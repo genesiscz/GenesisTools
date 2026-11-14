@@ -34,6 +34,14 @@ export interface DoorWorker {
 const IDLE_MS = 15 * 60_000;
 /** A job this long has hung: the worker is replaced, and its callers run their processes. */
 const JOB_TIMEOUT_MS = 10 * 60_000;
+/**
+ * Jobs handed to the worker at once. The rest wait on the main thread, where a caller that gives up removes its job
+ * before the worker ever starts it: a message already posted to a worker that is busy in a synchronous fold cannot be
+ * cancelled until the fold ends.
+ */
+const MAX_IN_FLIGHT = 4;
+/** What a caller gets when it gave up before its job finished: the shape of the worker's own cancelled answer. */
+const CANCELLED: CallResult = { stdout: "", stderr: "cancelled", exit: 130 };
 
 /** The worker's side of one job: the named door's own work, never a second dispatch. */
 export async function answerDoorJob(job: DoorJob, doors: readonly Door[], signal: AbortSignal): Promise<DoorReply> {
@@ -69,6 +77,8 @@ export class DoorWorkerRunner {
     private worker?: DoorWorker;
     private sequence = 0;
     private readonly pending = new Map<number, (reply: DoorReply) => void>();
+    /** Jobs waiting for a free place at the worker, oldest first. */
+    private readonly queue: { id: number; start: () => void; fail: (error: string) => void }[] = [];
     private idle?: ReturnType<typeof setTimeout>;
 
     constructor(
@@ -76,12 +86,18 @@ export class DoorWorkerRunner {
             createWorker?: () => DoorWorker;
             idleMs?: number;
             jobTimeoutMs?: number;
+            maxInFlight?: number;
         } = {}
     ) {}
 
     /** Jobs the worker has not answered yet. */
     get running(): number {
         return this.pending.size;
+    }
+
+    /** Jobs that wait on the main thread for a free place at the worker. */
+    get queued(): number {
+        return this.queue.length;
     }
 
     async run(input: {
@@ -91,6 +107,10 @@ export class DoorWorkerRunner {
         traceId?: string;
         inline: () => Promise<CallResult>;
     }): Promise<CallResult> {
+        if (input.signal.aborted) {
+            return CANCELLED;
+        }
+
         const worker = this.ensureWorker();
         if (!worker) {
             return input.inline();
@@ -99,36 +119,60 @@ export class DoorWorkerRunner {
         clearTimeout(this.idle);
         const id = ++this.sequence;
         const reply = await new Promise<DoorReply>((resolve) => {
-            const deadline = setTimeout(() => {
-                if (this.worker !== worker) {
-                    return;
-                }
+            const dispatch = (): void => {
+                const deadline = setTimeout(() => {
+                    if (this.worker !== worker) {
+                        return;
+                    }
 
-                log.warn({ door: input.door }, "hub server: a door worker job hung; replacing the worker");
-                this.discard(worker, "the door worker job timed out");
-            }, this.options.jobTimeoutMs ?? JOB_TIMEOUT_MS);
-            deadline.unref?.();
-            const cancel = (): void => {
-                if (this.worker === worker && this.pending.has(id)) {
-                    worker.postMessage({ op: "cancel", id });
+                    log.warn({ door: input.door }, "hub server: a door worker job hung; replacing the worker");
+                    this.discard(worker, "the door worker job timed out");
+                }, this.options.jobTimeoutMs ?? JOB_TIMEOUT_MS);
+                deadline.unref?.();
+                this.pending.set(id, (answer) => {
+                    clearTimeout(deadline);
+                    resolve(answer);
+                });
+                try {
+                    worker.postMessage({
+                        op: "run",
+                        id,
+                        door: input.door,
+                        parsed: input.parsed,
+                        traceId: input.traceId,
+                    });
+                } catch (error) {
+                    this.pending.get(id)?.({
+                        id,
+                        ok: false,
+                        unsupported: true,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                    this.pending.delete(id);
                 }
             };
+            const cancelled: DoorReply = { id, ok: true, result: CANCELLED };
+            // The caller is answered at once. A job the worker already holds keeps its place until the worker
+            // answers or the watchdog replaces it, so the in-flight cap still bounds the work.
+            const cancel = (): void => {
+                const waiting = this.queue.findIndex((entry) => entry.id === id);
+                if (waiting >= 0) {
+                    this.queue.splice(waiting, 1);
+                } else if (this.worker === worker && this.pending.has(id)) {
+                    worker.postMessage({ op: "cancel", id });
+                }
+
+                resolve(cancelled);
+            };
             input.signal.addEventListener("abort", cancel, { once: true });
-            this.pending.set(id, (answer) => {
-                clearTimeout(deadline);
-                input.signal.removeEventListener("abort", cancel);
-                resolve(answer);
-            });
-            try {
-                worker.postMessage({ op: "run", id, door: input.door, parsed: input.parsed, traceId: input.traceId });
-            } catch (error) {
-                this.pending.get(id)?.({
+            if (this.pending.size < (this.options.maxInFlight ?? MAX_IN_FLIGHT)) {
+                dispatch();
+            } else {
+                this.queue.push({
                     id,
-                    ok: false,
-                    unsupported: true,
-                    error: error instanceof Error ? error.message : String(error),
+                    start: dispatch,
+                    fail: (error) => resolve({ id, ok: false, unsupported: true, error }),
                 });
-                this.pending.delete(id);
             }
         });
         this.armIdle();
@@ -183,6 +227,7 @@ export class DoorWorkerRunner {
                 const answer = this.pending.get(event.data.id);
                 this.pending.delete(event.data.id);
                 answer?.(event.data);
+                this.startQueued();
             };
             worker.onerror = (event) => {
                 if (this.worker !== worker) {
@@ -207,18 +252,30 @@ export class DoorWorkerRunner {
         this.failPending(reason);
     }
 
-    /** The callers of a lost job run their processes. */
+    /** The callers of a lost job, and of every job still waiting for a place, run their processes. */
     private failPending(error: string): void {
         const answers = [...this.pending.entries()];
+        const waiting = this.queue.splice(0);
         this.pending.clear();
         for (const [id, answer] of answers) {
             answer({ id, ok: false, unsupported: true, error });
+        }
+
+        for (const entry of waiting) {
+            entry.fail(error);
+        }
+    }
+
+    /** Hands waiting jobs to the worker while it has free places. */
+    private startQueued(): void {
+        while (this.queue.length > 0 && this.pending.size < (this.options.maxInFlight ?? MAX_IN_FLIGHT)) {
+            this.queue.shift()?.start();
         }
     }
 
     private armIdle(): void {
         clearTimeout(this.idle);
-        if (this.pending.size > 0) {
+        if (this.pending.size > 0 || this.queue.length > 0) {
             return;
         }
 

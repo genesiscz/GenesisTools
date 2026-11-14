@@ -79,6 +79,13 @@ extension ToolsBridge {
         let value = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
                 DispatchQueue.global(qos: .userInitiated).async {
+                    // A cancel that came while the block waited for a thread must not start the child: the handle is
+                    // marked before any process exists, and `adopt` would only terminate it after its side effects began.
+                    if handle.cancelled {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+
                     continuation.resume(with: Result { try ToolsCallTrace.$ledger.withValue(ledger) { try work(handle) } })
                 }
             }

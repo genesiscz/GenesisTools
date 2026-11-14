@@ -1009,6 +1009,39 @@ describe("DoorWorkerRunner", () => {
         runner.stop();
     });
 
+    it("never sends a job whose caller already gave up", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        const controller = new AbortController();
+        controller.abort();
+
+        expect((await job(runner, controller.signal)).exit).toBe(130);
+        expect(workers.flatMap((worker) => worker.messages)).toEqual([]);
+        runner.stop();
+    });
+
+    it("answers a caller that gives up at once, and keeps a job it has not sent out of the worker", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create, maxInFlight: 1 });
+        const first = job(runner);
+        const controller = new AbortController();
+        const second = job(runner, controller.signal);
+        const third = job(runner);
+
+        expect(runner.running).toBe(1);
+        expect(runner.queued).toBe(2);
+        controller.abort();
+        expect((await second).exit).toBe(130);
+        expect(runner.queued).toBe(1);
+
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "one", stderr: "", exit: 0 } });
+        expect((await first).stdout).toBe("one");
+        expect(workers[0].messages.map((message) => ("id" in message ? message.id : message.op))).toEqual([1, 3]);
+        reply(workers[0], { id: 3, ok: true, result: { stdout: "three", stderr: "", exit: 0 } });
+        expect((await third).stdout).toBe("three");
+        runner.stop();
+    });
+
     it("frees memory by ending an idle worker, and asks a busy one to drop its caches", async () => {
         const { workers, create } = fakeWorkers();
         const runner = new DoorWorkerRunner({ createWorker: create });

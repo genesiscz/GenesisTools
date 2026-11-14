@@ -914,9 +914,9 @@ describe("the process's one reader of the open sessions", () => {
         expect(await second).toBe(await first);
         expect(reads).toHaveLength(1);
 
-        at(2_999);
+        at(3_099);
         expect(await reader()).toBe(await first);
-        at(3_000);
+        at(3_100);
         void reader();
         expect(reads).toHaveLength(2);
     });
@@ -927,10 +927,10 @@ describe("the process's one reader of the open sessions", () => {
         slow.at(2_000);
         slow.reads[0].finish(["a"]);
         await two;
-        slow.at(19_999);
+        slow.at(21_999);
         await slow.reader();
         expect(slow.reads).toHaveLength(1);
-        slow.at(20_000);
+        slow.at(22_000);
         void slow.reader();
         expect(slow.reads).toHaveLength(2);
 
@@ -939,12 +939,28 @@ describe("the process's one reader of the open sessions", () => {
         stalled.at(10_000);
         stalled.reads[0].finish([]);
         await ten;
-        stalled.at(59_999);
+        stalled.at(69_999);
         await stalled.reader();
         expect(stalled.reads).toHaveLength(1);
-        stalled.at(60_000);
+        stalled.at(70_000);
         void stalled.reader();
         expect(stalled.reads).toHaveLength(2);
+    });
+
+    // Regression test: the reuse window ran from the start of the read, so a read longer than the cap was already stale.
+    test("a read longer than the cap is still shared for a minute after it finished", async () => {
+        const { reader, reads, at } = slowTable();
+        const first = reader();
+        at(192_000);
+        reads[0].finish(["a"]);
+        await first;
+
+        at(192_001);
+        expect(await reader()).toBe(await first);
+        expect(reads).toHaveLength(1);
+        at(252_000);
+        void reader();
+        expect(reads).toHaveLength(2);
     });
 
     test("a one-session read keeps its own short timeout, and a failed read is asked again", async () => {

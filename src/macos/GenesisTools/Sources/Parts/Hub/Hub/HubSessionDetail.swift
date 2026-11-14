@@ -89,6 +89,9 @@ struct HubSessionDetailHost: View {
     @State private var banner: String?
     /// The banner's failure (a refresh or an earlier page that did not load) with its Try again, set and cleared as one.
     @State private var bannerFailure: (report: FailureReport, retry: @MainActor () -> Void)?
+    /// The report of an earlier-page failure the banner shows, so a retry that loads the page clears that notice and
+    /// never a newer failure of another load.
+    @State private var earlierFailure: FailureReport?
     @State private var loadID = 0
     /// Between onAppear and onDisappear. A page load that finishes after the detail left must not start a follow.
     @State private var onScreen = false
@@ -488,6 +491,7 @@ struct HubSessionDetailHost: View {
             guard id == loadID else { return }
             // A new window replaces whatever an older load or page reported.
             bannerFailure = nil
+            earlierFailure = nil
             envelope = fetched
             turns = fetched.turns
             windowStart = fetched.windowStart
@@ -549,6 +553,8 @@ struct HubSessionDetailHost: View {
             // main thread; the failure shows at once and takes it when it arrives.
             let full = await report.addingCallLog()
             guard id == loadID else { return }
+            // A banner the reader dismissed while the log loaded stays dismissed.
+            guard first || bannerFailure?.report == report else { return }
             showFailure(full, first: first, retry: retry)
         }
     }
@@ -619,6 +625,10 @@ struct HubSessionDetailHost: View {
             await rebuild()
             // The list inserting the earlier rows above the viewport (GenesisKit `TranscriptScrollAnchor`).
             HubMainBusy.measure("transcript.earlier.render")
+            if let failed = earlierFailure {
+                if bannerFailure?.report == failed { bannerFailure = nil }
+                earlierFailure = nil
+            }
             return true
         } catch {
             guard owner == session.id, generation == loadID else { return false }
@@ -626,10 +636,12 @@ struct HubSessionDetailHost: View {
                                                  call: ledger.failed, title: "Earlier turns did not load", area: "hub")
             let retry: @MainActor () -> Void = { Task { await loadEarlier(count: count) } }
             showFailure(report, first: false, retry: retry)
+            earlierFailure = report
             Task {
                 let full = await report.addingCallLog()
                 if owner == session.id, generation == loadID, bannerFailure?.report == report {
                     showFailure(full, first: false, retry: retry)
+                    earlierFailure = full
                 }
             }
             return false

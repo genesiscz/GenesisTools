@@ -110,8 +110,10 @@ export function openSessionsReader(
         const startedAt = clock();
         const started = read(psTimeoutMs)
             .then((ids) => {
-                const paced = Math.min((clock() - startedAt) * OPEN_SESSIONS_PACE, OPEN_SESSIONS_REUSE_MAX_MS);
-                memo = { until: startedAt + Math.max(OPEN_SESSIONS_REUSE_MS, paced), ids };
+                const finishedAt = clock();
+                const paced = Math.min((finishedAt - startedAt) * OPEN_SESSIONS_PACE, OPEN_SESSIONS_REUSE_MAX_MS);
+                // From the finish: a read that lasted longer than its own reuse window must still be shared.
+                memo = { until: finishedAt + Math.max(OPEN_SESSIONS_REUSE_MS, paced), ids };
 
                 return ids;
             })
