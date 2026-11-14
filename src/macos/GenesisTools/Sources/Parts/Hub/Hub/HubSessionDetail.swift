@@ -87,9 +87,8 @@ struct HubSessionDetailHost: View {
     @State private var loadState: TranscriptLoadState = .loading
     @State private var loadingEarlier = false
     @State private var banner: String?
-    /// The banner's failure (a refresh or an earlier page that did not load), with Try again.
-    @State private var bannerFailure: FailureReport?
-    @State private var bannerRetry: (@MainActor () -> Void)?
+    /// The banner's failure (a refresh or an earlier page that did not load) with its Try again, set and cleared as one.
+    @State private var bannerFailure: (report: FailureReport, retry: @MainActor () -> Void)?
     @State private var loadID = 0
     /// Between onAppear and onDisappear. A page load that finishes after the detail left must not start a follow.
     @State private var onScreen = false
@@ -131,14 +130,13 @@ struct HubSessionDetailHost: View {
             loadingEarlier: loadingEarlier,
             windowNote: searchNote ?? (windowStart > 0 ? envelope.map { "Turns \(windowStart + 1)–\($0.nextOffset)" } : nil),
             banner: banner,
-            bannerFailure: bannerFailure,
-            onRetryBanner: bannerRetry,
+            bannerFailure: bannerFailure?.report,
+            onRetryBanner: bannerFailure?.retry,
             onRetry: { Task { await retryFirstPage() } },
             onLoadEarlier: { Task { await loadEarlier() } },
             onDismissBanner: {
                 banner = nil
                 bannerFailure = nil
-                bannerRetry = nil
             },
             onReaderAtEnd: { readerAtEnd = $0 },
             preset: TranscriptPreset(query: transcriptQuery ?? ""),
@@ -490,7 +488,6 @@ struct HubSessionDetailHost: View {
             guard id == loadID else { return }
             // A new window replaces whatever an older load or page reported.
             bannerFailure = nil
-            bannerRetry = nil
             envelope = fetched
             turns = fetched.turns
             windowStart = fetched.windowStart
@@ -545,13 +542,14 @@ struct HubSessionDetailHost: View {
                                                  call: ledger.failed, title: "Transcript did not load", area: "hub",
                                                  expected: "The session's latest turns show in the transcript.")
             let first = document.sections.isEmpty
-            showFailure(report, first: first, retry: { Task { await retryFirstPage() } })
+            let retry: @MainActor () -> Void = { Task { await retryFirstPage() } }
+            showFailure(report, first: first, retry: retry)
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             // The details' log (this call's lines in app-perf.log and the calls of the minute before) is read off the
             // main thread; the failure shows at once and takes it when it arrives.
             let full = await report.addingCallLog()
             guard id == loadID else { return }
-            showFailure(full, first: first, retry: { Task { await retryFirstPage() } })
+            showFailure(full, first: first, retry: retry)
         }
     }
 
@@ -561,8 +559,7 @@ struct HubSessionDetailHost: View {
             loadState = .failed(report)
         } else {
             banner = nil
-            bannerFailure = report
-            bannerRetry = retry
+            bannerFailure = (report, retry)
         }
     }
 
@@ -631,7 +628,7 @@ struct HubSessionDetailHost: View {
             showFailure(report, first: false, retry: retry)
             Task {
                 let full = await report.addingCallLog()
-                if owner == session.id, generation == loadID, bannerFailure == report {
+                if owner == session.id, generation == loadID, bannerFailure?.report == report {
                     showFailure(full, first: false, retry: retry)
                 }
             }
