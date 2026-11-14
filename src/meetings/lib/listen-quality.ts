@@ -8,7 +8,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { personKey, personPresent } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
-import { openQuestions } from "./questions";
+import { questionOwnedItems } from "./transcript-corrections";
 
 export async function qualityVoiceFeatures(opened: OpenedMeeting): Promise<LineVoice[]> {
     const entries = (await opened.meeting()).transcript;
@@ -145,11 +145,7 @@ export interface QualityLine {
 
 export function qualityLines(record: MeetingRecord, entries: readonly TranscriptEntry[]): QualityLine[] {
     const lines = new TranscriptLines(entries);
-    const questionOwned = new Set(
-        openQuestions(record)
-            .filter((question) => question.about === "speaker")
-            .flatMap((question) => question.decides)
-    );
+    const questionOwned = questionOwnedItems(record);
     return entries.map((entry, index) => {
         const matches = record.items.filter(
             (one) =>

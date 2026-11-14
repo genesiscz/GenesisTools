@@ -131,6 +131,15 @@ function withConfidence(readings: string[], confidence: number | undefined): str
     );
 }
 
+/** The items an open speaker question decides: their lines wait for the answer, whatever their confidence. */
+export function questionOwnedItems(record: MeetingRecord): Set<string> {
+    return new Set(
+        openQuestions(record)
+            .filter((question) => question.about === "speaker")
+            .flatMap((question) => question.decides)
+    );
+}
+
 /** The line address an item carries: its index in the source transcript, stored by suggest and `items add`. */
 export function lineOf(item: MeetingItem): number | undefined {
     const line = item.evidence?.transcriptLine;
@@ -158,11 +167,7 @@ export function correctionsOf(
         throw new RangeError("applyAbove must be between 0 and 1");
     }
     const markBelow = opts.applyAbove ?? Math.max(0.7, applyAbove);
-    const questionOwned = new Set(
-        openQuestions(record)
-            .filter((question) => question.about === "speaker")
-            .flatMap((question) => question.decides)
-    );
+    const questionOwned = questionOwnedItems(record);
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
         item.status === "confirmed" ||
