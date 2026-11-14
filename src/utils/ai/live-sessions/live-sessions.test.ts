@@ -7,10 +7,11 @@ import { CmuxUnresponsiveError } from "@genesiscz/utils/cmux/lib/health";
 import type { CmuxTreeBackoff } from "@genesiscz/utils/cmux/lib/tree-backoff";
 import type { LiveSurface } from "@genesiscz/utils/cmux/live-layout";
 import type { LiveAgentSurface } from "@genesiscz/utils/cmux/live-surfaces";
+import { SurfaceInputError } from "@genesiscz/utils/cmux/surface-input";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { fleetEntryOf, readFleetView } from "./fleet";
-import { liveSurfacesNow, type SessionInputDeps, sendToSession } from "./input";
+import { agentSessionsOf, liveSurfacesNow, type SessionInputDeps, sendToSession } from "./input";
 import {
     joinLiveSessions,
     type LiveAgentProcess,
@@ -277,6 +278,29 @@ describe("a session that waits on a question", () => {
     });
 });
 
+describe("agentSessionsOf: agent sessions on one tty", () => {
+    it("counts a worker started from another Claude's tool shell as a second session", () => {
+        const processes = [
+            psEntry(10, "-zsh"),
+            psEntry(11, "claude", { ppid: 10 }),
+            psEntry(12, "/bin/zsh -c claude -p hello", { ppid: 11 }),
+            psEntry(13, "claude -p hello", { ppid: 12 }),
+        ];
+
+        expect(agentSessionsOf(processes)).toEqual(["claude", "claude"]);
+    });
+
+    it("NEGATIVE CONTROL: a launcher and the agent it starts are one session", () => {
+        const processes = [
+            psEntry(20, "-zsh"),
+            psEntry(21, "node /opt/bin/codex", { ppid: 20 }),
+            psEntry(22, "/opt/lib/codex/vendor/codex", { ppid: 21 }),
+        ];
+
+        expect(agentSessionsOf(processes)).toEqual(["codex"]);
+    });
+});
+
 describe("sendToSession: the one guarded session input", () => {
     const TMUX_JOIN = {
         pane: "%41",
@@ -355,6 +379,37 @@ describe("sendToSession: the one guarded session input", () => {
         expect([...other.calls, ...both.calls]).toEqual([]);
     });
 
+    it("recordedOnly skips a surface matched by its topic title alone, and two surfaces naming the id refuse", async () => {
+        const titled: LiveAgentSurface = { ...plain, transcriptPath: "/fixture/a.jsonl" };
+        const byTitle = edges({ surfaces: async () => ({ ok: true, surfaces: [titled] }) });
+        const twice = edges({
+            surfaces: async () => ({ ok: true, surfaces: [plain, liveSurface(SESSION_A, "surface:8", "ttys008")] }),
+        });
+
+        expect(
+            await sendToSession({ sessionId: SESSION_A, text: "hi", recordedOnly: true }, byTitle.deps)
+        ).toMatchObject({ delivered: false, reason: "not-found" });
+        expect(await sendToSession({ sessionId: SESSION_A, text: "hi" }, twice.deps)).toMatchObject({
+            reason: "ambiguous",
+            detail: expect.stringContaining("surface:7, surface:8"),
+        });
+        expect([...byTitle.calls, ...twice.calls]).toEqual([]);
+        // NEGATIVE CONTROL: without recordedOnly, the title-matched surface is still a target.
+        expect(await sendToSession({ sessionId: SESSION_A, text: "hi" }, byTitle.deps)).toMatchObject({
+            delivered: true,
+        });
+    });
+
+    it("tty-shared: a second session of the same agent in the tab refuses the write", async () => {
+        const twoClaudes = edges({ agentsOnTty: () => ["claude", "claude"] });
+
+        expect(await sendToSession({ sessionId: SESSION_A, text: "hi" }, twoClaudes.deps)).toMatchObject({
+            reason: "tty-shared",
+            detail: expect.stringContaining("it runs 2 claude sessions"),
+        });
+        expect(twoClaudes.calls).toEqual([]);
+    });
+
     it("tmux-hidden: the surface shows another tmux pane, checked again right before the write", async () => {
         const hidden = edges({
             surfaces: async () => ({ ok: true, surfaces: [viaTmux] }),
@@ -406,7 +461,11 @@ describe("sendToSession: the one guarded session input", () => {
         const { calls, deps } = edges({
             run: async (args) => {
                 calls.push(args);
-                return { code: 1, stdout: "", stderr: "the prompt holds text" };
+                return {
+                    code: 1,
+                    stdout: "",
+                    stderr: "Error: paste: the agent prompt in surface:7 holds text someone is typing, so nothing was sent.",
+                };
             },
         });
 
@@ -416,6 +475,33 @@ describe("sendToSession: the one guarded session input", () => {
             mayHaveLanded: false,
         });
         expect(calls).toHaveLength(1);
+    });
+
+    it("a cmux failure its guard does not name is an error, never a draft or dialog refusal", async () => {
+        const failing = (stderr: string) =>
+            edges({
+                run: async (args) => {
+                    if (args[0] === "send-key") {
+                        return { code: 1, stdout: "", stderr };
+                    }
+
+                    return { code: 0, stdout: "", stderr: "" };
+                },
+            }).deps;
+
+        const missing = sendToSession(
+            { sessionId: SESSION_A, text: "hi", keys: ["enter"] },
+            failing("Surface not found")
+        );
+        await expect(missing).rejects.toBeInstanceOf(SurfaceInputError);
+        await expect(missing).rejects.toMatchObject({ mayHaveLanded: true });
+
+        expect(
+            await sendToSession(
+                { sessionId: SESSION_A, keys: ["enter"] },
+                failing("Error: send-key: surface:7 is waiting on a question or dialog, so nothing was sent.")
+            )
+        ).toMatchObject({ delivered: false, reason: "dialog-open", mayHaveLanded: false });
     });
 
     it("timeout: a cmux that does not answer the tree read is a refusal, never not-found", async () => {

@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import { sessionOpenDialog } from "@genesiscz/utils/agents/dialogs/session";
 import type { OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
@@ -9,7 +10,7 @@ import { type SurfaceKeyPress, writeSurfaceInput } from "@genesiscz/utils/cmux/s
 import { cmuxDidNotAnswer, type ReadCmuxTreeOptions, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
-import { processesOnTty } from "@genesiscz/utils/process/processes";
+import { type ProcessEntry, processesOnTty } from "@genesiscz/utils/process/processes";
 import { listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import { EMPTY_TREE, type LocateOptions, liveSessionReads, locateLiveSurfaces } from "./locate";
 
@@ -17,8 +18,8 @@ import { EMPTY_TREE, type LocateOptions, liveSessionReads, locateLiveSurfaces } 
  * Typing into a running session's tab: the one guarded input. It takes a session id, finds the session's cmux surface
  * through the live-session locator, and writes only after every guard passed, in this order:
  *
- * 1. the surface's tty runs this session's agent and no other agent (a worker started inside another agent's tab
- *    inherits the tab, and the input would reach the tab's real agent);
+ * 1. the surface's tty runs one session of this session's agent and no other agent session (a worker started inside
+ *    another agent's tab inherits the tab, and the input would reach the tab's real agent; a second Claude counts);
  * 2. a --via-tmux session's surface still shows the agent's tmux pane;
  * 3. no question, plan or permission dialog is open in the session (state signals, never a screen read);
  * 4. no draft: cmux's own check on the paste refuses while a person is typing in the prompt.
@@ -33,6 +34,7 @@ const log = logger.child({ component: "session-input" });
 export type SessionInputRefusal =
     | "not-found"
     | "tty-shared"
+    | "ambiguous"
     | "tmux-hidden"
     | "dialog-open"
     | "draft-present"
@@ -74,6 +76,12 @@ export interface SessionInput {
      * `--force`. The tty and tmux guards still apply.
      */
     force?: boolean;
+    /**
+     * Only a surface the hook journal recorded for this session. A surface the locator matched to the session by a
+     * unique tab title is skipped, because another session can share that topic: a caller that must not guess
+     * (`--exact-session`) then gets `not-found` instead of a write.
+     */
+    recordedOnly?: boolean;
 }
 
 export type SurfaceLookup = { ok: true; surfaces: LiveAgentSurface[] } | { ok: false; detail: string };
@@ -84,8 +92,8 @@ export interface SessionInputDeps {
     surfaces?: () => Promise<SurfaceLookup>;
     /** The keys a tab title is tried by when the journal does not know the session (the cmux tool's `titleMatchKeys`). */
     titleKeys?: LocateOptions["titleKeys"];
-    /** The agents running on a tty now. */
-    agentsOnTty?: (tty: string) => ReadonlySet<string>;
+    /** The agent sessions running on a tty now, one entry per session (`["claude", "claude"]` is two Claude sessions). */
+    agentsOnTty?: (tty: string) => Iterable<string>;
     /** Does a --via-tmux session's surface still show the agent's pane? */
     stillShown?: (target: LiveAgentSurface) => Promise<{ ok: true } | { ok: false; reason: string }>;
     openDialog?: (input: { sessionId: string; provider: AccountProviderAlias }) => Promise<OpenDialog | null>;
@@ -110,15 +118,65 @@ export async function liveSurfacesNow(
     return { ok: true, surfaces: await locateLiveSurfaces(reads, reads.processes(), options.titleKeys) };
 }
 
-/** The agents (`claude`, `codex`, `grok`) this user runs on one tty now. */
-export function agentsOnTtyNow(tty: string): Set<AccountProviderAlias> {
+/** The agent sessions (`claude`, `codex`, `grok`) this user runs on one tty now, one entry per session. */
+export function agentsOnTtyNow(tty: string): AccountProviderAlias[] {
     const uid = globalThis.process.getuid?.();
     const own = processesOnTty(ttyName(tty) ?? tty).filter(
         (entry) => entry.command !== null && !entry.zombie && (uid === undefined || entry.uid === uid)
     );
-    return new Set(
-        ACCOUNT_PROVIDER_ALIASES.filter((agent) => own.some((entry) => runsAgent(entry.command ?? "", agent)))
-    );
+    return agentSessionsOf(own);
+}
+
+const SHELL = /^-?(?:ba|z|k|da|fi|tc|c)?sh$/;
+
+/**
+ * One entry per agent session among the processes of one tty. An agent process counts once with the processes that
+ * start it: a wrapper (`tools claude resume`) or a launcher of the same agent (Codex's npm script and its native
+ * binary) above it, through any process that is not a shell. An agent started from a shell is a session of its own,
+ * even when that shell belongs to another agent: a worker started from a Claude tool shell inside another Claude
+ * session's tab is the second `claude` here, and input meant for one of them could reach the other.
+ */
+export function agentSessionsOf(processes: readonly ProcessEntry[]): AccountProviderAlias[] {
+    const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+    const agentOf = new Map<number, AccountProviderAlias>();
+
+    for (const entry of processes) {
+        const agent = ACCOUNT_PROVIDER_ALIASES.find((alias) => runsAgent(entry.command ?? "", alias));
+
+        if (agent) {
+            agentOf.set(entry.pid, agent);
+        }
+    }
+
+    const startedBySameAgent = (entry: ProcessEntry, agent: AccountProviderAlias): boolean => {
+        const seen = new Set<number>([entry.pid]);
+        let parent = byPid.get(entry.ppid);
+
+        while (parent && !seen.has(parent.pid)) {
+            if (agentOf.get(parent.pid) === agent) {
+                return true;
+            }
+
+            if (SHELL.test(basename(argvZero(parent)))) {
+                return false;
+            }
+
+            seen.add(parent.pid);
+            parent = byPid.get(parent.ppid);
+        }
+
+        return false;
+    };
+
+    return [...agentOf].flatMap(([pid, agent]) => {
+        const entry = byPid.get(pid);
+
+        return entry && !startedBySameAgent(entry, agent) ? [agent] : [];
+    });
+}
+
+function argvZero(entry: ProcessEntry): string {
+    return entry.command?.trim().split(/\s+/)[0] || entry.name;
 }
 
 /**
@@ -171,9 +229,24 @@ export async function sendToSession(input: SessionInput, deps: SessionInputDeps 
         return refusal(input, "timeout", `nothing was sent to session ${input.sessionId}: ${lookup.detail}`);
     }
 
-    const target = lookup.surfaces.find(
-        (entry) => entry.sessionId === input.sessionId && (!input.provider || entry.agent === input.provider)
+    const candidates = lookup.surfaces.filter(
+        (entry) =>
+            entry.sessionId === input.sessionId &&
+            (!input.provider || entry.agent === input.provider) &&
+            !(input.recordedOnly && entry.transcriptPath)
     );
+
+    if (candidates.length > 1) {
+        return refusal(
+            input,
+            "ambiguous",
+            `nothing was sent: ${candidates.length} surfaces name session ${input.sessionId} (${candidates
+                .map((entry) => entry.surface.ref)
+                .join(", ")})`
+        );
+    }
+
+    const target = candidates[0];
 
     if (!target) {
         return refusal(input, "not-found", `session ${input.sessionId} has no live cmux surface`);
@@ -193,17 +266,20 @@ export async function sendToSession(input: SessionInput, deps: SessionInputDeps 
 
     const ref = target.surface.ref;
     const tty = target.tmux?.paneTty ?? target.surface.tty;
-    const running = tty ? (deps.agentsOnTty ?? agentsOnTtyNow)(tty) : new Set<string>();
+    const running: string[] = tty ? [...(deps.agentsOnTty ?? agentsOnTtyNow)(tty)] : [];
+    const own = running.filter((agent) => agent === target.agent).length;
 
-    if (!running.has(target.agent) || running.size > 1) {
-        const others = [...running].filter((agent) => agent !== target.agent);
+    if (own !== 1 || running.length > 1) {
+        const others = [...new Set(running.filter((agent) => agent !== target.agent))];
         return refusal(
             input,
             "tty-shared",
             `nothing was sent to ${ref}: ${
-                running.has(target.agent)
-                    ? `it also runs ${others.join(", ")}, so the input could reach that agent`
-                    : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${target.agent}`
+                own > 1
+                    ? `it runs ${own} ${target.agent} sessions, so the input could reach another one`
+                    : own === 1
+                      ? `it also runs ${others.join(", ")}, so the input could reach that agent`
+                      : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${target.agent}`
             }`
         );
     }

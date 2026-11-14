@@ -420,6 +420,50 @@ describe("attachCodexAgents", () => {
         }
     });
 
+    test("a cold cache reads the headers in a bounded pool and keeps each link with its own agent", async () => {
+        const dir = temp();
+        const ids = Array.from(
+            { length: 20 },
+            (_, index) => `019a0000-0000-7000-8000-${String(index).padStart(12, "0")}`
+        );
+        const records = ids.map((id) =>
+            record(
+                id,
+                rollout(
+                    dir,
+                    id,
+                    meta({ id, parent: ROOT, depth: 1, nickname: id.slice(-2), role: "worker", path: "/r" }),
+                    1
+                )
+            )
+        );
+        const reader = resolveHistoryProvider("codex").reader;
+        const read = reader.readSpawnLink.bind(reader);
+        let inFlight = 0;
+        let peak = 0;
+        const spy = spyOn(reader, "readSpawnLink").mockImplementation(async (source) => {
+            inFlight++;
+            peak = Math.max(peak, inFlight);
+            await Bun.sleep(1);
+            inFlight--;
+            return read(source);
+        });
+
+        try {
+            const tops = await attachCodexAgents(records, {
+                now: NOW,
+                cachePath: join(dir, "cache.json"),
+                model: null,
+            });
+
+            expect(spy).toHaveBeenCalledTimes(20);
+            expect(peak).toBeLessThanOrEqual(8);
+            expect((tops.get(ROOT) ?? []).map((node) => node.id).sort()).toEqual([...ids].sort());
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test("a head that cannot be read leaves the agent out instead of failing the list", async () => {
         const { records, cache } = family();
         const broken: CodexAgentRecord = {

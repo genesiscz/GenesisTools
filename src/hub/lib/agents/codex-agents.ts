@@ -7,6 +7,7 @@ import { CODEX_MODEL_HEAD_BYTES } from "@genesiscz/utils/agent-sessions/readers/
 import { countCodexToolCalls } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
 import type { NativeSessionSource, SpawnLink } from "@genesiscz/utils/agent-sessions/types";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -32,6 +33,8 @@ const TURN_STALE_MS = 15 * 60 * 1000;
 /** A rollout with no turn marker in its tail: fresh means running. */
 const NO_MARKER_FRESH_MS = 2 * 60 * 1000;
 const CACHE_KEEP_MS = 7 * 24 * 3_600_000;
+/** Rollout headers read at once when the scan cache misses: each read opens and may decompress a file. */
+const SPAWN_LINK_READS = 8;
 
 /** One Codex sub-agent rollout from the session index. */
 export interface CodexAgentRecord {
@@ -386,7 +389,15 @@ export async function attachCodexAgents(
 ): Promise<Map<string, AgentNode[]>> {
     const cachePath = context.cachePath ?? defaultCachePath();
     const cache = loadCache(cachePath);
-    const links = await Promise.all(records.map((record) => cachedSpawnLink(record, cache)));
+    // A cold cache (or a read-only roster with none) reads every header: a bounded pool keeps the open files flat.
+    const linked = await concurrentMap({
+        items: records,
+        fn: (record) => cachedSpawnLink(record, cache),
+        concurrency: SPAWN_LINK_READS,
+        onError: (record, error) =>
+            logger.debug({ error, path: record.filePath }, "[hub agents] codex agent header read failed"),
+    });
+    const links = records.map((record) => linked.get(record) ?? null);
     const byId = new Map<string, AgentNode>();
     const parents = new Map<string, string>();
     const roots = new Map<string, string>();
