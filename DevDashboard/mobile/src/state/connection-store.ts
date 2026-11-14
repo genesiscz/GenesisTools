@@ -51,8 +51,6 @@ interface ConnectionStoreState {
     /** Rebuilds the last active connection at launch WITHOUT a probe, so an offline launch still lands in the app. */
     restore: () => Promise<void>;
     listConnections: () => Promise<SavedConnection[]>;
-    /** Saves a connection without connecting to it (the Connections screen's add form). */
-    addConnection: (input: SavedConnectionInput) => Promise<string>;
     updateConnection: (id: string, patch: SavedConnectionPatch) => Promise<void>;
     remove: (id: string) => Promise<void>;
 }
@@ -221,12 +219,6 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
             const activeId = await getActiveConnectionId();
             set({ connections, activeId });
             return connections;
-        },
-
-        async addConnection(input) {
-            const id = await upsertConnection(input);
-            set({ connections: await loadConnections() });
-            return id;
         },
 
         async updateConnection(id, patch) {
