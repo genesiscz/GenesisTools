@@ -2564,13 +2564,16 @@ struct HubRootView: View {
 }
 
 extension HubModel {
-    /// The review the View menu's diff commands, the bench and a `--snapshot` act on: the PR's in PRs mode, else
-    /// the review slot that Sessions, Worktrees and the Agents lead share (Inbox, Activity and Usage show none).
+    /// The review on screen, which the View menu's diff commands, the bench and a `--snapshot` act on: the PR's in
+    /// PRs mode, the review slot that Sessions, Worktrees and the Agents lead share, and none in Inbox, Activity and
+    /// Usage. Those modes keep the slot filled out of sight, so a diff command there would change a hidden review;
+    /// with no review the menu disables those commands.
     @MainActor
     var mainReview: ReviewModel? {
         switch mode {
         case .prs: return prs.review
-        case .sessions, .worktrees, .agents, .inbox, .timeline, .usage: return review
+        case .sessions, .worktrees, .agents: return review
+        case .inbox, .timeline, .usage: return nil
         }
     }
 

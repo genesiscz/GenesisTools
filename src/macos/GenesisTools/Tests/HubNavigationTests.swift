@@ -574,6 +574,31 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertTrue(usage.showsTitlebarHeader)
     }
 
+    /// The diff commands act on the review on screen: the PR's in PRs mode, the shared slot in Sessions, Worktrees and
+    /// Agents, and none in Inbox, Activity and Usage, where the slot stays filled out of sight and the menu disables
+    /// every diff command instead of changing that hidden review.
+    @MainActor
+    func testTheDiffCommandsActOnlyOnAReviewOnScreen() {
+        let model = isolatedModel()
+        let session = ReviewModel(repo: URL(fileURLWithPath: "/fixture/session"), options: DiffViewOptions(), renderer: NullRenderer())
+        let pr = ReviewModel(repo: URL(fileURLWithPath: "/fixture/pr"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.review = session
+        model.prs.review = pr
+        let diffCommands = HubMenuCommands.view.filter { $0.id?.hasPrefix("hub.view.diff.") == true }
+        XCTAssertEqual(diffCommands.count, 6)
+        for mode in HubMode.allCases {
+            model.mode = mode
+            switch mode {
+            case .prs: XCTAssertTrue(model.mainReview === pr)
+            case .sessions, .worktrees, .agents: XCTAssertTrue(model.mainReview === session, "\(mode)")
+            case .inbox, .timeline, .usage: XCTAssertNil(model.mainReview, "\(mode)")
+            }
+            for command in diffCommands {
+                XCTAssertEqual(command.enabled?(model), model.mainReview != nil, "\(mode) \(command.title)")
+            }
+        }
+    }
+
     /// Every mode has one owner in the table, the hub asks the model of the mode on screen, and every mode's place
     /// opens that same mode again through its `--hub` flags.
     @MainActor
