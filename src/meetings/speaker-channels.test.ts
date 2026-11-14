@@ -11,12 +11,20 @@ import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { embedVoice, VoiceUnavailableError } from "@genesiscz/utils/meetings/voice";
 import { clusterVoices, lineVoices, measureVoice, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { decimate } from "./lib/acoustic";
+import { planByChannel } from "./lib/by-channel";
 import { CallTimeline } from "./lib/call-timeline";
+import { attributeByChannel } from "./lib/channel-operation";
+import { DecisionJournal } from "./lib/decision-journal";
 import { identifiedDepartures } from "./lib/departure";
+import { OpenedMeeting } from "./lib/opened-meeting";
 import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
+import { compactEvidence, rawMeeting } from "./lib/raw";
+import { rejectFilterIds } from "./lib/reject-filter";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
 import { anchoredMeetingVoices, lineDeviceCandidates } from "./lib/voice";
@@ -475,12 +483,6 @@ test("R20 does not override a line when tagged channel and calibrated energy dis
     ).toBe(false);
 });
 
-import { Storage } from "@genesiscz/utils/storage/storage";
-import { planByChannel } from "./lib/by-channel";
-import { DecisionJournal } from "./lib/decision-journal";
-import { compactEvidence, rawMeeting } from "./lib/raw";
-import { rejectFilterIds } from "./lib/reject-filter";
-
 test("channel plans split on eligibility and leave shared room voices unresolved", () => {
     const lines = Array.from({ length: 6 }, (_, index) => ({
         index,
@@ -592,10 +594,6 @@ test("compact evidence has 509 bounded rows with mic percent and unknown", () =>
     expect(compact).toContain("mic20%");
     expect(compact).toContain("mic?");
 });
-
-import { decimate } from "./lib/acoustic";
-import { attributeByChannel } from "./lib/channel-operation";
-import { OpenedMeeting } from "./lib/opened-meeting";
 
 test("the actual byChannel dry-run door writes nothing, apply persists the same planned ranges", async () => {
     const store = new MeetingStore(new Storage(`by-channel-door-${process.pid}`));
