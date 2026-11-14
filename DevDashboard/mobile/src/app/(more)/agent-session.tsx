@@ -18,7 +18,7 @@ import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
 import { PingButton } from "@/features/agents/components/PingButton";
 import { ago, ChildRow } from "@/features/agents/components/SessionCard";
 import { SteerComposer } from "@/features/agents/components/SteerComposer";
-import { useAgentsBoard, useAgentTranscript, useStopSession } from "@/features/agents/hooks";
+import { useAgentsBoard, useAgentTranscript, useBoardSession, useStopSession } from "@/features/agents/hooks";
 import { confirmWithFaceId } from "@/lib/face-id";
 import { idempotencyKey } from "@/lib/idempotency";
 import { useMinuteClock } from "@/lib/minute-clock";
@@ -349,7 +349,7 @@ export default function AgentSessionScreen() {
     const c = useThemeColors();
     const { key, text } = useLocalSearchParams<{ key?: string; text?: string }>();
     const board = useAgentsBoard();
-    const session = board.data?.sessions.find((entry) => entry.key === key);
+    const session = useBoardSession(key ?? "");
     const timings = board.data?.sendTimings;
     // Kept per session key, so the route's next session does not show the last one's stop.
     const [stop, setStop] = useState<{ key: string; receipt: AgentStopReceiptDto } | null>(null);
