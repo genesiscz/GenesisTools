@@ -432,7 +432,6 @@ export function layoutLayerDiagram({
 
                 return undefined;
             };
-            const detour = (x: number): RoutePoint[] => route(x, x0, x1);
             const explicit =
                 edge.lane === "left"
                     ? left - COLUMN_GAP / 2
@@ -456,19 +455,23 @@ export function layoutLayerDiagram({
                       ].sort((a, b) => Math.abs(a - x0) - Math.abs(b - x0))
                     : [explicit];
             let clear: RoutePoint[] | undefined;
-            lane = candidates.find((x) => {
+            for (const x of candidates) {
                 clear = clearThrough(x);
 
-                return clear !== undefined;
-            });
+                if (clear) {
+                    lane = x;
+                    break;
+                }
+            }
 
-            if (lane !== undefined && clear) {
+            if (clear) {
                 d = roundedRoute(clear);
                 crosses = [];
             } else if (explicit !== undefined) {
+                const detour = route(explicit, x0, x1);
                 lane = explicit;
-                d = roundedRoute(detour(explicit));
-                crosses = routeCrosses(detour(explicit), obstacles);
+                d = roundedRoute(detour);
+                crosses = routeCrosses(detour, obstacles);
             }
         }
 
