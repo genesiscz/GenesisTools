@@ -54,7 +54,11 @@ export interface KernelTableReaders {
     usage(pid: number): { rssBytes: number; running: boolean } | null;
     cpuPercent(pid: number): number | null;
     userName(uid: number): string | null;
+    /** The one uid whose usage the kernel gives this process; absent reads every row (root, and tests). */
+    readableUid?: number;
 }
+
+const OWN_UID = process.getuid?.();
 
 const kernelReaders: KernelTableReaders = {
     rows: listProcessTable,
@@ -62,6 +66,7 @@ const kernelReaders: KernelTableReaders = {
     usage: readProcessUsage,
     cpuPercent: readCpuPercent,
     userName,
+    readableUid: OWN_UID === 0 ? undefined : OWN_UID,
 };
 
 /**
@@ -87,13 +92,15 @@ export function kernelProcsTable(readers: KernelTableReaders = kernelReaders): P
             continue;
         }
 
-        const usage = row.zombie ? null : readers.usage(row.pid);
+        // The kernel withholds another user's usage, so those two reads are skipped rather than spent on nothing.
+        const readable = !row.zombie && (readers.readableUid === undefined || row.uid === readers.readableUid);
+        const usage = readable ? readers.usage(row.pid) : null;
         table.push({
             pid: row.pid,
             ppid: row.ppid,
             user: readers.userName(row.uid) ?? String(row.uid),
             stat: usage?.running ? "R" : row.state,
-            cpu: (row.zombie ? null : readers.cpuPercent(row.pid)) ?? 0,
+            cpu: (readable ? readers.cpuPercent(row.pid) : null) ?? 0,
             rss: usage ? Math.round(usage.rssBytes / 1024) : 0,
             // Whole seconds, as `ps lstart` prints: a stop compares this with `ps -p` before it signals.
             startTime: new Date(Math.floor(row.startMs / 1000) * 1000),
