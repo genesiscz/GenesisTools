@@ -112,6 +112,24 @@ describe("fableCapableAccounts", () => {
     });
 });
 
+describe("fableCapableAccounts and a plan contradiction", () => {
+    const lapsed: AccountUsage = {
+        accountName: "lapsed",
+        subscriptionPlan: "claude_free",
+        subscriptionStatus: "canceled",
+        planContradictedAt: 2000,
+        usage: usageWith(10),
+    };
+
+    test("a profile read newer than the contradiction drops the account", () => {
+        expect(fableCapableAccounts([{ ...lapsed, subscriptionCheckedAt: 3000 }], NOW)).toEqual([]);
+    });
+
+    test("a contradiction newer than the profile read keeps the account", () => {
+        expect(fableCapableAccounts([{ ...lapsed, subscriptionCheckedAt: 1000 }], NOW)).toEqual(["lapsed"]);
+    });
+});
+
 describe("weeklyStatusForAccount", () => {
     test("an unpolled account reports available so the gate never blocks blindly", () => {
         expect(weeklyStatusForAccount([], "nobody").available).toBe(true);

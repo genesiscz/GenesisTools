@@ -146,6 +146,9 @@ function snapshotBase(account: AccountEntry, usage: AccountUsage, fetchedAt: str
             ...(usage.subscriptionStatus === undefined ? {} : { status: usage.subscriptionStatus }),
             ...(usage.subscriptionCreatedAt === undefined ? {} : { createdAt: usage.subscriptionCreatedAt }),
             ...(usage.billingAnchor === undefined ? {} : { billingAnchor: usage.billingAnchor }),
+            ...(usage.subscriptionCheckedAt === undefined
+                ? {}
+                : { checkedAt: new Date(usage.subscriptionCheckedAt).toISOString() }),
             ...(usage.planContradictedAt === undefined ? {} : { contradictedAt: usage.planContradictedAt }),
             ...projectedRenewal(usage),
         },
