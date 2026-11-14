@@ -38,7 +38,7 @@ import {
     uncertainSharedCallRanges,
 } from "./listen-quality";
 import { meetingFieldsChange } from "./meeting-fields";
-import { personStays, rosterPresence } from "./person-stays";
+import { personStays, presenceOf, rosterPresence } from "./person-stays";
 import { rejectFilterIds } from "./reject-filter";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
@@ -2113,6 +2113,40 @@ test("an identified goodbye ends an attendance stay whose leave the platform did
     expect(stays(false)).toEqual([{ fromSec: 0, toSec: 300, source: "goodbye", confidence: 0.8 }]);
     expect(stays(undefined)).toEqual([{ fromSec: 0, toSec: 600, source: "attendance", confidence: 1 }]);
     expect(stays(true)).toEqual([{ fromSec: 0, toSec: 600, source: "attendance", confidence: 1 }]);
+});
+
+test("presence keeps an attendance leave the platform did not record exactly as a bound, and a recorded one exact", () => {
+    const presence = (leftAtExact: boolean, departureSec?: number) => {
+        const record = meetingRecordSchema.parse({
+            id: "presence-inexact",
+            title: "",
+            start: now,
+            createdAt: now,
+            createdBy: "new",
+            participants: [{ name: "Bob Example", from: [] }],
+            attendance: { from: "teams", people: [{ name: "Bob Example", fromSec: 0, toSec: 600, leftAtExact }] },
+        });
+        const departures =
+            departureSec === undefined
+                ? []
+                : [{ name: "Bob Example", atSec: departureSec, reason: "indicator" as const }];
+        const derived = personStays({ record, durationSec: 900, departures }).flatMap((person) =>
+            person.stays.map((stay) => presenceOf(person, stay, 900))
+        );
+
+        if (departureSec === undefined) {
+            expect(rosterPresence(record, 900)).toEqual(derived);
+        }
+
+        return derived;
+    };
+
+    expect(presence(false)).toEqual([
+        { name: "Bob Example", self: undefined, fromSec: 0, toSec: 600, leftAtExact: false },
+    ]);
+    expect(presence(true)).toEqual([{ name: "Bob Example", self: undefined, fromSec: 0, toSec: 600 }]);
+    // An inferred departure before the bound ends the stay there, as every other inferred leave does.
+    expect(presence(false, 300)).toEqual([{ name: "Bob Example", self: undefined, fromSec: 0, toSec: 300 }]);
 });
 
 test("a name in prose that does not identify the speaker stays a comment", () => {

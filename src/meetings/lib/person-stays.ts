@@ -47,6 +47,18 @@ function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | un
         : [{ stay: { fromSec: person.firstSeenSec, source: "platform-roster", confidence: 1 } }];
 }
 
+/**
+ * A person's stays. `inexactEnds` holds the stays (by identity) that still end where the platform bounded an
+ * attendance leave it did not record exactly; an inferred departure that ends one earlier takes it out. It is not
+ * stored with the stays.
+ */
+export interface PersonStays {
+    name: string;
+    self?: boolean;
+    stays: Stay[];
+    inexactEnds?: ReadonlySet<Stay>;
+}
+
 /** Whether the record's stays put a person in the call at a time; true when it knows nothing of them. */
 export function storedPresentAt(record: MeetingRecord, name: string, sec: number): boolean {
     const stays = baselineStays(record, name);
@@ -64,7 +76,7 @@ export function personStays(options: {
     departures?: readonly IdentifiedDeparture[];
     silenceMinutes?: number;
     callSilent?: readonly { fromSec: number; toSec: number }[];
-}): Array<{ name: string; self?: boolean; stays: Stay[] }> {
+}): PersonStays[] {
     return options.record.participants.map((person) => {
         const baseline = baselineStays(options.record, person.name) ?? [];
         const stays: Stay[] = baseline.map(({ stay }) =>
@@ -110,6 +122,7 @@ export function personStays(options: {
             }
             const stay = stays.findLast((one) => endable(one, event.atSec));
             if (stay) {
+                inexact.delete(stay);
                 stay.toSec = event.atSec;
                 stay.source = "goodbye";
                 stay.confidence = event.reason === "attendance" ? 1 : 0.8;
@@ -148,12 +161,13 @@ export function personStays(options: {
                 !laterVoice &&
                 options.durationSec - last.endSec >= options.silenceMinutes * 60
             ) {
+                inexact.delete(stay);
                 stay.toSec = last.endSec;
                 stay.source = "silence";
                 stay.confidence = 0.5;
             }
         }
-        return { name: person.name, self: person.self, stays };
+        return { name: person.name, self: person.self, stays, ...(inexact.size > 0 ? { inexactEnds: inexact } : {}) };
     });
 }
 
@@ -164,15 +178,20 @@ export function rosterPresence(record: MeetingRecord, durationSec: number): Pres
 }
 
 /**
- * One stay as presence. A stay with no end runs to `durationSec`, an artificial bound, so it is marked
- * `leftAtExact: false`: a departure resolver must not read that bound as a recorded leave.
+ * One stay as presence. A stay with no end runs to `durationSec`, an artificial bound, and a stay that still ends at
+ * the platform's inexact leave (`inexactEnds`) ends at a bound too: both are marked `leftAtExact: false`, so a
+ * departure resolver does not read that bound as a recorded leave.
  */
-export function presenceOf(person: { name: string; self?: boolean }, stay: Stay, durationSec: number): Presence {
+export function presenceOf(
+    person: { name: string; self?: boolean; inexactEnds?: ReadonlySet<Stay> },
+    stay: Stay,
+    durationSec: number
+): Presence {
     return {
         name: person.name,
         self: person.self,
         fromSec: stay.fromSec,
         toSec: stay.toSec ?? durationSec,
-        ...(stay.toSec === undefined ? { leftAtExact: false } : {}),
+        ...(stay.toSec === undefined || person.inexactEnds?.has(stay) ? { leftAtExact: false } : {}),
     };
 }
