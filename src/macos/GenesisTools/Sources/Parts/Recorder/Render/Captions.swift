@@ -65,11 +65,10 @@ final class CaptionTrack: @unchecked Sendable {
 /// the `limit` plates used last: a karaoke line makes one per word said and a typewriter text one per letter, so a
 /// long export kept thousands of full bitmaps before the bound (each frame still needs only the few it shows).
 final class TextPlates: @unchecked Sendable {
-    static let kept = 64
     private let lock = NSLock()
     private var images: RecentCache<String, CIImage>
 
-    init(limit: Int = TextPlates.kept) {
+    init(limit: Int = 64) {
         images = RecentCache(limit: limit)
     }
 
