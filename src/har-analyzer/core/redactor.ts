@@ -328,6 +328,13 @@ class Redactor {
         return masked;
     }
 
+    /** Mask a named form value when its name is a known key, recorded under `location:name`; null for any other name. */
+    private maskNamed(name: string, value: string, location: string): string | null {
+        const kind = kindForKey(name);
+
+        return kind ? this.maskKeyed(value, kind, `${location}:${name}`) : null;
+    }
+
     /** Redact unmistakable value shapes (JWT always; email only when allowed). */
     private redactValuePatterns(value: string, location: string, options: { emails: boolean }): string {
         let result = value;
@@ -435,10 +442,9 @@ class Redactor {
                     decoded = null;
                 }
 
-                const kind = kindForKey(name);
-                if (kind) {
-                    const value = decoded ?? rawValue;
-                    const masked = this.maskKeyed(value, kind, `${location}:${name}`);
+                const value = decoded ?? rawValue;
+                const masked = this.maskNamed(name, value, location);
+                if (masked !== null) {
                     if (masked !== value) {
                         return `${rawName}=${encodeURIComponent(masked)}`;
                     }
@@ -468,9 +474,9 @@ class Redactor {
      */
     private redactPlainFormText(text: string, location: string): string {
         const maskPair = (pair: string, head: string, name: string, value: string): string => {
-            const kind = kindForKey(name);
+            const masked = this.maskNamed(name, value, location);
 
-            return kind ? `${head}${name}=${this.maskKeyed(value, kind, `${location}:${name}`)}` : pair;
+            return masked === null ? pair : `${head}${name}=${masked}`;
         };
         const pairs = text
             .replace(/(^|[\r\n])([^=\r\n]+)=([^\r\n]*)/g, maskPair)
@@ -482,9 +488,9 @@ class Redactor {
     /** A multipart/form-data body: the value of a part whose field name is a known key is masked whole. */
     private redactMultipartText(text: string, location: string): string {
         const parts = text.replace(MULTIPART_PART, (part, head: string, name: string, value: string) => {
-            const kind = kindForKey(name);
+            const masked = this.maskNamed(name, value, location);
 
-            return kind ? `${head}${this.maskKeyed(value, kind, `${location}:${name}`)}` : part;
+            return masked === null ? part : `${head}${masked}`;
         });
 
         return this.redactValuePatterns(parts, location, { emails: false });
