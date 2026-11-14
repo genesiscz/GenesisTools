@@ -75,7 +75,8 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
 
     public func show(_ report: FailureReport, options: FailureNoticeOptions = FailureNoticeOptions(),
                      retry: (@MainActor () -> Void)? = nil, issue: FailureNoticeIssueTarget? = nil,
-                     environment: (@Sendable () async -> FailureEnvironment?)? = nil) {
+                     environment: (@Sendable () async -> FailureEnvironment?)? = nil,
+                     prepared: (@Sendable () async -> FailureReport?)? = nil) {
         FailureCapture.record(report)
         generation += 1
         let shown = generation
@@ -104,10 +105,17 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
                                       poster: issue.poster, near: self?.panel)
             }
         }
-        if let environment {
-            Task { @MainActor [weak model] in
-                guard let facts = await environment() else { return }
-                model?.report.environment = facts
+        if let prepared {
+            // The prepared report carries the captured log and its place too, not only the environment. A newer
+            // failure in this window (`generation`) is never overwritten by an older preparation.
+            Task { @MainActor [weak self, weak model] in
+                guard let ready = await prepared(), let self, let model, self.generation == shown, self.model === model else { return }
+                model.report = ready
+            }
+        } else if let environment {
+            Task { @MainActor [weak self, weak model] in
+                guard let facts = await environment(), let self, let model, self.generation == shown, self.model === model else { return }
+                model.report.environment = facts
             }
         }
         self.model = model

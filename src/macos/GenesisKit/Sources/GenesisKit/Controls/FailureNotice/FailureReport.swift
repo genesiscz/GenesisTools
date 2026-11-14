@@ -221,7 +221,7 @@ public struct FailureReport: Codable, Equatable, Sendable {
             case "steps": value = steps()
             case "expected": value = expected ?? "It works without an error."
             case "actual": value = actual(timeZone: timeZone)
-            case "area": value = area ?? "other"
+            case "area": value = issueTool ?? "other"
             case "impact": value = Self.impactChoices.map { "- [ ] \($0)" }.joined(separator: "\n")
             default: value = environment?.values[field.id] ?? "_No response_"
             }

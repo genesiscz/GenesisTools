@@ -708,6 +708,47 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertTrue(text.contains("***"))
     }
 
+    func testAHeaderCredentialIsHiddenInStderrThatRepeatsOnlyTheToken() {
+        let argv = ["fixture", "--header", "Authorization: Bearer fixture-token-123"]
+        XCTAssertEqual(ToolsCallTrace.redactedText("Rejected token fixture-token-123", argv: argv), "Rejected token ***")
+        XCTAssertEqual(ToolsCallTrace.redactedText("sent Authorization: Bearer other-token-456", argv: []),
+                       "sent Authorization: ***")
+    }
+
+    func testAReportWithoutACallIsRedactedBeforeItIsArchived() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
+        let report = FailureReport(headline: "failed", log: "curl: Authorization: Bearer fixture-token-123")
+        let ready = await store.prepared(report)
+        XCTAssertFalse(ready.log.contains("fixture-token-123"))
+    }
+
+    func testAMergedCaptureKeepsTheLogLocationOfItsLog() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { report in
+            var enriched = report
+            enriched.log = "captured"
+            enriched.logFile = "/tmp/fixture-perf.log"
+            enriched.logLine = 42
+            return enriched
+        })
+        let report = FailureReport(headline: "failed", log: "")
+        _ = await store.prepared(report)
+        let again = await store.prepared(report)
+        XCTAssertEqual(again.log, "captured")
+        XCTAssertEqual(again.logFile, "/tmp/fixture-perf.log")
+        XCTAssertEqual(again.logLine, 42)
+    }
+
+    func testDiagnosticWorkOutsideTheCallersLedgerNeverBecomesItsFailedCall() async {
+        let ledger = ToolsCallLedger()
+        let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
+            XCTAssertNil(ToolsCallTrace.ledger, "the diagnostic runs outside the caller's ledger")
+            return report
+        })
+        await ledger.record { _ = await store.prepared(FailureReport(headline: "failed", log: "")) }
+    }
+
     // MARK: - The inline view
 
     @MainActor

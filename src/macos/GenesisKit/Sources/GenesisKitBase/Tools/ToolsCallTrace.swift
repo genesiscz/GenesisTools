@@ -45,7 +45,8 @@ public enum ToolsCallTrace {
         return out
     }
 
-    /// Values hidden in argv must not reappear in a persisted error's message or stderr.
+    /// Values hidden in argv must not reappear in a persisted error's message or stderr, and a header-style credential
+    /// (`Authorization: Bearer ...`, `x-api-key: ...`) in free text is hidden whether or not argv names it.
     public static func redactedText(_ text: String, argv: [String]) -> String {
         var safe = text
         for (raw, masked) in zip(argv, redacted(argv)) where raw != masked {
@@ -55,11 +56,39 @@ public enum ToolsCallTrace {
             } else {
                 secret = raw
             }
-            guard !secret.isEmpty, safe.contains(secret) else { continue }
-            if secret.count < 4 { return "[withheld: the error repeats a credential]" }
-            safe = safe.replacingOccurrences(of: secret, with: "***")
+            // A header's credential is its value after the colon and the token after a scheme word: stderr repeats
+            // the token alone (`Rejected token abc`), not the whole `Authorization: Bearer abc`.
+            for candidate in credentialCandidates(secret) {
+                guard !candidate.isEmpty, safe.contains(candidate) else { continue }
+                if candidate.count < 4 { return "[withheld: the error repeats a credential]" }
+                safe = safe.replacingOccurrences(of: candidate, with: "***")
+            }
         }
-        return safe
+        return scrubbingHeaders(safe)
+    }
+
+    /// The secret itself, then, for a `Name: value` header, the value and its last word (the token after `Bearer`).
+    private static func credentialCandidates(_ secret: String) -> [String] {
+        var out = [secret]
+        guard let colon = secret.firstIndex(of: ":") else { return out }
+        let value = secret[secret.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        if !value.isEmpty { out.append(value) }
+        if let word = value.split(separator: " ").last.map(String.init), word != value { out.append(word) }
+        return out
+    }
+
+    private static let headerPattern = try? NSRegularExpression(
+        pattern: #"(?i)\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)(\s*[:=]\s*)[^\r\n]+"#)
+    private static let schemePattern = try? NSRegularExpression(pattern: #"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"#)
+
+    /// `Authorization: ...` lines and `Bearer <token>` words in text, whatever produced it.
+    static func scrubbingHeaders(_ text: String) -> String {
+        var out = text
+        for (regex, template) in [(headerPattern, "$1$2***"), (schemePattern, "$1 ***")] {
+            guard let regex else { continue }
+            out = regex.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: template)
+        }
+        return out
     }
 
     private static let stamp: DateFormatter = {

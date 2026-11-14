@@ -179,7 +179,7 @@ final class RecorderNoticePanel {
         let captured = report
         panel.show(captured, options: RecorderFailureStyle.noticeOptions(defaults), retry: retry,
                    issue: FailureReporter.defaultIssueTarget(defaults: defaults, dryRunKey: "recorder.debug.issueDryRun"),
-                   environment: { await FailureCapture.prepared(captured).environment })
+                   prepared: { await FailureCapture.prepared(captured) })
     }
 
     func close() { panel.close() }
