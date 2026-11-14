@@ -47,8 +47,8 @@ import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
-import { editProject, type OwnedEdit, readUndoSteps, setEditOwner } from "./edit";
-import { EditSession, EditSessions, type ProjectChanged, withEditSession } from "./edit-session";
+import { editProject, type OwnedEdit, readUndoSteps, setEditOwner, withEditCancel } from "./edit";
+import { EditSession, EditSessions, type ProjectChanged, SAVE_DELAY_MS, withEditSession } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
 import { chaptersOfPart } from "./moments";
@@ -470,6 +470,63 @@ describe("one undo and redo journal for the session and the file", () => {
         const revision = readProject(path).revision;
         await expect(redoEdit(path)).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
         expect(readProject(path).revision).toBe(revision);
+    });
+
+    test("an undo cancelled while its save waits for another process never saves, then or later", async () => {
+        const path = editFixture("gt-es-cancel-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        const busy = Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED" });
+        const controller = new AbortController();
+        const real = EditSession.prototype.flush;
+        const spy = spyOn(EditSession.prototype, "flush").mockImplementation(function (this: EditSession) {
+            if (this.dirty && !controller.signal.aborted) {
+                // The caller cancels while another process holds the save.
+                controller.abort(new Error("cancelled by the caller"));
+                throw busy;
+            }
+
+            return real.call(this);
+        });
+        closing.push(() => spy.mockRestore());
+        const revision = readProject(path).revision;
+
+        await expect(withEditCancel(controller.signal, () => undoEdit(path))).rejects.toThrow(
+            "cancelled by the caller"
+        );
+        // The undo's own debounced save would land by now.
+        await Bun.sleep(SAVE_DELAY_MS + 100);
+        expect({ revision: readProject(path).revision, volume: readProject(path).audio.volume }).toEqual({
+            revision,
+            volume: 0.4,
+        });
+    });
+
+    test("a short-lived save whose recording folder goes during the wait refuses and announces no change", async () => {
+        const path = editFixture("gt-es-moved-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        const busy = Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED" });
+        const trashed = `${dirname(path)}-trashed`;
+        const real = EditSession.prototype.flush;
+        const spy = spyOn(EditSession.prototype, "flush").mockImplementation(function (this: EditSession) {
+            if (this.dirty && existsSync(path)) {
+                // The recording is moved to the Trash while another process holds the save.
+                renameSync(dirname(path), trashed);
+                throw busy;
+            }
+
+            return real.call(this);
+        });
+        closing.push(() => spy.mockRestore());
+        const changes: ProjectChanged[] = [];
+
+        await expect(
+            withEditSession(path, (session) => session.undo({ by: "agent" }), {
+                onChange: (change) => changes.push(change),
+            })
+        ).rejects.toThrow("folder is gone");
+        expect(changes).toEqual([]);
+        expect(existsSync(dirname(path))).toBe(false);
+        expect(readProject(join(trashed, "talk.edit.json")).audio.volume).toBe(0.4);
     });
 
     test("an undo in the session can be redone from the file after the session closes", async () => {
@@ -979,6 +1036,34 @@ describe("finishing a part export of an edit with cards", () => {
 
         await edits.finishExport({ value: path, answer: { ok: true, path: movie }, subtitles: "srt" });
         expect(readFileSync(join(root, "part.srt"), "utf8")).toContain("00:00:05,500 --> 00:00:06,500");
+    });
+
+    test("a polish of a movie nobody edited, with no step to run, saves nothing and does not fail", async () => {
+        const root = mkdtempSync(join(tmpdir(), "rs-polish-fresh-"));
+        const video = join(root, "talk.mp4");
+        writeFileSync(video, "movie");
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 3_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        closing.push(() => probe.mockRestore());
+
+        const polished = await new Movie(video).polish({
+            removeIdle: false,
+            autoZoom: false,
+            normalize: false,
+            frame: false,
+        });
+
+        expect(polished.steps).toEqual([]);
+        expect(existsSync(edits.editPathOf(video))).toBe(false);
     });
 
     test("a part's chapters have no intro chapter and start from the part", async () => {
