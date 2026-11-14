@@ -42,7 +42,7 @@ Most tools follow these common patterns:
 
 **Interactive User Experience**:
 
--   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
+-   `@inquirer/prompts` and `@clack/prompts` are the two prompt backends behind the `p` facade (next item). New tool code imports neither of them directly.
 -   **Prompts go through the `p` facade** (`p.text`, `p.select`, `p.multiselect`, `p.password`, … from `@genesiscz/utils/prompts/p`). Set the backend once at the tool's entry point with `p.setBackend`; never call `inquirerBackend.*` or `clackBackend.*` in tool code, so cancel handling stays the same on both backends. A cancel (Escape, Ctrl-C) ends the process with code 0 by default; a call whose caller handles the cancel passes `cancel: "back"` and gets the cancel symbol back (`if (p.isCancel(answer)) { … }`). Lint `no-raw-clack-import` refuses `@clack/prompts` outside `src/utils/prompts/`; a clack function the facade lacks becomes a pass-through there. Tests answer a cancel with `CANCEL_ANSWER` from `p/__tests__/test-backend.ts`.
 -   **Non-TTY guard**: Always check `isInteractive()` (from `@genesiscz/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
 
@@ -78,7 +78,7 @@ Most tools follow these common patterns:
 
 ## How to Write Tools
 
-See `docs/tool-template.md` for complete templates (@inquirer + @clack/prompts), common patterns, and best practices.
+See `docs/tool-template.md` for complete templates, common patterns, and best practices. Its prompt imports are older than the `p` facade: new code imports `p` from `@genesiscz/utils/prompts/p`, never from `@clack/prompts` (lint `no-raw-clack-import`).
 
 ## Logging & output (core)
 
@@ -86,7 +86,7 @@ Read `.claude/rules/logging.md` before you add or change console output, a log l
 
 - **`logger` is diagnostics, `out` is user-facing.** `import { logger, out } from "@genesiscz/utils/logger"` (named only). `logger.*` writes the day file always and stderr by level, and is **never** the result channel.
 - **`out.result(data)` / `out.print(raw)` are the ONLY writers to stdout.** Never emit a serialized result via `logger.*` (`scripts/ci/logging-guard.sh` enforces it).
-- **Every commander entrypoint ends with `await runTool(program, { tool })`** (`@genesiscz/utils/cli`); the subprocess spawner is `execTool`.
+- **Every commander entrypoint ends with `await runTool(program, { tool })`** (`@genesiscz/utils/cli`); the subprocess spawner is `execTool`. A tool with several command trees passes them as `registrars` (a `LazyRegistrar[]` table, `src/utils/cli/lazy-registrars.ts`; `src/codex/registrars.ts` is the model), so `tools <tool> <command>` imports only that command's tree. Bare `--help` and an unknown name still register every tree.
 - **Triage from logs first, and log enough to triage from logs alone.** Read `~/.genesis-tools/logs/<today>.log` (or `tools genesis-tools logs failures`) before any hypothesis. Code that reads a day file goes through `dayLogPath` / `listDayLogs` and the readers that open `.zst` too; never build `<date>.log` by hand.
 - **Never swallow errors.** A bare `catch {}` is forbidden; at minimum `logger.debug` (or `.warn`) the caught error with context. A new timer is `profiler.scope("<scope>")` from `@genesiscz/utils/profile`, never a hand-rolled `performance.now()` pair, and a new scope name goes into `PROFILER_SCOPE_NAMES`.
 
