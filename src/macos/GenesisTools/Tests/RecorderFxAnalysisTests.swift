@@ -138,6 +138,14 @@ final class RecorderFxAnalysisTests: XCTestCase {
                        #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
     }
 
+    func testTheHideButtonKeepsFixedAreasHiddenUnlessAskedToLeaveThemVisible() {
+        // A fixed header can hold the name being hidden, so the default never leaves fixed areas visible.
+        XCTAssertEqual(EditOp.json([PrivateDataSection.hideTextOp("alice@example.com", leaveFixed: false)]),
+                       #"[{"op":"hideText","text":"alice@example.com"}]"#)
+        XCTAssertEqual(EditOp.json([PrivateDataSection.hideTextOp("alice@example.com", leaveFixed: true)]),
+                       #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
+    }
+
     // Regression test: PR #507 review — with every checkbox unticked the button said "All Hidden" while every hit still
     // showed in the movie.
     @MainActor
@@ -152,14 +160,6 @@ final class RecorderFxAnalysisTests: XCTestCase {
         XCTAssertEqual(PrivateDataSection.hideTitle(hits: [hit("p1", hidden: true), hit("p2", hidden: false)], picked: ["p1"]),
                        "Pick a Hit", "a hidden hit's tick hides nothing more")
         XCTAssertEqual(PrivateDataSection.hideTitle(hits: hits.map { hit($0.id, hidden: true) }, picked: []), "All Hidden")
-    }
-
-    func testTheHideButtonKeepsFixedAreasHiddenUnlessAskedToLeaveThemVisible() {
-        // A fixed header can hold the name being hidden, so the default never leaves fixed areas visible.
-        XCTAssertEqual(EditOp.json([PrivateDataSection.hideTextOp("alice@example.com", leaveFixed: false)]),
-                       #"[{"op":"hideText","text":"alice@example.com"}]"#)
-        XCTAssertEqual(EditOp.json([PrivateDataSection.hideTextOp("alice@example.com", leaveFixed: true)]),
-                       #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
     }
 
     private func trackedRedaction() -> EditProject.Redaction {

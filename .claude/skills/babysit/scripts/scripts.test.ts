@@ -127,6 +127,8 @@ describe("safe restack helpers", () => {
         // A line break after `return` makes it return undefined.
         const asi = `function f(value: number) {\n${block("    return\n        value;", "    return value;")}}\n`;
         expect(resolveSameText("a.ts", asi).unresolved).toBe(1);
+        // A line break between two statements (`a\n++b`) is not the space in `a ++b`.
+        expect(resolveSameText("a.ts", block("a\n++b", "a ++b")).unresolved).toBe(1);
         // TypeScript reads `a! = b` as an assignment and `a != b` as a comparison.
         expect(resolveSameText("a.ts", block("a! = b;", "a != b;")).unresolved).toBe(1);
         // The block sits inside a template literal, so its indentation is string content.
@@ -137,12 +139,6 @@ describe("safe restack helpers", () => {
         expect(resolveSameText("a.json", `{\n${block('    "a": [1, 2]', '"a":[1,2]')}}\n`).unresolved).toBe(0);
         expect(resolveSameText("a.json", `{\n${block('    "a": 1.0', '"a": 1')}}\n`).unresolved).toBe(1);
         expect(resolveSameText("a.json", `{\n${block('    "a": "x y"', '"a": "xy"')}}\n`).unresolved).toBe(1);
-    });
-
-    test("keeps a line break that automatic semicolon insertion reads as the end of a statement", () => {
-        const fn = (body: string) => `function f() {${body}}`;
-        expect(resolveSameText("a.ts", block(fn("\n    return\n    x;\n"), fn(" return x; "))).unresolved).toBe(1);
-        expect(resolveSameText("a.ts", block("a\n++b", "a ++b")).unresolved).toBe(1);
     });
 
     test("only resolves a version line when it is the version file's only conflict", () => {
