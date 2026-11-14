@@ -68,6 +68,26 @@ describe("Api.send", () => {
         await expect(api.getTags()).rejects.toThrow("did not answer GET");
     });
 
+    test("gives up on a body that stalls after the headers and names the request", async () => {
+        const stalledBody = ({ init }: { init?: RequestInit }) =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode('{"value":'));
+                        init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason));
+                        setTimeout(() => controller.error(new Error("the body read carried no timeout signal")), 1000);
+                    },
+                }),
+                { headers: { "Content-Type": "application/json" } }
+            );
+        const { api } = apiAnswering(stalledBody, 20);
+
+        await expect(api.getTags()).rejects.toThrow("did not answer GET");
+        await expect(api.fetchBinary(`${ORG}/_apis/wit/attachments/fixture`)).rejects.toThrow(
+            "did not answer GET binary"
+        );
+    });
+
     test("throws AdoHttpError with the status and url of a 404", async () => {
         const { api } = apiAnswering(() => new Response("TF401232: Work item 4242 does not exist.", { status: 404 }));
 
