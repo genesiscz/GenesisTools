@@ -72,13 +72,21 @@ export function _clearExternalRefScanners(): void {
     externalScanners.clear();
 }
 
-function walk(value: unknown, at: { path: string; segments: readonly (string | number)[] }, out: Referrer[]): void {
-    const { path, segments } = at;
+/** The keys from the config root as the display path: a dot before a key, `[i]` for an array index. */
+function formatPath(segments: readonly (string | number)[]): string {
+    return segments.reduce<string>(
+        (path, segment) =>
+            typeof segment === "number" ? `${path}[${segment}]` : path ? `${path}.${segment}` : segment,
+        ""
+    );
+}
 
+/** `segments` is the walk's own stack of keys: each level pushes its key and pops it, and a found ref takes a copy. */
+function walk(value: unknown, segments: (string | number)[], out: Referrer[]): void {
     if (typeof value === "string") {
         const ref = accountRefIn(value);
         if (ref) {
-            out.push({ path, ref, segments });
+            out.push({ path: formatPath(segments), ref, segments: [...segments] });
         }
 
         return;
@@ -86,14 +94,18 @@ function walk(value: unknown, at: { path: string; segments: readonly (string | n
 
     if (Array.isArray(value)) {
         value.forEach((item, index) => {
-            walk(item, { path: `${path}[${index}]`, segments: [...segments, index] }, out);
+            segments.push(index);
+            walk(item, segments, out);
+            segments.pop();
         });
         return;
     }
 
     if (value && typeof value === "object") {
         for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-            walk(child, { path: path ? `${path}.${key}` : key, segments: [...segments, key] }, out);
+            segments.push(key);
+            walk(child, segments, out);
+            segments.pop();
         }
     }
 }
@@ -106,8 +118,8 @@ function walk(value: unknown, at: { path: string; segments: readonly (string | n
 export async function allReferrers(config: AiConfigData): Promise<Referrer[]> {
     const found: Referrer[] = [];
 
-    walk(config.defaults, { path: "defaults", segments: ["defaults"] }, found);
-    walk(config.models ?? {}, { path: "models", segments: ["models"] }, found);
+    walk(config.defaults, ["defaults"], found);
+    walk(config.models ?? {}, ["models"], found);
 
     for (const [name, scan] of externalScanners) {
         const external = await scan();
