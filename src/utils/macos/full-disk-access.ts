@@ -9,6 +9,7 @@ import {
     genesisAppDir,
     isRunningUnderGenesisApp,
 } from "./genesis-app";
+import { appleScriptString } from "./jxa";
 import { MacOS } from "./MacOS";
 import { genesisAppBuildHint } from "./xcode";
 
@@ -172,8 +173,4 @@ export function requestFullDiskAccess(
     }
 
     return "opened";
-}
-
-function appleScriptString(text: string): string {
-    return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }

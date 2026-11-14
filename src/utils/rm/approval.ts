@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { appleScriptString } from "@genesiscz/utils/macos/jxa";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type RmApproval, rmConfigPath } from "./config";
 import type { FolderStats, ItemGit } from "./item-facts";
@@ -404,11 +405,6 @@ export function dialogEnvironment(searchPath: string): Record<string, string> {
     }
 
     return environment;
-}
-
-/** `text` as an AppleScript string literal. */
-export function appleScriptString(text: string): string {
-    return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
 const MAC_DIALOG: PersonDialog = {
