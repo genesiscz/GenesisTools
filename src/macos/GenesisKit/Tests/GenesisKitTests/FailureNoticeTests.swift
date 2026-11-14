@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import SwiftUI
-import Vision
 import XCTest
 @testable import GenesisKit
 
@@ -97,12 +96,7 @@ final class FailureNoticeTests: XCTestCase {
         let host = NSHostingView(rootView: view)
         host.frame = CGRect(x: 0, y: 0, width: 620, height: 700)
         host.layoutSubtreeIfNeeded()
-        let image = try XCTUnwrap(HostedShot.bitmap(host)?.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
-        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        let text = TreeDrawnText.lines(of: host).joined(separator: " ")
         XCTAssertTrue(text.contains("Stack trace"), text)
         XCTAssertFalse(text.contains("startRecordingCamera"), "the full stack starts folded")
     }
@@ -729,12 +723,7 @@ final class FailureInlineTests: XCTestCase {
             let host = NSHostingView(rootView: view)
             host.frame = CGRect(x: 0, y: 0, width: 560, height: form == .pane ? 320 : 90)
             host.layoutSubtreeIfNeeded()
-            let image = try XCTUnwrap(HostedShot.bitmap(host)?.cgImage)
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: image).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let text = TreeDrawnText.lines(of: host).joined(separator: " ")
             for word in ["transcript did not load", "Try again", "Details", "Report a bug"] {
                 XCTAssertTrue(text.contains(word), "\(form): \(word) in \(text)")
             }
