@@ -1124,6 +1124,7 @@ async function main(): Promise<void> {
     let freed = 0;
     let removed = 0;
     const refused: Record<string, number> = {};
+    const leftover: string[] = [];
 
     // Only these exclusively created, private (0700) directories belong to this run.
     const quarantines = new Map<string, string>();
@@ -1246,11 +1247,20 @@ async function main(): Promise<void> {
                 continue;
             }
 
-            rmSync(trash, { recursive: true, force: true });
+            // A process that still writes into a moved folder makes the recursive delete see ENOTEMPTY. Retry, and when
+            // it still fails, leave the quarantine: its pid ends with this run, so the next run lists it as an orphan.
+            try {
+                rmSync(trash, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+            } catch (error) {
+                leftover.push(trash);
+                console.error(
+                    `could not empty ${trash} (${error instanceof Error ? error.message : String(error)}); the next run lists it as an orphan quarantine`
+                );
+            }
         }
     }
 
-    const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
+    const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}${leftover.length ? `; quarantines left for the next run: ${leftover.length}` : ""}`;
     console.log(summary);
     removeSpentPlans(planPath);
 
