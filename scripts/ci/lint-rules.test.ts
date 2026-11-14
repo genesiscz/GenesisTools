@@ -927,11 +927,11 @@ describe("no-raw-clack-import", () => {
         }
     });
 
-    test("the facade, its backends and the ratcheted meetings file may import it; @clack/core is another module", () => {
+    test("only the facade and its backends may import it; @clack/core is another module", () => {
         const source = 'import * as clack from "@clack/prompts";';
         expect(rules(source, "src/utils/prompts/p/clack-backend.ts")).toEqual([]);
         expect(rules(source, "src/utils/prompts/p/__tests__/clack-backend.test.ts")).toEqual([]);
-        expect(rules(source, "src/meetings/commands/listen.ts")).toEqual([]);
+        expect(rules(source, "src/meetings/commands/listen.ts")).toEqual(["no-raw-clack-import"]);
         expect(rules(source, "src/meetings/commands/other.ts")).toEqual(["no-raw-clack-import"]);
         expect(rules('import * as p from "@genesiscz/utils/prompts/p";')).toEqual([]);
         expect(rules('import { Prompt } from "@clack/core";')).toEqual([]);
