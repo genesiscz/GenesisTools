@@ -570,35 +570,33 @@ export function refreshMentions(options: {
         if (options.transcript) {
             const from = state.transcript === options.transcript ? (state.offset ?? 0) : 0;
             const read = options.readToolCalls(options.transcript, from);
-            const uses = read.supported ? read.calls : [];
 
+            // A harness whose transcript has no tool calls to read adds nothing and keeps no offset.
             if (read.supported) {
                 for (const issue of read.issues) {
                     hookDiag("The transcript's tool calls were read with a gap", { ...issue, session });
                 }
-            }
 
-            for (const use of uses) {
-                entries.push(...mentionsOf(use));
-            }
-
-            const times = fileTimesOf(uses);
-
-            if (times.size > 0) {
-                const refusedTimes = makePrivateDir(mentionsRoot());
-
-                if (refusedTimes) {
-                    throw new Error(refusedTimes);
+                for (const use of read.calls) {
+                    entries.push(...mentionsOf(use));
                 }
 
-                appendFileSync(
-                    fileTimesPath(session),
-                    `${[...times].map(([path, at]) => `${at}\t${path}`).join("\n")}\n`,
-                    { mode: FILE_MODE }
-                );
-            }
+                const times = fileTimesOf(read.calls);
 
-            if (read.supported) {
+                if (times.size > 0) {
+                    const refusedTimes = makePrivateDir(mentionsRoot());
+
+                    if (refusedTimes) {
+                        throw new Error(refusedTimes);
+                    }
+
+                    appendFileSync(
+                        fileTimesPath(session),
+                        `${[...times].map(([path, at]) => `${at}\t${path}`).join("\n")}\n`,
+                        { mode: FILE_MODE }
+                    );
+                }
+
                 next.transcript = options.transcript;
                 next.offset = read.offset;
             }
