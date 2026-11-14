@@ -30,8 +30,16 @@ function linkedIndex(records: MeetingRecord[], sourceId: string): Map<string, Me
     const index = new Map<string, MeetingRecord[]>();
     for (const record of records) {
         const id = record.sources[sourceId]?.meetingId;
-        if (typeof id === "string") {
-            index.set(id, [...(index.get(id) ?? []), record]);
+        if (typeof id !== "string") {
+            continue;
+        }
+
+        const list = index.get(id);
+
+        if (list) {
+            list.push(record);
+        } else {
+            index.set(id, [record]);
         }
     }
 
