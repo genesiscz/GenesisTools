@@ -346,7 +346,7 @@ const MaxGuardDepth = 3;
  * place until a guard holder removes it. A guard whose process died is cleared the same way, one level deeper.
  * Returns the live process that holds the guard (it takes the run over now), or null when the caller should look again.
  */
-async function removeStaleLock(path: string, text: string, depth = 0): Promise<LockHolder | null> {
+async function breakStaleLock(path: string, text: string, depth = 0): Promise<LockHolder | null> {
     const guard = `${path}.${sha256(text, 16)}.takeover`;
     try {
         await writeFile(guard, lockText(), { flag: "wx" });
@@ -365,7 +365,7 @@ async function removeStaleLock(path: string, text: string, depth = 0): Promise<L
             return holder;
         }
 
-        return depth < MaxGuardDepth ? removeStaleLock(guard, held, depth + 1) : null;
+        return depth < MaxGuardDepth ? breakStaleLock(guard, held, depth + 1) : null;
     }
 
     try {
@@ -387,7 +387,7 @@ function lockText(): string {
 
 /**
  * Takes `run.lock` with an exclusive create. A lock left by an ended process on this computer is removed through
- * `removeStaleLock`, so of several processes that find it stale at the same time exactly one removes it.
+ * `breakStaleLock`, so of several processes that find it stale at the same time exactly one removes it.
  */
 async function claimRun(dir: string): Promise<RunClaim> {
     const path = join(dir, Files.lock);
@@ -422,7 +422,7 @@ async function claimRun(dir: string): Promise<RunClaim> {
         if (!holder || holderIsAlive(holder)) {
             throw inUse(holder);
         }
-        const taker = await removeStaleLock(path, text);
+        const taker = await breakStaleLock(path, text);
         if (taker) {
             throw inUse(taker);
         }
