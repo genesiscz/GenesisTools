@@ -52,8 +52,8 @@ export function presentAgents(events: readonly FeedEvent[]): Map<string, string>
  * written) must not take the replacement off the bus. A leave without a login id (`tools agents leave`) ends
  * whichever login is current.
  */
-function presence(events: readonly FeedEvent[]): Map<string, CurrentLogin> {
-    const present = new Map<string, CurrentLogin>();
+function presence(events: readonly FeedEvent[]): Presence {
+    const present: Presence = new Map();
 
     for (const event of events) {
         trackPresence(present, event);
@@ -62,18 +62,33 @@ function presence(events: readonly FeedEvent[]): Map<string, CurrentLogin> {
     return present;
 }
 
-/** An agent on the bus, with the login that put it there (undefined for a login from before login ids). */
-interface CurrentLogin {
-    name: string;
-    loginId: string | undefined;
-}
+/** Agent id to its name and the login that put it on the bus. */
+type Presence = Map<string, { name: string; loginId: string | undefined }>;
 
-function trackPresence(present: Map<string, CurrentLogin>, event: FeedEvent): void {
+/**
+ * Fold one feed event into `present`, and say whether it is about the agent's current login: a login (it becomes
+ * the current one), or a logout or a leave that names the current login or none. A logout or a leave of an older
+ * login changes nothing.
+ */
+function trackPresence(present: Presence, event: FeedEvent): boolean {
     if (event.type === "logged_in") {
         present.set(event.agent_id, { name: event.agent_name, loginId: event.login_id });
-    } else if (event.type === "agent_left" && endsCurrentLogin(present.get(event.agent_id), event.login_id)) {
+        return true;
+    }
+
+    if (event.type !== "logged_out" && event.type !== "agent_left") {
+        return false;
+    }
+
+    if (!endsCurrentLogin(present.get(event.agent_id), event.login_id)) {
+        return false;
+    }
+
+    if (event.type === "agent_left") {
         present.delete(event.agent_id);
     }
+
+    return true;
 }
 
 function endsCurrentLogin(current: { loginId: string | undefined } | undefined, leaving: string | undefined): boolean {
@@ -186,70 +201,55 @@ export async function announceLeave(
 }
 
 /**
- * The re-arm fold: who is on the bus with which login, and the logins that ended with a `rearm_until` and were not
- * replaced. Every watching login keeps one from the events it reads, so it can tell when a lapse is due without
- * reading the whole feed; `pendingRearms` is the same fold over a whole feed.
+ * The pending re-arms folded from a feed: agent id to the login that ended and may come back, and the presence the
+ * same events give (`presence`), with each agent's current login. A login releases its slot before it writes its
+ * `logged_out`, so the logout of an older login can land after its replacement logged in and out; it must not take
+ * the replacement's place.
  */
-export interface RearmTracker {
-    present: Map<string, CurrentLogin>;
+export interface RearmFold {
     pending: Map<string, PendingRearm>;
+    /** Who is on the bus, with the login that put each agent there (see `presence`). */
+    present: Map<string, { name: string; loginId: string | undefined }>;
 }
 
 /**
- * The re-arm fold over a whole feed. Folding the feed's later events once more leaves it as it is, so a login can seed
- * it from the whole feed and then fold everything after its cursor.
+ * Fold one feed event into the pending re-arms. Every watching login keeps this fold from the events it reads, so it
+ * can tell when a lapse is due without reading the whole feed; `foldRearms` is the same fold over a whole feed. A
+ * logout or a leave that names an older login than the agent's current one changes nothing (`trackPresence`).
  */
-export function rearmTrackerFrom(events: readonly FeedEvent[]): RearmTracker {
-    const tracker: RearmTracker = { present: new Map(), pending: new Map() };
-
-    for (const event of events) {
-        trackRearm(tracker, event);
-    }
-
-    return tracker;
-}
-
-/**
- * Fold one feed event into `tracker`. A `logged_out` or `agent_left` counts only when it ends the agent's current
- * login: the slot is released before the old login writes its `logged_out`, so a replacement can log in, and even
- * end with its own grace, before the old one's late `logged_out` lands. That late event must not overwrite the
- * replacement's grace.
- */
-export function trackRearm(tracker: RearmTracker, event: FeedEvent): void {
-    if (event.type === "logged_out") {
-        const current = tracker.present.get(event.agent_id);
-
-        if (event.rearm_until && event.login_id && current && endsCurrentLogin(current, event.login_id)) {
-            tracker.pending.set(event.agent_id, {
-                loginId: event.login_id,
-                since: event.ts,
-                until: event.rearm_until,
-            });
-        }
-
+export function trackRearm(fold: RearmFold, event: FeedEvent): void {
+    if (!trackPresence(fold.present, event)) {
         return;
     }
 
-    const endsLogin =
-        event.type === "logged_in" ||
-        (event.type === "agent_left" && endsCurrentLogin(tracker.present.get(event.agent_id), event.login_id));
+    if (event.type === "logged_out") {
+        if (event.rearm_until && event.login_id) {
+            fold.pending.set(event.agent_id, { loginId: event.login_id, since: event.ts, until: event.rearm_until });
+        }
+    } else if (event.type === "logged_in" || event.type === "agent_left") {
+        fold.pending.delete(event.agent_id);
+    }
+}
 
-    if (endsLogin) {
-        tracker.pending.delete(event.agent_id);
+export function foldRearms(events: readonly FeedEvent[]): RearmFold {
+    const fold: RearmFold = { pending: new Map(), present: new Map() };
+
+    for (const event of events) {
+        trackRearm(fold, event);
     }
 
-    trackPresence(tracker.present, event);
+    return fold;
 }
 
 /** The agents on the bus whose current login ended with a `rearm_until` and was not replaced. */
 export function pendingRearms(events: readonly FeedEvent[]): Map<string, PendingRearm & { agentName: string }> {
-    const tracker = rearmTrackerFrom(events);
+    const { pending, present } = foldRearms(events);
     const result = new Map<string, PendingRearm & { agentName: string }>();
 
-    for (const [agentId, entry] of tracker.pending) {
-        const current = tracker.present.get(agentId);
+    for (const [agentId, entry] of pending) {
+        const current = present.get(agentId);
 
-        if (current) {
+        if (current && endsCurrentLogin(current, entry.loginId)) {
             result.set(agentId, { ...entry, agentName: current.name });
         }
     }
@@ -307,21 +307,22 @@ export async function announceLapses(paths: SessionPaths, now: number = Date.now
 }
 
 /**
- * Announce the lapses due at `now`, then drop from `pending` every re-arm due at that same `now`. One cutoff for
- * both: a re-arm that falls due while `announceLapses` waits for the feed lock was not announced, so it must stay for
- * the next check. A dropped one is settled: its lapse is in the feed (written here or by another watcher), or a new
- * login replaced it.
+ * `announceLapses` for the re-arms a watching login folded, then forget exactly the entries that were due. One cutoff
+ * serves both: a re-arm that falls due while the feed lock is awaited was not announced, so it stays for the next
+ * check (with a fresh time it was dropped, and the agent stayed on the bus for good). An entry a newer event replaced
+ * meanwhile is not the one that was due, and stays too. A due lapse another login wrote first is in the feed already.
  */
 export async function announceDueLapses(
     paths: SessionPaths,
-    pending: Map<string, PendingRearm>,
+    fold: RearmFold,
     now: number = Date.now()
 ): Promise<FeedEvent[]> {
+    const due = [...fold.pending].filter(([, entry]) => Date.parse(entry.until) <= now);
     const appended = await announceLapses(paths, now);
 
-    for (const [agentId, entry] of pending) {
-        if (Date.parse(entry.until) <= now) {
-            pending.delete(agentId);
+    for (const [agentId, entry] of due) {
+        if (fold.pending.get(agentId) === entry) {
+            fold.pending.delete(agentId);
         }
     }
 

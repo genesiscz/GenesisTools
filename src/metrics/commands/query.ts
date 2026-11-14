@@ -23,6 +23,7 @@ async function pickAggregates(flags: QueryFlags): Promise<QueryFlags | undefined
         message: "Aggregates",
         options: METRIC_AGGREGATES.map((value) => ({ value, label: value })),
         required: true,
+        cancel: "back",
     });
 
     return p.isCancel(picked) ? undefined : { ...flags, agg: picked.join(",") };

@@ -13,7 +13,6 @@ import {
     launchdStatus,
     parseLaunchdPid,
     plistPath,
-    refreshLaunchd,
     renderLaunchdPlist,
     runLaunchctlCommand,
     writeLaunchdPlist,
@@ -67,6 +66,20 @@ describe("renderLaunchdPlist", () => {
             const path = plistString(renderLaunchdPlist(baseOptions()), "PATH") ?? "";
             expect(path.split(":")).toContain("/opt/homebrew/bin");
             expect(path.split(":")).toContain("/usr/bin");
+        });
+    });
+});
+
+describe("runLaunchctlCommand deadline", () => {
+    test("a call past its deadline is killed and comes back as a failed result", async () => {
+        const result = await runLaunchctlCommand(["/bin/sleep", "5"], 200);
+        expect(result.exitCode).toBe(124);
+        expect(result.stderr).toContain("timed out after 200 ms");
+    });
+
+    test("a call that ends in time keeps its own exit code", async () => {
+        expect(await runLaunchctlCommand(["/usr/bin/false"], 10_000)).toMatchObject({
+            exitCode: 1,
         });
     });
 });
@@ -183,7 +196,7 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
         writeFileSync(path, "<plist>old</plist>");
         runner(() => ok);
 
-        await refreshLaunchd({ ...baseOptions(), env: { FIXTURE: "new" } });
+        await installLaunchd({ ...baseOptions(), env: { FIXTURE: "new" } });
         expect(calls.map((call) => call[0])).toEqual(["unload", "load", "kickstart"]);
         expect(readFileSync(path, "utf8")).toContain("<string>new</string>");
     });
@@ -193,7 +206,7 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
         writeFileSync(path, "<plist>old</plist>");
         runner((args, index) => (args[0] === "load" && index === 1 ? { exitCode: 5, stdout: "", stderr: "busy" } : ok));
 
-        await expect(refreshLaunchd(baseOptions())).rejects.toThrow("busy");
+        await expect(installLaunchd(baseOptions())).rejects.toThrow("busy");
         expect(readFileSync(path, "utf8")).toBe("<plist>old</plist>");
     });
 

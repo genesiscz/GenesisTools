@@ -89,7 +89,8 @@ tools metrics query agent-context hook.injection --group-by checkpoint --since 1
   `groupBy`), `ingest.events` and `ingest.rejected` (dim `door`: `spool`, `rpc`, `import`) and `drain.ms`.
 - The mods plugin's ledger also writes `model` (the model of the loop the injection went to, null while the plugin
   has not seen one) and `delivery` (`full` for an area rule's text, `pointer` for one `Area rules (pointer): ...`
-  line, null for other sources). The resume guard writes `agent-context / agent.resume` and `agent.resume.result`
+  line, null for other sources). The shell guard writes `agent-context / guard.verdict`, one event per firing rule
+  (`src/agents/README.md`, "Guard messages"). The resume guard writes `agent-context / agent.resume` and `agent.resume.result`
   (the plugin's README, "The resume guard").
 - `import hooks-log` makes one event per old line (the old log kept no per-entry length) with `session: null`. Its
   offset is kept, so a second run adds only new lines.

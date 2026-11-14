@@ -220,9 +220,9 @@ function frameOf(mark: Mark, box: DocBox, preset: AnnotationPreset): ShotFramePa
     };
 }
 
-/** Half the width of an ellipse with radii `rx`, `ry` at `dy` from its center; 0 at or past its top and bottom. */
+/** Half the width of an ellipse with radii `rx`, `ry` at `dy` from its centre; 0 at or past its top and bottom. */
 function ellipseHalfWidth(rx: number, ry: number, dy: number): number {
-    if (rx <= 0 || ry <= 0 || dy >= ry) {
+    if (rx <= 0 || ry <= 0 || Math.abs(dy) >= ry) {
         return 0;
     }
 
@@ -230,40 +230,49 @@ function ellipseHalfWidth(rx: number, ry: number, dy: number): number {
 }
 
 /**
- * The stroke ring of an ellipse frame, as horizontal strips one band high. Each strip spans from the outer edge at
- * the strip's row nearest the center to the inner edge at its row farthest from it, so every stroke pixel is inside.
+ * An unfilled ellipse's stroke as horizontal strips about one stroke band high, so a strip's slack follows the stroke
+ * and not the ellipse's size: in each strip, the span between the inner and the outer edge of the stroke on the left
+ * and on the right (the whole outer span where the strip passes above the inner edge).
  */
-function ellipseArea(frame: ShotFramePaint, band: number): DocBox[] {
-    const { x, y, w, h } = grow(frame.box, 1);
-    const cx = x + w / 2;
-    const cy = y + h / 2;
-    const inner = { rx: w / 2 - band, ry: h / 2 - band };
-    const strips: DocBox[] = [];
-    for (let top = y; top < y + h; top += band) {
-        const bottom = Math.min(top + band, y + h);
-        const near = top <= cy && cy <= bottom ? 0 : Math.min(Math.abs(top - cy), Math.abs(bottom - cy));
-        const far = Math.max(Math.abs(top - cy), Math.abs(bottom - cy));
-        const outer = ellipseHalfWidth(w / 2, h / 2, near);
-        const hole = ellipseHalfWidth(inner.rx, inner.ry, far);
-        if (hole <= 0) {
-            strips.push({ x: cx - outer, y: top, w: 2 * outer, h: bottom - top });
+function ellipseStrokeArea(frame: ShotFramePaint): DocBox[] {
+    // The stroke lies inside the box; the outer edge also takes half a stroke of slack, as a centred stroke would.
+    const cx = frame.box.x + frame.box.w / 2;
+    const cy = frame.box.y + frame.box.h / 2;
+    const slack = frame.strokeWidth / 2 + 1;
+    const outer = { rx: frame.box.w / 2 + slack, ry: frame.box.h / 2 + slack };
+    const inner = { rx: frame.box.w / 2 - frame.strokeWidth - 1, ry: frame.box.h / 2 - frame.strokeWidth - 1 };
+    const areas: DocBox[] = [];
+    const strips = Math.max(1, Math.ceil((2 * outer.ry) / (frame.strokeWidth + 2)));
+    const height = (2 * outer.ry) / strips;
+
+    for (let strip = 0; strip < strips; strip++) {
+        const top = cy - outer.ry + strip * height;
+        const bottom = top + height;
+        // The outer edge is widest at the row nearest the centre, the inner edge narrowest at the row farthest away.
+        const nearest = top <= cy && bottom >= cy ? 0 : Math.min(Math.abs(top - cy), Math.abs(bottom - cy));
+        const farthest = Math.max(Math.abs(top - cy), Math.abs(bottom - cy));
+        const out = Math.ceil(ellipseHalfWidth(outer.rx, outer.ry, nearest)) + 1;
+        const within = Math.floor(ellipseHalfWidth(inner.rx, inner.ry, farthest)) - 1;
+        const y = Math.floor(top);
+        const h = Math.ceil(bottom) - y;
+
+        if (within <= 0) {
+            areas.push({ x: Math.floor(cx - out), y, w: 2 * out + 1, h });
             continue;
         }
 
-        strips.push(
-            { x: cx - outer, y: top, w: outer - hole, h: bottom - top },
-            { x: cx + hole, y: top, w: outer - hole, h: bottom - top }
-        );
+        areas.push({ x: Math.floor(cx - out), y, w: Math.ceil(out - within) + 1, h });
+        areas.push({ x: Math.floor(cx + within), y, w: Math.ceil(out - within) + 1, h });
     }
 
-    return strips;
+    return areas;
 }
 
 /**
- * The areas a frame draws on: for a rectangle its four stroke bands plus its corners (a rounded corner's stroke
- * curves in past the straight bands), for an ellipse its stroke ring, or the whole box when it is filled.
+ * The areas a frame draws on: its four stroke bands plus its corners (a rounded corner's stroke curves in past the
+ * straight bands), an ellipse's curved stroke, or the whole box when it is filled.
  */
-function frameArea(frame: ShotFramePaint): DocBox[] {
+export function shotFrameArea(frame: ShotFramePaint): DocBox[] {
     if (frame.fill) {
         return [grow(frame.box, 1)];
     }
@@ -272,11 +281,11 @@ function frameArea(frame: ShotFramePaint): DocBox[] {
         return [];
     }
 
-    const band = frame.strokeWidth + 2;
     if (frame.shape === "ellipse") {
-        return ellipseArea(frame, band);
+        return ellipseStrokeArea(frame);
     }
 
+    const band = frame.strokeWidth + 2;
     const corner = Math.min(Math.ceil(frame.radius + frame.strokeWidth) + 2, frame.box.w / 2, frame.box.h / 2);
     const { x, y, w, h } = grow(frame.box, 1);
     return [
@@ -554,7 +563,7 @@ export async function capturePart(
         const size = checkImageDimensions({ data: raw, maxPixels: 400_000_000 });
         const scale = size.width / clip.w;
         const areas = [
-            ...placed.flatMap((entry) => frameArea(entry.frame)),
+            ...placed.flatMap((entry) => shotFrameArea(entry.frame)),
             ...placed.flatMap((entry) => (entry.chip ? [grow(entry.chip.placed.chip, 1)] : [])),
             ...leaders.map(leaderArea),
         ]

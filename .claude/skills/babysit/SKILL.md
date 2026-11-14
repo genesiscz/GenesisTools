@@ -5,6 +5,8 @@ description: Run a PR review loop where external worker models fix the review fi
 
 # babysit: other models fix the review findings, this session judges
 
+Do not automatically open babysit notes in Genesis. Open them only when the user explicitly asks. Include this restriction in worker briefs.
+
 This session is the **master**. Workers (Grok or Codex Sol) do the fixing on their own PRs; the master briefs them,
 watches them, judges each fix as if a stranger wrote it, corrects what is wrong, integrates, pushes and reports. The
 process was proven on 2026-10-14 (Phase 1 and 2: Grok 4.7 Fast on #512, Sol 6.1 on #511); the numbers and the
@@ -446,6 +448,40 @@ turns the same merge into hundreds of conflicts.
    counts only the PR's own files (`gh pr view --json files` stops at 100).
 4. Check `gh pr view <N> --json state`: a restacked merge can leave the PR OPEN (#501, 2026-10-15). Log a `note`
    event with the merge SHA, and list every PR that did not land with its reason in the report.
+
+### Stacks: merge the parent in during the rounds, rebase the stack once to land
+
+Martin, 2026-11-10 (❓ DECISION 1 of the "Unified review" run). The 2026-11-05 train rebased stacked branches during
+the rounds and lost review fixes in #733, #735 and #738; a merge commit replays nothing, so nothing can be dropped.
+
+1. **During the rounds, never rebase a stacked branch.** When a parent's round is pushed, merge the parent's new head
+   into each direct child with a merge commit (`git merge --no-edit origin/<parent>` in the child's worktree,
+   conflicts through `conflicts.ts`), down the whole stack. Do it at the start of the child's next round, so the merge
+   rides the child's one round push. No force push; the threads and SHAs stay, and the child's fixes are written
+   against the parent's fixed code.
+2. **To land, rebase the whole stack once, bottom-up, onto the current master.** Record every branch's old head first.
+   The bottom PR: `restack.ts --wt <wt> --onto origin/master`. Each child: `restack.ts --wt <wt> --onto <its parent's
+   new head> --upstream <its parent's old head>` (the last parent head it merged). The rebase drops the merge commits
+   and replays only the child's own commits; a conflict a merge commit resolved comes back, so resolve it the same way.
+   Then `resolve-same.ts`, and `restack-verify.ts --reference <the child's pre-rebase head>` per branch: the old head
+   already holds every fix, so every dropped or changed file is a loss to restore before the push.
+3. **Push bottom-up, one branch at a time**, each with `--force-with-lease=<branch>:<old head>`, and push a child only
+   after `gh pr view <parent> --json headRefOid` shows the parent's new head. GitHub records a PR's base commit when
+   its head is pushed: a child pushed before its parent's new head exists records the parent's OLD tip, and its page
+   then lists every rebased parent commit as its own (the #717 defect, in stack form).
+4. **Why the pages stay right.** The bottom PR's base is master and its new head sits directly on master. Every
+   child's base is its parent branch, so it records the parent's new head; when the parent merges, `tools github
+   merge` retargets the child to master and GitHub records the new base. Never retarget a child to master by hand
+   before its parent merged, and never push a master-based PR on top of unmerged commits (the #717 rule above).
+5. A restack that resolved a conflict is new code: CI green on every pushed head, and judge the resolutions.
+6. **Merge bottom-up with `tools github merge --rebase <N>`.** Each head already sits on its merged parent, so every
+   merge is a fast-forward and no SHA changes. The tool refuses a PR whose recorded base would show foreign commits
+   (its stale-page check); a babysit run never passes `--allow-stale-page`. After each merge,
+   `gh api repos/<owner>/<repo>/pulls/<N> --jq .changed_files` must equal
+   `git diff --name-only <the parent's merged head> <N's head> | wc -l`, and the next child must show
+   `baseRefName` master. A mismatch stops the train.
+7. Before the stack's rebase, tell the owner of any draft or foreign PR stacked on its top: that PR's base branch is
+   force-pushed.
 
 A PR that conflicts with master, or whose parent was just squash-merged, is restacked first:
 `bun .claude/skills/babysit/scripts/restack.ts --wt <worktree> --onto origin/master [--upstream <fork point>]`. It runs

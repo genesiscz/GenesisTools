@@ -68,6 +68,7 @@ import { focusOf, forgetFocus, noteFocus } from "./sidebar";
 import { progressSuffix, spinner } from "./spinner";
 import { clearStall, noteStop, stallCatcher, stallRow } from "./stall";
 import { tmpRow, tmpUsage } from "./tmp-usage";
+import { callTimeOf, noteCallTime } from "./tool-time";
 
 // The full-diff mod. When the diff hook (`tools agents hooks`) cut a Bash call's message, it wrote the
 // whole diff to ~/.genesis-tools/agents/hook-diffs/<tool_use_id>.md. This draws those hunks with Claude
@@ -841,6 +842,15 @@ export const register: Register = (on) => {
         }
 
         rememberToolPaths(e);
+
+        // The start time the toolTime mod draws on the row: a read and a write of session state, so only while the
+        // mod is on (it is off by default) and not on every call.
+        if ((await settingsOf(host)).toolTime.enabled) {
+            await noteCallTime($, e.tool_use_id).catch((error: unknown) =>
+                logMod(host, "toolTime", { error: String(error) })
+            );
+        }
+
         const ends = liveFeatures().flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
 
         try {
@@ -1111,10 +1121,20 @@ export const register: Register = (on) => {
         const drawn = await withGroupDiffs($, e.props, e.requestId, ui, await next(e));
         const calls = e.props.calls.map((call) => ({ tool: call.tool, input: call.input }));
 
+        // An unfolded group's rows draw their own times.
+        const time = e.props.isExpanded
+            ? undefined
+            : await callTimeOf(
+                  $,
+                  hostOf($),
+                  e.props.calls.map((call) => call.tool_use_id)
+              );
+
         return askOnRow(hostOf($), ui, drawn, {
             id: e.requestId,
             isRunning: e.props.isActive || e.props.isExpanded,
             calls,
+            time,
         });
     });
 
@@ -1123,7 +1143,9 @@ export const register: Register = (on) => {
         const { tool, input, output, tool_use_id, isRunning } = e.props;
         const drawn = await withCallDiffs($, e.props, ui, await next(e));
 
-        return askOnRow(hostOf($), ui, drawn, { id: tool_use_id, isRunning, calls: [{ tool, input, output }] });
+        const time = await callTimeOf($, hostOf($), [tool_use_id]);
+
+        return askOnRow(hostOf($), ui, drawn, { id: tool_use_id, isRunning, calls: [{ tool, input, output }], time });
     });
 };
 /** The band's first row: the git row at the left, the chips (decisions, inbox, hooks) at the right edge. */

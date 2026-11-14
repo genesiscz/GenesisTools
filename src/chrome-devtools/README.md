@@ -346,7 +346,8 @@ sanitized), `--documents <n>` (document hops to print, default 40), `--summary` 
 | `console --match <p> [--reload] [--wait <s>]` | What the tab already logged plus what it logs while listening (5 s, or 8 s with `--reload`) |
 | `eval [fnOrExpr] [--file <path>] [--timeout 30]` | Runs JS in the page and prints the result as JSON |
 | `nav <url> [--new] [--spa] [--wait-for <sel>] [--wait-text <t>]` | Navigates a tab, opens a new one, or moves a single-page app in place |
-| `shot [path] [--full]` | Screenshot, default `/tmp/shot.png`; with `--mark` or `--annotate`, an annotated shot (see [Annotated page shots](#annotated-page-shots-shot---mark-shots)) |
+| `shot [path] [--full]` | Screenshot, default `/tmp/shot.png`; refuses an output that is no `.png`; with `--mark` or `--annotate`, an annotated shot (see [Annotated page shots](#annotated-page-shots-shot---mark-shots)) |
+| `shot <path> --mark <loc> [--label <t>] [--at <side>] [--clip <loc>] [--pad <px>] [--annotate <plan>] [--preset <name>] [--raw]` | An annotated image of what the tab shows now and the marks; `--raw` adds the raw image (see below) |
 | `grid [path] [--region x,y,w,h] [--step 60] [--full]` | Screenshot with a pixel grid burned in (needs ImageMagick) |
 | `snapshot [--text] [--json]` | The tab's controls (role, label, value) and, with `--text`, its visible text |
 | `click <label> [--nth <n>] [--role <role>] [--json]` | Clicks a control by its label; an option's label picks that option |
@@ -414,26 +415,25 @@ back-forward-cache page returns in 5 to 11 ms.
 
 ### Annotated page shots (`shot --mark`, `shots`)
 
-Boxes and labels drawn INTO the page (its own font, so Czech letters are right), photographed, and
-removed. Each shot is photographed twice, raw and annotated, and the two differ only under the
-overlay (exactly in a `.png`; a `.webp` is lossy, so its compression touches every pixel); a run
-writes the annotated image, and the raw one only when asked (`--raw`). Targets
-are locator strings resolved when the shot runs, never pixels; a target that matches nothing, or a
-label with no free spot, fails the shot by name instead of drawing at 0,0.
+Boxes and labels drawn into the page (in its own font, so Czech letters are right), photographed and removed. Each
+shot is photographed twice, raw and annotated, and the two differ only under the overlay (exactly in a `.png`; a
+`.webp` is lossy, so its compression touches every pixel); a run writes the annotated image, and the raw one only when
+asked (`--raw`). Targets are locator strings resolved when the shot runs, never pixels; a target that matches nothing,
+or a label with no free spot, fails the shot by name instead of drawing at 0,0.
 
 ```bash
-# One quick shot of the tab you look at: the annotated image and the marks (--raw adds the raw PNG).
+# one quick shot of the tab you look at: the annotated image and the marks (--raw adds the raw PNG)
 tools chrome-devtools shot ~/shots/usages.webp \
     --mark testid=usages-button \
     --label "Kde je použitý" \
     --at below
-# The same from a plan: items with a target mark the page, items with a rect draw in image pixels.
+# the same from a plan: items with a target mark the page, items with a rect draw in image pixels
 tools chrome-devtools shot ~/shots/usages.png --annotate plan.jsonc
-# A shot book: list it, check it (no browser), rehearse it (no images), run it.
-tools chrome-devtools shots list scripts/proposal.shots.ts
-tools chrome-devtools shots check scripts/proposal.shots.ts
-tools chrome-devtools shots rehearse scripts/proposal.shots.ts --only 18,08
-tools chrome-devtools shots run scripts/proposal.shots.ts --tag 1110 --out wiki/images
+# a shot book: list it, check it (no browser), rehearse it (no images), run it
+tools chrome-devtools shots list scripts/app.shots.ts
+tools chrome-devtools shots check scripts/app.shots.ts
+tools chrome-devtools shots rehearse scripts/app.shots.ts --only 18,08
+tools chrome-devtools shots run scripts/app.shots.ts --tag 1110 --out ~/Projects/app/docs/images
 ```
 
 | Command | What it does |
@@ -441,27 +441,30 @@ tools chrome-devtools shots run scripts/proposal.shots.ts --tag 1110 --out wiki/
 | `shot [path] --mark <loc> [--label <t>] [--at <side>] [--clip <loc>] [--pad <px>] [--annotate <plan>] [--preset <name>] [--raw]` | Marks on the current tab; a `.webp` at most 1200 px wide at quality 60, a `.png` at full size; refuses any other output name; `--raw` adds `<stem>.original.png` |
 | `shots run <book> [--only ids] [--out dir] [--tag t] [--base url] [--browser headless\|attach] [--port n] [--raw] [--json]` | Every shot: the annotated `<stem>.<tag>.webp`, a full-size annotated PNG under `png/` when the book asks, the raw image as `png/<stem>.<tag>.original.png` only with `--raw` (or `output.raw`), marks and the run report under `.shots/<tag>/` |
 | `shots list <book> [--only ids] [--json]` | id, stem, parts, first URL, note; no browser |
-| `shots check <book>` | Parses every locator, mark and part; no browser, changes nothing |
-| `shots rehearse <book> [--only ids]` | Visits every part, runs its steps, resolves every locator and places every label; no image |
+| `shots check <book> [--only ids]` | Parses every locator, mark and part; no browser, changes nothing |
+| `shots rehearse <book> [--only ids] [--browser] [--port]` | Visits every part, runs its steps, resolves every locator and places every label; no image |
 
-Locators: `testid=x` (`testid^=` prefix), `css=…`, `text=Exact` (`text~=` contains, `text=/re/`),
-`role=dialog`, `role=heading[name="Zahrada"]`, `label=/^Název/`, chained with ` >> `
-(`has-text=…`, `nth=1`); an array is a union whose every member must match. A `.ts` book is
-`export default defineShots({...})` with `id`, `css`, `text`, `union`, `nth`, `within`, `hasText`,
-`role` and `label` imported from `@genesis-tools/shots`; the loader serves that module, so the
-book's folder needs no `node_modules`. A mark also takes the first shot script's words (`at:
-"below"`, `dx`, `dy`, `color: "amber"`, `quiet`). Labels go to the requested side, else the next
-side that covers no page text and no other label inside the clip (`clip.fit: "labels"` grows the
-clip instead). Browsers: `headless` (default; a fresh Chrome, login cookies copied in memory from
-your running browser for the book's base URL only, or from `browser.headless.cookies: { from:
-"command", argv }`), or `attach` (your running browser, a new background tab). A book's `output`
-defaults to `{ formats: ["webp"], raw: false, webp: { maxWidth: 1200, quality: 60 } }`;
-`maxWidth: 0` keeps the full width. The marks file is an annotation plan in the raw image's pixels:
-`tools control draw <raw.png> --annotate <marks.json>` redraws it onto the raw image. Code:
-`src/utils/chrome-devtools/shots/` (vendored: locators, the in-page agent, `capturePart`) and
-`lib/shots/` (book, browsers, runner, quick shot). A vendored copy of `shots/` also needs these
-files of `src/utils/`: `image/annotation-plan.ts`, `image/mark-layout.ts`, `image/dimensions.ts`
-and its `image/detect-format.ts`, and `json.ts` (`SafeJSON`, which needs the `comment-json` package).
+- **Locators**: `testid=x` (`testid^=` prefix), `css=…`, `text=Exact` (`text~=` contains, `text=/re/`), `role=dialog`,
+  `role=heading[name="Zahrada"]`, `label=/^Název/`, chained with ` >> ` (`has-text=…`, `nth=1`); an array is a union
+  whose every member must match.
+- **A book** is `.ts` (`export default defineShots({...})`, with `id`, `css`, `text`, `union`, `nth`, `within`,
+  `hasText`, `role` and `label` imported from `@genesis-tools/shots`; the loader serves that module, so the book's
+  folder needs no `node_modules`) or `.json`/`.jsonc`. A mark also takes the first shot script's words `at: "below"`,
+  `dx`, `dy`, `color: "amber"` and `quiet`.
+- **Labels** go to the requested side, else to the next side that covers no page text and no other label inside the
+  clip; `clip.fit: "labels"` grows the clip instead. The clip defaults to the marks' targets plus 20 px.
+- **Browsers**: `headless` (default: a fresh Chrome; login cookies copied in memory from your running browser, only
+  those the book's base URL sends, or from `browser.headless.cookies: { from: "command", argv }`) or `attach` (your
+  running browser, in a new background tab).
+- **Output**: a WebP is at most 1200 px wide at quality 60, a PNG keeps the full size. A book's `output` defaults to
+  `{ formats: ["webp"], raw: false, webp: { maxWidth: 1200, quality: 60 } }`; `maxWidth: 0` keeps the full width.
+- The marks file is an annotation plan in the raw image's pixels: `tools control draw <raw.png> --annotate
+  <marks.json>` redraws it onto the raw image. A `shot --annotate` plan is the same format, where an item may name a
+  `target` instead of a `rect`.
+- Code: `src/utils/chrome-devtools/shots/` (vendored: locators, the in-page agent, `capturePart`) and `lib/shots/`
+  (book, browsers, runner, quick shot). A vendored copy of `shots/` also needs these files of `src/utils/`:
+  `image/annotation-plan.ts`, `image/mark-layout.ts`, `image/dimensions.ts` and its `image/detect-format.ts`, and
+  `json.ts` (`SafeJSON`, which needs the `comment-json` package).
 
 ### Performance, throttling and overrides
 

@@ -302,7 +302,8 @@ or `bun` itself under launchd, so every terminal needed its own grants and a lau
   window), `widget`, `clicky` (keyboard sounds), `markdown` (the markdown viewer), `recorder` (the screen recorder's
   menu bar item and editor) and `meetings`. `permissions build --parts` and `--add-part` choose them.
 - The one launchd writer (`src/utils/process/launchd-agent.ts`, used by the dashboards, ai-proxy, the MCP gateway,
-  `daemon`, `automate` and the youtube server) puts the launcher first in `ProgramArguments`, so services share the CLI's grants instead of needing rows for
+  `daemon`, `automate` and the youtube server) puts the launcher first in `ProgramArguments`, so services share the
+  CLI's grants instead of needing rows for
   `~/.bun/bin/bun`. A plist from before the app existed is left alone until the user starts that service again:
   `ui up` boots the job out and rewrites it, `tools daemon restart` and `tools automate daemon install` reinstall it,
   and `status` says so until then. Without the bundle, or with the launcher switched off, the plists come out exactly

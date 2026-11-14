@@ -25,6 +25,7 @@ export type RmLedgerAction =
     | "config-set"
     | "close"
     | "lost"
+    | "take-over"
     | "finish"
     | "fail";
 

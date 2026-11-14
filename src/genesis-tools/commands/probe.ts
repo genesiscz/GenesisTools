@@ -91,6 +91,8 @@ function fixFor(kind: GenesisLinkKind | null, state: LinkState): string | null {
                 : toolCommand("browser-router presets");
         case "target-missing":
             return kind === "md" ? "install Genesis Markdown" : null;
+        case "path-missing":
+            return "copy the real path (ls, fd) and encode it with encodeURI; never type the percent codes by hand";
     }
 }
 
@@ -125,11 +127,11 @@ export function registerProbeCommand(program: Command): void {
                 "genesis.tools links a click opens; exits 1 when a named part is missing"
         )
         .argument("[names...]", `Parts to check: ${NAMES.join(", ")}`)
-        .option("--url <url>", "Whether a click on this one link opens what it names")
+        .option("--url <url>", "Whether a click on this one link opens what it names, the file or folder included")
         .option("--json", "Print the probe as JSON")
         .action((names: string[], options: { url?: string; json?: boolean }) => {
             if (options.url) {
-                const state = linkState(options.url, readProbeFacts());
+                const state = linkState(options.url, readProbeFacts(), { checkFile: true });
 
                 if (options.json) {
                     out.result(state);

@@ -226,8 +226,11 @@ tool added there appears here with no edit to this server.
   handoffs, and the Jev, control and fetch groups. The INBOX paragraph is there only when the Mac has the native inbox.
 - **Lazy groups.** A group from another tool loads only when the capability list can expose it. A server builds one
   registry per instruction variant and keeps it.
-- **Shutdown.** The stdio transport does not close on EOF. When stdin ends, the server closes what the loaded groups
-  hold (the fetch and Alza Chrome workers, the Waze live-map tab), so no child outlives the host.
+- **Shutdown.** The loaded groups hold children (the fetch and Alza Chrome workers, the Waze live-map tab), and the
+  server closes them when it stops, so no child outlives the host. The stdio server closes them when stdin ends (the
+  stdio transport does not close on EOF). The gateway's hosted child closes them on SIGTERM, which the gateway sends
+  to stop it, and on SIGINT. The hosted child's drain path does not close them: when its code changes or the gateway
+  exits, it finishes the requests in flight and exits without closing the groups.
 - **Errors.** An unknown tool name is a JSON-RPC `MethodNotFound` error. A handler that throws returns a result with
   `isError: true` and the text `<tool> failed: <message>`, and the day log gets a warning `mcp tool handler failed`.
 - **Data.** The server keeps no store of its own. The question and handoff tools write the question store under
@@ -254,8 +257,9 @@ Codex the stdio entry back.
 - The server runs in a child process of the gateway (`src/genesis-tools-mcp/hosted-child.ts`). The child exits once
   its source changes, and the next call starts the new code; the gateway needs no restart.
 - It is stateless: every request gets a fresh server from the same registry. The caller is the harness process that
-  owns the connection. A request whose caller the gateway cannot name is recorded as `unknown`, never as the gateway's
-  own session.
+  owns the connection. When the one owner is a command that an agent started (`tools scripts call`, a persisted
+  script), that command's own environment names the session, as it does for a local run of a tool. A request whose
+  caller the gateway cannot name is recorded as `unknown`, never as the gateway's own session.
 - The stored `GENESIS_TOOLS_MCP_CAPABILITIES` value becomes the `X-Genesis-Mcp-Capabilities` header. A request without
   the header gets the default set; the gateway's own environment never narrows it.
 - A session that started before `gateway host` keeps its stdio server until it restarts.

@@ -132,7 +132,7 @@ export async function readWidgetRosterCache({
 
         const age = now - parsed.writtenAt;
         if (age < 0 || age > maxAgeMs || !alive(parsed.pid)) {
-            logger.debug({ path, age, pid: parsed.pid }, "Widget roster cache is stale; reading the index");
+            logger.debug({ path, age, writerPid: parsed.pid }, "Widget roster cache is stale; reading the index");
             return undefined;
         }
 

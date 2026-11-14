@@ -86,6 +86,45 @@ export async function relayBytes(source: ReadableStream<Uint8Array>, sink: ByteS
     }
 }
 
+/**
+ * Copies a child's stdout to `sink` line by line through `rewrite` ({@link pumpLines} over a byte sink). A line split
+ * across chunks is rewritten whole, and a last line with no newline still goes out.
+ */
+export async function relayLines(input: {
+    source: ReadableStream<Uint8Array>;
+    sink: ByteSink;
+    rewrite: (line: string) => string;
+}): Promise<void> {
+    const encoder = new TextEncoder();
+
+    await pumpLines({
+        source: input.source,
+        sink: {
+            write: (line: string) => input.sink.write(encoder.encode(line)),
+            flush: () => input.sink.flush(),
+            end: () => undefined,
+        },
+        rewrite: input.rewrite,
+    });
+}
+
+/** How a child's stdout reaches this process's stdout when the child does not inherit it. */
+type StdoutRelay = (source: ReadableStream<Uint8Array>, sink: ByteSink) => Promise<void>;
+
+/** Line by line through `stdoutLines`, byte for byte with `relayStdout`, or none: the child inherits stdout. */
+function stdoutRelay(input: {
+    relayStdout?: boolean;
+    stdoutLines?: (line: string) => string;
+}): StdoutRelay | undefined {
+    const rewrite = input.stdoutLines;
+
+    if (rewrite) {
+        return (source, sink) => relayLines({ source, sink, rewrite });
+    }
+
+    return input.relayStdout ? relayBytes : undefined;
+}
+
 export interface DirectRunDeps {
     spawn(options: {
         cmd: string[];
@@ -133,10 +172,13 @@ export async function runBinaryDirect(
         env: Record<string, string | undefined>;
         stdinLines?: (line: string) => string;
         relayStdout?: boolean;
+        /** Relays the child's stdout line by line through this rewrite (implies a relayed stdout). */
+        stdoutLines?: (line: string) => string;
     },
     deps: DirectRunDeps = defaultDeps
 ): Promise<number> {
     const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
+    const relayStdout = stdoutRelay(input);
     let proc: DirectChild | undefined;
     let pendingSignal: NodeJS.Signals | undefined;
     const forward = (signal: NodeJS.Signals) => {
@@ -157,7 +199,7 @@ export async function runBinaryDirect(
     try {
         proc = deps.spawn({
             cmd: input.argv,
-            stdio: [input.stdinLines ? "pipe" : "inherit", input.relayStdout ? "pipe" : "inherit", "inherit"],
+            stdio: [input.stdinLines ? "pipe" : "inherit", relayStdout ? "pipe" : "inherit", "inherit"],
             env: input.env,
         });
 
@@ -178,8 +220,8 @@ export async function runBinaryDirect(
                   })
                 : undefined;
         const relay =
-            input.relayStdout && proc.stdout instanceof ReadableStream
-                ? relayBytes(proc.stdout, deps.stdout()).catch((error) => {
+            relayStdout && proc.stdout instanceof ReadableStream
+                ? relayStdout(proc.stdout, deps.stdout()).catch((error) => {
                       logger.warn({ error }, "[embed] stdout relay failed");
                   })
                 : undefined;

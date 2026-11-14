@@ -16,16 +16,24 @@
  * log    The categoriser's input: every commit oldest first with the paths it touched (rename
  *        detection off, so both halves of a move show), and the canonical path count.
  * group  Turns an agent-written groups file into a plan. groups.json is an array, in commit order:
- *          { "message": "fix(x): …", "commits": ["abc1234", …], "paths": ["src/x/**", "a.ts"], "rest": true }
- *        all fields but `message` optional. Each canonical path goes to: the group whose `paths`
+ *          { "message": "fix(x): …", "body": "why…\n\nmore", "commits": ["abc1234", …],
+ *            "paths": ["src/x/**", "a.ts"], "rest": true,
+ *            "author": { "from": "<sha>" } | { "name": "…", "email": "…", "date": "…" } }
+ *        all fields but `message` optional; `message` is the one-line subject, `body` may span
+ *        lines. Each canonical path goes to: the group whose `paths`
  *        (exact or glob) claim it, else the group whose `commits` touch it most often (a tie goes
  *        to the LATER group and is reported as shared), else the one `rest` group. Fails on a
  *        path two groups claim by `paths`, a path no rule places, a commit listed twice or never
- *        (when any group lists commits), and an empty group. Writes the plan in the
- *        recommit-plan-check format and runs that check.
+ *        (when any group lists commits), and an empty group. Author: `author.from` copies that
+ *        commit's name, email and author date; without `author`, a group whose listed commits all
+ *        have one author takes that author and the author date of the last of them, and a group
+ *        with several prints a note and gets the current git user. The committer is always the
+ *        current user. Writes the plan in the recommit-plan-check format (plus `AUTHOR:` and
+ *        `BODY:` lines) and runs that check.
  * check  The same check as recommit-plan-check.ts --plan: no duplicates, nothing missing or
- *        extra, every step changes the tree, the last step is head's tree byte for byte.
- * apply  Checks the plan, then builds the commits in a temporary index on top of the merge-base
+ *        extra, every step changes the tree, the last step is head's tree byte for byte; and
+ *        every AUTHOR line parses as git will read it. A plan without AUTHOR or BODY lines is valid.
+ * apply Checks the plan, then builds the commits in a temporary index on top of the merge-base
  *        (`commit-tree`, so the working tree, the index and any stash are never touched), proves
  *        the new tip's tree equals head's, tags the old head (`bkp/recommit/<branch>-<stamp>`),
  *        and moves the branch with a compare-and-swap `update-ref`. A worktree that has the branch
@@ -46,6 +54,11 @@
  * `group` prints each group's areas (first two path segments with counts) so a path that landed in
  * the wrong scope is visible; pin it with a `paths` glob.
  *
+ * Tree entries are read only for the plan's paths, and no git output is ever cut: spawnSync's
+ * 1 MiB default once cut a 1.5 MB `ls-tree -r` listing silently, and every path past the cut
+ * became a deletion. A plan path with no entry in head is written as a deletion only when
+ * base..head deletes it; any other missing entry stops `apply` before it builds anything.
+ *
  * Exit codes: 0 ok · 1 the groups or the plan are wrong (details on stderr) · 2 usage or git error.
  */
 
@@ -64,7 +77,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canonicalPaths, checkPlan, parsePlan } from "./recommit-plan-check";
+import {
+    canonicalPaths,
+    checkPlan,
+    describeUnresolved,
+    type EntryReader,
+    formatAuthor,
+    formatPlan,
+    headIndexLines,
+    must,
+    type PlanAuthor,
+    type PlanGroup,
+    type PlanReport,
+    parsePlan,
+    runGit,
+    type TreeEntry,
+    treeEntries,
+} from "./recommit-plan-check";
 
 const USAGE = `usage:
   recommit.ts log   --base <ref> [--head <ref>] [-C <dir>]
@@ -75,20 +104,18 @@ const USAGE = `usage:
 
 class UsageError extends Error {}
 
-function git(cwd: string, args: string[], opts: { input?: string; indexFile?: string } = {}): string {
-    const env = opts.indexFile ? { ...process.env, GIT_INDEX_FILE: opts.indexFile } : process.env;
-    const r = spawnSync("git", ["-C", cwd, ...args], { input: opts.input, env, encoding: "utf8" });
-
-    if (r.status !== 0) {
-        throw new Error(`git ${args.slice(0, 3).join(" ")} failed (${r.status}): ${(r.stderr ?? "").trim()}`);
-    }
-
-    return r.stdout ?? "";
+/** Every call goes through `runGit`: no output limit, and a cut or killed git throws. */
+function git(
+    cwd: string,
+    args: string[],
+    opts: { input?: string; indexFile?: string; env?: Record<string, string> } = {}
+): string {
+    return must(runGit(args, { cwd, ...opts }), `git ${args.slice(0, 3).join(" ")}`);
 }
 
 function tryGit(cwd: string, args: string[]): string | null {
-    const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
-    return r.status === 0 ? (r.stdout ?? "").trim() : null;
+    const r = runGit(args, { cwd });
+    return r.code === 0 ? r.stdout.trim() : null;
 }
 
 interface Args {
@@ -147,27 +174,94 @@ function parseArgs(argv: string[]): Args {
 interface Commit {
     sha: string;
     subject: string;
+    author: PlanAuthor;
     paths: string[];
 }
 
+/** Subject, then the author's name, email and strict ISO date, which `GIT_AUTHOR_DATE` reads back. */
+const SUBJECT_AND_AUTHOR = "%s%x00%an%x00%ae%x00%aI";
+
+function readSubjectAndAuthor(fields: string[]): { subject: string; author: PlanAuthor } {
+    const [subject = "", name = "", email = "", date = ""] = fields;
+    return { subject, author: { name, email, date } };
+}
+
+function subjectAndAuthor(cwd: string, sha: string): { subject: string; author: PlanAuthor } {
+    return readSubjectAndAuthor(
+        git(cwd, ["log", "-1", `--format=${SUBJECT_AND_AUTHOR}`, sha])
+            .replace(/\n$/, "")
+            .split("\0")
+    );
+}
+
 function commitsBetween(cwd: string, base: string, head: string): Commit[] {
-    return git(cwd, ["rev-list", "--reverse", `${base}..${head}`])
+    // One `git log` reads every subject and author, one line per commit (a subject never holds a newline); only the
+    // paths still take a git call per commit.
+    return git(cwd, ["log", "--reverse", `--format=%H%x00${SUBJECT_AND_AUTHOR}`, `${base}..${head}`])
         .split("\n")
         .filter(Boolean)
-        .map((sha) => ({
-            sha,
-            subject: git(cwd, ["log", "-1", "--format=%s", sha]).trim(),
-            paths: git(cwd, ["diff-tree", "-r", "-z", "--no-renames", "--no-commit-id", "--name-only", "--root", sha])
-                .split("\0")
-                .filter(Boolean),
-        }));
+        .map((line) => {
+            const [sha = "", ...fields] = line.split("\0");
+
+            return {
+                sha,
+                ...readSubjectAndAuthor(fields),
+                paths: git(cwd, [
+                    "diff-tree",
+                    "-r",
+                    "-z",
+                    "--no-renames",
+                    "--no-commit-id",
+                    "--name-only",
+                    "--root",
+                    sha,
+                ])
+                    .split("\0")
+                    .filter(Boolean),
+            };
+        });
 }
+
+type AuthorSpec = { from: string } | PlanAuthor;
 
 interface GroupSpec {
     message: string;
+    body?: string;
+    author?: AuthorSpec;
     commits?: string[];
     paths?: string[];
     rest?: boolean;
+}
+
+const GROUP_FIELDS = ["message", "body", "author", "commits", "paths", "rest"];
+
+function isLine(value: unknown): value is string {
+    return typeof value === "string" && value.trim() !== "" && !/[\n<>]/.test(value);
+}
+
+function readAuthorSpec(raw: unknown, where: string): AuthorSpec {
+    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+        const keys = Object.keys(raw);
+        const from = "from" in raw ? raw.from : undefined;
+        const name = "name" in raw ? raw.name : undefined;
+        const email = "email" in raw ? raw.email : undefined;
+        const date = "date" in raw ? raw.date : undefined;
+
+        if (keys.length === 1 && isLine(from)) {
+            return { from };
+        }
+
+        if (
+            keys.every((k) => ["name", "email", "date"].includes(k)) &&
+            isLine(name) &&
+            isLine(email) &&
+            (date === undefined || isLine(date))
+        ) {
+            return { name, email, ...(date !== undefined ? { date } : {}) };
+        }
+    }
+
+    throw new UsageError(`${where} must be { "from": "<sha>" } or { "name", "email", "date"? }, each one line`);
 }
 
 function readGroups(file: string): GroupSpec[] {
@@ -177,23 +271,126 @@ function readGroups(file: string): GroupSpec[] {
         throw new UsageError(`${file}: expected a non-empty JSON array of groups`);
     }
 
-    return data.map((raw, i) => {
-        const g = raw as GroupSpec;
+    return data.map((raw: unknown, i) => {
+        const where = `${file}: groups[${i}]`;
 
-        if (typeof g?.message !== "string" || g.message.trim() === "" || g.message.includes("\n")) {
-            throw new UsageError(`${file}: groups[${i}].message must be one non-empty line`);
+        if (typeof raw !== "object" || raw === null) {
+            throw new UsageError(`${where} must be an object`);
         }
 
-        for (const key of Object.keys(g)) {
-            if (!["message", "commits", "paths", "rest"].includes(key)) {
-                throw new UsageError(
-                    `${file}: groups[${i}].${key} is not a known field (message, commits, paths, rest)`
-                );
+        for (const key of Object.keys(raw)) {
+            if (!GROUP_FIELDS.includes(key)) {
+                throw new UsageError(`${where}.${key} is not a known field (${GROUP_FIELDS.join(", ")})`);
             }
         }
 
-        return g;
+        const g = raw as GroupSpec;
+
+        if (typeof g.message !== "string" || g.message.trim() === "" || g.message.includes("\n")) {
+            throw new UsageError(`${where}.message must be one non-empty line`);
+        }
+
+        if (g.body !== undefined && typeof g.body !== "string") {
+            throw new UsageError(`${where}.body must be a string (it may span lines)`);
+        }
+
+        const body = g.body?.trimEnd().replace(/^\n+/, "");
+        const author = g.author === undefined ? undefined : readAuthorSpec(g.author, `${where}.author`);
+
+        return { ...g, body: body || undefined, author };
     });
+}
+
+/**
+ * A group's author: its `author` (copied from the `from` commit), else the one author of all
+ * its listed commits with the author date of the last of them, else none (the current user).
+ */
+function groupAuthor({
+    cwd,
+    group,
+    label,
+    listed,
+    order,
+}: {
+    cwd: string;
+    group: GroupSpec;
+    label: string;
+    listed: Commit[];
+    order: Commit[];
+}): { author?: PlanAuthor; problem?: string; note?: string } {
+    const spec = group.author;
+
+    if (spec && "from" in spec) {
+        const sha = tryGit(cwd, ["rev-parse", "--verify", "--quiet", `${spec.from}^{commit}`]);
+        return sha
+            ? { author: subjectAndAuthor(cwd, sha).author }
+            : { problem: `${label}: author.from ${spec.from} is not a commit` };
+    }
+
+    if (spec) {
+        return { author: spec };
+    }
+
+    const idents = [...new Set(listed.map((c) => `${c.author.name} <${c.author.email}>`))];
+
+    if (idents.length === 1) {
+        const last = listed.reduce((a, b) => (order.indexOf(b) > order.indexOf(a) ? b : a));
+        return { author: last.author };
+    }
+
+    if (idents.length > 1) {
+        return {
+            note: `${label} lists commits by ${idents.length} authors (${idents.join(", ")}), so it keeps the current git user; set "author" to pick one`,
+        };
+    }
+
+    return {};
+}
+
+/** `git var` parses an author the way `commit-tree` will, so a bad date fails before any commit exists. */
+function authorProblems(cwd: string, groups: PlanGroup[]): string[] {
+    return groups.flatMap((group) => {
+        if (!group.author) {
+            return [];
+        }
+
+        const r = runGit(["var", "GIT_AUTHOR_IDENT"], { cwd, env: authorEnv(group.author) });
+        return r.code === 0 ? [] : [`group ${group.index}: author ${formatAuthor(group.author)}: ${r.stderr.trim()}`];
+    });
+}
+
+/**
+ * The whole `check`: `checkPlan` plus every AUTHOR line git must read. Prints the problems and returns null when the
+ * plan fails, so `group`, `check` and `apply` cannot drift apart on what a valid plan is.
+ */
+function passedPlan({
+    cwd,
+    base,
+    head,
+    groups,
+}: {
+    cwd: string;
+    base: string;
+    head: string;
+    groups: PlanGroup[];
+}): PlanReport | null {
+    const report = checkPlan({ cwd, base, head, groups });
+    const problems = [...report.problems, ...authorProblems(cwd, groups)];
+
+    if (problems.length) {
+        process.stderr.write(`✖ plan check:\n  ${problems.join("\n  ")}\n`);
+        return null;
+    }
+
+    return report;
+}
+
+function authorEnv(author: PlanAuthor): Record<string, string> {
+    return {
+        GIT_AUTHOR_NAME: author.name,
+        GIT_AUTHOR_EMAIL: author.email,
+        ...(author.date ? { GIT_AUTHOR_DATE: author.date } : {}),
+    };
 }
 
 export interface GroupingResult {
@@ -201,6 +398,8 @@ export interface GroupingResult {
     problems: string[];
     shared: string[];
     counts: number[];
+    /** Groups whose listed commits have several authors and that name no `author`. */
+    notes: string[];
 }
 
 /** Places every canonical path in one group, by the rules in the header. Pure apart from git reads. */
@@ -296,46 +495,58 @@ export function groupPaths({
         }
     });
 
-    const plan = groups
-        .map((g, gi) => [`COMMIT ${gi + 1}: ${g.message}`, "FILES:", ...assigned[gi].sort()].join("\n"))
-        .join("\n\n");
+    const notes: string[] = [];
+    const planGroups = groups.map((group, gi) => {
+        const { author, problem, note } = groupAuthor({
+            cwd,
+            group,
+            label: `group ${gi + 1} (${group.message})`,
+            listed: groupCommits[gi],
+            order: commits,
+        });
 
-    return { plan: `${plan}\n`, problems, shared, counts: assigned.map((p) => p.length) };
+        if (problem) {
+            problems.push(problem);
+        }
+
+        if (note) {
+            notes.push(note);
+        }
+
+        return { message: group.message, body: group.body, author, paths: assigned[gi].sort() };
+    });
+
+    return { plan: formatPlan(planGroups), problems, shared, counts: assigned.map((p) => p.length), notes };
 }
 
-interface HeadEntry {
-    mode: string;
-    sha: string;
-}
-
-function treeEntries(cwd: string, ref: string): Map<string, HeadEntry> {
-    const entries = new Map<string, HeadEntry>();
-
-    for (const record of git(cwd, ["ls-tree", "-r", "-z", ref]).split("\0").filter(Boolean)) {
-        const tab = record.indexOf("\t");
-        const [mode, , sha] = record.slice(0, tab).split(" ");
-        entries.set(record.slice(tab + 1), { mode: mode ?? "", sha: sha ?? "" });
-    }
-
-    return entries;
-}
-
-const ZERO = "0000000000000000000000000000000000000000";
-
-/** Builds one commit per plan group on `base` in a throwaway index; returns the new SHAs. */
+/**
+ * Builds one commit per plan group on `base` in a throwaway index; returns the new SHAs. Every
+ * path is resolved before the first object is written, so a path whose entry lookup came back
+ * empty while base..head does not delete it throws and leaves nothing behind. `readEntries` is
+ * the lookup, replaceable in a test.
+ */
 export function buildCommits({
     cwd,
     base,
     head,
     planText,
+    readEntries = treeEntries,
 }: {
     cwd: string;
     base: string;
     head: string;
     planText: string;
+    readEntries?: EntryReader;
 }): string[] {
     const groups = parsePlan(planText);
-    const entries = treeEntries(cwd, head);
+    const index = headIndexLines({ cwd, base, head, paths: groups.flatMap((g) => g.paths), readEntries });
+
+    if (index.unresolved.length > 0) {
+        throw new Error(
+            `no entry in head ${head.slice(0, 9)} for ${describeUnresolved({ cwd, head, paths: index.unresolved })}; a missing entry is never written as a deletion, so no commit was built`
+        );
+    }
+
     const scratch = mkdtempSync(join(tmpdir(), "recommit-"));
     const indexFile = join(scratch, "index");
     const shas: string[] = [];
@@ -345,13 +556,13 @@ export function buildCommits({
         let parent = base;
 
         for (const group of groups) {
-            const lines = group.paths.map((path) => {
-                const entry = entries.get(path);
-                return entry ? `${entry.mode} ${entry.sha}\t${path}` : `0 ${ZERO}\t${path}`;
-            });
+            const lines = group.paths.flatMap((path) => index.lines.get(path) ?? []);
             git(cwd, ["update-index", "--index-info"], { indexFile, input: `${lines.join("\n")}\n` });
             const tree = git(cwd, ["write-tree"], { indexFile }).trim();
-            parent = git(cwd, ["commit-tree", tree, "-p", parent, "-m", group.message]).trim();
+            const message = group.body ? ["-m", group.message, "-m", group.body] : ["-m", group.message];
+            parent = git(cwd, ["commit-tree", tree, "-p", parent, ...message], {
+                env: group.author ? authorEnv(group.author) : {},
+            }).trim();
             shas.push(parent);
         }
     } finally {
@@ -377,11 +588,13 @@ export function auditCommits({
 }): string[] {
     const problems: string[] = [];
     const groups = parsePlan(planText);
-    const baseEntries = treeEntries(cwd, base);
-    const headEntries = treeEntries(cwd, head);
-    const snapshots = shas.map((sha) => treeEntries(cwd, sha));
-    const show = (e: HeadEntry | undefined) => (e ? `${e.mode} ${e.sha.slice(0, 9)}` : "absent");
-    const same = (a: HeadEntry | undefined, b: HeadEntry | undefined) => a?.mode === b?.mode && a?.sha === b?.sha;
+    const paths = groups.flatMap((g) => g.paths);
+    const read = (ref: string) => treeEntries({ cwd, ref, paths });
+    const baseEntries = read(base);
+    const headEntries = read(head);
+    const snapshots = shas.map(read);
+    const show = (e: TreeEntry | undefined) => (e ? `${e.mode} ${e.sha.slice(0, 9)}` : "absent");
+    const same = (a: TreeEntry | undefined, b: TreeEntry | undefined) => a?.mode === b?.mode && a?.sha === b?.sha;
 
     groups.forEach((group, gi) => {
         for (const path of group.paths) {
@@ -535,9 +748,19 @@ function main(argv: string[]): number {
             process.stderr.write(`shared ${line}\n`);
         }
 
-        parsePlan(result.plan).forEach((g, i) => {
+        for (const note of result.notes) {
+            process.stderr.write(`note: ${note}\n`);
+        }
+
+        const planned = parsePlan(result.plan);
+
+        planned.forEach((g, i) => {
             process.stdout.write(`${i + 1}. ${String(result.counts[i]).padStart(4)} paths  ${g.message}\n`);
             process.stdout.write(`        areas: ${areas(g.paths)}\n`);
+
+            if (g.author) {
+                process.stdout.write(`        author: ${formatAuthor(g.author)}\n`);
+            }
         });
 
         if (result.problems.length) {
@@ -545,10 +768,9 @@ function main(argv: string[]): number {
             return 1;
         }
 
-        const report = checkPlan({ cwd, base, head, groups: parsePlan(result.plan) });
+        const report = passedPlan({ cwd, base, head, groups: planned });
 
-        if (report.problems.length) {
-            process.stderr.write(`✖ plan check:\n  ${report.problems.join("\n  ")}\n`);
+        if (!report) {
             return 1;
         }
 
@@ -562,10 +784,10 @@ function main(argv: string[]): number {
     }
 
     const planText = readFileSync(args.plan, "utf8");
-    const report = checkPlan({ cwd, base, head, groups: parsePlan(planText) });
+    const planned = parsePlan(planText);
+    const report = passedPlan({ cwd, base, head, groups: planned });
 
-    if (report.problems.length) {
-        process.stderr.write(`✖ plan check:\n  ${report.problems.join("\n  ")}\n`);
+    if (!report) {
         return 1;
     }
 

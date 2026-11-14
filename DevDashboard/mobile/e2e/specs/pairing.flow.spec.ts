@@ -1,8 +1,7 @@
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { appPage } from "@e2e/pages/app.page";
 import { connectionsPage } from "@e2e/pages/ConnectionsPage.page";
-import { connectPage } from "@e2e/pages/ConnectPage.page";
-import { pairingUri, TEST_AGENT_BASE_URL } from "@e2e/pages/testAgent";
+import { confirmPairing, pairingUri, TEST_AGENT_BASE_URL } from "@e2e/pages/testAgent";
 
 /**
  * Pairing, end to end against the test agent (DD_TEST_AGENT, a side agent on loopback): a pairing link opens the pair
@@ -24,20 +23,8 @@ describe("Pairing flow", () => {
     });
 
     it("Pair connects and leaves the pair screen", async () => {
-        await $("~pair-confirm").click();
-
-        // A loopback agent answers without a password; one that asks shows pair-ask instead, which fails this case.
-        await browser.waitUntil(async () => !(await $("~pair-screen").isExisting()) || (await $("~pair-ask").isExisting()), {
-            timeout: 20_000,
-            timeoutMsg: "the pair screen never closed",
-        });
-        expect(await $("~pair-ask").isExisting()).toBe(false);
-        expect(await $("~pair-error").isExisting()).toBe(false);
-
-        if (await connectPage.isShown()) {
-            await connectPage.waitUntilReachable();
-            await connectPage.tapContinue();
-        }
+        // A loopback agent answers without a password; one that asks for one or shows an error fails this case.
+        await confirmPairing();
     });
 
     it("the agent is the active saved connection", async () => {

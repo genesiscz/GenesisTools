@@ -14,6 +14,7 @@ import {
     confirmByPerson,
     createAsideRequest,
     DEFAULT_APPROVAL_DEPS,
+    defaultAdminTakeover,
     defaultRuleContext,
     disposalGraceMinutes,
     effectiveConfig,
@@ -273,6 +274,8 @@ export async function executePlan(
                     config: ctx.config,
                     caller: ctx.caller,
                     graceMinutes: minutes,
+                    // Only a person's confirmation may ask for an administrator (root's file in a sticky folder).
+                    adminTakeover: items.some((item) => confirmedMinutes.has(item)) ? defaultAdminTakeover() : null,
                     onRefused: (move, reason) => {
                         out.println(pc.red(`refuse ${shown(move.target.path, ctx.cwd)}: ${reason}`));
                         result.refused++;

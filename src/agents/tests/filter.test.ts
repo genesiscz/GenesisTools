@@ -9,18 +9,18 @@ import {
     announceDueLapses,
     announceLapses,
     announceLeave,
+    foldRearms,
     leaveReasonOf,
     logInAndAnnounceJoin,
     notListening,
     pendingRearms,
     presentAgents,
     REARM_GRACE_MS,
-    rearmTrackerFrom,
     remainingAgentNames,
     trackRearm,
 } from "../lib/leave";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
-import type { AgentRecord, FeedEvent } from "../lib/types";
+import type { AgentRecord, FeedEvent, SessionPaths } from "../lib/types";
 
 const agentAlpha: AgentRecord = {
     agent_id: "agt_alpha",
@@ -280,6 +280,24 @@ describe("filter.filterForAgent", () => {
 });
 
 describe("agent_left", () => {
+    /** A stream login of the agent, which announces a join when it is one. */
+    const loginAgent = (paths: SessionPaths, agent: { agentId: string; name: string; loginId: string }) =>
+        logInAndAnnounceJoin(paths, {
+            agent_id: agent.agentId,
+            agent_name: agent.name,
+            mode: "stream",
+            login_id: agent.loginId,
+        });
+    /** The login's Monitor was killed: a signal logout whose re-arm grace runs until `until` (epoch ms). */
+    const appendKilled = (paths: SessionPaths, login: { agentId: string; loginId: string; until: number }) =>
+        appendFeed(paths, {
+            type: "logged_out",
+            agent_id: login.agentId,
+            reason: "signal",
+            mode: "stream",
+            login_id: login.loginId,
+            rearm_until: new Date(login.until).toISOString(),
+        });
     const loggedIn = (seq: number, id: string, name: string, loginId?: string): FeedEvent => ({
         seq,
         ts: "2026-01-01T00:00:01Z",
@@ -448,12 +466,7 @@ describe("agent_left", () => {
             for (const [round, order] of ["leave-first", "login-first", "together"].entries()) {
                 const paths = sessionPaths(`join-race-${round}`);
                 ensureSessionDir(paths);
-                await logInAndAnnounceJoin(paths, {
-                    agent_id: "agt_alpha",
-                    agent_name: "alpha",
-                    mode: "stream",
-                    login_id: "old",
-                });
+                await loginAgent(paths, { agentId: "agt_alpha", name: "alpha", loginId: "old" });
                 const leave = () =>
                     announceLeave(paths, {
                         agent_id: "agt_alpha",
@@ -461,13 +474,7 @@ describe("agent_left", () => {
                         reason: "signal",
                         login_id: "old",
                     });
-                const login = () =>
-                    logInAndAnnounceJoin(paths, {
-                        agent_id: "agt_alpha",
-                        agent_name: "alpha",
-                        mode: "stream",
-                        login_id: "new",
-                    });
+                const login = () => loginAgent(paths, { agentId: "agt_alpha", name: "alpha", loginId: "new" });
 
                 if (order === "leave-first") {
                     await leave();
@@ -500,31 +507,22 @@ describe("agent_left", () => {
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             const paths = sessionPaths("rearm");
             ensureSessionDir(paths);
-            const login = (agentId: string, name: string, loginId: string) =>
-                logInAndAnnounceJoin(paths, { agent_id: agentId, agent_name: name, mode: "stream", login_id: loginId });
-            const killed = (agentId: string, loginId: string, until: number) =>
-                appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: agentId,
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: loginId,
-                    rearm_until: new Date(until).toISOString(),
-                });
             const now = Date.now();
 
-            await login("main_lead", "lead", "lead-1");
-            await login("agt_beta", "beta", "beta-1");
-            await login("agt_gamma", "gamma", "gamma-1");
+            await loginAgent(paths, { agentId: "main_lead", name: "lead", loginId: "lead-1" });
+            await loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId: "beta-1" });
+            await loginAgent(paths, { agentId: "agt_gamma", name: "gamma", loginId: "gamma-1" });
 
             // beta's Monitor expires and is re-armed inside the grace: no presence event at all.
-            await killed("agt_beta", "beta-1", now + REARM_GRACE_MS);
+            await appendKilled(paths, { agentId: "agt_beta", loginId: "beta-1", until: now + REARM_GRACE_MS });
             expect(notListening(await readFeed(paths), ["agt_beta"])).toMatchObject([{ state: "rearming" }]);
-            expect(await login("agt_beta", "beta", "beta-2")).toEqual({ joined: false });
+            expect(await loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId: "beta-2" })).toEqual({
+                joined: false,
+            });
             expect(pendingRearms(await readFeed(paths)).size).toBe(0);
 
             // gamma's is not re-armed: nothing before the grace ends, one lapsed leave after it.
-            await killed("agt_gamma", "gamma-1", now + REARM_GRACE_MS);
+            await appendKilled(paths, { agentId: "agt_gamma", loginId: "gamma-1", until: now + REARM_GRACE_MS });
             expect(await announceLapses(paths, now + REARM_GRACE_MS - 1)).toEqual([]);
             const lapsed = await announceLapses(paths, now + REARM_GRACE_MS);
             expect(lapsed).toMatchObject([
@@ -538,7 +536,9 @@ describe("agent_left", () => {
             ]);
 
             // Its late re-arm is a join again.
-            expect(await login("agt_gamma", "gamma", "gamma-2")).toEqual({ joined: true });
+            expect(await loginAgent(paths, { agentId: "agt_gamma", name: "gamma", loginId: "gamma-2" })).toEqual({
+                joined: true,
+            });
 
             const presenceEvents = (await readFeed(paths)).filter(
                 (event) => event.type === "agent_left" || event.type === "agent_joined"
@@ -560,25 +560,85 @@ describe("agent_left", () => {
             const paths = sessionPaths("rearm-leave");
             ensureSessionDir(paths);
             const now = Date.now();
-            await logInAndAnnounceJoin(paths, {
-                agent_id: "agt_beta",
-                agent_name: "beta",
-                mode: "stream",
-                login_id: "beta-1",
-            });
+            await loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId: "beta-1" });
             await announceLeave(paths, { agent_id: "agt_beta", agent_name: "beta", reason: "leave", note: "done" });
             // The Monitor it stops afterwards still writes its logged_out with a grace.
-            await appendFeed(paths, {
-                type: "logged_out",
-                agent_id: "agt_beta",
-                reason: "signal",
-                mode: "stream",
-                login_id: "beta-1",
-                rearm_until: new Date(now).toISOString(),
-            });
+            await appendKilled(paths, { agentId: "agt_beta", loginId: "beta-1", until: now });
 
             expect(await announceLapses(paths, now + REARM_GRACE_MS)).toEqual([]);
             expect((await readFeed(paths)).filter((event) => event.type === "agent_left")).toHaveLength(1);
+        });
+    });
+
+    test("a late logout of an older login does not take the current login's re-arm away", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-late-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-late");
+            ensureSessionDir(paths);
+            const now = Date.now();
+            const killed = (loginId: string) => appendKilled(paths, { agentId: "agt_beta", loginId, until: now });
+            const login = (loginId: string) => loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId });
+
+            // Login A released its slot before writing its logout, so B logged in and out first.
+            await login("beta-a");
+            await login("beta-b");
+            await killed("beta-b");
+            await killed("beta-a");
+            // A leave that names the older login does not end B either.
+            await appendFeed(paths, {
+                type: "agent_left",
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                reason: "ended",
+                remaining: [],
+                login_id: "beta-a",
+            });
+
+            const feed = await readFeed(paths);
+            expect(foldRearms(feed).pending.get("agt_beta")?.loginId).toBe("beta-b");
+            expect(pendingRearms(feed).get("agt_beta")?.loginId).toBe("beta-b");
+            expect(await announceLapses(paths, now + REARM_GRACE_MS)).toMatchObject([
+                { type: "agent_left", agent_id: "agt_beta", reason: "lapsed", login_id: "beta-b" },
+            ]);
+        });
+    });
+
+    test("a lapse check forgets only the re-arms due at its own cutoff, and not one replaced meanwhile", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-cutoff-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-cutoff");
+            ensureSessionDir(paths);
+            // In the past, so a check that took a fresh time after the lock would call every entry below due.
+            const cutoff = Date.now() - 60_000;
+
+            for (const name of ["beta", "gamma", "delta"]) {
+                await loginAgent(paths, { agentId: `agt_${name}`, name, loginId: `${name}-1` });
+            }
+
+            await appendKilled(paths, { agentId: "agt_beta", loginId: "beta-1", until: cutoff });
+            // Falls due while the check waits for the feed lock: not announced by it, so it must stay.
+            await appendKilled(paths, { agentId: "agt_gamma", loginId: "gamma-1", until: cutoff + 1 });
+            await appendKilled(paths, { agentId: "agt_delta", loginId: "delta-1", until: cutoff });
+
+            const fold = foldRearms(await readFeed(paths));
+            const check = announceDueLapses(paths, fold, cutoff);
+            // While the check waits, delta's next login ends too: the watcher folds a newer re-arm in its place.
+            const replaced = {
+                loginId: "delta-2",
+                since: new Date(cutoff).toISOString(),
+                until: new Date(cutoff + 1_000).toISOString(),
+            };
+            fold.pending.set("agt_delta", replaced);
+            const lapsed = await check;
+
+            expect(lapsed.map((event) => event.type === "agent_left" && event.agent_id).sort()).toEqual([
+                "agt_beta",
+                "agt_delta",
+            ]);
+            expect([...fold.pending.keys()].sort()).toEqual(["agt_delta", "agt_gamma"]);
+            expect(fold.pending.get("agt_delta")).toBe(replaced);
         });
     });
 
@@ -589,22 +649,9 @@ describe("agent_left", () => {
             const paths = sessionPaths("rearm-fence");
             ensureSessionDir(paths);
             const now = Date.now();
-            const login = (loginId: string) =>
-                logInAndAnnounceJoin(paths, {
-                    agent_id: "agt_beta",
-                    agent_name: "beta",
-                    mode: "stream",
-                    login_id: loginId,
-                });
+            const login = (loginId: string) => loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId });
             const killed = (loginId: string, until: number) =>
-                appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: "agt_beta",
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: loginId,
-                    rearm_until: new Date(until).toISOString(),
-                });
+                appendKilled(paths, { agentId: "agt_beta", loginId, until });
 
             // beta-1 released its slot, beta-2 logged in and was killed, and only then beta-1's logout landed.
             await login("beta-1");
@@ -616,7 +663,7 @@ describe("agent_left", () => {
             expect(pendingRearms(feed).get("agt_beta")).toMatchObject({ loginId: "beta-2", since: replacementEnd.ts });
 
             // A watching login folds the same events one by one, after seeding from the feed before them.
-            const tracker = rearmTrackerFrom(feed.slice(0, 2));
+            const tracker = foldRearms(feed.slice(0, 2));
             for (const event of feed.slice(2)) {
                 trackRearm(tracker, event);
             }
@@ -634,7 +681,7 @@ describe("agent_left", () => {
     });
 
     test("a login that ended after its replacement logged in starts no grace", () => {
-        const tracker = rearmTrackerFrom([
+        const tracker = foldRearms([
             {
                 seq: 1,
                 ts: "2026-01-01T00:00:01Z",
@@ -681,31 +728,19 @@ describe("agent_left", () => {
                 ["agt_beta", "beta", cutoff],
                 ["agt_gamma", "gamma", cutoff + 1],
             ] as const) {
-                await logInAndAnnounceJoin(paths, {
-                    agent_id: agentId,
-                    agent_name: name,
-                    mode: "stream",
-                    login_id: `${name}-1`,
-                });
-                await appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: agentId,
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: `${name}-1`,
-                    rearm_until: new Date(until).toISOString(),
-                });
+                await loginAgent(paths, { agentId, name, loginId: `${name}-1` });
+                await appendKilled(paths, { agentId, loginId: `${name}-1`, until });
             }
 
-            const pending = rearmTrackerFrom(await readFeed(paths)).pending;
-            const lapsed = await announceDueLapses(paths, pending, cutoff);
+            const fold = foldRearms(await readFeed(paths));
+            const lapsed = await announceDueLapses(paths, fold, cutoff);
 
             expect(lapsed).toMatchObject([{ type: "agent_left", agent_id: "agt_beta", reason: "lapsed" }]);
-            expect([...pending.keys()]).toEqual(["agt_gamma"]);
-            expect(await announceDueLapses(paths, pending)).toMatchObject([
+            expect([...fold.pending.keys()]).toEqual(["agt_gamma"]);
+            expect(await announceDueLapses(paths, fold)).toMatchObject([
                 { type: "agent_left", agent_id: "agt_gamma", reason: "lapsed" },
             ]);
-            expect(pending.size).toBe(0);
+            expect(fold.pending.size).toBe(0);
         });
     });
 });

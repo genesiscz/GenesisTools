@@ -299,7 +299,7 @@ A mapping entry holds `adoWorkItemId`, `adoWorkItemTitle`, `adoWorkItemType`, `c
   any hours were not booked. A dry run exits 0 even when it reports missing rows or unreadable weeks, so read its
   output before you run it again with `--confirm`.
 - `fill --verbose` has no effect today (see [Writing the hours](#writing-the-hours-fill)).
-- `tools hub timesheet` shows one week the way the dashboard previews it, through the same server functions.
+- `tools hub timesheet` shows one week from the same month-fill plan the dashboard previews and `fill --confirm` writes (`src/clarity/lib/month-fill.ts`).
 - The `genesis-tools:timelog` plugin command walks the whole ADO TimeLog to Clarity routine.
 
 ## Troubleshooting

@@ -46,10 +46,13 @@ import {
     cameBack,
     closeAllLost,
     denyRequest,
+    dropLostCopies,
     nothingLeft,
     printDenyOutcome,
     reportLostCopies,
     savedSizes,
+    waitingPutBack,
+    waitingPutBackLine,
 } from "../lib/approve";
 import {
     buildRequestViews,
@@ -157,6 +160,8 @@ export async function underDecisionLock(
 
 /** A request's rows for the approval window, and the paths the rules refuse before any prompt. */
 interface PreparedApproval {
+    /** The request without the lost copies the run reported (saved so), or as it was when nothing else is left. */
+    request: RmRequest;
     /** Paths the rules refuse now: they keep the request pending and the window does not show them. */
     blocked: ApproveEntry[];
     openEntries: ApproveEntry[];
@@ -166,23 +171,25 @@ interface PreparedApproval {
 }
 
 /**
- * The rows `request` offers a person, the paths refused before the prompt, and the lost aside copies (each printed
- * and logged unless `quiet`).
+ * The rows `request` offers a person, the paths refused before the prompt, and the lost aside copies. Unless `quiet`,
+ * each lost copy is printed, logged and dropped from the saved request (the caller holds its lock), so a request whose
+ * other paths stay pending reports it once, not at every approval.
  */
 function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): PreparedApproval {
     const lost = request.targets.filter(nothingLeft);
+    const rest = request.targets.filter((t) => !lost.includes(t));
+    let current = request;
 
     if (!quiet) {
         reportLostCopies(request, lost, ctx.caller);
+        current = dropLostCopies(request, rest);
     }
 
     // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
-    const entries: ApproveEntry[] = request.targets
-        .filter((t) => !lost.includes(t))
-        .map((t) => ({
-            wanted: t,
-            target: resolveTarget(t.stored ?? t.path, request.cwd),
-        }));
+    const entries: ApproveEntry[] = rest.map((t) => ({
+        wanted: t,
+        target: resolveTarget(t.stored ?? t.path, request.cwd),
+    }));
     // A root is trusted, not deleted: only the hard-deny rules apply to it, not the worktree ones.
     const denyOf: ApprovalDenyCheck = request.kind === "root" ? hardDenyReason : approvalDenyReason;
     const refused = entries
@@ -196,7 +203,13 @@ function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): Pr
     }
 
     const blocked = refused.map((refusal) => refusal.entry);
-    return { blocked, openEntries: entries.filter((entry) => !blocked.includes(entry)), lost, denyOf };
+    return {
+        request: current,
+        blocked,
+        openEntries: entries.filter((entry) => !blocked.includes(entry)),
+        lost,
+        denyOf,
+    };
 }
 
 /**
@@ -249,13 +262,8 @@ function leftOutReason(request: RmRequest | null, id: string): string | null {
         return `nothing is left to decide: ${rm} prune`;
     }
 
-    const deniedBefore = new Set(request.decided?.denied ?? []);
-
-    if (request.targets.some((target) => deniedBefore.has(target.path) && !cameBack(target))) {
-        return `it has unfinished recovery: ${rm} deny ${id}`;
-    }
-
-    return null;
+    const waiting = waitingPutBack(request);
+    return waiting.length > 0 ? waitingPutBackLine(request, waiting) : null;
 }
 
 /** One stream of row updates for a window that shows the rows of several requests. */
@@ -364,7 +372,7 @@ function readBatch(ids: readonly string[], ctx: RunContext, kick: BatchDeps["kic
             continue;
         }
 
-        const { openEntries, blocked } = prepareApproval(request, ctx);
+        const { request: current, openEntries, blocked } = prepareApproval(request, ctx);
 
         if (openEntries.length === 0 && blocked.length === 0) {
             closeAllLost(request, ctx.caller);
@@ -381,7 +389,7 @@ function readBatch(ids: readonly string[], ctx: RunContext, kick: BatchDeps["kic
             }
         }
 
-        read.parts.push({ request, rows, shared });
+        read.parts.push({ request: current, rows, shared });
     }
 
     return read;
@@ -822,13 +830,12 @@ async function decideOne(
 
     // A path the person already denied whose aside copy could not go home waits for a deny, not a second
     // approval; a path that was blocked or changed while they decided can be approved again. A path that came back
-    // beside its copy can never go home, so approving (which deletes only the copy) is the one way forward.
-    const deniedBefore = new Set(request.decided?.denied ?? []);
+    // beside its copy can never go home, so approving (which deletes only the copy) is the one way forward, and a
+    // lost copy is reported and closed below like any other.
+    const waiting = waitingPutBack(request);
 
-    if (request.targets.some((target) => deniedBefore.has(target.path) && !cameBack(target))) {
-        out.println(
-            pc.red(`Request ${id} has unfinished recovery. Use ${toolCommand("rm")} deny ${id} to retry the put-back.`)
-        );
+    if (waiting.length > 0) {
+        out.println(pc.red(`Request ${id}: ${waitingPutBackLine(request, waiting)}.`));
         process.exitCode = 1;
         return;
     }
@@ -906,7 +913,7 @@ async function decideOne(
     }
     applyApprovalAnswer({
         ctx,
-        request,
+        request: prepared.request,
         openEntries,
         blocked: prepared.blocked,
         answer,

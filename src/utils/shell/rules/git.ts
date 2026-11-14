@@ -30,8 +30,9 @@ interface GitInvocation extends GitCall {
     /** The statements of the unit the invocation sits in, and the index of its own statement there. */
     unit: Span[];
     statement: number;
-    /** Index of the element in its statement's pipeline. */
+    /** Index of the element in its statement's pipeline, and the number of elements in that pipeline. */
     pipe: number;
+    pipeLength: number;
 }
 
 // `git <sub>` in one pipeline element, with `git -C dir` / `git --no-pager` global options skipped.
@@ -74,7 +75,7 @@ function gitInvocations(scan: ShellScan): GitInvocation[] {
                 const call = gitCall(elements[pipe], scan.command);
 
                 if (call) {
-                    out.push({ ...call, element: elements[pipe], unit, statement, pipe });
+                    out.push({ ...call, element: elements[pipe], unit, statement, pipe, pipeLength: elements.length });
                 }
             }
         }
@@ -776,7 +777,16 @@ function undoesOwnSwap(scan: ShellScan, inv: GitInvocation, paths: string[]): bo
         for (let pipe = 0; pipe < elements.length; pipe++) {
             const call = gitCall(elements[pipe], scan.command);
             const read = call ? REVERTS.get(call.tokens[call.sub].text) : undefined;
-            const swap = call && read?.(scan, { ...call, element: elements[pipe], unit: inv.unit, statement: s, pipe });
+            const swap =
+                call &&
+                read?.(scan, {
+                    ...call,
+                    element: elements[pipe],
+                    unit: inv.unit,
+                    statement: s,
+                    pipe,
+                    pipeLength: elements.length,
+                });
 
             if (!call || !swap?.ref || swap.ref === "HEAD" || gitPlace(scan, call) !== place) {
                 continue;
@@ -1354,9 +1364,45 @@ export const gitPushForceWithoutLease: ShellRule = {
     },
 };
 
+export const gitCommitPiped: ShellRule = {
+    id: "git-commit-piped",
+    kind: "misread",
+    title: "git commit piped into tail, head or grep hides whether the commit happened",
+    severity: "warn",
+    why:
+        "A pipeline's status is its last command's, so `git commit … | tail -1` succeeds when the commit failed (a " +
+        "pre-commit hook refused it, nothing was staged). HEAD then still names the previous commit, and a " +
+        "`git rev-parse HEAD` or `git log -1` after it reports that one as the new commit. Redirect the commit's " +
+        "output to a file and print its exit status, or check `git log -1 --format='%h %s'` before you name a SHA.",
+    wrong: 'git commit -m "fix: x" 2>&1 | tail -1; git rev-parse --short HEAD',
+    right: 'git commit -m "fix: x" > /tmp/cc/p/s/commit.txt 2>&1; echo "commit exit $?"; git log -1 --format=\'%h %s\'',
+    evidence:
+        "2026-11-11 21:00, session 86ebe292: `git commit … | tail -1; git rev-parse --short=10 HEAD` printed the " +
+        "previous commit's SHA while biome had refused the commit (bare JSON in a test). The SHA went into the reply " +
+        "as the logging fix, and its hub link opened an unrelated commit.",
+    detect(scan): ShellMatch | null {
+        if (/pipefail/.test(scan.command)) {
+            return null;
+        }
+
+        for (const inv of gitInvocations(scan)) {
+            if (inv.tokens[inv.sub].text !== "commit") {
+                continue;
+            }
+
+            if (inv.pipe < inv.pipeLength - 1) {
+                return elementMatch(scan, inv);
+            }
+        }
+
+        return null;
+    },
+};
+
 export const gitRules: readonly ShellRule[] = [
     gitCheckoutOverwritesFile,
     gitCheckoutInFreshWorktree,
     gitCheckoutOverwritesSavedFile,
     gitPushForceWithoutLease,
+    gitCommitPiped,
 ];

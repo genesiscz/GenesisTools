@@ -61,7 +61,7 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the twenty-three general rules; personal ones load from guard.customRules", () => {
+    it("holds the twenty-four general rules; personal ones load from guard.customRules", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
@@ -75,6 +75,7 @@ describe("the registry", () => {
                 "git-checkout-in-fresh-worktree",
                 "git-checkout-overwrites-file",
                 "git-checkout-overwrites-saved-file",
+                "git-commit-piped",
                 "git-push-force-without-lease",
                 "pipestatus-index-mismatch",
                 "pipestatus-under-zsh",

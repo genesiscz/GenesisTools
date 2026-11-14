@@ -299,6 +299,7 @@ function deltaPct(upstream: number, port: number): number {
     return upstream === 0 ? (port === 0 ? 0 : 100) : Math.round(((port - upstream) / upstream) * 1000) / 10;
 }
 
+// lint-rules-ignore: Jev compares repository-search evaluation reports; portable eval compareRuns consumes a different persisted run schema.
 export function compareRuns(upstream: RunReport, port: RunReport): Comparison {
     const upstreamFiles = new Map(upstream.files.map((file) => [file.path, file]));
     const portFiles = new Map(port.files.map((file) => [file.path, file]));

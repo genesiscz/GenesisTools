@@ -44,14 +44,6 @@ class ConnectPage extends BasePage {
         return this.isExisting(`reachability-${kind}`);
     }
 
-    /** Poll until the badge shows `reachable` (the gate the Continue button waits on). */
-    async waitUntilReachable(timeout = 10_000): Promise<void> {
-        await this.waitUntil(() => this.isReachabilityState("reachable"), {
-            timeout,
-            message: "reachability never reached `reachable`",
-        });
-    }
-
     async tapOpenTailscale(): Promise<void> {
         await this.tap("open-tailscale");
     }
@@ -83,31 +75,19 @@ class ConnectPage extends BasePage {
     }
 
     /**
-     * Simulate a scanned pairing QR by deep-linking the pairing URI into the app (sim has no camera), tap Pair, and wait
-     * until the pairing has connected and the app shows the tabs. The connect screen is gone after this: a successful
-     * pair replaces the route, so there is no reachability badge or Continue button left to drive.
+     * One-shot: from a fresh `/connect` screen to a paired app on its tabs. It simulates a scanned pairing QR by
+     * deep-linking the local test agent's pairing URI into the app (the sim has no camera), then taps Pair. The connect
+     * screen is gone after this: a successful pair replaces the route with the tabs. This is the canonical way for a
+     * feature spec's `before()` to clear the connect gate before driving its own tab.
      */
-    async injectPairing(uri: string): Promise<void> {
+    async pairWithTestAgent({ baseUrl = DEFAULT_TEST_AGENT, username = "e2e", tier = "cloudflared-self" }: { baseUrl?: string; username?: string; tier?: Tier } = {}): Promise<void> {
+        await this.selectTier(tier);
         await browser.execute("mobile: deepLink", {
-            url: uri,
+            url: pairingUri({ tier, baseUrl, username }),
             bundleId: getDevDashboardBundleId(),
         });
         // A link never connects by itself: the pair screen shows its address and waits for this tap.
         await confirmPairing();
-    }
-
-    async tapContinue(): Promise<void> {
-        await this.tap("connect-continue");
-    }
-
-    /**
-     * One-shot: from a fresh `/connect` screen to a paired app on its tabs, using a deep-linked pairing URI against the
-     * local test agent. This is the canonical way for a feature spec's `before()` to clear the connect gate before
-     * driving its own tab — copy this call rather than re-deriving the deep-link string.
-     */
-    async pairWithTestAgent({ baseUrl = DEFAULT_TEST_AGENT, username = "e2e", tier = "cloudflared-self" }: { baseUrl?: string; username?: string; tier?: Tier } = {}): Promise<void> {
-        await this.selectTier(tier);
-        await this.injectPairing(pairingUri({ tier, baseUrl, username }));
     }
 }
 

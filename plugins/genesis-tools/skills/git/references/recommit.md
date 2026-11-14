@@ -16,9 +16,10 @@ stays yours: which commits form which group, and each message.
 R="${CLAUDE_PLUGIN_ROOT}/skills/git/scripts/recommit.ts"
 bun "$R" log   --base <parent> --head <branch>              # commits oldest first, with their paths
 # write groups.json, in commit order:
-#   [{ "message": "fix(x): …", "commits": ["abc1234", …] },
-#    { "message": "test: …", "paths": ["src/**/*.test.ts"] },
-#    { "message": "chore: the rest", "commits": [ … ], "rest": true }]
+#   [{ "message": "fix(x): …", "body": "Why.\n\nDetails.", "commits": ["abc1234", …] },
+#    { "message": "test: …", "paths": ["src/**/*.test.ts"], "author": { "from": "def5678" } },
+#    { "message": "chore: the rest", "commits": [ … ], "rest": true,
+#      "author": { "name": "Alice", "email": "alice@example.com", "date": "2026-11-01T10:00:00+01:00" } }]
 bun "$R" group --base <parent> --head <branch> --groups groups.json   # writes groups.plan.txt, checks it
 bun "$R" apply --base <parent> --head <branch> --plan groups.plan.txt --dry-run
 bun "$R" apply --base <parent> --head <branch> --plan groups.plan.txt
@@ -30,6 +31,21 @@ bun "$R" apply --base <parent> --head <branch> --plan groups.plan.txt
   `paths` entry when the default is wrong.
 - `group` refuses a commit listed twice or never, a path two groups claim, a path no rule places,
   and an empty group. Fix the JSON and run it again; nothing exists yet.
+- `message` is the one-line subject; the optional `body` may span lines. Author per group:
+  `author.from` copies that commit's name, email and author date; `{ name, email, date? }` sets
+  them (no `date` means the time of the recommit). Without `author`, a group whose listed commits
+  all have one author takes that author and the author date of the last of them; a group whose
+  commits have several authors prints `note: group N (…) lists commits by K authors …` and gets
+  the current git user. The committer is always the current user. `group` prints each group's
+  `author:` line, and `group`, `check` and `apply` refuse a date git cannot parse.
+- The plan carries them between the `COMMIT n:` line and `FILES:`: `AUTHOR: Name <email> [date]`,
+  and `BODY:` followed by one `| `-prefixed line per body line. A plan without them (an older plan,
+  or one written by hand) is still valid and commits as the current user.
+- A large repo is safe: `group`, `check` and `apply` read tree entries only for the plan's paths,
+  and no git output is cut (a 1 MiB output limit once dropped every path past the first MiB of a
+  10 900-file listing, and each dropped path became a deletion). A plan path with no entry in head
+  becomes a deletion only when base..head deletes it; any other missing entry stops the run with
+  that path named, before any commit exists.
 - Grouping by `commits` keeps the CONTENT safe whatever the commits mix (cmux, tmux, utils, a
   deletion, a rename split across groups, a mode change, a symlink): `apply` proves the final tree
   byte for byte AND audits every path (it equals the base before its group, its final entry from

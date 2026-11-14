@@ -26,6 +26,7 @@ import {
     type Resolution,
     resolveLocators,
     SHOT_OVERLAY_ID,
+    shotFrameArea,
     textRects,
 } from "@genesiscz/utils/chrome-devtools/shots/page";
 import { parseShotPart } from "@genesiscz/utils/chrome-devtools/shots/part";
@@ -95,6 +96,14 @@ describe("the locator grammar", () => {
         expect(() => parseShotPart({ marks: [{ target: id("x"), at: "under" as "below" }] })).toThrow(/unknown side/);
     });
 
+    test("a chain splits only at separators outside quotes and regex literals", () => {
+        expect(splitChain('role=button[name="Next >> page"]')).toEqual(['role=button[name="Next >> page"]']);
+        expect(splitChain('css=[title="a >> b"] >> nth=0')).toEqual(['css=[title="a >> b"]', "nth=0"]);
+        expect(splitChain("text=/a >> [/] b/ >> nth=1")).toEqual(["text=/a >> [/] b/", "nth=1"]);
+        expect(splitChain("text=Don't >> nth=1")).toEqual(["text=Don't", "nth=1"]);
+        expect(parseLocator('role=button[name="Next >> page"]').chains[0]?.steps).toHaveLength(1);
+    });
+
     test("a mark's kind and label are checked at the boundary, so shots check catches them", () => {
         const book = (mark: Record<string, unknown>) => ({
             shots: [{ id: "1", stem: "one", marks: [{ target: "testid=x", ...mark }] }],
@@ -126,14 +135,6 @@ describe("the locator grammar", () => {
         expect(() => parseShotPart({ clip: { pad: 4 } })).toThrow(/a part with no marks needs a clip/);
     });
 
-    test("a chain splits only at separators outside quotes and regex literals", () => {
-        expect(splitChain('role=button[name="Next >> page"]')).toEqual(['role=button[name="Next >> page"]']);
-        expect(splitChain('css=[title="a >> b"] >> nth=0')).toEqual(['css=[title="a >> b"]', "nth=0"]);
-        expect(splitChain("text=/a >> [/] b/ >> nth=1")).toEqual(["text=/a >> [/] b/", "nth=1"]);
-        expect(splitChain("text=Don't >> nth=1")).toEqual(["text=Don't", "nth=1"]);
-        expect(parseLocator('role=button[name="Next >> page"]').chains[0]?.steps).toHaveLength(1);
-    });
-
     test("a malformed locator fails at the boundary and names itself", () => {
         expect(() => parseLocator("tesid=x")).toThrow(LocatorSyntaxError);
         expect(() => parseLocator("tesid=x")).toThrow(/locator "tesid=x": unknown step/);
@@ -160,6 +161,9 @@ body { margin: 0; font: 16px Helvetica, Arial, sans-serif; }
 <div data-testid="hidden-thing" style="display:none">skryté</div>
 <div data-testid="invisible-thing" class="abs" style="left:700px;top:200px;width:60px;height:20px;visibility:hidden">neviditelné</div>
 <div id="host" class="abs" style="left:700px;top:20px;width:100px;height:50px"></div>
+<div data-testid="invisible" class="abs" style="left:900px;top:20px;width:40px;height:40px;visibility:hidden"><span data-testid="invisible-child" style="display:block;width:20px;height:20px"></span></div>
+<div data-testid="mixed" class="abs" style="left:900px;top:100px;width:40px;height:40px"></div>
+<div data-testid="mixed" class="abs" style="left:960px;top:200px;width:40px;height:40px;visibility:hidden"></div>
 </body></html>`;
 
 const SHADOW = `document.getElementById("host").attachShadow({ mode: "open" }).innerHTML =
@@ -253,6 +257,20 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
             "testid=panel | testid=usages-buton (member testid=usages-buton) matched nothing"
         );
         expect(hidden).toEqual({ ok: false, source: "testid=hidden-thing", reason: "zero-size" });
+    });
+
+    test("visibility:hidden matches are never boxed, and a chain step into a shadow host searches its root", async () => {
+        const [invisible, invisibleChild, mixed, inHost] = await resolve(
+            id("invisible"),
+            id("invisible-child"),
+            id("mixed"),
+            within(css("#host"), css("span"))
+        );
+
+        expect(invisible).toEqual({ ok: false, source: "testid=invisible", reason: "zero-size" });
+        expect(invisibleChild).toEqual({ ok: false, source: "testid=invisible-child", reason: "zero-size" });
+        expect(box(mixed)).toEqual({ x: 900, y: 100, w: 40, h: 40, count: 1 });
+        expect(box(inHost)).toEqual({ x: 700, y: 20, w: 60, h: 20, count: 1 });
     });
 
     test("a css step scoped to a shadow host searches the host's own shadow root", async () => {
@@ -514,6 +532,31 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
 });
 
 describe("what a shot's overlay paints and exports", () => {
+    test("an unfilled ellipse's painted area covers its whole curved stroke and not its middle", () => {
+        const frame = {
+            shape: "ellipse" as const,
+            box: { x: 10, y: 20, w: 400, h: 200 },
+            stroke: "#ff4d4f",
+            strokeWidth: 3,
+            dash: [],
+            radius: 0,
+            fill: "",
+        };
+        const areas = shotFrameArea(frame);
+        const covered = (x: number, y: number) =>
+            areas.some((area) => x >= area.x && x <= area.x + area.w && y >= area.y && y <= area.y + area.h);
+
+        for (let degree = 0; degree < 360; degree += 3) {
+            const angle = (degree * Math.PI) / 180;
+            const x = 210 + (200 - 1.5) * Math.cos(angle);
+            const y = 120 + (100 - 1.5) * Math.sin(angle);
+            expect(covered(x, y)).toBe(true);
+        }
+
+        expect(covered(210, 120)).toBe(false);
+        expect(covered(210 + 100, 120 + 50)).toBe(false);
+    });
+
     test("the exported annotation carries the drawn style and the offset to where the chip was placed", () => {
         const placedChip = { x: 120, y: 20, w: 60, h: 18 };
         const annotation = annotationOf(

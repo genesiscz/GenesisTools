@@ -16,6 +16,7 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
+    type AdminTakeoverResult,
     type ApprovalDeps,
     type ApprovalItemUpdate,
     type ApprovalPrompt,
@@ -41,6 +42,8 @@ import {
     type RmCaller,
     type RmConfig,
     type RmRequest,
+    type RmRequestTarget,
+    type RmTarget,
     readRmLedger,
     recoverAsideJournals,
     requestBatchIds,
@@ -57,6 +60,7 @@ import {
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
 import { describePolicy } from "../commands/profiles";
+import { subcommandMeant } from "../commands/remove";
 import { approveMany, askForApproval, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { agentMayDrainEarly, drainFailures } from "../commands/trash";
@@ -1219,6 +1223,19 @@ describe("a path named like a subcommand", () => {
         expect(notes).toEqual([]);
     });
 
+    test("a bare word that names no file and is close to a subcommand names that subcommand", () => {
+        // `tools rm approvals` (2026-11-14) refused a missing path and never said `approve`.
+        const program = createRmProgram();
+        expect(subcommandMeant("approvals", program)).toBe("approve");
+        expect(subcommandMeant("reqeusts", program)).toBe("requests");
+        expect(subcommandMeant("Trash", program)).toBe("trash");
+        // A path, a dot name or a word far from every subcommand is just a missing path.
+        expect(subcommandMeant("./approvals", program)).toBeNull();
+        expect(subcommandMeant("build/approve", program)).toBeNull();
+        expect(subcommandMeant("node_modules", program)).toBeNull();
+        expect(subcommandMeant("x", program)).toBeNull();
+    });
+
     test("the help says to write ./<name>, because -- still runs the subcommand", () => {
         let help = "";
         const program = createRmProgram();
@@ -1625,6 +1642,106 @@ describe("an aside copy deleted outside tools rm (macOS tmp_cleaner)", () => {
         } finally {
             process.exitCode = exitCode;
         }
+    });
+
+    /** An agent's own deny while the path of the first copy was taken again: that copy waits for a put-back. */
+    function deniedWhileTaken(folder: string): { request: RmRequest; taken: RmRequestTarget & { stored: string } } {
+        const request = asideRequest(folder);
+        const [taken] = request.targets;
+
+        if (!taken?.stored) {
+            throw new Error("expected an aside copy");
+        }
+
+        file(taken.path);
+        expect(denyRequest(request, { caller: AGENT, via: "cli" }).waiting.map((target) => target.path)).toEqual([
+            taken.path,
+        ]);
+        return { request, taken: { ...taken, stored: taken.stored } };
+    }
+
+    test("approve closes a denied request whose waiting copy was lost, instead of asking for a put-back", async () => {
+        // bd7ccy and c55v5s (2026-11-14): the path is back, the copy is gone, and every approve said "unfinished
+        // recovery" while a deny could put nothing back.
+        const { request, taken } = deniedWhileTaken("lost-after-deny");
+        clean(taken.stored, "lost-after-deny");
+        const exitCode = process.exitCode;
+
+        try {
+            const approve = await run(["approve", request.id]);
+            expect(approve).not.toContain("recovery");
+            expect(approve).toContain(`gone ${taken.path}: its set-aside copy was ${CAUSE}`);
+            expect(loadRmRequest(request.id)?.status).toBe("gone");
+            expect(process.exitCode ?? 0).toBe(0);
+        } finally {
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("a batch approval closes such a request too, and still leaves out one whose copy waits to go home", async () => {
+        const lost = deniedWhileTaken("lost-after-deny-batch");
+        clean(lost.taken.stored, "lost-after-deny-batch");
+        const waits = deniedWhileTaken("waits-after-deny-batch");
+        // The path is free again: a deny would put the copy back now, so approving it is still not the way.
+        renameSync(waits.taken.path, join(base, "waits-after-deny-batch-moved"));
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            printed.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([lost.request.id, waits.request.id], context(), {
+                ask: async () => {
+                    throw new Error("no window opens: nothing is left to approve");
+                },
+                kickDrainer: () => undefined,
+            });
+            const text = printed.join("\n");
+            expect(text).not.toContain(`left out ${lost.request.id}`);
+            expect(text).toContain(
+                `left out ${waits.request.id}: 1 denied path waits aside to go home: ${toolCommand("rm")} deny ${waits.request.id} puts it back`
+            );
+            expect(loadRmRequest(lost.request.id)?.status).toBe("gone");
+            expect(loadRmRequest(waits.request.id)?.status).toBe("pending");
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("a lost copy is reported once: an approval that decides nothing drops it from the request", async () => {
+        // m888au (2026-11-09 to 11-14): the same three lost copies were logged as `lost` at each of seven approvals,
+        // since the one path left was refused every time and nothing saved the request.
+        const request = asideRequest("lost-once");
+        const [lost, kept] = request.targets;
+
+        if (!lost?.stored || !kept?.stored) {
+            throw new Error("expected two aside copies");
+        }
+
+        clean(lost.stored, "lost-once");
+        const unanswered = async (): Promise<PersonAnswer> => ({
+            approved: false,
+            via: "none",
+            choices: { selected: null, disposal: "trash", remember: "once", note: null },
+            deniedByPerson: false,
+        });
+        const exitCode = process.exitCode;
+        const println = spyOn(out, "println").mockImplementation(() => undefined);
+
+        try {
+            for (let round = 0; round < 2; round++) {
+                await approveMany([request.id], context(), { ask: unanswered, kickDrainer: () => undefined });
+            }
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        const logged = readRmLedger().filter((entry) => entry.action === "lost" && entry.requestId === request.id);
+        expect(logged.map((entry) => entry.path)).toEqual([lost.path]);
+        expect(loadRmRequest(request.id)).toMatchObject({ status: "pending", targets: [{ path: kept.path }] });
     });
 
     test("an approval moves the copies that are left and closes the request with the lost one reported", async () => {
@@ -3128,6 +3245,108 @@ describe("a move that cannot finish", () => {
                     entry.action === "refuse" && entry.rule === "not-movable" && entry.path === entries[0]?.wanted.path
             )
         ).toBe(true);
+    });
+
+    /** Root's file in a sticky folder, as the move sees it: its rename fails until an administrator gave it away. */
+    function adminTakeover(rootOwned: string, answer: AdminTakeoverResult) {
+        const takes: string[][] = [];
+        let taken = false;
+        return {
+            takes,
+            takeover: {
+                needed: (target: RmTarget) => (target.path === rootOwned ? "it belongs to root" : null),
+                take: (paths: readonly string[]) => {
+                    takes.push([...paths]);
+                    taken = answer.ok;
+                    return answer;
+                },
+            },
+            hooks: {
+                beforeRename: () => {
+                    if (!taken) {
+                        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+                    }
+                },
+            },
+        };
+    }
+
+    test("root's file in a sticky folder moves once an administrator's password gave it to this user", () => {
+        const request = asideRequest("admin-takeover");
+        const entries = entriesOf(request);
+        const rootOwned = entries[0]?.target;
+        const seam = adminTakeover(rootOwned?.path ?? "", { ok: true });
+        const refused: string[] = [];
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (_entry, reason) => refused.push(reason),
+            adminTakeover: seam.takeover,
+            hooks: seam.hooks,
+        });
+
+        expect(refused).toEqual([]);
+        // One prompt for the batch, on the item's real path.
+        expect(seam.takes).toEqual([[rootOwned?.canonical ?? ""]]);
+        expect(batch?.items.map((item) => item.original)).toEqual(entries.map((entry) => entry.wanted.path));
+        expect(
+            readRmLedger().some((entry) => entry.action === "take-over" && entry.path === entries[0]?.wanted.path)
+        ).toBe(true);
+    });
+
+    test("a cancelled administrator's password keeps that file where it is; the rest of the batch moves", () => {
+        const request = asideRequest("admin-cancelled");
+        const entries = entriesOf(request);
+        const rootOwned = entries[0]?.target;
+        const seam = adminTakeover(rootOwned?.path ?? "", {
+            ok: false,
+            reason: "the administrator's password was not given",
+        });
+        const refused: Array<{ path: string; reason: string }> = [];
+        let renames = 0;
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (entry, reason) => refused.push({ path: entry.wanted.path, reason }),
+            adminTakeover: seam.takeover,
+            hooks: { beforeRename: () => renames++ },
+        });
+
+        expect(refused).toEqual([
+            {
+                path: entries[0]?.wanted.path ?? "",
+                reason: "only an administrator can move it, and the administrator's password was not given",
+            },
+        ]);
+        // It never reached its rename: nothing tried to move it without the password.
+        expect(renames).toBe(1);
+        expect(batch?.items.map((item) => item.original)).toEqual([entries[1]?.wanted.path]);
+        expect(existsSync(rootOwned?.path ?? "")).toBe(true);
+    });
+
+    test("a batch with nothing of root's never asks for an administrator's password", () => {
+        const request = asideRequest("admin-not-needed");
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entriesOf(request),
+            denied: [],
+            choices,
+            adminTakeover: {
+                needed: () => null,
+                take: () => {
+                    throw new Error("no administrator step for this user's own files");
+                },
+            },
+        });
+
+        expect(batch?.items).toHaveLength(2);
     });
 
     test("a move that stops halfway records what reached the trash, so those copies never read as lost", () => {

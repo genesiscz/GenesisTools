@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { genesisMdHandlerPath } from "@genesiscz/utils/app-links/open-file";
 import { APP_LINKS } from "@genesiscz/utils/app-links/targets";
 import { cmuxBinary, hasCapability, httpsHandler } from "@genesiscz/utils/browser-router/capabilities";
@@ -28,7 +29,8 @@ export type LinkProblem =
     | "not-https-handler"
     | "no-link-host"
     | "no-route"
-    | "target-missing";
+    | "target-missing"
+    | "path-missing";
 
 export interface LinkState {
     opens: boolean;
@@ -127,8 +129,34 @@ function missingTarget(decision: RouteDecision, facts: ProbeFacts): string | nul
     return null;
 }
 
-/** Whether a click on `url` opens what it names on this Mac, and why not. */
-export function linkState(url: string, facts: ProbeFacts): LinkState {
+/** The link paths that name a file or folder on this Mac, and the query key that holds it, read from APP_LINKS. */
+const FILE_LINKS = [
+    { path: APP_LINKS["genesis-md"].open.path({ path: "/" }), key: "path" },
+    { path: APP_LINKS.finder.reveal.path({ target: "/" }), key: "target" },
+].map(({ path, key }) => ({ pathname: `/${path.split("?")[0]}`, key }));
+
+/** The local file or folder a note or Finder link names, decoded as the router decodes it; null for other links. */
+export function linkedFile(url: string): string | null {
+    if (!URL.canParse(url)) {
+        return null;
+    }
+
+    const parsed = new URL(url);
+    const entry = FILE_LINKS.find((item) => item.pathname === parsed.pathname);
+
+    return entry ? parsed.searchParams.get(entry.key) : null;
+}
+
+/**
+ * Whether a click on `url` opens what it names on this Mac, and why not. `checkFile` also checks that the file or
+ * folder a note or Finder link names exists: one hand-typed letter in a percent-encoded path makes `open -R` fail
+ * with only a toast, while the route itself is fine. The probe's own sample links name no real file, so it is opt-in.
+ */
+export function linkState(
+    url: string,
+    facts: ProbeFacts,
+    { checkFile = false, exists = existsSync }: { checkFile?: boolean; exists?: (path: string) => boolean } = {}
+): LinkState {
     if (facts.platform !== "darwin") {
         return problem("not-darwin", "GenesisTools links open only on macOS");
     }
@@ -167,7 +195,17 @@ export function linkState(url: string, facts: ProbeFacts): LinkState {
 
     const missing = missingTarget(decision, facts);
 
-    return missing ? problem("target-missing", missing, action) : { opens: true, problem: null, reason: null, action };
+    if (missing) {
+        return problem("target-missing", missing, action);
+    }
+
+    const file = checkFile ? linkedFile(url) : null;
+
+    if (file !== null && !exists(file)) {
+        return problem("path-missing", `${file} does not exist on this Mac, so the click opens nothing`, action);
+    }
+
+    return { opens: true, problem: null, reason: null, action };
 }
 
 /** The probe of every part and link kind, from `facts` (read from this Mac when omitted). */

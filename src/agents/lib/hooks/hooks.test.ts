@@ -662,6 +662,8 @@ describe("the hook sections", () => {
             "longCommand",
             "corrected command",
             "contextCapPerSession",
+            "quietMinutes",
+            "metrics",
             "diff.enabled",
             "diff.maxFiles",
             "diff.standDownWhenNative",
@@ -2086,7 +2088,13 @@ describe("installHooks on a machine with no settings file", () => {
 });
 
 describe("hook state across processes", () => {
-    it("concurrent hooks of one session lose no counter bump", async () => {
+    /**
+     * A bump that waits longer than the state's lock budget (2 s) is skipped by design and logged as "Could not persist
+     * the hook state" with the LockTimeoutError. A loaded machine reaches that budget here: a worker that releases the
+     * lock takes it again at once while the others sleep between looks, so the last worker waits behind up to 30
+     * bumps. A lost update leaves no record, so the count plus the recorded skips is exactly 45 unless one was lost.
+     */
+    it("concurrent hooks of one session lose no counter bump: each is counted, or skipped on record", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-hook-state-"));
         const worker = join(import.meta.dir, "state.test-worker.ts");
         const startAt = String(Date.now() + 1000);
@@ -2104,7 +2112,26 @@ describe("hook state across processes", () => {
         }
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
-            expect(readContextCounts("sess-parallel")).toEqual({ "rule-x": 45 });
+            const log = defaultLogPath();
+            const diag = existsSync(log)
+                ? readFileSync(log, "utf8")
+                      .split("\n")
+                      .filter(Boolean)
+                      .map((line) => SafeJSON.parse(line, { strict: true }))
+                      .filter((record) => isJsonObject(record) && record.phase === "diag")
+                : [];
+            const skipped = diag.filter(
+                (record) =>
+                    record.reason === "Could not persist the hook state" &&
+                    typeof record.err === "string" &&
+                    record.err.startsWith("LockTimeoutError:")
+            );
+            const counted = readContextCounts("sess-parallel")["rule-x"] ?? 0;
+
+            expect({ bumps: counted + skipped.length, otherDiag: diag.length - skipped.length }).toEqual({
+                bumps: 45,
+                otherDiag: 0,
+            });
         });
     }, 30_000);
 
@@ -2121,7 +2148,7 @@ describe("hook state across processes", () => {
         };
         const expected: HookSessionState = {
             version: 2,
-            guard: { contextNotes: { "rule-x": 3 }, explained: {} },
+            guard: { contextNotes: { "rule-x": 3 }, explained: {}, seen: {} },
             decisions: {
                 stopBlocks: 1,
                 nudge: { blocks: 2, lastTurn: 77 },
@@ -2142,13 +2169,7 @@ describe("hook state across processes", () => {
             await bumpContextCounts("sess-old", ["rule-x"]);
 
             const written = SafeJSON.parse(readFileSync(path, "utf8"));
-            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {} } });
-            // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
-            expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
-            expect(
-                migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } })
-                    .guard.explained
-            ).toEqual({ main: { r: 5 } });
+            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {}, seen: {} } });
             expect(migrateHookState(written)).toEqual(written);
             // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
             expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
@@ -3206,4 +3227,22 @@ it("classifies Copilot hook spellings as Copilot callers and leaves turn and par
         expect(parsed).not.toHaveProperty("turnId");
         expect(parsed).not.toHaveProperty("parentAgentId");
     }
+});
+
+describe("what a hook process imports", () => {
+    // Regression test: the payload parser was wrapped by the profiler, whose import (its config, so `Storage`) was
+    // 27 ms of CPU in each hook process, before and after every Bash call (measured 2026-11-10).
+    it("keeps the profiler and its config out of the hooks that run on every tool call", async () => {
+        const bin = join(import.meta.dir, "..", "..", "bin");
+        const built = await Bun.build({
+            entrypoints: ["hook-pre.ts", "hook-diff-post.ts", "hook-guard.ts"].map((name) => join(bin, name)),
+            target: "bun",
+            metafile: true,
+            throw: false,
+        });
+        const files = Object.keys(built.metafile?.inputs ?? {});
+
+        expect(files.some((file) => file.endsWith("lib/hooks/payload.ts"))).toBe(true);
+        expect(files.filter((file) => /utils\/(?:profile|GenesisTools)\//.test(file))).toEqual([]);
+    });
 });

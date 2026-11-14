@@ -94,6 +94,24 @@ describe("collectAuthHealth", () => {
         expect(health.verdict).toBe("healthy");
     });
 
+    test("a sign-in error a later renew got past does not come back with an unrelated failure", () => {
+        const health = collectAuthHealth([
+            ...failedRenew(T0),
+            ...laterSuccess(T0 + 60 * 60_000),
+            ...transientFailure(T0 + 2 * 60 * 60_000),
+        ]);
+        const spaces = health.resources.find((r) => r.resource === SPACES);
+
+        expect(spaces?.errors).toEqual(expect.arrayContaining(["InteractionRequired", "network_error"]));
+        expect(spaces?.needsSignIn).toBe(false);
+        expect(health.verdict).not.toBe("needs-sign-in");
+    });
+
+    test("lines with no completed chat-token renew are no evidence, never healthy", () => {
+        const unrelated: WebLogLine = { message: "TelemetryService: flushed 12 events", at: T0 };
+        expect(collectAuthHealth([unrelated]).verdict).toBe("no-evidence");
+    });
+
     test("an old chat-list error is history, a recent one is a chat error with working tokens", () => {
         const end = T0 + 2 * 60 * 60_000;
         const old = collectAuthHealth([leftRailError(T0), ...laterSuccess(end)]);

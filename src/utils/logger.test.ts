@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("logger facade", () => {
     it("is a stable object whose identity never changes and is lazy", async () => {
@@ -104,6 +105,28 @@ describe("configureLogger in-place", () => {
 });
 
 describe("daily file sink", () => {
+    it("keeps the writer's pid: another process's pid passed in a record is written as targetPid", async () => {
+        const mod = await import("./logger");
+        const home = mkdtempSync(join(tmpdir(), "logger-pid-home-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const logger = mod.createLogger({ logToFile: true, minimalLevels: true });
+            logger.info({ pid: 424_242, port: 1 }, "PID_OF_A_CHILD");
+            logger.info({ pid: process.pid }, "PID_OF_ITSELF");
+        });
+
+        const dir = join(home, ".genesis-tools", "logs");
+        const lines = readdirSync(dir)
+            .flatMap((file) => readFileSync(join(dir, file), "utf8").split("\n"))
+            .filter((line) => line.includes("PID_OF_"));
+        const child = SafeJSON.parse(lines.find((line) => line.includes("PID_OF_A_CHILD")) ?? "{}", { strict: true });
+        const itself = SafeJSON.parse(lines.find((line) => line.includes("PID_OF_ITSELF")) ?? "{}", { strict: true });
+
+        expect(child).toMatchObject({ pid: process.pid, targetPid: 424_242, port: 1 });
+        expect(itself.pid).toBe(process.pid);
+        expect(itself.targetPid).toBeUndefined();
+    });
+
     it("follows GENESIS_TOOLS_HOME, so a logger built before the test sandbox never writes the real day log", async () => {
         const mod = await import("./logger");
         const earlyHome = mkdtempSync(join(tmpdir(), "logger-early-home-"));
