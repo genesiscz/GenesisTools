@@ -799,6 +799,27 @@ private func vaultDeny(_ reason: String) -> Never {
 
 @MainActor private let vaultPresenter = ApprovalPanelPresenter()
 
+/// Why an auto-allow rule lets the caller through without a window: a listed command first, else a trusted daemon. The
+/// caller audits, logs, notifies and answers the same way for both.
+private struct VaultAutoAllowDecision {
+    let auditDetail: String
+    let logText: String
+    let notify: () -> Void
+
+    static func of(caller: VaultCaller, settings: VaultAutoAllowSettings) -> VaultAutoAllowDecision? {
+        let trustedRoot = VaultAutoAllow.trustedRoot()
+        if let match = VaultAutoAllow.match(caller: caller, settings: settings, trustedRoot: trustedRoot) {
+            return VaultAutoAllowDecision(auditDetail: match.auditDetail, logText: "command=\(match.command) agent=\(match.agent)",
+                                          notify: { VaultAutoAllow.notify(match) })
+        }
+        if let daemon = VaultAutoAllow.daemon(caller: caller, settings: settings, trustedRoot: trustedRoot) {
+            return VaultAutoAllowDecision(auditDetail: "daemon: \(daemon)", logText: "daemon=\(daemon)",
+                                          notify: { VaultAutoAllow.notifyDaemon(daemon, everyHours: settings.daemonNotifyHours) })
+        }
+        return nil
+    }
+}
+
 func unlockVault(_ params: VaultUnlockParams) {
     let caller = VaultProcess.caller(getppid())
     let session = VaultSession.info(caller, claudeHome: (NSHomeDirectory() as NSString).appendingPathComponent(".claude"))
@@ -809,18 +830,10 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     // Before the remembered grants, so a listed command always leaves its audit line and notification.
     let autoAllow = VaultAutoAllowSettings.load()
-    let trustedRoot = VaultAutoAllow.trustedRoot()
-    if let match = VaultAutoAllow.match(caller: caller, settings: autoAllow, trustedRoot: trustedRoot) {
-        vaultAudit("auto-allowed", params: params, caller: caller, session: session, detail: match.auditDetail)
-        logClick("vault.unlock decision=allow auto-allow command=\(match.command) agent=\(match.agent)")
-        if autoAllow.notify { VaultAutoAllow.notify(match) }
-        emitVaultKey(remembered: false, params: params, caller: caller, session: session)
-    }
-
-    if let daemon = VaultAutoAllow.daemon(caller: caller, settings: autoAllow, trustedRoot: trustedRoot) {
-        vaultAudit("auto-allowed", params: params, caller: caller, session: session, detail: "daemon: \(daemon)")
-        logClick("vault.unlock decision=allow auto-allow daemon=\(daemon)")
-        if autoAllow.notify { VaultAutoAllow.notifyDaemon(daemon, everyHours: autoAllow.daemonNotifyHours) }
+    if let allow = VaultAutoAllowDecision.of(caller: caller, settings: autoAllow) {
+        vaultAudit("auto-allowed", params: params, caller: caller, session: session, detail: allow.auditDetail)
+        logClick("vault.unlock decision=allow auto-allow \(allow.logText)")
+        if autoAllow.notify { allow.notify() }
         emitVaultKey(remembered: false, params: params, caller: caller, session: session)
     }
 
