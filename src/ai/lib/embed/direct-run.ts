@@ -108,6 +108,23 @@ export async function relayLines(input: {
     });
 }
 
+/** How a child's stdout reaches this process's stdout when the child does not inherit it. */
+type StdoutRelay = (source: ReadableStream<Uint8Array>, sink: ByteSink) => Promise<void>;
+
+/** Line by line through `stdoutLines`, byte for byte with `relayStdout`, or none: the child inherits stdout. */
+function stdoutRelay(input: {
+    relayStdout?: boolean;
+    stdoutLines?: (line: string) => string;
+}): StdoutRelay | undefined {
+    const rewrite = input.stdoutLines;
+
+    if (rewrite) {
+        return (source, sink) => relayLines({ source, sink, rewrite });
+    }
+
+    return input.relayStdout ? relayBytes : undefined;
+}
+
 export interface DirectRunDeps {
     spawn(options: {
         cmd: string[];
@@ -161,7 +178,7 @@ export async function runBinaryDirect(
     deps: DirectRunDeps = defaultDeps
 ): Promise<number> {
     const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
-    const relayStdout = input.relayStdout === true || input.stdoutLines !== undefined;
+    const relayStdout = stdoutRelay(input);
     let proc: DirectChild | undefined;
     let pendingSignal: NodeJS.Signals | undefined;
     const forward = (signal: NodeJS.Signals) => {
@@ -202,13 +219,9 @@ export async function runBinaryDirect(
                       logger.warn({ error }, "[embed] stdin pump failed");
                   })
                 : undefined;
-        const stdoutLines = input.stdoutLines;
         const relay =
             relayStdout && proc.stdout instanceof ReadableStream
-                ? (stdoutLines
-                      ? relayLines({ source: proc.stdout, sink: deps.stdout(), rewrite: stdoutLines })
-                      : relayBytes(proc.stdout, deps.stdout())
-                  ).catch((error) => {
+                ? relayStdout(proc.stdout, deps.stdout()).catch((error) => {
                       logger.warn({ error }, "[embed] stdout relay failed");
                   })
                 : undefined;
