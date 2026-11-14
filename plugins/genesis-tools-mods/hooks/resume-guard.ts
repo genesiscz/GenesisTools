@@ -36,6 +36,7 @@ import {
     jsonOf,
     logMod,
     type ModsSettings,
+    serialByKey,
     settingsOf,
 } from "./shared";
 
@@ -484,29 +485,15 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
         return undefined;
     }
 
-    return oneAtATime(agent.id, () => decideFor(host, { agent, to, settings, log }));
+    return deciding.run(agent.id, () => decideFor(host, { agent, to, settings, log }));
 }
-
-/** Each agent's decision still running: a second send to the same agent waits for it, so it sees that refusal. */
-const deciding = new Map<string, Promise<unknown>>();
 
 /**
- * Runs `decide` after the decision before it for the same agent. The refusal is published after several awaits (the
- * transcript, the log, the report); two sends at once both read no refusal and both refused, and a retry made while
- * the first refusal was still being written was refused again.
+ * Each agent's decision still running: a second send to the same agent waits for it, so it sees that refusal. The
+ * refusal is published after several awaits (the transcript, the log, the report); two sends at once both read no
+ * refusal and both refused, and a retry made while the first refusal was still being written was refused again.
  */
-function oneAtATime<T>(agentId: string, decide: () => Promise<T>): Promise<T> {
-    const result = (deciding.get(agentId) ?? Promise.resolve()).then(decide);
-    const tail = result.catch(() => undefined);
-    deciding.set(agentId, tail);
-    void tail.then(() => {
-        if (deciding.get(agentId) === tail) {
-            deciding.delete(agentId);
-        }
-    });
-
-    return result;
-}
+const deciding = serialByKey<string>();
 
 /** The decision on one send to `agent`: the refusal text, or undefined to let it through. */
 async function decideFor(

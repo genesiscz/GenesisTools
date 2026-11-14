@@ -29,7 +29,7 @@ import {
 } from "./answers";
 import { liveAgo } from "./live";
 import { takesSeveral } from "./option-labels";
-import { type Feature, type Host, logMod, settingsOf } from "./shared";
+import { type Feature, type Host, logMod, serialByKey, settingsOf } from "./shared";
 import {
     actionRow,
     dimNote,
@@ -66,7 +66,7 @@ const localPick = new Map<number, string>();
  * Each decision's option press still running. The next press of the same decision waits for it, so it toggles the set
  * that press left: two quick presses on a and c staged `a`, then `c`, and the second write lost the first.
  */
-const pressing = new Map<number, Promise<void>>();
+const pressing = serialByKey<number>();
 
 /** A press on `letter` of a several-letter decision the log does not have: it only ticks, nothing reaches the prompt. */
 export function tickLocal(decision: Pick<ShownDecision, "n" | "options">, letter: string): string {
@@ -101,20 +101,6 @@ function logHasDraft(n: number): boolean {
     const logged = answersOf()?.decisions.find((decision) => decision.n === n);
 
     return Boolean(logged?.draftOption || logged?.draft);
-}
-
-/** Runs one option press of decision `n` after the press before it, whatever that one's outcome. */
-function afterPress(n: number, press: () => Promise<void>): Promise<void> {
-    const run = (pressing.get(n) ?? Promise.resolve()).then(press);
-    const tail = run.catch(() => undefined);
-    pressing.set(n, tail);
-    void tail.then(() => {
-        if (pressing.get(n) === tail) {
-            pressing.delete(n);
-        }
-    });
-
-    return run;
 }
 
 /**
@@ -400,7 +386,7 @@ function currentDecisions(): ShownDecision[] {
 
 /** Tests: settles once every option press started so far has finished. */
 export async function decisionPressesDone(): Promise<void> {
-    await Promise.all([...pressing.values()]);
+    await pressing.settled();
 }
 
 /** Tests: no chat read yet, no ticks, no press running. */
@@ -672,7 +658,7 @@ export function pressDecisionOption(
     decision: Pick<ShownDecision, "n" | "options" | "multiple" | "draftOption">,
     letter: string
 ): Promise<void> {
-    return afterPress(decision.n, () =>
+    return pressing.run(decision.n, () =>
         stageDecision(host, {
             decision,
             answer: { option: pickAfterPress({ ...decision, draftOption: stagedSetOf(decision.n) }, letter) },
