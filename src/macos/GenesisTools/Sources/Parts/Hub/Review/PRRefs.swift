@@ -343,7 +343,7 @@ enum PRRefMenu {
             }
         }
         let label = "\(target.label) \(info.title.prefix(40))"
-        return (["--review", "--repo", repo, "--pr", target.url, "--range", "\(base)..\(head)", "--label", label], nil)
+        return (ReviewLaunch.launchArguments(repo: repo, target: .range(base: base, head: head, label: label), pr: target.url), nil)
     }
 
     nonisolated private static func commitIsLocal(_ sha: String, repo: String) -> Bool {
@@ -472,7 +472,7 @@ enum CommitMenu {
     /// A review window on one commit. `--commit`, not `<sha>^..<sha>`: a root commit has no parent, and
     /// the commit scope diffs it against the empty tree.
     static func newWindowArguments(repo: String, sha: String, subject: String) -> [String] {
-        ["--review", "--repo", repo, "--commit", sha, "--label", subject]
+        ReviewLaunch.launchArguments(repo: repo, target: .commit(sha: sha, label: subject))
     }
 
     /// Blocking git: only from the detached task.

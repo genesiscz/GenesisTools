@@ -108,6 +108,47 @@ struct ReviewLaunch {
     }
 }
 
+extension ReviewLaunch {
+    /// What a `--review` window shows in its folder: the working tree, one commit, or a commit range.
+    enum Target: Equatable {
+        case folder
+        case commit(sha: String, label: String?)
+        case range(base: String, head: String, label: String?)
+    }
+
+    /// The target `init(_:)` read, by the rule `ReviewWindows.open` applies: a range wins over a commit.
+    var target: Target {
+        if let range {
+            return .range(base: range.base, head: range.head, label: rangeLabel)
+        }
+        if let commit, !commit.isEmpty {
+            return .commit(sha: commit, label: rangeLabel)
+        }
+        return .folder
+    }
+
+    /// The flags `init(_:)` reads back as the same folder, target, PR and proposal. A PR without a local
+    /// worktree appends `ReviewRemoteHead.launchArguments`.
+    static func launchArguments(repo: String, target: Target, pr: String? = nil, proposal: String? = nil) -> [String] {
+        var args = ["--review", "--repo", repo]
+        if let pr {
+            args += ["--pr", pr]
+        }
+        if let proposal {
+            args += ["--proposal", proposal]
+        }
+        switch target {
+        case .folder:
+            break
+        case .commit(let sha, let label):
+            args += ["--commit", sha] + (label.map { ["--label", $0] } ?? [])
+        case .range(let base, let head, let label):
+            args += ["--range", "\(base)..\(head)"] + (label.map { ["--label", $0] } ?? [])
+        }
+        return args
+    }
+}
+
 package func runReview(_ args: [String]) -> Never {
     let launch = ReviewLaunch(args)
     if launch.snapshotPath == nil, !reviewInstance.claim() {

@@ -1550,16 +1550,15 @@ final class PRsModel: ObservableObject {
     /// live threads and proposal. The hub keeps its own copy.
     func openInReviewWindow(_ pr: HubPR) {
         guard let review, let executable = Bundle.main.executableURL else { return }
-        var args = ["--review", "--repo", review.repo.path]
-        if case .ref(let ref) = Self.threadsTarget(pr, path: review.repo.path) {
-            args += ["--pr", ref]
+        var ref: String?
+        if case .ref(let threads) = Self.threadsTarget(pr, path: review.repo.path) {
+            ref = threads
         }
-        if let proposal = pr.proposal {
-            args += ["--proposal", proposal.path]
-        }
+        var target = ReviewLaunch.Target.folder
         if case .range(let base, let head, let label, _) = review.scope {
-            args += ["--range", "\(base)..\(head)", "--label", label]
+            target = .range(base: base, head: head, label: label)
         }
+        var args = ReviewLaunch.launchArguments(repo: review.repo.path, target: target, pr: ref, proposal: pr.proposal?.path)
         // No local worktree: the folder is on another branch, so the window opens the host's files and the PR's commits.
         if let remote = review.remoteHead {
             args += ReviewRemoteHead.launchArguments(branch: remote.branch, sha: remote.sha, base: remote.base, forge: pr.commitForge)

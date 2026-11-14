@@ -739,10 +739,7 @@
         "src/macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorModel.swift": 2,
         "src/macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorView.swift": 1
     },
-    "roster-swift-review-argv-outside-review-launch": {
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/PRRefs.swift": 2
-    },
+    "roster-swift-review-argv-outside-review-launch": {},
     "roster-swift-tools-server-client-outside-bridge": {},
     "roster-swift-unix-socket-outside-rpc-clients": {
         "native/ax-tool/SnapshotSupport/CursorReceipt.swift": 2,
