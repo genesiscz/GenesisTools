@@ -168,13 +168,19 @@ public struct FailureReport: Codable, Equatable, Sendable {
 
     // MARK: - Markdown
 
+    /// " (exit N)" after a command or a step that failed, empty without an exit status: the one spelling the agent
+    /// context, the steps and the "Actual" block share.
+    private var exitSuffix: String {
+        exitStatus.map { " (exit \($0))" } ?? ""
+    }
+
     /// A markdown block an agent can act on without asking: the issue body under a heading, then every environment
     /// fact `tools genesis-tools env` gave.
     public func agentContext(timeZone: TimeZone = .current) -> String {
         var text = "## \(app?.name ?? "GenesisTools") failure: \(headline)\n\n"
         text += "- **Issue title:** \(issueTitle)\n"
         if let command {
-            text += "- **Command:** `\(command)`" + (exitStatus.map { " (exit \($0))" } ?? "") + "\n"
+            text += "- **Command:** `\(command)`" + exitSuffix + "\n"
         }
         text += "\n" + issueBody(timeZone: timeZone)
         if let environment, !environment.fields.isEmpty, !environment.markdown.isEmpty {
@@ -245,7 +251,7 @@ public struct FailureReport: Codable, Equatable, Sendable {
         } else {
             lines.append("1. (what you did)")
         }
-        lines.append("2. It failed" + (exitStatus.map { " (exit \($0))" } ?? "") + ".")
+        lines.append("2. It failed" + exitSuffix + ".")
         return lines.joined(separator: "\n")
     }
 
@@ -261,7 +267,7 @@ public struct FailureReport: Codable, Equatable, Sendable {
             lines.append("tool: \(issueTool)" + (issue?.title.map { " (issue: \($0))" } ?? ""))
         }
         if let command {
-            lines.append("command: \(command)" + (exitStatus.map { " (exit \($0))" } ?? ""))
+            lines.append("command: \(command)" + exitSuffix)
         }
         if let logFile {
             lines.append("log: \(logFile)" + (logLine.map { " (from line \($0))" } ?? ""))
