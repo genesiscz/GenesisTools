@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
 import { Md } from "./md";
 import { type BodyContent, Card, CodeBlock } from "./primitives";
 
@@ -636,6 +636,7 @@ export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }
     const prefix = `uml-${useId().replace(/:/g, "")}`;
     const elements = new Map(model.elements.map((element) => [element.id, element]));
     const tab = `${model.type ?? "class"} ${model.name}`;
+    const description = useMemo(() => describeUmlModel(model), [model]);
     return (
         <svg
             viewBox={`0 0 ${model.width} ${model.height}`}
@@ -653,7 +654,7 @@ export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }
             }}
         >
             <title>{tab}</title>
-            <desc id={`${prefix}-desc`}>{describeUmlModel(model)}</desc>
+            <desc id={`${prefix}-desc`}>{description}</desc>
             <defs>
                 {(Object.keys(KEYWORDS) as UmlElementKind[]).map((kind) => {
                     const fill =
