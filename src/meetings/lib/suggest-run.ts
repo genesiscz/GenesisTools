@@ -251,24 +251,19 @@ export async function runSuggest(options: {
             const room = Math.max(0, config.global.suggest.questionCap - open.length);
 
             if (rules.includes("evidence") && room > 0) {
-                const draft = structuredClone(current);
                 const before = new Set(current.items.map((item) => item.id));
-                const quality = addQualityQuestions({
-                    record: draft,
-                    entries: meeting.transcript,
-                    longStretchWords: config.global.suggest.longStretchWords,
-                    below: Math.max(0.7, config.global.suggest.applyAbove),
-                    features,
-                    channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
-                });
-                const accepted = draft.items
-                    .filter((item) => item.kind === "question" && !before.has(item.id))
-                    .slice(0, room);
-                const keep = new Set(
-                    accepted.flatMap((item) => (item.kind === "question" ? [item.id, ...item.decides] : []))
+                const quality = new Set(
+                    addQualityQuestions({
+                        record: current,
+                        entries: meeting.transcript,
+                        longStretchWords: config.global.suggest.longStretchWords,
+                        below: Math.max(0.7, config.global.suggest.applyAbove),
+                        features,
+                        channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+                        limit: room,
+                    })
                 );
-                current.items = draft.items.filter((item) => before.has(item.id) || keep.has(item.id));
-                fresh.push(...current.items.filter((item) => quality.includes(item.id) && keep.has(item.id)));
+                fresh.push(...current.items.filter((item) => quality.has(item.id) && !before.has(item.id)));
             }
         });
     } finally {

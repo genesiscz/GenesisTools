@@ -30,6 +30,8 @@ export function addQualityQuestions(options: {
     below?: number;
     features?: readonly LineVoice[];
     channel?: number;
+    /** At most this many new questions; a question already on the record does not count. */
+    limit?: number;
 }): string[] {
     const lines = qualityLines(options.record, options.entries);
     const groups: Array<{ group: "spot-check" | "long-stretch"; parts: QualityLine[][] }> = [
@@ -54,6 +56,7 @@ export function addQualityQuestions(options: {
         },
     ];
     const ids: string[] = [];
+    let created = 0;
     for (const { group, parts } of groups) {
         for (const part of parts) {
             const confidence = part.reduce((lowest, line) => Math.min(lowest, line.confidence), 1);
@@ -71,6 +74,9 @@ export function addQualityQuestions(options: {
                 known.priority ??= 1;
                 known.confidence ??= confidence;
                 ids.push(known.id);
+                continue;
+            }
+            if (options.limit !== undefined && created >= options.limit) {
                 continue;
             }
             const decides: string[] = [];
@@ -117,6 +123,7 @@ export function addQualityQuestions(options: {
             });
             options.record.items.push(question);
             ids.push(question.id);
+            created++;
         }
     }
     return ids;
