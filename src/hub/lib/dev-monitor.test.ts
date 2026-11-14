@@ -525,6 +525,43 @@ describe("command deadlines", () => {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    test("a deadline written while the monitor waits out its interval is emitted before it stops", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-drain-"));
+        const sources = monitorFixtureSources(dir);
+        const batches: DevEvent[][] = [];
+        const controller = new AbortController();
+
+        try {
+            const run = runDevMonitor({
+                ...DEFAULT_CLASSIFY,
+                sources,
+                fromStart: false,
+                intervalMs: 60_000,
+                minDelayMs: 0,
+                signal: controller.signal,
+                emit: (events) => batches.push(events),
+            });
+            // The first read ends with the first save; from then on the monitor waits out its long interval.
+            const giveUpAt = Date.now() + 5000;
+
+            while (readMonitorState(sources.state) === null && Date.now() < giveUpAt) {
+                await Bun.sleep(20);
+            }
+
+            const firstSave = readMonitorState(sources.state)?.lastRunAt ?? "";
+            const writtenAt = Date.now();
+            appendFailure(failureRecord({}), sources.failuresDir);
+            controller.abort();
+            await run;
+
+            // The watermark of the first save is the start of its read, never later than the write it did not see.
+            expect(Date.parse(firstSave)).toBeLessThanOrEqual(writtenAt);
+            expect(batches.flat().map((event) => event.kind)).toEqual(["deadline"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe("the summary of what happened while no monitor ran", () => {
