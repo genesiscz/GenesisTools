@@ -3039,6 +3039,18 @@ describe("round 7 review regressions", () => {
         expect(result.stdout.toString()).toContain('"live-quarantine":1');
     });
 
+    test("reclaim lists an orphaned quarantine at the default age, since moving old entries into it made it new", () => {
+        const s = reclaimFixture();
+        const orphan = join(s.root, ".tmp-reclaim-999999999-Mn78Op");
+        fs.mkdirSync(orphan, { mode: 0o700 });
+        fs.writeFileSync(join(orphan, "0-moved-entry"), "fixture");
+        const result = s.execute([]);
+        expect({ code: result.exitCode, err: result.stderr.toString() }).toEqual({ code: 0, err: "" });
+        const planPath = /plan: (.+)/.exec(result.stdout.toString())?.[1] ?? "";
+        const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
+        expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toContain(orphan);
+    });
+
     test("reclaim takes a Claude session's scratch once its process exits, however recent its transcript", () => {
         const s = reclaimFixture();
         const running = "77777777-7777-4777-8777-777777777777";

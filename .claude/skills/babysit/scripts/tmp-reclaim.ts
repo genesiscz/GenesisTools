@@ -621,7 +621,9 @@ export function judge(
         return tree.refuse;
     }
 
-    if (Date.now() - tree.newest < minAgeHours * 3_600_000) {
+    // An orphaned quarantine holds entries that an earlier plan already chose under this age rule. Moving them in
+    // made the folder new, so its age says nothing; a file still open in it was refused above.
+    if (!QUARANTINE_NAME.test(name) && Date.now() - tree.newest < minAgeHours * 3_600_000) {
         return "recent";
     }
 
