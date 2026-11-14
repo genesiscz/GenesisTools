@@ -21,13 +21,16 @@ export interface FaceDeps {
     open(args: string[]): { status: number | null; stderr: string };
 }
 
+/** How long `open` may take to hand a face to Launch Services; a stalled one is killed and reported, not waited on. */
+const OPEN_TIMEOUT_MS = 15_000;
+
 export const LIVE_FACE_DEPS: FaceDeps = {
     status: () => appStatus(),
     build: async (part, progress) => {
         await buildApp({ ...progress, parts: { add: [part] } });
     },
     open: (args) => {
-        const result = spawnSync("open", args, { encoding: "utf8" });
+        const result = spawnSync("open", args, { encoding: "utf8", timeout: OPEN_TIMEOUT_MS, killSignal: "SIGKILL" });
         return { status: result.status, stderr: result.stderr || result.error?.message || "" };
     },
 };
