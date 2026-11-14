@@ -37,23 +37,9 @@ export function QueueSessionCard({
     const label = session.title ?? session.project ?? "Agent question";
     const send = useSendStaged((receipt) => onReceipt({ testID: `${testId}-receipt`, label, receipt }));
     // Decisions whose card holds a typed note that is not staged yet: Send stages it first, so it counts as staged.
-    const [typedNotes, setTypedNotes] = useState<ReadonlySet<number>>(() => new Set());
+    const [typedNotes, setTypedNotes] = useState<Readonly<Record<number, boolean>>>({});
     const reportNote = useCallback((number: number, typed: boolean) => {
-        setTypedNotes((current) => {
-            if (current.has(number) === typed) {
-                return current;
-            }
-
-            const next = new Set(current);
-
-            if (typed) {
-                next.add(number);
-            } else {
-                next.delete(number);
-            }
-
-            return next;
-        });
+        setTypedNotes((current) => ((current[number] ?? false) === typed ? current : { ...current, [number]: typed }));
     }, []);
     const staged = stagedOf(session, typedNotes).length;
     // Each decision card's flush, by number: Send saves every note being typed and waits for stages first.

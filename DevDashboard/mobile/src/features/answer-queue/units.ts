@@ -252,10 +252,10 @@ export function decisionsOf(session: WaitingSessionDto): WaitingDecisionDto[] {
  */
 export function stagedOf(
     session: WaitingSessionDto,
-    typedNotes: ReadonlySet<number> = new Set()
+    typedNotes: Readonly<Record<number, boolean>> = {}
 ): WaitingDecisionDto[] {
     return decisionsOf(session).filter(
-        (item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()) || typedNotes.has(item.number)
+        (item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()) || typedNotes[item.number] === true
     );
 }
 
