@@ -619,16 +619,9 @@ export interface CompressionFileEntry {
 }
 
 /** What the walker may leave out at discovery, so a broad root never returns every regular file. */
-export interface CompressionListBounds {
-    /** Smaller files are walked but not returned. */
-    minBytes?: number;
-    /** Only these extensions are returned (any case). */
-    exts?: string[];
-    /** Names with these prefixes are returned whatever their size or extension (transaction remnants). */
-    keepPrefixes?: string[];
-    /** Only UF_COMPRESSED files are returned. */
-    compressedOnly?: boolean;
-}
+export type CompressionListBounds = Partial<
+    Pick<ListBigFilesOptions, "minBytes" | "exts" | "keepPrefixes" | "compressedOnly">
+>;
 
 export async function listCompressionFiles(
     root: string,
@@ -642,13 +635,7 @@ export async function listCompressionListing(
     root: string,
     bounds: CompressionListBounds = {}
 ): Promise<{ entries: CompressionFileEntry[]; walked: number }> {
-    const result = await listBigFiles({
-        roots: [root],
-        minBytes: bounds.minBytes ?? 0,
-        exts: bounds.exts,
-        keepPrefixes: bounds.keepPrefixes,
-        compressedOnly: bounds.compressedOnly,
-    });
+    const result = await listBigFiles({ ...bounds, roots: [root], minBytes: bounds.minBytes ?? 0 });
 
     if (result.deniedDirs > 0 || result.readErrors > 0) {
         throw new Error("Compression listing is incomplete: unreadable directories");
