@@ -118,6 +118,12 @@ function gpxPoints(points: readonly { lat: number; lon: number }[]): string {
     return points.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}"/>`).join("\n");
 }
 
+/** One `<trk>` with a single segment: the route, or a jam with `type` "jam". */
+function gpxTrack(track: { name: string; points: readonly { lat: number; lon: number }[]; type?: string }): string {
+    const type = track.type ? `    <type>${xml(track.type)}</type>\n` : "";
+    return `  <trk>\n    <name>${xml(track.name)}</name>\n${type}    <trkseg>\n${gpxPoints(track.points)}\n    </trkseg>\n  </trk>`;
+}
+
 export function toGpx(input: ExportInput): string {
     const waypoints = input.alerts
         .map(
@@ -125,24 +131,14 @@ export function toGpx(input: ExportInput): string {
                 `  <wpt lat="${alert.lat}" lon="${alert.lon}">\n    <time>${new Date(alert.publishedAt).toISOString()}</time>\n    <name>${xml(alertName(alert))}</name>\n    <type>${xml(alert.category)}</type>\n  </wpt>`
         )
         .join("\n");
-    const jams = input.jams
-        .map(
-            (jam) =>
-                `  <trk>\n    <name>${xml(jamName(jam))}</name>\n    <type>jam</type>\n    <trkseg>\n${gpxPoints(jam.line)}\n    </trkseg>\n  </trk>`
-        )
-        .join("\n");
+    const jams = input.jams.map((jam) => gpxTrack({ name: jamName(jam), points: jam.line, type: "jam" })).join("\n");
     const desc = warningsText(input);
     // GPX 1.1 orders metadata as name, desc, ..., time.
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="GenesisTools waze" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata><name>${xml(`${input.from.label} → ${input.to.label}`)}</name>${desc ? `<desc>${desc}</desc>` : ""}<time>${new Date(input.generatedAt).toISOString()}</time></metadata>
 ${waypoints}
-  <trk>
-    <name>${xml(input.route.name)}</name>
-    <trkseg>
-${gpxPoints(input.route.coords)}
-    </trkseg>
-  </trk>
+${gpxTrack({ name: input.route.name, points: input.route.coords })}
 ${jams}
 </gpx>
 `;
