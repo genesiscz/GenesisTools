@@ -464,7 +464,10 @@ the rounds and lost review fixes in #733, #735 and #738; a merge commit replays 
    new head> --upstream <its parent's old head>` (the last parent head it merged). The rebase drops the merge commits
    and replays only the child's own commits; a conflict a merge commit resolved comes back, so resolve it the same way.
    Then `resolve-same.ts`, and `restack-verify.ts --reference <the child's pre-rebase head>` per branch: the old head
-   already holds every fix, so every dropped or changed file is a loss to restore before the push.
+   holds every fix of the child, so every dropped or changed file is a loss to restore before the push. It does NOT
+   hold the new base's changes: a resolution that restored the child's old copy of a file master also changed passes
+   as "equals reference". For each file in both `git diff <old base>..<new base>` and the child's own diff, compare
+   the result with the new base too (`git diff <new base> -- <file>` must show only the child's lines) before the push.
 3. **Push bottom-up, one branch at a time**, each with `--force-with-lease=<branch>:<old head>`, and push a child only
    after `gh pr view <parent> --json headRefOid` shows the parent's new head. GitHub records a PR's base commit when
    its head is pushed: a child pushed before its parent's new head exists records the parent's OLD tip, and its page

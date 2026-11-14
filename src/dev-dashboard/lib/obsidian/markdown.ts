@@ -119,9 +119,10 @@ const INLINE_TAG_RE = /^#([A-Za-z][\w/-]*)(?=$|[\s.,;:!?)\]])/;
 // [x](javascript:...) or ![y](data:text/html;...) would execute on the public,
 // auth-bypassed /share/:slug page. Allow only safe schemes + relative URLs.
 // An app deep link (`myapp://path`) only asks the OS to open an app, so any `scheme://` passes,
-// except the schemes a browser executes or loads itself.
+// except the schemes a browser executes or loads itself, and the handlers that act on the visitor's own machine
+// (a vault write through Obsidian's Advanced URI, a Shortcuts or Keyboard Maestro run): a public page must not carry them.
 const SAFE_LINK_SCHEME_RE =
-    /^(?:https?:|mailto:|tel:|#|\/|\.{1,2}\/|[^:]*$|(?!(?:javascript|vbscript|data|file|blob|filesystem):)[a-z][a-z0-9+.-]*:\/\/)/i;
+    /^(?:https?:|mailto:|tel:|#|\/|\.{1,2}\/|[^:]*$|(?!(?:javascript|vbscript|data|file|blob|filesystem|obsidian|shortcuts|raycast|alfred|hammerspoon|keyboardmaestro|x-callback-url):)[a-z][a-z0-9+.-]*:\/\/)/i;
 const SAFE_IMG_SRC_RE = /^(?:https?:|data:image\/(?:png|jpe?g|gif|webp|svg\+xml|avif);|#|\/|\.{1,2}\/|[^:]*$)/i;
 
 interface ImageSize {

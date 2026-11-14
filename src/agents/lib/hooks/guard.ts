@@ -320,6 +320,7 @@ export function evaluateGuard(
         }),
     });
 
-    // A firing that is all quiet still comes back, so the hook can count it; it shows nothing.
-    return verdict.outcome === "allow" && verdict.quieted.length === 0 ? null : verdict;
+    // A firing that shows nothing (all quiet, or a context rule past its session cap) still comes back, so the hook
+    // can count it; settleGuardVerdict keeps an allow verdict from producing output.
+    return verdict.outcome === "allow" && verdict.violations.length === 0 ? null : verdict;
 }

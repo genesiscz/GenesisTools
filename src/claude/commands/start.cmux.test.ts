@@ -262,6 +262,36 @@ describe("steer priority rewrite", () => {
         expect(ended).toBe(true);
     });
 
+    test("the line relay waits for a slow stdout flush, also for the last partial line", async () => {
+        const encoder = new TextEncoder();
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode("one\ntw"));
+                controller.enqueue(encoder.encode("o"));
+                controller.close();
+            },
+        });
+        const events: string[] = [];
+        let pending = 0;
+        let flushed = 0;
+        const sink = {
+            write: (chunk: Uint8Array) => {
+                pending++;
+                events.push(`write ${new TextDecoder().decode(chunk)}`);
+            },
+            flush: async () => {
+                await Bun.sleep(20);
+                flushed = pending;
+                events.push("flushed");
+            },
+        };
+
+        await relayLines({ source, sink, rewrite: (line) => line });
+        // Every write was flushed before the relay returned, and a write never ran ahead of the previous flush.
+        expect(flushed).toBe(pending);
+        expect(events).toEqual(["write one\n", "flushed", "flushed", "write two", "flushed"]);
+    });
+
     test("a child that exits while the host keeps stdin open cancels the pending read and closes its stdin", async () => {
         let cancelled = false;
         let ended = false;

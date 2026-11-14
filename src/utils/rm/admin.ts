@@ -157,8 +157,12 @@ function adminBlocker(input: {
         }
 
         const guarded = (above.mode & STICKY_BIT) !== 0 && entry.uid !== uid;
+        // Another user's folder lets its owner rename any entry, sticky or not, and a sticky folder lets an entry's owner
+        // rename it: neither is root, so either could redirect the later pathname-based chown during the prompt.
+        const otherOwner = above.uid !== 0 && above.uid !== uid;
+        const otherEntryOwner = child !== join(realFolder, name) && entry.uid !== 0 && entry.uid !== uid;
 
-        if (above.uid === uid || (facts.writable(dir) && !guarded)) {
+        if (above.uid === uid || otherOwner || otherEntryOwner || (facts.writable(dir) && !guarded)) {
             return ` (this user could replace ${child}: an administrator deletes it, e.g. with sudo)`;
         }
 
@@ -177,6 +181,12 @@ export function needsAdminReason(target: Pick<RmTarget, "path" | "kind">): strin
     return block.kind === "admin" ? block.reason : null;
 }
 
+export interface AdminTakeoverItem {
+    path: string;
+    /** `dev:ino` of the path as the person approved it, as `identityOf` reads it. */
+    identity: string | null;
+}
+
 export type AdminTakeoverResult = { ok: true } | { ok: false; reason: string };
 
 /**
@@ -186,16 +196,30 @@ export type AdminTakeoverResult = { ok: true } | { ok: false; reason: string };
 export interface AdminTakeover {
     /** Why `target` needs an administrator, or null. */
     needed(target: RmTarget): string | null;
-    /** Gives `paths` (real paths) to this user, with one administrator prompt for all of them. */
-    take(paths: readonly string[]): AdminTakeoverResult;
+    /**
+     * Gives `items` (real paths) to this user, with one administrator prompt for all of them. Each item carries the
+     * `dev:ino` identity that was approved: the privileged command checks it right before it changes the owner.
+     */
+    take(items: readonly AdminTakeoverItem[]): AdminTakeoverResult;
 }
 
 /** How long the administrator prompt may wait for the person. */
 const ADMIN_PROMPT_TIMEOUT_MS = 10 * 60_000;
 
-/** The osascript argv that asks for an administrator's password and gives `paths` to `uid`. */
-export function adminTakeoverCommand(paths: readonly string[], uid: number): string[] {
-    const command = shellCommandLine(["/usr/sbin/chown", "-h", String(uid), ...paths]);
+/**
+ * The osascript argv that asks for an administrator's password and gives `items` to `uid`. The shell line changes an
+ * owner only while `stat` (no symlink following) still prints the approved `dev:ino`, so a swap during the prompt makes
+ * it stop instead of handing over another file.
+ */
+export function adminTakeoverCommand(items: readonly AdminTakeoverItem[], uid: number): string[] {
+    const paths = items.map((item) => item.path);
+    const command = items
+        .map((item) => {
+            const stat = shellCommandLine(["/usr/bin/stat", "-f", "%d:%i", item.path]);
+            const expected = shellCommandLine([item.identity ?? "none"]);
+            return `[ "$(${stat})" = ${expected} ] && ${shellCommandLine(["/usr/sbin/chown", "-h", String(uid), item.path])}`;
+        })
+        .join(" && ");
     const what = paths.length === 1 ? (paths[0] ?? "") : formatCount(paths.length, "file");
     const prompt = `GenesisTools moves ${what} to its trash. Only root may move it: enter an administrator's password to give it to you first.`;
     return [
@@ -208,7 +232,8 @@ export function adminTakeoverCommand(paths: readonly string[], uid: number): str
 /** macOS: `chown -h` through `do shell script ... with administrator privileges`, the system's admin prompt. */
 export const MAC_ADMIN_TAKEOVER: AdminTakeover = {
     needed: (target) => needsAdminReason(target),
-    take: (paths) => {
+    take: (items) => {
+        const paths = items.map((item) => item.path);
         const inTest = testProcessReason();
 
         // A data-loss guard, as the trash's: a test never asks the person for a password or changes an owner.
@@ -222,7 +247,7 @@ export const MAC_ADMIN_TAKEOVER: AdminTakeover = {
             return { ok: false, reason: "this system has no user ids" };
         }
 
-        const argv = adminTakeoverCommand(paths, uid);
+        const argv = adminTakeoverCommand(items, uid);
         logger.info({ paths }, "rm: asking for an administrator's password to give root's files to this user");
         const proc = Bun.spawnSync(argv, {
             env: dialogEnvironment("/usr/bin:/bin"),

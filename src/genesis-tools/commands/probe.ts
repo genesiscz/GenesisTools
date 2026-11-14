@@ -92,7 +92,7 @@ function fixFor(kind: GenesisLinkKind | null, state: LinkState): string | null {
         case "target-missing":
             return kind === "md" ? "install Genesis Markdown" : null;
         case "path-missing":
-            return "copy the real path (ls, fd) and encode it with encodeURI; never type the percent codes by hand";
+            return "copy the real path (ls, fd) and encode it with encodeURIComponent (it also encodes + and #); never type the percent codes by hand";
     }
 }
 

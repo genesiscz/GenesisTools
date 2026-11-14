@@ -1128,6 +1128,14 @@ describe("git-commit-piped", () => {
         expect(ids('git commit -m "x" > /tmp/out.txt 2>&1; echo "exit $?"')).not.toContain(PIPED);
         expect(ids('set -o pipefail; git commit -m "x" | tail -1')).not.toContain(PIPED);
         expect(ids("git log -1 | tail -1")).not.toContain(PIPED);
+        expect(ids('set -eo pipefail; git commit -m "x" | tail -1')).not.toContain(PIPED);
+    });
+
+    it("the word pipefail in a message, a comment or a disabled option does not suppress the warning", () => {
+        expect(only('git commit -m "fix pipefail handling" | tail -1', PIPED)).toBeDefined();
+        expect(only('git commit -m "set -o pipefail" | tail -1', PIPED)).toBeDefined();
+        expect(only('git commit -m "x" | tail -1 # set -o pipefail', PIPED)).toBeDefined();
+        expect(only('set -o pipefail; set +o pipefail; git commit -m "x" | tail -1', PIPED)).toBeDefined();
     });
 });
 

@@ -1,6 +1,7 @@
 import { FABLE_EXHAUSTED_PCT, FABLE_LOW_PCT } from "./account-picker";
 import type { AccountUsage, UsageResponse } from "./api";
 import { effectiveLeftPct, extractCompactLimits } from "./compact-limits";
+import { planAllowsClaudeCode } from "./subscription";
 
 /**
  * Whether an account can still serve Fable, read from the warm usage cache —
@@ -121,8 +122,8 @@ export function deadBucketForAccount(
 /**
  * Accounts that can still run Fable AND have weekly headroom — the suggestion
  * list when the user declines a downgrade. Accounts with no usage data are
- * skipped (we can't vouch for them), and so is any account carrying an error
- * or the org-blocked flag: a dead account still holds a stale usage replay
+ * skipped (we can't vouch for them), and so is any account carrying an error,
+ * the org-blocked flag or a plan that cannot run Claude Code: a dead account still holds a stale usage replay
  * whose long-past reset reads as a full refill, which once made a canceled
  * subscription look like the way out.
  */
@@ -132,6 +133,7 @@ export function fableCapableAccounts(accounts: AccountUsage[], now: Date = new D
             (a) =>
                 !a.error &&
                 !a.orgBlocked &&
+                planAllowsClaudeCode(a) &&
                 a.usage &&
                 fableStatus(a.usage, now).available &&
                 hasWeeklyHeadroom(a.usage, now)

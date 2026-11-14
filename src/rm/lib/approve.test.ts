@@ -3255,8 +3255,8 @@ describe("a move that cannot finish", () => {
             takes,
             takeover: {
                 needed: (target: RmTarget) => (target.path === rootOwned ? "it belongs to root" : null),
-                take: (paths: readonly string[]) => {
-                    takes.push([...paths]);
+                take: (items: readonly { path: string; identity: string | null }[]) => {
+                    takes.push(items.map((item) => item.path));
                     taken = answer.ok;
                     return answer;
                 },
@@ -3328,6 +3328,30 @@ describe("a move that cannot finish", () => {
         expect(renames).toBe(1);
         expect(batch?.items.map((item) => item.original)).toEqual([entries[1]?.wanted.path]);
         expect(existsSync(rootOwned?.path ?? "")).toBe(true);
+    });
+
+    test("a file swapped after the approval never reaches the administrator step", () => {
+        const request = asideRequest("admin-swapped");
+        const entries = entriesOf(request);
+        const rootOwned = entries[0]?.target;
+        const seam = adminTakeover(rootOwned?.path ?? "", { ok: true });
+        const refused: string[] = [];
+
+        renameSync(rootOwned?.path ?? "", `${rootOwned?.path}.gone`);
+        writeFileSync(rootOwned?.path ?? "", "a stranger");
+        approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (_entry, reason) => refused.push(reason),
+            adminTakeover: seam.takeover,
+            hooks: seam.hooks,
+        });
+
+        expect(seam.takes).toEqual([]);
+        expect(refused[0]).toBe("only an administrator can move it, and another file or folder is there now");
     });
 
     test("a batch with nothing of root's never asks for an administrator's password", () => {

@@ -538,6 +538,14 @@ describe("probeGenesisTools", () => {
         expect(
             linkState(`https://${linkHost}/md/open?path=/notes/gone.md`, facts(), { checkFile: true, exists }).problem
         ).toBe("path-missing");
+        // A finder or note link with no target reveals nothing, and is not "opens".
+        expect(linkState(`https://${linkHost}/finder/reveal`, facts(), { checkFile: true, exists })).toMatchObject({
+            opens: false,
+            problem: "path-missing",
+        });
+        expect(linkState(`https://${linkHost}/md/open?path=`, facts(), { checkFile: true, exists }).problem).toBe(
+            "path-missing"
+        );
         // Without checkFile the route alone decides, as the whole-Mac probe needs for its sample links.
         expect(linkState(typo, facts(), { exists }).opens).toBe(true);
         expect(linkedFile(`https://${linkHost}/hub?pr=acme/app%231`)).toBeNull();
