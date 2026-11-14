@@ -1616,30 +1616,40 @@ for (const askRow of [false, true]) {
             return <Text>Bash(ls)</Text>;
         });
 
-        await $.tool.call({ tool: "Bash", command: "ls" });
-        expect(id).not.toBe("");
+        // A minute boundary between the call and the render would read "1m ago": hold the clock across both.
+        const realNow = Date.now;
+        const frozen = realNow();
+        Date.now = () => frozen;
 
-        const ui = await $.ui.mount({
-            plugin: "genesis-tools-mods",
-            surface: "terminal",
-            component: "ToolUse",
-            props: {
-                tool_use_id: id,
-                tool: "Bash",
-                input: { command: "ls" },
-                isRunning: false,
-                isErrored: false,
-                isInterrupted: false,
-            },
-            requestId: id,
-            viewport: { columns: 120, rows: 10 },
-        });
+        try {
+            await $.tool.call({ tool: "Bash", command: "ls" });
+            expect(id).not.toBe("");
 
-        const texts = (await ui.findAll({ type: "Text" })).map((text) => text.text ?? "");
+            const ui = await $.ui.mount({
+                plugin: "genesis-tools-mods",
+                surface: "terminal",
+                component: "ToolUse",
+                props: {
+                    tool_use_id: id,
+                    tool: "Bash",
+                    input: { command: "ls" },
+                    isRunning: false,
+                    isErrored: false,
+                    isInterrupted: false,
+                },
+                requestId: id,
+                viewport: { columns: 120, rows: 10 },
+            });
 
-        expect(texts.filter((text) => /^\d\d:\d\d:\d\d \(just now\)$/.test(text))).toHaveLength(1);
-        expect((await ui.find({ key: `ask-${id}` })) !== undefined).toBe(askRow);
-        await ui.unmount();
+            const texts = (await ui.findAll({ type: "Text" })).map((text) => text.text ?? "");
+
+            expect(texts.filter((text) => /^\d\d:\d\d:\d\d \(just now\)$/.test(text))).toHaveLength(1);
+            expect((await ui.find({ key: `ask-${id}` })) !== undefined).toBe(askRow);
+            await ui.unmount();
+        } finally {
+            Date.now = realNow;
+        }
+
         forgetSettings();
     });
 }
