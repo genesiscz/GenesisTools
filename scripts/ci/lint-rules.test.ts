@@ -68,6 +68,23 @@ describe("swift-hand-joined-genesis-tools", () => {
         ]);
     });
 
+    test("a .genesis-tools path built by concatenation or a tilde is flagged too", () => {
+        for (const source of [
+            'let path = NSHomeDirectory() + "/.genesis-tools/hub/widget/state.json"',
+            'let path = home + "/.genesis-tools"',
+            'let path = ("~/.genesis-tools/logs" as NSString).expandingTildeInPath',
+            'let url = URL(fileURLWithPath: "/.genesis-tools/logs")',
+        ]) {
+            expect({
+                source,
+                rules: checkSwiftSource("Sources/Host/Example.swift", source).map((f) => f.rule),
+            }).toEqual({
+                source,
+                rules: ["swift-hand-joined-genesis-tools"],
+            });
+        }
+    });
+
     test("the helper, a test, the helper call and the other .genesis tree pass", () => {
         expect(checkSwiftSource("Sources/GenesisKitBase/Paths/GenesisToolsHome.swift", join)).toEqual([]);
         expect(checkSwiftSource("Tests/GenesisKitTests/ExampleTests.swift", join)).toEqual([]);

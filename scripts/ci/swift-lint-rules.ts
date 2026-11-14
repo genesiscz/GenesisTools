@@ -958,16 +958,22 @@ export const SWIFT_PROCESS_TOOL_RULE: SwiftStructRule = {
 };
 export const SWIFT_PROCESS_TOOL = /"(?:\/usr)?\/s?bin\/(?:ps|lsof|pgrep)"/;
 /**
- * The call sites that existed when the rule came, with what bounds each. A new site needs its own reason in an
- * ignore comment; this list only shrinks.
+ * The call sites that existed when the rule came: how many launches each file may keep and what bounds them. A new
+ * site needs its own reason in an ignore comment; a file's count and this list only shrink.
  */
-export const SWIFT_PROCESS_TOOL_RATCHET = new Map<string, string>([
+export const SWIFT_PROCESS_TOOL_RATCHET = new Map<string, { sites: number; reason: string }>([
     [
         "src/macos/GenesisKit/Sources/GenesisKitBase/Perf/HangWatch.swift",
-        "at most once a minute, only after a main-thread stall, killed at 3 s, and ten minutes after a ps that failed; it needs other users' %cpu, which only the setuid ps reads",
+        {
+            sites: 1,
+            reason: "at most once a minute, only after a main-thread stall, killed at 3 s, and ten minutes after a ps that failed; it needs other users' %cpu, which only the setuid ps reads",
+        },
     ],
     [
         "src/macos/GenesisKit/Sources/GenesisKitDisk/Disk/DiskSystemProbes.swift",
-        "one fseventsd health read, off the main thread, 5 s timeout; no caller in the app on 2026-11-10; the kernel refuses this root daemon's usage to libproc",
+        {
+            sites: 1,
+            reason: "one fseventsd health read, off the main thread, 5 s timeout; no caller in the app on 2026-11-10; the kernel refuses this root daemon's usage to libproc",
+        },
     ],
 ]);

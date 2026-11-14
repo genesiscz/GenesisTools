@@ -36,6 +36,13 @@ describe("swift-no-process-tool-spawn", () => {
         ]);
     });
 
+    test("a listed file may keep its listed number of launches, and a new one fails", () => {
+        const [file, entry] = [...SWIFT_PROCESS_TOOL_RATCHET.entries()][0];
+        const source = Array.from({ length: entry.sites + 1 }, () => launch("/bin/ps")).join("\n");
+
+        expect(rules(file, source)).toEqual([`swift-no-process-tool-spawn:${2 * entry.sites + 2}`]);
+    });
+
     test("every listed file still exists, so the list can only shrink", () => {
         for (const file of SWIFT_PROCESS_TOOL_RATCHET.keys()) {
             expect(existsSync(join(import.meta.dir, "../..", file))).toBe(true);
