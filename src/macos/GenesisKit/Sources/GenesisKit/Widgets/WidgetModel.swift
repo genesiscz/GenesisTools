@@ -865,11 +865,14 @@ public final class WidgetModel: ObservableObject {
 
     /// Wait briefly for writes queued by stop, including a held staged discard. The app's quit deadline is 5 s.
     func waitForShutdownMutations(timeout: Duration = .seconds(4)) async -> Bool {
-        guard let pending = mutationTask else { return true }
+        guard mutationTask != nil || !decisions.writing.isEmpty else { return true }
         return await withCheckedContinuation { continuation in
             let completion = WidgetShutdownCompletion(continuation)
             Task { @MainActor in
-                await pending.value
+                // A write the staging engine starts (the held Discard `stop` sends) joins the queue of hub writes one
+                // turn later, so the engine's writes are waited for first.
+                await self.decisionWritesEnded()
+                await self.mutationTask?.value
                 completion.finish(true)
             }
             Task { @MainActor in
@@ -1540,27 +1543,21 @@ public final class WidgetModel: ObservableObject {
     /// runs (`heldDecisionIDs`). Every send, the leave question and the Review list read this, so a close that sends
     /// can never deliver an answer the user just discarded.
     public var stagedItems: [WidgetInboxItem] { stagedRows.filter { !heldDecisionIDs.contains($0.sourceId) } }
-    /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
-    @Published var pendingStage: [String: String] = [:]
-    /// Identifies the newest local mutation, so an older completion cannot erase it.
-    var pendingStageVersions: [String: UUID] = [:]
-    /// Keeps the version of an in-flight stage until its completion, even if a snapshot confirms it first.
-    var pendingStagesInFlight: Set<UUID> = []
-    /// When each `pendingStage` entry was asked for (epoch ms): `reconcileStaged` drops it once its row changed after
-    /// that, whatever the row now holds, or after `pendingStageLifetime`, so a pick another surface replaced or a
-    /// decision sent elsewhere stops showing the old pick (it stayed until the widget restarted).
-    var pendingStageAt: [String: Double] = [:]
+    /// The decision staging engine the hub's Inbox shares (`DecisionAnswering.Engine`): the picks, notes and clears
+    /// staged here that no snapshot shows yet (versioned, so an older write's answer cannot erase a newer pick), one
+    /// write queue per decision, the held Discard, and the confirmation by the next snapshot. It writes through this
+    /// model's queue of hub writes (`WidgetDecisionLog`).
+    private(set) lazy var decisions = makeDecisions()
+    var decisionChanges: AnyCancellable?
+    /// Work waiting until no write of the engine runs or waits (`whenDecisionWritesEnd`).
+    var afterDecisionWrites: [() -> Void] = []
     /// The item each pending pick was made on, so a leave or a popup's end right after the click still knows it.
     var pendingStageItems: [String: WidgetInboxItem] = [:]
-    /// Picks whose stage write got no answer from the hub in time. They stay shown, with Try again, until the user
-    /// stages, discards or retries them or a snapshot shows them; no clock drops them, because the hub never took them.
-    var pendingStageUnsaved: Set<String> = []
-    /// Notes waiting for their stage write and snapshot, distinct from an empty pick used to clear a stage.
-    var pendingStageNotes: [String: String] = [:]
-    /// When the hub confirmed each pending pick was written (epoch ms): a row written after it is another surface's.
-    var pendingStageDone: [String: Double] = [:]
+    /// Try again for each pending pick: the same stage once more, should its write get no answer from the hub.
+    var stageAgain: [String: () -> Void] = [:]
     /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
     @Published public var sendingDecisionIDs: Set<String> = []
+    /// The version of the pick each running send took (`decisions.version`): a newer one is staged again.
     var sendingStageVersions: [String: UUID] = [:]
     /// The question about staged decisions before the panel closes (`requestCollapse`).
     @Published public var stagedLeavePrompt = false
@@ -1570,8 +1567,10 @@ public final class WidgetModel: ObservableObject {
     var keptStaged: Set<String> = []
     /// A Discard of staged decisions held for its Undo (the leave question's Discard; `holdDiscard`): the ids leave
     /// every send at once (`heldDecisionIDs`), and the decision log hears of it when the Undo window ends.
-    @Published public internal(set) var heldDiscard: [String] = []
-    var discardTask: Task<Void, Never>?
+    public var heldDiscard: [String] {
+        guard case .unstage(let refs)? = decisions.heldActions()[Self.heldDiscardKey] else { return [] }
+        return refs.map(\.id)
+    }
     /// User edits and selections invalidate a send's pending automatic close, even if changed back afterwards.
     var sendCloseRevision = 0
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
@@ -2206,6 +2205,33 @@ public final class WidgetModel: ObservableObject {
             } catch {
                 failed?()
                 self.report(error)
+            }
+        }
+    }
+
+    /// One write of the decision staging engine (`WidgetDecisionLog`), in the queue of every hub write and with
+    /// `action`'s refresh and error line. Every outcome is an answer: with `keepsInput`, a call that got no answer
+    /// within `timeoutSeconds` is `.unanswered`, so the caller keeps the user's input and offers it again.
+    func decisionWrite(_ value: WidgetJSON, timeoutSeconds: Int = 120, keepsInput: Bool = false) async -> DecisionLogAnswer {
+        await withCheckedContinuation { continuation in
+            let previous = mutationTask
+            mutationTask = Task { [weak self] in
+                await previous?.value
+                guard let self else {
+                    continuation.resume(returning: .unanswered(seconds: 0))
+                    return
+                }
+                do {
+                    let result = try await self.call(value, timeoutSeconds: timeoutSeconds)
+                    continuation.resume(returning: .done(result))
+                    if self.settingsOnly { self.refreshSettings() }
+                } catch ToolsBridgeError.timeout(let seconds, _) where keepsInput {
+                    PerfLog.mark("widget.error tools call exceeded \(seconds)s; the input is kept")
+                    continuation.resume(returning: .unanswered(seconds: seconds))
+                } catch {
+                    self.report(error)
+                    continuation.resume(returning: .refused(error.localizedDescription, detail: nil))
+                }
             }
         }
     }

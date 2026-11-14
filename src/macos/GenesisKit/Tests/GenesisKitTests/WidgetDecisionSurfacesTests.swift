@@ -421,7 +421,8 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         defer { model.stop() }
         let fresh = WidgetInboxItem(id: "decision:d4", sourceId: "d4", kind: "decision", key: key + "1", at: 2,
                                     needsAnswer: true, title: "x", number: 4, options: Self.threeOptions, revision: 1)
-        model.markPending("d4", "a", item: fresh)
+        model.actionRunner = { _ in ["ok": true] }
+        model.stage(id: "d4", sessionId: "s1", revision: 1, option: "a", item: fresh)
         XCTAssertEqual(model.stagedItems.count, 1)
         XCTAssertEqual(model.stagedForLeave.count, 2)
         let renderer = ImageRenderer(content: WidgetStagedLeavePrompt(model: model)
@@ -674,8 +675,10 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         model.choose(item, option: "a")
         XCTAssertEqual(model.stagedOption("d15", stored: nil), "c", "a click on a ticked letter unticks it")
         await record.drain()
-        XCTAssertEqual(record.actions().map(\.action), ["ledger", "ledger", "ledger"])
-        XCTAssertEqual(record.actions().map(\.option), ["a", "ac", "c"])
+        // The staging engine (C19) writes the first tick at once and keeps only the newest of the ticks made while
+        // that write runs: the stored pick goes from a to c, the screen showed ac in between.
+        XCTAssertEqual(record.actions().map(\.action), ["ledger", "ledger"])
+        XCTAssertEqual(record.actions().map(\.option), ["a", "c"])
 
         let card = try XCTUnwrap(model.cards.first { $0.sourceId == "d15" })
         XCTAssertTrue(card.takesSeveral)

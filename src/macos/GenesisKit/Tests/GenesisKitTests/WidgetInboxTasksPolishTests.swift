@@ -1176,6 +1176,14 @@ final class WidgetStagingTests: XCTestCase {
         }
     }
 
+    /// A pick staged here through the staging engine, as the widget's clicks stage it: shown at once, its write runs
+    /// through `actionRunner` (the old `markPending` showed a pick with no write behind it).
+    private func stageHere(_ model: WidgetModel, _ id: String, _ option: String, item: WidgetInboxItem? = nil,
+                           note: String? = nil) {
+        model.stage(id: id, sessionId: "fixture-staged", revision: item?.revision ?? 1, option: option, note: note,
+                    item: item)
+    }
+
     private func journalRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-staging-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("native-submissions"),
@@ -1279,7 +1287,7 @@ final class WidgetStagingTests: XCTestCase {
 
         model.receive([try snapshot(draftOption: "a")])
         XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"])
-        XCTAssertTrue(model.pendingStage.isEmpty, "the snapshot now shows the pick")
+        XCTAssertTrue(model.decisions.pending.isEmpty, "the snapshot now shows the pick")
 
         model.expanded = .right
         model.requestCollapse()
@@ -1684,7 +1692,7 @@ final class WidgetStagingTests: XCTestCase {
         model.expanded = .right
         model.requestCollapse()
         XCTAssertTrue(model.stagedLeavePrompt)
-        model.markPending("d1", "a", item: WidgetModel.inboxItem(card))
+        stageHere(model, "d1", "a", item: WidgetModel.inboxItem(card))
         XCTAssertEqual(model.stagedForLeave.first?.draft, "a note", "a later pick keeps the pending note")
         model.discardStaged(["d1"])
         XCTAssertTrue(model.stagedForLeave.isEmpty, "a discard is not a note-only stage")
@@ -1723,14 +1731,15 @@ final class WidgetStagingTests: XCTestCase {
             }
             await fulfillment(of: [secondStarted], timeout: 1)
             XCTAssertEqual(model.stagedForLeave.first?.draft, "newer note", "the later stage stays visible")
-            XCTAssertNil(model.pendingStageDone[card.sourceId], "the earlier success cannot acknowledge the later write")
+            XCTAssertNil(model.decisions.pending[card.sourceId]?.doneAt,
+                         "the earlier success cannot acknowledge the later write")
             model.expanded = .right
             model.requestCollapse()
             XCTAssertTrue(model.stagedLeavePrompt, "an immediate leave still sees the pending note")
             model.afterMutations { finished.fulfill() }
             try XCTUnwrap(second).resume(returning: ["ok": true])
             await fulfillment(of: [finished], timeout: 1)
-            XCTAssertNotNil(model.pendingStageDone[card.sourceId], "the matching success acknowledges the note")
+            XCTAssertNotNil(model.decisions.pending[card.sourceId]?.doneAt, "the matching success acknowledges the note")
         }
     }
 
@@ -1793,7 +1802,7 @@ final class WidgetStagingTests: XCTestCase {
         var confirmed = item
         confirmed.draftOption = "a"
         model.reconcileStaged([confirmed])
-        XCTAssertNil(model.pendingStage[item.sourceId])
+        XCTAssertNil(model.decisions.pending[item.sourceId])
         try XCTUnwrap(held).resume(returning: ["ok": true])
         await fulfillment(of: [sent], timeout: 1)
     }
@@ -1874,7 +1883,7 @@ final class WidgetStagingTests: XCTestCase {
         model.afterMutations { finished.fulfill() }
         try XCTUnwrap(stage).resume(returning: ["ok": true])
         await fulfillment(of: [finished], timeout: 1)
-        XCTAssertNotNil(model.pendingStageDone[card.sourceId])
+        XCTAssertNotNil(model.decisions.pending[card.sourceId]?.doneAt)
     }
 
     func testSettledSnapshotBeforeOrAfterSendCallbackKeepsOutcome() async throws {
@@ -1939,35 +1948,41 @@ final class WidgetStagingTests: XCTestCase {
 
     /// Decision audit F10: a pick shown here gives way once its row is written after the pick landed, whatever the
     /// row holds, and a pick no snapshot confirms expires; it used to stay until the widget restarted.
-    func testAPendingPickGivesWayToANewerRowAndExpires() throws {
+    func testAPendingPickGivesWayToANewerRowAndExpires() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }
-        let now = Date().timeIntervalSince1970 * 1000
-        model.markPending("d1", "a")
-        model.pendingStageDone["d1"] = now - 1_000
+        model.actionRunner = { _ in ["ok": true] }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        stageHere(model, "d1", "a")
+        await model.decisionWritesEnded()
+        seconds += 1
         let row = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: key, at: 1,
-                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b", updatedAt: now - 1_500)
+                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b",
+                                  updatedAt: (seconds - 1.5) * 1000)
         model.reconcileStaged([row])
         XCTAssertEqual(model.stagedOption("d1", stored: "b"), "a", "a row from before the pick does not replace it")
         var newer = row
-        newer.updatedAt = now
+        newer.updatedAt = seconds * 1000
         model.reconcileStaged([newer])
         XCTAssertEqual(model.stagedOption("d1", stored: "b"), "b", "a row written after the pick landed is the truth")
 
-        model.markPending("d1", "a")
-        model.pendingStageAt["d1"] = now - 20_000
+        stageHere(model, "d1", "a")
+        seconds += 20
         model.reconcileStaged([])
-        XCTAssertEqual(model.pendingStage["d1"], "a",
+        XCTAssertEqual(model.decisions.pending["d1"]?.option, "a",
                        "a write the hub has not answered keeps its pick, so a slow hub does not make it go and come back")
-        model.pendingStageDone["d1"] = now - 20_000
+        await model.decisionWritesEnded()
+        seconds += 20
         model.reconcileStaged([])
-        XCTAssertNil(model.pendingStage["d1"], "a pick no snapshot confirmed in time after the hub took it stops showing")
-        XCTAssertTrue(model.pendingStageAt.isEmpty && model.pendingStageItems.isEmpty)
+        XCTAssertNil(model.decisions.pending["d1"], "a pick no snapshot confirmed in time after the hub took it stops showing")
+        XCTAssertTrue(model.pendingStageItems.isEmpty && model.stageAgain.isEmpty)
 
-        model.markPending("d1", "a")
-        model.pendingStageAt["d1"] = now - 70_000
-        model.reconcileStaged([])
-        XCTAssertNil(model.pendingStage["d1"], "a write that never answered stops showing its pick after a minute")
+        model.discardStaged(["d1"])
+        await model.decisionWritesEnded()
+        seconds += 70
+        model.reconcileStaged([row])
+        XCTAssertNil(model.decisions.pending["d1"], "a clear no snapshot shows stops showing after a minute")
     }
 
     /// 2026-11-10, a Mac at load 500: the write of a pick was killed at its 120 s limit and the pick was dropped, and
@@ -1985,51 +2000,49 @@ final class WidgetStagingTests: XCTestCase {
             if writes == 1 { throw ToolsBridgeError.timeout(seconds: WidgetModel.stageWriteTimeoutSeconds) }
             return ["ok": true]
         }
-        let unanswered = expectation(description: "the first write ended without an answer")
         model.choose(card, option: "a")
-        model.afterMutations { unanswered.fulfill() }
-        await fulfillment(of: [unanswered], timeout: 1)
+        await model.decisionWritesEnded()
         XCTAssertEqual(model.stagedOption(card.sourceId, stored: nil), "a", "a pick the hub did not answer stays shown")
         XCTAssertEqual(model.noticeAction?.title, "Try again")
         XCTAssertEqual(model.notice, "The hub did not answer within 30 seconds, so this pick is not saved yet. It stays here.")
 
-        model.pendingStageAt[card.sourceId] = Date().timeIntervalSince1970 * 1000 - 70_000
+        model.decisions.now = { Date().timeIntervalSince1970 + 70 }
         model.reconcileStaged([])
-        XCTAssertEqual(model.pendingStage[card.sourceId], "a", "no clock drops a pick the hub never took")
+        XCTAssertEqual(model.decisions.pending[card.sourceId]?.option, "a", "no clock drops a pick the hub never took")
 
-        let retried = expectation(description: "the second write was answered")
         model.noticeAction?.run()
-        model.afterMutations { retried.fulfill() }
-        await fulfillment(of: [retried], timeout: 1)
+        await model.decisionWritesEnded()
         XCTAssertEqual(writes, 2, "Try again writes the same pick once more")
-        XCTAssertNotNil(model.pendingStageDone[card.sourceId], "the answered write is acknowledged")
-        XCTAssertTrue(model.pendingStageUnsaved.isEmpty)
+        XCTAssertNotNil(model.decisions.pending[card.sourceId]?.doneAt, "the answered write is acknowledged")
+        XCTAssertEqual(model.decisions.pending[card.sourceId]?.unsaved, false)
     }
 
     /// A pick whose write still runs (queued behind another call to the hub) keeps showing past the minute.
     func testAPickWhoseStageWriteStillRunsDoesNotExpire() throws {
         let model = StagingFixture.model()
         defer { model.stop() }
-        let version = model.markPending("d1", "a")
-        model.pendingStagesInFlight.insert(version)
-        model.pendingStageAt["d1"] = Date().timeIntervalSince1970 * 1000 - 70_000
+        model.actionRunner = { _ in ["ok": true] }
+        stageHere(model, "d1", "a")
+        XCTAssertTrue(model.decisions.isWriting("d1"), "the write has not run yet")
+        model.decisions.now = { Date().timeIntervalSince1970 + 70 }
         model.reconcileStaged([])
-        XCTAssertEqual(model.pendingStage["d1"], "a")
+        XCTAssertEqual(model.decisions.pending["d1"]?.option, "a")
     }
 
     /// Decision audit F16: Esc right after a pick, before any snapshot lists it, still asks about it.
     func testANewerStageDuringASendAsksOnLeave() throws {
         let model = StagingFixture.model()
         defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
         model.receive([try snapshot(draftOption: nil)])
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
-        let old = model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "first")
+        stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "first")
         model.sendingDecisionIDs.insert(card.sourceId)
-        model.sendingStageVersions[card.sourceId] = old
+        model.sendingStageVersions[card.sourceId] = model.decisions.version(card.sourceId)
         model.keptStaged.insert(card.sourceId)
         XCTAssertTrue(model.stagedForLeave.isEmpty)
-        model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "newer")
+        stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "newer")
         XCTAssertEqual(model.stagedForLeave.first?.draft, "newer")
         model.expanded = .right
         model.requestCollapse()
@@ -2076,7 +2089,7 @@ final class WidgetStagingTests: XCTestCase {
         await fulfillment(of: [started], timeout: 1)
         let observation = model.$sendingDecisionIDs.dropFirst().filter(\.isEmpty).prefix(1).sink { _ in finished.fulfill() }
         defer { observation.cancel() }
-        model.markPending(card.sourceId, "b", item: WidgetModel.inboxItem(card), note: "new answer")
+        stageHere(model, card.sourceId, "b", item: WidgetModel.inboxItem(card), note: "new answer")
         model.expanded = .right
         model.requestCollapse()
         XCTAssertEqual(model.expanded, .right)
@@ -2107,12 +2120,12 @@ final class WidgetStagingTests: XCTestCase {
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
         XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"], "a staged pick before its send")
-        model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card))
+        stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card))
         model.sendStaged([card.sourceId])
         await fulfillment(of: [started], timeout: 1)
         XCTAssertTrue(model.stagedForLeave.isEmpty, "a decision on its way is not staged")
         model.receive([try snapshot(draftOption: "a")])
-        XCTAssertNil(model.pendingStage[card.sourceId], "the snapshot confirmed the local stage")
+        XCTAssertNil(model.decisions.pending[card.sourceId], "the snapshot confirmed the local stage")
         XCTAssertTrue(model.stagedForLeave.isEmpty, "confirmation preserves the identity of the stage being sent")
         model.expanded = .right
         model.requestCollapse()
@@ -2426,7 +2439,7 @@ final class WidgetStagingTests: XCTestCase {
         // Since decision audit F8 (2026-10-27) a send at once stages the pick and sends it staged, as Send now does:
         // the outbox it used before dropped the staged note.
         XCTAssertEqual(names(actions).filter { $0 != "selection" }, ["ledger", "send-staged"])
-        XCTAssertNil(model.pendingStage["d1"])
+        XCTAssertNil(model.decisions.pending["d1"])
     }
 
     /// Several decision rows can be open at once: a click on one row's option answers that row's decision, not the

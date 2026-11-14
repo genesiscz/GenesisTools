@@ -1657,11 +1657,12 @@ final class WidgetLedgerUndo: ObservableObject {
         let revision: Int
     }
 
+    /// The change itself waits in the model's staging engine (`WidgetModel.decisions`, under the card's id); this keeps
+    /// what ends the wait and what the card shows meanwhile.
     private struct Hold {
         let move: Move
         /// The decision's id in the log: held, it leaves every staged send (`WidgetModel.heldDecisionIDs`).
         let sourceId: String
-        let request: WidgetJSON
         let note: String
         /// Kept until the change is sent, so a panel's model that goes away still sends it.
         let model: WidgetModel
@@ -1674,7 +1675,7 @@ final class WidgetLedgerUndo: ObservableObject {
     private var holds: [String: Hold] = [:]
     /// Changes handed to the model's queue and not answered yet: a quit sends them again, because that queue never
     /// runs again. A second copy finds the item already moved and changes nothing.
-    private var sending: [String: (request: WidgetJSON, bridge: ToolsBridge)] = [:]
+    private var sending: [String: (action: DecisionLogAction, bridge: ToolsBridge)] = [:]
     /// The quit observer of the shared instance, which lives as long as the app.
     private var quitObserver: NSObjectProtocol?
 
@@ -1702,14 +1703,11 @@ final class WidgetLedgerUndo: ObservableObject {
         let id = card.id
         let move = Move(state: state, revision: revision)
         let note = Self.note(card, state: state)
-        var hold = Hold(
-            move: move,
-            sourceId: card.sourceId,
-            request: .object([
-                "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(session),
-                "expectedRevision": .number(Double(revision)), "state": .string(state),
-            ]),
-            note: note, model: model)
+        let address = DecisionAddress(id: card.sourceId, sessionId: session, revision: revision)
+        var hold = Hold(move: move, sourceId: card.sourceId, note: note, model: model)
+        model.decisions.hold(id, .move(address, state: state), ended: { [weak self] answer in
+            self?.ended(id, move: move, sourceId: card.sourceId, model: model, answer)
+        })
         moves[id] = move
         // Folded, the card is no longer the decision the number keys and the composer answer.
         GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.insert(id) }
@@ -1745,28 +1743,32 @@ final class WidgetLedgerUndo: ObservableObject {
         let model = hold.model
         // Its Undo could not take the change back any more.
         if model.notice == hold.note { model.notice = nil }
-        sending[id] = (hold.request, model.bridge)
-        model.action(hold.request, failed: { [weak self] in
-            self?.sending[id] = nil
+        if let action = model.decisions.heldActions()[id] { sending[id] = (action, model.bridge) }
+        model.decisions.commit(id)
+    }
+
+    /// The log answered a committed change.
+    private func ended(_ id: String, move: Move, sourceId: String, model: WidgetModel, _ answer: DecisionLogAnswer) {
+        sending[id] = nil
+        guard case .done = answer else {
             // The log refused it (the item changed elsewhere): the card shows its real state again, and the error
             // line says why.
-            if self?.moves[id] == hold.move {
+            if moves[id] == move {
+                moves[id] = nil
+                model.heldCardIDs.remove(id)
+                model.heldDecisionIDs.remove(sourceId)
+            }
+            return
+        }
+        // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            if self?.moves[id] == move {
                 self?.moves[id] = nil
                 model.heldCardIDs.remove(id)
-                model.heldDecisionIDs.remove(hold.sourceId)
+                model.heldDecisionIDs.remove(sourceId)
             }
-        }, completed: { [weak self] in
-            self?.sending[id] = nil
-            // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                if self?.moves[id] == hold.move {
-                    self?.moves[id] = nil
-                    model.heldCardIDs.remove(id)
-                    model.heldDecisionIDs.remove(hold.sourceId)
-                }
-            }
-        })
+        }
     }
 
     private func undo(_ id: String, reduceMotion: Bool) {
@@ -1775,6 +1777,7 @@ final class WidgetLedgerUndo: ObservableObject {
         hold.deadline?.cancel()
         moves[id] = nil
         let model = hold.model
+        model.decisions.undo(id)
         model.heldCardIDs.remove(id)
         model.heldDecisionIDs.remove(hold.sourceId)
         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
@@ -1786,13 +1789,15 @@ final class WidgetLedgerUndo: ObservableObject {
     /// main thread, and the quit waits for them up to `quitWait`. The `ledger` action reads the decision log itself,
     /// so it needs no widget state root.
     private func sendBeforeQuit() {
-        let held = holds.values.map { (request: $0.request, bridge: $0.model.bridge) }
+        let held = holds.compactMap { id, hold in
+            hold.model.decisions.heldActions()[id].map { (action: $0, bridge: hold.model.bridge) }
+        }
         for hold in holds.values {
             hold.watch?.cancel()
             hold.deadline?.cancel()
         }
         holds.removeAll()
-        let work = held + Array(sending.values)
+        let work = (held + Array(sending.values)).map { (request: WidgetDecisionLog.request($0.action), bridge: $0.bridge) }
         sending.removeAll()
         guard !work.isEmpty else { return }
         let done = DispatchSemaphore(value: 0)

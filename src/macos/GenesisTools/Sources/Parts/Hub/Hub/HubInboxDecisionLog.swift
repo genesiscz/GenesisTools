@@ -11,7 +11,9 @@ final class HubInboxDecisionLog: DecisionLog {
 
     func run(_ action: DecisionLogAction) async -> DecisionLogAnswer {
         let capture = capture
-        let commands = Self.arguments(action)
+        guard let commands = Self.arguments(action) else {
+            return .refused("the hub Inbox cannot change this item that way.", detail: nil)
+        }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let span = HubPerf.begin("inbox.draft")
@@ -36,9 +38,12 @@ final class HubInboxDecisionLog: DecisionLog {
     }
 
     /// The `tools` commands of one action: a stage is one `question inbox draft`, an unstage one per decision with the
-    /// pick and the note cleared, a dismiss one `question inbox dismiss`.
-    nonisolated static func arguments(_ action: DecisionLogAction) -> [[String]] {
+    /// pick and the note cleared, a dismiss one `question inbox dismiss`. Nil for a move the Inbox has no command for
+    /// (a task's Mark complete is the widget's).
+    nonisolated static func arguments(_ action: DecisionLogAction) -> [[String]]? {
         switch action {
+        case .move(let address, let state):
+            return state == "dismissed" ? arguments(.dismiss(address)) : nil
         case .stage(let address, let option, let note):
             return draft(address, option: option, note: note).map { [$0] } ?? []
         case .unstage(let addresses):

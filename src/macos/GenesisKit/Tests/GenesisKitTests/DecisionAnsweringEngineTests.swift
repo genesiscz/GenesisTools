@@ -42,7 +42,7 @@ private final class FakeDecisionLog: DecisionLog {
             rows[ref.id] = row
         case .unstage(let refs):
             for ref in refs { rows[ref.id] = Row(updatedAt: clockMs) }
-        case .dismiss(let ref):
+        case .dismiss(let ref), .move(let ref, _):
             rows[ref.id, default: Row()].dismissed = true
         }
         return answer
@@ -152,6 +152,52 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         engine.reconcile(log.snapshot())
         XCTAssertNil(engine.pending[ref.id])
         XCTAssertEqual(log.rows[ref.id], .init(option: "ac", note: "both", updatedAt: log.clockMs))
+    }
+
+    /// The widget's rules the engine took over (C19 second half): a write queued behind a refused one keeps its own
+    /// work, a newer change is told from an older one past a snapshot's confirmation, a refused clear shows the stored
+    /// pick again, and a dismiss queued behind a stage is never replaced by a later stage.
+    func testARefusedWriteKeepsTheWorkOfTheWriteQueuedBehindIt() async {
+        let log = FakeDecisionLog()
+        log.holdNext = true
+        log.answers = [.refused("DECISION 4 changed", detail: nil)]
+        let engine = engine(log)
+        var sent: [String] = []
+        let first = engine.stage(ref, option: "a", note: nil, then: { sent.append("a") })
+        await settle()
+        let second = engine.stage(ref, option: "b", note: nil, then: { sent.append("b") })
+        XCTAssertNotEqual(first, second)
+        engine.reconcile([ref.id: .init(option: "b", note: nil)])
+        XCTAssertNil(engine.pending[ref.id], "the snapshot confirmed the newer pick while its write waits")
+        XCTAssertEqual(engine.version(ref.id), second, "the version outlives the confirmation while a write runs")
+        log.release()
+        await settle()
+        XCTAssertEqual(sent, ["b"], "the refused write dropped its own send, not the one queued behind it")
+        XCTAssertNil(engine.version(ref.id), "no write and no pending pick: nothing to tell apart any more")
+
+        let other = DecisionAddress(id: "d_5_s1", sessionId: "s1", number: 5)
+        log.answers = [.refused("no such decision", detail: nil)]
+        engine.unstage([other])
+        XCTAssertEqual(engine.letters(other.id, stored: "c"), "")
+        await settle()
+        XCTAssertEqual(engine.letters(other.id, stored: "c"), "c", "a refused clear shows the stored pick again")
+
+        log.holdNext = true
+        engine.stage(ref, option: "a", note: nil)
+        await settle()
+        engine.hold("card", .move(ref, state: "dismissed"))
+        engine.commit("card")
+        engine.stage(ref, option: "c", note: nil)
+        engine.hold(ref.id, .move(ref, state: "implemented"))
+        engine.commit(ref.id)
+        engine.stage(ref, option: "d", note: nil)
+        engine.stage(ref, option: "e", note: nil)
+        log.release()
+        await settle()
+        XCTAssertEqual(log.actions.suffix(5), [.stage(ref, option: "a", note: nil), .move(ref, state: "dismissed"),
+                                                .stage(ref, option: "c", note: nil), .move(ref, state: "implemented"),
+                                                .stage(ref, option: "e", note: nil)],
+                       "a move keeps its place in the queue; a stage replaces only the stage waiting right before it")
     }
 
     func testANoteKeepsThePickOfTheWriteBeforeIt() {

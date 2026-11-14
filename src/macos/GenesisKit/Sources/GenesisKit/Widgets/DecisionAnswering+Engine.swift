@@ -32,6 +32,9 @@ public enum DecisionLogAction: Equatable, Sendable {
     case unstage([DecisionAddress])
     /// Drops a decision that no longer matters, without sending anything.
     case dismiss(DecisionAddress)
+    /// Moves the decision log's item to `state` at the address's revision: the widget's Dismiss ("dismissed") and a
+    /// task's Mark complete ("implemented"), both held for their Undo. The hub's Inbox only dismisses.
+    case move(DecisionAddress, state: String)
 
     /// A note-only stage queued behind an earlier stage keeps that stage's letters: it replaces the queued write, and
     /// the running one may still fail. A newer pick wins, and nothing else takes letters.
@@ -51,8 +54,8 @@ public enum DecisionLogAnswer: Equatable, Sendable {
     case unanswered(seconds: Int)
 }
 
-/// One surface's door to the decision log. The widget's runs the action on its live connection (`WidgetModel.action`);
-/// the hub's Inbox runs `tools` (`HubInboxDecisionLog`).
+/// One surface's door to the decision log. The widget's runs the action in its own queue of hub writes
+/// (`WidgetDecisionLog`); the hub's Inbox runs `tools` (`HubInboxDecisionLog`).
 @MainActor
 public protocol DecisionLog: AnyObject {
     func run(_ action: DecisionLogAction) async -> DecisionLogAnswer
@@ -116,20 +119,32 @@ extension DecisionAnswering {
         public var written: ((String, DecisionLogAction, DecisionLogAnswer) -> Void)?
         /// Called when the last queued write of a decision ended, before the work that waited for it.
         public var drained: ((String) -> Void)?
+        /// The clock of `Pending.askedAt` and `doneAt`, in seconds since 1970; a test moves it.
+        var now: () -> TimeInterval
 
         private struct Write {
             var action: DecisionLogAction
-            var version: UUID?
+            /// The pending entry of each decision the write changes (its id to its version): a landed stage starts its
+            /// confirmation clock, and a refused write takes the entries back, unless a newer change replaced them.
+            var versions: [String: UUID] = [:]
+            /// Work that waits for this write (a send at once waits for its pick); dropped when it fails.
+            var then: [() -> Void] = []
+            /// The answer to this write, for the surface that held it (`hold`) or cleared it (`unstage`).
+            var ended: ((DecisionLogAnswer) -> Void)?
         }
 
         private let log: DecisionLog
         private let clock: any Clock<Duration>
-        private let now: () -> TimeInterval
         private var running: [String: Write] = [:]
-        private var queued: [String: Write] = [:]
-        /// Work waiting for a decision's writes to land (a send at once waits for its pick); dropped when one fails.
+        /// Writes waiting behind the running one, oldest first. A stage queued behind a waiting stage replaces it.
+        private var queued: [String: [Write]] = [:]
+        /// Work whose write landed, waiting for the decision's last write; a later failed write drops it too.
         private var afterWrites: [String: [() -> Void]] = [:]
-        private var holds: [String: (action: DecisionLogAction, task: Task<Void, Never>?)] = [:]
+        /// The newest change made here for each decision. It outlives the pending entry while a write of the decision
+        /// runs or waits, so work that waited for a write can tell whether a newer change came meanwhile.
+        private var versions: [String: UUID] = [:]
+        private var holds: [String: (action: DecisionLogAction, task: Task<Void, Never>?,
+                                     ended: ((DecisionLogAnswer) -> Void)?)] = [:]
 
         public init(log: DecisionLog, clock: any Clock<Duration> = ContinuousClock(),
                     now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 }) {
@@ -153,29 +168,54 @@ extension DecisionAnswering {
             running[id] != nil || queued[id] != nil
         }
 
-        /// Stages `option` and `note` for `ref`, shown at once. `then` runs once every write of the decision landed
-        /// (a send at once waits for its pick); a failed write drops it, so a send never sends what was stored before.
-        public func stage(_ ref: DecisionAddress, option: String?, note: String?, then: (() -> Void)? = nil) {
+        /// The version of the newest change made here for `id` (the one `stage` returned), while it shows as pending
+        /// or a write of the decision runs. A surface compares it to tell its own change from a newer one.
+        public func version(_ id: String) -> UUID? {
+            versions[id]
+        }
+
+        /// Stages `option` and `note` for `ref`, shown at once, and returns the change's version. `then` runs once
+        /// this write and every write of the decision before it landed (a send at once waits for its pick); a failed
+        /// write drops it, so a send never sends what was stored before. Work of a write queued behind a failed one
+        /// waits for its own write.
+        @discardableResult
+        public func stage(_ ref: DecisionAddress, option: String?, note: String?, then: (() -> Void)? = nil) -> UUID {
             let previous = pending[ref.id]
             let version = UUID()
             pending[ref.id] = Pending(option: option ?? previous?.option, note: note ?? previous?.note, version: version,
                                       askedAt: now())
-            if let then { afterWrites[ref.id, default: []].append(then) }
-            write(ref.id, Write(action: .stage(ref, option: option, note: note), version: version))
+            versions[ref.id] = version
+            write(ref.id, Write(action: .stage(ref, option: option, note: note), versions: [ref.id: version],
+                                then: then.map { [$0] } ?? []))
+            return version
         }
 
-        /// Takes `refs` out of every send at once. A clear (`""`) is pending until a snapshot shows it.
-        public func unstage(_ refs: [DecisionAddress]) {
+        /// Takes `refs` out of every send at once. A clear (`""`) is pending until a snapshot shows it; a refused one
+        /// shows the stored pick again. `ended` gets the log's answer.
+        public func unstage(_ refs: [DecisionAddress], ended: ((DecisionLogAnswer) -> Void)? = nil) {
             guard let first = refs.first else { return }
+            var cleared: [String: UUID] = [:]
             for ref in refs {
-                pending[ref.id] = Pending(option: "", note: "", version: UUID(), askedAt: now())
+                let version = UUID()
+                pending[ref.id] = Pending(option: "", note: "", version: version, askedAt: now())
+                versions[ref.id] = version
+                cleared[ref.id] = version
             }
-            write(first.id, Write(action: .unstage(refs), version: nil))
+            write(first.id, Write(action: .unstage(refs), versions: cleared, ended: ended))
+        }
+
+        /// The pick staged here as `version` went out with a send: it stops showing as pending. A newer one stays.
+        public func forget(_ id: String, version: UUID) {
+            guard versions[id] == version else { return }
+            versions[id] = nil
+            if pending[id] != nil { pending[id] = nil }
         }
 
         /// Holds `action` for `id` until `commit` writes it or `undo` drops it; with `seconds`, it is written then by
-        /// itself. Nothing reaches the log meanwhile, so Undo needs no move back.
-        public func hold(_ id: String, _ action: DecisionLogAction, seconds: Double? = nil) {
+        /// itself. Nothing reaches the log meanwhile, so Undo needs no move back. `ended` gets the log's answer once
+        /// the change was written.
+        public func hold(_ id: String, _ action: DecisionLogAction, seconds: Double? = nil,
+                         ended: ((DecisionLogAnswer) -> Void)? = nil) {
             guard holds[id] == nil else { return }
             let clock = self.clock
             let task = seconds.map { seconds in
@@ -184,16 +224,21 @@ extension DecisionAnswering {
                     self?.commit(id)
                 }
             }
-            holds[id] = (action, task)
+            holds[id] = (action, task, ended)
             held.insert(id)
         }
 
-        /// Writes the change held for `id` now (its Undo window ended).
+        /// Writes the change held for `id` now (its Undo window ended). A held clear shows as cleared from now on, as
+        /// `unstage` does.
         public func commit(_ id: String) {
             guard let hold = holds.removeValue(forKey: id) else { return }
             hold.task?.cancel()
             held.remove(id)
-            write(id, Write(action: hold.action, version: nil))
+            if case .unstage(let refs) = hold.action {
+                unstage(refs, ended: hold.ended)
+                return
+            }
+            write(id, Write(action: hold.action, ended: hold.ended))
         }
 
         /// Undo of a held change: nothing was written, the decision is as it was.
@@ -224,17 +269,27 @@ extension DecisionAnswering {
                 if confirmed || overtaken || expired { next[id] = nil }
             }
             if next != pending { pending = next }
+            versions = versions.filter { next[$0.key] != nil || isWriting($0.key) }
         }
 
-        /// Runs `write` for `id` now, or after the write running for it.
+        /// Runs `write` for `id` now, or after the writes running and waiting for it. A stage behind a waiting stage
+        /// replaces it, since only the newest pick and note need writing; any other write keeps its place.
         private func write(_ id: String, _ write: Write) {
-            guard running[id] == nil else {
-                var next = write
-                next.action = write.action.keepingPick(from: (queued[id] ?? running[id])?.action)
-                queued[id] = next
+            guard let current = running[id] else {
+                start(id, write, queued: false)
                 return
             }
-            start(id, write, queued: false)
+            var waiting = queued[id] ?? []
+            var next = write
+            next.action = write.action.keepingPick(from: (waiting.last ?? current).action)
+            if case .stage = write.action, let last = waiting.last, case .stage = last.action {
+                next.versions = last.versions.merging(write.versions) { _, newer in newer }
+                next.then = last.then + write.then
+                waiting[waiting.count - 1] = next
+            } else {
+                waiting.append(next)
+            }
+            queued[id] = waiting
         }
 
         /// `queued`: a write that waited behind another one; it leaves the error alone, so a failure of the one
@@ -253,26 +308,35 @@ extension DecisionAnswering {
         private func finish(_ id: String, _ write: Write, _ answer: DecisionLogAnswer) {
             running[id] = nil
             writing.remove(id)
-            let current = write.version.map { pending[id]?.version == $0 } ?? false
+            // The entries this write still owns: a newer change to a decision is its own write's.
+            let current = write.versions.filter { pending[$0.key]?.version == $0.value }.map(\.key)
             switch answer {
             case .done:
-                if current { pending[id]?.doneAt = now() }
+                // A clear starts no clock: it waits for a snapshot, or for `unansweredLifetime`.
+                if case .stage = write.action { for owned in current { pending[owned]?.doneAt = now() } }
+                afterWrites[id, default: []] += write.then
             case .refused(let text, let detail):
                 errors[id] = WriteError(text: text, detail: detail)
                 afterWrites[id] = nil
-                if current { pending[id] = nil }
+                for owned in current { pending[owned] = nil }
             case .unanswered:
-                if current { pending[id]?.unsaved = true }
+                for owned in current { pending[owned]?.unsaved = true }
                 afterWrites[id] = nil
             }
+            write.ended?(answer)
             written?(id, write.action, answer)
-            if let next = queued.removeValue(forKey: id) {
+            if var waiting = queued.removeValue(forKey: id), !waiting.isEmpty {
+                let next = waiting.removeFirst()
+                if !waiting.isEmpty { queued[id] = waiting }
                 start(id, next, queued: true)
                 return
             }
             let waiting = afterWrites.removeValue(forKey: id) ?? []
             drained?(id)
             waiting.forEach { $0() }
+            for owned in Set(write.versions.keys).union([id]) where pending[owned] == nil && !isWriting(owned) {
+                versions[owned] = nil
+            }
         }
     }
 
