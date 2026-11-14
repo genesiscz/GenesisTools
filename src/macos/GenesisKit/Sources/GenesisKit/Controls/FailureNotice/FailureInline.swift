@@ -24,6 +24,8 @@ public final class FailureReporter {
 
     private lazy var panel = FailureNoticePanel(identifier: "failure.notice")
     private var preparations: [String: Task<FailureReport, Never>] = [:]
+    /// The keys of `preparations` oldest first, so the cap drops the oldest failure and never the one just shown.
+    private var preparationOrder: [String] = []
 
     public init() {}
 
@@ -66,9 +68,8 @@ public final class FailureReporter {
             if !FailureCapture.isEnabled, ready.environment == nil { ready.environment = await load() }
             return ready
         }
-        if preparations.count > 64, let oldest = preparations.keys.first(where: { $0 != key }) {
-            preparations[oldest] = nil
-        }
+        preparationOrder.append(key)
+        if preparationOrder.count > 64 { preparations[preparationOrder.removeFirst()] = nil }
     }
 
     /// Kept for existing hosts, and does nothing: `prepare(report)` gathers the context of each failure, and a fetch
