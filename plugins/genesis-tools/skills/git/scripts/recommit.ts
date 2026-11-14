@@ -251,14 +251,13 @@ function readAuthorSpec(raw: unknown, where: string): AuthorSpec {
             return { from };
         }
 
-        if (keys.every((k) => ["name", "email", "date"].includes(k)) && isLine(name) && isLine(email)) {
-            if (date === undefined) {
-                return { name, email };
-            }
-
-            if (isLine(date)) {
-                return { name, email, date };
-            }
+        if (
+            keys.every((k) => ["name", "email", "date"].includes(k)) &&
+            isLine(name) &&
+            isLine(email) &&
+            (date === undefined || isLine(date))
+        ) {
+            return { name, email, ...(date !== undefined ? { date } : {}) };
         }
     }
 
