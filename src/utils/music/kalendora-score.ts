@@ -323,7 +323,7 @@ function pulse(drums: Drums): Instrument[] {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Shelved tracks. Martin heard them on 2026-11-10 and did not want them ("Calm" reads as lift music, "Piano" is harsh).
+// Shelved tracks. They were heard on 2026-11-10 and rejected ("Calm" reads as lift music, "Piano" is harsh).
 // The scores stay so the work is not lost; `bun scripts/music.ts Calm` renders one into out/music-shelved/ (not
 // committed, not in tracks.json).
 
