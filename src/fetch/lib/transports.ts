@@ -1,4 +1,5 @@
 import { ImpersonatedBodyTooLargeError, ImpersonatedHttpClient } from "@genesiscz/utils/http/impersonate/client";
+import { REDIRECT_STATUSES } from "@genesiscz/utils/http/redirect";
 import type { HttpTransport, TransportName, TransportRequest, TransportResponse } from "./types";
 
 /**
@@ -57,9 +58,6 @@ const PLAIN_HEADERS = {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
-
-/** The redirect statuses the fetcher follows. A transport discards such an answer's body instead of buffering it. */
-export const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
 /** Bun's fetch: fast, no extra process, and refused by Cloudflare Bot Management (403 challenge). */
 class PlainTransport implements HttpTransport {

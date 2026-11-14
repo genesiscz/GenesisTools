@@ -1,8 +1,9 @@
 import { keepsHeaders } from "@app/mcp-web-reader/lib/fetch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { REDIRECT_STATUSES } from "@genesiscz/utils/http/redirect";
 import { logger } from "@genesiscz/utils/logger";
 import { blockVerdict, describeVerdict } from "./challenge";
-import { MAX_RESPONSE_BYTES, REDIRECT_STATUSES, TRANSPORTS, type TransportOptions } from "./transports";
+import { MAX_RESPONSE_BYTES, TRANSPORTS, type TransportOptions } from "./transports";
 import type {
     BlockVerdict,
     FetchedPage,
