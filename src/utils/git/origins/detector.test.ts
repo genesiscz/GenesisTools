@@ -4,9 +4,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { repoFacts } from "../repo-facts";
 import { TestRepo } from "../test-repo";
 import { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
+import { FORGE_FACTS, type ForgeFacts, prNumberLabel, prWebUrl } from "./facts";
 import { ghDriver, parseGhPrList } from "./gh";
 import { glabDriver, parseGlabMrList } from "./glab";
 import { cleanHostError, createHostCheck, dnsName, summarizeHostError } from "./host-errors";
+import { prSourceRef } from "./pr-fetch";
 import {
     ghCheckStatus,
     glabPipelineStatus,
@@ -25,7 +27,7 @@ import {
     viewPr,
 } from "./prs";
 import { missingCliError, spawnRunner } from "./runner";
-import type { CommandRunner } from "./types";
+import type { CommandRunner, OriginKind } from "./types";
 import { branchWebUrl, commitWebUrl, originWebBase } from "./web";
 
 const repos: TestRepo[] = [];
@@ -265,6 +267,81 @@ describe("originWebBase / branchWebUrl / commitWebUrl", () => {
         expect(branchWebUrl(classifyOriginUrl("https://dev.azure.com/org/p/_git/r"), "main")).toBeNull();
         expect(branchWebUrl(gh, "HEAD")).toBeNull();
     });
+});
+
+describe("FORGE_FACTS", () => {
+    const cases: Array<{
+        kind: OriginKind;
+        web: string;
+        words: Pick<ForgeFacts, "name" | "mark" | "noun" | "longNoun" | "binary" | "defaultHost" | "loginField">;
+        label: string;
+        pages: { pr: string; files: string; checks: string; branch: string; commit: string };
+        headRef: string;
+    }> = [
+        {
+            kind: "github",
+            web: "https://github.com/o/r",
+            words: {
+                name: "GitHub",
+                mark: "#",
+                noun: "PR",
+                longNoun: "pull request",
+                binary: "gh",
+                defaultHost: "github.com",
+                loginField: "login",
+            },
+            label: "#12",
+            pages: {
+                pr: "https://github.com/o/r/pull/12",
+                files: "https://github.com/o/r/pull/12/files",
+                checks: "https://github.com/o/r/pull/12/checks",
+                branch: "https://github.com/o/r/tree/feat/x",
+                commit: "https://github.com/o/r/commit/abc123",
+            },
+            headRef: "refs/pull/12/head",
+        },
+        {
+            kind: "gitlab",
+            web: "https://gitlab.internal.example/g/sub/p",
+            words: {
+                name: "GitLab",
+                mark: "!",
+                noun: "MR",
+                longNoun: "merge request",
+                binary: "glab",
+                defaultHost: "gitlab.com",
+                loginField: "username",
+            },
+            label: "!12",
+            pages: {
+                pr: "https://gitlab.internal.example/g/sub/p/-/merge_requests/12",
+                files: "https://gitlab.internal.example/g/sub/p/-/merge_requests/12/diffs",
+                checks: "https://gitlab.internal.example/g/sub/p/-/merge_requests/12/pipelines",
+                branch: "https://gitlab.internal.example/g/sub/p/-/tree/feat/x",
+                commit: "https://gitlab.internal.example/g/sub/p/-/commit/abc123",
+            },
+            headRef: "refs/merge-requests/12/head",
+        },
+    ];
+
+    for (const c of cases) {
+        it(`${c.kind}: words, label, web pages, PR URL pattern and head ref`, () => {
+            const facts = FORGE_FACTS[c.kind];
+            expect(facts).toMatchObject(c.words);
+            expect(prNumberLabel(c.kind, 12)).toBe(c.label);
+
+            const prUrl = prWebUrl(c.kind, c.web, 12);
+            expect(prUrl).toBe(c.pages.pr);
+            expect(`${prUrl}/${facts.web.prTabs.files}`).toBe(c.pages.files);
+            expect(`${prUrl}/${facts.web.prTabs.checks}`).toBe(c.pages.checks);
+            expect(parsePrUrl(c.pages.files)).toMatchObject({ project: { kind: c.kind, web: c.web }, number: 12 });
+
+            const origin = { ...classifyOriginUrl(`${c.web}.git`), kind: c.kind };
+            expect(branchWebUrl(origin, "feat/x")).toBe(c.pages.branch);
+            expect(commitWebUrl(origin, "abc123")).toBe(c.pages.commit);
+            expect(prSourceRef(c.kind, 12)).toBe(c.headRef);
+        });
+    }
 });
 
 describe("project refs and PR URLs", () => {

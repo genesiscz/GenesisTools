@@ -9,8 +9,12 @@ import { SafeJSON } from "@genesiscz/utils/json";
  */
 export const KIT_FIXTURES_DIR = join(import.meta.dir, "..", "GenesisKit", "Sources", "GenesisKitFixtures", "Disk");
 
-/** `Disk/` holds the Disk Manager contracts; `Git/` the git rules both languages implement (worktree renames). */
-export type KitFixtureFolder = "Disk" | "Git";
+/**
+ * `Disk/` holds the Disk Manager contracts; `Git/` the git rules both languages implement (worktree renames);
+ * `Widget/` the golden widget snapshots that `src/hub/lib/widget/snapshot-golden.test.ts` writes and the kit's widget
+ * tests decode.
+ */
+export type KitFixtureFolder = "Disk" | "Git" | "Widget";
 
 export function kitFixturePath(name: string, folder: KitFixtureFolder = "Disk"): string {
     return join(KIT_FIXTURES_DIR, "..", folder, name);

@@ -151,6 +151,11 @@ export interface RunToolOpts {
      * passes below, so a lazily registered tree gets them like an eager one.
      */
     registrars?: readonly LazyRegistrar[];
+    /**
+     * Exit codes that report an outcome, not a failure, so the failures log skips them: `tools rm` exits 3 when a path
+     * waits for the person (a request), which wrote 23 false failures in two days (2026-11-13 and 11-14).
+     */
+    outcomeExitCodes?: readonly number[];
 }
 
 /** What a tool's `formatError` prints instead of the default report. */
@@ -300,6 +305,7 @@ export async function runTool(
             argv: argv.slice(2),
             commandPath: () => currentRunLabel() ?? commandPathFromArgv(program, argv.slice(2)),
             secrets: () => secretsFromArgv(program, argv.slice(2)),
+            outcomeExitCodes: opts.outcomeExitCodes,
         });
     }
 

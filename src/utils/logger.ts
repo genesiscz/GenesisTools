@@ -406,6 +406,12 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         // both key spellings get pino's error serializer; non-Errors pass through.
         serializers: { err: errorSerializer, error: errorSerializer },
         ...(showPid && { base: { pid: process.pid } }),
+        // A record's `pid` is the process that wrote it: day-log readers filter a run's lines by it
+        // (`tools genesis-tools logs show`). 148 calls pass another process's id as `pid` (a child, a lock
+        // holder, a cache writer), and pino lets that key overwrite the writer's, so the line moved to the
+        // other process and the writer was lost (2026-11-11: the roster-cache "stale" lines named the dead
+        // writer, never the reader). Such a value is kept as `targetPid`.
+        formatters: { log: keepWriterPid },
         // GenesisTools.app's per-call id (utils/trace.ts): a day-log record names the app call it served.
         mixin: () => {
             const traceId = currentTraceId();
@@ -421,6 +427,16 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
 };
 
 export type Logger = pino.Logger;
+
+/** pino's `formatters.log`: a `pid` that is not this process's moves to `targetPid` (see `baseConfig`). */
+export function keepWriterPid(record: Record<string, unknown>): Record<string, unknown> {
+    if (!("pid" in record) || record.pid === process.pid) {
+        return record;
+    }
+
+    const { pid, ...rest } = record;
+    return { ...rest, targetPid: pid };
+}
 
 let _pino: pino.Logger | null = null;
 function get(): pino.Logger {

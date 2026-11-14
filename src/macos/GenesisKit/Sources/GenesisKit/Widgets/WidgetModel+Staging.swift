@@ -7,16 +7,16 @@ import Foundation
 /// lost when the widget restarts.
 extension WidgetModel {
     /// A click on a decision option or its number key stages it ("stage", the default) or sends it at once ("send").
-    public var decisionClickStages: Bool { (snapshot?.state.preferences.decisionClick ?? "stage") == "stage" }
+    public var decisionClickStages: Bool { preferences.decisionClick == "stage" }
 
     /// What this click does: `decisionClickStages`, turned around while ⌘ is down (`decisionCommandSwaps`, on by
     /// default), so a ⌘-click sends at once while clicks stage, and stages while clicks send (Martin, 2026-10-26).
     public var clickStagesNow: Bool {
-        DecisionAnswering.clickStages(snapshot?.state.preferences, command: NSEvent.modifierFlags.contains(.command))
+        DecisionAnswering.clickStages(preferences, command: NSEvent.modifierFlags.contains(.command))
     }
 
     /// Return in a decision's own answer field stages the text as its note ("stage", the default) or sends it.
-    public var ownAnswerReturnStages: Bool { (snapshot?.state.preferences.ownAnswerReturn ?? "stage") == "stage" }
+    public var ownAnswerReturnStages: Bool { preferences.ownAnswerReturn == "stage" }
 
     /// Return (or ⌘-Return, `command`) in the own answer field of `ownAnswerCard`: stage the text as the decision's
     /// note or send it as the answer, by `ownAnswerReturn`; ⌘ does the other while `decisionCommandSwaps` is on.
@@ -29,7 +29,7 @@ extension WidgetModel {
         // Return again on the empty field, after Return staged the note: the staged decision goes to its session now
         // (Martin, 2026-10-28: "if i enter to stage, then enter it again, it should probably send that one").
         if text.isEmpty, emptyReturnOnStaged(card) { return }
-        if DecisionAnswering.returnStages(snapshot?.state.preferences, command: command) {
+        if DecisionAnswering.returnStages(preferences, command: command) {
             guard !text.isEmpty else {
                 // The warning tone: in the default grey this note was nearly invisible (Martin, 2026-10-28).
                 postNote("Write your answer first.", tone: .warning)
@@ -47,7 +47,7 @@ extension WidgetModel {
     func emptyReturnOnStaged(_ card: WidgetCard) -> Bool {
         guard isStaged(card), draft.assetIds.isEmpty else { return false }
         let decision = WidgetWords.decision(card.number)
-        switch snapshot?.state.preferences.ownAnswerEmptyReturn ?? "send" {
+        switch preferences.ownAnswerEmptyReturn {
         case "confirm":
             postNote("Send " + decision + " with its staged answer now?", action: WidgetNoticeAction(title: "Send") {
                 [weak self] in _ = self?.sendStagedFromOwnAnswer(card)
@@ -64,7 +64,7 @@ extension WidgetModel {
     func isStaged(_ card: WidgetCard) -> Bool {
         !heldDecisionIDs.contains(card.sourceId)
             && (stagedOption(card.sourceId, stored: card.draftOption) != nil
-                || (pendingStageNotes[card.sourceId] ?? card.draft)?.isEmpty == false)
+                || (decisions.pending[card.sourceId]?.note ?? card.draft)?.isEmpty == false)
     }
 
     /// An empty own answer of a staged decision sends that decision, as its Send now does. False when nothing is
@@ -72,7 +72,7 @@ extension WidgetModel {
     @discardableResult
     func sendStagedFromOwnAnswer(_ card: WidgetCard) -> Bool {
         guard draft.assetIds.isEmpty, isStaged(card) else { return false }
-        let note = pendingStageNotes[card.sourceId] ?? card.draft
+        let note = decisions.pending[card.sourceId]?.note ?? card.draft
         PerfLog.mark("widget.own-answer send staged \(card.sourceId)")
         // The note staged a moment ago is not in a snapshot yet; the item carries it, as the leave question's does.
         var item = Self.inboxItem(card)
@@ -82,9 +82,25 @@ extension WidgetModel {
         return true
     }
 
+    /// A Send of `card` while its own answer field holds words or media: the words become its staged note and go with
+    /// the staged pick, and the field empties only once the hub has the note (`sendDecisionNow`); media cannot be staged,
+    /// so it goes with the pick and the words through the durable outbox, as a click with media does. False when the
+    /// field is empty, so the staged pick and note go as they are.
+    func sendOwnAnswerWithStage(_ card: WidgetCard) -> Bool {
+        let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard card.kind == "decision", card.needsAnswer, !typed.isEmpty || !draft.assetIds.isEmpty else { return false }
+        PerfLog.mark("widget.send-staged own answer goes with \(card.sourceId)")
+        guard draft.assetIds.isEmpty else {
+            submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true)
+            return true
+        }
+        sendDecisionNow(card, option: nil, note: typed)
+        return true
+    }
+
     /// The pick a card shows as staged: the one staged here a moment ago, else the snapshot's.
     public func stagedOption(_ sourceId: String, stored: String?) -> String? {
-        if let pending = pendingStage[sourceId] { return pending.isEmpty ? nil : pending }
+        if let pending = decisions.pending[sourceId]?.option { return pending.isEmpty ? nil : pending }
         return stored
     }
 
@@ -166,7 +182,7 @@ extension WidgetModel {
             stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option,
                   item: item, completed: { [weak self] version in
                       guard let self, self.canSendStaged(item.sourceId, version: version) else { return }
-                      self.clearPendingStage(item.sourceId, version: version)
+                      self.decisions.forget(item.sourceId, version: version)
                       self.deliverDecisions([item], action: .sendStaged)
                   })
             return
@@ -214,7 +230,7 @@ extension WidgetModel {
               option: option ?? stagedOption(card.sourceId, stored: card.draftOption), note: note, item: item,
               completed: { [weak self] version in
                   guard let self, self.canSendStaged(card.sourceId, version: version) else { return }
-                  self.clearPendingStage(card.sourceId, version: version)
+                  self.decisions.forget(card.sourceId, version: version)
                   if note != nil, self.selectedKey == key, self.draft.text == typed {
                       self.setText("")
                       if self.ownAnswerCardID == card.id { self.ownAnswerCardID = nil }
@@ -288,113 +304,120 @@ extension WidgetModel {
         let recommendedSet = card.choices.filter(\.recommended).map(\.id).joined()
         let recommended = card.takesSeveral ? (recommendedSet.isEmpty ? nil : recommendedSet)
             : card.choices.first(where: \.recommended)?.id
-        return WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind, key: card.sessionKey, at: card.at,
+        return WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind.rawValue, key: card.sessionKey, at: card.at,
                                needsAnswer: card.needsAnswer, title: card.title, number: card.number,
                                options: card.choices.map(\.title), recommended: recommended,
                                revision: card.revision, draftOption: card.draftOption, draft: card.draft,
                                multiple: card.multiple)
     }
 
-    private func stage(
+    /// Stages `option` (nil: no pick) and `note` (nil: the note staged here, if any) for the decision `id` through the
+    /// staging engine. `completed` gets the change's version once its write and every write of the decision before it
+    /// landed; a refused or unanswered write drops it.
+    func stage(
         id: String, sessionId: String, revision: Int, option: String?, note: String? = nil,
         item: WidgetInboxItem? = nil, completed: ((UUID) -> Void)? = nil
     ) {
         sendCloseRevision += 1
-        // An option-only write keeps a locally pending note even if the earlier note write is refused.
-        let stagedNote = note ?? pendingStageNotes[id]
-        let version = markPending(id, option ?? "", item: item, note: stagedNote)
-        pendingStagesInFlight.insert(version)
-        var fields: [String: WidgetJSON] = [
-            "action": "ledger", "id": .string(id), "sessionId": .string(sessionId),
-            "expectedRevision": .number(Double(revision)), "state": "drafted", "draftOption": .string(option ?? ""),
-        ]
-        if let stagedNote { fields["draft"] = .string(stagedNote) }
-        action(.object(fields), failed: { [weak self] in
-            self?.pendingStagesInFlight.remove(version)
-            self?.clearPendingStage(id, version: version)
-        }, completed: { [weak self] in
-            if self?.pendingStageVersions[id] == version {
-                self?.pendingStageDone[id] = Date().timeIntervalSince1970 * 1000
-            }
-            completed?(version)
-            self?.pendingStagesInFlight.remove(version)
-            if self?.pendingStage[id] == nil, self?.pendingStageVersions[id] == version {
-                self?.pendingStageVersions[id] = nil
-            }
-        })
-    }
-
-    /// How long a pick made here shows after the hub took it, before a snapshot confirms it: a few snapshots' time.
-    /// After it the snapshot is the truth again, so a pick that never landed, or a decision sent elsewhere, stops
-    /// showing it. The clock starts when the hub answers: a write still queued behind others keeps its pick, which
-    /// went away and came back when the hub was slow.
-    nonisolated static let pendingStageLifetime: TimeInterval = 15
-    /// The limit for a pick whose write never answered (a discard has no `pendingStageDone`).
-    nonisolated static let pendingStageUnansweredLifetime: TimeInterval = 60
-
-    /// A pick or a clear (`""`) made here, shown at once until a snapshot shows the decision log has it.
-    @discardableResult
-    func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil, note: String? = nil) -> UUID {
-        let version = UUID()
-        pendingStageVersions[id] = version
         keptStaged.remove(id)
-        pendingStage[id] = option
-        if let note { pendingStageNotes[id] = note }
-        pendingStageAt[id] = Date().timeIntervalSince1970 * 1000
-        pendingStageDone[id] = nil
         if let item { pendingStageItems[id] = item }
-        return version
+        // An option-only write keeps a locally pending note even if the earlier note write is refused.
+        let stagedNote = note ?? decisions.pending[id]?.note
+        // `completed` runs after `stage` returned, so it reads the version the engine gave this change.
+        var version = UUID()
+        version = decisions.stage(DecisionAddress(id: id, sessionId: sessionId, revision: revision),
+                                  option: option ?? "", note: stagedNote,
+                                  then: completed.map { completed in { completed(version) } })
+        stageAgain[id] = { [weak self] in
+            self?.stage(id: id, sessionId: sessionId, revision: revision, option: option, note: stagedNote, item: item,
+                        completed: completed)
+        }
     }
 
-    private func clearPendingStage(_ id: String, version: UUID) {
-        guard pendingStageVersions[id] == version else { return }
-        pendingStage[id] = nil
-        pendingStageNotes[id] = nil
-        pendingStageVersions[id] = nil
+    /// The limit of one stage write. It writes one row of the decision log on this Mac and delivers nothing, so 30 s
+    /// without an answer is a stalled Mac: of 624 widget calls in five days, 6 that answered took longer. At the limit
+    /// the pick stays shown with Try again (`Pending.unsaved`); it waited 120 s and was dropped before.
+    nonisolated static let stageWriteTimeoutSeconds = 30
+    /// The engine's key of the leave question's held Discard: one at a time, so a second one writes the first.
+    nonisolated static let heldDiscardKey = "widget.staged-discard"
+
+    func makeDecisions() -> DecisionAnswering.Engine {
+        let engine = DecisionAnswering.Engine(log: WidgetDecisionLog(model: self))
+        engine.written = { [weak self] id, action, answer in self?.decisionWritten(id, action, answer) }
+        engine.drained = { [weak self] _ in self?.runAfterDecisionWrites() }
+        // Only the shown picks redraw the panel; a write starting or ending changes nothing on screen.
+        decisionChanges = engine.$pending.dropFirst().sink { [weak self] _ in self?.objectWillChange.send() }
+        return engine
+    }
+
+    /// A stage write the hub did not answer: no answer is not a refusal, so the pick and its note stay here with Try
+    /// again. A click on 2026-11-10 was dropped after its write was killed at 120 s on a Mac at load 500, and the user
+    /// learned it from an agent that waited.
+    private func decisionWritten(_ id: String, _ action: DecisionLogAction, _ answer: DecisionLogAnswer) {
+        guard case .stage = action, case .unanswered(let seconds) = answer, decisions.pending[id]?.unsaved == true,
+              let again = stageAgain[id] else { return }
+        PerfLog.mark("widget.staged write unanswered id=\(id) after \(seconds)s; the pick stays")
+        postNote("The hub did not answer within \(seconds) seconds, so this pick is not saved yet. It stays here.",
+                 action: WidgetNoticeAction(title: "Try again") { again() }, tone: .warning)
+    }
+
+    /// Runs `work` once no write of the staging engine runs or waits, at once when none does. The engine keeps each
+    /// decision's writes until the one before has landed, so a send waits here for the picks staged before it, as it
+    /// waited behind them in the queue of hub writes (a Send now right after a click sends that pick).
+    func whenDecisionWritesEnd(_ work: @escaping () -> Void) {
+        guard decisions.writing.isEmpty else {
+            afterDecisionWrites.append(work)
+            return
+        }
+        work()
+    }
+
+    /// `whenDecisionWritesEnd` for a caller that awaits it (the shutdown).
+    func decisionWritesEnded() async {
+        await withCheckedContinuation { continuation in whenDecisionWritesEnd { continuation.resume() } }
+    }
+
+    private func runAfterDecisionWrites() {
+        guard decisions.writing.isEmpty, !afterDecisionWrites.isEmpty else { return }
+        let ready = afterDecisionWrites
+        afterDecisionWrites = []
+        ready.forEach { $0() }
+    }
+
+    /// A staged decision as a write addresses it. A clear goes by id; the session is the one it is listed under.
+    private func stagedAddress(_ id: String) -> DecisionAddress {
+        let item = stagedRows.first { $0.sourceId == id } ?? pendingStageItems[id]
+        return DecisionAddress(id: id, sessionId: item.flatMap { session(forKey: $0.key)?.target.sessionId } ?? "",
+                               revision: item?.revision)
     }
 
     /// A later edit has its own staged intent; an older send must not send that edit instead.
     private func canSendStaged(_ id: String, version: UUID) -> Bool {
-        guard pendingStageVersions[id] == version else {
+        guard decisions.version(id) == version else {
             postNote("This decision changed. Review it before sending.")
             return false
         }
         return true
     }
 
-    /// The staged items as the snapshot shows them, and the picks staged here that it now shows. `listed`: every
-    /// decision the snapshot lists, to say when a revision cleared a staged pick.
+    /// The staged items as the snapshot shows them, and the picks staged here that it now shows (the engine's
+    /// confirmation: shown, overtaken by a newer row, or expired). `listed`: every decision the snapshot lists, to say
+    /// when a revision cleared a staged pick.
     func reconcileStaged(_ items: [WidgetInboxItem], listed: [WidgetInboxItem] = []) {
         let staged = items.filter(\.isStaged)
         noteClearedPicks(before: stagedRows, after: staged, listed: listed)
         if staged != stagedRows { stagedRows = staged }
-        refreshPeekStaging(staged)
-        let shown = Dictionary(items.map { ($0.sourceId, (pick: $0.draftOption ?? "", note: $0.draft, at: $0.updatedAt ?? 0)) },
-                               uniquingKeysWith: { first, _ in first })
-        let now = Date().timeIntervalSince1970 * 1000
-        for (id, option) in pendingStage {
-            let row = shown[id]
-            // Shown as picked here (a decision the list no longer holds shows no pick, so a pending unstage "" is
-            // done); or the row changed after this pick landed, so another surface or a revision wrote it since; or
-            // no snapshot confirmed the pick in time.
-            let confirmed = (row?.pick ?? "") == option && (pendingStageNotes[id].map { row?.note == $0 } ?? true)
-            let overtaken = pendingStageDone[id].map { done in (row?.at ?? 0) > done } ?? false
-            let expired = pendingStageDone[id].map { done in now - done > Self.pendingStageLifetime * 1000 }
-                ?? pendingStageAt[id].map { asked in now - asked > Self.pendingStageUnansweredLifetime * 1000 }
-                ?? false
-            if confirmed || overtaken || expired {
-                if !confirmed { PerfLog.mark("widget.staged pending dropped id=\(id) overtaken=\(overtaken)") }
-                pendingStage[id] = nil
-            }
+        alertPopup.stagingChanged(staged)
+        let rows = Dictionary(items.map {
+            ($0.sourceId, DecisionAnswering.Engine.Row(option: $0.draftOption, note: $0.draft, updatedAt: $0.updatedAt))
+        }, uniquingKeysWith: { first, _ in first })
+        let before = decisions.pending
+        decisions.reconcile(rows)
+        for (id, entry) in before where decisions.pending[id] == nil && (rows[id]?.option ?? "") != (entry.option ?? "") {
+            PerfLog.mark("widget.staged pending dropped id=\(id) unconfirmed")
         }
-        pendingStageAt = pendingStageAt.filter { pendingStage[$0.key] != nil }
-        pendingStageDone = pendingStageDone.filter { pendingStage[$0.key] != nil }
-        pendingStageItems = pendingStageItems.filter { pendingStage[$0.key] != nil }
-        pendingStageNotes = pendingStageNotes.filter { pendingStage[$0.key] != nil }
-        pendingStageVersions = pendingStageVersions.filter {
-            pendingStage[$0.key] != nil || pendingStagesInFlight.contains($0.value)
-                || (sendingDecisionIDs.contains($0.key) && sendingStageVersions[$0.key] == $0.value)
-        }
+        pendingStageItems = pendingStageItems.filter { decisions.pending[$0.key] != nil }
+        stageAgain = stageAgain.filter { decisions.pending[$0.key] != nil }
     }
 
     /// A staged pick the agent's new text cleared (a revision drops the staged pick, since it was made on the old
@@ -403,7 +426,7 @@ extension WidgetModel {
         let still = Set(after.map(\.sourceId))
         let revised = before.compactMap { old -> (WidgetInboxItem, WidgetInboxItem)? in
             guard !still.contains(old.sourceId), !sendingDecisionIDs.contains(old.sourceId),
-                  pendingStage[old.sourceId] != "", let oldRevision = old.revision,
+                  decisions.pending[old.sourceId]?.option != "", let oldRevision = old.revision,
                   let now = listed.first(where: { $0.sourceId == old.sourceId && $0.needsAnswer }),
                   (now.revision ?? 0) > oldRevision else { return nil }
             return (old, now)
@@ -428,6 +451,15 @@ extension WidgetModel {
     /// `known`: items the caller holds whose pick was staged here a moment ago, before a snapshot listed them; the
     /// send waits for that stage (`afterMutations`), so a Send now right after the click sends it.
     public func sendStaged(_ ids: [String], thenClose: Bool = false, known: [WidgetInboxItem] = []) {
+        // Words typed in the own answer field of a decision being sent go with its staged pick, as Return there sends
+        // them. Send sent the ticked set alone, and the words left with the field when the card closed (2026-11-10: a
+        // 957-character note on a decision that takes several options).
+        if let card = ownAnswerCard, ids.contains(card.sourceId), !sendingDecisionIDs.contains(card.sourceId),
+           sendOwnAnswerWithStage(card) {
+            let rest = ids.filter { $0 != card.sourceId }
+            if !rest.isEmpty { sendStaged(rest, thenClose: thenClose, known: known) }
+            return
+        }
         var chosen = stagedItems.filter { ids.contains($0.sourceId) }
         for item in known where ids.contains(item.sourceId) && !chosen.contains(where: { $0.sourceId == item.sourceId })
             && (stagedOption(item.sourceId, stored: item.draftOption) != nil || item.draft != nil) {
@@ -467,14 +499,14 @@ extension WidgetModel {
         let staged = action == .sendStaged
         let opened = openedAt
         // Sent from the popup on screen (its Send now, or the staged reminder's): the popup shows the result.
-        let fromPeek = peekItem.map { shown in
+        let fromPeek = alertPopup.item.map { shown in
             items.contains { $0.sourceId == shown.sourceId } || shown.sourceId == WidgetAlerts.stagedReminderID
         } ?? false
         let closeRevision = sendCloseRevision
         let draftAtSend = draft
         let ids = Set(items.map(\.sourceId))
         sendingDecisionIDs.formUnion(ids)
-        for id in ids { sendingStageVersions[id] = pendingStageVersions[id] }
+        for id in ids { sendingStageVersions[id] = decisions.version(id) }
         // Every staged send says it started: a Send now that changed nothing on screen read as a dead button.
         if staged { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
         // The "Sending…" note this send put up; a failure takes it down, unless another note replaced it meanwhile.
@@ -490,7 +522,7 @@ extension WidgetModel {
         }
         PerfLog.mark("widget.decision-send \(action.rawValue) start: \(items.count) to "
             + titles.values.sorted().joined(separator: ", "))
-        afterMutations { [weak self] in
+        whenDecisionWritesEnd { [weak self] in self?.afterMutations { [weak self] in
             guard let self else { return }
             defer {
                 self.sendingDecisionIDs.subtract(ids)
@@ -508,18 +540,18 @@ extension WidgetModel {
                 PerfLog.mark("widget.decision-send \(action.rawValue) result: \(text)")
                 let tone: WidgetNoticeTone = outcome.delivered ? .success : .warning
                 if fromPeek {
-                    self.showPeekOutcome(WidgetPeekOutcome(text: text, tone: tone, sendAgain: waiting,
-                                                           detail: outcome.details),
-                                         sent: ids, delivered: outcome.delivered)
+                    self.applyAlertPopup(self.alertPopup.sendEnded(
+                        WidgetPeekOutcome(text: text, tone: tone, sendAgain: waiting, detail: outcome.details),
+                        sent: ids, delivered: outcome.delivered))
                 } else if outcome.failed == 0 {
-                    self.dropSentFromPeek(ids)
+                    self.applyAlertPopup(self.alertPopup.sent(ids))
                 }
                 if outcome.delivered {
                     postNote(text, tone: .success)
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
                     // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
                     // (Martin, 2026-10-25).
-                    let closeSeconds = snapshot?.state.preferences.sendCloseSeconds ?? 2.5
+                    let closeSeconds = preferences.sendCloseSeconds
                     if thenClose, expanded != nil, openedAt == opened, sendCloseRevision == closeRevision,
                        closeSeconds > 0 {
                         Task { [weak self] in
@@ -546,9 +578,9 @@ extension WidgetModel {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
                 if fromPeek {
-                    self.showPeekOutcome(WidgetPeekOutcome(text: staged
+                    self.applyAlertPopup(self.alertPopup.sendEnded(WidgetPeekOutcome(text: staged
                         ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it.",
-                        tone: .warning, detail: error.localizedDescription), sent: ids, delivered: false)
+                        tone: .warning, detail: error.localizedDescription), sent: ids, delivered: false))
                 }
                 fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
                          : "The answers could not be sent again. They still wait for the session's next prompt.",
@@ -556,30 +588,24 @@ extension WidgetModel {
                 if staged { keptStaged.subtract(items.map(\.sourceId)) }
                 flashUnsent(items)
             }
-        }
+        } }
     }
 
     /// A send result that arrives after the panel closed: the sessions it concerns flash on the rail (the alert flash
     /// setting), so the note waiting in the panel is noticed.
     private func flashUnsent(_ items: [WidgetInboxItem]) {
         guard expanded == nil else { return }
-        let seconds = WidgetAlerts.flashSeconds(snapshot?.state.preferences)
+        let seconds = WidgetAlerts.flashSeconds(preferences)
         for key in Set(items.map(\.key)) { flashAttention(key, seconds: seconds) }
     }
 
-    /// Discards the picks and notes of the staged decisions `ids`; they still wait for an answer.
-    public func discardStaged(_ ids: [String], completed: (() -> Void)? = nil) {
+    /// Discards the picks and notes of the staged decisions `ids`; they still wait for an answer. Each shows as
+    /// cleared until a snapshot does; a refused clear shows the stored pick again.
+    public func discardStaged(_ ids: [String]) {
         guard !ids.isEmpty else { return }
         sendCloseRevision += 1
-        var versions: [String: UUID] = [:]
-        for id in ids {
-            pendingStageNotes[id] = nil
-            versions[id] = markPending(id, "")
-        }
-        action(["action": "unstage", "ids": .array(ids.map { .string($0) })], failed: { [weak self] in
-            for (id, version) in versions { self?.clearPendingStage(id, version: version) }
-            completed?()
-        }, completed: completed)
+        keptStaged.subtract(ids)
+        decisions.unstage(ids.map(stagedAddress))
     }
 
     /// A close the user asked for (Esc, the close button, a click outside, the idle timer): with staged decisions it
@@ -593,7 +619,7 @@ extension WidgetModel {
             collapse(file: file, line: line)
             return
         }
-        switch snapshot?.state.preferences.stagedOnLeave ?? "ask" {
+        switch preferences.stagedOnLeave {
         case "keep":
             collapse(file: file, line: line)
         case "send":
@@ -606,29 +632,32 @@ extension WidgetModel {
 
     /// The staged decisions as the user sees them: the snapshot's, without picks cleared here, plus picks staged here
     /// that no snapshot listed yet. The leave question and a popup's end read this: a pick made less than a second
-    /// before Esc was only in `pendingStage`, and the panel closed without asking (decision audit F16).
-    /// A decision whose send runs is on its way, not staged: on 2026-11-04 two sends waited 100 s for a slow hub, the
-    /// leave question called them staged, and their Send now read as a button that only staged.
+    /// before Esc was only pending here, and the panel closed without asking (decision audit F16).
+    /// A decision whose send runs is on its way, not staged, unless it was staged again after the send took its pick:
+    /// on 2026-11-04 two sends waited 100 s for a slow hub, the leave question called them staged, and their Send now
+    /// read as a button that only staged.
     public var stagedForLeave: [WidgetInboxItem] {
-        stagedOrPending.filter {
-            !sendingDecisionIDs.contains($0.sourceId)
-                || pendingStageVersions[$0.sourceId] != sendingStageVersions[$0.sourceId]
+        stagedOrPending.filter { item in
+            !sendingDecisionIDs.contains(item.sourceId)
+                || decisions.version(item.sourceId).map { $0 != sendingStageVersions[item.sourceId] } ?? false
         }
     }
 
     private var stagedOrPending: [WidgetInboxItem] {
         let listed = Set(stagedItems.map(\.sourceId))
-        let pending = pendingStage.compactMap { id, option -> WidgetInboxItem? in
-            guard (!option.isEmpty || pendingStageNotes[id]?.isEmpty == false), !listed.contains(id),
+        let pending = decisions.pending.compactMap { id, entry -> WidgetInboxItem? in
+            let option = entry.option ?? ""
+            guard (!option.isEmpty || entry.note?.isEmpty == false), !listed.contains(id),
                   !heldDecisionIDs.contains(id), var item = pendingStageItems[id] else { return nil }
             item.draftOption = option.isEmpty ? nil : option
-            if let note = pendingStageNotes[id] { item.draft = note }
+            if let note = entry.note { item.draft = note }
             return item
         }
         let listedItems = stagedItems.compactMap { item -> WidgetInboxItem? in
-            guard pendingStage[item.sourceId] != "" || pendingStageNotes[item.sourceId]?.isEmpty == false else { return nil }
+            let entry = decisions.pending[item.sourceId]
+            guard entry?.option != "" || entry?.note?.isEmpty == false else { return nil }
             var fresh = item
-            if pendingStage[item.sourceId] != nil, let note = pendingStageNotes[item.sourceId] { fresh.draft = note }
+            if let note = entry?.note { fresh.draft = note }
             return fresh
         }
         return listedItems + pending.sorted { $0.at < $1.at }
@@ -658,42 +687,39 @@ extension WidgetModel {
         collapse()
     }
 
-    /// Discards the staged decisions `ids` after the Undo window (`undoSeconds`): until then they leave every send
-    /// (`heldDecisionIDs`) and `undoHeldDiscard` keeps them staged. A second hold sends the first one's discard now.
+    /// Discards the staged decisions `ids` after the Undo window (`undoSeconds`): the engine holds the clear, until then
+    /// they leave every send (`heldDecisionIDs`) and `undoHeldDiscard` keeps them staged. A second hold sends the first
+    /// one's discard now. Once the log answered the clear, the decisions show the snapshot's state again.
     public func holdDiscard(_ ids: [String]) {
         guard !ids.isEmpty else { return }
         commitHeldDiscard()
-        heldDiscard = ids
         heldDecisionIDs.formUnion(ids)
         PerfLog.mark("widget.staged discard held \(ids.count)")
         postNote(Plural.count(ids.count, "staged decision") + " discarded.",
                  action: WidgetNoticeAction(title: "Undo") { [weak self] in self?.undoHeldDiscard() })
-        let seconds = undoSeconds
-        discardTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-            self?.commitHeldDiscard()
-        }
+        decisions.hold(Self.heldDiscardKey, .unstage(ids.map(stagedAddress)), seconds: undoSeconds,
+                       ended: { [weak self] _ in
+                           guard let self else { return }
+                           self.sendCloseRevision += 1
+                           self.keptStaged.subtract(ids)
+                           self.heldDecisionIDs.subtract(ids)
+                       })
     }
 
     /// Undo of a held Discard: the decisions stay staged as they were; nothing reached the decision log.
     public func undoHeldDiscard() {
-        guard !heldDiscard.isEmpty else { return }
-        discardTask?.cancel()
-        discardTask = nil
-        heldDecisionIDs.subtract(heldDiscard)
-        PerfLog.mark("widget.staged discard undone \(heldDiscard.count)")
-        postNote(Plural.count(heldDiscard.count, "decision") + " kept staged.")
-        heldDiscard = []
+        let ids = heldDiscard
+        guard !ids.isEmpty else { return }
+        decisions.undo(Self.heldDiscardKey)
+        heldDecisionIDs.subtract(ids)
+        PerfLog.mark("widget.staged discard undone \(ids.count)")
+        postNote(Plural.count(ids.count, "decision") + " kept staged.")
     }
 
-    /// Sends a held Discard to the decision log now (its window ended, another discard came, or the widget stops).
+    /// Sends a held Discard to the decision log now (another discard came, or the widget stops); the end of its
+    /// window sends it by itself.
     func commitHeldDiscard() {
-        discardTask?.cancel()
-        discardTask = nil
-        guard !heldDiscard.isEmpty else { return }
-        let ids = heldDiscard
-        heldDiscard = []
-        discardStaged(ids, completed: { [weak self] in self?.heldDecisionIDs.subtract(ids) })
+        decisions.commit(Self.heldDiscardKey)
     }
 }
 
@@ -701,12 +727,12 @@ extension WidgetModel {
 /// a button stays (`noteSeconds`, at least 10 s), so every Undo in the widget lasts the same. With notes set to stay
 /// until closed (`noteSeconds` 0), the row stays until it is closed, but 60 s at most, since the delete must happen.
 public extension WidgetModel {
-    nonisolated static func undoSeconds(_ preferences: WidgetPreferences?) -> Double {
+    nonisolated static func undoSeconds(_ preferences: WidgetPreferences) -> Double {
         noteSeconds(preferences, hasAction: true) ?? 60
     }
 
     /// `undoSeconds` for the current preferences; the coordinator hands this to the shelf and voice-notes stores.
-    var undoSeconds: Double { Self.undoSeconds(snapshot?.state.preferences) }
+    var undoSeconds: Double { Self.undoSeconds(preferences) }
 }
 
 /// A button beside the widget's notice line.

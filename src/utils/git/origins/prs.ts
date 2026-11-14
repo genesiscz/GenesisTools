@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { parseConcatenatedJson, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyOriginUrl } from "./detector";
+import { FORGE_FACTS } from "./facts";
 import { toState as ghState } from "./gh";
 import { toState as glabState } from "./glab";
 import { unresolvedHostError } from "./host-errors";
@@ -200,12 +201,7 @@ export function parsePrUrl(url: string): { project: ProjectRef; number: number }
     }
 
     const { kind } = classifyOriginUrl(parsed.href);
-    const match =
-        kind === "github"
-            ? /^\/(.+?)\/pull\/(\d+)(?:\/.*)?$/.exec(parsed.pathname)
-            : kind === "gitlab"
-              ? /^\/(.+?)\/(?:-\/)?merge_requests\/(\d+)(?:\/.*)?$/.exec(parsed.pathname)
-              : null;
+    const match = kind ? FORGE_FACTS[kind].prPath.exec(parsed.pathname) : null;
 
     if (!kind || !match) {
         return null;
@@ -306,9 +302,13 @@ export function parsePrQuery(query: string): PrQuery {
 }
 
 function webUrls(kind: OriginKind, url: string): PrDetail["webUrls"] {
-    return kind === "github"
-        ? { pr: url, files: `${url}/files`, commits: `${url}/commits`, checks: `${url}/checks` }
-        : { pr: url, files: `${url}/diffs`, commits: `${url}/commits`, checks: `${url}/pipelines` };
+    const tabs = FORGE_FACTS[kind].web.prTabs;
+    return {
+        pr: url,
+        files: `${url}/${tabs.files}`,
+        commits: `${url}/${tabs.commits}`,
+        checks: `${url}/${tabs.checks}`,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -1029,10 +1029,7 @@ export async function viewerLogin({
         return null;
     }
 
-    const cmd =
-        project.kind === "github"
-            ? ["gh", "api", "--hostname", project.host, "user"]
-            : ["glab", "api", "--hostname", project.host, "user"];
+    const cmd = [FORGE_FACTS[project.kind].binary, "api", "--hostname", project.host, "user"];
     const { stdout, error } = await run({ cmd, cwd, runner });
 
     if (error) {
@@ -1041,7 +1038,7 @@ export async function viewerLogin({
 
     try {
         const user = parseJson(stdout, cmd[0]);
-        return isRecord(user) ? str(user[project.kind === "github" ? "login" : "username"]) : null;
+        return isRecord(user) ? str(user[FORGE_FACTS[project.kind].loginField]) : null;
     } catch (err) {
         log.debug({ err, host: project.host }, "viewer lookup unreadable");
         return null;
@@ -1385,10 +1382,17 @@ export async function prsOfCommit({
         return { prs: [], pushed: false, error: blocked };
     }
 
-    const cmd =
-        project.kind === "github"
-            ? ghApi(project, `repos/${project.path}/commits/${sha}/pulls`)
-            : glabApi(project, `${glabProject(project)}/repository/commits/${sha}/merge_requests`);
+    let cmd: string[];
+
+    switch (project.kind) {
+        case "github":
+            cmd = ghApi(project, `repos/${project.path}/commits/${sha}/pulls`);
+            break;
+        case "gitlab":
+            cmd = glabApi(project, `${glabProject(project)}/repository/commits/${sha}/merge_requests`);
+            break;
+    }
+
     const res = await run({ cmd, cwd, runner });
 
     if (res.error) {
@@ -1401,10 +1405,19 @@ export async function prsOfCommit({
         return { prs: [], pushed: false, error: res.error };
     }
 
+    let commitPr: (row: Record<string, unknown>) => CommitPr[];
+
+    switch (project.kind) {
+        case "github":
+            commitPr = ghCommitPr;
+            break;
+        case "gitlab":
+            commitPr = glabCommitPr;
+            break;
+    }
+
     try {
-        const prs = records(parseJson(res.stdout, project.kind === "github" ? "gh" : "glab")).flatMap((row) =>
-            project.kind === "github" ? ghCommitPr(row) : glabCommitPr(row)
-        );
+        const prs = records(parseJson(res.stdout, FORGE_FACTS[project.kind].binary)).flatMap(commitPr);
         log.debug({ project: project.path, sha, prs: prs.map((pr) => pr.number) }, "prs of commit");
         return { prs, pushed: true, error: null };
     } catch (err) {

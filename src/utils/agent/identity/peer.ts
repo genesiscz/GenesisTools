@@ -3,11 +3,11 @@ import type { PeerSessionPart } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
 import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { readProcessEnvKeys } from "@genesiscz/utils/process/processes";
+import { readProcessEnvironment, readProcessEnvKeys } from "@genesiscz/utils/process/processes";
 import { findLoopbackClientPids, type ProcessInfo, readProcessInfo } from "@genesiscz/utils/process/socket-owner";
 import { profiler } from "@genesiscz/utils/profile";
 import { callerEnvKeys } from "./enrichers";
-import { envHosts } from "./env";
+import { envHosts, resolveEnvHost } from "./env";
 import type { CallerAgent, PeerQuery, ScopedCaller } from "./types";
 
 const { log } = logger.scoped("agent-context");
@@ -73,6 +73,23 @@ function pickHost(candidates: Candidate[]): Candidate {
     )[0];
 }
 
+/**
+ * The one owner of the socket when it is no host process: a command an agent started that calls the gateway itself
+ * (`tools scripts call`, a persisted script). Its own environment names its host as it would for a local run of a
+ * tool, so the caller is the session that started it. A process whose environment names no host stays unknown.
+ */
+function commandCaller(info: ProcessInfo): Candidate {
+    const environment = readProcessEnvironment(info.pid);
+    const host = environment ? resolveEnvHost(environment) : null;
+    const agent = host?.agent ?? "unknown";
+
+    if (agent !== "unknown") {
+        log.debug({ pid: info.pid, name: info.name, agent }, "agent-context: the caller's own env names its host");
+    }
+
+    return { info, agent, sessionId: host?.sessionId ?? null };
+}
+
 /** The host process that holds the client end of this connection, and what it is running. */
 export function readPeerCaller(query: PeerQuery): PeerCaller {
     return prof.measure("gateway.resolveCallerFromPeer", () => {
@@ -83,8 +100,7 @@ export function readPeerCaller(query: PeerQuery): PeerCaller {
             return agent ? [{ info, agent, sessionId: peerSessionOf(info, agent, query) }] : [];
         });
         const lone = infos.length === 1 ? infos[0] : undefined;
-        const chosen =
-            hosts.length > 0 ? pickHost(hosts) : lone && { info: lone, agent: "unknown" as const, sessionId: null };
+        const chosen = hosts.length > 0 ? pickHost(hosts) : lone && commandCaller(lone);
 
         if (!chosen) {
             log.info({ clientPort: query.clientPort, owners: pids }, "gateway caller has no single owning process");

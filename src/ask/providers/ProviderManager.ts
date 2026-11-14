@@ -4,6 +4,7 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { ephemeralEnvAccounts } from "@genesiscz/utils/ai/config/migrations/2026-08-seedEnvAccounts";
 import type { AccountEntry, AiConfigData } from "@genesiscz/utils/ai/config/schema";
 import { formatModelRef, parseModelRef } from "@genesiscz/utils/ai/core/model-ref";
+import { fromTaskDefault, type ModelRequest } from "@genesiscz/utils/ai/core/resolve";
 import { describeCredential } from "@genesiscz/utils/ai/providers/credentials";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -55,9 +56,9 @@ export interface AskChatDefault {
 }
 
 /**
- * Ask's chat default (`defaults.app.ask.chat`). An `@account/<id>[:<model>]` model names the account to bill and,
- * after the colon, the model; the account's provider is the provider, as in `fromTaskDefault` of the shared resolver
- * (src/utils/ai/core/resolve.ts). Any other model ref is kept as written.
+ * Ask's chat default (`defaults.app.ask.chat`), read by the shared resolver's `fromTaskDefault`. An
+ * `@account/<id>[:<model>]` model names the account to bill and, after the colon, the model; the account's provider
+ * is the provider. Any other model ref is kept as written.
  */
 export function askChatDefault(store: AiConfigStore): AskChatDefault {
     const config = store.data();
@@ -67,28 +68,28 @@ export function askChatDefault(store: AiConfigStore): AskChatDefault {
         return provider;
     }
 
-    let parsed: ReturnType<typeof parseModelRef>;
+    let request: ModelRequest;
     try {
-        parsed = parseModelRef(chat.model, config);
+        request = fromTaskDefault(chat, config, "defaults.app.ask.chat");
     } catch (error) {
         logger.warn({ error, model: chat.model }, "defaults.app.ask.chat.model is not a model ref; ask ignores it");
         return provider;
     }
 
-    if (parsed.kind !== "account" || !parsed.accountId) {
+    if (!request.accountId) {
         return { ...provider, model: chat.model };
     }
 
-    const account = store.account(parsed.accountId);
+    const account = store.account(request.accountId);
     if (!account) {
-        logger.warn({ account: parsed.accountId }, "defaults.app.ask.chat.model names an account that does not exist");
+        logger.warn({ account: request.accountId }, "defaults.app.ask.chat.model names an account that does not exist");
         return provider;
     }
 
     return {
         provider: providerNameFor(account.provider),
         accountId: account.id,
-        ...(parsed.modelId ? { model: parsed.modelId } : {}),
+        ...(request.modelId ? { model: request.modelId } : {}),
     };
 }
 

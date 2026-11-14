@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli";
+import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import { out } from "@genesiscz/utils/logger";
 import { planRemoval, presetsFor, scanPresets } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
@@ -63,6 +64,41 @@ function addRemoveFlags(command: Command): Command {
         .option("--no-aside", "leave what needs the user where it is");
 }
 
+/** Characters two names share from their start. */
+function commonPrefix(a: string, b: string): number {
+    let length = 0;
+
+    while (length < a.length && length < b.length && a[length] === b[length]) {
+        length++;
+    }
+
+    return length;
+}
+
+/**
+ * The subcommand a bare word most likely meant, or null: `tools rm approvals` (2026-11-14) refused a missing path
+ * `approvals` and never named `approve`. A word with a folder in it, or one starting with `.` or `-`, is a path.
+ */
+export function subcommandMeant(word: string, program: Command): string | null {
+    if (/[/\\]/.test(word) || word.startsWith(".") || word.startsWith("-")) {
+        return null;
+    }
+
+    const typed = word.toLowerCase();
+    let best: { name: string; distance: number } | null = null;
+
+    for (const name of program.commands.flatMap((command) => [command.name(), ...command.aliases()])) {
+        const distance = levenshteinDistance(typed, name);
+        const close = distance <= 2 || (distance <= 3 && commonPrefix(typed, name) >= 4);
+
+        if (close && distance < typed.length && (!best || distance < best.distance)) {
+            best = { name, distance };
+        }
+    }
+
+    return best?.name ?? null;
+}
+
 export function registerRemoveCommand(program: Command): void {
     addRemoveFlags(program)
         .argument("[paths...]", "files or folders to delete")
@@ -75,6 +111,14 @@ export function registerRemoveCommand(program: Command): void {
             const ctx = runContext();
             const plan = planRemoval(paths, ctx.rules);
             await executePlan(plan, ctx, { ...flags, keepMinutes: keepMinutes(flags) });
+
+            for (const item of plan) {
+                const meant = item.target.kind === "missing" ? subcommandMeant(item.target.input, program) : null;
+
+                if (meant && !flags.json) {
+                    out.println(pc.yellow(`No ${item.target.input} here. Did you mean ${toolCommand("rm")} ${meant}?`));
+                }
+            }
         });
 
     addRemoveFlags(

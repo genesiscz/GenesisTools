@@ -1,3 +1,4 @@
+import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import type { NotifyEvent } from "./notify-config";
 
 // The PR notifier's decision core: a fresh snapshot of one PR against what the last poll remembered
@@ -82,7 +83,7 @@ function remember(previous: string[], next: string[]): string[] {
 }
 
 function label(pr: PrSnapshot): string {
-    return `${pr.project.split("/").pop() ?? pr.project}${pr.provider === "gitlab" ? "!" : "#"}${pr.number}`;
+    return `${pr.project.split("/").pop() ?? pr.project}${prNumberLabel(pr.provider, pr.number)}`;
 }
 
 function ciKey(pr: PrSnapshot): string | null {

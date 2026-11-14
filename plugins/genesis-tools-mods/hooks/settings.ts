@@ -40,6 +40,8 @@ export interface ModsSettings {
         earlier: "show" | "hide";
     };
     askRow: { enabled: boolean };
+    /** The local start time of each tool call under `[ask]` (or in its place); `ago` adds `(5m ago)`. */
+    toolTime: { enabled: boolean; ago: boolean };
     spinner: { enabled: boolean };
     cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
     tmpUsage: { enabled: boolean; minutes: number };
@@ -212,6 +214,10 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             earlier: git.earlier === "show" || git.earlier === "hide" ? git.earlier : d.git.earlier,
         },
         askRow: { enabled: enabled("askRow", d.askRow.enabled) },
+        toolTime: {
+            enabled: enabled("toolTime", d.toolTime.enabled),
+            ago: bool(part("toolTime").ago, d.toolTime.ago),
+        },
         spinner: { enabled: enabled("spinner", d.spinner.enabled) },
         cacheBand: {
             enabled: bool(cache.enabled, d.cacheBand.enabled),

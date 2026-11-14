@@ -1,4 +1,5 @@
 import Foundation
+import GenesisKitBase
 
 package enum NativePreview {
     package static var enabled: Bool { Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true }
@@ -11,8 +12,8 @@ package enum NativePreview {
     }
     package static func hubFile(_ name: String) -> URL {
         if enabled { return root.appendingPathComponent("hub", isDirectory: true).appendingPathComponent(name) }
-        // Under genesisHome() (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
-        return URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/hub")
+        // Under GenesisToolsHome.home() (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
+        return GenesisToolsHome.url("hub")
             .appendingPathComponent(name)
     }
 }

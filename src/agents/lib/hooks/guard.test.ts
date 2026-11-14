@@ -10,6 +10,7 @@ import { DEFAULT_HOOKS_CONFIG, lastConfigProblems, loadHooksConfig } from "./con
 import { recentBashCommands } from "./corpus";
 import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRuleSet } from "./custom-rules";
 import { evaluateCommand, evaluateGuard } from "./guard";
+import { recordGuardVerdict } from "./guard-metrics";
 import { repoRoot } from "./install";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { HARNESS_HOOK_FACTS, type HookPayload } from "./payload";
@@ -256,6 +257,7 @@ describe("the guard explains a rule once per loop", () => {
                 contextRules: [],
                 loop: MAIN_LOOP,
                 explainedRules: first?.explainedRules ?? [],
+                seenRules: first?.seenRules ?? [],
                 at: EXPLAINED_AT,
             });
 
@@ -288,7 +290,7 @@ describe("the guard explains a rule once per loop", () => {
 
         try {
             await env.testing.withOverrides({ GENESIS_TOOLS_HOME: dir }, async () => {
-                const shown = { contextRules: [], loop: MAIN_LOOP };
+                const shown = { contextRules: [], loop: MAIN_LOOP, seenRules: [] };
                 await recordGuardShown(sessionId, {
                     ...shown,
                     explainedRules: ["stderr-discarded-then-counted"],
@@ -318,6 +320,137 @@ describe("the guard explains a rule once per loop", () => {
         } finally {
             scans.mockRestore();
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("leaves out a warn the loop saw within quietMinutes, but never a block", () => {
+        const quiet = evaluateCommand(LONG_WARN, DEFAULT_HOOKS_CONFIG, { seenRecently: () => true });
+        const block = evaluateCommand(COMMAND, DEFAULT_HOOKS_CONFIG, { seenRecently: () => true });
+
+        expect(quiet.outcome).toBe("allow");
+        expect(quiet.quieted).toEqual(["exit-code-after-pipeline"]);
+        expect(quiet.message).toBe("");
+        expect(block.outcome).toBe("block");
+        expect(block.seenRules).toEqual(["stderr-discarded-then-counted"]);
+    });
+
+    it("is quiet for the same loop inside the window, and speaks again after it or in another loop", async () => {
+        const { dir, transcript } = fixture();
+        const sessionId = "sess-quiet-window";
+        const warnPayload = (agentId?: string): HookPayload => ({
+            ...payload(sessionId, transcript, agentId),
+            command: LONG_WARN,
+        });
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: dir }, async () => {
+                const first = evaluateGuard(warnPayload(), DEFAULT_HOOKS_CONFIG);
+                expect(first?.outcome).toBe("warn");
+
+                const shown = { contextRules: [], loop: MAIN_LOOP, explainedRules: first?.explainedRules ?? [] };
+                await recordGuardShown(sessionId, { ...shown, seenRules: first?.seenRules ?? [], at: Date.now() });
+
+                const repeat = evaluateGuard(warnPayload(), DEFAULT_HOOKS_CONFIG);
+                expect(repeat?.outcome).toBe("allow");
+                expect(repeat?.quieted).toEqual(["exit-code-after-pipeline"]);
+                expect(evaluateGuard(warnPayload("agent-7"), DEFAULT_HOOKS_CONFIG)?.outcome).toBe("warn");
+
+                const off = { ...DEFAULT_HOOKS_CONFIG, guard: { ...DEFAULT_HOOKS_CONFIG.guard, quietMinutes: 0 } };
+                expect(evaluateGuard(warnPayload(), off)?.outcome).toBe("warn");
+
+                await recordGuardShown(sessionId, { ...shown, seenRules: [], at: Date.now() });
+                await recordGuardShown(sessionId, {
+                    ...shown,
+                    explainedRules: [],
+                    seenRules: ["exit-code-after-pipeline"],
+                    at: Date.now() - 11 * 60_000,
+                });
+                expect(evaluateGuard(warnPayload(), DEFAULT_HOOKS_CONFIG)?.outcome).toBe("warn");
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("records one guard.verdict event per rule, with the shown message's tokens and 0 for a quiet one", () => {
+        const events: Array<{ value: number; dims: Record<string, unknown> }> = [];
+        const recorder = {
+            record: (_project: string, _metric: string, value: number, dims?: Record<string, unknown>) => {
+                events.push({ value, dims: dims ?? {} });
+            },
+            flush: () => {},
+        };
+        const live = { ...DEFAULT_HOOKS_CONFIG, shadow: false };
+        const base = payload("sess-metrics", "/nonexistent.jsonl");
+        const block = evaluateCommand(COMMAND, DEFAULT_HOOKS_CONFIG);
+        const quiet = evaluateCommand(LONG_WARN, DEFAULT_HOOKS_CONFIG, { seenRecently: () => true });
+
+        recordGuardVerdict({ payload: base, verdict: block, config: live, recorder });
+        recordGuardVerdict({
+            payload: { ...base, agentId: "agent-3" },
+            verdict: quiet,
+            config: live,
+            recorder,
+        });
+        recordGuardVerdict({
+            payload: base,
+            verdict: block,
+            config: { ...live, guard: { ...live.guard, metrics: false } },
+            recorder,
+        });
+
+        expect(events).toHaveLength(2);
+        expect(events[0]?.value).toBe(Math.ceil(block.message.length / 4));
+        expect(events[0]?.dims).toMatchObject({
+            rule: "stderr-discarded-then-counted",
+            outcome: "block",
+            delivery: "block",
+            form: "full",
+            agent: MAIN_LOOP,
+            harness: "claude",
+        });
+        expect(events[1]).toEqual({
+            value: 0,
+            dims: expect.objectContaining({ rule: "exit-code-after-pipeline", delivery: "quiet", agent: "agent-3" }),
+        });
+    });
+
+    it("splits a message's tokens over its rules in whole numbers that add up to the message", () => {
+        const values: number[] = [];
+        const recorder = {
+            record: (_project: string, _metric: string, value: number) => {
+                values.push(value);
+            },
+            flush: () => {},
+        };
+        const block = evaluateCommand(COMMAND, DEFAULT_HOOKS_CONFIG);
+        const first = block.violations[0];
+
+        if (!first) {
+            throw new Error("the fixture command fires no rule");
+        }
+
+        const rules = ["rule-a", "rule-b", "rule-c"];
+        const three = {
+            ...block,
+            violations: rules.map((ruleId) => ({ ...first, ruleId })),
+            seenRules: rules,
+            explainedRules: rules,
+        };
+
+        // 400 characters are 100 tokens, 401 are 101: neither splits evenly over three rules.
+        for (const length of [400, 401]) {
+            values.length = 0;
+            recordGuardVerdict({
+                payload: payload("sess-split", "/nonexistent.jsonl"),
+                verdict: { ...three, message: "x".repeat(length) },
+                config: { ...DEFAULT_HOOKS_CONFIG, shadow: false },
+                recorder,
+            });
+
+            expect(values).toHaveLength(3);
+            expect(values.reduce((sum, value) => sum + value, 0)).toBe(Math.ceil(length / 4));
+            expect(Math.max(...values) - Math.min(...values)).toBeLessThanOrEqual(1);
         }
     });
 

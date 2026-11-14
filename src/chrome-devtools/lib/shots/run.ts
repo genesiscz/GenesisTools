@@ -94,8 +94,7 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
     const notes: string[] = [];
     let offset = 0;
     const setup = tab.shared ? { ...book.setup, viewport: undefined } : book.setup;
-    // the raw images are kept, stacked and encoded only when they are written
-    const keepRaw = options.raw ?? book.output.raw;
+    const wantsRaw = options.raw ?? book.output.raw;
 
     for (const [index, part] of shot.parts.entries()) {
         const capture = await capturePart(tab.cdp, part, setup);
@@ -109,7 +108,7 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
             };
         }
 
-        if (keepRaw) {
+        if (wantsRaw) {
             raws.push(capture.images.raw);
         }
 
@@ -128,7 +127,7 @@ async function shootOne(tab: ShotTab, book: ShotBook, shot: Shot, options: RunOp
         files.push(path);
     }
 
-    if (keepRaw) {
+    if (wantsRaw) {
         const path = join(options.out, "png", `${name}.original.png`);
         await writeAtomic(path, await stackImages(raws));
         files.push(path);

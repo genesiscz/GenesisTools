@@ -2,6 +2,7 @@ import { createEvaluator, type Evaluator, lazyEvaluator } from "@genesiscz/utils
 import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { serveStdio } from "@genesiscz/utils/mcp/stdio";
 import { profiler } from "@genesiscz/utils/profile";
 import {
     type CallToolResult,
@@ -133,13 +134,5 @@ export function createJevMcpServer(options: { registry?: JevMcpRegistry; deps?: 
 
 export async function startJevMcpServer(options: { deps?: JevRouteDeps } = {}): Promise<void> {
     const server = createJevMcpServer(options);
-    const transport = new StdioServerTransport();
-    const stop = () => {
-        void server.close().finally(() => process.exit(0));
-    };
-    process.stdin.once("end", stop);
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-    await server.connect(transport);
-    logger.info("Jev MCP server is listening on stdio");
+    await serveStdio({ name: "jev", server, transport: new StdioServerTransport(), shutdown: () => server.close() });
 }

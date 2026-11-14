@@ -99,14 +99,14 @@ public struct WidgetSessionBrowser: View {
     private var projectFilter: some View {
         // Built at the click: a SwiftUI Menu builds every project's item with each body pass.
         MenuButton(items: {
-            let chosen = model.snapshot?.state.preferences.projects ?? []
+            let chosen = model.preferences.projects
             let folders = Array(Set((model.snapshot?.sessions ?? []).map { $0.target.cwd })).sorted()
             return [.action("Show every project", checked: chosen.isEmpty) { setProjects([]) }, .divider]
                 + folders.map { cwd in
                     let selected = chosen.contains(cwd)
                     return .action(cwd.isEmpty ? "Unassigned" : URL(fileURLWithPath: cwd).lastPathComponent,
                                    checked: selected) {
-                        var projects = model.snapshot?.state.preferences.projects ?? []
+                        var projects = model.preferences.projects
                         if selected { projects.removeAll { $0 == cwd } } else { projects.append(cwd) }
                         setProjects(projects)
                     }
@@ -152,7 +152,7 @@ public struct WidgetSessionBrowser: View {
     }
 
     private func setProjects(_ projects: [String]) {
-        model.updatePreferences(["projects": .array(projects.map(WidgetJSON.string))])
+        model.writePreferences { $0.projects = projects }
     }
 }
 

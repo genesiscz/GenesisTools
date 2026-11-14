@@ -58,6 +58,21 @@ final class FailureNoticeTests: XCTestCase {
     failed, nothing was recorded: The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host
     """
 
+    @MainActor
+    func testStacksAreCachedForTheDisclosureAndStackOnlyFailuresHaveDetails() {
+        let stack = "Error: refused\n    at origin (/fixture/source.ts:12:3)"
+        let report = FailureReport(headline: "Refused", stack: stack)
+        XCTAssertTrue(report.hasLog)
+        let model = FailureNoticeModel(report: report, detailsOpen: true, retry: nil, dismiss: {})
+        XCTAssertTrue(model.detailsOpen)
+        XCTAssertFalse(model.stackOpen)
+        XCTAssertEqual(model.stackText, stack)
+        model.report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure)
+        XCTAssertTrue(model.stackText?.contains("startRecordingCamera") == true)
+        model.report = FailureReport(headline: "No stack", log: "error: refused")
+        XCTAssertNil(model.stackText)
+    }
+
     /// A report delivered with an empty log and enriched later (`addingCallLog`, `deliver`) counts the events it has
     /// now, and a report for another failure shows its own time: both stayed at the first report's values.
     @MainActor
@@ -72,22 +87,36 @@ final class FailureNoticeTests: XCTestCase {
         XCTAssertNotEqual(model.timeText, FailureNoticeModel.timeText(first))
     }
 
-    // MARK: - Headline
+    @MainActor
+    func testDetailsOfferAFoldableStackTrace() throws {
+        let report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure)
+        let model = FailureNoticeModel(report: report, detailsOpen: true, retry: nil, dismiss: {})
+        let view = FailureNoticeView(model: model)
+            .frame(width: 620, height: 700).background(Color(white: 0.1))
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(x: 0, y: 0, width: 620, height: 700)
+        host.layoutSubtreeIfNeeded()
+        let text = TreeDrawnText.lines(of: host).joined(separator: " ")
+        XCTAssertTrue(text.contains("Stack trace"), text)
+        XCTAssertFalse(text.contains("startRecordingCamera"), "the full stack starts folded")
+    }
 
-    /// The defect: the notice's title read "The recording stopped at once (exit 1): {." because the first line that
-    /// started with "error:" after trimming was the indented field `    error: {` of a WARN entry.
     func testRemoteEvidenceSurvivesTheCompatibleReportAdapter() {
         let stack = "RpcError: refused\n    at first (service.ts:1:2)\n    at second (caller.ts:3:4)"
         let report = FailureReport(headline: "Refused", command: "tools meetings decide", stack: stack,
                                    issue: FailureIssue(tool: "meetings", title: "Decision failed"))
         XCTAssertTrue(report.hasLog)
-        XCTAssertTrue(report.detailsMarkdown().contains(stack))
+        XCTAssertTrue(report.detailsMarkdown().contains("Stack: 2 frames, from `first` at `service.ts:1:2`"))
         XCTAssertTrue(report.rawText().contains(stack))
         XCTAssertTrue(report.agentContext().contains(stack))
         XCTAssertTrue(report.agentContext().contains("tool: meetings (issue: Decision failed)"))
         XCTAssertTrue(report.agentContext().contains("command: tools meetings decide"))
     }
 
+    // MARK: - Headline
+
+    /// The defect: the notice's title read "The recording stopped at once (exit 1): {." because the first line that
+    /// started with "error:" after trimming was the indented field `    error: {` of a WARN entry.
     func testTheHeadlineIsTheErrorSentenceNeverAnIndentedErrorField() {
         XCTAssertEqual(FailureLog.headline(in: Self.cameraFailure),
                        "The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host.")
@@ -407,26 +436,6 @@ final class IssueDraftTests: XCTestCase {
         XCTAssertFalse(empty.canPost)
     }
 
-    /// The defect: a second "Draft an issue" replaced a window whose post was in flight (its link or error was lost,
-    /// and a second copy could be posted) and dropped an edited draft without a word.
-    func testAWindowWithAPostInFlightOrAnEditedDraftIsNeverReplaced() {
-        let ok = IssuePostResult(posted: true, number: 7, url: "https://github.com/shop/storefront/issues/7", replaced: 0)
-        let draft = IssueDraft(repo: "shop/storefront", title: "T", body: "B")
-        let poster = FakePoster(result: .success(ok))
-
-        XCTAssertFalse(IssueDraftModel(draft: draft, poster: poster).holdsWork, "an untouched draft can be replaced")
-        XCTAssertTrue(IssueDraftModel(draft: draft, poster: poster, state: .posting).holdsWork)
-        XCTAssertFalse(IssueDraftModel(draft: draft, poster: poster, state: .posted(ok)).holdsWork)
-
-        let edited = IssueDraftModel(draft: draft, poster: poster)
-        edited.draft.body = "B, with the private path removed"
-        XCTAssertTrue(edited.holdsWork)
-        let failed = IssueDraftModel(draft: draft, poster: poster, state: .failed("Not Found"))
-        XCTAssertFalse(failed.holdsWork)
-        failed.draft.title = "T2"
-        XCTAssertTrue(failed.holdsWork)
-    }
-
     private final class CountingPoster: IssuePosting, @unchecked Sendable {
         let result: Result<IssuePostResult, IssuePostError>
         private(set) var posts = 0
@@ -454,5 +463,399 @@ final class IssueDraftTests: XCTestCase {
         XCTAssertTrue(retry.canPost, "a failed post can be tried again")
         await retry.post()
         XCTAssertEqual(failing.posts, 2)
+    }
+
+    /// The defect: a second "Draft an issue" replaced a window whose post was in flight (its link or error was lost,
+    /// and a second copy could be posted) and dropped an edited draft without a word.
+    func testAWindowWithAPostInFlightOrAnEditedDraftIsNeverReplaced() {
+        let ok = IssuePostResult(posted: true, number: 7, url: "https://github.com/shop/storefront/issues/7", replaced: 0)
+        let draft = IssueDraft(repo: "shop/storefront", title: "T", body: "B")
+        let poster = FakePoster(result: .success(ok))
+
+        XCTAssertFalse(IssueDraftModel(draft: draft, poster: poster).holdsWork, "an untouched draft can be replaced")
+        XCTAssertTrue(IssueDraftModel(draft: draft, poster: poster, state: .posting).holdsWork)
+        XCTAssertFalse(IssueDraftModel(draft: draft, poster: poster, state: .posted(ok)).holdsWork)
+
+        let edited = IssueDraftModel(draft: draft, poster: poster)
+        edited.draft.body = "B, with the private path removed"
+        XCTAssertTrue(edited.holdsWork)
+        let failed = IssueDraftModel(draft: draft, poster: poster, state: .failed("Not Found"))
+        XCTAssertFalse(failed.holdsWork)
+        failed.draft.title = "T2"
+        XCTAssertTrue(failed.holdsWork)
+    }
+}
+
+/// A failed `tools` call as a report (`FailureReport.toolsCall`), the call ledger, the details' log and the inline view.
+final class FailureInlineTests: XCTestCase {
+
+    private static func call(_ argv: [String], via: String?, exit: Int32? = nil, stderr: String? = nil, seconds: Double = 31.2)
+        -> ToolsCallLedger.Call {
+        let started = Date(timeIntervalSince1970: 1_800_000_000)
+        return ToolsCallLedger.Call(traceId: "297f7e79", argv: argv, started: started, via: via, exit: exit, stderr: stderr,
+                                    ended: started.addingTimeInterval(seconds))
+    }
+
+    private static let tailArgv = ["ai", "sessions", "tail", "a1523c66-0000-4000-8000-000000000000", "--json", "--limit", "12"]
+
+    /// A unique path in the temporary directory, removed when the test ends. Nothing is created there.
+    private func temporaryURL(_ prefix: String, suffix: String = "") -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString)\(suffix)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testATimeoutSaysWhatDidNotLoadWhatRanAndThatTheMacMayBeBusy() {
+        let report = FailureReport.toolsCall(ToolsBridgeError.timeout(seconds: 30), outcome: "The transcript did not load",
+                                             action: "Open the session's transcript",
+                                             call: Self.call(Self.tailArgv, via: "server-timeout", exit: -1), area: "hub",
+                                             home: "/Users/alice")
+        XCTAssertEqual(report.headline, "The transcript did not load: the tools call did not answer in 30 s.")
+        XCTAssertEqual(report.summary, "`ai sessions tail` did not answer in 30 s (the hub server held it the whole time).")
+        XCTAssertEqual(report.command, "tools ai sessions tail a1523c66-0000-4000-8000-000000000000 --json --limit 12")
+        XCTAssertNil(report.exitStatus, "a killed call has no exit status worth showing")
+        XCTAssertTrue(report.nextStep?.contains("busy") == true)
+        XCTAssertTrue(report.dayLog?.hasPrefix("/Users/alice/.genesis-tools/logs/") == true)
+        XCTAssertTrue(report.agentContext().contains("trace: t=297f7e79 (via server-timeout)"))
+    }
+
+    func testAFailedExitTakesItsHeadlineFromStderrAndKeepsTheStatus() {
+        let stderr = "[ai-sessions] reading the session\nerror: the session file is gone\n"
+        let report = FailureReport.toolsCall(
+            ToolsBridgeError.refused("tools ai sessions tail: the session file is gone"), outcome: "The transcript did not load",
+            action: "Open the session's transcript", call: Self.call(Self.tailArgv, via: "process", exit: 1, stderr: stderr, seconds: 0.4))
+        XCTAssertEqual(report.headline, "The transcript did not load: the session file is gone.")
+        XCTAssertEqual(report.summary, "`ai sessions tail` ended with exit 1.")
+        XCTAssertEqual(report.exitStatus, 1)
+    }
+
+    func testAMissingBinaryNamesTheInstallStepAndAKilledRunnerCallIsATimeout() {
+        let missing = FailureReport.toolsCall(ToolsBridgeError.binaryNotFound("/nonexistent"), outcome: "The agents did not load",
+                                              action: "List the agents", argv: ["hub", "agents", "--json"])
+        XCTAssertEqual(missing.headline, "The agents did not load: the tools command is not installed where the app looks for it.")
+        XCTAssertEqual(missing.summary, "No tools command at /nonexistent.")
+        XCTAssertTrue(missing.nextStep?.contains("./install.sh") == true)
+
+        struct RunnerError: Error {}
+        let killed = FailureReport.toolsCall(RunnerError(), outcome: "The activity did not load", action: "Read the activity feed",
+                                             call: Self.call(["hub", "timeline", "--json"], via: "process-timeout", exit: -1, seconds: 60))
+        XCTAssertEqual(killed.headline, "The activity did not load: the tools call did not answer in 60 s.")
+    }
+
+    func testAClauseLowersASentenceStartButNeverAName() {
+        XCTAssertEqual(ToolsCallCause.lowered("The session file is gone."), "the session file is gone")
+        XCTAssertEqual(ToolsCallCause.lowered("GitHub answered 502"), "GitHub answered 502")
+        XCTAssertEqual(ToolsCallCause.lowered("PR 12 is closed"), "PR 12 is closed")
+    }
+
+    func testTheLogHoldsTheTraceAndTheCallsOfTheMinuteBeforeAcrossMidnight() {
+        let utc = TimeZone(identifier: "UTC")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = utc
+        let to = calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 0, minute: 0, second: 20))!
+        let text = """
+        [23:58:40.000] mark call t=aaaaaaaa via=server pid=1 ms=5 exit=0 out=1B start=23:58:39.995 argv=too old
+        [23:59:30.000] mark call t=bbbbbbbb via=server pid=1 ms=900 exit=0 out=1B start=23:59:29.100 argv=hub agents
+        [23:59:31.000] hub.sessions.list 12.0ms
+        [00:00:18.000] mark tools.ai.sessions.tail TIMEOUT after 30s (the hub server did not answer; no process started)
+        [00:00:18.100] mark call t=297f7e79 via=server-timeout pid=1 ms=31207 exit=-1 out=0B start=23:59:46.893 argv=ai sessions tail
+        [00:05:00.000] mark call t=cccccccc via=server pid=1 ms=5 exit=0 out=1B start=00:04:59.995 argv=too new
+        """
+        let log = ToolsCallLog.select(text, traceId: "297f7e79", from: to.addingTimeInterval(-91), to: to, timeZone: utc)
+        XCTAssertEqual(log.lines.count, 2, log.lines.joined(separator: "\n"))
+        XCTAssertTrue(log.lines[0].contains("t=bbbbbbbb"), "a call that ended in the minute before, across midnight")
+        XCTAssertTrue(log.lines[1].contains("t=297f7e79"))
+        XCTAssertEqual(log.traceLine, 5, "the trace's own call line, 1-based")
+    }
+
+    func testAddingTheCallLogReadsTheFileAndPointsOpenLogAtTheCallsLine() async throws {
+        let folder = temporaryURL("failure-log")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stamp = DateFormatter()
+        stamp.dateFormat = "HH:mm:ss.SSS"
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        let now = Date()
+        let lines = (0..<40).map { "[\(stamp.string(from: now.addingTimeInterval(-600))) ] filler \($0)" } + [
+            "[\(stamp.string(from: now.addingTimeInterval(-20)))] mark call t=11111111 via=server pid=1 ms=4000 exit=0 out=1B start=x argv=hub prs",
+            "[\(stamp.string(from: now))] mark call t=297f7e79 via=server-timeout pid=1 ms=31207 exit=-1 out=0B start=x argv=ai sessions tail",
+        ]
+        let file = folder.appendingPathComponent("app-perf.log")
+        try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        var call = Self.call(Self.tailArgv, via: "server-timeout", exit: -1)
+        call.started = now.addingTimeInterval(-31)
+        call.ended = now
+        let report = await FailureReport.toolsCall(ToolsBridgeError.timeout(seconds: 30), outcome: "The transcript did not load",
+                                                   action: "Open the session's transcript", call: call, time: now)
+            .addingCallLog(perfLog: file)
+        XCTAssertEqual(report.logFile, file.path)
+        XCTAssertEqual(report.logLine, 42)
+        XCTAssertTrue(report.log.hasPrefix("error: The transcript did not load"))
+        XCTAssertTrue(report.log.contains("t=11111111"), "the slow call 20 s before is in the details")
+        XCTAssertFalse(report.log.contains("filler"))
+    }
+
+    func testTheLedgerNamesTheCallThatFailedEvenWhenTheBinaryIsMissing() async {
+        let ledger = ToolsCallLedger()
+        let bridge = ToolsBridge(binaryPath: "/nonexistent/tools", server: nil)
+        do {
+            _ = try await ledger.record { try await bridge.run(subcommand: "ai", args: ["sessions", "tail", "x", "--json"]) }
+            XCTFail("a missing binary throws")
+        } catch {
+            XCTAssertEqual(error as? ToolsBridgeError, .binaryNotFound("/nonexistent/tools"))
+        }
+        XCTAssertEqual(ledger.failed?.argv, ["ai", "sessions", "tail", "x", "--json"])
+        XCTAssertEqual(ledger.failed?.traceId.count, 8)
+        let outside = ToolsCallLedger()
+        _ = try? await bridge.run(subcommand: "ai", args: ["usage"])
+        XCTAssertTrue(outside.calls.isEmpty, "a call outside `record` is not noted")
+    }
+
+    func testFailureIsPreparedAndPersistedBeforeDetailsAndReusesItsSnapshotAfterRestart() async throws {
+        let directory = temporaryURL("failure-capture")
+        let began = expectation(description: "triage starts at the error, without Details")
+        let probe = FailureCaptureProbe()
+        FailureCapture.enable(directory: directory, environment: {
+            let number = probe.next()
+            began.fulfill()
+            return FailureEnvironment(markdown: "snapshot \(number)")
+        }, enrich: { $0 })
+        defer { FailureCapture.disable() }
+        let report = FailureReport.unexpected("fixture error", outcome: "The fixture did not load", action: "Read fixture",
+                                              time: Date(timeIntervalSince1970: 1000), home: directory.path)
+        let fix = await NoticeFix.details(report)
+        await MainActor.run { fix.preparation?() } // the notice appears; no Details action is pressed
+        var redraw = report
+        redraw.time = Date(timeIntervalSince1970: 1001)
+        let redrawnFix = await NoticeFix.details(redraw)
+        XCTAssertEqual(fix.id, redrawnFix.id, "a parent redraw retains the visible notice's first prepared report")
+        await fulfillment(of: [began], timeout: 2)
+        let prepared = await FailureCapture.prepared(report)
+        XCTAssertTrue(prepared.environment?.markdown.hasSuffix("snapshot 1") == true)
+        XCTAssertEqual(probe.count, 1)
+
+        let reopened = FailureCaptureStore(directory: directory, environment: {
+            XCTFail("Details must reuse the event snapshot, including after a restart")
+            return nil
+        }, enrich: { $0 })
+        let reopenedRecord = await reopened.read(report)
+        let stored = try XCTUnwrap(reopenedRecord)
+        XCTAssertEqual(stored.version, 1)
+        XCTAssertEqual(stored.report.time, report.time)
+        XCTAssertEqual(FailureCaptureStore.key(stored.report), FailureCaptureStore.key(report))
+        XCTAssertNotNil(stored.contextCapturedAt)
+        let reread = await reopened.prepared(report)
+        XCTAssertTrue(reread.environment?.markdown.hasSuffix("snapshot 1") == true)
+        let bytes = try Data(contentsOf: reopened.file(for: report))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertNotNil(object["contextCapturedAt"])
+    }
+
+    func testLaterFailuresGetFreshContextAndOldArchivesKeepTheirOriginalEventTime() async throws {
+        let directory = temporaryURL("failure-capture")
+        let probe = FailureCaptureProbe()
+        let store = FailureCaptureStore(directory: directory, environment: {
+            FailureEnvironment(markdown: "snapshot \(probe.next())")
+        }, enrich: { $0 })
+        let first = FailureReport(headline: "First", time: Date(timeIntervalSince1970: 1000))
+        let second = FailureReport(headline: "First", time: Date(timeIntervalSince1970: 2000))
+        let a = await store.prepared(first)
+        let b = await store.prepared(second)
+        XCTAssertTrue(a.environment?.markdown.hasSuffix("snapshot 1") == true)
+        XCTAssertTrue(b.environment?.markdown.hasSuffix("snapshot 2") == true)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let old = FailureReport(headline: "Older failure", time: Date(timeIntervalSince1970: 500))
+        let oldObject = try JSONSerialization.jsonObject(with: encoder.encode(old))
+        let oldFile = store.file(for: old)
+        try JSONSerialization.data(withJSONObject: ["report": oldObject]).write(to: oldFile)
+        let oldArchive = await store.read(old)
+        let oldRecord = try XCTUnwrap(oldArchive)
+        XCTAssertEqual(oldRecord.version, 1)
+        XCTAssertEqual(oldRecord.recordedAt, old.time)
+        XCTAssertNil(oldRecord.contextCapturedAt)
+        let prepared = await store.prepared(old)
+        XCTAssertEqual(prepared.time, old.time)
+        let currentArchive = await store.read(old)
+        let current = try XCTUnwrap(currentArchive)
+        XCTAssertGreaterThan(try XCTUnwrap(current.contextCapturedAt), old.time)
+    }
+
+    func testCallsWithoutALedgerReachFailureCaptureButTriageFailuresCannotRecurse() {
+        let probe = FailureCaptureProbe()
+        ToolsCallTrace.observeFailures { _ in _ = probe.next() }
+        defer { ToolsCallTrace.observeFailures(nil) }
+        ToolsCallTrace.record(traceId: "fixture-1", via: "process", argv: ["fixture", "read"], started: Date(),
+                              exit: 1, outBytes: 0, stderr: "failed")
+        XCTAssertEqual(probe.count, 1)
+        for command in ["triage", "env"] {
+            ToolsCallTrace.record(traceId: "fixture-2", via: "process", argv: ["genesis-tools", command], started: Date(),
+                                  exit: 1, outBytes: 0, stderr: "failed")
+        }
+        XCTAssertEqual(probe.count, 1)
+    }
+
+    func testPersistedFailureDoesNotRepeatACredentialFromItsCall() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
+        let call = ToolsCallLedger.Call(traceId: "fixture-secret", argv: ["fixture", "--token", "invented-secret"],
+                                        started: Date(), via: "process", exit: 1, stderr: "rejected invented-secret")
+        let report = FailureReport(headline: "rejected invented-secret", log: "rejected invented-secret", call: call)
+        _ = await store.prepared(report)
+        let text = try String(contentsOf: store.file(for: report), encoding: .utf8)
+        XCTAssertFalse(text.contains("invented-secret"))
+        XCTAssertTrue(text.contains("***"))
+    }
+
+    // MARK: - The inline view
+
+    @MainActor
+    func testTheInlineFailureShowsTheHeadlineWhatRanAndItsThreeActions() throws {
+        let report = FailureReport.toolsCall(ToolsBridgeError.timeout(seconds: 30), outcome: "The transcript did not load",
+                                             action: "Open the session's transcript", call: Self.call(Self.tailArgv, via: "server-timeout"))
+        let reporter = FailureReporter()
+        for form in [FailureInline.Form.pane, .compact] {
+            let view = FailureInline(report, form: form, reporter: reporter, retry: {})
+                .frame(width: 560, height: form == .pane ? 320 : 90)
+                .background(Color(white: 0.1))
+                .environment(\.colorScheme, .dark)
+            let host = NSHostingView(rootView: view)
+            host.frame = CGRect(x: 0, y: 0, width: 560, height: form == .pane ? 320 : 90)
+            host.layoutSubtreeIfNeeded()
+            let text = TreeDrawnText.lines(of: host).joined(separator: " ")
+            for word in ["transcript did not load", "Try again", "Details", "Report a bug"] {
+                XCTAssertTrue(text.contains(word), "\(form): \(word) in \(text)")
+            }
+            XCTAssertFalse(text.contains("exceeded"), "never the raw error words")
+        }
+    }
+
+    /// `FAILURE_INLINE_SHOTS=<folder>` writes the failure window a Details press opens on a timed-out transcript read,
+    /// with its log of the calls of the minute before (made-up lines), as a PNG.
+    @MainActor
+    func testWritesTheFailureWindowOfATimedOutCall() async throws {
+        guard let folder = ProcessInfo.processInfo.environment["FAILURE_INLINE_SHOTS"] else {
+            throw XCTSkip("FAILURE_INLINE_SHOTS is not set")
+        }
+        let stamp = DateFormatter()
+        stamp.dateFormat = "HH:mm:ss.SSS"
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        let now = Date()
+        func at(_ seconds: Double) -> String { stamp.string(from: now.addingTimeInterval(seconds)) }
+        let lines = [
+            "[\(at(-52))] mark call t=4b1d0a17 via=server pid=4242 ms=212 exit=0 out=18211B start=\(at(-52.2)) argv=hub agents --json",
+            "[\(at(-40))] mark call t=9c3e55f0 via=server pid=4242 ms=11840 exit=0 out=242922B start=\(at(-51.8)) argv=ai usage sessions --json --hours 72",
+            "[\(at(-12))] mark call t=0e7710aa via=process pid=4242 ms=8190 exit=0 out=5120B start=\(at(-20.2)) argv=hub pr threads acme/storefront#4182 --json",
+            "[\(at(0))] mark call t=297f7e79 via=server-timeout pid=4242 ms=31207 exit=-1 out=0B start=\(at(-31.2)) argv=ai sessions tail 5ca1ab1e --json --limit 12",
+        ]
+        let file = temporaryURL("failure-shot", suffix: ".log")
+        try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        var call = Self.call(["ai", "sessions", "tail", "5ca1ab1e", "--json", "--limit", "12"], via: "server-timeout", exit: -1)
+        call.started = now.addingTimeInterval(-31.2)
+        call.ended = now
+        var report = await FailureReport.toolsCall(ToolsBridgeError.timeout(seconds: 30), outcome: "The transcript did not load",
+                                                   action: "Open the session's transcript", call: call, title: "Transcript did not load",
+                                                   area: "hub", time: now, home: "/Users/alice")
+            .addingCallLog(perfLog: file)
+        report.logFile = "/Users/alice/.genesis-tools/logs/app-perf.log"
+        let model = FailureNoticeModel(report: report, detailsOpen: true, detailsCap: 300, retry: {}, dismiss: {})
+        model.draftIssue = {}
+        let view = FailureNoticeView(model: model).background(Color(white: 0.16)).environment(\.colorScheme, .dark)
+        try HostedShot.write(view, size: CGSize(width: 620, height: 560), settle: 0.6,
+                             to: URL(fileURLWithPath: folder).appendingPathComponent("failure-window-timeout.png"))
+    }
+
+    @MainActor
+    func testWithoutAnIssueTargetTheReportButtonIsGoneAndDetailsGoesToTheReporter() {
+        let reporter = FailureReporter()
+        reporter.issueTarget = { nil }
+        var opened: [String] = []
+        reporter.onOpen = { what, _ in opened.append(what) }
+        reporter.reportBug(FailureReport(headline: "x"))
+        XCTAssertEqual(opened, ["issue"])
+        XCTAssertNil(reporter.issueTarget())
+    }
+}
+
+private final class FailureCaptureProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func next() -> Int { lock.withLock { value += 1; return value } }
+}
+
+/// What an issue and an agent get beyond the log: the issue title the thrower named, the Impact checkboxes, the stack,
+/// and every home path as `~`.
+final class FailureIssueTests: XCTestCase {
+    private let stack = """
+    RpcError: I14 lasts 00:50, longer than the 30 s a Moment plays.
+        at unplayable (/Users/alice/GenesisTools/src/meetings/lib/service/moment-handlers.ts:134:12)
+        at clipMomentCall (/Users/alice/GenesisTools/src/meetings/lib/service/moment-handlers.ts:125:19)
+    """
+
+    private func moment(issue: FailureIssue?) -> FailureReport {
+        FailureReport(title: "A Meetings read failed", headline: "I14 lasts 00:50, longer than the 30 s a Moment plays.",
+                      command: "meetings service moment.clip {\"meeting\":\"m1\"}", log: "The Meetings service refused it",
+                      area: "meetings", stack: stack, issue: issue)
+    }
+
+    func testTheIssueTitleIsTheToolInBracketsAndTheThrowersTitle() {
+        XCTAssertEqual(IssueDraft.defaultTitle(for: moment(issue: FailureIssue(tool: "meetings", title: "A Moment does not play (too-long)"))),
+                       "[meetings] A Moment does not play (too-long)")
+        XCTAssertEqual(IssueDraft.defaultTitle(for: moment(issue: nil)),
+                       "[meetings] I14 lasts 00:50, longer than the 30 s a Moment plays", "no title: the headline, the area as the tool")
+    }
+
+    func testTheIssueOfAnErrorReplyNeedsATool() {
+        XCTAssertEqual(FailureIssue(json: ["tool": "meetings", "title": " A title "]), FailureIssue(tool: "meetings", title: "A title"))
+        XCTAssertEqual(FailureIssue(json: ["tool": "meetings", "title": ""]), FailureIssue(tool: "meetings"))
+        XCTAssertNil(FailureIssue(json: ["title": "x"]))
+        XCTAssertNil(FailureIssue(json: nil))
+    }
+
+    func testImpactIsAChecklistToTick() throws {
+        let environment = try XCTUnwrap(FailureEnvironment.parse(json: FailureNoticeTests.environmentJSON))
+        var report = moment(issue: nil)
+        report.environment = environment
+        XCTAssertTrue(report.issueBody().contains("""
+        ### Impact
+
+        - [ ] Blocks my work completely
+        - [ ] Frequent failure or major degradation
+        - [ ] Occasional failure
+        - [ ] Cosmetic
+        """))
+    }
+
+    func testTheStackIsFoldedInTheSummaryAndWholeInTheRawLogTheIssueAndTheContext() {
+        let report = moment(issue: nil)
+        XCTAssertTrue(report.detailsMarkdown().hasPrefix("### Stack\n\nStack: 2 frames, from `unplayable` at `src/meetings/lib/service/moment-handlers.ts:134:12`"))
+        let raw = report.rawText()
+        XCTAssertTrue(raw.contains("command: meetings service moment.clip {\"meeting\":\"m1\"}"))
+        XCTAssertTrue(raw.contains("stack:\nRpcError: I14 lasts"))
+        XCTAssertTrue(raw.contains("at clipMomentCall ("))
+        XCTAssertTrue(report.issueBody().contains("at clipMomentCall ("))
+        XCTAssertTrue(report.agentContext().contains("- **Command:** `meetings service moment.clip {\"meeting\":\"m1\"}`"))
+    }
+
+    func testEveryHomePathInTheReportTextIsShortened() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let report = FailureReport(headline: "It failed.", dayLog: home + "/.genesis-tools/logs/2026-11-11.log", log: "read \(home)/a.txt")
+        for text in [report.rawText(), report.agentContext(), report.issueBody()] {
+            XCTAssertFalse(text.contains(home + "/"), text)
+            XCTAssertTrue(text.contains("day log: ~/.genesis-tools/logs/2026-11-11.log"), text)
+        }
+    }
+
+    func testShortenHomeCoversMacLinuxAndWindows() {
+        XCTAssertEqual(PathDisplay.shortenHome(in: "at f (/Users/alice/src/a.ts:3:9) and /Users/alice", home: "/Users/alice"),
+                       "at f (~/src/a.ts:3:9) and ~")
+        XCTAssertEqual(PathDisplay.shortenHome(in: "open /home/alice/notes.md", home: "/home/alice"), "open ~/notes.md")
+        XCTAssertEqual(PathDisplay.shortenHome(in: "read /root/.bashrc", home: "/root"), "read ~/.bashrc")
+        XCTAssertEqual(PathDisplay.shortenHome(in: #"at C:\Users\alice\src\a.ts"#, home: #"C:\Users\alice"#), #"at ~\src\a.ts"#)
+        XCTAssertEqual(PathDisplay.shortenHome(in: "at d:/users/Alice/src/a.ts", home: #"C:\Users\alice"#), "at ~/src/a.ts")
+        XCTAssertEqual(PathDisplay.shortenHome(in: "/Users/alice2/a /data/Users/alice/b /Users/bob/c", home: "/Users/alice"),
+                       "/Users/alice2/a /data/Users/alice/b /Users/bob/c")
     }
 }

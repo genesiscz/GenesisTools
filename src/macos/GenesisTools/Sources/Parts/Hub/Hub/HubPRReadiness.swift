@@ -170,7 +170,7 @@ final class PRReadinessStore: ObservableObject {
         _ batches: [[String]],
         run: @escaping @Sendable ([String]) async -> Result<[PRReadinessOutcome], Error> = { batch in
             Result {
-                let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
+                let capture = try HubSource.bridge.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
                 return try JSONDecoder().decode([PRReadinessOutcome].self, from: capture.stdout)
             }
         },

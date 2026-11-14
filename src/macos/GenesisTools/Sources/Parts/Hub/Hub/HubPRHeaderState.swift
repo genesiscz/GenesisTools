@@ -31,7 +31,7 @@ struct PRHeaderState: View {
         }
     }
 
-    private var kind: String { pr.isGitLab ? "MR" : "PR" }
+    private var kind: String { pr.forgeKind.noun }
 
     /// What blocks the draft besides being one, then the conflict state.
     static func draftTooltip(readiness: PRReadiness?, mergeable: String?, kind: String) -> TooltipContent {

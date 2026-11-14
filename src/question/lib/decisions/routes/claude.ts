@@ -1,9 +1,9 @@
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
-import { claudePeerRoute, type HarnessAnswer, ownedWorkerRoute, ownedWorkers } from "../deliver";
+import { claudePeerRoute, type HarnessAnswer, ownedWorkerRoute, ownedWorkers, t3ThreadRoute } from "../deliver";
 
-/** Claude answers through an owned worker, then its own peer socket. */
+/** Claude answers through an owned worker, then its own peer socket, then the T3 Code thread that runs it. */
 export const harnessAnswer: HarnessAnswer = {
-    routes: [ownedWorkerRoute("claude"), claudePeerRoute],
+    routes: [ownedWorkerRoute("claude"), claudePeerRoute, t3ThreadRoute],
     ownedWorkers: () =>
         ownedWorkers({
             provider: "claude",

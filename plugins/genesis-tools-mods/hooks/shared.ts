@@ -220,6 +220,36 @@ export function paceAfter(everyMs: number, startedAt: number, now = Date.now()):
     return startedAt + Math.max(everyMs, (now - startedAt) * 10);
 }
 
+/**
+ * Runs each job after the job before it with the same key, whatever that one's outcome. A key is dropped once its last
+ * job settles, so the map holds only the keys that still have a job running.
+ */
+export function serialByKey<K>() {
+    const tails = new Map<K, Promise<unknown>>();
+
+    return {
+        run<T>(key: K, job: () => Promise<T>): Promise<T> {
+            const result = (tails.get(key) ?? Promise.resolve()).then(job);
+            const tail = result.catch(() => undefined);
+            tails.set(key, tail);
+            void tail.then(() => {
+                if (tails.get(key) === tail) {
+                    tails.delete(key);
+                }
+            });
+
+            return result;
+        },
+        /** Settles once every job started so far has finished. */
+        async settled(): Promise<void> {
+            await Promise.all([...tails.values()]);
+        },
+        clear(): void {
+            tails.clear();
+        },
+    };
+}
+
 /** `12s`, `4m 05s`, `1h 02m`. */
 export function shortDuration(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));

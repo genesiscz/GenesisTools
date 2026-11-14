@@ -65,7 +65,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         settings: @escaping () -> WidgetVoiceNoteSettings,
         sessions: @escaping () -> [WidgetSession],
         attachDraft: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String,
-        undoSeconds: @escaping @MainActor () -> Double = { WidgetModel.undoSeconds(nil) }) {
+        undoSeconds: @escaping @MainActor () -> Double = { WidgetModel.undoSeconds(.hubDefaults) }) {
         let bridge = ToolsBridge(binaryPath: binaryPath)
         let transport = VoiceCommandTransport(binaryPath: binaryPath, stateRoot: stateRoot)
         let prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["voice-notes"]

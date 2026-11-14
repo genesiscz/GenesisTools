@@ -5,7 +5,14 @@ import { logger } from "@genesiscz/utils/logger";
 import { capture } from "@genesiscz/utils/process/capture";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
-import { listProcessRows, type PsRow } from "@genesiscz/utils/process/processes";
+import {
+    commandOfRow,
+    listProcessTable,
+    type ProcessTableRow,
+    readCpuPercent,
+    readProcessUsage,
+} from "@genesiscz/utils/process/libproc-table";
+import { listProcessRows, type PsRow, userName } from "@genesiscz/utils/process/processes";
 import { readTopEnergy } from "@genesiscz/utils/process/top";
 import { buildProcsReport, type ProcsReport, type SessionLike } from "./tree";
 
@@ -40,8 +47,77 @@ function realpathOr(path: string): string {
     }
 }
 
+/** What the kernel table reads of one process; tests pass fakes. */
+export interface KernelTableReaders {
+    rows(): ProcessTableRow[] | null;
+    command(row: ProcessTableRow): string;
+    usage(pid: number): { rssBytes: number; running: boolean } | null;
+    cpuPercent(pid: number): number | null;
+    userName(uid: number): string | null;
+    /** The one uid whose usage the kernel gives this process; absent reads every row (root, and tests). */
+    readableUid?: number;
+}
+
+const OWN_UID = process.getuid?.();
+
+const kernelReaders: KernelTableReaders = {
+    rows: listProcessTable,
+    command: commandOfRow,
+    usage: readProcessUsage,
+    cpuPercent: readCpuPercent,
+    userName,
+    readableUid: OWN_UID === 0 ? undefined : OWN_UID,
+};
+
+/**
+ * The table `ps -axo pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=` printed, read from the kernel in this
+ * process: no `ps` is started. Null where the kernel reader does not work (not macOS, a failed self-check), so the
+ * caller keeps `ps`. Until 2026-11-10 every report started that `ps`: 133 to 466 an hour from the hub server, and at
+ * a load average of 300 to 800 a read took 7 s (p50) and 244 were killed at their limit in six hours.
+ * Another user's process has its executable path as its command and no CPU or memory (the kernel withholds them, as
+ * in `listHostProcesses`); the report builds its groups from this user's agents, shells and MCP servers.
+ */
+export function kernelProcsTable(readers: KernelTableReaders = kernelReaders): PsRow[] | null {
+    const rows = readers.rows();
+
+    if (rows === null) {
+        return null;
+    }
+
+    const table: PsRow[] = [];
+
+    for (const row of rows) {
+        // `ps -ax` has no row for the kernel (pid 0).
+        if (row.pid <= 0) {
+            continue;
+        }
+
+        // The kernel withholds another user's usage, so those two reads are skipped rather than spent on nothing.
+        const readable = !row.zombie && (readers.readableUid === undefined || row.uid === readers.readableUid);
+        const usage = readable ? readers.usage(row.pid) : null;
+        table.push({
+            pid: row.pid,
+            ppid: row.ppid,
+            user: readers.userName(row.uid) ?? String(row.uid),
+            stat: usage?.running ? "R" : row.state,
+            cpu: (readable ? readers.cpuPercent(row.pid) : null) ?? 0,
+            rss: usage ? Math.round(usage.rssBytes / 1024) : 0,
+            // Whole seconds, as `ps lstart` prints: a stop compares this with `ps -p` before it signals.
+            startTime: new Date(Math.floor(row.startMs / 1000) * 1000),
+            command: readers.command(row),
+        });
+    }
+
+    return table;
+}
+
+/** The kernel table where it answers, else the process layer's rows (one `ps` bounded by `psTimeoutMs` at most). */
+async function readTable(psTimeoutMs: number): Promise<PsRow[]> {
+    return kernelProcsTable() ?? listProcessRows({ timeoutMs: psTimeoutMs });
+}
+
 export const realProcsSources: ProcsSources = {
-    table: () => listProcessRows({ timeoutMs: PS_TIMEOUT_MS }),
+    table: () => readTable(PS_TIMEOUT_MS),
     cwdOf: (pid) => {
         const cwd = readProcessCwd(pid);
         return cwd && cwd !== "/" ? realpathOr(cwd) : null;
@@ -85,8 +161,8 @@ export const realProcsSources: ProcsSources = {
 };
 
 /**
- * One refresh of the resource monitor: ONE `ps` for the table, libproc for the roots' folders, the
- * polled session listing, `launchctl list` only when launchd adopted a candidate, and `top` only with
+ * One refresh of the resource monitor: ONE read of the kernel's table (one `ps` where it does not answer), libproc
+ * for the roots' folders, the polled session listing, `launchctl list` only when launchd adopted a candidate, and `top` only with
  * `energy`.
  */
 /**
@@ -103,9 +179,7 @@ export async function openAgentSessionIds(
     // Injected sources (tests) keep their own table; the bound applies to the real `ps` only.
     const bounded =
         sources ??
-        (psTimeoutMs === undefined
-            ? realProcsSources
-            : { ...realProcsSources, table: () => listProcessRows({ timeoutMs: psTimeoutMs }) });
+        (psTimeoutMs === undefined ? realProcsSources : { ...realProcsSources, table: () => readTable(psTimeoutMs) });
     const report = await readProcsReport({ sources: bounded });
     return new Set(
         report.groups.flatMap((group) =>

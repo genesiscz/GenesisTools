@@ -229,8 +229,8 @@ The tool reads transcripts and never writes them. `consolidate` never deletes it
 - Sources are the `sessionSources` in the config: the Claude projects folder (`~/.claude/projects`, or
   `$CLAUDE_CONFIG_DIR/projects`) and the mirror. A live source is searched with ripgrep for the exact string
   `"model":"<fable id>"`. The mirror holds only Fable sessions, so every `.jsonl` in it counts.
-- The Fable id is the one the `fable` alias names in the model catalog: `claude-fable-5-1` since 2026-09-04. A session
-  answered only by `claude-fable-5` is not found in a live source, and its turns do not count as Fable turns, so it
+- The Fable id is the one the `fable` alias names in the model catalog: `claude-fable-5-2` since 2026-11-10
+  (`claude-fable-5-1` from 2026-09-04). A session answered only by an older Fable is not found in a live source, and its turns do not count as Fable turns, so it
   yields no episodes. No flag changes it.
 - Subagent transcripts and `agent-*` files are skipped. Files under `--min-size` (100000 bytes) are skipped. Copies of
   one session under several folders collapse to the largest file. The queue runs oldest first, because style

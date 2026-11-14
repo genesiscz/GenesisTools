@@ -3,6 +3,8 @@ import { GATE_ONLY_TAG } from "@genesiscz/utils/ai/config/selectors";
 import {
     auditPath,
     autoAllowCommand,
+    autoAllowCommandEntry,
+    autoAllowDaemon,
     GATE_API_KEY_PROVIDERS,
     GATE_PROVIDERS,
     GateDeniedError,
@@ -268,8 +270,21 @@ function printAutoAllow(settings: VaultAutoAllowSettings): void {
         out.println(`  ${app}`);
     }
 
+    renderCliSection("GenesisTools' own daemons (whoever starts them; a script of the installed checkout, run by bun)");
+    for (const daemon of settings.daemons) {
+        out.println(`  ${daemon}`);
+    }
+
     renderCliSection("Notification");
     out.println(`  ${settings.notify ? "on: one per auto-allow" : "off: the audit line only"}`);
+    if (settings.notify) {
+        out.println(
+            settings.daemonNotifyHours > 0
+                ? `  a daemon: at most one in ${settings.daemonNotifyHours} h (it reads the key about once a minute)`
+                : "  a daemon: one for every pass"
+        );
+    }
+
     renderCliSection("File");
     out.println(`  ${pc.dim(vaultAutoAllowPath())}`);
 }
@@ -329,19 +344,7 @@ function registerAutoAllowCommands(gate: Command): void {
         .command("add <command...>")
         .description(`Put a command on the list: \`add claude warmup\` lets "${toolCommand("claude warmup")}" through`)
         .action(async (words: string[]) => {
-            const command = autoAllowCommand(words);
-            if (refuseEmpty(command, "a command")) {
-                return;
-            }
-
-            // The app matches `<tool> <subcommand>` exactly, so any other shape would sit on the list and match nothing.
-            const parts = command.split(" ");
-            if (parts.length !== 2 || parts.some((part) => part.startsWith("-"))) {
-                out.log.error(`A command is a tool and its subcommand, like "claude warmup"; got "${command}".`);
-                process.exitCode = 1;
-                return;
-            }
-
+            const command = autoAllowCommandEntry(words);
             await changeAutoAllow((settings) => ({
                 ...settings,
                 commands: settings.commands.includes(command) ? settings.commands : [...settings.commands, command],
@@ -393,6 +396,47 @@ function registerAutoAllowCommands(gate: Command): void {
                 ...settings,
                 agentApps: settings.agentApps.filter((known) => known !== app),
             }));
+        });
+
+    autoAllow
+        .command("add-daemon <script>")
+        .description(
+            "Give a background program of the installed checkout the key with no window: its script's path from the checkout's root (src/codex/daemon.ts)"
+        )
+        .action(async (script: string) => {
+            const daemon = autoAllowDaemon(script);
+            await changeAutoAllow((settings) => ({
+                ...settings,
+                daemons: settings.daemons.includes(daemon) ? settings.daemons : [...settings.daemons, daemon],
+            }));
+        });
+
+    autoAllow
+        .command("remove-daemon <script>")
+        .description("Take a background program off the list; it asks in the window again")
+        .action(async (script: string) => {
+            const daemon = autoAllowDaemon(script);
+            await changeAutoAllow((settings) => ({
+                ...settings,
+                daemons: settings.daemons.filter((known) => known !== daemon),
+            }));
+        });
+
+    autoAllow
+        .command("daemon-notify <hours>")
+        .description(
+            "Hours between two notifications for one daemon (24 by default; 0 is one for every pass); the audit line is written for every pass"
+        )
+        .action(async (value: string) => {
+            const hours = Number(value);
+
+            if (!Number.isFinite(hours) || hours < 0 || value.trim() === "") {
+                out.log.error(`Expected a number of hours from 0 up, got "${value}".`);
+                process.exitCode = 1;
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({ ...settings, daemonNotifyHours: hours }));
         });
 
     autoAllow

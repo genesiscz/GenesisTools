@@ -118,7 +118,10 @@ const INLINE_TAG_RE = /^#([A-Za-z][\w/-]*)(?=$|[\s.,;:!?)\]])/;
 // marked (v5+) no longer strips dangerous URL schemes, so a note containing
 // [x](javascript:...) or ![y](data:text/html;...) would execute on the public,
 // auth-bypassed /share/:slug page. Allow only safe schemes + relative URLs.
-const SAFE_LINK_SCHEME_RE = /^(?:https?:|mailto:|tel:|#|\/|\.{1,2}\/|[^:]*$)/i;
+// An app deep link (`myapp://path`) only asks the OS to open an app, so any `scheme://` passes,
+// except the schemes a browser executes or loads itself.
+const SAFE_LINK_SCHEME_RE =
+    /^(?:https?:|mailto:|tel:|#|\/|\.{1,2}\/|[^:]*$|(?!(?:javascript|vbscript|data|file|blob|filesystem):)[a-z][a-z0-9+.-]*:\/\/)/i;
 const SAFE_IMG_SRC_RE = /^(?:https?:|data:image\/(?:png|jpe?g|gif|webp|svg\+xml|avif);|#|\/|\.{1,2}\/|[^:]*$)/i;
 
 interface ImageSize {

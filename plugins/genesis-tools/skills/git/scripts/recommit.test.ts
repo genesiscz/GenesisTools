@@ -3,6 +3,7 @@ import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { auditCommits, buildCommits } from "./recommit";
+import { treeEntries } from "./recommit-plan-check";
 
 const SCRIPT = join(import.meta.dir, "recommit.ts");
 
@@ -313,5 +314,268 @@ describe("auditCommits", () => {
         const problems = auditCommits({ cwd: repo.dir, base, head, planText, shas: reordered });
         expect(problems.length).toBeGreaterThan(0);
         expect(problems.join("\n")).toContain("belongs to another group");
+    });
+});
+
+describe("buildCommits", () => {
+    test("refuses a path whose entry lookup comes back empty while head has it, before it writes any object", async () => {
+        await groupGood();
+        const head = await repo.sha();
+        const planText = readFileSync(join(repo.root, "groups.plan.txt"), "utf8");
+        const objectsBefore = await repo.git(["count-objects"]);
+        const dropping: typeof treeEntries = (args) => {
+            const entries = treeEntries(args);
+            entries.delete("src/ui/b.tsx");
+            return entries;
+        };
+
+        expect(() => buildCommits({ cwd: repo.dir, base, head, planText, readEntries: dropping })).toThrow(
+            "src/ui/b.tsx"
+        );
+        expect(await repo.git(["count-objects"])).toBe(objectsBefore);
+    });
+});
+
+/**
+ * `git ls-tree -r` of this head is over 1 MiB, the default output limit of `spawnSync`. The bulk
+ * is 6000 entries that share one blob, written by one `git fast-import` (`TestRepo.importCommits`),
+ * so the fixture costs no checkout.
+ */
+describe("recommit on a tree listing over 1 MiB", () => {
+    test("group and apply --dry-run keep the paths that sort past the first MiB", async () => {
+        const big = await TestRepo.create();
+
+        try {
+            const dir = `bulk/${"a-long-directory-name-".repeat(8)}`;
+            const bulk = Object.fromEntries(
+                Array.from({ length: 6000 }, (_, i) => [`${dir}/file-${String(i).padStart(5, "0")}.ts`, "bulk\n"])
+            );
+            await big.importCommits({
+                branch: "feat/big",
+                from: await big.sha(),
+                commits: [
+                    {
+                        message: "bulk",
+                        files: {
+                            ...bulk,
+                            "aaa/start.ts": "start 1\n",
+                            "zzz/end.ts": "end 1\n",
+                            "zzz/gone.ts": "gone\n",
+                        },
+                    },
+                    { message: "start", files: { "aaa/start.ts": "start 2\n" } },
+                    { message: "end and gone", files: { "zzz/end.ts": "end 2\n" }, deletes: ["zzz/gone.ts"] },
+                ],
+            });
+            const [bigBase = "", startCommit = "", endCommit = ""] = (
+                await big.git(["rev-parse", "feat/big~2", "feat/big~1", "feat/big"])
+            ).split("\n");
+            expect(Buffer.byteLength(await big.git(["ls-tree", "-r", "-z", "feat/big"]))).toBeGreaterThan(1024 * 1024);
+
+            const groupsPath = join(big.root, "groups.json");
+            writeFileSync(
+                groupsPath,
+                JSON.stringify([
+                    { message: "feat: start", commits: [startCommit] },
+                    { message: "feat: end", commits: [endCommit] },
+                ])
+            );
+            const grouped = await run(big, ["group", "--base", bigBase, "--head", "feat/big", "--groups", groupsPath]);
+            expect(grouped.stderr).not.toContain("✖");
+            expect(grouped.exitCode).toBe(0);
+            expect(grouped.stdout).toContain("tree identity OK");
+
+            const applied = await run(big, [
+                "apply",
+                "--base",
+                bigBase,
+                "--head",
+                "feat/big",
+                "--plan",
+                join(big.root, "groups.plan.txt"),
+                "--dry-run",
+            ]);
+            expect(applied.stderr).not.toContain("✖");
+            expect(applied.exitCode).toBe(0);
+            const tip = /new tip ([0-9a-f]{40})/.exec(applied.stdout)?.[1] ?? "";
+            expect(await big.tree(tip)).toBe(await big.tree("feat/big"));
+            expect(await big.git(["show", "--name-status", "--format=", tip])).toBe("M\tzzz/end.ts\nD\tzzz/gone.ts");
+        } finally {
+            big.cleanup();
+        }
+    });
+});
+
+const ALICE = "Alice <alice@example.com>";
+const BOB = "Bob <bob@example.com>";
+
+/** The seed, then four commits on feat/authors: Alice, Bob, Alice, Bob, each adding one file. */
+let authorsBuilt: { base: string; shas: string[] } | null = null;
+
+async function twoAuthors(): Promise<{ repo: TestRepo; base: string; shas: string[] }> {
+    const authored = await TestRepo.fromScenario("recommit:two-authors", async (r) => {
+        const first = await r.sha();
+        await r.checkout("feat/authors", { create: true });
+        const recorded: string[] = [];
+
+        for (const [author, file] of [
+            [ALICE, "a/one.ts"],
+            [BOB, "b/one.ts"],
+            [ALICE, "a/two.ts"],
+            [BOB, "b/two.ts"],
+        ] as const) {
+            r.write({ file, content: `${file}\n` });
+            await r.git(["add", file]);
+            await r.git(["commit", "-q", "--author", author, "-m", `add ${file}`], { epoch: r.tick() });
+            recorded.push(await r.sha());
+        }
+
+        authorsBuilt = { base: first, shas: recorded };
+    });
+
+    if (authorsBuilt === null) {
+        throw new Error("the two-authors scenario recorded no commits");
+    }
+
+    return { repo: authored, ...authorsBuilt };
+}
+
+/** One entry per commit of base..feat/authors, oldest first: `author|author date|subject|body`. */
+async function authoredLog(r: TestRepo, from: string): Promise<string[]> {
+    const out = await r.git(["log", "--reverse", "--format=%an|%aI|%s|%b%x1e", `${from}..feat/authors`]);
+    return out
+        .split("\x1e")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+}
+
+describe("recommit body and author", () => {
+    test("a group of one author's commits keeps that author and the last commit's date, with its body", async () => {
+        const { repo: authored, base: from, shas: picks } = await twoAuthors();
+
+        try {
+            const groupsPath = join(authored.root, "groups.json");
+            writeFileSync(
+                groupsPath,
+                JSON.stringify([
+                    {
+                        message: "feat(a): alice's files",
+                        body: "Why Alice added them.\n\n- one\n- two",
+                        commits: [picks[0], picks[2]],
+                    },
+                    { message: "feat(b): bob's files", commits: [picks[3], picks[1]] },
+                ])
+            );
+            const grouped = await run(authored, ["group", "--base", from, "--groups", groupsPath]);
+            expect(grouped.stderr).not.toContain("✖");
+            expect(grouped.exitCode).toBe(0);
+            expect(grouped.stderr).not.toContain("note:");
+
+            const applied = await run(authored, [
+                "apply",
+                "--base",
+                from,
+                "--plan",
+                join(authored.root, "groups.plan.txt"),
+            ]);
+            expect(applied.exitCode).toBe(0);
+            const dateOf = async (sha: string) => (await authored.git(["log", "-1", "--format=%aI", sha])).trim();
+            expect(await authoredLog(authored, from)).toEqual([
+                `Alice|${await dateOf(picks[2])}|feat(a): alice's files|Why Alice added them.\n\n- one\n- two`,
+                `Bob|${await dateOf(picks[3])}|feat(b): bob's files|`,
+            ]);
+            expect(await authored.git(["log", "-1", "--format=%cn", "feat/authors"])).toBe("Test");
+        } finally {
+            authored.cleanup();
+        }
+    });
+
+    test("a mixed group keeps the current user with a note; author.from and an explicit author are copied", async () => {
+        const { repo: authored, base: from, shas: picks } = await twoAuthors();
+
+        try {
+            const groupsPath = join(authored.root, "groups.json");
+            writeFileSync(
+                groupsPath,
+                JSON.stringify([
+                    { message: "feat: mixed", commits: [picks[0], picks[1]] },
+                    { message: "feat: as bob", commits: [picks[2]], author: { from: picks[1] } },
+                    {
+                        message: "feat: as carol",
+                        commits: [picks[3]],
+                        author: { name: "Carol", email: "carol@example.com", date: "2024-01-02T03:04:05+01:00" },
+                    },
+                ])
+            );
+            const grouped = await run(authored, ["group", "--base", from, "--groups", groupsPath]);
+            expect(grouped.exitCode).toBe(0);
+            expect(grouped.stderr).toContain("note: group 1 (feat: mixed)");
+            expect(grouped.stderr).toContain("current git user");
+
+            const applied = await run(authored, [
+                "apply",
+                "--base",
+                from,
+                "--plan",
+                join(authored.root, "groups.plan.txt"),
+            ]);
+            expect(applied.exitCode).toBe(0);
+            const bobDate = (await authored.git(["log", "-1", "--format=%aI", picks[1]])).trim();
+            const log = await authoredLog(authored, from);
+            expect(log[0]).toStartWith("Test|");
+            expect(log[0]).toEndWith("|feat: mixed|");
+            expect(log.slice(1)).toEqual([
+                `Bob|${bobDate}|feat: as bob|`,
+                "Carol|2024-01-02T03:04:05+01:00|feat: as carol|",
+            ]);
+        } finally {
+            authored.cleanup();
+        }
+    });
+
+    test("an author date git cannot parse fails the plan check before anything is built", async () => {
+        const { repo: authored, base: from, shas: picks } = await twoAuthors();
+
+        try {
+            const groupsPath = join(authored.root, "groups.json");
+            writeFileSync(
+                groupsPath,
+                JSON.stringify([
+                    {
+                        message: "feat: all",
+                        commits: picks,
+                        author: { name: "Carol", email: "carol@example.com", date: "not a date" },
+                    },
+                ])
+            );
+            const grouped = await run(authored, ["group", "--base", from, "--groups", groupsPath]);
+            expect(grouped.exitCode).toBe(1);
+            expect(grouped.stderr).toContain("group 1: author Carol <carol@example.com> not a date");
+            expect(grouped.stderr).toContain("invalid date format");
+        } finally {
+            authored.cleanup();
+        }
+    });
+
+    test("a plan file without AUTHOR and BODY lines still applies, as the current user", async () => {
+        const { repo: authored, base: from } = await twoAuthors();
+
+        try {
+            const plan = join(authored.root, "old.plan.txt");
+            writeFileSync(
+                plan,
+                "COMMIT 1: feat: a\nFILES:\na/one.ts\na/two.ts\n\nCOMMIT 2: feat: b\nFILES:\nb/one.ts\nb/two.ts\n"
+            );
+            const applied = await run(authored, ["apply", "--base", from, "--plan", plan]);
+            expect(applied.stderr).not.toContain("✖");
+            expect(applied.exitCode).toBe(0);
+            const log = await authoredLog(authored, from);
+            expect(log.map((entry) => entry.replace(/\|[^|]*\|/, "|<date>|"))).toEqual([
+                "Test|<date>|feat: a|",
+                "Test|<date>|feat: b|",
+            ]);
+        } finally {
+            authored.cleanup();
+        }
     });
 });

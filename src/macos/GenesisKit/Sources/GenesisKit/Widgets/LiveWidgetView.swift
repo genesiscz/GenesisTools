@@ -158,7 +158,8 @@ public struct LiveWidgetView: View {
                 // One sentence; the raw text (a process's stderr) only behind Details.
                 // Reconnect restarts the widget's link to the hub: the one next step every failed call has.
                 NoticePill(text: error, more: model.errorDetail, tone: .error,
-                           fixes: [.button("Reconnect", symbol: "arrow.clockwise") { model.error = nil; model.start() }]) {
+                           fixes: [.button("Reconnect", symbol: "arrow.clockwise") { model.error = nil; model.start() }]
+                               + (model.errorReport.map { [NoticeFix.details($0)] } ?? [])) {
                     model.error = nil
                 }
                     .accessibilityIdentifier("widget.error")
@@ -424,7 +425,7 @@ public struct LiveWidgetView: View {
 
     /// The inbox's composer sits under the tabs unless the user moved it to the bottom (Widgets → Sessions).
     private var composerOnTop: Bool {
-        showsComposer && section == "Inbox" && (model.snapshot?.state.preferences.inboxComposer ?? "top") == "top"
+        showsComposer && section == "Inbox" && model.preferences.inboxComposer == "top"
     }
 
     /// No session picked: the sessions that hold inbox items, so nothing waits out of sight.
@@ -616,7 +617,7 @@ public struct LiveWidgetView: View {
         .id("choice-" + card.id + "-" + choice.id)
         .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
             choice.id, recommended: choice.recommended, stages: stages, picked: picked,
-            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, key: index < 9 ? index + 1 : nil,
+            swaps: model.preferences.decisionCommandSwaps, key: index < 9 ? index + 1 : nil,
             multiple: multiple))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
                                                                 recommended: choice.recommended, multiple: multiple,
@@ -642,7 +643,7 @@ public struct LiveWidgetView: View {
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
-        let preferences = model.snapshot?.state.preferences
+        let preferences = model.preferences
         // The agent's pick sits under the option it recommends, else above the options (Decision cards → The agent's
         // pick).
         let pickUnder = WidgetProposal.placement(card, preferences: preferences)
@@ -817,8 +818,8 @@ public struct LiveWidgetView: View {
 
     /// The refs listed under a card's buttons: all of them, less the files its Code section already shows with their
     /// lines (by the path as written or the file it names).
-    static func listedRefs(_ card: WidgetCard, preferences: WidgetPreferences?) -> [WidgetReference] {
-        guard preferences?.decisionCode != "hide", let code = card.decision?.refs, !code.isEmpty else { return card.refs }
+    static func listedRefs(_ card: WidgetCard, preferences: WidgetPreferences) -> [WidgetReference] {
+        guard preferences.decisionCode != "hide", let code = card.decision?.refs, !code.isEmpty else { return card.refs }
         let shown = Set(code.filter(\.hasContent).flatMap { [$0.path, $0.absolute].compactMap { $0 } })
         return card.refs.filter { !shown.contains($0.value) }
     }
@@ -856,6 +857,7 @@ public struct LiveWidgetView: View {
 
     static func kindLabel(_ card: WidgetCard) -> String {
         if card.needsAnswer { return "Waiting for your answer" }
+        let kind = card.kind.rawValue
         switch card.kind {
         // An agent message (inbox_send, tools question message, a tools rm request notice) rides the answer card with
         // status "message"; it answers nothing, so it reads as a message.
@@ -866,11 +868,11 @@ public struct LiveWidgetView: View {
         case "decision":
             if let replacement = card.supersededBy { return "Decision · Superseded by " + WidgetWords.decision(replacement.number) }
             if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
-                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind)
+                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: kind)
             }
-            return "Decision · " + statusPhrase(card.status, kind: card.kind)
-        case "form": return "Question · " + statusPhrase(card.status, kind: card.kind)
-        default: return sentenceCase(card.kind) + " · " + statusPhrase(card.status, kind: card.kind)
+            return "Decision · " + statusPhrase(card.status, kind: kind)
+        case "form": return "Question · " + statusPhrase(card.status, kind: kind)
+        default: return sentenceCase(kind) + " · " + statusPhrase(card.status, kind: kind)
         }
     }
 
@@ -982,7 +984,7 @@ public struct LiveWidgetView: View {
             transcript: model.transcript, cards: shownCards, outgoing: model.outgoing,
             activity: model.sessionActivity, provider: model.selected?.target.provider ?? ""))
         if let error = model.transcriptError {
-            Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+            FailureInline(message: error, outcome: "The conversation did not load", action: "Read the conversation", area: "widget", identifier: "widget.transcript.failure")
         }
         ForEach(timeline) { item in
             VStack(alignment: .leading, spacing: 5) {
@@ -1155,6 +1157,7 @@ public struct LiveWidgetView: View {
         case "queued": return "queued for the session"
         case "resume": return "by resuming the session"
         case "grok-leader": return "through its Grok leader"
+        case "t3": return "through its T3 Code thread"
         default: return nil
         }
     }
@@ -1207,7 +1210,9 @@ public struct LiveWidgetView: View {
             if let error = message.error, !(message.state == "waiting-route" && message.receipt?.channel == "session-queue") {
                 // What happened in one sentence; the transport's own text only behind Details.
                 NoticePill(text: Self.outgoingProblem(message), more: error,
-                           tone: message.state == "failed" ? .error : .warning)
+                           tone: message.state == "failed" ? .error : .warning,
+                           fixes: [.details(FailureReport.unexpected(error, outcome: Self.outgoingProblem(message),
+                                                                     action: "Send a message", area: "widget", app: .launch))])
             }
             if message.isWithdrawable || message.needsRecovery {
                 HStack {
@@ -1339,7 +1344,7 @@ public struct LiveWidgetView: View {
         }
         if model.voiceActive {
             HStack(alignment: .center, spacing: 9) {
-                VoiceLevelBars(level: min(1, model.voiceLevel * 5), tint: .red, reduceMotion: model.effectiveReduceMotion)
+                WidgetVoiceBars(meter: model.voiceMeter, reduceMotion: model.effectiveReduceMotion)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.voiceMode == .note ? "Voice note" : "Dictation")
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
@@ -1407,7 +1412,7 @@ public struct LiveWidgetView: View {
         let paste = WidgetKeymap.label(WidgetKeymap.paste)
         let close = WidgetKeymap.label(WidgetKeymap.collapse)
         let keys = Self.ownAnswerKeys(ownAnswer: model.ownAnswerCard != nil, returnStages: model.ownAnswerReturnStages,
-                                      commandSwaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true)
+                                      commandSwaps: model.preferences.decisionCommandSwaps)
         let media = paste.isEmpty ? keys.hint : keys.hint + " · \(paste) media"
         return ViewThatFits(in: .horizontal) {
             Text(close.isEmpty ? media : media + " · \(close) close")
@@ -1562,7 +1567,7 @@ struct WidgetInboxCardRow: View, Equatable {
             Circle()
                 .fill(waiting ? Color.orange : (staged || !card.read ? SessionPalette.blue : Color.clear))
                 .frame(width: 7, height: 7).padding(.top, 5)
-            Image(systemName: LiveWidgetView.kindSymbol(card.kind)).font(.system(size: 11))
+            Image(systemName: LiveWidgetView.kindSymbol(card.kind.rawValue)).font(.system(size: 11))
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 // A one-question form's title is its prompt, which the open card does not repeat: open, it
@@ -1652,11 +1657,12 @@ final class WidgetLedgerUndo: ObservableObject {
         let revision: Int
     }
 
+    /// The change itself waits in the model's staging engine (`WidgetModel.decisions`, under the card's id); this keeps
+    /// what ends the wait and what the card shows meanwhile.
     private struct Hold {
         let move: Move
         /// The decision's id in the log: held, it leaves every staged send (`WidgetModel.heldDecisionIDs`).
         let sourceId: String
-        let request: WidgetJSON
         let note: String
         /// Kept until the change is sent, so a panel's model that goes away still sends it.
         let model: WidgetModel
@@ -1669,7 +1675,7 @@ final class WidgetLedgerUndo: ObservableObject {
     private var holds: [String: Hold] = [:]
     /// Changes handed to the model's queue and not answered yet: a quit sends them again, because that queue never
     /// runs again. A second copy finds the item already moved and changes nothing.
-    private var sending: [String: (request: WidgetJSON, bridge: ToolsBridge)] = [:]
+    private var sending: [String: (action: DecisionLogAction, bridge: ToolsBridge)] = [:]
     /// The quit observer of the shared instance, which lives as long as the app.
     private var quitObserver: NSObjectProtocol?
 
@@ -1697,14 +1703,11 @@ final class WidgetLedgerUndo: ObservableObject {
         let id = card.id
         let move = Move(state: state, revision: revision)
         let note = Self.note(card, state: state)
-        var hold = Hold(
-            move: move,
-            sourceId: card.sourceId,
-            request: .object([
-                "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(session),
-                "expectedRevision": .number(Double(revision)), "state": .string(state),
-            ]),
-            note: note, model: model)
+        let address = DecisionAddress(id: card.sourceId, sessionId: session, revision: revision)
+        var hold = Hold(move: move, sourceId: card.sourceId, note: note, model: model)
+        model.decisions.hold(id, .move(address, state: state), ended: { [weak self] answer in
+            self?.ended(id, move: move, sourceId: card.sourceId, model: model, answer)
+        })
         moves[id] = move
         // Folded, the card is no longer the decision the number keys and the composer answer.
         GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.insert(id) }
@@ -1740,28 +1743,32 @@ final class WidgetLedgerUndo: ObservableObject {
         let model = hold.model
         // Its Undo could not take the change back any more.
         if model.notice == hold.note { model.notice = nil }
-        sending[id] = (hold.request, model.bridge)
-        model.action(hold.request, failed: { [weak self] in
-            self?.sending[id] = nil
+        if let action = model.decisions.heldActions()[id] { sending[id] = (action, model.bridge) }
+        model.decisions.commit(id)
+    }
+
+    /// The log answered a committed change.
+    private func ended(_ id: String, move: Move, sourceId: String, model: WidgetModel, _ answer: DecisionLogAnswer) {
+        sending[id] = nil
+        guard case .done = answer else {
             // The log refused it (the item changed elsewhere): the card shows its real state again, and the error
             // line says why.
-            if self?.moves[id] == hold.move {
+            if moves[id] == move {
+                moves[id] = nil
+                model.heldCardIDs.remove(id)
+                model.heldDecisionIDs.remove(sourceId)
+            }
+            return
+        }
+        // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            if self?.moves[id] == move {
                 self?.moves[id] = nil
                 model.heldCardIDs.remove(id)
-                model.heldDecisionIDs.remove(hold.sourceId)
+                model.heldDecisionIDs.remove(sourceId)
             }
-        }, completed: { [weak self] in
-            self?.sending[id] = nil
-            // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                if self?.moves[id] == hold.move {
-                    self?.moves[id] = nil
-                    model.heldCardIDs.remove(id)
-                    model.heldDecisionIDs.remove(hold.sourceId)
-                }
-            }
-        })
+        }
     }
 
     private func undo(_ id: String, reduceMotion: Bool) {
@@ -1770,6 +1777,7 @@ final class WidgetLedgerUndo: ObservableObject {
         hold.deadline?.cancel()
         moves[id] = nil
         let model = hold.model
+        model.decisions.undo(id)
         model.heldCardIDs.remove(id)
         model.heldDecisionIDs.remove(hold.sourceId)
         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
@@ -1781,13 +1789,15 @@ final class WidgetLedgerUndo: ObservableObject {
     /// main thread, and the quit waits for them up to `quitWait`. The `ledger` action reads the decision log itself,
     /// so it needs no widget state root.
     private func sendBeforeQuit() {
-        let held = holds.values.map { (request: $0.request, bridge: $0.model.bridge) }
+        let held = holds.compactMap { id, hold in
+            hold.model.decisions.heldActions()[id].map { (action: $0, bridge: hold.model.bridge) }
+        }
         for hold in holds.values {
             hold.watch?.cancel()
             hold.deadline?.cancel()
         }
         holds.removeAll()
-        let work = held + Array(sending.values)
+        let work = (held + Array(sending.values)).map { (request: WidgetDecisionLog.request($0.action), bridge: $0.bridge) }
         sending.removeAll()
         guard !work.isEmpty else { return }
         let done = DispatchSemaphore(value: 0)
@@ -1882,7 +1892,7 @@ enum WidgetErrorText {
         switch error {
         case is DecodingError:
             return ("The widget could not read the hub's answer. Try again, or reconnect.", String(describing: error))
-        case ToolsBridgeError.timeout(let seconds):
+        case ToolsBridgeError.timeout(let seconds, _):
             return ("The hub did not answer within \(seconds) seconds. Try again, or reconnect.", nil)
         case let bridge as ToolsBridgeError:
             // A missing tools command and a refusal already say what happened in a sentence of their own.

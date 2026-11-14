@@ -19,6 +19,7 @@ import {
     isGenesisToolsBinary,
     retiredAtOf,
 } from "@genesiscz/utils/genesis-tools/app-binary";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
@@ -32,6 +33,7 @@ import {
     pickCodesignIdentity,
     preferredFirst,
     readSourceInfo,
+    reapedFaceLines,
     recordCodesignTrust,
     retiredStampsToDelete,
     signByHashes,
@@ -48,7 +50,7 @@ import {
     writeCodesignTrustLauncher,
 } from "./codesign-trust";
 import { renderSwiftFaceTable, SWIFT_FACE_TABLE_PATH, swiftFaceTableIsCurrent, syncSwiftFaceTable } from "./face-table";
-import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
+import { isPermissionKind, PERMISSION_KINDS, parsePermissionStatusLines, permissionStatusLabel } from "./kinds";
 import {
     type AppProcess,
     describePromptProcesses,
@@ -510,6 +512,30 @@ describe("grantsFor", () => {
         const grants = grantsFor("com.other", user, user, [calendar]);
         expect(grants[0]).toMatchObject({ granted: false, label: "not asked yet" });
     });
+
+    it("answers a closed database with the app's own check, and keeps 'not readable' only for a kind it lacks", () => {
+        const closed: TccReadResult = { readable: false, rows: [] };
+        const live = parsePermissionStatusLines(
+            "calendar granted\nfull-disk-access denied\nwebcam granted\nautomation unknown:asks on first use\n"
+        );
+        expect([...live.keys()]).toEqual(["calendar", "full-disk-access", "automation"]);
+
+        const automation = TCC_SERVICES.find((s) => s.id === "kTCCServiceAppleEvents");
+        const unmapped = { ...calendar, kind: undefined };
+        const grants = grantsFor(
+            "com.genesiscz.genesistools",
+            closed,
+            closed,
+            [calendar, fda, ...(automation ? [automation] : []), unmapped],
+            live
+        );
+        expect(grants.map((g) => [g.granted, g.label])).toEqual([
+            [true, "allowed"],
+            [false, "denied"],
+            [undefined, "asks on first use"],
+            [undefined, "unknown (database not readable)"],
+        ]);
+    });
 });
 
 function processRows(text: string): Array<{ pid: number; command: string }> {
@@ -518,6 +544,38 @@ function processRows(text: string): Array<{ pid: number; command: string }> {
         return match ? [{ pid: Number(match[1]), command: match[2] }] : [];
     });
 }
+
+describe("reapedFaceLines", () => {
+    it("writes one lifecycle line per face a build closes, with the face and who closed it", () => {
+        const launcher = "/Users/alice/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
+        const lines = reapedFaceLines({
+            stale: ["111", "333"],
+            processes: [
+                { pid: 111, command: `${launcher} --hub --mode inbox --resume` },
+                { pid: 222, command: `${launcher} bun run dev` },
+                { pid: 333, command: launcher },
+            ],
+            at: new Date("2026-11-10T17:34:43Z"),
+            by: "pid 42, /repo",
+        });
+        expect(lines.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
+            {
+                detail: "closed by an app build (pid 42, /repo); the build opens it again, not activated",
+                event: "reaped",
+                face: "--hub",
+                pid: 111,
+                t: 1794332083,
+            },
+            {
+                detail: "closed by an app build (pid 42, /repo); the build opens it again, not activated",
+                event: "reaped",
+                face: "--window",
+                pid: 333,
+                t: 1794332083,
+            },
+        ]);
+    });
+});
 
 describe("staleAppFacePids", () => {
     const launcher = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";

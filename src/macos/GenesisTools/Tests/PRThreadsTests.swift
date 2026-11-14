@@ -443,7 +443,8 @@ final class PRThreadsTests: XCTestCase {
     }
 
     func testAFailedVerbPrintsItsErrorAndCode() throws {
-        let failure = try JSONDecoder().decode(PRCLIError.self, from: Data(#"{"error":"not a draft","code":"not-a-draft"}"#.utf8))
+        let capture = ProcessCapture(status: 1, stdout: Data(#"{"error":"not a draft","code":"not-a-draft"}"#.utf8), stderr: Data())
+        let failure = ToolsFailure(argv: ["hub", "pr", "publish"], capture: capture)
         XCTAssertEqual(failure.code, "not-a-draft")
         XCTAssertEqual("\(failure)", "not a draft")
     }
@@ -612,8 +613,8 @@ final class PRThreadsTests: XCTestCase {
 
     // MARK: references, head files, card clicks
 
-    private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.com/group/shop")
-    private let github = ForgeWeb(kind: "github", web: "https://github.com/acme/shop")
+    private let gitlab = ForgeWeb(kind: .gitlab, web: "https://gitlab.example.com/group/shop")
+    private let github = ForgeWeb(kind: .github, web: "https://github.com/acme/shop")
 
     func testCommitIdsLinkToTheHostAsCode() {
         let text = "Jo, `phase2.md` odsud vyhodím, zůstane jen na oracle větvi (44a8c867b4)."

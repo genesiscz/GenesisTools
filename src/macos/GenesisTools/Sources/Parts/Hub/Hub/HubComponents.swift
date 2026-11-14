@@ -135,9 +135,10 @@ struct RepoFacts: Codable, Equatable {
         let target: String
         let url: String
 
-        /// "PR !12" on GitLab, "PR #12" on GitHub, with the state when it is not open.
+        /// "MR !12" on GitLab, "PR #12" on GitHub, with the state when it is not open.
         func label(kind: String?) -> String {
-            let number = kind == "gitlab" ? "MR !\(self.number)" : "PR #\(self.number)"
+            let forge = Forge(kind: kind) ?? .github
+            let number = "\(forge.noun) \(forge.label(self.number))"
             return state == "OPEN" ? number : "\(number) (\(state.lowercased()))"
         }
     }
@@ -156,7 +157,7 @@ struct RepoFacts: Codable, Equatable {
     var webURL: URL? { origin?.web.flatMap(URL.init(string:)) }
     var branchURL: URL? { branchUrl.flatMap(URL.init(string:)) }
     var prURL: URL? { pr.flatMap { URL(string: $0.url) } }
-    var forge: ForgeWeb? { ForgeWeb(kind: origin?.kind, web: origin?.web) }
+    var forge: ForgeWeb? { ForgeWeb(kind: Forge(kind: origin?.kind), web: origin?.web) }
     /// The branch against its PR/MR's target; nil without a PR.
     var compareURL: URL? {
         guard let pr, let branch else { return nil }
@@ -171,7 +172,7 @@ struct RepoFacts: Codable, Equatable {
     /// Blocking: runs `tools`, so call it off the main thread only. A folder that is gone from disk (a deleted
     /// Copilot session-state checkout) is answered here: `tools hub repo` on one took 1.7 to 2.5 s under load
     /// (24 runs on 2026-10-10, inventory H20), to say what a `stat` says.
-    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = ToolsCLIRunner.run) -> [RepoFacts] {
+    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = { try HubSource.bridge.output($0) }) -> [RepoFacts] {
         let present = paths.filter { FileManager.default.fileExists(atPath: $0) }
         let missing = paths.filter { !present.contains($0) }.map(none)
         if !missing.isEmpty {
@@ -853,4 +854,14 @@ func projectRoot(of cwd: String) -> String {
         dir.deleteLastPathComponent()
     }
     return cwd
+}
+
+extension NoticeFix {
+    /// "Details" on a hub notice for a failure that is not a `tools` call: one place sets the hub area and the
+    /// launch facts, so no call site repeats them.
+    @MainActor
+    static func unexpectedDetails(_ message: String, outcome: String, action: String, area: String = "hub",
+                                  retry: (@MainActor () -> Void)? = nil) -> NoticeFix {
+        .details(FailureReport.unexpected(message, outcome: outcome, action: action, area: area, app: .launch), retry: retry)
+    }
 }

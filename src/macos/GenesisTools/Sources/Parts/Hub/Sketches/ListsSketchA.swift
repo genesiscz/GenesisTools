@@ -268,9 +268,7 @@ extension ListsSketchA {
                         ExternalLink(text: worktree.repo, url: facts?.webURL)
                         PullRequestLink(facts: facts)
                         Spacer()
-                        if let notice = model.notice {
-                            NoticePill(text: notice, isError: notice.hasPrefix("cmux:")) { model.notice = nil }
-                        }
+
                         Button {
                             launchingNew = true
                         } label: {

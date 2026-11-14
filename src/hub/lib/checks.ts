@@ -290,10 +290,17 @@ async function fetchCheckLog({
     }
 
     try {
-        const found =
-            target.provider === "github"
-                ? await githubLog(target, maxLines, runner)
-                : await gitlabLog(target, maxLines, runner);
+        let found: Awaited<ReturnType<typeof githubLog>>;
+
+        switch (target.provider) {
+            case "github":
+                found = await githubLog(target, maxLines, runner);
+                break;
+            case "gitlab":
+                found = await gitlabLog(target, maxLines, runner);
+                break;
+        }
+
         const result: CheckLogResult = {
             ...base,
             ...found,

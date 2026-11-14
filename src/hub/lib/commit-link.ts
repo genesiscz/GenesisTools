@@ -6,6 +6,7 @@ import {
     type CommitPr,
     type CommitPrsResult,
     type ProjectRef,
+    prNumberLabel,
     projectRefFromRemote,
     prsOfCommit,
     spawnRunner,
@@ -229,7 +230,7 @@ async function judge({
     checkout: string;
     git: (dir: string, args: string[]) => Promise<string | null>;
 }): Promise<CommitLinkPr> {
-    const ref = `${project.path}${project.kind === "gitlab" ? "!" : "#"}${pr.number}`;
+    const ref = `${project.path}${prNumberLabel(project.kind, pr.number)}`;
     const merge =
         ends.length === 1 && pr.mergedSha !== null && pr.mergedSha.toLowerCase().startsWith(ends[0].toLowerCase());
     const head = pr.headSha && (await git(checkout, ["rev-parse", "--verify", "--quiet", `${pr.headSha}^{commit}`]));

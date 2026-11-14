@@ -25,3 +25,8 @@ export function runJxa(script: string, timeout = 15_000): string {
 export function escapeJxa(str: string): string {
     return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 }
+
+/** `text` as an AppleScript string literal: `"…"` with backslashes, quotes and newlines escaped. */
+export function appleScriptString(text: string): string {
+    return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+}

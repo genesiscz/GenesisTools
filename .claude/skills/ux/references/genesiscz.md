@@ -53,6 +53,18 @@ The common action is one click or one key; editing a suggestion happens in its r
 an own answer and a comment always possible. After an answer the chosen control stays highlighted, the next item
 comes up by itself (it plays, it is selected), and every answer has Undo or "Revert and edit" right there.
 
+**A decision and what it caused are one transaction** (Martin, 2026-11-11, the "This also affects" sheet):
+
+- Undo of a decision undoes everything it carried with it (the look-alikes it settled, the lines it rewrote, the
+  dictionary entry it taught), in one step. Leaving the carried items decided after an Undo is a defect.
+- Changing a decision to another answer asks again about the items it carried, with the new answer, because they
+  were settled for the old one. Never keep them silently on the old answer, never move them silently to the new one.
+- Each carried item can be rejected on its own, in the same place it is shown: struck through, and unstruck by one
+  more click. A rejected item leaves the transaction (it is no longer tied to that decision), so a later Undo or
+  change does not touch it.
+- **Every play, open or show button does something.** A clip longer than the limit plays its start and says so; it
+  never answers with an error notice (`too-long`, 2026-11-11).
+
 ## 7. One component per concept
 
 The same thing looks and behaves the same everywhere: one play control, one row, one notice, one timeline. Two
@@ -72,6 +84,18 @@ If the engine knows that one fix also affects other items, sections or meetings,
 happens and lets them choose: "Just this" or a selection, each part checkable on the spot (playable, viewable). A
 merge or a rename names what it touches. Silent side effects and silent no-ops are defects.
 
+Rules for that list (Martin, 2026-11-11):
+
+- **Never list what is already being asked.** An item whose span, target or text equals the one being decided
+  (a look-alike over exactly the same range) is the same question: merge it, do not ask it twice. Asking again for
+  what was just picked reads as the engine not knowing what it does.
+- **Each listed item carries the same evidence as the item that asked.** If the question quotes only the words one
+  speaker said while three talked over each other, every look-alike in the list quotes its own speaker's words the
+  same way, with its play control. An item shown only by a label and a time cannot be judged, so it cannot be
+  confirmed.
+- **Name things by what a person sees**: "Speaker range 29:33–30:23" and the people in it, never a bare id ("114",
+  "i43") in a sheet, a notice or an error.
+
 ## 10. Build from what is already known
 
 Inputs complete from the data the system already has (calendar people, contacts, earlier meetings, project names)
@@ -88,6 +112,15 @@ close it (the capture picker, 2026-11-09). Background work never steals focus or
 An error shows what failed, why, and the next step, in the surface's own style, with buttons such as "Copy context
 for agents" or "Draft an issue" (the recorder failure notice, 2026-11-09). Raw stderr in grey text is a defect.
 
+## 12a. A state that differs looks different
+
+Suggested, confirmed, rejected and pending are different states, and each has its own color AND its own glyph, so it
+reads at a glance and also without color (Martin, 2026-11-11: a suggested speaker chip was indistinguishable from a
+confirmed one). A slightly different shade of the same chip is not a different look. Pick from the shared hues
+(`KitHue`): a suggestion is tentative (a blue tint, a dashed or outlined chip, a "sparkles" or "questionmark" glyph,
+the confidence shown), a confirmed answer is solid (green, a checkmark), a rejected one is struck through. Check every
+place the state shows (row, chip, timeline marker, sheet) uses the same pair.
+
 ## 13. More data, shown honestly
 
 When the system reads less than is there (OCR missing small text, a transcript missing a stretch), they want it to
@@ -96,6 +129,6 @@ read more, and the view to show both what changed and everything it read ("All t
 
 ## How to use this in an audit
 
-For each view: walk principles 1 to 13 as questions, note each gap with the screenshot or the code line, score it 1
+For each view: walk principles 1 to 13 (with 12a) as questions, note each gap with the screenshot or the code line, score it 1
 to 10 by how often they would meet it and how much it slows them, and propose the fix in terms of the shared engine and
 GenesisKit component it should use. Find gaps of the same kind as their examples; do not stop at their examples.

@@ -27,11 +27,11 @@ import {
     announceDueLapses,
     announceLeave,
     endsInRearm,
+    foldRearms,
     hasDueRearm,
     leaveReasonOf,
     logInAndAnnounceJoin,
-    type RearmTracker,
-    rearmTrackerFrom,
+    type RearmFold,
     rearmUntil,
     trackRearm,
 } from "../lib/leave";
@@ -103,7 +103,7 @@ interface ActiveLogin {
     /** The `--presence` flag; absent means the agent's default (`presenceModeFor`). */
     presence: PresenceMode | undefined;
     /** Logins that ended with a `rearm_until`, kept from every event read; a due one is announced as lapsed. */
-    rearms: RearmTracker;
+    rearms: RearmFold;
     /** True while a lapse check holds the feed lock, so the timer never stacks two. */
     lapseCheckRunning: boolean;
 }
@@ -413,16 +413,14 @@ async function drainPending(active: ActiveLogin): Promise<number> {
  * decides under the feed lock, so the watchers never write one lapse twice.
  */
 async function checkLapses(active: ActiveLogin): Promise<void> {
-    const now = Date.now();
-
-    if (active.lapseCheckRunning || !hasDueRearm(active.rearms.pending, now)) {
+    if (active.lapseCheckRunning || !hasDueRearm(active.rearms.pending)) {
         return;
     }
 
     active.lapseCheckRunning = true;
 
     try {
-        await announceDueLapses(active.paths, active.rearms.pending, now);
+        await announceDueLapses(active.paths, active.rearms);
     } catch (err) {
         log.warn({ err }, "lapse check failed; the next check retries");
     } finally {
@@ -662,7 +660,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             }),
             presence,
             // Seeded from the whole feed: a re-arm that started before this login's cursor can still lapse.
-            rearms: rearmTrackerFrom(feedAtLogin),
+            rearms: foldRearms(feedAtLogin),
             lapseCheckRunning: false,
         };
 

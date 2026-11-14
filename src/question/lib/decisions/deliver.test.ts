@@ -1165,6 +1165,53 @@ describe("delivery routes", () => {
         expect(queued.channel).toBe("queued");
     });
 
+    test("a session T3 Code runs gets the answer through its thread; a refusal is queued, a lost receipt is unknown", async () => {
+        const never = async (): Promise<never> => {
+            throw new Error("must not run a tool when T3 Code runs the session");
+        };
+        const sends: { threadId: string; text: string }[] = [];
+        const t3 = (outcome: Awaited<ReturnType<NonNullable<DeliverDeps["sendT3"]>>>): DeliverDeps => ({
+            runTool: never,
+            codexWorkerFor: () => null,
+            t3ThreadFor: (session) => (session === "t3-session" ? "thread:fixture" : undefined),
+            sendT3: async (threadId, text) => {
+                sends.push({ threadId, text });
+                return outcome;
+            },
+        });
+        const sent = t3({ kind: "sent", messageId: "message-1", runId: "run-1", delivery: "steered" });
+
+        expect(
+            await deliverToSession({ session: "t3-session", provider: "codex", text: "DECISION 3: a) yes" }, sent)
+        ).toEqual({ channel: "t3", delivered: true, target: "T3 Code thread · steered" });
+        expect(sends).toEqual([{ threadId: "thread:fixture", text: "DECISION 3: a) yes" }]);
+
+        // A Claude session T3 Code runs, with no live peer socket, reaches the thread too.
+        expect(
+            await deliverToSession({ session: "t3-session", provider: "claude", text: "DECISION 1: b) no" }, sent)
+        ).toMatchObject({ channel: "t3", delivered: true });
+
+        // A session T3 Code does not run keeps the old ladder: a Codex thread with no worker is queued, nothing sent.
+        sends.length = 0;
+        const elsewhere = await deliverToSession({ session: "other", provider: "codex", text: "x" }, sent);
+        expect(elsewhere.channel).toBe("queued");
+        expect(sends).toEqual([]);
+
+        const refused = await deliverToSession(
+            { session: "t3-session", provider: "codex", text: "x" },
+            t3({ kind: "refused", reason: "the T3 Code server is not running" })
+        );
+        expect(refused).toMatchObject({ channel: "queued", delivered: false });
+        expect(refused.error).toContain("the T3 Code server is not running");
+
+        await expect(
+            deliverToSession(
+                { session: "t3-session", provider: "codex", text: "x" },
+                t3({ kind: "unknown", reason: "T3 Code printed no receipt." })
+            )
+        ).rejects.toBeInstanceOf(DeliveryUnknownError);
+    });
+
     test("a Codex worker whose daemon is gone is no route and the answer is queued, while a live daemon is still the route", async () => {
         const home = mkdtempSync(join(tmpdir(), "codex-worker-liveness-"));
         const queueRoot = mkdtempSync(join(tmpdir(), "codex-worker-liveness-queue-"));

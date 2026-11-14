@@ -41,6 +41,7 @@ mock.module("@genesiscz/utils/process/cwd", () => ({
 }));
 mock.module("@genesiscz/utils/process/processes", () => ({
     ...realProcesses,
+    readProcessEnvironment: (pid: number) => fakeProcesses.find((row) => row.pid === pid)?.env ?? null,
     // The named keys of a fake process's env, as the real reader picks them (processes.test.ts pins its trimming).
     readProcessEnvKeys: (pid: number, keys: readonly string[]) => {
         const environment = fakeProcesses.find((row) => row.pid === pid)?.env ?? {};
@@ -227,6 +228,52 @@ describe("characterization: who the gateway says the caller is", () => {
             processName: "node",
             env: {},
         });
+    });
+
+    it("one unnamed owner whose own env names a harness session is that session's caller: a command an agent started", () => {
+        // `tools scripts call genesis-tools.handoff_post` from an agent's shell: the socket belongs to the script.
+        peer({
+            pid: 4602,
+            name: "bun",
+            env: {
+                CLAUDECODE: "1",
+                CLAUDE_CODE_SESSION_ID: "claude-session-2",
+                T3CODE_THREAD_ID: "thread:script",
+                OTHER_TOKEN: "fixture-secret",
+            },
+        });
+
+        const caller = resolveCallerFromPeer({ ...PEER });
+        expect(caller).toEqual({
+            agent: "claude-code",
+            sessionId: "claude-session-2",
+            cwd: "/fixture/project",
+            pid: 4602,
+            processName: "bun",
+            env: { T3CODE_THREAD_ID: "thread:script" },
+        });
+        expect(whoIsCalling({ origin: "remote", caller })).toMatchObject({
+            agent: "claude-code",
+            sessionId: "claude-session-2",
+            host: { app: "t3code", threadId: "thread:script" },
+        });
+    });
+
+    it("a harness process on the socket wins over a command whose env names another session", () => {
+        fakeProcesses = [
+            {
+                pid: 4603,
+                name: "bun",
+                startSec: START_SEC,
+                openFiles: [],
+                cwd: "/fixture/other",
+                env: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "inherited" },
+            },
+            { pid: 4604, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/project" },
+        ];
+        loopbackOwners = [4603, 4604];
+
+        expect(resolveCallerFromPeer({ ...PEER })).toMatchObject({ agent: "grok", sessionId: null, pid: 4604 });
     });
 
     it("no owner, or several unnamed owners, is an unknown caller with nothing filled in", () => {

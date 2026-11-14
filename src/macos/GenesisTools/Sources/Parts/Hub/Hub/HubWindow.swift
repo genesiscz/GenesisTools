@@ -396,7 +396,7 @@ package func runHub(_ args: [String]) -> Never {
         model.onSettled = {
             MainActor.assumeIsolated {
                 // PRs mode shows the PR's own review, not the selected session's.
-                let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
+                let review: @MainActor () -> ReviewModel? = { model.mainReview }
                 HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style, showsDiff: { model.snapshotShowsDiff }) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + HubSnapshotLoads.pause) {
                         MainActor.assumeIsolated {
@@ -599,6 +599,19 @@ enum HubMode: String, CaseIterable {
         case .timeline: return "Activity: sessions, commits, pushes, PR events, review comments, decisions and CI results across your projects, by day"
         case .agents: return "Agents: every session's sub-agents, teammates and codex or grok workers, live, each with its whole transcript"
         case .usage: return "Usage: every AI account's limits, burn and forecast, spend over time, who ate the bar, plans and workers"
+        }
+    }
+
+    /// The mode switch's icon, when the sidebar is too narrow for the titles, and the folded sidebar's rail.
+    var symbol: String {
+        switch self {
+        case .sessions: return "text.bubble"
+        case .worktrees: return "arrow.triangle.branch"
+        case .prs: return "arrow.triangle.pull"
+        case .inbox: return "tray"
+        case .timeline: return "clock"
+        case .agents: return "person.2"
+        case .usage: return "chart.bar.xaxis"
         }
     }
 }
@@ -837,7 +850,7 @@ final class HubModel {
     var findBranchPR: @Sendable (_ root: String, _ branch: String) -> String? = { HubCommitLookup.branchPR(root: $0, branch: $1) }
     var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
     var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
-        try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", $0, "--json"]))
+        try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: HubSource.bridge.output(["question", "inbox", "--session", $0, "--json"]))
     }
     /// The session `select` last set up (review, decisions, folders).
     private var selectedSetUp: String?
@@ -1068,7 +1081,7 @@ final class HubModel {
             if let shown = shownCommit, shown.repo == place.selection {
                 return HubNavTarget(place: place, commit: shown.commit, repo: shown.repo)
             }
-        default:
+        case .sessions, .inbox, .timeline, .agents, .usage:
             break
         }
         return HubNavTarget(place: place)
@@ -1128,15 +1141,10 @@ final class HubModel {
 
     @MainActor
     var navEntry: HubNavEntry {
-        switch mode {
+        switch owner(of: mode) {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
-        case .prs: return HubNavEntry(mode: .prs, selection: prs.selectedID)
-        // Both lists are the content itself, so the mode alone is a place worth going back to.
-        case .inbox: return HubNavEntry(mode: .inbox, selection: inbox.selectedID ?? Self.wholeList)
-        case .timeline: return HubNavEntry(mode: .timeline, selection: Self.wholeList)
-        case .agents: return HubNavEntry(mode: .agents, selection: agents.selectedID ?? Self.wholeList)
-        case .usage: return HubNavEntry(mode: .usage, selection: usage.place.selection)
+        case .model(let model): return HubNavEntry(mode: mode, selection: model.navSelection)
         }
     }
 
@@ -1284,24 +1292,15 @@ final class HubModel {
     func navTitle(_ entry: HubNavEntry) -> String {
         guard let id = entry.selection else { return entry.mode.title }
         let name: String
-        switch entry.mode {
+        switch owner(of: entry.mode) {
         case .sessions:
             name = id == AgentProcs.selectionID ? "agent processes"
                 : "session " + (sessions.first { $0.id == id }?.displayTitle ?? String(id.suffix(8)))
         case .worktrees:
             name = id == WorktreeCleanup.selectionID ? "worktree cleanup"
                 : "worktree " + (worktrees.first { $0.path == id }.map { "\($0.repo) \($0.branch)" } ?? (id as NSString).lastPathComponent)
-        case .prs:
-            name = prs.prs.first { $0.id == id }.map { "\($0.label) \($0.title)" } ?? "a PR"
-        case .inbox:
-            name = id == Self.wholeList ? "Inbox" : "Inbox: " + (inbox.sessions.first { $0.id == id }?.displayTitle ?? "a session")
-        case .timeline:
-            name = "Activity"
-        case .usage:
-            let place = HubUsagePlace(selection: id)
-            name = "Usage: " + (place?.session.map { "session " + $0.id.prefix(8) } ?? place?.section.title ?? id)
-        case .agents:
-            name = id == Self.wholeList ? "Agents" : agents.selectedMain.map { "main of " + $0.displayTitle } ?? ("agent " + (agents.selected?.node.title ?? String((AgentTree.split(id)?.child ?? id).prefix(12))))
+        case .model(let model):
+            name = model.navTitle(selection: id)
         }
         return name.count > 70 ? String(name.prefix(69)) + "…" : name
     }
@@ -1350,7 +1349,12 @@ final class HubModel {
         let previous = mode
         mode = next
         MainActor.assumeIsolated {
-            if next == .agents {
+            // The two modes that watch or poll stop when they leave the screen.
+            if next != .agents { agents.deactivate() }
+            if next != .usage { usage.deactivate() }
+            // No `default`: the compiler names this switch for a new mode, which never opens as Sessions unnoticed.
+            switch next {
+            case .agents:
                 agents.activate()
                 // One screen with two sidebars: the session open in Sessions stays open, as its Main row
                 // (Martin, 2026-10-01). An agent of that same session that was open stays open.
@@ -1361,21 +1365,25 @@ final class HubModel {
                         agents.refresh(sessions: [session.sessionId])
                     }
                 }
-            } else {
-                agents.deactivate()
+            case .usage:
+                usage.activate()
+            case .inbox:
+                inbox.loadIfStale()
+            case .timeline:
+                timeline.loadIfStale()
+            case .prs:
+                loadPRsIfNeeded()
+            case .worktrees:
+                loadWorktreesIfNeeded()
+            case .sessions:
+                break
             }
-            if next == .usage { usage.activate() } else { usage.deactivate() }
         }
-        if next == .inbox {
-            MainActor.assumeIsolated { inbox.loadIfStale() }
-        }
-        if next == .timeline {
-            MainActor.assumeIsolated { timeline.loadIfStale() }
-        }
-        if next == .prs {
-            MainActor.assumeIsolated { loadPRsIfNeeded() }
-        }
-        if next == .worktrees && worktrees.isEmpty && !loadingWorktrees {
+    }
+
+    /// The first open of Worktrees finds every checkout the sessions worked in; later opens keep the list.
+    private func loadWorktreesIfNeeded() {
+        if worktrees.isEmpty && !loadingWorktrees {
             loadingWorktrees = true
             let sessions = sessions
             // The worktree a link asked for is discovered with the session folders, whatever its repo.
@@ -1917,11 +1925,13 @@ final class HubModel {
     /// `paletteContext`, whose project list walks every session's folders (a 535 ms stall sampled in menu validation).
     @MainActor
     var paletteCurrentPath: String? {
-        if mode == .worktrees, let path = selectedWorktree, path != WorktreeCleanup.selectionID {
-            return path
-        }
-        if mode == .prs, let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot {
-            return path
+        switch mode {
+        case .worktrees:
+            if let path = selectedWorktree, path != WorktreeCleanup.selectionID { return path }
+        case .prs:
+            if let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot { return path }
+        case .sessions, .inbox, .timeline, .agents, .usage:
+            break
         }
         return selected.map { $0.cwd.isEmpty ? nil : projectRoot(of: $0.cwd) } ?? nil
     }
@@ -1934,14 +1944,8 @@ final class HubModel {
             return [findRoot]
         }
 
-        var roots: [String] = []
-        if mode == .worktrees, let path = selectedWorktree, path != WorktreeCleanup.selectionID {
-            roots.append(path)
-        } else if mode == .prs, let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot {
-            roots.append(path)
-        } else if let current = paletteCurrentPath {
-            roots.append(current)
-        }
+        // The worktree or PR checkout on screen, else the session's project: the palette's own folder.
+        var roots: [String] = paletteCurrentPath.map { [$0] } ?? []
         roots += extraFolders.filter { !roots.contains($0) }
         return roots
     }
@@ -2379,6 +2383,8 @@ struct HubRootView: View {
     /// The open screen in words: mode, what is selected, and the session panes.
     private var perfArea: String {
         var parts = [model.mode.rawValue]
+        // The two modes that show the session panes name them too.
+        let showsPanes: Bool
         switch model.mode {
         case .agents:
             if let node = model.agents.selected?.node {
@@ -2386,14 +2392,16 @@ struct HubRootView: View {
             } else if let parent = model.agents.selectedMain {
                 parts.append("main " + String(parent.displayTitle.prefix(40)))
             }
+            showsPanes = true
         case .sessions:
             if let session = model.selected {
                 parts.append(String(session.displayTitle.prefix(40)))
             }
-        default:
-            break
+            showsPanes = true
+        case .worktrees, .prs, .inbox, .timeline, .usage:
+            showsPanes = false
         }
-        if model.mode == .agents || model.mode == .sessions {
+        if showsPanes {
             parts.append(model.tabOrder.filter { model.panes.contains($0) }.map(\.rawValue).joined(separator: ","))
         }
         return parts.joined(separator: " › ")
@@ -2407,12 +2415,20 @@ struct HubRootView: View {
 
     /// What the right-hand side needs before anything clips: the open panes' minimums side by side.
     private var mainMinWidth: CGFloat {
-        // PRs with the diff open: the overview (360) and the diff (420) side by side. At 520 the diff
-        // pushed its own header and file rail past the window edge (snapshot 2026-09-24 15:25).
-        if model.mode == .prs, prsShowDiff { return 360 + 1 + 420 }
-        // An agent's transcript is the full session screen, as a session's transcript alone is.
-        if model.mode == .agents { return model.agents.selected != nil || model.agents.selectedMain != nil ? 761 : 520 }
-        guard model.mode == .sessions, model.selected != nil else { return 520 }
+        switch model.mode {
+        case .prs:
+            // PRs with the diff open: the overview (360) and the diff (420) side by side. At 520 the diff
+            // pushed its own header and file rail past the window edge (snapshot 2026-09-24 15:25).
+            return prsShowDiff ? 360 + 1 + 420 : 520
+        case .agents:
+            // An agent's transcript is the full session screen, as a session's transcript alone is.
+            return model.agents.selected != nil || model.agents.selectedMain != nil ? 761 : 520
+        case .worktrees, .inbox, .timeline, .usage:
+            return 520
+        case .sessions:
+            break
+        }
+        guard model.selected != nil else { return 520 }
         let visible = model.tabOrder.filter { model.panes.contains($0) }
         guard visible.count > 1 else {
             // Alone, the transcript is the full session screen: a 460 pt column plus its own 300 pt
@@ -2436,17 +2452,19 @@ struct HubRootView: View {
                                railAccessory: AnyView(HubModeRail(model: model, inbox: model.inbox))) {
                 SessionListView(model: model)
             }
-            if model.mode == .prs {
+            // No `default`: the compiler names this switch for a new mode, which never shows the Sessions screen unnoticed.
+            switch model.mode {
+            case .prs:
                 // Every main view outside Sessions mode reflows with the sidebar's edge on every step. Held
                 // until release, it left a dark gap or cut the content off for the whole drag (Martin,
                 // 2026-10-29: "fix this all resizing issue pls"); the per-step cost is in the commit.
                 PRsMain(model: model, prs: model.prs)
                     .flexiblePane(neighbourOf: "hub.sidebar")
-            } else if model.mode == .inbox {
+            case .inbox:
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
                 InboxFindHost(model: model, inbox: model.inbox)
                     .flexiblePane(neighbourOf: "hub.sidebar")
-            } else if model.mode == .timeline {
+            case .timeline:
                 switch HubLayout.option("lists") {
                 case "a": ListsSketchA.ActivityRuns(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
                 case "b": ListsSketchB.ActivityByProject(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
@@ -2454,13 +2472,13 @@ struct HubRootView: View {
                 TimelineMain(model: model, timeline: model.timeline)
                     .flexiblePane(neighbourOf: "hub.sidebar")
                 }
-            } else if model.mode == .usage {
+            case .usage:
                 UsageMain(model: model, usage: model.usage)
                     .flexiblePane(neighbourOf: "hub.sidebar")
-            } else if model.mode == .agents {
+            case .agents:
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
                 AgentsMain(model: model, agents: model.agents)
-            } else if model.mode == .worktrees {
+            case .worktrees:
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
                     switch HubLayout.option("lists") {
                     case "a": ListsSketchA.WorktreeDetail(model: model, worktree: worktree).flexiblePane(neighbourOf: "hub.sidebar")
@@ -2479,19 +2497,21 @@ struct HubRootView: View {
                         .foregroundColor(ReviewPalette.dim)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else if model.selectedID == AgentProcs.selectionID {
-                AgentProcsView(model: model)
-            } else if let session = model.selected {
-                SessionDetailView(model: model, session: session)
-            } else if model.loadingSessions {
-                TranscriptSkeleton()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else if let failure = model.sessionsFailure, model.sessions.isEmpty {
-                FailureInline(failure, form: .pane, identifier: "sessions.failure") { model.loadSessions() }
-            } else {
-                Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .sessions:
+                if model.selectedID == AgentProcs.selectionID {
+                    AgentProcsView(model: model)
+                } else if let session = model.selected {
+                    SessionDetailView(model: model, session: session)
+                } else if model.loadingSessions {
+                    TranscriptSkeleton()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else if let failure = model.sessionsFailure, model.sessions.isEmpty {
+                    FailureInline(failure, form: .pane, identifier: "sessions.failure") { model.loadSessions() }
+                } else {
+                    Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
+                        .foregroundColor(ReviewPalette.dim)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .hubSurface(.content)
@@ -2544,6 +2564,19 @@ struct HubRootView: View {
 }
 
 extension HubModel {
+    /// The review on screen, which the View menu's diff commands, the bench and a `--snapshot` act on: the PR's in
+    /// PRs mode, the review slot that Sessions, Worktrees and the Agents lead share, and none in Inbox, Activity and
+    /// Usage. Those modes keep the slot filled out of sight, so a diff command there would change a hidden review;
+    /// with no review the menu disables those commands.
+    @MainActor
+    var mainReview: ReviewModel? {
+        switch mode {
+        case .prs: return prs.review
+        case .sessions, .worktrees, .agents: return review
+        case .inbox, .timeline, .usage: return nil
+        }
+    }
+
     /// The screen shows a web diff a `--snapshot` must wait for: PRs mode, a worktree's review, or the Changes pane
     /// of an open session (Sessions, or a lead session in Agents). Inbox, Activity, the Agents list alone, worktree
     /// cleanup and a session without Changes have none, and their snapshots used to wait out the whole 30 s for a
@@ -2563,10 +2596,8 @@ extension HubModel {
     /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
     @MainActor
     var showsTitlebarHeader: Bool {
-        switch mode {
-        case .prs: return prs.selected != nil
-        case .inbox, .timeline, .usage: return true
-        case .agents: return agents.selected != nil || agents.selectedMain != nil
+        switch owner(of: mode) {
+        case .model(let model): return model.showsTitlebarHeader
         case .worktrees:
             return worktrees.contains { $0.path == selectedWorktree }
                 || (selectedWorktree == WorktreeCleanup.selectionID && !loadingWorktrees)
@@ -2610,11 +2641,6 @@ enum SessionGrouping: String, CaseIterable {
 private struct HubModePicker: View {
     var model: HubModel
     @ObservedObject var inbox: HubInboxModel
-
-    static let symbols: [HubMode: String] = [
-        .sessions: "text.bubble", .worktrees: "arrow.triangle.branch", .prs: "arrow.triangle.pull",
-        .inbox: "tray", .timeline: "clock", .agents: "person.2", .usage: "chart.bar.xaxis",
-    ]
 
     /// Narrower than `titlesWidth`, the row shows icons with tooltips: a title is never cut ("Worktr…").
     @State private var icons = false
@@ -2680,7 +2706,7 @@ private struct HubModePicker: View {
             Group {
                 if icons {
                     // A filled tray says something waits; the count is in the Inbox header.
-                    Image(systemName: mode == .inbox && !count.isEmpty ? "tray.full.fill" : Self.symbols[mode] ?? "circle")
+                    Image(systemName: mode == .inbox && !count.isEmpty ? "tray.full.fill" : mode.symbol)
                         .font(.system(size: 11))
                 } else {
                     Text(verbatim: mode.title + count)
@@ -2716,7 +2742,7 @@ private struct HubModeRail: View {
                 Button {
                     model.setMode(mode)
                 } label: {
-                    Image(systemName: mode == .inbox && waiting > 0 ? "tray.full.fill" : HubModePicker.symbols[mode] ?? "circle")
+                    Image(systemName: mode == .inbox && waiting > 0 ? "tray.full.fill" : mode.symbol)
                         .font(.system(size: 11))
                         .foregroundColor(selected ? .white : Color.white.opacity(0.6))
                         .frame(width: 22, height: 22)
@@ -2876,16 +2902,18 @@ private struct SessionListView: View {
                     .padding(.bottom, 6)
             }
 
-            if model.mode == .worktrees {
+            // No `default`: the compiler names this switch for a new mode, which never lists sessions unnoticed.
+            switch model.mode {
+            case .worktrees:
                 switch HubLayout.option("lists") {
                 case "a": ListsSketchA.WorktreeList(model: model)
                 case "b": ListsSketchB.WorktreeList(model: model)
                 default:
                 WorktreeListView(model: model)
                 }
-            } else if model.mode == .prs {
+            case .prs:
                 PRListView(model: model, prs: model.prs)
-            } else if model.mode == .inbox {
+            case .inbox:
                 // The rows are Hub/HubInbox.swift's; the keys step through the same order. Read at the press: this
                 // view does not observe the Inbox.
                 let sort = inboxSort
@@ -2936,7 +2964,7 @@ private struct SessionListView: View {
                             },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
-            } else if model.mode == .timeline {
+            case .timeline:
                 // Up and Down pick the project above or below in the Projects filter (All, then each project).
                 ScrollViewReader { proxy in
                     TimelineListView(model: model, timeline: model.timeline)
@@ -2946,16 +2974,16 @@ private struct SessionListView: View {
                             select: { model.timeline.project = $0 == Self.allProjects ? nil : $0 },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
-            } else if model.mode == .usage {
+            case .usage:
                 // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current list.
                 switch HubLayout.option("usageSettings") {
                 case "a": UsageSettingsSketchSidebarA(usage: model.usage)
                 case "b": UsageSettingsSketchSidebarB(usage: model.usage, filter: model.filter)
                 default: UsageListView(usage: model.usage, filter: model.filter)
                 }
-            } else if model.mode == .agents {
+            case .agents:
                 AgentsListView(model: model, agents: model.agents)
-            } else {
+            case .sessions:
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {

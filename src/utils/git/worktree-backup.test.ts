@@ -208,6 +208,29 @@ describe("worktree backup", () => {
         expect(readFileSync(join(result.folder ?? "", "README.md"), "utf8")).toContain("changed during the backup");
     });
 
+    it("keeps the worktree and the backup when the worktree changes during the backup", async () => {
+        try {
+            const result = await backupWorktree({
+                path: spare,
+                remove: true,
+                backupRoot,
+                now,
+                afterBackup: () => {
+                    writeFileSync(join(spare, "late.txt"), "written during the backup\n");
+                },
+            });
+            expect(result.refusal).toContain("changed during the backup");
+            expect(result.removed).toBe(false);
+            expect(existsSync(spare)).toBe(true);
+            expect(existsSync(join(result.folder ?? "", "untracked", "draft.txt"))).toBe(true);
+            expect(readFileSync(join(result.folder ?? "", "README.md"), "utf8")).toContain("changed during the backup");
+        } finally {
+            if (existsSync(join(spare, "late.txt"))) {
+                unlinkSync(join(spare, "late.txt"));
+            }
+        }
+    });
+
     it("keeps the worktree and the backup when the proof fails, and never reaches git worktree remove", async () => {
         const exec = Executor.prototype.exec;
         const spy = spyOn(Executor.prototype, "exec").mockImplementation(function (

@@ -14,6 +14,8 @@ import { HUB_REGISTRARS } from "@app/hub/registrars";
 import { MACOS_REGISTRARS } from "@app/macos/registrars";
 import { MEETINGS_REGISTRARS } from "@app/meetings/registrars";
 import { QUESTION_REGISTRARS } from "@app/question/registrars";
+import RECORDER_CLI_CONTRACTS from "@app/recorder/commands/registrars/__fixtures__/cli-contracts.json";
+import { createRecorderProgram, RECORDER_REGISTRARS } from "@app/recorder/registrars";
 import { runTool } from "@genesiscz/utils/cli";
 import {
     type LazyRegistrar,
@@ -39,6 +41,7 @@ const TABLES: Record<string, readonly LazyRegistrar[]> = {
     macos: MACOS_REGISTRARS,
     meetings: MEETINGS_REGISTRARS,
     question: QUESTION_REGISTRARS,
+    recorder: RECORDER_REGISTRARS,
 };
 
 function registeredNames(program: Command): string[] {
@@ -139,46 +142,73 @@ describe("ai usage", () => {
     });
 });
 
+interface CliContract {
+    argv: string[];
+    exit: number;
+    stdout: string;
+    stderr: string;
+}
+
+/**
+ * Runs one argv through runTool's argv gate in this process, as the tool's index.ts does, and returns what commander
+ * printed. The fixtures were captured from the tool's eager tree (every command inline) before its extraction.
+ */
+async function runContract({
+    program,
+    tool,
+    registrars,
+    argv,
+}: {
+    program: Command;
+    tool: string;
+    registrars: readonly LazyRegistrar[];
+    argv: string[];
+}): Promise<CliContract> {
+    let stdout = "";
+    let stderr = "";
+    let exit = 0;
+    program.exitOverride().configureOutput({
+        writeOut: (text) => {
+            stdout += text;
+        },
+        writeErr: (text) => {
+            stderr += text;
+        },
+        getOutHelpWidth: () => 80,
+        getErrHelpWidth: () => 80,
+    });
+    program.hook("preAction", () => {
+        throw new Error("A CLI contract probe must never execute a command action");
+    });
+
+    try {
+        await runTool(program, { tool, registrars }, [process.execPath, `src/${tool}/index.ts`, ...argv]);
+    } catch (error) {
+        if (!(error instanceof CommanderError)) {
+            throw error;
+        }
+
+        exit = error.exitCode;
+    }
+
+    return { argv, exit, stdout, stderr };
+}
+
 describe("ai-proxy CLI extraction contract", () => {
     test("help and usage errors match the eager tree byte for byte through runTool's argv gate", async () => {
         for (const fixture of AI_PROXY_CLI_CONTRACTS.filter((entry) => !entry.argv.includes("--readme"))) {
-            let stdout = "";
-            let stderr = "";
-            let exit = 0;
             const program = new Command()
                 .name("ai-proxy")
                 .description("OpenAI-compatible local proxy for Grok, GitHub Copilot, and other AI providers")
-                .version("0.1.0")
-                .exitOverride()
-                .configureOutput({
-                    writeOut: (text) => {
-                        stdout += text;
-                    },
-                    writeErr: (text) => {
-                        stderr += text;
-                    },
-                    getOutHelpWidth: () => 80,
-                    getErrHelpWidth: () => 80,
-                });
-            program.hook("preAction", () => {
-                throw new Error("A CLI contract probe must never execute a command action");
+                .version("0.1.0");
+            const result = await runContract({
+                program,
+                tool: "ai-proxy",
+                registrars: AI_PROXY_REGISTRARS,
+                argv: fixture.argv,
             });
 
-            try {
-                await runTool(program, { tool: "ai-proxy", registrars: AI_PROXY_REGISTRARS }, [
-                    process.execPath,
-                    "src/ai-proxy/index.ts",
-                    ...fixture.argv,
-                ]);
-            } catch (error) {
-                if (!(error instanceof CommanderError)) {
-                    throw error;
-                }
-
-                exit = error.exitCode;
-            }
-
-            expect({ argv: fixture.argv, exit, stdout, stderr }).toEqual(fixture);
+            expect(result).toEqual(fixture);
         }
     });
 
@@ -210,5 +240,20 @@ describe("ai-proxy CLI extraction contract", () => {
         }
 
         expect(outputs[0]).toBe(outputs[1]);
+    });
+});
+
+describe("recorder CLI extraction contract", () => {
+    test("help and usage errors match the eager tree byte for byte through runTool's argv gate", async () => {
+        for (const fixture of RECORDER_CLI_CONTRACTS) {
+            const result = await runContract({
+                program: createRecorderProgram(),
+                tool: "recorder",
+                registrars: RECORDER_REGISTRARS,
+                argv: fixture.argv,
+            });
+
+            expect(result).toEqual(fixture);
+        }
     });
 });

@@ -708,30 +708,14 @@
         "src/youtube/ui/lib/format.ts": 5,
         "src/zsh/lib/completions/rc-block.ts": 1
     },
-    "roster-swift-cli-runner-type-outside-bridge": {
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubWorktrees.swift": 1
-    },
-    "roster-swift-forge-kind-compare-outside-forge": {
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubCommitLink.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubComponents.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubNotify.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRFetch.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/PRThreads.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewProposal.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewWindow.swift": 1
-    },
+    "roster-swift-cli-runner-type-outside-bridge": {},
+    "roster-swift-forge-kind-compare-outside-forge": {},
     "roster-swift-genesis-tools-home-name-outside-owner": {
         "src/browser-router/native/Router.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKit/Recording/Live/LiveRecording.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKit/Widgets/WidgetModel.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKitBase/Notifications/NotificationLedger.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKitBase/Permissions/GateAudit.swift": 1,
         "src/macos/GenesisTools/Sources/Host/App/SettingsModel.swift": 1,
         "src/macos/GenesisTools/Sources/Host/LauncherFailures.swift": 1,
-        "src/macos/GenesisTools/Sources/Host/Notify.swift": 2,
+        "src/macos/GenesisTools/Sources/Host/Notify.swift": 1,
         "src/macos/GenesisTools/Sources/Host/Router.swift": 1,
-        "src/macos/GenesisTools/Sources/Host/WidgetLaunch.swift": 1,
         "src/macos/GenesisTools/Sources/Parts/Meetings/Data/MeetingsService.swift": 1
     },
     "roster-swift-hand-built-genesis-tools-path": {
@@ -755,14 +739,8 @@
         "src/macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorModel.swift": 2,
         "src/macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorView.swift": 1
     },
-    "roster-swift-review-argv-outside-review-launch": {
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/PRRefs.swift": 2
-    },
-    "roster-swift-tools-server-client-outside-bridge": {
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubData.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Widget/WidgetWindow.swift": 1
-    },
+    "roster-swift-review-argv-outside-review-launch": {},
+    "roster-swift-tools-server-client-outside-bridge": {},
     "roster-swift-unix-socket-outside-rpc-clients": {
         "native/ax-tool/SnapshotSupport/CursorReceipt.swift": 2,
         "native/ax-tool/Sources/CursorOverlay.swift": 2

@@ -1,4 +1,10 @@
-import { type ProjectRef, parsePrRef, parsePrUrl, projectRefFromRemote } from "@genesiscz/utils/git/origins";
+import {
+    FORGE_FACTS,
+    type ProjectRef,
+    parsePrRef,
+    parsePrUrl,
+    projectRefFromRemote,
+} from "@genesiscz/utils/git/origins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { defineTransclusion, resolvePath, TransclusionError } from "../registry";
 import type { TransclusionContext, TransclusionResult } from "../types";
@@ -92,8 +98,7 @@ async function api({
     endpoint: string;
     ctx: TransclusionContext;
 }): Promise<unknown> {
-    const binary = project.kind === "github" ? "gh" : "glab";
-    const defaultHost = project.kind === "github" ? "github.com" : "gitlab.com";
+    const { binary, defaultHost } = FORGE_FACTS[project.kind];
     const hostArgs = project.host === defaultHost ? [] : ["--hostname", project.host];
     const result = await ctx.run([binary, "api", ...hostArgs, endpoint], { cwd: ctx.cwd, signal: ctx.signal });
 
@@ -346,15 +351,22 @@ export const prThreadTransclusion = defineTransclusion({
             );
         }
 
-        const prEndpoint =
-            project.kind === "github"
-                ? `repos/${project.path}/pulls/${number}`
-                : `projects/${encodeURIComponent(project.path)}/merge_requests/${number}`;
+        let prEndpoint: string;
+
+        switch (project.kind) {
+            case "github":
+                prEndpoint = `repos/${project.path}/pulls/${number}`;
+                break;
+            case "gitlab":
+                prEndpoint = `projects/${encodeURIComponent(project.path)}/merge_requests/${number}`;
+                break;
+        }
+
         const pr = record(await api({ project, endpoint: prEndpoint, ctx }));
         const webUrl = text(pr.html_url) || text(pr.web_url);
         const state = pr.merged === true || text(pr.merged_at) ? "merged" : text(pr.state);
         const author = login(project.kind === "github" ? pr.user : pr.author);
-        const header = `**[${project.kind === "github" ? "PR" : "MR"} ${project.path}#${number}: ${text(pr.title).replace(/[[\]]/g, "")}](${webUrl})** · ${state} · @${author}`;
+        const header = `**[${FORGE_FACTS[project.kind].noun} ${project.path}#${number}: ${text(pr.title).replace(/[[\]]/g, "")}](${webUrl})** · ${state} · @${author}`;
         const max = Math.max(1, params.int("max"));
 
         if (!comment) {
@@ -364,19 +376,26 @@ export const prThreadTransclusion = defineTransclusion({
                 markdown: [header, ...(cut ? ["", ...cut.split("\n").map((line) => `> ${line}`)] : [])].join("\n"),
                 meta: { provider: project.kind, repo: project.path, number, state, url: webUrl },
                 block: true,
-                source: `${project.path}#${number} via ${project.kind === "github" ? "gh" : "glab"} api`,
+                source: `${project.path}#${number} via ${FORGE_FACTS[project.kind].binary} api`,
             };
         }
 
-        const thread =
-            project.kind === "github"
-                ? await githubThread({ project, number, comment, max, ctx })
-                : await gitlabThread({ project, number, comment, max, ctx });
+        let thread: Awaited<ReturnType<typeof githubThread | typeof gitlabThread>>;
+
+        switch (project.kind) {
+            case "github":
+                thread = await githubThread({ project, number, comment, max, ctx });
+                break;
+            case "gitlab":
+                thread = await gitlabThread({ project, number, comment, max, ctx });
+                break;
+        }
+
         return {
             markdown: `${header}\n\n${thread.markdown}`,
             meta: { provider: project.kind, repo: project.path, number, url: webUrl, ...thread.meta },
             block: true,
-            source: `${project.path}#${number} comment ${comment.id} via ${project.kind === "github" ? "gh" : "glab"} api`,
+            source: `${project.path}#${number} comment ${comment.id} via ${FORGE_FACTS[project.kind].binary} api`,
             ...(thread.shown ? { shown: thread.shown } : {}),
         };
     },

@@ -1,5 +1,7 @@
 export type { OriginInfo } from "./detector";
 export { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
+export type { ForgeFacts } from "./facts";
+export { FORGE_FACTS, prNumberLabel, prWebUrl } from "./facts";
 export { ghDriver, parseGhPrList } from "./gh";
 export { glabDriver, parseGlabMrList } from "./glab";
 export { cleanHostError, createHostCheck, dnsName, summarizeHostError, unresolvedHostError } from "./host-errors";

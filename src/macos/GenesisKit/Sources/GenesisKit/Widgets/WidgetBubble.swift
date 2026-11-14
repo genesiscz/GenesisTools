@@ -54,7 +54,7 @@ extension WidgetModel {
     /// A rail bubble's tooltip under `bubbleTooltip`: "auto" shows it only while hover previews are off, because
     /// the preview already names the session and an extra label over it read as the preview failing to open.
     func bubbleTooltip(_ content: TooltipContent) -> TooltipContent {
-        switch snapshot?.state.preferences.bubbleTooltip ?? "auto" {
+        switch preferences.bubbleTooltip {
         case "always": return content
         case "never": return TooltipContent()
         default: return layout.hoverPreviews ? TooltipContent() : content

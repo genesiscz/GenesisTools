@@ -146,7 +146,7 @@ export const ANNOTATION_PRESETS = {
         labelChip: { bg: "#d32f2f", fg: "#ffffff", fontSize: 14 },
         blurStrength: 12,
     },
-    /** The amber twin of review-dashed, with callout-amber's dark text: white on amber is 1.9:1. */
+    /** The amber twin of review-dashed. Dark text on amber, as callout-amber: white on #ffb020 is 1.8:1. */
     "callout-amber-dashed": {
         shape: { stroke: "#ffb020", strokeWidth: 3, radius: 8, fill: "", dash: [9, 6] },
         labelChip: { bg: "#ffb020", fg: "#111111", fontSize: 14 },

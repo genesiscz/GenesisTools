@@ -5,7 +5,7 @@ import Foundation
 /// which question it answered (2026-10-27).
 extension WidgetModel {
     /// "Replies name what they answer" (`replyNames`): "selected-or-newest" (default), "selected" or "never".
-    public var replyNames: String { snapshot?.state.preferences.replyNames ?? "selected-or-newest" }
+    public var replyNames: String { preferences.replyNames }
 
     /// The card a reply would name before the composer's ×: the card the user selected and left open, else (by
     /// default) the session's newest item from the agent. A folded or held (being dismissed) card is not looked at.

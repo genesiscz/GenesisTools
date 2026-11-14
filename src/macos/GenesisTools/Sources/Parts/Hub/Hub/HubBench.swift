@@ -297,7 +297,7 @@ enum HubBench {
         /// step, so the run's own deadline reports it as a partial run. `GENESIS_HUB_BENCH_FOLLOW_STEPS` (default 150).
         private func addFileFollow() {
             let model = model
-            let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
+            let review: @MainActor () -> ReviewModel? = { model.mainReview }
             order += ["follow", "follow.settle"]
             PerfLog.mark("hub.bench follow: \(review()?.files.count ?? 0) files")
             let count = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_FOLLOW_STEPS"].flatMap(Int.init) ?? 150

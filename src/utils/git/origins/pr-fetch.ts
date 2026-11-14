@@ -1,6 +1,7 @@
 import { type ExecResult, Executor } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyOriginUrl } from "./detector";
+import { FORGE_FACTS } from "./facts";
 import type { OriginKind } from "./types";
 
 const log = logger.child({ component: "hub/pr-fetch" });
@@ -69,7 +70,7 @@ export interface PrFetchResult {
 
 /** The host's own ref for a PR/MR head. It lives on the base project, so a PR from a fork has one too. */
 export function prSourceRef(provider: OriginKind, number: number): string {
-    return provider === "gitlab" ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`;
+    return `${FORGE_FACTS[provider].headRefs}/${number}/head`;
 }
 
 export function prPrivateRefs(number: number): { head: string; base: string } {

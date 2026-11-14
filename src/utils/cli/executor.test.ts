@@ -355,6 +355,20 @@ describe("toolCommand", () => {
 });
 
 describe("Executor bounded calls", () => {
+    test("keeps exact output when trim is false, including the leading space of a Git path", async () => {
+        const command = [
+            process.execPath,
+            "-e",
+            "process.stdout.write('  lead\\n'); process.stderr.write('  detail\\n');",
+        ];
+        const executor = new Executor();
+        expect(await executor.exec(command, { trim: false })).toMatchObject({
+            stdout: "  lead\n",
+            stderr: "  detail\n",
+        });
+        expect(await executor.exec(command)).toMatchObject({ stdout: "lead", stderr: "detail" });
+    });
+
     test("a resistant child cannot extend the advertised timeout to its natural exit", async () => {
         const executor = new Executor();
         const started = performance.now();

@@ -47,6 +47,10 @@ The full reference of every mod is the "The Claude Code mods" section of [the ag
 - `links`: paths, commits and repeated decisions in the main loop's reply become links as it streams.
 - `git`: a band row per checkout with branch, unpushed commits, changed files and PRs with CI (`/mod-git`).
 - `askRow`: `[ask]` beside a finished tool row quotes the row into the prompt.
+- `toolTime` (`ago` on): the local time each tool call started (`14:03:27 (5m ago)`) under `[ask]`, or in its place
+  while `[ask]` is off. The time is session state per `tool_use_id`, noted as the call starts, so it survives a reload
+  of the mod; rows from before the mod ran (a resumed session) show none. `ago` counts wall-clock minutes, so every
+  row changes at the same minute and the one live clock redraws once a minute.
 - `spinner`: the spinner line names the running tool, its time and the working subagents.
 - `cacheBand`: the prompt cache countdown of this session and of the others close to expiry.
 - `tmpUsage`: what the session keeps on disk and the free disk (`/mod-tmp`).

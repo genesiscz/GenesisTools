@@ -81,33 +81,45 @@ async function connect(socket: string, onRequest?: RpcSocketClientOptions["onReq
     return client;
 }
 
-test("error replies retain the remote stack and issue", async () => {
-    const peer = new RpcPeer({
-        write: (bytes) => bytes.length,
-        handle: async () => null,
-        invalid: "ignore",
-        log: logger.scoped("rpc-test").log,
-        label: "fixture",
-    });
-    const pending = peer.request("fixture").catch((error: unknown) => error);
-    const stack = "Error: refused\n    at origin (/fixture/source.ts:12:3)";
-    const issue = { tool: "fixture", title: "Original refusal" };
-    peer.receive(
-        Buffer.from(
-            SafeJSON.stringify({
-                jsonrpc: "2.0",
-                id: 1,
-                error: { code: 1042, message: "refused", data: { reason: "fixture" }, stack, issue },
-            }) + "\n"
-        )
-    );
-    expect(await pending).toMatchObject({ code: 1042, message: "refused", data: { reason: "fixture" }, stack, issue });
-    const legacy = peer.request("legacy").catch((error: unknown) => error);
-    peer.receive(
-        Buffer.from(SafeJSON.stringify({ jsonrpc: "2.0", id: 2, error: { code: 1043, message: "legacy" } }) + "\n")
-    );
-    expect(await legacy).toMatchObject({ code: 1043, message: "legacy", issue: undefined });
-    peer.close("done");
+test("error replies retain the remote stack and issue in both RPC dialects", async () => {
+    for (const jsonrpcField of [true, false]) {
+        const peer = new RpcPeer({
+            write: (bytes) => bytes.length,
+            handle: async () => null,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "fixture",
+            dialect: { jsonrpcField },
+        });
+        const pending = peer.request("fixture");
+        const rejected = pending.catch((error: unknown) => error);
+        const stack = "Error: refused\n    at origin (/fixture/source.ts:12:3)";
+        const issue = { tool: "fixture", title: "Original refusal" };
+        peer.receive(
+            Buffer.from(
+                SafeJSON.stringify({
+                    ...(jsonrpcField ? { jsonrpc: "2.0" } : {}),
+                    id: 1,
+                    error: { code: 1042, message: "refused", data: { reason: "fixture" }, stack, issue },
+                }) + "\n"
+            )
+        );
+        const error = await rejected;
+        expect(error).toBeInstanceOf(RpcError);
+        expect(error).toMatchObject({ code: 1042, message: "refused", data: { reason: "fixture" }, stack, issue });
+        const legacy = peer.request("legacy").catch((error: unknown) => error);
+        peer.receive(
+            Buffer.from(
+                SafeJSON.stringify({
+                    ...(jsonrpcField ? { jsonrpc: "2.0" } : {}),
+                    id: 2,
+                    error: { code: 1043, message: "legacy" },
+                }) + "\n"
+            )
+        );
+        expect(await legacy).toMatchObject({ code: 1043, message: "legacy", issue: undefined });
+        peer.close("done");
+    }
 });
 
 test("a handler failure sends its cause stack and issue, and the peer answers the next request", async () => {

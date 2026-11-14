@@ -35,6 +35,9 @@ tools ts skeleton src/utils --exported --top-level
 # Ranked refactor recommendations (duplicates, shadowed helpers, long functions, long parameter lists)
 tools ts refactors src
 
+# The import graph between folders, and the folders that import each other
+tools ts areas src --split src/utils
+
 # The import tree of an entry point, with measured self and total time per module
 tools ts imports analyze src/notify/index.ts
 
@@ -303,6 +306,8 @@ repository of large files does not report every file. Below ten files the budget
 
 **`unused-exports`** is off by default because it is the one analyser that reports something you must verify first.
 
+---
+
 ### `tools ts areas <paths...>`
 
 The static import graph between areas, for an architecture review. An area is the first folder under each scanned
@@ -342,12 +347,19 @@ the **cross-area edges** heaviest first, and one block per `--forbid` rule.
 | `--limit <n>` | Rows per table in text and markdown (default 40); JSON always has every row |
 | `--mermaid` | Print a Mermaid flowchart instead: mutual edges red, dynamic-only edges dashed (`--md` fences it) |
 | `--min-edges <n>` | With `--mermaid`, draw only edges with at least this many sites (default 5) |
-| `--tests`, `--ignore` | As everywhere: tests are skipped unless `--tests` |
+| `--tests`, `--ignore <s>` | See "Which files the static commands read" |
+| `--format` and shorthands | See "Output formats" |
 
-Checked on this repository on 2026-11-08 against the regex probe it replaces: `src/utils/agent-sessions` and
+Checked on this repository on 2026-11-08 15:38 against the regex probe it replaces: `src/utils/agent-sessions` and
 `src/utils/ai` import each other 88 and 40 times, and `src/hub` imports `src/question` 61 times, the same counts in
 both. The probe put every import of a folder's `index.ts` (`@genesiscz/utils/env`) into `src/utils/(root)`; the
 resolver puts it into `src/utils/env`, which is why the `(root)` edges are smaller here and some areas gained edges.
+
+Cost, on the same day (2026-11-08 15:52, a Mac at load average 330 to 400): `areas src --split src/utils` over 6593
+files took 6 to 7 s of wall time, most of it the ast-grep parse of every file; `depth src/utils` over 1737 files took
+2 to 3 s.
+
+---
 
 ### `tools ts depth <paths...>`
 
@@ -380,9 +392,19 @@ The ranking:
 - `deep = code lines per export × log2(1 + importer files)`. The deep table lists the top `--deep` (default 10)
   modules with at least one importer: much behaviour behind few names, used widely.
 
-`--within <path>` (repeatable) sets where importers are counted; the default is the scanned paths, so
-`depth src/utils` counts only importers inside `src/utils`. `--split` groups importers and folder modules one level
-deeper, as in `areas`. The JSON forms carry every module under `modules`, beside the two ranked tables.
+| Flag | Effect |
+|---|---|
+| `--by folder\|file` | What one module is (default `folder`) |
+| `--within <path>` | Where importers are counted; repeatable; the default is the scanned paths |
+| `--split <dir>` | Group importers and folder modules one level deeper, as in `areas`; repeatable |
+| `--min-exports <n>` | Names a module needs to be ranked shallow (default 2) |
+| `--limit <n>` | Rows in the shallow table (default 25) |
+| `--deep <n>` | Rows in the deep table (default 10) |
+| `--tests`, `--ignore <s>` | See "Which files the static commands read" |
+| `--format` and shorthands | See "Output formats" |
+
+`--within` sets where importers are counted, so `depth src/utils` counts only importers inside `src/utils`. The JSON
+forms carry every module under `modules`, beside the two ranked tables.
 
 ---
 

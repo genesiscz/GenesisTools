@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitBase
 import ImageIO
 import MachO
 
@@ -58,7 +59,7 @@ package enum SnapshotGeometry {
         let executable = Bundle.main.executablePath ?? CommandLine.arguments.first ?? ""
         var facts: [String: Any] = ["binary": binaryUUID() ?? NSNull(), "executable": executable]
         let installed = (NSHomeDirectory() as NSString).appendingPathComponent("Applications/GenesisTools.app/")
-        let manifest = URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/manifest.json")
+        let manifest = GenesisToolsHome.url("app/manifest.json")
         if executable.hasPrefix(installed),
            let data = try? Data(contentsOf: manifest),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

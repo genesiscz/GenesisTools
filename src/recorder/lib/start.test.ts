@@ -43,8 +43,10 @@ const repo = join(moduleDir(import.meta), "..", "..", "..");
 async function recorderCommands(): Promise<Set<string>> {
     const sources = [join(repo, "src/recorder/index.ts")];
 
-    for (const name of await readdir(join(repo, "src/recorder/commands"))) {
-        sources.push(join(repo, "src/recorder/commands", name));
+    for (const name of await readdir(join(repo, "src/recorder/commands"), { recursive: true })) {
+        if (name.endsWith(".ts") && !name.endsWith(".test.ts")) {
+            sources.push(join(repo, "src/recorder/commands", name));
+        }
     }
 
     const names = new Set<string>();

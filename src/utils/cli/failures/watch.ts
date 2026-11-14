@@ -9,9 +9,12 @@ import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure } from "./record";
 import { takeRunId } from "./run-id";
 
-const TAIL_CHARS = 4000;
+/** How much of a failure's output, message and stack a record keeps. */
+export const FAILURE_TAIL_CHARS = 4000;
+export const FAILURE_MESSAGE_CHARS = 2000;
+export const FAILURE_STACK_CHARS = 8000;
 /** The GenesisTools checkout this code runs from: the main one or a worktree. */
-export const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
+const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
 const SECRET_WORD = "(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential)";
 const SECRET_FLAG = new RegExp(`^--?[\\w-]*${SECRET_WORD}[\\w-]*$`, "i");
 /** A positional argument whose declared name is secret-shaped (`[secret]`) takes a secret value. */
@@ -41,6 +44,7 @@ interface Run {
     ended: boolean;
     /** The `tools` wrapper's id for this run, copied into every record so the wrapper never records it twice. */
     runId: string | undefined;
+    outcomeExitCodes: readonly number[];
 }
 
 let run: Run | null = null;
@@ -337,10 +341,13 @@ export function classifyExit({
     exitCode,
     noted,
     stderrTail,
+    outcomeExitCodes = [],
 }: {
     exitCode: number;
     noted: Noted | null;
     stderrTail: string;
+    /** Exit codes the tool documents as an outcome, not a failure (`tools rm` exits 3 when it opened a request). */
+    outcomeExitCodes?: readonly number[];
 }): FailureKind | null {
     if (noted?.kind === "crash" && noted.fatal) {
         return "crash";
@@ -356,6 +363,10 @@ export function classifyExit({
 
     if (noted?.kind === "error" || noted?.kind === "usage") {
         return noted.kind;
+    }
+
+    if (outcomeExitCodes.includes(exitCode)) {
+        return null;
     }
 
     if (USAGE_LINE.test(stderrTail) || /^Usage: /.test(stderrTail.trimStart())) {
@@ -433,7 +444,7 @@ function text(chunk: unknown): string {
 
 function remember(chunk: unknown): void {
     if (run) {
-        run.stderr = (run.stderr + text(chunk)).slice(-TAIL_CHARS);
+        run.stderr = (run.stderr + text(chunk)).slice(-FAILURE_TAIL_CHARS);
     }
 }
 
@@ -447,7 +458,7 @@ function tapStderr(): void {
     const writeOut = process.stdout.write;
     process.stdout.write = function (this: NodeJS.WriteStream, ...args: Parameters<typeof writeOut>) {
         if (run) {
-            run.stdout = (run.stdout + text(args[0])).slice(-TAIL_CHARS);
+            run.stdout = (run.stdout + text(args[0])).slice(-FAILURE_TAIL_CHARS);
         }
 
         return Reflect.apply(writeOut, this, args);
@@ -503,6 +514,34 @@ export function currentRunFacts(): { tool: string; command: string | null; argv:
     };
 }
 
+/** The process half of every failure record, the part {@link processFailureFields} fills in. */
+export interface ProcessFailureFields {
+    v: ToolFailure["v"];
+    at: string;
+    pid: number;
+    ppid: number;
+    cwd: string;
+    traceId: string | null;
+    toolsRoot: string;
+}
+
+/**
+ * The fields every record this process writes shares (a run's end, a command deadline, a handled call): the process,
+ * its checkout and its trace. Each writer adds its kind, its id and its message, cut to
+ * {@link FAILURE_MESSAGE_CHARS} and {@link FAILURE_STACK_CHARS}.
+ */
+export function processFailureFields(now: Date): ProcessFailureFields {
+    return {
+        v: 1,
+        at: now.toISOString(),
+        pid: process.pid,
+        ppid: process.ppid,
+        cwd: process.cwd(),
+        traceId: currentTraceId() ?? null,
+        toolsRoot: TOOLS_ROOT,
+    };
+}
+
 function caller(): FailureCaller | null {
     try {
         return run?.caller() ?? null;
@@ -528,26 +567,21 @@ function write(kind: FailureKind, exitCode: number | null, fatal: boolean): void
             : error !== undefined && error !== null
               ? String(error)
               : (jsonErrorMessage(run.stdout) ?? messageOfTail(tail));
+        const now = new Date();
         const failure: ToolFailure = {
-            v: 1,
-            id: `${Date.now().toString(36)}-${process.pid}`,
-            at: new Date().toISOString(),
+            ...processFailureFields(now),
+            id: `${now.getTime().toString(36)}-${process.pid}`,
             kind,
             tool: run.tool,
             command: run.commandPath()?.replace(/^tools /, "") ?? null,
             argv: redactArgv(run.argv, secrets),
             exitCode,
-            message: message ? redact(stripAnsi(message)).slice(0, 2000) : null,
+            message: message ? redact(stripAnsi(message)).slice(0, FAILURE_MESSAGE_CHARS) : null,
             errorName: err?.name ?? null,
-            stack: err?.stack ? redact(err.stack).slice(0, 8000) : null,
+            stack: err?.stack ? redact(err.stack).slice(0, FAILURE_STACK_CHARS) : null,
             stderrTail: tail || null,
             fatal,
             durationMs: Math.round(performance.now()),
-            pid: process.pid,
-            ppid: process.ppid,
-            cwd: process.cwd(),
-            traceId: currentTraceId() ?? null,
-            toolsRoot: TOOLS_ROOT,
             caller: caller(),
             ...(run.runId ? { runId: run.runId } : {}),
         };
@@ -570,7 +604,12 @@ function finish(code: number): void {
     }
 
     const exitCode = code || (typeof process.exitCode === "number" ? process.exitCode : 0);
-    const kind = classifyExit({ exitCode, noted: run.noted, stderrTail: stripAnsi(run.stderr) });
+    const kind = classifyExit({
+        exitCode,
+        noted: run.noted,
+        stderrTail: stripAnsi(run.stderr),
+        outcomeExitCodes: run.outcomeExitCodes,
+    });
     if (kind) {
         write(kind, exitCode, true);
     }
@@ -639,6 +678,7 @@ export function watchToolRun({
     secrets = () => ({ flags: [], indexes: [] }),
     caller = agentCaller,
     runId,
+    outcomeExitCodes = [],
 }: {
     tool: string;
     argv?: string[];
@@ -647,6 +687,8 @@ export function watchToolRun({
     caller?: () => FailureCaller | null;
     /** Defaults to the wrapper's id from the env (run-id.ts), which is then removed so child tools do not inherit it. */
     runId?: string;
+    /** Exit codes the tool documents as an outcome, not a failure (`RunToolOpts.outcomeExitCodes`). */
+    outcomeExitCodes?: readonly number[];
 }): void {
     if (run) {
         return;
@@ -663,7 +705,9 @@ export function watchToolRun({
         noted: null,
         ended: false,
         runId: runId ?? takeRunId(process.env),
+        outcomeExitCodes,
     };
+    logger.debug({ tool, runId: run.runId, pid: process.pid }, "tool run started");
     tapStderr();
     process.on("uncaughtExceptionMonitor", (error) => {
         noteCrash(error, process.listenerCount("uncaughtException") === 0);

@@ -621,11 +621,35 @@ export function judge(
         return tree.refuse;
     }
 
-    if (Date.now() - tree.newest < minAgeHours * 3_600_000) {
+    // An orphaned quarantine holds entries that an earlier plan already chose under this age rule. Moving them in
+    // made the folder new, so its age says nothing; a file still open in it was refused above.
+    if (!QUARANTINE_NAME.test(name) && Date.now() - tree.newest < minAgeHours * 3_600_000) {
         return "recent";
     }
 
     return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
+}
+
+/** Removes a tree, repeating the recursive delete while it ends with ENOTEMPTY (at most 10 passes, ACLs dropped after the first). */
+function removeTree(path: string): void {
+    for (let pass = 1; ; pass++) {
+        try {
+            rmSync(path, { recursive: true, force: true });
+            return;
+        } catch (error) {
+            const code = error instanceof Error && "code" in error ? error.code : undefined;
+
+            if (code !== "ENOTEMPTY" || pass >= 10) {
+                throw error;
+            }
+
+            // A file with an ACL that denies delete (the compress tests leave `everyone deny delete` on partner
+            // files) survives every pass. The tree is ours, so drop every ACL in it once, then delete again.
+            if (pass === 1) {
+                Bun.spawnSync(["/bin/chmod", "-RN", path], { stdout: "ignore", stderr: "ignore", timeout: 120_000 });
+            }
+        }
+    }
 }
 
 function childNames(path: string): string[] | null {
@@ -1124,6 +1148,7 @@ async function main(): Promise<void> {
     let freed = 0;
     let removed = 0;
     const refused: Record<string, number> = {};
+    const leftover: string[] = [];
 
     // Only these exclusively created, private (0700) directories belong to this run.
     const quarantines = new Map<string, string>();
@@ -1187,7 +1212,7 @@ async function main(): Promise<void> {
 
             if (leftBehind) {
                 try {
-                    rmSync(planned.path, { recursive: true, force: true });
+                    removeTree(planned.path);
                     removed++;
                     freed += now.bytes;
                 } catch (error) {
@@ -1246,11 +1271,21 @@ async function main(): Promise<void> {
                 continue;
             }
 
-            rmSync(trash, { recursive: true, force: true });
+            // A recursive delete of a large tree (258,000 files on 2026-11-14) can end with ENOTEMPTY: entries of a folder
+            // are still being removed when its own rmdir runs. Each pass removes more; when passes run out, leave the
+            // quarantine: its pid ends with this run, so the next run lists it as an orphan.
+            try {
+                removeTree(trash);
+            } catch (error) {
+                leftover.push(trash);
+                console.error(
+                    `could not empty ${trash} (${error instanceof Error ? error.message : String(error)}); the next run lists it as an orphan quarantine`
+                );
+            }
         }
     }
 
-    const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
+    const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}${leftover.length ? `; quarantines left for the next run: ${leftover.length}` : ""}`;
     console.log(summary);
     removeSpentPlans(planPath);
 

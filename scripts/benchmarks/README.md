@@ -44,3 +44,10 @@ re-deriving how it was produced.
   it; `--dump` writes the snapshot for a parity diff between two commits) and `roster-read.ts` (one widget roster read,
   CPU per read over reads spaced so a live session appends between them). Both, and `prefix-mark.ts`, take
   `--record-run "<the change>"`, which appends the run to the baseline's history ([`baselines/`](baselines/README.md)).
+- [`hub/`](hub/) — `big-session.ts`: what one very large session costs the hub. It answers the calls a selection
+  sends (the transcript's last page, sub-agents, the Changes pane, decisions, the agents list, usage rows) through the
+  resident server's doors, each in a fresh process (`big-session-child.ts`). `*.stallMs` and `together.maxStallMs`
+  are the longest time the server's event loop answered nobody, `together.tailAnswerMs` how long the cheapest call
+  waits behind the others, `together.failed` the calls that failed only beside the others. The session is the largest
+  Claude transcript on this Mac, or `--session <id>`; `--before <checkout>` runs an older commit's code beside the
+  current one. Run it before and after a change to a door, a transcript reader or the session-changes fold.

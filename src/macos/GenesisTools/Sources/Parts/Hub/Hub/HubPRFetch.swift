@@ -41,8 +41,8 @@ enum PRFetch {
 
     static func arguments(_ pr: HubPR, root: String, base: String?) -> [String] {
         var args = ["hub", "pr", "fetch", "\(root)#\(pr.number)", "--json"]
-        if let kind = pr.origin?.kind, kind == "github" || kind == "gitlab" {
-            args += ["--provider", kind]
+        if let forge = Forge(kind: pr.origin?.kind) {
+            args += ["--provider", forge.rawValue]
         }
         if let head = pr.headSha, !head.isEmpty {
             args += ["--head", head]
@@ -56,16 +56,11 @@ enum PRFetch {
         return args
     }
 
-    private struct Failure: Decodable {
-        let error: String
-        let code: String?
-    }
-
     /// Blocks until the tool exits: call it from a detached task, never from a view body.
     static func run(_ args: [String]) -> PRFetchState {
         let capture: ProcessCapture
         do {
-            capture = try ToolsCLIRunner.capture(args, timeout: timeout)
+            capture = try HubSource.bridge.capture(args, timeout: timeout)
         } catch {
             return .failed("Could not fetch the PR head: \(error)")
         }
@@ -75,18 +70,17 @@ enum PRFetch {
         return .failed(sentence(stdout: capture.stdout, stderr: capture.stderr, status: capture.status))
     }
 
-    /// The verb prints `{ error, code }` on failure (src/hub/index.ts `prVerb`); the code picks the lead.
+    /// The verb prints `{ error, code }` on failure (src/hub/index.ts `prVerb`), read as a `ToolsFailure`; the code
+    /// picks the lead. A failure that names nothing reads as its exit summary.
     static func sentence(stdout: Data, stderr: Data, status: Int32) -> String {
-        if let failure = try? JSONDecoder().decode(Failure.self, from: stdout) {
-            switch failure.code {
-            case "auth": return "Sign-in needed to fetch the PR head: \(failure.error)"
-            case "network": return "The host did not answer: \(failure.error)"
-            case "ref-missing": return "The host has no head for this PR: \(failure.error)"
-            default: return "Could not fetch the PR head: \(failure.error)"
-            }
+        let failure = ToolsFailure(argv: ["hub", "pr", "fetch"], capture: ProcessCapture(status: status, stdout: stdout, stderr: stderr))
+        guard failure.named else { return failure.message }
+        switch failure.code {
+        case "auth": return "Sign-in needed to fetch the PR head: \(failure.message)"
+        case "network": return "The host did not answer: \(failure.message)"
+        case "ref-missing": return "The host has no head for this PR: \(failure.message)"
+        default: return "Could not fetch the PR head: \(failure.message)"
         }
-        let text = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return "tools hub pr fetch exited \(status)" + (text.isEmpty ? "" : ": \(text.suffix(200))")
     }
 }
 
@@ -105,7 +99,7 @@ struct PRFetchStatus: View {
                     .font(.system(size: 11.5))
                     .foregroundColor(ReviewPalette.dim)
             }
-            .instantTooltip("No local worktree has \(pr.headBranch): git fetch puts the \(pr.isGitLab ? "MR" : "PR") head into refs/genesis/pr/\(pr.number)/head of \(pr.repoRoot ?? "the checkout"). Nothing is checked out.")
+            .instantTooltip("No local worktree has \(pr.headBranch): git fetch puts the \(pr.forgeKind.noun) head into refs/genesis/pr/\(pr.number)/head of \(pr.repoRoot ?? "the checkout"). Nothing is checked out.")
         case .failed(let message):
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -115,7 +109,7 @@ struct PRFetchStatus: View {
                     .foregroundColor(ReviewPalette.removed)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                IconButton(systemName: "arrow.clockwise", tooltip: "Fetch the \(pr.isGitLab ? "MR" : "PR") head again", action: retry)
+                IconButton(systemName: "arrow.clockwise", tooltip: "Fetch the \(pr.forgeKind.noun) head again", action: retry)
             }
             .frame(maxWidth: 420, alignment: .trailing)
             .instantTooltip("No diff: \(message)")

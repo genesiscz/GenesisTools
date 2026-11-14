@@ -11,12 +11,12 @@ public enum WidgetAlerts {
 
     /// The arrivals the preferences ask to hear about: decisions and questions (anything that waits for an answer)
     /// under `alertDecisions`, answers and messages under `alertAnswers`. Agent results never alert.
-    public static func wanted(_ items: [WidgetInboxItem], preferences: WidgetPreferences?) -> [WidgetInboxItem] {
+    public static func wanted(_ items: [WidgetInboxItem], preferences: WidgetPreferences) -> [WidgetInboxItem] {
         items.filter { item in
             if item.needsAnswer || item.kind == "decision" || item.kind == "form" {
-                return preferences?.alertDecisions ?? true
+                return preferences.alertDecisions
             }
-            return item.kind == "answer" && (preferences?.alertAnswers ?? true)
+            return item.kind == "answer" && preferences.alertAnswers
         }
     }
 
@@ -51,27 +51,26 @@ public enum WidgetAlerts {
 
     /// Seconds the alert popup stays while the pointer is not on it (`alertPopupSeconds`, default 7); 0 keeps it
     /// until it is closed, answered or opened.
-    public static func popupSeconds(_ preferences: WidgetPreferences?) -> Double {
-        popupDuration(preferences?.alertPopupSeconds, fallback: 7)
+    public static func popupSeconds(_ preferences: WidgetPreferences) -> Double {
+        popupDuration(preferences.alertPopupSeconds)
     }
 
     /// Seconds the popup of a decision answered elsewhere stays (`autoDecisionSeconds`, default 5); 0 keeps it.
-    public static func autoDecisionSeconds(_ preferences: WidgetPreferences?) -> Double {
-        popupDuration(preferences?.autoDecisionSeconds, fallback: 5)
+    public static func autoDecisionSeconds(_ preferences: WidgetPreferences) -> Double {
+        popupDuration(preferences.autoDecisionSeconds)
     }
 
     /// A stored popup duration in the range both popups allow: 0 (until closed), else 3 to 60 seconds.
-    private static func popupDuration(_ value: Double?, fallback: Double) -> Double {
-        let seconds = value ?? fallback
-        return seconds <= 0 ? 0 : max(3, min(60, seconds))
+    private static func popupDuration(_ seconds: Double) -> Double {
+        seconds <= 0 ? 0 : max(3, min(60, seconds))
     }
 
     public static let defaultAutoDecisionSound = "Tink"
 
     /// The sound of a decision answered elsewhere: `autoDecisionSound`, where "same" means `alertSound`.
-    public static func autoDecisionSound(_ preferences: WidgetPreferences?) -> String? {
-        let sound = preferences?.autoDecisionSound ?? defaultAutoDecisionSound
-        return sound == "same" ? preferences?.alertSound : sound
+    public static func autoDecisionSound(_ preferences: WidgetPreferences) -> String? {
+        let sound = preferences.autoDecisionSound
+        return sound == "same" ? preferences.alertSound : sound
     }
 
     /// Who stored a decision's answer, in the words every surface uses (`answeredVia`).
@@ -105,26 +104,27 @@ public enum WidgetAlerts {
         case newest
     }
 
-    public static func popupMany(_ preferences: WidgetPreferences?) -> PopupMany {
-        preferences?.alertPopupMany.flatMap(PopupMany.init(rawValue:)) ?? .list
+    public static func popupMany(_ preferences: WidgetPreferences) -> PopupMany {
+        PopupMany(rawValue: preferences.alertPopupMany) ?? .list
     }
 
     /// The chime's volume, 0 to 1 of the system volume (`alertVolume` in percent, default 100).
-    public static func volume(_ preferences: WidgetPreferences?) -> Float {
-        Float(max(0, min(100, preferences?.alertVolume ?? 100)) / 100)
+    public static func volume(_ preferences: WidgetPreferences) -> Float {
+        Float(max(0, min(100, preferences.alertVolume)) / 100)
     }
 
     /// The sound for a burst: `alertSound` when anything in it waits for an answer, else the answers' own sound
     /// (`alertAnswerSound`, where "same" means `alertSound`). nil plays the default sound.
-    public static func sound(for items: [WidgetInboxItem], preferences: WidgetPreferences?) -> String? {
+    public static func sound(for items: [WidgetInboxItem], preferences: WidgetPreferences) -> String? {
         let asks = items.contains { $0.needsAnswer || $0.kind == "decision" || $0.kind == "form" }
-        guard !asks, let answer = preferences?.alertAnswerSound, answer != "same" else { return preferences?.alertSound }
+        let answer = preferences.alertAnswerSound
+        guard !asks, answer != "same" else { return preferences.alertSound }
         return answer
     }
 
     /// Seconds the session behind an alert flashes in the widget; 0 is off.
-    public static func flashSeconds(_ preferences: WidgetPreferences?) -> Double {
-        max(0, min(30, preferences?.alertFlashSeconds ?? 5))
+    public static func flashSeconds(_ preferences: WidgetPreferences) -> Double {
+        max(0, min(30, preferences.alertFlashSeconds))
     }
 
     private static var lastChime = Date.distantPast

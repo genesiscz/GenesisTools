@@ -186,13 +186,15 @@ tools agents hooks diff show toolu_01abc
 |---|---|
 | `hooks config show` | The config in effect, after defaults. |
 | `hooks config path` | Where the config file lives. |
+| `hooks config describe <key> [--json]` | One setting: its value, its default, and its named values with when to pick each. |
 | `hooks config rules` | Switch rules on and off. A terminal gets a picker. |
 | `hooks config set <key> <value> --write` | Change one setting. |
 
 `hooks config` alone runs `config show`. `config rules` in a terminal opens a picker, and saving the selection is the
 write. Elsewhere, or with flags, it prints the list and takes `--enable <ids>` and `--disable <ids>` (comma lists)
 with `--write`. `config set` takes `--replace-subagent-line` and `--write`. Its keys are listed under
-[Configuration](#configuration).
+[Configuration](#configuration). Where `config describe` lists named values for a key, `config set` takes a name
+(`config set mods.resumeGuard.minTokens recommended --write`) as well as any other value the key takes.
 
 ```bash
 tools agents hooks config set shadow false --write
@@ -212,8 +214,8 @@ tools agents hooks config rules --disable zsh-word-split --write
 | `hooks mods watch [--off] --write` | Load the mods from this checkout in every new session, reload on each save. |
 
 `hooks mods` alone runs `mods status`. `mods install --scope` is `user` (default), `project` or `local`. The mod
-names are `diff`, `idleCompact`, `agentModel`, `agentRow`, `decisions`, `inbox`, `links`, `git`, `askRow`, `spinner`,
-`cacheBand`, `tmpUsage`, `agentsBand`, `hooks`, `hooksDedupe` and `stall`. `enable` and `disable` take
+names are `diff`, `idleCompact`, `agentModel`, `agentRow`, `decisions`, `inbox`, `links`, `git`, `askRow`, `toolTime`, `spinner`,
+`cacheBand`, `tmpUsage`, `agentsBand`, `hooks`, `hooksDedupe`, `stall` and `resumeGuard`. `enable` and `disable` take
 `--replace-subagent-line` for `agentRow`. `mods watch` writes the folder into `CLAUDE_CODE_PLUGIN_DIRS` in the `env`
 block of the Claude settings; `--off` takes it out.
 
@@ -514,6 +516,23 @@ in the same loop gets a compact form: the title, the matched part, the corrected
 session)", and a block keeps the first sentence of its reason. After the loop compacts, the full form comes back once.
 Claude and Codex place a compaction by the rows of their transcripts; Grok keeps only a count, so a Grok session that
 has compacted at least once always gets the full form. The `systemMessage` the user sees is unchanged.
+
+A warn or a context note of a rule that the same loop saw within `guard.quietMinutes` (10) minutes, and has not
+compacted since, is not shown at all: the command ran, and the loop already read that rule. A block always shows,
+because the command did not run. The window starts again at each message that shows the rule; `0` turns it off.
+
+Each firing rule is one `agent-context / guard.verdict` event for `tools metrics` (`guard.metrics`, on by default).
+The value is the estimated tokens (characters / 4) of the message the model got, split evenly over the rules in it;
+a rule that showed nothing counts 0. Dims: `session`, `agent` (`main` or the subagent id), `harness`, `model` (null
+when the payload has none), `rule`, `kind` (`misread` or `destructive`), `outcome`, `delivery` (`block`, `warn`,
+`context`, `quiet`, `capped`, `behind-block`), `form` (`full`, `compact`, `none`), `demoted` and `shadow`. The hook
+writes one spool line per rule when it exits; it starts no service.
+
+```bash
+tools metrics query agent-context guard.verdict --group-by kind,outcome --agg count,sum
+tools metrics query agent-context guard.verdict --group-by rule,delivery --agg count,sum
+tools metrics query agent-context guard.verdict --group-by agent --where delivery=quiet --agg count
+```
 
 ### Custom rules
 
@@ -890,6 +909,16 @@ every file; a click on the diff itself still opens the group's calls. The diff o
 behind one `[ show diff from git pull ]` button, because it is other people's work arriving.
 `config set mods.diff.collapseGitSync false --write` draws it like any other call.
 
+`[ files only (everywhere) ]` beside it folds every diff block of the session to its file names: the blocks already
+drawn and the ones drawn later. It then reads `[ show diff (everywhere) ]`, which opens them again. It forgets the
+files folded one by one before; a file or a block still folds and opens by itself after it.
+`config set mods.diff.filesOnly true --write` starts every session that way (off by default).
+
+Under an open diff the mod draws a second row: `[ ↑ top ]` jumps to the top of the block, and `[ files only ]` and
+`[ files only (everywhere) ]` stand there again, so a long diff folds from where the reading ended. These buttons
+scroll to the block's top first and fold after that; otherwise the window would stay where the block's end was.
+`config set mods.diff.bottomRow false --write` removes the row (on by default).
+
 #### The idle-compaction mod (`mods.idleCompact`, on)
 
 The plugin compacts an idle Claude session 56 minutes after its last turn (`mods.idleCompact.minutes`, 1 to 59),
@@ -963,6 +992,8 @@ defaults are in the plugin's [README](../../plugins/genesis-tools-mods/README.md
   Times in the sidebars and the band are live (`hooks/live.ts`): a time with seconds redraws each second while it is
   on screen, one in minutes each minute, and nothing redraws while no live time shows.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
+- `mods.toolTime` (`ago` on): the local time each tool call started (`14:03:27 (5m ago)`), under `[ask]` on its row
+  or in its place while `[ask]` is off. `ago` counts wall-clock minutes, so all rows redraw together once a minute.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others` on): the prompt cache countdown, yellow under
   `cautionMinutes` and red under `warnMinutes`, and the other sessions whose cache runs out within the yellow window. A
@@ -1179,7 +1210,10 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `rules.<rule-id>` | rule severity | `allow`, `context`, `warn` or `block` for every harness. |
 | `harnesses.<harness>.<rule-id>` | | The same for one harness. |
 | `guard.longCommand.lines` / `.chars` | `30` / `2500` | Long-command downgrade. |
+| `guard.corrected.wholeMaxChars` / `.partMaxChars` | `200` / `400` | How much of a corrected command a message prints. |
 | `guard.contextCapPerSession` | `3` | Context notes per rule per session. |
+| `guard.quietMinutes` | `10` | Minutes a loop does not see a warn or a note of a rule it just saw. `0`: off. |
+| `guard.metrics` | `true` | Record each firing as `agent-context / guard.verdict`. |
 | `guard.customRules` | empty | Comma list of rule files or folders. |
 | `diff.enabled` | `true` | The Bash diff (Grok: off). |
 | `diff.maxFiles` / `diff.maxLinesPerFile` | `15` / `30` | Files and lines per message. |
@@ -1204,6 +1238,8 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `questions`, `questions.<harness>` | off | See [Structural questions](#structural-questions-questions). |
 | `questions.notify` | `true` | Banner for a new open question. |
 | `agentsTalk.hint` | `true` | The agents-talk SessionStart reminder. |
+| `areaRules.write` / `.agents` | `full` / `same` | See [Area rules](#area-rules). |
+| `areaRules.harnesses.<harness>.<field>` | none | Per-harness area-rules levels. |
 | `mods.*` | see above | See [The Claude Code mods](#the-claude-code-mods). |
 
 `config set --help` prints the full key list. Keys in the file that `set` does not take: `logPath` (the decision log,

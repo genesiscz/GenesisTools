@@ -36,7 +36,7 @@ final class WidgetFieldEditingTests: XCTestCase {
 
     private func line(revision: Int, key: String, text: String) throws -> String {
         let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(text), encoding: .utf8))
-        return #"{"version":1,"state":{"version":1,"revision":\#(revision),"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{"\#(key)":{"text":\#(encoded),"assetIds":[]}},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
+        return #"{"version":1,"state":{"version":1,"revision":\#(revision),"preferences":\#(WidgetTestPreferences.json()),"assets":{},"drafts":{"\#(key)":{"text":\#(encoded),"assetIds":[]}},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
     }
 
     private func until(_ condition: @autoclosure () -> Bool, _ message: String) async throws {

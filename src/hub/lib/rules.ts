@@ -10,6 +10,7 @@ import { decisionFiles } from "@app/question/lib/decisions/read";
 import { awaitsAnswer, type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { byId } from "@genesiscz/utils/ai/catalog/static";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { FORGE_FACTS } from "@genesiscz/utils/git/origins/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -647,8 +648,8 @@ export function ruleSessionFromRow(row: AgentSessionRow): RuleSession {
 export function prRefFromKey(key: string, provider?: NotifyItem["provider"]): string {
     const slash = key.indexOf("/");
     const ref = slash >= 0 ? key.slice(slash + 1) : key;
-    const gitlab = (provider ?? (key.startsWith("github.com/") ? "github" : "gitlab")) === "gitlab";
-    return gitlab ? ref.replace(/#(\d+)$/, "!$1") : ref;
+    const kind = provider ?? (key.startsWith("github.com/") ? "github" : "gitlab");
+    return ref.replace(/#(\d+)$/, `${FORGE_FACTS[kind].mark}$1`);
 }
 
 export function rulePrsFromNotifyState(state: NotifyState): { prs: RulePr[]; postedCi: RuleInputs["postedCi"] } {

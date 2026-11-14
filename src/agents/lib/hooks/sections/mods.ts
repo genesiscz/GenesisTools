@@ -31,6 +31,7 @@ const DEFAULT_MODS: ModsConfig = {
         earlier: "show",
     },
     askRow: { enabled: false },
+    toolTime: { enabled: false, ago: true },
     spinner: { enabled: false },
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },
@@ -124,6 +125,10 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
             earlier: git.earlier === "show" || git.earlier === "hide" ? git.earlier : base.git.earlier,
         },
         askRow: { enabled: enabled("askRow", base.askRow.enabled) },
+        toolTime: {
+            enabled: enabled("toolTime", base.toolTime.enabled),
+            ago: boolOr(partOf(held.toolTime).ago, base.toolTime.ago),
+        },
         spinner: { enabled: enabled("spinner", base.spinner.enabled) },
         cacheBand: {
             enabled: boolOr(cache.enabled, base.cacheBand.enabled),
@@ -363,6 +368,7 @@ export const MODS_HOOK_SECTION: HookConfigSection<ModsConfig> = {
         "mods.idleCompact.<enabled|minutes|minTokens>",
         "mods.agentModel.<enabled|format>",
         "mods.agentRow.<enabled|format|effort>",
+        "mods.toolTime.<enabled|ago>",
         "mods.<decisions|inbox|links|git|askRow|spinner>.enabled",
         "mods.decisions.<chip|expand|history|enter>",
         "mods.inbox.<chip|expand>",

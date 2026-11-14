@@ -1,12 +1,14 @@
 import { resolve } from "node:path";
 import {
     type CommandRunner,
+    FORGE_FACTS,
     type ProjectRef,
     type PrSummary,
     parseGhPrRows,
     parseGlabMrRows,
     parsePrUrl,
     projectRefFromRemote,
+    prWebUrl,
     spawnRunner,
     viewPr,
 } from "@genesiscz/utils/git/origins";
@@ -113,43 +115,60 @@ async function prsForBranch({
     cwd: string;
     runner: CommandRunner;
 }): Promise<{ prs: PrSummary[]; baseShas: Map<number, string>; error: string | null }> {
-    const cmd =
-        project.kind === "github"
-            ? [
-                  "gh",
-                  "pr",
-                  "list",
-                  "--repo",
-                  `${project.host}/${project.path}`,
-                  "--head",
-                  branch,
-                  "--state",
-                  "all",
-                  "--limit",
-                  "10",
-                  "--json",
-                  [...GH_LIST_FIELDS, "baseRefOid"].join(","),
-              ]
-            : [
-                  "glab",
-                  "api",
-                  "--hostname",
-                  project.host,
-                  `projects/${encodeURIComponent(project.path)}/merge_requests?${new URLSearchParams({
-                      source_branch: branch,
-                      state: "all",
-                      order_by: "updated_at",
-                      sort: "desc",
-                      per_page: "10",
-                  })}`,
-              ];
+    let cmd: string[];
+
+    switch (project.kind) {
+        case "github":
+            cmd = [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                `${project.host}/${project.path}`,
+                "--head",
+                branch,
+                "--state",
+                "all",
+                "--limit",
+                "10",
+                "--json",
+                [...GH_LIST_FIELDS, "baseRefOid"].join(","),
+            ];
+            break;
+        case "gitlab":
+            cmd = [
+                "glab",
+                "api",
+                "--hostname",
+                project.host,
+                `projects/${encodeURIComponent(project.path)}/merge_requests?${new URLSearchParams({
+                    source_branch: branch,
+                    state: "all",
+                    order_by: "updated_at",
+                    sort: "desc",
+                    per_page: "10",
+                })}`,
+            ];
+            break;
+    }
+
     const res = await runHost({ cmd, cwd, runner });
 
     if (res.error) {
         return { prs: [], baseShas: new Map(), error: res.error };
     }
 
-    const prs = project.kind === "github" ? parseGhPrRows(res.stdout) : parseGlabMrRows(res.stdout);
+    let prs: PrSummary[];
+
+    switch (project.kind) {
+        case "github":
+            prs = parseGhPrRows(res.stdout);
+            break;
+        case "gitlab":
+            prs = parseGlabMrRows(res.stdout);
+            break;
+    }
+
     return { prs, baseShas: baseShas(res.stdout, project.kind), error: null };
 }
 
@@ -232,16 +251,13 @@ export async function findBranchPr({
     const listed = await prsForBranch({ project, branch: facts.branch, cwd, runner });
 
     if (listed.error) {
-        throw new HubPrError(
-            "provider",
-            `${project.kind === "github" ? "gh" : "glab"} could not list PRs: ${listed.error}`
-        );
+        throw new HubPrError("provider", `${FORGE_FACTS[project.kind].binary} could not list PRs: ${listed.error}`);
     }
 
     const pr = pickPr(listed.prs);
 
     if (!pr) {
-        return none(`no ${project.kind === "github" ? "PR" : "MR"} has ${facts.branch} as its source branch`);
+        return none(`no ${FORGE_FACTS[project.kind].noun} has ${facts.branch} as its source branch`);
     }
 
     const baseSha =
@@ -379,6 +395,6 @@ export async function explicitPrTarget({
         host: project.host,
         project: project.path,
         number: parsed.number,
-        url: `${project.web}/${project.kind === "github" ? "pull" : "-/merge_requests"}/${parsed.number}`,
+        url: prWebUrl(project.kind, project.web, parsed.number),
     };
 }

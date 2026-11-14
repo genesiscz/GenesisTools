@@ -87,7 +87,8 @@ export class ModelResolutionError extends Error {
     }
 }
 
-interface ModelRequest {
+/** What a ref or a configured default asks for, before an account is picked; `via` names the rung it came from. */
+export interface ModelRequest {
     accountId?: string;
     providerId?: string;
     modelId?: string;
@@ -192,7 +193,11 @@ function hasSpec(rung: TaskDefault | undefined): rung is TaskDefault {
     return Boolean(rung?.model || rung?.provider);
 }
 
-function fromTaskDefault(rung: TaskDefault, cfg: AiConfigData, via: string): ModelRequest {
+/**
+ * The request a configured default spells. Exported so a tool that reads its own default (`ask`'s
+ * `defaults.app.ask.chat`) parses it by the same rules. Throws when the model is not a model ref.
+ */
+export function fromTaskDefault(rung: TaskDefault, cfg: AiConfigData, via: string): ModelRequest {
     const seed = rung.model ? seedFrom(parseModelRef(rung.model, cfg)) : {};
 
     // `provider` only fills a half the model ref left open, so a rung written as

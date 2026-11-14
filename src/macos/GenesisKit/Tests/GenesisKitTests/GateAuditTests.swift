@@ -319,14 +319,26 @@ final class ApprovalVerifierTests: XCTestCase {
         var unavailable: String?
         var biometricReplies: [@Sendable (Bool, Error?) -> Void] = []
         var passwordReplies: [@Sendable (Bool, Error?) -> Void] = []
+        var passwordReasons: [String] = []
 
         func unavailableReason(_ context: LAContext) -> String? { unavailable }
         func evaluateBiometrics(_ context: LAContext, reason: String, reply: @escaping @Sendable (Bool, Error?) -> Void) {
             biometricReplies.append(reply)
         }
         func evaluatePassword(reason: String, reply: @escaping @Sendable (Bool, Error?) -> Void) {
+            passwordReasons.append(reason)
             passwordReplies.append(reply)
         }
+    }
+
+    // The system dialog adds its own full stop: the rm window's title read "… from 1 request?." (2026-11-14).
+    func testThePasswordDialogReasonEndsWithoutTheTitlesQuestionMark() {
+        let fake = FakeEvaluator()
+        let verifier = ApprovalVerifier(reason: "approve: Delete 1 item from 1 request?", evaluator: fake)
+        verifier.usePassword()
+        XCTAssertEqual(fake.passwordReasons, ["approve: Delete 1 item from 1 request"])
+        XCTAssertEqual(ApprovalVerifier.systemReason("give “gh” the vault key."), "give “gh” the vault key")
+        XCTAssertEqual(ApprovalVerifier.systemReason("allow “gh” to use the account shop"), "allow “gh” to use the account shop")
     }
 
     private func settle() {

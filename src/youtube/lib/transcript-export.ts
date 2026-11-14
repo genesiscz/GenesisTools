@@ -173,6 +173,7 @@ export function renderTranscriptVtt(segments: TranscriptSegment[]): string {
     return `WEBVTT\n\n${cues}`;
 }
 
+// lint-rules-ignore: caption exports render VideoMeta/Transcript as SRT/VTT/JSON; eval reports render persisted ConversationRecord and are a different contract.
 export function renderTranscript(
     video: ExportVideoMeta,
     transcript: Transcript,

@@ -8,6 +8,7 @@ import type { VideoId } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
@@ -433,5 +434,5 @@ export async function startMcpServer(yt: Youtube): Promise<void> {
     );
 
     logger.info({ tools: MCP_TOOLS.length }, "youtube mcp server starting on stdio");
-    await server.connect(new StdioServerTransport());
+    await server.connect(recordMcpTransport({ transport: new StdioServerTransport(), server: "youtube" }));
 }

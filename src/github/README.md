@@ -32,8 +32,8 @@ Only github.com is supported: the URL parser matches `github.com` and nothing el
 
 ## Commands
 
-- Read: `issue`, `pr`, `comments`, `get`.
-- Write: `media upload`.
+- Read: `issue` (alias `issues`), `pr`, `comments`, `get`.
+- Write: `issue post`, `media upload`.
 - Review threads: `review`, with the subcommands `expand`, `respond`, `respond-batch`, `resolve`, `comment`,
   `sessions` and `summary`.
 - Search: `search`, `code`.
@@ -131,7 +131,10 @@ because GitHub plays it inline only when the URL stands alone in its paragraph.
 - When a later file or the `--append` write fails, the command still prints the markdown (or the `--json` rows) of
   the files it already uploaded, then the error, and exits 1. Retry only the files that are not printed.
 - Observed 2026-11-09: a fresh asset answers 404 to a request without a token and 302 (to a signed S3 URL) with one,
-  until something references it. Check the rendered PR or comment, not a logged-out `curl`.
+  until something references it. Two assets that public repositories already reference answered an anonymous
+  request with 302 the same day, so a referenced asset on a public repository is readable without a token. On a
+  private repository an anonymous request gets 404 either way. Check the rendered PR or comment, not a logged-out
+  `curl`.
 
 ### `pr`: a pull request
 

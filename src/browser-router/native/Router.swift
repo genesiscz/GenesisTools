@@ -44,6 +44,7 @@ enum RouteFailure: Error, CustomStringConvertible {
 func configDirectory() -> URL {
     let override = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
     let root = override.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.homeDirectoryForCurrentUser
+    // lint-rules-ignore: swiftc builds this file alone (swift-parity.test.ts), so it cannot use GenesisToolsHome; it honours GENESIS_TOOLS_HOME itself above.
     return root.appendingPathComponent(".genesis-tools/browser-router", isDirectory: true)
 }
 

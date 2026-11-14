@@ -1,5 +1,4 @@
 import { connectPage } from "@e2e/pages/ConnectPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 // The transport & trust done-gate (plan 02). These cases exercise the /connect screen's tier picker
 // + reachability probe, which only exist on a FRESH install (no stored connection). Once any
@@ -55,9 +54,8 @@ describe("ConnectPage", () => {
             this.skip();
         }
 
-        await connectPage.selectTier("cloudflared-self");
         // A successful Pair replaces the route with the tabs, so the connect screen is gone once it returns.
-        await connectPage.injectPairing(pairingUri());
+        await connectPage.pairWithTestAgent();
         expect(await connectPage.isShown()).toBe(false);
     });
 });

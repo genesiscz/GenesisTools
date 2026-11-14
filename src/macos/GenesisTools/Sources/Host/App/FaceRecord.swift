@@ -1,4 +1,5 @@
 import Foundation
+import GenesisKitBase
 
 /// A window face's exact argv, written at launch to `~/.genesis-tools/app/faces/<pid>.json`.
 ///
@@ -8,8 +9,8 @@ import Foundation
 /// It goes at a normal exit; one left by a SIGTERM is pruned by the next rebuild.
 package enum FaceRecord {
     static var directory: URL {
-        // `genesisHome()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
+        // `GenesisToolsHome.home()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
+        GenesisToolsHome.url("app/faces", isDirectory: true)
     }
 
     /// The faces that record their argv for a rebuild and keep a link relay in front of them: every face declared a

@@ -72,31 +72,59 @@ async function ask(host: Host, id: string, rows: Parameters<typeof quoteOf>[0]):
     await logMod(host, "ask", { id, tools: rows.map((row) => row.tool), chars: text.length });
 }
 
-/** A finished tool row with `[ask]` beside it; the row as drawn while running, or with the mod off. */
+/**
+ * A tool row with `[ask]` beside it once it finished, and the call's start time under it (`time`, from the toolTime
+ * mod), or in its place while `[ask]` is off or the call runs. The row as drawn when neither shows.
+ */
 export async function askOnRow(
     host: Host,
     ui: ElementTable,
     drawn: RenderElement,
-    row: { id: string; isRunning: boolean; calls: { tool: string; input: unknown; output?: unknown }[] }
+    row: {
+        id: string;
+        isRunning: boolean;
+        calls: { tool: string; input: unknown; output?: unknown }[];
+        time?: string;
+    }
 ): Promise<RenderElement> {
-    if (row.isRunning || !(await settingsOf(host)).askRow.enabled) {
+    const asks = !row.isRunning && (await settingsOf(host)).askRow.enabled;
+
+    if (!asks && row.time === undefined) {
         return drawn;
     }
 
-    return withButton(ui, drawn, `ask-${row.id}`, () => ask(host, row.id, row.calls));
+    return withSide(ui, drawn, `ask-${row.id}`, {
+        onPress: asks ? () => ask(host, row.id, row.calls) : undefined,
+        time: row.time,
+    });
 }
 
-function withButton(ui: ElementTable, drawn: RenderElement, key: string, onPress: () => Promise<void>): RenderElement {
-    const { Box, Button } = ui;
+function withSide(
+    ui: ElementTable,
+    drawn: RenderElement,
+    key: string,
+    side: { onPress?: () => Promise<void>; time?: string }
+): RenderElement {
+    const { Box, Button, Text } = ui;
+    const { onPress, time } = side;
 
     return (
         <Box key={`${key}-row`} flexDirection="row" gap={1} alignItems="flex-end">
             <Box key={`${key}-drawn`} flexGrow={1} flexShrink={1}>
                 {drawn}
             </Box>
-            <Button key={key} dimColor onPress={() => void onPress()}>
-                ask
-            </Button>
+            <Box key={`${key}-side`} flexDirection="column" alignItems="flex-end" flexShrink={0}>
+                {onPress ? (
+                    <Button key={key} dimColor onPress={() => void onPress()}>
+                        ask
+                    </Button>
+                ) : null}
+                {time ? (
+                    <Text key={`${key}-time`} dimColor>
+                        {time}
+                    </Text>
+                ) : null}
+            </Box>
         </Box>
     );
 }

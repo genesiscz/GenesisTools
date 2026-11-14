@@ -27,6 +27,7 @@ import {
     type ApprovalDeps,
     ApprovalUpdates,
     acquireDrainerLock,
+    adminTakeoverCommand,
     allPresets,
     appApprovalFromReply,
     appApproveParams,
@@ -69,6 +70,7 @@ import {
     loadRmMeasurements,
     loadRmRequest,
     lockRmRequest,
+    MAC_ADMIN_TAKEOVER,
     matchPreset,
     mayDenyRmRequest,
     measureBytes,
@@ -77,9 +79,12 @@ import {
     measureTarget,
     measureTempTree,
     moveAside,
+    moveBlock,
     moveToTrash,
     newBatchId,
     notMovableReason,
+    type PathFact,
+    type PathFacts,
     PERSON_DIALOGS,
     parseRmConfig,
     pathPresent,
@@ -100,6 +105,7 @@ import {
     RmPartialMoveError,
     type RmRequest,
     type RmRuleContext,
+    ROOT_PERSON_CHECK_REFUSAL,
     readRmLedger,
     readRmLedgerNewest,
     readRmRequestFile,
@@ -1049,6 +1055,24 @@ describe("requests and approval", () => {
             outcome: { approved: false, via: "touch-id", detail: "denied in the approval window" },
         });
         const missing = async (): Promise<AppApproval> => ({ kind: "missing", detail: "no app" });
+
+        test("under sudo nothing asks: the window would want the root account's password", async () => {
+            // 2026-11-14: `sudo tools rm approve` opened the window as root, and its password dialog asked for the
+            // "System Administrator" account, whose password the person did not have.
+            const calls: string[] = [];
+            const asRoot = { ...depsWith(allowed, calls), euid: () => 0 };
+
+            for (const approval of ["auto", "touch-id", "code"] as const) {
+                const outcome = await confirmByPerson({ ...prompt, approval }, asRoot);
+                expect(outcome).toEqual({ approved: false, via: "none", detail: ROOT_PERSON_CHECK_REFUSAL });
+            }
+
+            expect(calls).toEqual([]);
+            expect(ROOT_PERSON_CHECK_REFUSAL).toContain("Run the command without sudo");
+            // The control: the same deps as this user ask the window.
+            expect((await confirmByPerson(prompt, { ...asRoot, euid: () => 501 })).via).toBe("touch-id");
+            expect(calls).toEqual(["app"]);
+        });
 
         test("auto asks the app first, and its answer is final", async () => {
             const calls: string[] = [];
@@ -3786,6 +3810,100 @@ describe("a path this user cannot move", () => {
             expect(notMovableReason(resolveTarget(path, base))).toBeNull();
         }
     );
+
+    describe("root's file in a sticky folder (m888au's spindump, 2026-11-14)", () => {
+        const ME = 501;
+        const SPINDUMP = "/private/var/tmp/spindump-stuck.buf";
+        const rootDir = (mode = 0o755): PathFact => ({ uid: 0, mode: 0o040000 | mode, nlink: 3, kind: "dir" });
+        const rootFile: PathFact = { uid: 0, mode: 0o100644, nlink: 1, kind: "file" };
+
+        /** /private/var/tmp as macOS ships it: root's, world-writable, sticky; every folder above is root's 755. */
+        function facts(changes: Record<string, PathFact | null> = {}, writable: string[] = []): PathFacts {
+            const tree: Record<string, PathFact | null> = {
+                "/": rootDir(),
+                "/private": rootDir(),
+                "/private/var": rootDir(),
+                "/private/var/tmp": rootDir(0o1777),
+                [SPINDUMP]: rootFile,
+                ...changes,
+            };
+            return {
+                lstat: (path) => tree[path] ?? null,
+                writable: (dir) => dir === "/private/var/tmp" || writable.includes(dir),
+                realpath: (dir) => dir,
+            };
+        }
+
+        const block = (path: string, given: PathFacts, platform: NodeJS.Platform = "darwin") =>
+            moveBlock({ path, kind: "file" }, { uid: ME, platform, facts: given });
+
+        test("an administrator's password may move it after the approval, on macOS only", () => {
+            expect(block(SPINDUMP, facts())).toEqual({
+                kind: "admin",
+                reason: "it belongs to root in the sticky folder /private/var/tmp: approving it asks for an administrator's password, which gives it to you so it can move",
+            });
+            // Elsewhere no administrator step exists: the old refusal, word for word.
+            expect(block(SPINDUMP, facts(), "linux")).toEqual({
+                kind: "never",
+                reason: "it belongs to root in the sticky folder /private/var/tmp, so only its owner or root can move it",
+            });
+            // Root moves anything; this user's own file is no case at all.
+            expect(moveBlock({ path: SPINDUMP, kind: "file" }, { uid: 0, platform: "darwin", facts: facts() })).toEqual(
+                { kind: "free" }
+            );
+            expect(block(SPINDUMP, facts({ [SPINDUMP]: { ...rootFile, uid: ME } }))).toEqual({ kind: "free" });
+        });
+
+        test("a password typed for one file can never hand over another", () => {
+            // A hard link this user planted to a system file: the link count gives it away.
+            expect(block(SPINDUMP, facts({ [SPINDUMP]: { ...rootFile, nlink: 2 } }))).toMatchObject({
+                kind: "never",
+                reason: expect.stringContaining("(it has 2 names: an administrator deletes it"),
+            });
+            // A folder: a recursive chown would follow what this user can plant inside.
+            expect(
+                moveBlock(
+                    { path: SPINDUMP, kind: "dir" },
+                    { uid: ME, platform: "darwin", facts: facts({ [SPINDUMP]: rootDir(0o777) }) }
+                )
+            ).toMatchObject({
+                kind: "never",
+                reason: expect.stringContaining("(a folder: an administrator deletes it"),
+            });
+            // A folder above that this user could swap for a symlink to /etc.
+            expect(block(SPINDUMP, facts({ "/private/var": { ...rootDir(), uid: ME } }))).toMatchObject({
+                kind: "never",
+                reason: expect.stringContaining("this user could replace /private/var/tmp"),
+            });
+            expect(block(SPINDUMP, facts({}, ["/private"]))).toMatchObject({
+                kind: "never",
+                reason: expect.stringContaining("this user could replace /private/var"),
+            });
+        });
+
+        test("the administrator prompt runs chown on the item itself, quoted, and never in a test", () => {
+            const argv = adminTakeoverCommand(['/private/var/tmp/it\'s "a" file'], ME);
+            expect(argv.slice(0, 2)).toEqual(["/usr/bin/osascript", "-e"]);
+            expect(argv[2]).toStartWith(
+                `do shell script "'/usr/sbin/chown' '-h' '501' '/private/var/tmp/it'\\\\''s \\"a\\" file'" with prompt "GenesisTools moves /private/var/tmp/it's \\"a\\" file to its trash.`
+            );
+            expect(argv[2]).toEndWith("with administrator privileges");
+
+            const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
+                throw new Error("a test must never ask for an administrator's password");
+            });
+
+            try {
+                expect(MAC_ADMIN_TAKEOVER.take([SPINDUMP])).toMatchObject({
+                    ok: false,
+                    reason: expect.stringContaining("a test process never asks for an administrator's password"),
+                });
+                expect(spawn).not.toHaveBeenCalled();
+            } finally {
+                spawn.mockRestore();
+            }
+        });
+    });
 });
 
 describe("the disk reserve for a full disk", () => {

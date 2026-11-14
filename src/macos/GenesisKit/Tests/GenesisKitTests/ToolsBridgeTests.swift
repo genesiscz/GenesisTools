@@ -196,7 +196,7 @@ final class ToolsBridgeTests: XCTestCase {
                 )
                 XCTFail("an inherited pipe must not produce partial success")
             } catch let error as ToolsBridgeError {
-                XCTAssertEqual(error, .timeout(seconds: 1))
+                XCTAssertEqual(error, .timeout(seconds: 1, command: ToolsBridgeError.command(["-c", "/bin/sleep 2 \(redirect) & printf held"])))
             }
             XCTAssertLessThan(Date().timeIntervalSince(started), 1.8)
         }
@@ -216,6 +216,25 @@ final class ToolsBridgeTests: XCTestCase {
             XCTFail("expected cancellation")
         } catch is CancellationError {}
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.8)
+    }
+
+    /// A hub server that kept a call for its whole limit (the limit plus 1 s) leaves the process nothing: it is
+    /// not started. It was started and killed at once before, 41 times in five days.
+    func testNoProcessBudgetIsLeftAfterTheServerUsedTheWholeLimit() {
+        // The server holds a call for a third of its limit, so the process keeps the rest.
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 30), 10)
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 300), 100)
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 12), 5, "at least 5 s for the server")
+        XCTAssertEqual(ToolsBridge.serverPatience(timeoutSeconds: 4), 4, "a short limit goes to the server whole")
+        XCTAssertNotNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 11.1), "the process runs after the server's part")
+        XCTAssertTrue(ToolsBridge.isServerDeadline(
+            ToolsRunResult(stdout: "", stderr: "hub server: ai sessions tail --json exceeded 10000 ms\n", exitCode: 124, wallMs: 10_001)))
+        XCTAssertFalse(ToolsBridge.isServerDeadline(
+            ToolsRunResult(stdout: "", stderr: "timeout: the command ran too long", exitCode: 124, wallMs: 5)),
+                       "a command's own exit 124 is its answer")
+        XCTAssertNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 31.1))
+        XCTAssertNil(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 30))
+        XCTAssertEqual(ToolsBridge.processBudget(timeoutSeconds: 30, waited: 0.2) ?? 0, 29.8, accuracy: 0.001)
     }
 
     func testEnvAllowlistScrubsSecrets() {
@@ -437,4 +456,225 @@ final class ToolsBridgeTests: XCTestCase {
 private final class LivePathBox: @unchecked Sendable {
     var path: String
     init(_ path: String) { self.path = path }
+}
+
+/// The one tools client (C04): every error shape reads as one `ToolsFailure`, the preamble goes, a failed `--json`
+/// call keeps its stdout, a process child gets the allowlist only, a cancel stops the child, and the server choice
+/// keeps a sandbox home off the real home's server. The server adapter is `FakeServer` (ToolsServerClientTests); the
+/// process stub is `/bin/sh -c` or `/bin/sleep`.
+final class ToolsClientTests: XCTestCase {
+    private func failure(stdout: String = "", stderr: String = "", status: Int32 = 1,
+                         argv: [String] = ["hub", "pr", "fetch", "x#1"]) -> ToolsFailure {
+        ToolsFailure(argv: argv, capture: ProcessCapture(status: status, stdout: Data(stdout.utf8), stderr: Data(stderr.utf8)))
+    }
+
+    func testEachErrorShapeReadsAsOneFailure() {
+        struct Row {
+            let stdout: String
+            let stderr: String
+            let message: String
+            let code: String?
+            let missing: [String]?
+        }
+        let rows: [Row] = [
+            Row(stdout: #"{"error":"not a draft","code":"not-a-draft"}"#, stderr: "", message: "not a draft", code: "not-a-draft", missing: nil),
+            Row(stdout: #"{"error":"\"explain-file\" needs --var file=…","code":"missing-vars","missing":["file"]}"#, stderr: "",
+                message: #""explain-file" needs --var file=…"#, code: "missing-vars", missing: ["file"]),
+            Row(stdout: #"{"error":{"message":"the index is locked","code":"busy"}}"#, stderr: "", message: "the index is locked",
+                code: "busy", missing: nil),
+            Row(stdout: #"{"type":"error","message":"no sessions match"}"#, stderr: "", message: "no sessions match", code: nil, missing: nil),
+            Row(stdout: "{\n  \"error\": \"pretty printed\",\n  \"code\": \"auth\"\n}\n", stderr: "", message: "pretty printed", code: "auth",
+                missing: nil),
+            Row(stdout: "{\"event\":\"start\"}\n{\"type\":\"error\",\"message\":\"the last line\"}\n", stderr: "", message: "the last line",
+                code: nil, missing: nil),
+            Row(stdout: "", stderr: "[profile:x] 3ms\n\u{1B}[31m✗ [config-stale] The config changed on disk.\u{1B}[0m\n",
+                message: "The config changed on disk.", code: "config-stale", missing: nil),
+            Row(stdout: "", stderr: "✗ no store\n", message: "no store", code: nil, missing: nil),
+            Row(stdout: "", stderr: "error: unknown option '--nope'\n\nUsage: tools hub [options]\n  error: {\n",
+                message: "unknown option '--nope'", code: nil, missing: nil),
+        ]
+        for row in rows {
+            let read = failure(stdout: row.stdout, stderr: row.stderr)
+            XCTAssertEqual(read.message, row.message, row.stdout + row.stderr)
+            XCTAssertEqual(read.code, row.code, row.stdout + row.stderr)
+            XCTAssertEqual(read.missing, row.missing, row.stdout + row.stderr)
+            XCTAssertTrue(read.named)
+            XCTAssertEqual("\(read)", row.message)
+        }
+    }
+
+    func testAFailureThatNamesNothingReadsAsTheExitSummary() {
+        let read = failure(stderr: "[profile:hub-pr] 4ms\nboom\n", status: 2)
+        XCTAssertEqual(read.message, "tools hub pr fetch exited 2: boom")
+        XCTAssertEqual(read.summary, "tools hub pr fetch exited 2: [profile:hub-pr] 4ms\nboom", "Details keep all of stderr")
+        XCTAssertEqual(read.stderrTail, "boom", "the profile lines are not the reason")
+        XCTAssertEqual(read.exitCode, 2)
+        XCTAssertFalse(read.named)
+        XCTAssertEqual(failure(status: 3).message, "tools hub pr fetch exited 3")
+        XCTAssertEqual(failure(stdout: "No agents found for that session.\n", status: 1).message,
+                       "tools hub pr fetch exited 1: No agents found for that session.", "an empty stderr leaves the reason to stdout")
+        XCTAssertEqual(failure(stdout: "ignored\n", stderr: "boom\n", status: 1).message, "tools hub pr fetch exited 1: boom",
+                       "stderr wins when it says something")
+        let indented = failure(stderr: "    error: {\n      \"x\": 1\n    }\n", status: 1)
+        XCTAssertFalse(indented.named, "an indented error: is a field of a log entry, not Commander's line")
+    }
+
+    func testAPreambleBeforeTheJSONIsDropped() throws {
+        let bridge = ToolsBridge(binaryPath: "/bin/sh", server: nil)
+        let data = try bridge.json(["-c", #"printf 'warning: a banner {x}\n[profile:y] 1ms\n{"rows":[1]}\n'"#])
+        XCTAssertEqual(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), #"{"rows":[1]}"#)
+        XCTAssertThrowsError(try bridge.json(["-c", "printf 'nothing to read'"])) { error in
+            XCTAssertTrue("\(error)".contains("no JSON object"), "\(error)")
+        }
+    }
+
+    func testANonZeroExitWithJSONOnStdoutKeepsBothStreams() throws {
+        let bridge = ToolsBridge(binaryPath: "/bin/sh", server: nil)
+        let argv = ["-c", #"printf '{"error":"origin refused the fetch","code":"auth"}'; echo detail >&2; exit 1"#]
+        let capture = try bridge.capture(argv)
+        XCTAssertEqual(capture.status, 1)
+        XCTAssertEqual(String(decoding: capture.stdout, as: UTF8.self), #"{"error":"origin refused the fetch","code":"auth"}"#)
+        XCTAssertEqual(String(decoding: capture.stderr, as: UTF8.self), "detail\n")
+        XCTAssertThrowsError(try bridge.output(argv)) { error in
+            let failure = error as? ToolsFailure
+            XCTAssertEqual(failure?.message, "origin refused the fetch")
+            XCTAssertEqual(failure?.code, "auth")
+            XCTAssertEqual(failure?.exitCode, 1)
+            XCTAssertEqual(failure?.stderrTail, "detail")
+        }
+        XCTAssertEqual(try bridge.output(["-c", "printf ok"]), Data("ok".utf8))
+    }
+
+    func testAProcessChildGetsTheAllowlistOnly() throws {
+        let allowed = ["GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "GIT_SSH_COMMAND", "GIT_CONFIG_GLOBAL", "HTTPS_PROXY", "no_proxy",
+                       "LANG", "LC_ALL", "TMPDIR", "GITLAB_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GENESIS_TOOLS_HOME",
+                       "GENESIS_HUB_SERVER", "PROFILE", "PROFILE_TO_STDERR"]
+        for key in allowed { XCTAssertTrue(ToolsBridge.allowsEnvironmentKey(key), key) }
+        // The names the hub's calls had before they moved onto the list (whole environment until 2026-11-10).
+        let fromTheWholeEnvironment = [
+            "GITHUB_PERSONAL_ACCESS_TOKEN", "TOOLS_SKIP_AUTOINSTALL", "TOOLS_AUTOINSTALL", "GENESIS_TOOLS_NO_EXEC",
+            "GENESIS_TOOLS_MASTER_KEY", "XDG_CONFIG_HOME", "GITLAB_PROJECT", "T3CODE_HOME", "LC_TIME", "GENESIS_TOOLS_APP_HOME",
+            "CODEBUFF_DATA_DIR", "KIMI_DATA_DIR", "OPENCLAW_DIR", "HERMES_HOME", "GOOSE_PATH_ROOT",
+        ]
+        for key in fromTheWholeEnvironment { XCTAssertTrue(ToolsBridge.allowsEnvironmentKey(key), key) }
+        for key in ["AWS_SECRET_ACCESS_KEY", "DATABASE_URL", "OPENAI_API_KEY", "GITHUBX", "GIT", "XGIT_DIR"] {
+            XCTAssertFalse(ToolsBridge.allowsEnvironmentKey(key), key)
+        }
+        // A repository location from a git hook's environment would point every child's git at that repository.
+        for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE"] {
+            XCTAssertFalse(ToolsBridge.allowsEnvironmentKey(key), key)
+        }
+        let scrubbed = ToolsBridge.scrubbedEnvironment(from: ["GIT_SSH_COMMAND": "ssh -i k", "GH_TOKEN": "t", "LEAK": "x"])
+        XCTAssertEqual(scrubbed["GIT_SSH_COMMAND"], "ssh -i k")
+        XCTAssertEqual(scrubbed["GH_TOKEN"], "t")
+        XCTAssertNil(scrubbed["LEAK"])
+
+        // A bridge's additions pass only when the allowlist has them; the trace id always does.
+        let bridge = ToolsBridge(binaryPath: "/bin/sh", server: nil, childEnvironment: { argv in
+            argv.last == "probe" ? ["PROFILE": "hub-pr", "PROFILE_TO_STDERR": "0", "NOT_ALLOWED": "leak"] : [:]
+        })
+        let script = #"printf '%s|%s|%s|%s' "$PROFILE" "$PROFILE_TO_STDERR" "${NOT_ALLOWED:-none}" "${GENESIS_TOOLS_TRACE_ID:+traced}""#
+        let out = try bridge.output(["-c", script, "probe"])
+        XCTAssertEqual(String(decoding: out, as: UTF8.self), "hub-pr|0|none|traced")
+
+        let git = ToolsBridge(binaryPath: "/bin/sh", server: nil, childEnvironment: { _ in
+            ["GIT_AUTHOR_NAME": "Alice", "GIT_DIR": "/fixture/hook-repo/.git"]
+        })
+        let gitOut = try git.output(["-c", #"printf '%s|%s' "$GIT_AUTHOR_NAME" "${GIT_DIR:-none}""#])
+        XCTAssertEqual(String(decoding: gitOut, as: UTF8.self), "Alice|none", "a child gets git's settings, never a hook's repository")
+    }
+
+    func testAFakeServerAnswersFirstAndAnArgvWithoutADoorRunsTheProcess() throws {
+        let server = try FakeServer { request in
+            let id = request["id"] as? Int ?? 0
+            let argv = request["argv"] as? [String] ?? []
+            if argv.first == "-c", argv.last == "door" {
+                return [["id": id, "ok": true, "stdout": "from-server\n", "stderr": "", "exit": 0, "ms": 2]]
+            }
+            if argv.last == "late" {
+                return [["id": id, "ok": true, "stdout": "", "stderr": "hub server: late exceeded 5000 ms\n", "exit": 124, "ms": 5000]]
+            }
+            return [["id": id, "ok": false, "code": "unsupported"]]
+        }
+        defer { server.stop() }
+        let bridge = ToolsBridge(binaryPath: "/bin/sh", server: ToolsServerClient(socketPath: server.path))
+        XCTAssertEqual(try bridge.output(["-c", "printf from-process", "door"]), Data("from-server\n".utf8))
+        XCTAssertEqual(try bridge.output(["-c", "printf from-process", "other"]), Data("from-process".utf8))
+        XCTAssertEqual(try bridge.output(["-c", "printf from-process", "late"]), Data("from-process".utf8),
+                       "the server's own deadline is no answer: the process runs")
+    }
+
+    func testACancelStopsTheChildAndAStopReturnsWhatItFinished() async throws {
+        let sleeper = ToolsBridge(binaryPath: "/bin/sleep", server: nil)
+        let started = Date()
+        let task = Task { try await sleeper.captureCancellable(["30"], timeout: 60) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled capture returned instead of throwing")
+        } catch is CancellationError {}
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the cancel waited for the child's own end")
+
+        // On TERM the child finishes its work and answers, as a widget send past its cancel point does.
+        let shell = ToolsBridge(binaryPath: "/bin/sh", server: nil)
+        let stopped = Task { try await shell.captureStoppable(["-c", "trap 'kill $!; echo finished; exit 0' TERM; sleep 30 & wait"]) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        stopped.cancel()
+        let run = try await stopped.value
+        XCTAssertTrue(run.stopped)
+        XCTAssertEqual(run.capture.status, 0)
+        XCTAssertEqual(String(decoding: run.capture.stdout, as: UTF8.self), "finished\n")
+    }
+
+    func testAProcessThatOutlivesTheLimitIsKilled() {
+        let started = Date()
+        XCTAssertThrowsError(try ToolsBridge(binaryPath: "/bin/sleep", server: nil).capture(["30"], timeout: 1)) { error in
+            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1, command: "tools 30"))
+            XCTAssertEqual("\(error)", "tools 30 did not finish within 1 s", "the text names the call and its limit")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 6)
+    }
+
+    /// `Int(0.5)` is 0: a half-second limit ran nothing and failed at once. It rounds up to 1 s.
+    func testAFractionalLimitRoundsUpToAWholeSecond() throws {
+        XCTAssertEqual(ToolsBridge.limitSeconds(0.5), 1)
+        XCTAssertEqual(ToolsBridge.limitSeconds(0), 1)
+        XCTAssertEqual(ToolsBridge.limitSeconds(1.2), 2)
+        let capture = try ToolsBridge(binaryPath: "/bin/sh", server: nil).capture(["-c", "printf ran"], timeout: 0.5)
+        XCTAssertEqual(String(decoding: capture.stdout, as: UTF8.self), "ran")
+    }
+
+    /// The sandbox-home case: a face on `GENESIS_TOOLS_HOME` or a worktree's `GENESIS_TOOLS_BIN` never asks the
+    /// resident server, which reads the real home with the main checkout's code.
+    func testTheServerChoiceKeepsASandboxHomeOffTheRealServer() {
+        XCTAssertTrue(ToolsServerClient.allowsResidentServer(environment: [:], preview: false))
+        XCTAssertTrue(ToolsServerClient.allowsResidentServer(environment: ["GENESIS_HUB_SERVER": "1"], preview: false))
+        XCTAssertFalse(ToolsServerClient.allowsResidentServer(environment: ["GENESIS_TOOLS_HOME": "/tmp/sandbox"], preview: false))
+        XCTAssertFalse(ToolsServerClient.allowsResidentServer(environment: ["GENESIS_TOOLS_BIN": "/tmp/wt/tools"], preview: false))
+        XCTAssertFalse(ToolsServerClient.allowsResidentServer(environment: ["GENESIS_HUB_SERVER": "0"], preview: false))
+        XCTAssertFalse(ToolsServerClient.allowsResidentServer(environment: [:], preview: true))
+        XCTAssertNil(ToolsServerClient.resident(environment: ["GENESIS_TOOLS_HOME": "/tmp/sandbox"], preview: false, startServer: {}))
+        XCTAssertNotNil(ToolsServerClient.resident(environment: [:], preview: false, startServer: {}))
+    }
+
+    /// A failure report names "what ran" from the task's call ledger: the blocking and the stoppable capture both note
+    /// their call there, also across the queue hop of the stoppable form (the hub's runner did until 2026-11-10).
+    func testCapturesNoteTheirCallInTheCallersLedger() async throws {
+        let bridge = ToolsBridge(binaryPath: "/bin/sh", server: nil)
+        let ledger = ToolsCallLedger()
+        _ = ledger.recordSync { try? bridge.output(["-c", "echo 'fatal: no such ref' >&2; exit 3", "blocking"]) }
+        let blocking = try XCTUnwrap(ledger.failed)
+        XCTAssertEqual(blocking.argv.last, "blocking")
+        XCTAssertEqual(blocking.exit, 3)
+        XCTAssertEqual(blocking.via, "process")
+        XCTAssertEqual(blocking.stderr, "fatal: no such ref\n")
+
+        let stoppable = ToolsCallLedger()
+        let run = try await stoppable.record { try await bridge.captureStoppable(["-c", "exit 4", "stoppable"]) }
+        XCTAssertEqual(run.capture.status, 4)
+        XCTAssertEqual(stoppable.calls.map { $0.argv.last }, ["stoppable"])
+        XCTAssertEqual(stoppable.failed?.exit, 4)
+    }
 }

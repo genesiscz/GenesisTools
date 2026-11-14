@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import GenesisKitFixtures
 import SwiftUI
 import XCTest
 @testable import GenesisKitBase
@@ -632,29 +633,24 @@ final class WidgetInboxPolishTests: XCTestCase {
         let decision = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "k", at: 1,
             needsAnswer: true)
         let answer = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 2, needsAnswer: false)
-        func prefs(_ json: String) throws -> WidgetPreferences {
-            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
-            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
-        }
+        func prefs(_ json: String) throws -> WidgetPreferences { try WidgetTestPreferences.decode(json) }
         let split = try prefs(#"{"alertSound":"Ping","alertAnswerSound":"Pop","alertFlashSeconds":10}"#)
         XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: split), "Pop")
         XCTAssertEqual(WidgetAlerts.sound(for: [answer, decision], preferences: split), "Ping",
                        "a burst with a question in it plays the decisions' sound")
         XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: try prefs(#"{"alertSound":"Ping","alertAnswerSound":"same"}"#)),
                        "Ping", "\"same\" follows the decisions' sound")
-        XCTAssertNil(WidgetAlerts.sound(for: [answer], preferences: nil), "no preferences: the default sound")
+        XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: .hubDefaults), "Glass",
+                       "no stored preferences: the hub's default sound")
         XCTAssertEqual(WidgetAlerts.flashSeconds(split), 10)
-        XCTAssertEqual(WidgetAlerts.flashSeconds(nil), 5, "flashing is on by default")
+        XCTAssertEqual(WidgetAlerts.flashSeconds(.hubDefaults), 5, "flashing is on by default")
         XCTAssertEqual(WidgetAlerts.flashSeconds(try prefs(#"{"alertFlashSeconds":0}"#)), 0)
     }
 
     /// The popup says "Decision 4", not "New decision · DECISION 4"; VoiceOver hears what arrived and from where; the
     /// popup's time and a note's time are settings (ux catalogue R4, R6, R10, R3).
     func testAlertWordsAndTheTimesTheySettle() throws {
-        func prefs(_ json: String) throws -> WidgetPreferences {
-            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
-            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
-        }
+        func prefs(_ json: String) throws -> WidgetPreferences { try WidgetTestPreferences.decode(json) }
         let decision = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "k", at: 1,
             needsAnswer: true, title: "Keep the cache?", number: 4)
         XCTAssertEqual(WidgetAlerts.kicker(decision), "Decision 4")
@@ -662,25 +658,25 @@ final class WidgetInboxPolishTests: XCTestCase {
                        "Decision 4, Keep the cache?, from Fixture session")
         let answer = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 2, needsAnswer: false)
         XCTAssertEqual(WidgetAlerts.announcement(answer, session: nil), "New answer")
-        XCTAssertEqual(WidgetAlerts.popupSeconds(nil), 7, "the popup stays 7 s by default")
+        XCTAssertEqual(WidgetAlerts.popupSeconds(.hubDefaults), 7, "the popup stays 7 s by default")
         XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":15}"#)), 15)
         XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":0}"#)), 0, "0 keeps it until closed")
         XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":1}"#)), 3)
-        XCTAssertEqual(WidgetAlerts.popupMany(nil), .list, "later alerts are listed under the first by default")
+        XCTAssertEqual(WidgetAlerts.popupMany(.hubDefaults), .list, "later alerts are listed under the first by default")
         XCTAssertEqual(WidgetAlerts.popupMany(try prefs(#"{"alertPopupMany":"queue"}"#)), .queue)
-        XCTAssertEqual(WidgetAlerts.volume(nil), 1, "full volume by default")
+        XCTAssertEqual(WidgetAlerts.volume(.hubDefaults), 1, "full volume by default")
         let answered = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "k", at: 3,
             needsAnswer: false, title: "Keep the cache?", number: 4, options: ["a) keep", "drop"], option: "ab",
             answeredVia: "automatic_heuristic")
         XCTAssertEqual(WidgetAlerts.kicker(answered), "Decision 4 answered")
         XCTAssertEqual(WidgetAlerts.answeredOptions(answered).map(\.text), ["keep", "drop"], "the agent's own letter is not kept")
         XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic"), "Answer read from your chat")
-        XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(nil), 5)
-        XCTAssertEqual(WidgetAlerts.autoDecisionSound(nil), "Tink")
+        XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(.hubDefaults), 5)
+        XCTAssertEqual(WidgetAlerts.autoDecisionSound(.hubDefaults), "Tink")
         XCTAssertEqual(WidgetAlerts.autoDecisionSound(try prefs(#"{"autoDecisionSound":"same","alertSound":"Ping"}"#)), "Ping")
         XCTAssertEqual(WidgetAlerts.volume(try prefs(#"{"alertVolume":40}"#)), 0.4, accuracy: 0.001)
-        XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: false), 6, "a note fades after 6 s by default")
-        XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
+        XCTAssertEqual(WidgetModel.noteSeconds(.hubDefaults, hasAction: false), 6, "a note fades after 6 s by default")
+        XCTAssertEqual(WidgetModel.noteSeconds(.hubDefaults, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
         XCTAssertEqual(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":20}"#), hasAction: true), 20)
         XCTAssertNil(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":0}"#), hasAction: false), "0 keeps it")
         XCTAssertEqual(try prefs(#"{"alertSound":"Glass"}"#).openShortcutChord, .defaultOpen,
@@ -760,7 +756,7 @@ final class WidgetInboxPolishTests: XCTestCase {
 
     func testTheSessionInboxFilterSplitsInboxEntriesFromDecisions() {
         let cards = ["answer", "result", "form", "decision", "todo"].map { kind in
-            WidgetCard(id: kind, kind: kind, sessionKey: "k", sourceId: kind, at: 1, title: kind, body: "",
+            WidgetCard(id: kind, kind: WidgetCardKind(rawValue: kind), sessionKey: "k", sourceId: kind, at: 1, title: kind, body: "",
                        status: "open", choices: [], attachments: [], refs: [], read: true)
         }
         XCTAssertEqual(LiveWidgetView.filtered(cards, by: "inbox").map(\.kind), ["answer", "result", "form"])
@@ -921,8 +917,8 @@ final class WidgetAnswerTargetTests: XCTestCase {
             "visible": true, "hiddenByFilter": false]
         let cards = try JSONSerialization.jsonObject(with: JSONEncoder().encode([card]))
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
-            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
-                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"],
+            "selectedKey": key, "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"]),
             "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": cards,
             "manifests": [:], "errors": [], "selectedKey": key,
             "notifications": ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false, "sessions": []]])
@@ -1104,47 +1100,52 @@ final class WarmPaneVisibilityTests: XCTestCase {
     }
 }
 
-/// One session with one open decision, as the widget's snapshot carries it.
+/// One session with one open decision, as the widget's snapshot carries it: the golden snapshot the hub's real builder
+/// wrote (`snapshot-staged-decision.json` in GenesisKitFixtures/Widget), with the staging state each test sets.
 @MainActor
 private enum StagingFixture {
     static let key = "local:codex:fixture-staged:"
 
     /// `stagedOnly`: the decision is not among the session's listed items (past its eight), only in the staged list.
-    /// `second`: a second open decision (d2) in the same session.
+    /// `second`: a second open decision (d2) in the same session. `multiple`: the decision takes any set of its options.
     static func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false,
-                         stagedOnLeave: String = "ask", draft: String? = nil, second: Bool = false) throws -> String {
-        var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
-                                   "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
-                                   "revision": 1]
-        var card: [String: Any] = ["id": "decision:d1", "kind": "decision", "sourceId": "d1", "sessionKey": key, "at": 1,
-                                   "title": "Keep it?", "body": "", "status": draftOption == nil ? "open" : "drafted",
-                                   "revision": 1, "number": 7,
-                                   "choices": [["id": "a", "title": "keep", "recommended": true],
-                                               ["id": "b", "title": "drop", "recommended": false]],
-                                   "attachments": [], "refs": [], "read": true]
+                         stagedOnLeave: String = "ask", draft: String? = nil, second: Bool = false,
+                         multiple: Bool = false) throws -> String {
+        let golden = try KitFixture.data("snapshot-staged-decision.json", in: "Widget")
+        var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: golden) as? [String: Any])
+        var notifications = try XCTUnwrap(wire["notifications"] as? [String: Any])
+        var session = try XCTUnwrap((notifications["sessions"] as? [[String: Any]])?.first)
+        var item = try XCTUnwrap(session["pendingItem"] as? [String: Any])
+        var card = try XCTUnwrap((wire["cards"] as? [[String: Any]])?.first)
+        XCTAssertEqual(session["key"] as? String, key)
+        card["status"] = draftOption == nil ? "open" : "drafted"
         if let draftOption { item["draftOption"] = draftOption; card["draftOption"] = draftOption }
         if let draft { item["draft"] = draft; card["draft"] = draft; card["status"] = "drafted" }
+        if multiple { item["multiple"] = true; card["multiple"] = true }
         var cards = [card]
         if second {
             var other = card
             other["id"] = "decision:d2"; other["sourceId"] = "d2"; other["number"] = 8; other["title"] = "Ship it?"
             other["status"] = "open"; other["draftOption"] = nil; other["draft"] = nil
             cards.append(other)
+            notifications["pendingDecisionIDs"] = ["d1", "d2"]
         }
-        let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "codex",
-            "sessionId": "fixture-staged", "sourceHome": "", "cwd": "/fixture"], "title": "Staged fixture",
-            "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true, "hiddenByFilter": false]
-        var notifications: [String: Any] = ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
-            "sessions": [["key": key, "unread": 0, "needsAnswer": 1, "pendingItem": item,
-                          "items": stagedOnly ? [] : [item]]]]
-        if stagedOnly { notifications["staged"] = [item] }
-        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
-            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
-                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
-                "decisionClick": decisionClick, "stagedOnLeave": stagedOnLeave],
-            "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": cards,
-            "manifests": [:], "errors": [], "selectedKey": key, "notifications": notifications])
-        return String(decoding: data, as: UTF8.self)
+        session["latest"] = item
+        session["pendingItem"] = item
+        session["items"] = stagedOnly ? [] : [item]
+        notifications["sessions"] = [session]
+        // The hub lists every decision with an unsent pick or note in `staged` (`widgetSnapshot`), whatever its session
+        // lists.
+        notifications["staged"] = stagedOnly || draftOption != nil || draft != nil ? [item] : []
+        var state = try XCTUnwrap(wire["state"] as? [String: Any])
+        var preferences = try XCTUnwrap(state["preferences"] as? [String: Any])
+        preferences["decisionClick"] = decisionClick
+        preferences["stagedOnLeave"] = stagedOnLeave
+        state["preferences"] = preferences
+        wire["state"] = state
+        wire["cards"] = cards
+        wire["notifications"] = notifications
+        return String(decoding: try JSONSerialization.data(withJSONObject: wire), as: UTF8.self)
     }
 
     static func model(root: URL? = nil, defaults given: UserDefaults? = nil) -> WidgetModel {
@@ -1173,6 +1174,14 @@ final class WidgetStagingTests: XCTestCase {
             guard case .object(let fields) = value, case .string(let name) = fields["action"] else { return nil }
             return name
         }
+    }
+
+    /// A pick staged here through the staging engine, as the widget's clicks stage it: shown at once, its write runs
+    /// through `actionRunner` (the old `markPending` showed a pick with no write behind it).
+    private func stageHere(_ model: WidgetModel, _ id: String, _ option: String, item: WidgetInboxItem? = nil,
+                           note: String? = nil) {
+        model.stage(id: id, sessionId: "fixture-staged", revision: item?.revision ?? 1, option: option, note: note,
+                    item: item)
     }
 
     private func journalRoot() throws -> URL {
@@ -1278,7 +1287,7 @@ final class WidgetStagingTests: XCTestCase {
 
         model.receive([try snapshot(draftOption: "a")])
         XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"])
-        XCTAssertTrue(model.pendingStage.isEmpty, "the snapshot now shows the pick")
+        XCTAssertTrue(model.decisions.pending.isEmpty, "the snapshot now shows the pick")
 
         model.expanded = .right
         model.requestCollapse()
@@ -1425,7 +1434,7 @@ final class WidgetStagingTests: XCTestCase {
         defer { model.stop() }
         model.actionRunner = { _ in ["ok": true] }
         model.receive([try snapshot(draftOption: nil)])
-        model.livePreferenceWindow = 0.3
+        model.preferenceStore.liveWindow = 0.3
         model.showLivePreferences(["previewWidth": .number(400), "sidePosition": .number(0.3)])
         XCTAssertEqual(model.agentsPreviewWidth, 400)
         XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, 0.3)
@@ -1447,7 +1456,7 @@ final class WidgetStagingTests: XCTestCase {
         defer { model.stop() }
         model.receive([try snapshot(draftOption: nil)])
         let savedPosition = model.snapshot?.state.preferences.sidePosition
-        model.livePreferenceWindow = 0.3
+        model.preferenceStore.liveWindow = 0.3
         model.showLivePreferences(["sidePosition": .number(0.3)])
         try await Task.sleep(for: .seconds(0.2))
         model.showLivePreferences(["previewWidth": .number(400)])
@@ -1464,7 +1473,7 @@ final class WidgetStagingTests: XCTestCase {
         let model = StagingFixture.model()
         defer { model.stop() }
         model.receive([try snapshot(draftOption: nil)])
-        model.liveApplyInterval = 0.2
+        model.preferenceStore.liveApplyInterval = 0.2
         var published = 0
         model.presentationChanged = { published += 1 }
         for width in stride(from: 300, through: 400, by: 10) {
@@ -1503,7 +1512,7 @@ final class WidgetStagingTests: XCTestCase {
         root["state"] = state
         full.receive([String(decoding: try JSONSerialization.data(withJSONObject: root), as: UTF8.self)])
 
-        XCTAssertEqual(live.snapshot?.state.preferences, full.snapshot?.state.preferences)
+        XCTAssertEqual(live.preferences, full.preferences)
         XCTAssertEqual(live.inboxFilter, "decisions")
         XCTAssertEqual(live.inboxFilter, full.inboxFilter)
         XCTAssertEqual(live.previewList.map(\.key), full.previewList.map(\.key))
@@ -1566,6 +1575,52 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(own["option"] as? String, "b", "the staged pick goes with the typed words")
         XCTAssertNil(model.ownAnswerCard)
         XCTAssertEqual(model.draft.text, "", "the words leave only after the journal is written")
+    }
+
+    /// Sends the fixture decision's ticked set ("ab") after `typing` ran on its card, and returns every action sent.
+    private func sendTickedSet(_ model: WidgetModel, typing: (WidgetCard) -> Void) async throws -> [WidgetJSON] {
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["sent": 1, "failed": 0, "ok": true]
+        }
+        model.receive([try StagingFixture.snapshot(draftOption: "ab", multiple: true)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        typing(card)
+        model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
+        try await Task.sleep(for: .milliseconds(300))
+        return actions
+    }
+
+    /// A decision that takes any set, with letters ticked and words typed in its own answer field: its Send stages the
+    /// words as the note with the set, then sends both. It sent the set alone, and the words left with the closed field
+    /// (2026-11-10, a 957-character note).
+    func testSendOnATickedSetCarriesTheWordsTypedInItsOwnAnswer() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let actions = try await sendTickedSet(model) { card in
+            XCTAssertTrue(card.takesSeveral, "the fixture decision takes a set")
+            model.openOwnAnswer(card)
+            model.setText("  both, and here is why  ")
+        }
+        let answering = actions.filter { names([$0]) != ["selection"] && names([$0]) != ["draft-text"] }
+        XCTAssertEqual(names(answering), ["ledger", "send-staged"], "the words are staged with the set, then both go")
+        guard case .object(let stage) = try XCTUnwrap(answering.first) else { return XCTFail("not an object") }
+        XCTAssertEqual(stage["draftOption"], .string("ab"), "the ticked set stays as it was")
+        XCTAssertEqual(stage["draft"], .string("both, and here is why"), "the typed words go as the decision's note")
+        XCTAssertEqual(model.draft.text, "", "the field empties once the hub has the note")
+    }
+
+    /// Words typed as a reply to the session (no decision's own answer open) are not an answer: Send sends the ticked
+    /// set alone and the reply stays in the composer.
+    func testSendOnATickedSetLeavesAReplyInTheComposer() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let actions = try await sendTickedSet(model) { _ in model.setText("a follow-up, not an answer") }
+        XCTAssertFalse(names(actions).contains("ledger"), "nothing is staged from a reply")
+        XCTAssertTrue(names(actions).contains("send-staged"), "the ticked set goes")
+        XCTAssertEqual(model.draft.text, "a follow-up, not an answer", "the reply stays where it was typed")
     }
 
     func testOwnAnswerSendButtonKeepsTheStagedPick() async throws {
@@ -1637,7 +1692,7 @@ final class WidgetStagingTests: XCTestCase {
         model.expanded = .right
         model.requestCollapse()
         XCTAssertTrue(model.stagedLeavePrompt)
-        model.markPending("d1", "a", item: WidgetModel.inboxItem(card))
+        stageHere(model, "d1", "a", item: WidgetModel.inboxItem(card))
         XCTAssertEqual(model.stagedForLeave.first?.draft, "a note", "a later pick keeps the pending note")
         model.discardStaged(["d1"])
         XCTAssertTrue(model.stagedForLeave.isEmpty, "a discard is not a note-only stage")
@@ -1676,14 +1731,15 @@ final class WidgetStagingTests: XCTestCase {
             }
             await fulfillment(of: [secondStarted], timeout: 1)
             XCTAssertEqual(model.stagedForLeave.first?.draft, "newer note", "the later stage stays visible")
-            XCTAssertNil(model.pendingStageDone[card.sourceId], "the earlier success cannot acknowledge the later write")
+            XCTAssertNil(model.decisions.pending[card.sourceId]?.doneAt,
+                         "the earlier success cannot acknowledge the later write")
             model.expanded = .right
             model.requestCollapse()
             XCTAssertTrue(model.stagedLeavePrompt, "an immediate leave still sees the pending note")
             model.afterMutations { finished.fulfill() }
             try XCTUnwrap(second).resume(returning: ["ok": true])
             await fulfillment(of: [finished], timeout: 1)
-            XCTAssertNotNil(model.pendingStageDone[card.sourceId], "the matching success acknowledges the note")
+            XCTAssertNotNil(model.decisions.pending[card.sourceId]?.doneAt, "the matching success acknowledges the note")
         }
     }
 
@@ -1746,7 +1802,7 @@ final class WidgetStagingTests: XCTestCase {
         var confirmed = item
         confirmed.draftOption = "a"
         model.reconcileStaged([confirmed])
-        XCTAssertNil(model.pendingStage[item.sourceId])
+        XCTAssertNil(model.decisions.pending[item.sourceId])
         try XCTUnwrap(held).resume(returning: ["ok": true])
         await fulfillment(of: [sent], timeout: 1)
     }
@@ -1827,56 +1883,7 @@ final class WidgetStagingTests: XCTestCase {
         model.afterMutations { finished.fulfill() }
         try XCTUnwrap(stage).resume(returning: ["ok": true])
         await fulfillment(of: [finished], timeout: 1)
-        XCTAssertNotNil(model.pendingStageDone[card.sourceId])
-    }
-
-    func testPopupRefreshAndExplicitCloseRespectStagedPolicy() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil, stagedOnLeave: "keep")])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var reminded = false
-        model.stagedLeftInPopup = { _ in reminded = true }
-        model.showPeek(item, on: side, seconds: 0.05)
-        var staged = item
-        staged.draftOption = "a"
-        model.reconcileStaged([staged])
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertNil(model.peekItem, "the timer survives the updated item")
-        XCTAssertTrue(reminded)
-
-        model.receive([try snapshot(draftOption: "a", stagedOnLeave: "ask")])
-        model.showPeek(staged, on: side, seconds: 0)
-        model.dismissPeek()
-        XCTAssertNotNil(model.peekItem, "explicit close retains a staged decision under ask")
-        model.endPeek(advance: false)
-    }
-
-    func testLeavingPopupDoesNotReplaceOutcomeLifetime() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        model.showPeek(item, on: side, seconds: 0.05)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered", tone: .warning), sent: [item.sourceId], delivered: false)
-        model.hover(side, inside: true)
-        model.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(model.peekOutcome?.text, "Not delivered")
-        XCTAssertNotNil(model.peekItem)
-        model.endPeek(advance: false)
-        var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: nil).utf8))
-        wire.state.preferences.sendCloseSeconds = 0
-        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
-        model.showPeek(item, on: side, seconds: 0.05)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Delivered", tone: .success), sent: [item.sourceId], delivered: true)
-        model.hover(side, inside: true)
-        model.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(model.peekOutcome?.text, "Delivered", "zero send-close time remains open")
-        model.endPeek(advance: false)
+        XCTAssertNotNil(model.decisions.pending[card.sourceId]?.doneAt)
     }
 
     func testSettledSnapshotBeforeOrAfterSendCallbackKeepsOutcome() async throws {
@@ -1904,10 +1911,10 @@ final class WidgetStagingTests: XCTestCase {
                 model.showPeek(item, on: side, seconds: 0)
                 model.sendStaged([item.sourceId])
                 XCTAssertTrue(model.sendingDecisionIDs.contains(item.sourceId))
-                XCTAssertTrue(model.keepSettledPeek(item))
+                XCTAssertTrue(model.alertPopup.keepsSettled(item))
                 var unrelated = item
                 unrelated.sourceId = "another-decision"
-                XCTAssertFalse(model.keepSettledPeek(unrelated), "another send must not hold an unrelated alert")
+                XCTAssertFalse(model.alertPopup.keepsSettled(unrelated), "another send must not hold an unrelated alert")
                 await fulfillment(of: [started], timeout: 1)
                 let reply: WidgetJSON = delivered
                     ? ["sent": 1, "queued": 0, "failed": 0]
@@ -1918,20 +1925,20 @@ final class WidgetStagingTests: XCTestCase {
                 summary.pendingDecisionIDs = []
                 if snapshotBeforeCallback {
                     model.updateInbox(summary)
-                    XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "an in-flight send keeps its popup")
-                    XCTAssertNil(model.peekOutcome, "the backend has not answered yet")
+                    XCTAssertEqual(model.alertPopup.item?.sourceId, item.sourceId, "an in-flight send keeps its popup")
+                    XCTAssertNil(model.alertPopup.outcome, "the backend has not answered yet")
                 }
                 model.afterMutations { finished.fulfill() }
                 try XCTUnwrap(release, "the backend continuation must be held").resume(returning: reply)
                 await fulfillment(of: [finished], timeout: 1)
                 XCTAssertFalse(model.sendingDecisionIDs.contains(item.sourceId), "the callback releases the in-flight ID")
-                XCTAssertEqual(model.peekOutcome?.tone, delivered ? .success : .warning)
-                XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "the real callback shows its outcome")
+                XCTAssertEqual(model.alertPopup.outcome?.tone, delivered ? .success : .warning)
+                XCTAssertEqual(model.alertPopup.item?.sourceId, item.sourceId, "the real callback shows its outcome")
                 if !snapshotBeforeCallback { model.updateInbox(summary) }
-                XCTAssertEqual(model.peekOutcome?.tone, delivered ? .success : .warning,
+                XCTAssertEqual(model.alertPopup.outcome?.tone, delivered ? .success : .warning,
                                "settlement must not close a displayed outcome")
                 if !delivered {
-                    XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId],
+                    XCTAssertEqual(model.alertPopup.outcome?.sendAgain.map(\.sourceId), [item.sourceId],
                                    "absence from pending IDs does not prove the answer was delivered")
                 }
                 model.endPeek(advance: false)
@@ -1939,172 +1946,103 @@ final class WidgetStagingTests: XCTestCase {
         }
     }
 
-    func testSentPopupStartsTheNextAlertsOwnCountdownInQueueAndListModes() async throws {
-        for many in [WidgetAlerts.PopupMany.queue, .list] {
-            let model = StagingFixture.model()
-            defer { model.stop() }
-            model.receive([try snapshot(draftOption: nil)])
-            let item = try XCTUnwrap(model.inboxOverviewItems.first)
-            var later = item
-            later.id = "decision:later"
-            later.sourceId = "later"
-            let side = WidgetSurfaceID(edge: .right)
-            model.showPeek(item, on: side, seconds: 0, many: many)
-            model.showPeek(later, on: side, seconds: 0.05, many: many)
-            model.dropSentFromPeek([item.sourceId])
-            XCTAssertEqual(model.peekItem?.sourceId, "later")
-            XCTAssertEqual(model.peekSeconds, 0.05, "the next alert gets its own duration")
-            try await Task.sleep(for: .milliseconds(300))
-            XCTAssertNil(model.peekItem, "the next alert does not inherit an already finished timer")
-        }
-    }
-
-    func testSettledPopupKeepsDeliveredOutcomeForItsConfiguredLifetime() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: nil).utf8))
-        wire.state.preferences.sendCloseSeconds = 0.4
-        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var later = item
-        later.id = "decision:later"
-        later.sourceId = "later"
-        model.showPeek(item, on: side, seconds: 0.05, many: .list)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Delivered", tone: .success), sent: [item.sourceId], delivered: true)
-        model.showPeek(later, on: side, seconds: 0.4, many: .list)
-        var answered = item
-        answered.needsAnswer = false
-        answered.answeredVia = "agent"
-        model.showPeek(answered, on: side, seconds: 0.05, many: .list)
-        var summary = WidgetInboxSummary(unread: 0, needsAnswer: 1, complete: true, truncated: false, sessions: [])
-        summary.pendingDecisionIDs = ["later"]
-        summary.answeredElsewhere = [answered]
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId)
-        XCTAssertEqual(model.peekOutcome?.text, "Delivered")
-        XCTAssertEqual(model.peekQueue.map(\.sourceId), ["later"])
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(model.peekOutcome?.text, "Delivered", "neither snapshot nor new alert shortens the outcome")
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(model.peekItem?.sourceId, "later", "the pending alert follows the configured outcome lifetime")
-        XCTAssertNil(model.peekOutcome)
-    }
-
-    func testSettledPopupKeepsFailureAndOnlyRemovesProvenStaleResend() throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var other = item
-        other.id = "decision:other"
-        other.sourceId = "other"
-        var answered = item
-        answered.needsAnswer = false
-        answered.answeredVia = "agent"
-        var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
-        summary.pendingDecisionIDs = []
-        summary.answeredElsewhere = [answered]
-        model.updateInbox(summary)
-        model.showPeek(item, on: side, seconds: 0)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered", tone: .warning, sendAgain: [item, other]),
-                              sent: [item.sourceId], delivered: false)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId, "other"],
-                       "the older snapshot cannot settle the new outcome")
-        summary.complete = false
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId, "other"],
-                       "an incomplete snapshot cannot remove resend controls")
-        summary.complete = true
-        summary.answeredElsewhere = []
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId, "other"],
-                       "an answered but undelivered decision is absent from pending IDs")
-        summary.answeredElsewhere = [answered]
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), ["other"])
-        XCTAssertEqual(model.peekOutcome?.text, "Not delivered")
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "failure stays until dismissed")
-    }
-
-    func testOnlyNewerCompleteSnapshotSettlesOrdinaryPopupControls() throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var later = item
-        later.id = "decision:later"
-        later.sourceId = "later"
-        var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
-        summary.pendingDecisionIDs = []
-        model.updateInbox(summary)
-        model.showPeek(item, on: side, seconds: 0, many: .list)
-        model.showPeek(later, on: side, seconds: 0, many: .list)
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "an older snapshot does not settle a new alert")
-        summary.complete = false
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekQueue.map(\.sourceId), ["later"])
-        summary.complete = true
-        summary.pendingDecisionIDs = nil
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "an older hub cannot prove settlement")
-        summary.pendingDecisionIDs = ["later"]
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekItem?.sourceId, "later", "a pending listed alert replaces the settled one")
-        XCTAssertTrue(model.peekQueue.isEmpty)
-        summary.pendingDecisionIDs = []
-        model.updateInbox(summary)
-        XCTAssertNil(model.peekItem, "the last settled alert closes")
-    }
-
     /// Decision audit F10: a pick shown here gives way once its row is written after the pick landed, whatever the
     /// row holds, and a pick no snapshot confirms expires; it used to stay until the widget restarted.
-    func testAPendingPickGivesWayToANewerRowAndExpires() throws {
+    func testAPendingPickGivesWayToANewerRowAndExpires() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }
-        let now = Date().timeIntervalSince1970 * 1000
-        model.markPending("d1", "a")
-        model.pendingStageDone["d1"] = now - 1_000
+        model.actionRunner = { _ in ["ok": true] }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        stageHere(model, "d1", "a")
+        await model.decisionWritesEnded()
+        seconds += 1
         let row = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: key, at: 1,
-                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b", updatedAt: now - 1_500)
+                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b",
+                                  updatedAt: (seconds - 1.5) * 1000)
         model.reconcileStaged([row])
         XCTAssertEqual(model.stagedOption("d1", stored: "b"), "a", "a row from before the pick does not replace it")
         var newer = row
-        newer.updatedAt = now
+        newer.updatedAt = seconds * 1000
         model.reconcileStaged([newer])
         XCTAssertEqual(model.stagedOption("d1", stored: "b"), "b", "a row written after the pick landed is the truth")
 
-        model.markPending("d1", "a")
-        model.pendingStageAt["d1"] = now - 20_000
+        stageHere(model, "d1", "a")
+        seconds += 20
         model.reconcileStaged([])
-        XCTAssertEqual(model.pendingStage["d1"], "a",
+        XCTAssertEqual(model.decisions.pending["d1"]?.option, "a",
                        "a write the hub has not answered keeps its pick, so a slow hub does not make it go and come back")
-        model.pendingStageDone["d1"] = now - 20_000
+        await model.decisionWritesEnded()
+        seconds += 20
         model.reconcileStaged([])
-        XCTAssertNil(model.pendingStage["d1"], "a pick no snapshot confirmed in time after the hub took it stops showing")
-        XCTAssertTrue(model.pendingStageAt.isEmpty && model.pendingStageItems.isEmpty)
+        XCTAssertNil(model.decisions.pending["d1"], "a pick no snapshot confirmed in time after the hub took it stops showing")
+        XCTAssertTrue(model.pendingStageItems.isEmpty && model.stageAgain.isEmpty)
 
-        model.markPending("d1", "a")
-        model.pendingStageAt["d1"] = now - 70_000
+        model.discardStaged(["d1"])
+        await model.decisionWritesEnded()
+        seconds += 70
+        model.reconcileStaged([row])
+        XCTAssertNil(model.decisions.pending["d1"], "a clear no snapshot shows stops showing after a minute")
+    }
+
+    /// 2026-11-10, a Mac at load 500: the write of a pick was killed at its 120 s limit and the pick was dropped, and
+    /// a minute into that wait it had already stopped showing. No answer is not a refusal, so the pick stays.
+    func testAPickWhoseStageWriteGotNoAnswerStaysAndCanBeTriedAgain() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        var writes = 0
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == "ledger" else { return ["ok": true] }
+            writes += 1
+            if writes == 1 { throw ToolsBridgeError.timeout(seconds: WidgetModel.stageWriteTimeoutSeconds) }
+            return ["ok": true]
+        }
+        model.choose(card, option: "a")
+        await model.decisionWritesEnded()
+        XCTAssertEqual(model.stagedOption(card.sourceId, stored: nil), "a", "a pick the hub did not answer stays shown")
+        XCTAssertEqual(model.noticeAction?.title, "Try again")
+        XCTAssertEqual(model.notice, "The hub did not answer within 30 seconds, so this pick is not saved yet. It stays here.")
+
+        model.decisions.now = { Date().timeIntervalSince1970 + 70 }
         model.reconcileStaged([])
-        XCTAssertNil(model.pendingStage["d1"], "a write that never answered stops showing its pick after a minute")
+        XCTAssertEqual(model.decisions.pending[card.sourceId]?.option, "a", "no clock drops a pick the hub never took")
+
+        model.noticeAction?.run()
+        await model.decisionWritesEnded()
+        XCTAssertEqual(writes, 2, "Try again writes the same pick once more")
+        XCTAssertNotNil(model.decisions.pending[card.sourceId]?.doneAt, "the answered write is acknowledged")
+        XCTAssertEqual(model.decisions.pending[card.sourceId]?.unsaved, false)
+    }
+
+    /// A pick whose write still runs (queued behind another call to the hub) keeps showing past the minute.
+    func testAPickWhoseStageWriteStillRunsDoesNotExpire() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        stageHere(model, "d1", "a")
+        XCTAssertTrue(model.decisions.isWriting("d1"), "the write has not run yet")
+        model.decisions.now = { Date().timeIntervalSince1970 + 70 }
+        model.reconcileStaged([])
+        XCTAssertEqual(model.decisions.pending["d1"]?.option, "a")
     }
 
     /// Decision audit F16: Esc right after a pick, before any snapshot lists it, still asks about it.
     func testANewerStageDuringASendAsksOnLeave() throws {
         let model = StagingFixture.model()
         defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
         model.receive([try snapshot(draftOption: nil)])
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
-        let old = model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "first")
+        stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "first")
         model.sendingDecisionIDs.insert(card.sourceId)
-        model.sendingStageVersions[card.sourceId] = old
+        model.sendingStageVersions[card.sourceId] = model.decisions.version(card.sourceId)
         model.keptStaged.insert(card.sourceId)
         XCTAssertTrue(model.stagedForLeave.isEmpty)
-        model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "newer")
+        stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "newer")
         XCTAssertEqual(model.stagedForLeave.first?.draft, "newer")
         model.expanded = .right
         model.requestCollapse()
@@ -2151,7 +2089,7 @@ final class WidgetStagingTests: XCTestCase {
         await fulfillment(of: [started], timeout: 1)
         let observation = model.$sendingDecisionIDs.dropFirst().filter(\.isEmpty).prefix(1).sink { _ in finished.fulfill() }
         defer { observation.cancel() }
-        model.markPending(card.sourceId, "b", item: WidgetModel.inboxItem(card), note: "new answer")
+        stageHere(model, card.sourceId, "b", item: WidgetModel.inboxItem(card), note: "new answer")
         model.expanded = .right
         model.requestCollapse()
         XCTAssertEqual(model.expanded, .right)
@@ -2182,12 +2120,12 @@ final class WidgetStagingTests: XCTestCase {
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
         XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"], "a staged pick before its send")
-        model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card))
+        stageHere(model, card.sourceId, "a", item: WidgetModel.inboxItem(card))
         model.sendStaged([card.sourceId])
         await fulfillment(of: [started], timeout: 1)
         XCTAssertTrue(model.stagedForLeave.isEmpty, "a decision on its way is not staged")
         model.receive([try snapshot(draftOption: "a")])
-        XCTAssertNil(model.pendingStage[card.sourceId], "the snapshot confirmed the local stage")
+        XCTAssertNil(model.decisions.pending[card.sourceId], "the snapshot confirmed the local stage")
         XCTAssertTrue(model.stagedForLeave.isEmpty, "confirmation preserves the identity of the stage being sent")
         model.expanded = .right
         model.requestCollapse()
@@ -2217,10 +2155,10 @@ final class WidgetStagingTests: XCTestCase {
         let side = WidgetSurfaceID(edge: .right)
         model.showPeek(item, on: side, seconds: 0.05)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(model.peekItem?.sourceId, "d1", "the popup stays with its Send now")
+        XCTAssertEqual(model.alertPopup.item?.sourceId, "d1", "the popup stays with its Send now")
         model.discardStaged(["d1"])
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertNil(model.peekItem, "with nothing staged in it, its time ends it")
+        XCTAssertNil(model.alertPopup.item, "with nothing staged in it, its time ends it")
 
         let kept = StagingFixture.model()
         defer { kept.stop() }
@@ -2229,7 +2167,7 @@ final class WidgetStagingTests: XCTestCase {
         kept.receive([try snapshot(draftOption: "a", stagedOnLeave: "keep")])
         kept.showPeek(try XCTUnwrap(kept.stagedItems.first), on: side, seconds: 0.05)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertNil(kept.peekItem, "\"keep\" closes the popup")
+        XCTAssertNil(kept.alertPopup.item, "\"keep\" closes the popup")
         XCTAssertEqual(reminded, ["d1"], "and the staged reminder lists the pick")
     }
 
@@ -2420,11 +2358,8 @@ final class WidgetStagingTests: XCTestCase {
     /// Every Undo row (Remove from shelf, Discard of a voice note) lasts as long as a note with a button; notes that
     /// stay until closed hold the item 60 s at most (judge round F4).
     func testUndoRowsLastAsLongAsANoteWithAButton() throws {
-        func prefs(_ json: String) throws -> WidgetPreferences {
-            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
-            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
-        }
-        XCTAssertEqual(WidgetModel.undoSeconds(nil), 10, "the default note time is 6 s, so a note with Undo stays 10 s")
+        func prefs(_ json: String) throws -> WidgetPreferences { try WidgetTestPreferences.decode(json) }
+        XCTAssertEqual(WidgetModel.undoSeconds(.hubDefaults), 10, "the default note time is 6 s, so a note with Undo stays 10 s")
         XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":3}"#)), 10)
         XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":20}"#)), 20)
         XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":0}"#)), 60, "until closed, at most 60 s")
@@ -2504,7 +2439,7 @@ final class WidgetStagingTests: XCTestCase {
         // Since decision audit F8 (2026-10-27) a send at once stages the pick and sends it staged, as Send now does:
         // the outbox it used before dropped the staged note.
         XCTAssertEqual(names(actions).filter { $0 != "selection" }, ["ledger", "send-staged"])
-        XCTAssertNil(model.pendingStage["d1"])
+        XCTAssertNil(model.decisions.pending["d1"])
     }
 
     /// Several decision rows can be open at once: a click on one row's option answers that row's decision, not the
@@ -2867,6 +2802,46 @@ final class WidgetComposerClickTests: XCTestCase {
         XCTAssertNil(FrameProbe.frames["widget.peek.ownAnswer"], "news has no own answer field")
     }
 
+    /// The redraw measurement of a live dictation (swift skill: count bodies with `RenderProbe`). The listener sends one
+    /// `level` line per 100 ms audio frame (`frameBytes` in `pcm-source.ts`, 10 Hz), so ten seconds of dictation is 100
+    /// writes of `WidgetModel.voiceLevel` into a hosted `LiveWidgetView` with the selected session's composer open. It
+    /// counts the model's publishes and every probed body that ran, per run, over `WIDGET_VOICE_REDRAW=<runs>` runs.
+    /// Off by default; prints one `widget.voice.redraw` line per run.
+    func testTenSecondsOfDictationRedrawCount() throws {
+        guard let runs = ProcessInfo.processInfo.environment["WIDGET_VOICE_REDRAW"].flatMap(Int.init), runs > 0 else {
+            throw XCTSkip("a measurement; run with WIDGET_VOICE_REDRAW=<runs>")
+        }
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil)])
+        model.select(StagingFixture.key)
+        let window = hostedWidget(model)
+        defer { window.orderOut(nil); window.close() }
+        pump(0.5)
+        let wasOn = RenderProbe.enabled
+        RenderProbe.enabled = true
+        defer { RenderProbe.enabled = wasOn }
+        let watch = RenderProbe.watch(model, "widgetModel")
+        defer { watch?.cancel() }
+        model.voiceActive = true
+        pump(0.3)
+        let frames = 100
+        for run in 1...runs {
+            let start = RenderProbe.snapshot()
+            for frame in 0..<frames {
+                model.voiceLevel = 0.05 + 0.04 * Double(frame % 7)
+                pump(0.1)
+            }
+            let ran = RenderProbe.snapshot().filter { $0.value > (start[$0.key] ?? 0) }
+                .map { ($0.key, $0.value - (start[$0.key] ?? 0)) }.sorted { $0.0 < $1.0 }
+            print("widget.voice.redraw run=\(run) frames=\(frames) "
+                + ran.map { "\($0.0)=\($0.1)" }.joined(separator: " "))
+        }
+        model.voiceActive = false
+    }
+
     private static let size = NSSize(width: 520, height: 700)
 
     /// The widget in a hidden window that takes the first click on any control.
@@ -3119,9 +3094,9 @@ final class WidgetSessionSwitchTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: [
             "version": 1,
             "state": ["version": 1, "revision": 0, "selectedKey": key(selected),
-                      "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                      "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
                                       "placement": "both", "side": "right", "quietSeconds": 15,
-                                      "voiceProvider": "openai", "voiceLanguage": "en"],
+                                      "voiceProvider": "openai", "voiceLanguage": "en"]),
                       "assets": [:], "drafts": [:], "outgoing": []],
             "sessions": sessions,
             "cards": try JSONSerialization.jsonObject(with: JSONEncoder().encode(cards)),

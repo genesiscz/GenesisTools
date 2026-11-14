@@ -1,5 +1,5 @@
 // Permission faces of GenesisTools.app:
-//   GenesisTools --permission-status <kind>                  print what macOS reports for the grant, then exit
+//   GenesisTools --permission-status <kind>|all|<kind>…      print what macOS reports for the grant(s), then exit
 //   GenesisTools --permission-dialog <kind> [--reason <text>] show the GenesisKit permission dialog, exit when it closes
 //   GenesisTools --local-network-rules                       print the Local Network answers macOS keeps for this app
 //
@@ -14,7 +14,7 @@ import Foundation
 private func permissionUsage() -> Never {
     let kinds = PermissionKind.allCases.map(\.rawValue).joined(separator: ", ")
     FileHandle.standardError.write(Data("""
-    usage: GenesisTools --permission-status <kind>
+    usage: GenesisTools --permission-status <kind> | all | <kind> <kind>…
            GenesisTools --permission-dialog <kind> [--reason <text>]
       kinds: \(kinds)
 
@@ -22,9 +22,19 @@ private func permissionUsage() -> Never {
     exit(64)
 }
 
+/// One kind prints its wire value alone (`tools macos permissions request` reads it). `all`, or several kinds, print
+/// one `<kind> <wire value>` line each, so a report reads every grant in one process (`tools genesis-tools triage`).
 func runPermissionStatus(_ args: [String]) -> Never {
+    let system = SystemPermissions()
+    let all = args == ["all"]
+    if all || args.count > 1 {
+        let kinds = all ? PermissionKind.allCases : args.compactMap { PermissionKind(id: $0) }
+        guard all || kinds.count == args.count else { permissionUsage() }
+        for kind in kinds { print("\(kind.rawValue) \(system.status(kind).wireValue)") }
+        exit(0)
+    }
     guard let id = args.first, let kind = PermissionKind(id: id) else { permissionUsage() }
-    print(SystemPermissions().status(kind).wireValue)
+    print(system.status(kind).wireValue)
     exit(0)
 }
 

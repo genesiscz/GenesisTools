@@ -712,10 +712,14 @@ To wire it into a client, use it as the server command and restart the client:
 ### Code layout and tests
 
 - `index.ts` registers the commands; `commands/` holds one file per command.
-- `utils/providers/<name>.ts` holds one class per provider, each extending `MCPProvider` (`utils/providers/types.ts`)
-  and converting with `toUnifiedConfig` and `fromUnifiedConfig`. `defaultProviders()` in `utils/providers/index.ts` is
-  the one list of providers; `tools scripts` builds its registry from it too.
-- `utils/backup.ts` (`BackupManager`) owns the diff, the confirmation and the backups.
+- `utils/providers/<name>.ts` holds one class per provider, each extending `MCPProvider` (`utils/providers/types.ts`,
+  ten abstract members). Every write of a harness file goes through the base's `writeCycle` (read, change, serialize,
+  diff, confirm, backup, atomic write); an adapter supplies only the change and its serializer. Cursor and Codex
+  (presence means enabled) share the verbs in `utils/providers/presence.ts`. `defaultProviders()` in
+  `utils/providers/index.ts` is the one list of providers; `tools scripts` and `tools genesis-tools-mcp install` use it.
+- `utils/backup.ts` (`BackupManager`) holds the diff view, the confirmation prompt and the backup copy that
+  `writeCycle` calls.
+- `utils/providers/verbs.test.ts` runs every verb against each adapter on a fixture file in the harness's format.
 - `lib/auth/` is OAuth (discovery, login, tokens, the vault), `lib/gateway/` the gateway, `lib/doctor/` the doctor.
 - Tests: `bun run test src/mcp-manager/`. The command tests and their mocks are described in
   [commands/__tests__/TESTING_GUIDE.md](commands/__tests__/TESTING_GUIDE.md).

@@ -300,7 +300,8 @@ struct AgentSendForm: View {
                 }
             }
             if let loadError {
-                Text(verbatim: loadError).font(.system(size: 11.5)).foregroundColor(ReviewPalette.removed).lineLimit(3)
+                FailureInline(message: loadError, outcome: "The sessions to send to did not load",
+                              action: "List the sessions", area: "review", identifier: "agent-send.failure")
             }
             ForEach(sessions) { session in
                 row(id: session.sessionId) {
@@ -367,7 +368,7 @@ struct AgentSendForm: View {
         }
         let span = HubPerf.begin("review.agentSend.sessions", args.suffix(from: 3).prefix(4).joined(separator: " "), awaits: true)
         let result = await Task.detached(priority: .userInitiated) {
-            Result { try JSONDecoder().decode(HubPRSessions.self, from: ToolsCLIRunner.run(args)) }
+            Result { try JSONDecoder().decode(HubPRSessions.self, from: HubSource.bridge.output(args)) }
         }.value
         loading = false
         switch result {

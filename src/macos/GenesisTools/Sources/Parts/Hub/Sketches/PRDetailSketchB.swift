@@ -108,9 +108,7 @@ struct PRDetailSketchB: View {
                 PRHeaderState(pr: pr, mergeable: detail?.mergeable)
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 if prs.review == nil, let fetch = prs.fetchState(pr) {
                     PRFetchStatus(pr: pr, state: fetch) { prs.retryFetch(pr) }
                 }
@@ -143,9 +141,7 @@ struct PRDetailSketchB: View {
         } details: {
             VStack(alignment: .leading, spacing: 8) {
                 facts
-                if let notice = prs.notice, notice.ref.matches(pr) {
-                    NoticePill(text: notice.text, isError: notice.isError) { prs.notice = nil }
-                }
+
                 HStack(spacing: 12) {
                     GenSegmentedTabs("PR", items: DocumentTab.allCases.map { GenSegmentedTabs.Item($0, title($0)) },
                                      selection: $tab, minSegmentWidth: 64, identifier: "prDetail.tabs")
@@ -406,7 +402,7 @@ struct PRDetailSketchB: View {
     private func linkedDescription(_ body: String) -> String {
         let siblings = prs.prs.filter { $0.project == pr.project }
         let key = ["sketchB", pr.id, body, (prs.details[pr.id]?.branchMentions ?? []).joined(separator: " "),
-                   siblings.map { "\($0.number)\($0.isGitLab ? "!" : "#")\($0.headBranch)>\($0.baseBranch)" }.sorted().joined(separator: " ")]
+                   siblings.map { "\($0.number)\($0.forgeKind.mark)\($0.headBranch)>\($0.baseBranch)" }.sorted().joined(separator: " ")]
             .joined(separator: "\u{1}")
         return PRDescriptionCache.linked(key: key) {
             var branches = Set(prs.details[pr.id]?.branchMentions ?? [])
@@ -414,9 +410,9 @@ struct PRDetailSketchB: View {
                 branches.insert(other.headBranch)
                 branches.insert(other.baseBranch)
             }
-            let gitLab = pr.isGitLab
+            let kind = pr.forgeKind
             let context = PRLinkContext(forge: pr.forge, branches: branches) { number in
-                siblings.first { $0.number == number && $0.isGitLab == gitLab }?.id
+                siblings.first { $0.number == number && $0.forgeKind == kind }?.id
             }
             return PRDescriptionLinker.linkify(body, context: context)
         }

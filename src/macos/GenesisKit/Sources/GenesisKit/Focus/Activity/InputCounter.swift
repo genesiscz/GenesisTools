@@ -14,7 +14,7 @@ import os
 /// load), the watchdog re-enables it and records a `capture_gap`, so a quiet hour reads as
 /// "not measured" rather than "you did nothing".
 public final class InputCounter {
-    /// Called once per bucket with the counts accumulated in it. Always on `queue`.
+    /// Called once per bucket, on the thread that flushes, after releasing the pending-count lock.
     public var onFlush: ((_ bucketMs: Int64, _ counts: ActivityStore.InputCounts) -> Void)?
     /// Called when the tap died and came back, with the gap it left behind.
     public var onGap: ((_ startedMs: Int64, _ endedMs: Int64, _ reason: String) -> Void)?
@@ -27,6 +27,33 @@ public final class InputCounter {
     private let queue = DispatchQueue(label: "dev.genesis.input-counter")
     private var lock = os_unfair_lock_s()
     private var pending = ActivityStore.InputCounts()
+    private var emissions = 0
+    private var emissionWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Tests can hold a payload after extraction, before its callback registers with the recorder.
+    var emissionExtractedForTesting: (() -> Void)?
+
+    var hasPendingEmissions: Bool {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        return emissions > 0
+    }
+
+    func waitForEmissions() async {
+        await withCheckedContinuation { continuation in
+            os_unfair_lock_lock(&lock)
+            if emissions == 0 { os_unfair_lock_unlock(&lock); continuation.resume() }
+            else { emissionWaiters.append(continuation); os_unfair_lock_unlock(&lock) }
+        }
+    }
+
+    private func finishEmission() {
+        os_unfair_lock_lock(&lock)
+        emissions -= 1
+        let ready = emissions == 0 ? emissionWaiters : []
+        if emissions == 0 { emissionWaiters = [] }
+        os_unfair_lock_unlock(&lock)
+        for waiter in ready { waiter.resume() }
+    }
     private var bucketMs: Int64 = InputCounter.bucketStart(Date().timeIntervalSince1970 * 1000)
     private var lastPoint: CGPoint?
     private var tapDisabledAtMs: Int64?
@@ -186,15 +213,19 @@ public final class InputCounter {
         let counts = pending
         let bucket = bucketMs
         let crossed = currentBucket != bucketMs || force
+        let callback = onFlush
+        let emits = crossed && counts != ActivityStore.InputCounts() && callback != nil
+        if emits { emissions += 1 }
         if crossed {
             pending = ActivityStore.InputCounts()
             bucketMs = currentBucket
         }
         os_unfair_lock_unlock(&lock)
 
-        guard crossed else { return }
-        guard counts != ActivityStore.InputCounts() else { return }
-        onFlush?(bucket, counts)
+        guard emits, let callback else { return }
+        defer { finishEmission() }
+        emissionExtractedForTesting?()
+        callback(bucket, counts)
     }
 
     /// Drops what the open bucket counted when its minute overlaps `from..<to`: that activity was forgotten

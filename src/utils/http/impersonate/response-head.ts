@@ -1,5 +1,4 @@
-/** The redirect statuses a caller that follows redirects itself acts on. */
-const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+import { REDIRECT_STATUSES } from "@genesiscz/utils/http/redirect";
 
 /**
  * The head of the response a transfer is reading, fed one header line at a time as curl delivers them. A new status

@@ -16,6 +16,7 @@ import {
     parseVmStat,
     runShell,
 } from "@app/dev-dashboard/lib/system/collector";
+import { kernelProcsTable } from "@app/hub/lib/procs/sources";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
 import { listActiveAgentProcesses, listActiveAgentProcessesViaPs } from "@genesiscz/utils/ai/active-processes";
 import { listHostProcesses } from "@genesiscz/utils/cmux/tmux-host";
@@ -156,6 +157,10 @@ async function runOnce(): Promise<number> {
 
     if (job === "table") {
         return (arm === "ps" ? await listPsTable() : await listHostProcesses()).length;
+    }
+
+    if (job === "report") {
+        return (arm === "ps" ? await listPsTable() : (kernelProcsTable() ?? [])).length;
     }
 
     if (job === "who") {

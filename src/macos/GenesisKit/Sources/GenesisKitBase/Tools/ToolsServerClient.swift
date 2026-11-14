@@ -39,13 +39,44 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
     }
 
-    public static func defaultSocketPath(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String {
-        home.appendingPathComponent(".genesis-tools/hub/server/hub.sock").path
+    /// Under `GENESIS_TOOLS_HOME` when it is set, like the server's own `hubServerSocketPath()`: a sandboxed app
+    /// that asked the real home's socket got the real server's sessions (2026-11-10).
+    public static func defaultSocketPath(home: String? = nil) -> String {
+        GenesisToolsHome.path("hub/server/hub.sock", in: home)
     }
 
     /// The server a `ToolsBridge` built without one asks first. An app sets it once at launch, before it builds a
     /// bridge (the widget face, for its `tools hub widget …` calls); nil, the default, keeps those bridges processes.
     nonisolated(unsafe) public static var shared: ToolsServerClient?
+
+    /// The one rule for whether a face asks the resident server: the hub (`HubSource.server`) and the widget
+    /// (`shared`) both call it. The server runs the main checkout's code against the real home (its socket is
+    /// `defaultSocketPath()` under the real home), so a face on a sandbox home (`GENESIS_TOOLS_HOME`) or on a
+    /// worktree's `tools` (`GENESIS_TOOLS_BIN`) runs every call as a process: before 2026-11-10 a hub on a sandbox home
+    /// was answered with the real home's data. The preview build and `GENESIS_HUB_SERVER=0` keep processes too.
+    public static func allowsResidentServer(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        preview: Bool = isPreviewBuild
+    ) -> Bool {
+        !preview && environment["GENESIS_HUB_SERVER"] != "0"
+            && environment[GenesisToolsHome.variable] == nil && environment["GENESIS_TOOLS_BIN"] == nil
+    }
+
+    /// Whether this app is the preview build (`GenesisToolsPreview` in its Info.plist): the one default of `preview`
+    /// for `allowsResidentServer` and `resident`.
+    @usableFromInline static var isPreviewBuild: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true
+    }
+
+    /// A client of the resident server when `allowsResidentServer` says this face may use one, else nil.
+    public static func resident(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        preview: Bool = isPreviewBuild,
+        startServer: @escaping @Sendable () -> Void
+    ) -> ToolsServerClient? {
+        guard allowsResidentServer(environment: environment, preview: preview) else { return nil }
+        return ToolsServerClient(startServer: startServer)
+    }
 
     /// Starts `tools hub serve` once, detached from any call: it outlives the call that found no server, exits by
     /// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
@@ -66,7 +97,10 @@ public final class ToolsServerClient: @unchecked Sendable {
         process.arguments = plan.arguments
         process.currentDirectoryURL = plan.workingDirectory
         process.environment = serverEnvironment()
-        process.qualityOfService = .utility
+        // The server answers the windows the user looks at, so it runs at their priority. At `.utility` it was
+        // the first thing a busy Mac stopped scheduling: at a load of 200 its doors took 248 to 330 s for 8 to 12 s
+        // of work, while the same argv as a process of the hub took 9 s (2026-11-10).
+        process.qualityOfService = .userInitiated
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice

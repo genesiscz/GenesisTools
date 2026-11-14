@@ -155,6 +155,7 @@ export interface TestChange {
 }
 
 /** Every test whose state differs between two runs, the new failures first. */
+// lint-rules-ignore: this compares E2E test summaries; eval compareRuns compares versioned model/scenario conversation cells.
 export function compareRuns(before: RunSummary, after: RunSummary): TestChange[] {
     const states = (summary: RunSummary) => {
         const result = new Map<string, E2eTestState>();

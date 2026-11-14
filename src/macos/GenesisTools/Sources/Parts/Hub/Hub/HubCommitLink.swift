@@ -217,17 +217,10 @@ struct HubLocalCommits: Equatable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repo, "--no-optional-locks"] + args
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        process.standardInput = FileHandle.nullDevice
+        // A `git` that does not end is a failed `git`: it had no limit, and one that hung held its thread for good.
+        guard let capture = try? process.runCapturing(timeout: HubGitLimit.seconds), capture.status == 0 else { return nil }
+        return String(decoding: capture.stdout, as: UTF8.self)
     }
 }
 
@@ -406,7 +399,7 @@ enum HubCommitLookup {
     /// the main thread. The hub's PR list shows one page per project, so an older branch's PR is not in it.
     static func branchPR(root: String, branch: String) -> String? {
         do {
-            return branchPRLabel(try ToolsCLIRunner.run(["hub", "pr", "find", "--repo", root, "--branch", branch, "--json"]))
+            return branchPRLabel(try HubSource.bridge.json(["hub", "pr", "find", "--repo", root, "--branch", branch, "--json"]))
         } catch {
             HubPerf.log("hub.commitLink no PR lookup for \(branch): \(error)")
             return nil
@@ -421,7 +414,7 @@ enum HubCommitLookup {
         }
         guard let found = try? JSONDecoder().decode(Found.self, from: data), let provider = found.provider,
               let number = found.number else { return nil }
-        return provider == "gitlab" ? "!\(number)" : "#\(number)"
+        return (Forge(kind: provider) ?? .github).label(number)
     }
 
     /// The first parent of `sha` in the checkout at `root`, the base of a range that starts at `sha`: git's empty

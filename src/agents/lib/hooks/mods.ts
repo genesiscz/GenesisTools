@@ -27,6 +27,7 @@ export const MOD_SWITCHES: Record<string, string[]> = {
     links: ["mods.links.enabled"],
     git: ["mods.git.enabled"],
     askRow: ["mods.askRow.enabled"],
+    toolTime: ["mods.toolTime.enabled"],
     spinner: ["mods.spinner.enabled"],
     cacheBand: ["mods.cacheBand.enabled"],
     tmpUsage: ["mods.tmpUsage.enabled"],

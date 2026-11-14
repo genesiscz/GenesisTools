@@ -4,6 +4,20 @@ import { type CallDoor, failed, ok } from "./types";
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The session's change log and the agents tool's Changes module, both Changes doors' first step, loaded on demand. */
+async function readSessionChangeLog(session: string) {
+    // `loadSessionChanges` loads the providers with a synchronous require on its first read; while another door's
+    // import of the same module is still running, that require throws. Loaded here first, it never races.
+    await import("@genesiscz/utils/agent-sessions/provider");
+    const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
+    // lint-rules-ignore: the Changes doors read the agents tool's change log, loaded on demand
+    const toolChanges = await import("@app/agents/lib/changes/tool-changes");
+    const file = changeLogPath(session);
+    const read = readChangeLogFile(file);
+    const warning = read.skipped > 0 ? `Skipped ${read.skipped} unreadable line(s) in ${file}\n` : "";
+    return { toolChanges, file, rows: read.rows, warning };
+}
+
 /**
  * `tools agents changes <session> --tools <ids> --json`: the hub asks it for each finished tool row of the session it
  * shows. As a process every ask read the whole session (223 MB main + 366 MB of sub-agents, ~1.5 s CPU and ~1 GB,
@@ -39,13 +53,8 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
     async run({ session, toolIds }, { signal }) {
         try {
             signal.throwIfAborted();
-            const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
-            // lint-rules-ignore: the Changes door reads the agents tool's change log, loaded on demand
-            const { toolChangesJson } = await import("@app/agents/lib/changes/tool-changes");
-            const file = changeLogPath(session);
-            const read = readChangeLogFile(file);
-            const warning = read.skipped > 0 ? `Skipped ${read.skipped} unreadable line(s) in ${file}\n` : "";
-            const outcome = await toolChangesJson({ session, toolIds, file, rows: read.rows, storeBlobs: false });
+            const { toolChanges, file, rows, warning } = await readSessionChangeLog(session);
+            const outcome = await toolChanges.toolChangesJson({ session, toolIds, file, rows, storeBlobs: false });
             if ("error" in outcome) {
                 return { stdout: "", stderr: `${warning}${outcome.error}\n`, exit: 1 };
             }
@@ -92,14 +101,10 @@ export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: numbe
     async run({ session, lastTurns, storeBlobs }, { signal }) {
         try {
             signal.throwIfAborted();
-            const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
-            // lint-rules-ignore: the Changes door reads the agents tool's change log, loaded on demand
-            const { sessionTurnChanges, turnChangesJson } = await import("@app/agents/lib/changes/tool-changes");
-            const file = changeLogPath(session);
-            const read = readChangeLogFile(file);
-            const warning = read.skipped > 0 ? `Skipped ${read.skipped} unreadable line(s) in ${file}\n` : "";
+            const { toolChanges, file, rows, warning } = await readSessionChangeLog(session);
+            const { sessionTurnChanges, turnChangesJson } = toolChanges;
             const options = { json: true, lastTurns: String(lastTurns), storeBlobs };
-            const result = await sessionTurnChanges({ session, file, rows: read.rows, options, count: lastTurns });
+            const result = await sessionTurnChanges({ session, file, rows, options, count: lastTurns });
             if ("error" in result) {
                 return { stdout: "", stderr: `${warning}${result.error}\n`, exit: 1 };
             }

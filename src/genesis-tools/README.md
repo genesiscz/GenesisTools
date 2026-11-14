@@ -23,7 +23,7 @@ tools genesis-tools probe md finder                # do note and folder links op
 tools genesis-tools logs failures [filters] [--limit 40]          # alias: logs list
 tools genesis-tools logs stats [filters] [--by tool,kind] [--top 30]
 tools genesis-tools logs usage [filters] [--top 25]
-tools genesis-tools logs show <id> [--since 7d]
+tools genesis-tools logs show <id> [--since 7d] [--context | --json]
 tools genesis-tools logs crashes [--since 7d] [--until <when>]
 tools genesis-tools logs day [flags]       # --since 1h, --level warn, --tool, --pid, --grep, --limit 100
 tools genesis-tools logs profile [flags]   # --since 24h, --min-ms 1000, --scope, --grep, --pid, --top 40
@@ -61,7 +61,7 @@ The filters of `failures`, `stats` and `usage`:
 | `--since <when>`    | records from this point on (default `24h`)                     |
 | `--until <when>`    | records up to this point (default now)                         |
 | `--tool <names...>` | these tools                                                    |
-| `--kind <kinds...>` | these kinds: `usage`, `error`, `crash`, `exit`, `interrupt`    |
+| `--kind <kinds...>` | `usage`, `error`, `crash`, `exit`, `interrupt`, `deadline`     |
 | `--command <text>`  | a command path that contains the text (`usage sessions`)       |
 | `--agent <agent>`   | `claude-code`, `codex`, `grok`, `copilot`, `unknown` (a shell) |
 | `--model <text>`    | a model that contains the text, any case (`sonnet`, `gpt-6`)   |
@@ -190,6 +190,22 @@ any secret-shaped argument become `[redacted]`. The same values are masked where
 tail echoes them. A secret shorter than four characters cannot be replaced safely, so a text that still echoes one is
 withheld whole: `[withheld: it echoes a short secret value]`.
 
+### Prepared failure context
+
+A failure is appended before context collection starts. The event gets a private, atomic report under
+`logs/failure-contexts/`, with load, memory and top processes from that moment. Installed CLI runs also start
+the same bounded `triage` gatherer used by the app in a detached child, so the report survives an explicit exit.
+The full section adds hub health, app faces, memory pressure, disk, nearby failures, slow calls and crash reports.
+Each section keeps its collection time. Diagnostic failures do not recursively start more diagnostics.
+
+`logs show <id> --context` prints the prepared Markdown; `--json` includes it as `context`.
+Reading an older failure prepares a report from the original event and its recorded output. If no machine snapshot
+was saved then, the report says so and does not probe today's Mac as if it were the historical one.
+
+MCP tool failures are recorded before the error response, including returned `isError` results and thrown
+protocol errors in long-running servers. The optional `operation` field names the MCP server and tool; the
+record's `command` and `argv` still describe the actual server invocation. Older v1 events remain readable.
+
 ### The day log and the profiling log
 
 Every tool's logger writes pino JSON to the day log. Its times are UTC; `logs day` and `logs show` print local time.
@@ -233,7 +249,7 @@ host and presets live in `tools browser-router`.
   - `failures`: an array of the newest `--limit` records, oldest first.
   - `stats`: `{ total, by, groups: [{ key, count, lastAt, lastId, models, sessions }] }`.
   - `usage`: `[{ tool, command, message, count, models, examples }]`.
-  - `show`: `{ failure, dayLog }`, where `dayLog` holds the raw pino records.
+  - `show`: `{ failure, dayLog, context }`, where `dayLog` holds the raw pino records and `context` is the prepared report.
   - `crashes`: `{ failures, reports: [{ path, process, at }] }`.
   - `day`: the raw pino records, oldest first.
   - `profile`: `[{ day, scope, label, ms, traceId, pid }]`, slowest first.
@@ -241,7 +257,8 @@ host and presets live in `tools browser-router`.
     milliseconds, `tools: { path }`, `app: { installed, path }`,
     `router: { httpsHandler, defaultHandler, configured, linkHost }`, `markdown: { path }` and `cmux: { path }`; each entry of `links` is
     `{ opens, problem, reason, action }`, with `problem` one of `not-darwin`, `app-missing`, `not-https-handler`,
-    `no-link-host`, `no-route`, `target-missing`. `probe --url` prints that one link state.
+    `no-link-host`, `no-route`, `target-missing`, `path-missing`. `probe --url` prints that one link state; for a
+    note or Finder link it also checks that the file or folder exists (`path-missing` when it does not).
 - Exit codes: 0 on success. A `logs` command exits 1 with `ERROR: <message>` on stderr for an unknown `--kind`, `--by` or `--level`, a
   `--since` or `--until` it cannot read, an inverted window, or an id it cannot find. The number flags (`--limit`,
   `--top`, `--min-ms`, `--pid`, `--exit`) are not checked: a value that is not a number drops the limit or matches

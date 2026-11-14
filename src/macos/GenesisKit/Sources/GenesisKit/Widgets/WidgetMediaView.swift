@@ -184,8 +184,8 @@ struct WidgetMediaView: View {
             }
             Text(estimate).font(.caption).foregroundStyle(.secondary)
             if let error = asset?.error {
-                Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-                Button("Prepare again") { updates?.flush(force: true) }.disabled(frozen)
+                FailureInline(message: error, outcome: "The media could not be prepared", action: "Prepare the media", area: "widget", identifier: "widget.media.failure") { updates?.flush(force: true) }
+                    .disabled(frozen)
             }
             if asset?.status != "ready" || manifest?.settings != settings {
                 HStack {
@@ -404,7 +404,9 @@ private struct WidgetImageCompare: View {
                     Button("Open original") { NSWorkspace.shared.open(URL(fileURLWithPath: first.path)) }
                 }
             }
-            if let failure { Text(failure).font(.caption).foregroundStyle(.orange) }
+            if let failure {
+                FailureInline(message: failure, outcome: "The images could not be compared", action: "Compare the images", area: "widget", identifier: "widget.compare.failure")
+            }
             if mode == "Difference" {
                 Text(
                     "Absolute pixel difference at preview resolution. Black means equal; images with different dimensions are not compared."

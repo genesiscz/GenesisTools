@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { formatCount } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
+    type AdminTakeover,
     type ApprovalChoices,
     type ApprovalItem,
     type ApprovalItemUpdate,
@@ -13,6 +14,7 @@ import {
     appendRmLedger,
     approvalAsker,
     approvalItemReason,
+    defaultAdminTakeover,
     disposalGraceMinutes,
     folderStats,
     freshMeasurement,
@@ -95,6 +97,24 @@ export function nothingLeft(target: RmRequestTarget): boolean {
 }
 
 /**
+ * The paths of `request` a deny already decided whose aside copy still waits to go home (the path was taken, or the
+ * put-back failed, at the deny, and the path is free now): a deny puts them back, never an approval. A copy that is
+ * gone (bd7ccy, 2026-11-14: /tmp was cleaned) or a path that came back beside its copy has nothing to put back.
+ */
+export function waitingPutBack(request: RmRequest): RmRequestTarget[] {
+    const denied = new Set(request.decided?.denied ?? []);
+    return request.targets.filter((target) => denied.has(target.path) && targetLiveState(target) === "aside");
+}
+
+/** Why `request` waits for a deny and not an approval: its put-back is not finished. */
+export function waitingPutBackLine(request: RmRequest, waiting: readonly RmRequestTarget[]): string {
+    const count = formatCount(waiting.length, "denied path");
+    const verb = waiting.length === 1 ? "waits" : "wait";
+    const them = waiting.length === 1 ? "it" : "them";
+    return `${count} ${verb} aside to go home: ${toolCommand("rm")} deny ${request.id} puts ${them} back`;
+}
+
+/**
  * Each path an earlier approval of `requestId` moved to the trash, with its batch. Such a run stopped before it saved
  * the decision (m888au, 2026-11-04 01:31: an EACCES after three moves), so the request still names those copies.
  */
@@ -142,6 +162,20 @@ export function reportLostCopies(request: RmRequest, lost: readonly RmRequestTar
             reason: "the aside copy was already gone at the approval",
         });
     }
+}
+
+/**
+ * Saves `request` with only `rest`, its paths that are not lost, once `reportLostCopies` reported the others; the
+ * caller holds its lock. A request with nothing else left keeps every path: `closeAllLost` closes it as it is.
+ */
+export function dropLostCopies(request: RmRequest, rest: readonly RmRequestTarget[]): RmRequest {
+    if (rest.length === 0 || rest.length === request.targets.length) {
+        return request;
+    }
+
+    const trimmed = { ...request, targets: [...rest] };
+    saveRmRequest(trimmed);
+    return trimmed;
 }
 
 /**
@@ -971,6 +1005,11 @@ export function approveDelete(input: {
     choices: ApprovalChoices;
     /** An approved path the trash refused (unavailable, or changed since the check): it stays where it is. */
     onRefused?: (entry: ApproveEntry, reason: string) => void;
+    /**
+     * The administrator step for root's file in a sticky folder (default: this platform's, `defaultAdminTakeover`): a
+     * person approved, so such an item asks for an administrator's password instead of being refused. Tests replace it.
+     */
+    adminTakeover?: AdminTakeover | null;
     /** Test seams of the trash move (an unwritable trash root, a swap before the rename). */
     hooks?: MoveOptions["hooks"];
     /** Sizes measured for the window, by request path: the drain then does not walk those trees again. */
@@ -997,6 +1036,7 @@ export function approveDelete(input: {
                 caller: request.caller,
                 graceMinutes,
                 hooks: input.hooks,
+                adminTakeover: input.adminTakeover === undefined ? defaultAdminTakeover() : input.adminTakeover,
                 onRefused: (move, reason) => {
                     out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
                     const entry = byTarget.get(move.target);

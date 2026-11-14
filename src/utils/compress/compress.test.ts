@@ -110,6 +110,8 @@ const scratch = (label: string) => {
 };
 
 afterAll(() => {
+    // The partner-metadata cases leave files whose ACL denies delete; a recursive delete cannot remove those.
+    Bun.spawnSync(["/bin/chmod", "-RN", root], { env: process.env, stdout: "ignore", stderr: "ignore" });
     rmSync(root, { recursive: true, force: true });
 });
 

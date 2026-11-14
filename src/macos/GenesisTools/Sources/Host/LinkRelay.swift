@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitBase
 
 /// `GenesisTools --link-relay`: a windowless face that never quits and is the OLDEST running instance of
 /// the bundle. Launch Services hands a link, an `.html` file, a banner click and a Dock reopen to the
@@ -19,7 +20,7 @@ enum LinkRelay {
     private static let startDeadline: TimeInterval = 3
 
     private static var lockFile: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/link-relay.lock")
+        GenesisToolsHome.url("app/link-relay.lock")
     }
 
     /// The window faces that need a relay in front of them: every face `FaceRecord` reopens after a rebuild.
@@ -69,7 +70,7 @@ enum LinkRelay {
         configuration.createsNewApplicationInstance = true
         configuration.activates = false
         // Launch Services does not pass this face's environment on. The relay must find its lock under the
-        // same `genesisHome()` (GENESIS_TOOLS_HOME), or this face waits for a lock the relay never takes.
+        // same `GenesisToolsHome.home()` (GENESIS_TOOLS_HOME), or this face waits for a lock the relay never takes.
         configuration.environment = ProcessInfo.processInfo.environment
         let opened = DispatchSemaphore(value: 0)
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in

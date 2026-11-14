@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import {
     installLaunchd as installAgent,
+    kickstartLaunchd,
     type LaunchdInstallOptions,
     launchdStatus,
     plistPath,
@@ -13,6 +14,23 @@ import {
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const LABEL = "com.genesis-tools.daemon";
+
+/**
+ * Restarts a running daemon through launchd, so it runs the GenesisTools.app just installed. A build swaps the bundle
+ * and moves the old one to `retired.noindex/`; a daemon left on it starts every task from the retired copy, and macOS
+ * asks again for each privacy grant those tasks use (2026-11-11 18:45: six stacked "gt-ai is requesting to bypass the
+ * system private window picker" prompts). Does nothing when the daemon is not installed or not running.
+ */
+export async function restartDaemonOnNewApp(): Promise<"restarted" | "not-running"> {
+    const status = await getDaemonStatus();
+
+    if (!status.installed || !status.running) {
+        return "not-running";
+    }
+
+    await kickstartLaunchd(LABEL);
+    return "restarted";
+}
 
 export const DAEMON_LOG_DIR = genesisToolsDir("daemon", "logs");
 export const DAEMON_STDERR_LOG = join(DAEMON_LOG_DIR, "daemon-stderr.log");

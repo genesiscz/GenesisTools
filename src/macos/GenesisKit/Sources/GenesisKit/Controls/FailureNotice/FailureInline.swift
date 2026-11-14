@@ -23,8 +23,9 @@ public final class FailureReporter {
     public var onOpen: ((_ what: String, _ report: FailureReport) -> Void)?
 
     private lazy var panel = FailureNoticePanel(identifier: "failure.notice")
-    private var facts: FailureEnvironment?
-    private var loading: Task<FailureEnvironment?, Never>?
+    private var preparations: [String: Task<FailureReport, Never>] = [:]
+    /// The keys of `preparations` oldest first, so the cap drops the oldest failure and never the one just shown.
+    private var preparationOrder: [String] = []
 
     public init() {}
 
@@ -41,60 +42,44 @@ public final class FailureReporter {
     /// an issue, and Try again when `retry` is given.
     public func showDetails(_ report: FailureReport, retry: (@MainActor () -> Void)? = nil) {
         onOpen?("details", report)
-        let environment = self.environment
+        prepare(report)
         panel.show(report, options: options(), retry: retry, issue: issueTarget(),
-                   environment: { [weak self] in
-                       if let known = await self?.cachedFacts() { return known }
-                       return await environment()
-                   })
+                   environment: { [weak self] in await self?.preparedReport(report).environment })
     }
 
-    /// Opens the issue draft for `report` with the environment facts, read once per run of the app.
+    /// Opens the issue draft for `report` with the context captured for that failure.
     public func reportBug(_ report: FailureReport) {
         onOpen?("issue", report)
         guard let target = issueTarget() else { return }
         Task { @MainActor in
-            var report = report
-            if report.environment == nil {
-                report.environment = await self.environmentFacts(within: 4)
-            }
+            let report = await self.preparedReport(report)
             IssueDraftWindow.show(IssueDraft.failure(report, repo: target.repo, labels: target.labels), poster: target.poster,
                                   near: NSApp.keyWindow)
         }
     }
 
-    /// Starts reading the environment facts, so a later Report a bug does not wait for them.
-    public func prefetchEnvironment() {
-        guard facts == nil, loading == nil else { return }
-        let environment = self.environment
-        loading = Task { @MainActor [weak self] in
-            let found = await environment()
-            self?.facts = found
-            return found
+    /// Prepares this failure before a Details or Report a bug press. The cache is per failure, not per app run.
+    public func prepare(_ report: FailureReport) {
+        let key = FailureCaptureStore.key(report)
+        guard preparations[key] == nil else { return }
+        let load = environment
+        preparations[key] = Task {
+            var ready = await FailureCapture.prepared(report)
+            if !FailureCapture.isEnabled, ready.environment == nil { ready.environment = await load() }
+            return ready
         }
+        preparationOrder.append(key)
+        if preparationOrder.count > 64 { preparations[preparationOrder.removeFirst()] = nil }
     }
 
-    private func cachedFacts() async -> FailureEnvironment? {
-        if let facts { return facts }
-        return await loading?.value
-    }
+    /// Kept for existing hosts, and does nothing: `prepare(report)` gathers the context of each failure, and a fetch
+    /// that is not tied to one failure has no place to keep its result.
+    @available(*, deprecated, message: "Use prepare(report) when the failure occurs")
+    public func prefetchEnvironment() {}
 
-    /// The facts, waiting at most `seconds` for a read already under way: an issue without them still says the app's
-    /// build and macOS.
-    private func environmentFacts(within seconds: Double) async -> FailureEnvironment? {
-        prefetchEnvironment()
-        if let facts { return facts }
-        guard let loading else { return nil }
-        return await withTaskGroup(of: FailureEnvironment?.self) { group in
-            group.addTask { await loading.value }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(seconds))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
+    private func preparedReport(_ report: FailureReport) async -> FailureReport {
+        prepare(report)
+        return await preparations[FailureCaptureStore.key(report)]?.value ?? report
     }
 }
 
@@ -136,7 +121,7 @@ public struct FailureInline: View {
         .accessibilityLabel(Text(verbatim: "Error: \(report.headline)"))
         .accessibilityIdentifier(identifier)
         .onAppear {
-            reporter.prefetchEnvironment()
+            reporter.prepare(report)
             AccessibilityNotification.Announcement(report.headline).post()
         }
     }
@@ -241,7 +226,10 @@ public extension NoticeFix {
     @MainActor
     static func details(_ report: FailureReport, retry: (@MainActor () -> Void)? = nil,
                         reporter: FailureReporter = .shared) -> NoticeFix {
-        .button("Details", symbol: "doc.text.magnifyingglass") { reporter.showDetails(report, retry: retry) }
+        var fix = NoticeFix.button("Details", symbol: "doc.text.magnifyingglass") { reporter.showDetails(report, retry: retry) }
+        fix.preparationID = "failure:" + FailureCaptureStore.presentationKey(report)
+        fix.preparation = { reporter.prepare(report) }
+        return fix
     }
 }
 
@@ -250,7 +238,8 @@ public extension StackedNotice.Action {
     @MainActor
     static func details(_ report: FailureReport, retry: (@MainActor () -> Void)? = nil,
                         reporter: FailureReporter = .shared) -> StackedNotice.Action {
-        StackedNotice.Action("Details", symbol: "doc.text.magnifyingglass", afterPress: .keep) { _ in
+        reporter.prepare(report)
+        return StackedNotice.Action("Details", symbol: "doc.text.magnifyingglass", afterPress: .keep) { _ in
             reporter.showDetails(report, retry: retry)
         }
     }

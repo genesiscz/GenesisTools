@@ -1,3 +1,4 @@
+import { REDIRECT_STATUSES } from "@genesiscz/utils/http/redirect";
 import { logger } from "@genesiscz/utils/logger";
 
 const USER_AGENT =
@@ -5,7 +6,6 @@ const USER_AGENT =
 
 const TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 5;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export interface FetchedPage {
     body: string;

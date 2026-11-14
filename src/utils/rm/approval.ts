@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { appleScriptString } from "@genesiscz/utils/macos/jxa";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type RmApproval, rmConfigPath } from "./config";
 import type { FolderStats, ItemGit } from "./item-facts";
@@ -215,7 +216,17 @@ export interface ApprovalDeps {
     /** The platform's dialog (`PERSON_DIALOGS`): true for Approve, null when no program on this system shows one. */
     dialog: (prompt: ApprovalPrompt) => boolean | null;
     app: (prompt: ApprovalPrompt) => Promise<AppApproval>;
+    /** The effective user id (none on Windows); a test's deps leave it out and are never root. */
+    euid?: () => number | undefined;
 }
+
+/**
+ * Why no person check runs as root (`sudo tools rm approve`, 2026-11-14): the window and the dialog run as root too, so
+ * the system asks for the root account's password ("System Administrator"), which the person does not have, and every
+ * file the decision writes into the person's `~/.genesis-tools` becomes root's.
+ */
+export const ROOT_PERSON_CHECK_REFUSAL =
+    "the person check does not run as root (sudo): its window would ask for the root account's password, not yours. Run the command without sudo; a file only root may move asks for an administrator's password after you approve it";
 
 const MAX_DIALOG_LINES = 15;
 
@@ -394,10 +405,6 @@ export function dialogEnvironment(searchPath: string): Record<string, string> {
     }
 
     return environment;
-}
-
-function appleScriptString(text: string): string {
-    return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
 const MAC_DIALOG: PersonDialog = {
@@ -795,6 +802,7 @@ export const DEFAULT_APPROVAL_DEPS: ApprovalDeps = {
     typed: askTyped,
     dialog: (prompt) => showPersonDialog(prompt),
     app: askApp,
+    euid: () => process.geteuid?.(),
 };
 
 /**
@@ -811,6 +819,10 @@ export async function confirmByPerson(
     deps: ApprovalDeps = DEFAULT_APPROVAL_DEPS
 ): Promise<ApprovalOutcome> {
     const approval = prompt.approval ?? "auto";
+
+    if (deps.euid?.() === 0) {
+        return { approved: false, via: "none", detail: ROOT_PERSON_CHECK_REFUSAL };
+    }
 
     if (approval !== "code" && deps.platform === "darwin") {
         let answer = await deps.app(prompt);

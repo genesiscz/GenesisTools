@@ -20,6 +20,7 @@
 import AppKit
 import Darwin
 import Foundation
+import GenesisKitBase
 import LocalAuthentication
 import Security
 
@@ -357,6 +358,19 @@ enum VaultSession {
     }
 }
 
+/// The file a path names: its volume and its file number. Two paths with one identity are one file (hard links).
+struct VaultFileIdentity: Equatable {
+    let volume: UInt64
+    let file: UInt64
+
+    /// Nil for a path that names no regular file (gone, a folder, not readable).
+    static func of(_ path: String) -> VaultFileIdentity? {
+        var info = stat()
+        guard stat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        return VaultFileIdentity(volume: UInt64(UInt32(bitPattern: info.st_dev)), file: UInt64(info.st_ino))
+    }
+}
+
 /// One remembered approval: this executable, this script. `tool` is for display and `revoke <tool>` only.
 struct VaultGrant: Codable, Equatable {
     var key: String
@@ -391,7 +405,7 @@ enum VaultGrants {
     }
 
     static var directory: String {
-        (genesisHome() as NSString).appendingPathComponent(".genesis-tools/ai/gate")
+        GenesisToolsHome.path("ai/gate")
     }
 
     static var path: String {
@@ -410,21 +424,29 @@ enum VaultGrants {
     /// The runtime a grant is keyed by. Bun and GenesisTools' `gt-<tool>` launchers are one program: every launcher is
     /// a hard link of `~/.bun/bin/bun`, and which one starts a script depends on the tool that spawned it. The usage
     /// daemon ran as bun, gt-services, gt-claude and gt-codex on one morning (2026-10-15), and each asked again for the
-    /// same script after "Always". Only these paths count, so a binary elsewhere that calls itself bun still asks.
-    static func runtime(of executable: String, home: String = genesisHome()) -> String {
+    /// same script after "Always". A binary elsewhere that calls itself bun still asks.
+    ///
+    /// A path that is the same file as one of the bun paths (one volume, one file number) is bun too. The kernel names
+    /// a running hard link by the path that was looked up last, so the usage daemon of the real home was named as the
+    /// `gt-hub` of a test home that had just started, and asked again after "Always" (2026-11-10: 30 remembered
+    /// approvals of one script, each for a launcher in another scratch home). A copy of bun is another file and asks.
+    static func runtime(of executable: String, home: String = GenesisToolsHome.home(),
+                        fileIdentity: (String) -> VaultFileIdentity? = VaultFileIdentity.of) -> String {
         let bun = ["\(home)/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun"]
         let launchers = "\(home)/.genesis-tools/bin/"
         let isLauncher = executable.hasPrefix(launchers) && (executable as NSString).lastPathComponent.hasPrefix("gt-")
             && !executable.dropFirst(launchers.count).contains("/")
-        return bun.contains(executable) || isLauncher ? "bun" : executable
+        if bun.contains(executable) || isLauncher { return "bun" }
+        guard let own = fileIdentity(executable) else { return executable }
+        return bun.contains { fileIdentity($0) == own } ? "bun" : executable
     }
 
-    static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = genesisHome()) -> Bool {
+    static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = GenesisToolsHome.home()) -> Bool {
         grant.script == script && runtime(of: grant.executable, home: home) == runtime(of: executable, home: home)
     }
 
     static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile,
-                     home: String = genesisHome()) -> VaultGrant? {
+                     home: String = GenesisToolsHome.home()) -> VaultGrant? {
         file.grants.last {
             sameProgram($0, executable: executable, script: script, home: home) && !$0.isTooBroad && $0.isLive(at: now)
         }
@@ -432,7 +454,7 @@ enum VaultGrants {
 
     /// Replaces any grant for the same program and drops expired and too-broad ones.
     static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile,
-                         home: String = genesisHome()) -> VaultGrantsFile {
+                         home: String = GenesisToolsHome.home()) -> VaultGrantsFile {
         var next = file
         next.grants = file.grants.filter {
             !sameProgram($0, executable: grant.executable, script: grant.script, home: home) && !$0.isTooBroad
@@ -777,6 +799,27 @@ private func vaultDeny(_ reason: String) -> Never {
 
 @MainActor private let vaultPresenter = ApprovalPanelPresenter()
 
+/// Why an auto-allow rule lets the caller through without a window: a listed command first, else a trusted daemon. The
+/// caller audits, logs, notifies and answers the same way for both.
+private struct VaultAutoAllowDecision {
+    let auditDetail: String
+    let logText: String
+    let notify: () -> Void
+
+    static func of(caller: VaultCaller, settings: VaultAutoAllowSettings) -> VaultAutoAllowDecision? {
+        let trustedRoot = VaultAutoAllow.trustedRoot()
+        if let match = VaultAutoAllow.match(caller: caller, settings: settings, trustedRoot: trustedRoot) {
+            return VaultAutoAllowDecision(auditDetail: match.auditDetail, logText: "command=\(match.command) agent=\(match.agent)",
+                                          notify: { VaultAutoAllow.notify(match) })
+        }
+        if let daemon = VaultAutoAllow.daemon(caller: caller, settings: settings, trustedRoot: trustedRoot) {
+            return VaultAutoAllowDecision(auditDetail: "daemon: \(daemon)", logText: "daemon=\(daemon)",
+                                          notify: { VaultAutoAllow.notifyDaemon(daemon, everyHours: settings.daemonNotifyHours) })
+        }
+        return nil
+    }
+}
+
 func unlockVault(_ params: VaultUnlockParams) {
     let caller = VaultProcess.caller(getppid())
     let session = VaultSession.info(caller, claudeHome: (NSHomeDirectory() as NSString).appendingPathComponent(".claude"))
@@ -787,10 +830,10 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     // Before the remembered grants, so a listed command always leaves its audit line and notification.
     let autoAllow = VaultAutoAllowSettings.load()
-    if let match = VaultAutoAllow.match(caller: caller, settings: autoAllow, trustedRoot: VaultAutoAllow.trustedRoot()) {
-        vaultAudit("auto-allowed", params: params, caller: caller, session: session, detail: match.auditDetail)
-        logClick("vault.unlock decision=allow auto-allow command=\(match.command) agent=\(match.agent)")
-        if autoAllow.notify { VaultAutoAllow.notify(match) }
+    if let allow = VaultAutoAllowDecision.of(caller: caller, settings: autoAllow) {
+        vaultAudit("auto-allowed", params: params, caller: caller, session: session, detail: allow.auditDetail)
+        logClick("vault.unlock decision=allow auto-allow \(allow.logText)")
+        if autoAllow.notify { allow.notify() }
         emitVaultKey(remembered: false, params: params, caller: caller, session: session)
     }
 

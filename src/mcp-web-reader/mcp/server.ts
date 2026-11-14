@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import {
     type CallToolResult,
     type ListToolsResult,
@@ -156,6 +157,8 @@ export function createWebReaderServer(): Server {
 }
 
 export async function startMcpServer(): Promise<void> {
-    await createWebReaderServer().connect(new StdioServerTransport());
+    await createWebReaderServer().connect(
+        recordMcpTransport({ transport: new StdioServerTransport(), server: "mcp-web-reader" })
+    );
     logger.debug({ version: SERVER_VERSION, tools: TOOLS.map((tool) => tool.name) }, "mcp-web-reader server running");
 }

@@ -19,12 +19,12 @@ struct StuckCheckEnvelope: Decodable {
 
 enum HubStuck {
     static func decode(_ data: Data) throws -> StuckCheckEnvelope {
-        try JSONDecoder().decode(StuckCheckEnvelope.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(StuckCheckEnvelope.self, from: data)
     }
 
     /// Blocking: call off the main thread.
     static func check(_ sessionIds: [String]) throws -> StuckCheckEnvelope {
-        try decode(ToolsCLIRunner.run(arguments(sessionIds)))
+        try decode(HubSource.bridge.json(arguments(sessionIds)))
     }
 
     static func arguments(_ sessionIds: [String]) -> [String] {
@@ -36,7 +36,7 @@ enum HubStuck {
         var args = ["hub", "stuck", "config", "--json"]
         if let toolMinutes { args += ["--tool-minutes", String(toolMinutes)] }
         if let repeats { args += ["--repeats", String(repeats)] }
-        _ = try ToolsCLIRunner.run(args)
+        _ = try HubSource.bridge.output(args)
     }
 
     /// The sessions worth watching: live now, or held by a cmux pane (a long tool call stops the file
@@ -56,6 +56,14 @@ final class HubStuckStore: ObservableObject {
     static let interval: Duration = .seconds(120)
     /// The ids the running `watch` polls, for a poll right after a threshold change.
     private var watchedIds: [String] = []
+    /// The check, so a test can hold one open. Blocking: it runs off the main thread.
+    var check: @Sendable ([String]) throws -> StuckCheckEnvelope = { try HubStuck.check($0) }
+    /// A check runs now. The list's `.task` starts a new `watch` on every change of the watched set, and the check
+    /// of the old one is detached, so nothing stopped it: each change added a `tools hub stuck check` (up to 61 s at
+    /// the server, then 60 s as a process) beside the ones still running.
+    private var polling = false
+    /// The ids asked for while a check ran: one more check follows it, for the newest ask only.
+    private var queued: [String]?
 
     /// Polls until cancelled (the session list's `.task` ends it when the watched set changes).
     func watch(_ sessionIds: [String]) async {
@@ -75,8 +83,26 @@ final class HubStuckStore: ObservableObject {
             return
         }
 
+        if polling {
+            queued = sessionIds
+            return
+        }
+
+        polling = true
+        defer { polling = false }
+        var ids = sessionIds
+        while true {
+            await poll(ids)
+            guard let next = queued else { return }
+            queued = nil
+            ids = next
+        }
+    }
+
+    private func poll(_ sessionIds: [String]) async {
         let span = HubPerf.begin("stuck.poll", "\(sessionIds.count) sessions", awaits: true)
-        let result = await Task.detached(priority: .utility) { Result { try HubStuck.check(sessionIds) } }.value
+        let check = check
+        let result = await Task.detached(priority: .utility) { Result { try check(sessionIds) } }.value
         switch result {
         case .success(let envelope):
             var next: [String: StuckVerdict] = [:]

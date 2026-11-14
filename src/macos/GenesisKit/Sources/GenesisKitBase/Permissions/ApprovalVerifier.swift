@@ -60,10 +60,22 @@ public final class ApprovalVerifier: ObservableObject {
     private var startedWhileNotKey = false
     private var answered = false
 
-    /// `reason` is what the system's password dialog says the app wants ("approve: Delete 2 items for shop?").
+    /// `reason` is what the system's password dialog says the app wants ("approve: Delete 2 items for shop"), see
+    /// `systemReason`.
     public init(reason: String, evaluator: ApprovalBiometricEvaluator = SystemBiometricEvaluator()) {
-        self.reason = reason
+        self.reason = Self.systemReason(reason)
         self.evaluator = evaluator
+    }
+
+    /// The system's dialog ends the reason with its own full stop ("GenesisTools is trying to <reason>."), so a window
+    /// title passed as the reason loses its closing "?" or "." here: "approve: Delete 1 item from 1 request?." was the
+    /// dialog's text on 2026-11-14.
+    public nonisolated static func systemReason(_ text: String) -> String {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = trimmed.last, "?.!".contains(last) {
+            trimmed.removeLast()
+        }
+        return trimmed.trimmingCharacters(in: .whitespaces)
     }
 
     /// Whether this Mac can use Touch ID now, read without starting anything. The window picks its footer from it

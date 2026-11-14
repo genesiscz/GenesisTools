@@ -354,6 +354,20 @@ describe("image size", () => {
     });
 });
 
+describe("app deep links", () => {
+    test("an app scheme link (myapp://path) keeps its href; script and data schemes are still blocked", () => {
+        const { html } = renderMarkdown(
+            "[myapp://support/landing](myapp://support/landing) [x](JavaScript://%0aalert(1)) [y](data://text/html,hi) [z](vbscript://a)",
+            noop
+        );
+
+        expect(html).toContain('<a href="myapp://support/landing">myapp://support/landing</a>');
+        expect(html).not.toContain('href="JavaScript:');
+        expect(html).not.toContain('href="data:');
+        expect(html).not.toContain('href="vbscript:');
+    });
+});
+
 describe("Obsidian syntax", () => {
     test("==highlight== becomes <mark> and keeps inline markdown inside", () => {
         const { html } = renderMarkdown("a ==**big** word== and a == b", noop);

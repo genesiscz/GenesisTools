@@ -454,9 +454,10 @@ describe("doctor env", () => {
     it("keeps the command arguments out of the day log, because they can carry a token", () => {
         const token = `sk-${crypto.randomUUID()}`;
         const result = runDoctorEnv({ commands: `echo Authorization:Bearer-${token}`, flags: [] });
-        const logs = readdirSync(genesisToolsDir("logs")).map((name) =>
-            readFileSync(join(genesisToolsDir("logs"), name), "utf8")
-        );
+        // The logs folder also holds the failure-contexts folder: read the files only.
+        const logs = readdirSync(genesisToolsDir("logs"), { withFileTypes: true })
+            .filter((entry) => entry.isFile())
+            .map((entry) => readFileSync(join(genesisToolsDir("logs"), entry.name), "utf8"));
 
         expect(result.code).toBe(0);
         expect(result.stdout).toContain(token);

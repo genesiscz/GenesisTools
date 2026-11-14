@@ -76,7 +76,7 @@ enum RecorderNotice {
     /// The report of a start that stopped at once: the error its output names, what was being recorded, the recording
     /// folder it named, and where this run's output sits in the log. The day log is named by the date in `timeZone`.
     nonisolated static func startReport(_ failure: ToolsRunner.EarlyFailure, time: Date, app: FailureAppFacts?,
-                                        home: String = genesisHome(), timeZone: TimeZone = .current) -> FailureReport {
+                                        home: String = GenesisToolsHome.home(), timeZone: TimeZone = .current) -> FailureReport {
         let printed = !failure.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let events = FailureLog.events(in: failure.output)
         let folder = events.flatMap(\.fields).last { $0.name == "folder" }.map { FailureReport.unquoted($0.value) }
@@ -171,16 +171,15 @@ final class RecorderNoticePanel {
 
     var isVisible: Bool { panel.isVisible }
 
-    /// Where "Draft an issue" posts. `recorder.debug.issueDryRun` (a test switch, off) makes the post a dry run.
-    static let issueRepo = "genesiscz/GenesisTools"
-
+    /// Where "Draft an issue" posts: the kit's one issue target (`FailureReporter`). `recorder.debug.issueDryRun` (a
+    /// test switch, off) makes the post a dry run.
     func show(_ report: FailureReport, retry: (@MainActor () -> Void)?, defaults: UserDefaults = .standard) {
-        let poster = ToolsIssuePoster(dryRun: defaults.bool(forKey: "recorder.debug.issueDryRun"))
         var report = report
         report.area = report.area ?? "recorder"
-        panel.show(report, options: RecorderFailureStyle.noticeOptions(defaults), retry: retry,
-                   issue: FailureNoticeIssueTarget(repo: Self.issueRepo, poster: poster),
-                   environment: { await FailureEnvironment.load() })
+        let captured = report
+        panel.show(captured, options: RecorderFailureStyle.noticeOptions(defaults), retry: retry,
+                   issue: FailureReporter.defaultIssueTarget(defaults: defaults, dryRunKey: "recorder.debug.issueDryRun"),
+                   environment: { await FailureCapture.prepared(captured).environment })
     }
 
     func close() { panel.close() }

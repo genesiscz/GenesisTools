@@ -3,6 +3,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { serveStdio } from "@genesiscz/utils/mcp/stdio";
 import {
     type CallToolResult,
     type ListToolsResult,
@@ -861,9 +862,7 @@ class JenkinsServer {
 
 class JenkinsServerWithRun extends JenkinsServer {
     async run(): Promise<void> {
-        const transport = new StdioServerTransport();
-        await this.getMcpServer().connect(transport);
-        logger.info("Jenkins MCP server running on stdio");
+        await serveStdio({ name: "jenkins", server: this.getMcpServer(), transport: new StdioServerTransport() });
     }
 }
 

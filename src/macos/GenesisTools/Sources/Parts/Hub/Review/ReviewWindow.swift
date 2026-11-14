@@ -108,6 +108,47 @@ struct ReviewLaunch {
     }
 }
 
+extension ReviewLaunch {
+    /// What a `--review` window shows in its folder: the working tree, one commit, or a commit range.
+    enum Target: Equatable {
+        case folder
+        case commit(sha: String, label: String?)
+        case range(base: String, head: String, label: String?)
+    }
+
+    /// The target `init(_:)` read, by the rule `ReviewWindows.open` applies: a range wins over a commit.
+    var target: Target {
+        if let range {
+            return .range(base: range.base, head: range.head, label: rangeLabel)
+        }
+        if let commit, !commit.isEmpty {
+            return .commit(sha: commit, label: rangeLabel)
+        }
+        return .folder
+    }
+
+    /// The flags `init(_:)` reads back as the same folder, target, PR and proposal. A PR without a local
+    /// worktree appends `ReviewRemoteHead.launchArguments`.
+    static func launchArguments(repo: String, target: Target, pr: String? = nil, proposal: String? = nil) -> [String] {
+        var args = ["--review", "--repo", repo]
+        if let pr {
+            args += ["--pr", pr]
+        }
+        if let proposal {
+            args += ["--proposal", proposal]
+        }
+        switch target {
+        case .folder:
+            break
+        case .commit(let sha, let label):
+            args += ["--commit", sha] + (label.map { ["--label", $0] } ?? [])
+        case .range(let base, let head, let label):
+            args += ["--range", "\(base)..\(head)"] + (label.map { ["--label", $0] } ?? [])
+        }
+        return args
+    }
+}
+
 package func runReview(_ args: [String]) -> Never {
     let launch = ReviewLaunch(args)
     if launch.snapshotPath == nil, !reviewInstance.claim() {
@@ -1135,7 +1176,7 @@ final class ReviewModel: ObservableObject {
         }
         let path = repo.path
         if let facts = MainActor.assumeIsolated({ RepoFactsStore.shared.facts(for: path, pr: true) }), let pull = facts.pr {
-            return facts.origin?.kind == "gitlab" ? "!\(pull.number)" : "#\(pull.number)"
+            return (Forge(kind: facts.origin?.kind) ?? .github).label(pull.number)
         }
         return "the PR"
     }
@@ -1570,7 +1611,7 @@ final class ReviewModel: ObservableObject {
             let answer: StoredProposalLookup
             do {
                 // Only this PR's keyed file: the whole archive grows with every PR ever reviewed.
-                let capture = try ToolsCLIRunner.capture(StoredProposal.listArguments(for: identity), timeout: 20)
+                let capture = try HubSource.bridge.capture(StoredProposal.listArguments(for: identity), timeout: 20)
                 guard capture.status == 0 else {
                     throw ReviewError.git("tools hub proposal list exited \(capture.status)")
                 }
@@ -2431,7 +2472,7 @@ final class ReviewModel: ObservableObject {
             if !cached.missing.isEmpty {
                 let span = HubPerf.begin("review.blame", "\(cached.missing.count) files in \(root.lastPathComponent), \(paths.count - cached.missing.count) cached")
                 let args = AgentBlame.arguments(repo: root.path, paths: cached.missing)
-                switch Result(catching: { try JSONDecoder().decode(AgentBlameResult.self, from: ToolsCLIRunner.run(args)) }) {
+                switch Result(catching: { try JSONDecoder().decode(AgentBlameResult.self, from: HubSource.bridge.output(args)) }) {
                 case .success(let found):
                     span.end("\(found.files.count) with agent lines, \(found.sources.count) turns, \(found.elapsedMs ?? 0) ms in tools")
                     ReviewCache.writeBlame(found, repo: root.path, asked: cached.missing, hashes: cached.hashes)
@@ -2558,7 +2599,7 @@ final class ReviewModel: ObservableObject {
         }
         switch input.confirmation {
         case .post?:
-            if !PRConfirm.post(input.body?.trimmed ?? "", label: store.label, isGitLab: store.pr?.identity.isGitLab == true,
+            if !PRConfirm.post(input.body?.trimmed ?? "", label: store.label, forge: store.pr?.identity.forgeKind ?? .github,
                                where_: "A reply in the existing thread.") {
                 return finished(false)
             }
@@ -2769,10 +2810,10 @@ final class ReviewModel: ObservableObject {
     }
 
     private func confirmPost(_ item: Suggestion) -> Bool {
-        let gitLab = prIdentity?.isGitLab ?? false
+        let forge = prIdentity?.forgeKind ?? .github
         let alert = NSAlert()
         alert.messageText = "Post on \(prLabel) now?"
-        alert.informativeText = "Everyone on the \(gitLab ? "merge request" : "pull request") sees it at once. \(item.thread == nil ? "A new thread on \(item.path):\(item.line)." : "A reply in the existing thread.")\n\n\(item.text.prefix(400))"
+        alert.informativeText = "Everyone on the \(forge.longNoun) sees it at once. \(item.thread == nil ? "A new thread on \(item.path):\(item.line)." : "A reply in the existing thread.")\n\n\(item.text.prefix(400))"
         alert.addButton(withTitle: "Post")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
