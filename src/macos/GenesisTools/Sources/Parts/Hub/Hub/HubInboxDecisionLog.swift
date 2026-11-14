@@ -12,7 +12,7 @@ final class HubInboxDecisionLog: DecisionLog {
     func run(_ action: DecisionLogAction) async -> DecisionLogAnswer {
         let capture = capture
         guard let commands = Self.arguments(action) else {
-            return .refused("the hub Inbox cannot change this item that way.", detail: nil)
+            return .refused("the hub Inbox cannot change this item that way, or it has no decision number to address.", detail: nil)
         }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -38,18 +38,21 @@ final class HubInboxDecisionLog: DecisionLog {
     }
 
     /// The `tools` commands of one action: a stage is one `question inbox draft`, an unstage one per decision with the
-    /// pick and the note cleared, a dismiss one `question inbox dismiss`. Nil for a move the Inbox has no command for
-    /// (a task's Mark complete is the widget's).
+    /// pick and the note cleared, a dismiss one `question inbox dismiss`. Nil, which the caller refuses, for a move the
+    /// Inbox has no command for (a task's Mark complete is the widget's) and for a decision with no number to address.
     nonisolated static func arguments(_ action: DecisionLogAction) -> [[String]]? {
         switch action {
         case .move(let address, let state):
             return state == "dismissed" ? arguments(.dismiss(address)) : nil
         case .stage(let address, let option, let note):
-            return draft(address, option: option, note: note).map { [$0] } ?? []
+            return draft(address, option: option, note: note).map { [$0] }
         case .unstage(let addresses):
-            return addresses.compactMap { draft($0, option: "", note: "") }
+            // Every address is checked before the first command runs: a batch with one unaddressable decision is
+            // refused whole, never reported as cleared after running only some of it.
+            let commands = addresses.map { draft($0, option: "", note: "") }
+            return commands.contains { $0 == nil } ? nil : commands.compactMap { $0 }
         case .dismiss(let address):
-            guard let number = address.number else { return [] }
+            guard let number = address.number else { return nil }
             var args = ["question", "inbox", "dismiss", "--session", address.sessionId, "--decision", String(number)]
             if let revision = address.revision { args += ["--expected-revision", String(revision)] }
             return [args]
