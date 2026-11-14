@@ -211,6 +211,27 @@ function refusal(
     return { delivered: false, reason, detail, ...extra };
 }
 
+/** Why a tty with these sessions must not take input meant for `agent`, or undefined when it runs only that one. */
+function ttySharedReason(agent: string, running: readonly string[]): string | undefined {
+    const own = running.filter((name) => name === agent).length;
+
+    if (own === 1 && running.length === 1) {
+        return undefined;
+    }
+
+    if (own > 1) {
+        return `it runs ${own} ${agent} sessions, so the input could reach another one`;
+    }
+
+    const others = [...new Set(running.filter((name) => name !== agent))];
+
+    if (own === 1) {
+        return `it also runs ${others.join(", ")}, so the input could reach that agent`;
+    }
+
+    return `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${agent}`;
+}
+
 /** Paste text and press keys into a running session's tab, after every guard; see the module comment. */
 export async function sendToSession(input: SessionInput, deps: SessionInputDeps = {}): Promise<SessionInputOutcome> {
     if (input.text === undefined && !input.keys?.length) {
@@ -261,21 +282,10 @@ export async function sendToSession(input: SessionInput, deps: SessionInputDeps 
     const ref = target.surface.ref;
     const tty = target.tmux?.paneTty ?? target.surface.tty;
     const running: string[] = tty ? [...(deps.agentsOnTty ?? agentsOnTtyNow)(tty)] : [];
-    const own = running.filter((agent) => agent === target.agent).length;
+    const shared = ttySharedReason(target.agent, running);
 
-    if (own !== 1 || running.length > 1) {
-        const others = [...new Set(running.filter((agent) => agent !== target.agent))];
-        return refusal(
-            input,
-            "tty-shared",
-            `nothing was sent to ${ref}: ${
-                own > 1
-                    ? `it runs ${own} ${target.agent} sessions, so the input could reach another one`
-                    : own === 1
-                      ? `it also runs ${others.join(", ")}, so the input could reach that agent`
-                      : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${target.agent}`
-            }`
-        );
+    if (shared) {
+        return refusal(input, "tty-shared", `nothing was sent to ${ref}: ${shared}`);
     }
 
     const stillShown = deps.stillShown ?? tmuxPaneStillShownNow;
