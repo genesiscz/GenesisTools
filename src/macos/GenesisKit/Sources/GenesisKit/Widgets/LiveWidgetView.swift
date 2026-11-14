@@ -1657,7 +1657,7 @@ final class WidgetLedgerUndo: ObservableObject {
         let revision: Int
     }
 
-    /// The change itself waits in the model's staging engine (`WidgetModel.decisions`, under the card's id); this keeps
+    /// The change itself waits in the model's staging engine (`WidgetModel.decisions`, under the decision's source id); this keeps
     /// what ends the wait and what the card shows meanwhile.
     private struct Hold {
         let move: Move
@@ -1701,11 +1701,16 @@ final class WidgetLedgerUndo: ObservableObject {
         // The session is read now: the user may pick another one before the note goes.
         guard let session = model.selected?.target.sessionId, let revision = card.revision else { return }
         let id = card.id
+        // A second Dismiss of the same card (a newer revision arrived under the note): the first change goes to the
+        // log now, so the view and the engine hold the same operation.
+        if holds[id] != nil { commit(id) }
         let move = Move(state: state, revision: revision)
         let note = Self.note(card, state: state)
         let address = DecisionAddress(id: card.sourceId, sessionId: session, revision: revision)
         var hold = Hold(move: move, sourceId: card.sourceId, note: note, model: model)
-        model.decisions.hold(id, .move(address, state: state), ended: { [weak self] answer in
+        // The engine's queue is the decision's, the one its stages use (`sourceId`), so a stage waiting for the same
+        // decision runs before the move.
+        model.decisions.hold(card.sourceId, .move(address, state: state), ended: { [weak self] answer in
             self?.ended(id, move: move, sourceId: card.sourceId, model: model, answer)
         })
         moves[id] = move
@@ -1743,8 +1748,8 @@ final class WidgetLedgerUndo: ObservableObject {
         let model = hold.model
         // Its Undo could not take the change back any more.
         if model.notice == hold.note { model.notice = nil }
-        if let action = model.decisions.heldActions()[id] { sending[id] = (action, model.bridge) }
-        model.decisions.commit(id)
+        if let action = model.decisions.heldActions()[hold.sourceId] { sending[id] = (action, model.bridge) }
+        model.decisions.commit(hold.sourceId)
     }
 
     /// The log answered a committed change.
@@ -1777,7 +1782,7 @@ final class WidgetLedgerUndo: ObservableObject {
         hold.deadline?.cancel()
         moves[id] = nil
         let model = hold.model
-        model.decisions.undo(id)
+        model.decisions.undo(hold.sourceId)
         model.heldCardIDs.remove(id)
         model.heldDecisionIDs.remove(hold.sourceId)
         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
@@ -1790,7 +1795,7 @@ final class WidgetLedgerUndo: ObservableObject {
     /// so it needs no widget state root.
     private func sendBeforeQuit() {
         let held = holds.compactMap { id, hold in
-            hold.model.decisions.heldActions()[id].map { (action: $0, bridge: hold.model.bridge) }
+            hold.model.decisions.heldActions()[hold.sourceId].map { (action: $0, bridge: hold.model.bridge) }
         }
         for hold in holds.values {
             hold.watch?.cancel()

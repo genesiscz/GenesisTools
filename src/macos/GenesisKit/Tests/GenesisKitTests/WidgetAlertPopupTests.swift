@@ -63,10 +63,39 @@ final class ManualClock: Clock, @unchecked Sendable {
         await settle()
     }
 
-    /// Lets the tasks the main actor has queued run, so a timer the popup just started is waiting before time moves.
+    /// How many timers wait now.
+    var sleeperCount: Int { lock.withLock { sleepers.count } }
+
+    /// Waits until at least `count` timers are registered, so time never moves before a timer a task is about to start
+    /// exists (a task that starts after the clock moved would sleep from the new time). Bounded: a timer that never
+    /// registers fails the test instead of hanging it.
+    @MainActor
+    func waitForSleepers(_ count: Int = 1, timeout: Duration = .seconds(2),
+                         file: StaticString = #filePath, line: UInt = #line) async {
+        let deadline = ContinuousClock.now + timeout
+        while sleeperCount < count {
+            if ContinuousClock.now >= deadline {
+                XCTFail("Expected \(count) timer(s) to register; \(sleeperCount) did.", file: file, line: line)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+    }
+
+    /// Lets the tasks the main actor has queued run: waits, with real short sleeps that free the main actor, until the
+    /// number of waiting timers stays the same for three looks. A `Task.yield` count proved nothing (Swift may resume
+    /// the yielding task at once), and a timer a task has not registered yet is the case this guards. Bounded.
     @MainActor
     private func settle() async {
-        for _ in 0 ..< 20 { await Task.yield() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        var last = -1
+        var stable = 0
+        while stable < 3, ContinuousClock.now < deadline {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(2))
+            let count = sleeperCount
+            if count == last { stable += 1 } else { stable = 0; last = count }
+        }
     }
 }
 

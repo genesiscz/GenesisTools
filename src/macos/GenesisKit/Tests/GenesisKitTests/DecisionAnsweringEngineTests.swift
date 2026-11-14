@@ -21,6 +21,8 @@ private final class FakeDecisionLog: DecisionLog {
     /// Set: the next write waits here until `release()`.
     var holdNext = false
     private var waiting: CheckedContinuation<Void, Never>?
+    /// A write is parked in `run`, waiting for `release()`: it started, and it has not finished.
+    var isParked: Bool { waiting != nil }
     /// Milliseconds since 1970 of the next row change; the engine of a test runs at 1,000 s.
     var clockMs: Double = 0
 
@@ -77,9 +79,20 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         DecisionAnswering.Engine(log: log, clock: clock, now: { [unowned self] in self.seconds })
     }
 
-    /// Lets the engine's write tasks run on the main actor.
-    private func settle() async {
-        for _ in 0 ..< 20 { await Task.yield() }
+    /// Waits, bounded, until the engine's writes are done or one is parked in the fake log (started, not finished), so
+    /// an assertion never runs before the write it checks. A short real sleep first frees the main actor for the write
+    /// tasks and the timers that start them; `Task.yield` alone proves nothing, since Swift may resume the yielder.
+    private func settle(_ engine: DecisionAnswering.Engine, _ log: FakeDecisionLog,
+                        file: StaticString = #filePath, line: UInt = #line) async {
+        try? await Task.sleep(for: .milliseconds(5))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !(engine.writing.isEmpty || log.isParked) {
+            if ContinuousClock.now >= deadline {
+                XCTFail("The engine's writes neither finished nor parked in the log.", file: file, line: line)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
     }
 
     func testAPickThenANoteBothLandAndASnapshotConfirmsThem() async {
@@ -90,11 +103,11 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         engine.stage(ref, option: "a", note: nil)
         XCTAssertEqual(engine.letters(ref.id, stored: nil), "a", "the pick shows at once")
         XCTAssertTrue(engine.writing.contains(ref.id))
-        await settle()
+        await settle(engine, log)
         engine.stage(ref, option: nil, note: "because")
         XCTAssertEqual(engine.letters(ref.id, stored: nil), "a", "a note keeps the pick staged before it")
         XCTAssertEqual(engine.note(ref.id, stored: nil), "because")
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.stage(ref, option: "a", note: nil), .stage(ref, option: nil, note: "because")])
         XCTAssertEqual(drained, 2)
         XCTAssertTrue(engine.writing.isEmpty)
@@ -110,14 +123,14 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let engine = engine(log)
         var sent = false
         engine.stage(ref, option: "b", note: nil, then: { sent = true })
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(engine.errors[ref.id], .init(text: "DECISION 4 changed", detail: "revision 2"))
         XCTAssertNil(engine.pending[ref.id], "a refused pick does not stay on screen")
         XCTAssertEqual(engine.letters(ref.id, stored: "a"), "a", "the stored pick shows again")
         XCTAssertFalse(sent, "a send at once must not send what was stored before")
         engine.stage(ref, option: "c", note: nil)
         XCTAssertNil(engine.errors[ref.id], "the next write clears the error")
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.rows[ref.id]?.option, "c")
     }
 
@@ -126,7 +139,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         log.answers = [.unanswered(seconds: 30)]
         let engine = engine(log)
         engine.stage(ref, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(engine.pending[ref.id]?.unsaved, true)
         seconds += DecisionAnswering.Engine.unansweredLifetime + 1
         engine.reconcile([:])
@@ -139,13 +152,13 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let engine = engine(log)
         var sent = 0
         engine.stage(ref, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         engine.stage(ref, option: "ac", note: nil)
         engine.stage(ref, option: nil, note: "both", then: { sent += 1 })
         XCTAssertEqual(engine.letters(ref.id, stored: nil), "ac", "the newest pick shows while the first write runs")
         XCTAssertEqual(log.actions.count, 1, "one write at a time for a decision")
         log.release()
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.stage(ref, option: "a", note: nil), .stage(ref, option: "ac", note: "both")],
                        "the queued note replaced the queued pick and kept its letters")
         XCTAssertEqual(sent, 1, "the send waited for every write of its decision")
@@ -164,27 +177,29 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let engine = engine(log)
         var sent: [String] = []
         let first = engine.stage(ref, option: "a", note: nil, then: { sent.append("a") })
-        await settle()
+        await settle(engine, log)
         let second = engine.stage(ref, option: "b", note: nil, then: { sent.append("b") })
         XCTAssertNotEqual(first, second)
         engine.reconcile([ref.id: .init(option: "b", note: nil)])
-        XCTAssertNil(engine.pending[ref.id], "the snapshot confirmed the newer pick while its write waits")
-        XCTAssertEqual(engine.version(ref.id), second, "the version outlives the confirmation while a write runs")
+        XCTAssertNotNil(engine.pending[ref.id], "a snapshot cannot confirm a newer pick whose write still waits")
+        XCTAssertEqual(engine.version(ref.id), second, "the version stays while a write runs")
         log.release()
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(sent, ["b"], "the refused write dropped its own send, not the one queued behind it")
+        engine.reconcile([ref.id: .init(option: "b", note: nil)])
+        XCTAssertNil(engine.pending[ref.id], "once the write landed, the snapshot that shows it confirms it")
         XCTAssertNil(engine.version(ref.id), "no write and no pending pick: nothing to tell apart any more")
 
         let other = DecisionAddress(id: "d_5_s1", sessionId: "s1", number: 5)
         log.answers = [.refused("no such decision", detail: nil)]
         engine.unstage([other])
         XCTAssertEqual(engine.letters(other.id, stored: "c"), "")
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(engine.letters(other.id, stored: "c"), "c", "a refused clear shows the stored pick again")
 
         log.holdNext = true
         engine.stage(ref, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         engine.hold("card", .move(ref, state: "dismissed"))
         engine.commit("card")
         engine.stage(ref, option: "c", note: nil)
@@ -193,7 +208,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         engine.stage(ref, option: "d", note: nil)
         engine.stage(ref, option: "e", note: nil)
         log.release()
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions.suffix(5), [.stage(ref, option: "a", note: nil), .move(ref, state: "dismissed"),
                                                 .stage(ref, option: "c", note: nil), .move(ref, state: "implemented"),
                                                 .stage(ref, option: "e", note: nil)],
@@ -219,11 +234,11 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         log.holdNext = true
         let engine = engine(log)
         engine.stage(ref, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         engine.stage(ref, option: nil, note: "why")
         engine.stage(ref, option: "c", note: nil)
         log.release()
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.stage(ref, option: "a", note: nil), .stage(ref, option: "c", note: "why")],
                        "the pick replaced the queued note write and carried the note")
     }
@@ -234,14 +249,14 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let other = DecisionAddress(id: "d_5_s1", sessionId: "s1", number: 5)
         log.holdNext = true
         engine.stage(other, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         engine.stage(other, option: "b", note: nil)
         engine.unstage([ref, other])
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.stage(other, option: "a", note: nil)],
                        "the clear is not written while another decision's stage runs")
         log.release()
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.stage(other, option: "a", note: nil), .stage(other, option: "b", note: nil),
                                       .unstage([ref, other])], "the clear runs last, once, so no stage brings a pick back")
         XCTAssertFalse(engine.isWriting(ref.id))
@@ -254,6 +269,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let engine = engine(log, clock: clock)
         engine.hold(ref.id, .dismiss(ref), seconds: 5)
         XCTAssertTrue(engine.held.contains(ref.id))
+        await clock.waitForSleepers(1)
         await clock.advance(by: .seconds(4))
         XCTAssertTrue(log.actions.isEmpty, "nothing reaches the log during the Undo window")
         engine.undo(ref.id)
@@ -263,8 +279,9 @@ final class DecisionAnsweringEngineTests: XCTestCase {
 
         engine.hold(ref.id, .dismiss(ref), seconds: 5)
         engine.hold(ref.id, .dismiss(ref), seconds: 5)
+        await clock.waitForSleepers(1)
         await clock.advance(by: .seconds(5))
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.dismiss(ref)], "the end of the window writes it, once")
         XCTAssertEqual(log.rows[ref.id]?.dismissed, true)
 
@@ -272,7 +289,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         engine.hold(other.id, .dismiss(other))
         XCTAssertEqual(engine.heldActions(), [other.id: .dismiss(other)])
         engine.commit(other.id)
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions.last, .dismiss(other), "a hold without a time is written when the surface says so")
     }
 
@@ -280,7 +297,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let log = FakeDecisionLog()
         let engine = engine(log)
         engine.stage(ref, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         log.clockMs = (seconds + 1) * 1000
         log.otherClientStages(ref.id, option: "b")
         engine.reconcile(log.snapshot())
@@ -292,7 +309,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         let log = FakeDecisionLog()
         let engine = engine(log)
         engine.stage(ref, option: "a", note: nil)
-        await settle()
+        await settle(engine, log)
         let stale = [ref.id: DecisionAnswering.Engine.Row(option: "", note: nil)]
         engine.reconcile(stale)
         XCTAssertEqual(engine.letters(ref.id, stored: ""), "a", "a snapshot from before the write cannot drop the pick")
@@ -308,10 +325,36 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         engine.unstage([ref, other])
         XCTAssertEqual(engine.letters(ref.id, stored: "a"), "")
         XCTAssertEqual(engine.letters(other.id, stored: "b"), "")
-        await settle()
+        await settle(engine, log)
         XCTAssertEqual(log.actions, [.unstage([ref, other])])
         engine.reconcile(log.snapshot())
         XCTAssertTrue(engine.pending.isEmpty)
+    }
+
+    func testAnOlderSnapshotWithTheSameLettersDoesNotConfirmANewerQueuedWrite() async {
+        let log = FakeDecisionLog()
+        log.holdNext = true
+        let engine = engine(log)
+        engine.stage(ref, option: "b", note: nil)
+        await settle(engine, log)
+        log.answers = [.done(.object([:])), .unanswered(seconds: 30)]
+        engine.stage(ref, option: "a", note: nil)
+        engine.reconcile([ref.id: .init(option: "a", note: nil)])
+        XCTAssertEqual(engine.pending[ref.id]?.option, "a", "the queued pick stays until its own write landed")
+        log.release()
+        await settle(engine, log)
+        XCTAssertEqual(engine.pending[ref.id]?.unsaved, true, "its write never answered: Try again is still offered")
+    }
+
+    func testAHoldReplacedByANewerRevisionWritesTheEarlierOneAndHoldsTheNewOne() async {
+        let log = FakeDecisionLog()
+        let engine = engine(log)
+        let newer = DecisionAddress(id: ref.id, sessionId: "s1", number: 4, revision: 2)
+        engine.hold(ref.id, .move(ref, state: "dismissed"))
+        engine.hold(ref.id, .move(newer, state: "dismissed"))
+        await settle(engine, log)
+        XCTAssertEqual(log.actions, [.move(ref, state: "dismissed")], "the earlier change is written, not lost")
+        XCTAssertEqual(engine.heldActions(), [ref.id: .move(newer, state: "dismissed")], "the newer one is held")
     }
 
     /// The click rule of both surfaces: a click stages its letter (a second click clears it) or sends it at once, and

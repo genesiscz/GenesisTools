@@ -242,7 +242,12 @@ extension DecisionAnswering {
         /// the change was written.
         public func hold(_ id: String, _ action: DecisionLogAction, seconds: Double? = nil,
                          ended: ((DecisionLogAnswer) -> Void)? = nil) {
-            guard holds[id] == nil else { return }
+            if let existing = holds[id] {
+                // The same change again is the one already held; a different one (a newer revision) replaces it, and
+                // the earlier one is written now rather than lost.
+                guard existing.action != action else { return }
+                commit(id)
+            }
             let clock = self.clock
             let task = seconds.map { seconds in
                 Task { [weak self] in
@@ -286,7 +291,9 @@ extension DecisionAnswering {
             var next = pending
             for (id, entry) in pending {
                 let row = rows[id]
-                let confirmed = (entry.option.map { (row?.option ?? "") == $0 } ?? true)
+                // A snapshot confirms a pick only once no write of the decision runs or waits: an older snapshot that
+                // happens to show the same letters says nothing about a newer write still queued.
+                let confirmed = !isWriting(id) && (entry.option.map { (row?.option ?? "") == $0 } ?? true)
                     && (entry.note.map { (row?.note ?? "") == $0 } ?? true)
                 let overtaken = entry.doneAt.map { done in (row?.updatedAt ?? 0) / 1000 > done } ?? false
                 let waiting = entry.unsaved || isWriting(id)
