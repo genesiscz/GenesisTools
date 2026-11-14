@@ -6851,14 +6851,18 @@ test("platform label prehistory emits one meaningless stretch and keeps later ow
         line("Alice Example", 130, "Own voice."),
     ];
     const current = { ...meeting, speakers: [{ speakerId: 1, name: "Alice Example", origin: "platform" }], transcript };
-    const items = suggestItems({
+    const suggest = (input: Pick<Parameters<typeof suggestItems>[0], "record" | "rules" | "evidence">) =>
+        suggestItems({
+            ...input,
+            meeting: current,
+            dictionary: { entries: [], abbrExpansion: "off" },
+            sourceWords: [],
+            now: record.start,
+        });
+    const items = suggest({
         record,
-        meeting: current,
         rules: ["evidence"],
-        dictionary: { entries: [], abbrExpansion: "off" },
-        sourceWords: [],
         evidence: { segments: [], speaking: [{ tSec: 120, speaking: ["Alice Example"] }], files: [] },
-        now: record.start,
     });
     expect(items.filter((item) => item.kind === "label")).toEqual([
         expect.objectContaining({
@@ -6877,19 +6881,15 @@ test("platform label prehistory emits one meaningless stretch and keeps later ow
         ...record,
         items: items.map((item) => (item.kind === "label" ? { ...item, status: "rejected" } : item)),
     });
-    const again = suggestItems({
+    const again = suggest({
         record: rejected,
-        meeting: current,
         rules: ["evidence", "speakers"],
-        dictionary: { entries: [], abbrExpansion: "off" },
-        sourceWords: [],
         evidence: {
             selfName: "Zed Example",
             segments: [{ startSec: 0, endSec: 140, channel: "system" }],
             speaking: Array.from({ length: 14 }, (_, index) => ({ tSec: index * 10, speaking: ["Bob Example"] })),
             files: [],
         },
-        now: record.start,
     });
 
     expect(again.some((item) => item.kind === "label")).toBe(false);
