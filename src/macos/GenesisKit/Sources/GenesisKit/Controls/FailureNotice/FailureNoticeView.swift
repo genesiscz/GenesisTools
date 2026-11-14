@@ -14,6 +14,9 @@ public final class FailureNoticeModel: ObservableObject {
             guard report != oldValue else { return }
             detailsMarkdown = report.detailsMarkdown()
             rawMarkdown = Self.rawMarkdown(report)
+            // A report enriched after delivery (`addingCallLog`) brings its events, or another failure its time.
+            timeText = Self.timeText(report)
+            stepCount = Self.stepCount(report)
         }
     }
     @Published public var detailsOpen: Bool
@@ -45,11 +48,19 @@ public final class FailureNoticeModel: ObservableObject {
         self.dismiss = dismiss
         detailsMarkdown = report.detailsMarkdown()
         rawMarkdown = Self.rawMarkdown(report)
+        timeText = Self.timeText(report)
+        stepCount = Self.stepCount(report)
+    }
+
+    static func timeText(_ report: FailureReport) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .medium
-        timeText = formatter.string(from: report.time)
-        stepCount = FailureLog.events(in: report.log).count
+        return formatter.string(from: report.time)
+    }
+
+    static func stepCount(_ report: FailureReport) -> Int {
+        FailureLog.events(in: report.log).count
     }
 
     private static func rawMarkdown(_ report: FailureReport) -> String {

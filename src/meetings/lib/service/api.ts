@@ -36,6 +36,7 @@ import {
     projectMeetingPersonSchema,
     projectRemovalSchema,
     projectRenameSchema,
+    projectRestoreSchema,
     projectSuggestionsSchema,
     unpairedSchema,
 } from "../library-schema";
@@ -1197,6 +1198,20 @@ const projectsRemove = defineMethod({
     reaches: ["user"],
 });
 
+const projectsRestore = defineMethod({
+    name: "projects.restore",
+    params: z
+        .object({
+            /** The `backup` a `projects.remove` answered: a file in the removal backups folder, never another path. */
+            backup: z.string().min(1),
+        })
+        .strict(),
+    result: projectRestoreSchema,
+    resultName: "{ name, meetings, sources }",
+    doc: "The Undo of `projects.remove`, as `projects restore --json` does: the removed block, its source pairings and the project of the meetings it left without one come back from the backup. Refused while a project of that name exists; a meeting given another project since keeps it.",
+    effect: "reversible",
+});
+
 const projectsLabels = defineMethod({
     name: "projects.labels",
     params: z
@@ -1449,6 +1464,7 @@ export const meetingsApi = defineApi({
         projectsAdd,
         projectsRename,
         projectsRemove,
+        projectsRestore,
         projectsLabels,
         projectsUnpair,
         projectsPreview,

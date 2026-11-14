@@ -204,7 +204,20 @@ public struct CatalogSheet: View {
 /// (a text field, a menu) draw too. The caller owns the application object and its activation policy.
 @MainActor
 public enum KitCatalogRenderer {
+    /// A drawn sheet and the path that drew it.
+    public struct Picture {
+        public let png: Data
+        /// Whether the window server drew it. False when the capture fell back to `cacheDisplay` (no Screen Recording
+        /// grant, no display to stream, no desktop picture covering the window), which leaves Liquid Glass and
+        /// everything it covers transparent (`WindowSnapshot`).
+        public let windowServer: Bool
+    }
+
     public static func png(of view: some View, width: CGFloat, scale: CGFloat = 2) async -> Data? {
+        await picture(of: view, width: width, scale: scale)?.png
+    }
+
+    public static func picture(of view: some View, width: CGFloat, scale: CGFloat = 2) async -> Picture? {
         let hosting = NSHostingView(rootView: AnyView(view.frame(width: width, alignment: .topLeading)))
         let fitting = hosting.fittingSize
         let size = NSSize(width: width, height: max(1, fitting.height))
@@ -220,7 +233,8 @@ public enum KitCatalogRenderer {
         try? await Task.sleep(for: .milliseconds(120))
         hosting.layoutSubtreeIfNeeded()
         guard let capture = await WindowSnapshot.capture(window) else { return nil }
-        if capture.method != "window server" {
+        let windowServer = capture.method == "window server"
+        if !windowServer {
             FileHandle.standardError.write(Data("catalog snapshot: \(capture.method)\n".utf8))
         }
 
@@ -234,6 +248,7 @@ public enum KitCatalogRenderer {
         NSGraphicsContext.current = context
         capture.image.draw(in: NSRect(origin: .zero, size: size))
         NSGraphicsContext.restoreGraphicsState()
-        return bitmap.representation(using: .png, properties: [:])
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return Picture(png: png, windowServer: windowServer)
     }
 }

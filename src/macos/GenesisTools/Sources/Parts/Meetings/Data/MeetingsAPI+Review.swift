@@ -513,7 +513,9 @@ extension MeetingsAPI {
         typealias Result = MeetingComment
     }
 
-    /// `comment.send`: the staged comments (or only `ids`) to the listening agent; it cannot be taken back.
+    /// `comment.send`: the staged comments (or only `ids`) to the listening agent. A sent comment the agent has not
+    /// read yet can be withdrawn (`comment.withdraw`, `MeetingComment.canWithdraw`); the send and the withdrawal both
+    /// stay in the comment's history.
     enum CommentSend: MeetingsServiceMethod {
         static let name = "comment.send"
 

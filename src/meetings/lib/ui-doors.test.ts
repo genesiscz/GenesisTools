@@ -31,7 +31,7 @@ import { matchPreview } from "./match-preview";
 import { projectLabels, setMeetingFields } from "./meeting-fields";
 import { momentClipPath, planMoment } from "./moment";
 import { meetingBadges, meetingsOverview } from "./overview";
-import { removeProject, renameProject } from "./project-admin";
+import { removeProject, renameProject, restoreProject } from "./project-admin";
 import { displayFocusSpans, screenTimeline } from "./screen-timeline";
 import { InProcessMeetingsClient } from "./service/client";
 import { openMeetingsWindow, playInOpenWindow, type WindowRequest, windowOpenArgs } from "./window";
@@ -1159,6 +1159,45 @@ describe("projects rename and remove", () => {
             block: { labels: ["Checkout 2.0"] },
             sources: { wisprflow: { folders: ["Work"] } },
         });
+    });
+
+    test("the Undo of a removal brings back the block, the folder pairing and the meeting's project", async () => {
+        const { config, meetings, used } = await withProject();
+        const backupRoot = join(meetings.root, "..", "backups");
+        const removal = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
+        await config.addProject("wrok");
+
+        await expect(restoreProject({ config, store: meetings, backup: removal.backup, backupRoot })).rejects.toThrow(
+            "exists again"
+        );
+        await removeProject({ config, store: meetings, name: "wrok", backupRoot });
+
+        const restored = await restoreProject({ config, store: meetings, backup: removal.backup, backupRoot });
+        const read = await config.read();
+
+        expect(restored).toEqual({ name: "wrok", meetings: [used], sources: ["wisprflow"] });
+        expect(read.projects.wrok?.labels).toEqual(["Checkout 2.0"]);
+        expect(read.sources.wisprflow.match.wrok?.folders).toEqual(["Work"]);
+        expect(meetings.read(used)?.project).toBe("wrok");
+    });
+
+    test("the Undo of a removal keeps what changed since and reads only a removal backup", async () => {
+        const { config, meetings, used } = await withProject();
+        const backupRoot = join(meetings.root, "..", "backups");
+        const removal = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
+        await config.addProject("other");
+        await meetings.update(used, { command: "test", change: "another project" }, (next) => {
+            next.project = "other";
+        });
+
+        await expect(
+            restoreProject({ config, store: meetings, backup: join(meetings.folder(used), "meeting.json"), backupRoot })
+        ).rejects.toThrow("is not a project removal backup");
+
+        const restored = await restoreProject({ config, store: meetings, backup: removal.backup, backupRoot });
+
+        expect(restored).toEqual({ name: "wrok", meetings: [], sources: ["wisprflow"] });
+        expect(meetings.read(used)?.project).toBe("other");
     });
 
     test("a waiting folder step follows a rename and closes on a removal, so no answer brings the old name back", async () => {

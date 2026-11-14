@@ -288,6 +288,26 @@ function readByteRange(path: string, from: number, to: number): string {
     }
 }
 
+/**
+ * Ends a last line a crash cut short with a line end, under the worker's claim, before the worker appends: the next row
+ * then starts on a line of its own and reads, instead of being glued onto the torn bytes. The torn line stays as it is;
+ * readers skip it, and its frame has no row, so it is read again.
+ */
+function endTornTail(path: string): void {
+    if (!existsSync(path)) {
+        return;
+    }
+
+    const size = statSync(path).size;
+
+    if (size === 0 || readByteRange(path, size - 1, size) === "\n") {
+        return;
+    }
+
+    appendFileSync(path, "\n", { mode: CAPTURE_FILE_MODE });
+    log.warn({ path }, "ocr.jsonl ended in a torn row; it gets a line end before the next row");
+}
+
 function readOf(row: OcrRow): OcrResult {
     return { text: row.text, blocks: row.blocks };
 }
@@ -339,7 +359,8 @@ type FrameOutcome =
     | { kind: "bad"; row: OcrRow }
     | { kind: "failed"; row: OcrRow; error: string };
 
-type Probe = { kind: "next"; row: OcrRow } | { kind: "control" } | { kind: "down" };
+/** `down`: another frame failed too. `unverified`: there was no other frame to try, so nothing tells bad from down. */
+type Probe = { kind: "next"; row: OcrRow } | { kind: "control" } | { kind: "down" } | { kind: "unverified" };
 
 class OcrWorker {
     readonly folder: string;
@@ -361,6 +382,8 @@ class OcrWorker {
     private runStartMs = 0;
     /** The run's first frame has a row already (this worker's or an earlier one's). */
     private firstChecked = false;
+    /** A row a crash cut short at the end of `ocr.jsonl` has a line end before this worker's first append. */
+    private tailEnded = false;
 
     constructor(private readonly options: OcrWorkerOptions) {
         this.folder = options.store.folder(options.meetingId);
@@ -472,7 +495,8 @@ class OcrWorker {
 
     /**
      * Whether Vision reads at all now: a different frame right after the failed one. The next frame waiting (its row
-     * is kept), else a frame that read before (only the read counts, its row stays). `down` when neither reads.
+     * is kept), else a frame that read before (only the read counts, its row stays). `down` when neither reads,
+     * `unverified` when there was neither to try.
      */
     private async probe(next: FrameIndexRow | undefined): Promise<Probe> {
         if (next) {
@@ -483,18 +507,24 @@ class OcrWorker {
             }
         }
 
-        if (this.lastGood && existsSync(this.lastGood)) {
+        const control = this.lastGood && existsSync(this.lastGood) ? this.lastGood : undefined;
+
+        if (!next && !control) {
+            return { kind: "unverified" };
+        }
+
+        if (control) {
             const settings = this.settings();
 
             try {
-                await this.engine.recognize(this.lastGood, settings.languages, {
+                await this.engine.recognize(control, settings.languages, {
                     read: settings.read,
                     tilePx: settings.tilePx,
                 });
                 this.readSinceRetry = true;
                 return { kind: "control" };
             } catch (error) {
-                log.warn({ err: error, control: this.lastGood }, "a frame that read before does not read now");
+                log.warn({ err: error, control }, "a frame that read before does not read now");
             }
         }
 
@@ -504,7 +534,9 @@ class OcrWorker {
     /**
      * A frame whose reads all failed. When another frame reads right after it, the frame is bad: its row says
      * `failed` and the worker moves on. Else Vision is down on this Mac: the worker waits on the same frame (30 s,
-     * 1 min, 2 min, then every 5 min) and tries it again, and says so once per outage.
+     * 1 min, 2 min, then every 5 min) and tries it again, and says so once per outage. With no other frame to try
+     * (a lone frame, nothing read before), nothing tells a bad frame from an outage: after `OCR_MAX_ATTEMPTS` waits
+     * with still no other frame, it gets its failed row, which a later round or `--retry-failed` reads again.
      */
     private async settle(queue: FrameIndexRow[], failedRow: OcrRow, tail: FrameIndexTail): Promise<void> {
         const entry = queue[0];
@@ -512,7 +544,7 @@ class OcrWorker {
         let row = failedRow;
         let waited = 0;
 
-        while (verdict.kind === "down") {
+        while (verdict.kind === "down" || (verdict.kind === "unverified" && waited < OCR_MAX_ATTEMPTS)) {
             await this.startOutage(row.failed ?? "every read failed");
             const wait = OCR_OUTAGE_BACKOFF_MS[Math.min(waited, OCR_OUTAGE_BACKOFF_MS.length - 1)];
             log.info({ meeting: this.options.meetingId, file: entry.file, waitMs: wait }, "OCR is down; waiting");
@@ -538,7 +570,11 @@ class OcrWorker {
             verdict = await this.probe(queue[1]);
         }
 
-        await this.endOutage();
+        // An unverified end proves no recovery: the outage stays open until a read works.
+        if (verdict.kind !== "unverified") {
+            await this.endOutage();
+        }
+
         log.error({ meeting: this.options.meetingId, file: entry.file, error: row.failed }, "a frame cannot be read");
         await this.writeRow(entry, row);
         queue.shift();
@@ -638,6 +674,11 @@ class OcrWorker {
             await this.checkFirstFrame(row);
         }
 
+        if (!this.tailEnded) {
+            endTornTail(this.ocrFile);
+            this.tailEnded = true;
+        }
+
         appendFileSync(this.ocrFile, `${SafeJSON.stringify(row)}\n`, { mode: CAPTURE_FILE_MODE });
         this.done.add(entry.file);
         this.result.read += 1;
@@ -690,7 +731,7 @@ class OcrWorker {
             const priorAttempts = row.failed === undefined ? 0 : (row.attempts ?? 1);
             const outcome = await this.readFrame(indexRowOf(row, motion.get(row.file)), priorAttempts);
 
-            if (outcome.kind === "failed" && auto && (await this.probe(undefined)).kind === "down") {
+            if (outcome.kind === "failed" && auto && (await this.probe(undefined)).kind !== "control") {
                 log.warn({ meeting: this.options.meetingId, file: row.file }, "OCR is down; the failed rows wait");
                 break;
             }
@@ -808,7 +849,7 @@ class OcrWorker {
             }
         }
 
-        // A line cut short keeps the file it names at its start: its frame never gets a second row either.
+        // Every whole row the readers count is done too. A line a crash cut short is no row: its frame is read again.
         for (const file of ocrRowFiles(this.ocrFile)) {
             this.done.add(file);
         }

@@ -313,10 +313,27 @@ final class FrameReviewModel {
     }
 
     func step(_ delta: Int, seek: Bool) {
-        guard let frame, let position = frames.firstIndex(where: { $0.file == frame.file }) else { return }
-        let next = min(max(0, position + delta), frames.count - 1)
-        selectTime(frames[next].meetingSec)
+        guard let next = stepTarget(delta) else { return }
+        selectTime(next.meetingSec)
         if seek { seekPlayback() }
+    }
+
+    /// The frame Previous (-1) or Next (+1) goes to; nil at an end. In Auto the shown frame can be outside `frames`:
+    /// a display keeps showing its last frame after focus moved to it, and that frame was taken while another display
+    /// had focus. Then the step goes by time, from the time shown.
+    func stepTarget(_ delta: Int) -> TimelineFrame? {
+        let sequence = frames
+        guard let frame, delta != 0, !sequence.isEmpty else { return nil }
+        if let position = sequence.firstIndex(where: { $0.file == frame.file }) {
+            let next = min(max(0, position + delta), sequence.count - 1)
+            return next == position ? nil : sequence[next]
+        }
+        if delta > 0 {
+            guard let first = sequence.firstIndex(where: { $0.meetingSec > time }) else { return nil }
+            return sequence[min(first + delta - 1, sequence.count - 1)]
+        }
+        guard let last = sequence.lastIndex(where: { $0.meetingSec < time }) else { return nil }
+        return sequence[max(0, last + delta + 1)]
     }
 
     func cancelPendingSeek() { seekTask?.cancel(); seekTask = nil }

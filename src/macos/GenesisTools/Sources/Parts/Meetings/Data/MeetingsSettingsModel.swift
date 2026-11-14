@@ -573,11 +573,28 @@ struct ProjectRemoval: Decodable, Equatable {
     let backup: String
 }
 
+/// What `tools meetings projects restore --json` prints.
+struct ProjectRestore: Decodable, Equatable {
+    let name: String
+    /// The meetings that have the project again.
+    let meetings: [String]
+    /// The sources whose folder pairing came back.
+    let sources: [String]
+}
+
 extension MeetingsSettingsModel {
     static func renameArgs(_ from: String, to: String) -> [String] { ["projects", "rename", from, to] }
 
     static func removeArgs(_ name: String, unassign: Bool) -> [String] {
         ["projects", "remove", name, "--json"] + (unassign ? ["--unassign"] : [])
+    }
+
+    static func restoreArgs(_ backup: String) -> [String] { ["projects", "restore", backup, "--json"] }
+
+    static func restoreNote(_ restore: ProjectRestore) -> String {
+        restore.meetings.isEmpty
+            ? "Restored the project \(restore.name)"
+            : "Restored the project \(restore.name) to \(Plural.count(restore.meetings.count, "meeting"))"
     }
 
     /// The CLI refuses to remove a project meetings still have with `[project-in-use]`
@@ -605,8 +622,9 @@ extension MeetingsSettingsModel {
             }) { $0.loadSettings() }
     }
 
-    /// Removes a project (`projects remove`); its settings go into a backup first. While meetings have it the CLI
-    /// refuses, and the note offers the removal that leaves those meetings without a project.
+    /// Removes a project (`projects remove`); its settings go into a backup first, and the note's Undo restores it from
+    /// there. While meetings have it the CLI refuses, and the note offers the removal that leaves those meetings
+    /// without a project.
     func removeProject(_ name: String, unassign: Bool = false) {
         let key = "project.remove.\(name)"
         guard writes, !writing.contains(key) else { return }
@@ -619,7 +637,10 @@ extension MeetingsSettingsModel {
                                                             orRun: Self.removeArgs(name, unassign: unassign),
                                                             resultFromCommand: true) else { return }
                 notices.push(StackedNotice(text: Self.removalNote(removal),
-                                           detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)"))
+                                           detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)",
+                                           actions: [.init("Undo", symbol: "arrow.uturn.backward") { [weak self] _ in
+                                               self?.restoreProject(removal)
+                                           }]))
             } catch let failure as MeetingsCLI.Failure where !unassign && Self.offersUnassign(failure) {
                 notices.push(StackedNotice(text: failure.sentence, more: failure.detail, tone: .error,
                                            actions: [.init("Remove and leave them without a project", symbol: "trash") { [weak self] _ in
@@ -627,6 +648,26 @@ extension MeetingsSettingsModel {
                                            }]))
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in self?.removeProject(name, unassign: unassign) })
+            }
+            loadSettings()
+        }
+    }
+
+    /// The Undo of `removeProject`: the project, its pairings and the project of the meetings the removal left
+    /// without one come back from the removal's backup (`projects restore`).
+    func restoreProject(_ removal: ProjectRemoval) {
+        let key = "project.restore.\(removal.backup)"
+        guard writes, !writing.contains(key) else { return }
+        writing.insert(key)
+        Task {
+            defer { writing.remove(key) }
+            do {
+                guard let restore = try await writeLibrary(MeetingsAPI.ProjectsRestore.self, .init(backup: removal.backup),
+                                                            orRun: Self.restoreArgs(removal.backup),
+                                                            resultFromCommand: true) else { return }
+                notices.push(StackedNotice(text: Self.restoreNote(restore)))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.restoreProject(removal) })
             }
             loadSettings()
         }

@@ -164,12 +164,18 @@ extension MeetingDetailModel {
             do {
                 let result = try await MeetingsService.write(MeetingsAPI.CommentSend.self, .init(meeting: id, requireListener: true),
                                                             service: service, orRun: ["comments", "send", id, "--require-listener", "--json"])
-                self?.commentDelivery = .sent(comments: result.sent.isEmpty ? staged : result.sent.count, listeners: result.listeners.count)
+                self?.commentDelivery = Self.delivery(after: result, staged: staged)
                 self?.readComments(service)
             } catch {
                 self?.commentDelivery = .failed(message: asFailure(error).sentence)
             }
         }
+    }
+
+    /// What a send did. With no listener the service kept the comments staged, so the count is what was staged here;
+    /// with one, the count is what the service sent: another window may have sent or withdrawn them meanwhile.
+    static func delivery(after result: MeetingsAPI.CommentSend.Result, staged: Int) -> CommentDelivery {
+        .sent(comments: result.listeners.isEmpty ? staged : result.sent.count, listeners: result.listeners.count)
     }
 
     func withdrawComment(_ comment: String) {

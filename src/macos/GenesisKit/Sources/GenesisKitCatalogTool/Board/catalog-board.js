@@ -103,7 +103,10 @@ function filter() {
     const term = query.value.trim().toLocaleLowerCase();
     let count = 0;
     articles.forEach((item) => {
-        const visible = (!group.value || item.entry.group === group.value) && (!term || item.search.includes(term));
+        // An entry with no sheet in the chosen appearance has nothing to show for it, so it is not a match.
+        const drawn = !look.value || item.entry.sheets.some((sheet) => sheet.look === look.value);
+        const visible =
+            drawn && (!group.value || item.entry.group === group.value) && (!term || item.search.includes(term));
         item.article.hidden = !visible;
         if (visible) {
             count++;

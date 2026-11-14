@@ -137,6 +137,9 @@ public final class AutocompleteModel<Item: AutocompleteItem>: ObservableObject {
     @Published public internal(set) var phase: AutocompletePhase = .idle
     /// The values a lazy or search source answered; nil before the first answer.
     @Published public internal(set) var answered: [Item]?
+    /// The text a search source's `answered` belongs to. While a newer text's search runs, the older answers stay on
+    /// screen but cannot be taken (`answers(for:)`).
+    @Published public internal(set) var answeredQuery: String?
     @Published public var marked: Int?
     @Published public internal(set) var focused = false
     /// Escape closed the list; typing or Down opens it again.
@@ -172,21 +175,30 @@ public final class AutocompleteModel<Item: AutocompleteItem>: ObservableObject {
         case .search(let search):
             guard answeredText != text || answered == nil else { return }
             answeredText = text
-            run(after: Self.searchPause) { try await search(text) }
+            run(after: Self.searchPause, query: text) { try await search(text) }
         }
+    }
+
+    /// Whether the answers on hand belong to `text`. A search source's answers belong to the text it searched; a list
+    /// source's are filtered by the text on screen, so they always do.
+    func answers(for text: String, source: AutocompleteSource<Item>) -> Bool {
+        guard case .search = source, answered != nil else { return true }
+        return answeredQuery == text
     }
 
     /// Reads again after a failure (the list's Retry).
     func retry(_ source: AutocompleteSource<Item>, text: String) {
         phase = .idle
         answered = nil
+        answeredQuery = nil
         answeredText = nil
         task?.cancel()
         task = nil
         need(source, text: text)
     }
 
-    private func run(after pause: Duration = .zero, _ read: @escaping @Sendable () async throws -> [Item]) {
+    private func run(after pause: Duration = .zero, query: String? = nil,
+                     _ read: @escaping @Sendable () async throws -> [Item]) {
         task?.cancel()
         loadingTimer?.cancel()
         phase = .loading(shown: false)
@@ -204,6 +216,7 @@ public final class AutocompleteModel<Item: AutocompleteItem>: ObservableObject {
                 let items = try await read()
                 guard !Task.isCancelled, let self else { return }
                 self.answered = items
+                self.answeredQuery = query
                 self.phase = .loaded
                 self.finish()
             } catch is CancellationError {
@@ -389,12 +402,15 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
 
     public var body: some View {
         let rows = matches
-        let list = listOpen ? listContent(rows) : nil
+        // Answers to an older text stay on screen while the new search runs, dimmed, and no key or click takes them.
+        let current = preview != nil || model.answers(for: text, source: source)
+        let takeable = current ? rows : []
+        let list = listOpen ? listContent(rows, current: current) : nil
         VStack(alignment: .leading, spacing: 4) {
             AutocompleteTextField(placeholder: placeholder, text: $text, label: label ?? placeholder, identifier: identifier,
                                   floating: usesPanel ? floating : nil, list: usesPanel ? list.map(carried) : nil,
                                   reduceMotion: reduceMotion, onFocus: focus, onType: type,
-                                  onCommand: { command(rows, $0) }, onListClosed: { model.dismiss() })
+                                  onCommand: { command(takeable, $0) }, onListClosed: { model.dismiss() })
                 .frame(maxWidth: .infinity)
             if presentation == .inPage, let list {
                 list.transition(.genReveal)
@@ -497,7 +513,7 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
 
     // MARK: The list
 
-    private func listContent(_ rows: [Item]) -> AnyView? {
+    private func listContent(_ rows: [Item], current: Bool) -> AnyView? {
         let phase = preview?.phase ?? model.phase
         if case .failed(let sentence) = phase {
             return AnyView(panel { failure(sentence) })
@@ -522,7 +538,7 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
                     .accessibilityAddTraits(.updatesFrequently)
             })
         }
-        return AnyView(panel { rowList(rows) })
+        return AnyView(panel { rowList(rows, current: current) })
     }
 
     private func panel(@ViewBuilder _ content: () -> some View) -> some View {
@@ -560,21 +576,25 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
 
     private static var rowHeight: CGFloat { 26 }
 
-    private func rowList(_ rows: [Item]) -> some View {
+    private func rowList(_ rows: [Item], current: Bool) -> some View {
         let height = CGFloat(min(rows.count, maxRows)) * (Self.rowHeight + 2) + 8
         let marked = markedIndex
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, item in
-                        row(item, index: index, marked: marked == index)
+                        row(item, index: index, marked: current && marked == index)
+                            .disabled(!current)
+                            .opacity(current ? 1 : 0.5)
                             .id(index)
                     }
                 }
                 .padding(4)
             }
-            .scrollIndicators(rows.count > maxRows ? .automatic : .never)
-            .frame(height: height)
+            .scrollIndicators(rows.count > maxRows || usesPanel ? .automatic : .never)
+            // In the floating panel the list may be given less than its height (the panel is only as tall as the room
+            // the screen has beside the field); it then scrolls.
+            .frame(minHeight: usesPanel ? 0 : height, idealHeight: height, maxHeight: height)
             // The marked row as a value: in the floating panel this view does not observe the model.
             .onChange(of: marked) { _, index in
                 guard let index else { return }
@@ -607,7 +627,7 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
         }
         .buttonStyle(AutocompleteRowStyle(marked: marked))
         .onHover { inside in
-            if inside, preview == nil, model.marked != index { model.marked = index }
+            if inside, preview == nil, model.marked != index, model.answers(for: text, source: source) { model.marked = index }
         }
         .accessibilityLabel([item.autocompleteTitle, item.autocompleteDetail].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(marked ? .isSelected : [])

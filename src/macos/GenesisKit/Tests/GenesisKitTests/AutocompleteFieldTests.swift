@@ -104,9 +104,12 @@ final class AutocompleteFieldTests: XCTestCase {
         let low = AutocompletePlacement.frame(field: CGRect(x: 10, y: 100, width: 300, height: 22), visible: small,
                                               size: CGSize(width: 0, height: 250))
         XCTAssertEqual(low.minY, 126, "174 pt above against 96 below")
+        XCTAssertEqual(low.height, 174, "and only as tall as the room above, so no row is off the screen")
         let high = AutocompletePlacement.frame(field: CGRect(x: 10, y: 200, width: 300, height: 22), visible: small,
                                                size: CGSize(width: 0, height: 250))
         XCTAssertEqual(high.maxY, 196, "196 pt below against 74 above")
+        XCTAssertEqual(high.minY, 0, "and its bottom stays on the screen")
+        XCTAssertTrue(small.contains(low) && small.contains(high))
     }
 
     func testAFieldScrolledEvenPartlyOutOfItsScrollViewHasNoList() {
@@ -256,6 +259,64 @@ final class AutocompleteFieldTests: XCTestCase {
         XCTAssertEqual(model.answered?.map(\.title), ["answer for ab"])
         let count = await asked.value
         XCTAssertEqual(count, 1, "the first text was replaced within the pause, so only the second was asked")
+    }
+
+    /// A field in a disabled row (`.disabled(true)`) is a disabled AppKit field: SwiftUI sets `isEnabled` on the
+    /// representable's control, so neither a click nor Tab gives it the keyboard, and VoiceOver hears it as disabled.
+    /// Enabled again, it edits.
+    func testADisabledFieldIsADisabledAppKitField() throws {
+        var text = "Work"
+        var disabled = true
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.isEditable || !field.isEnabled { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        func host() -> some View {
+            AutocompleteField("Name", text: Binding(get: { text }, set: { text = $0 }), items: [AutocompleteValue("Work")],
+                              onChoose: { _ in })
+                .disabled(disabled).frame(width: 260, height: 30)
+        }
+        let root = NSHostingView(rootView: AnyView(host()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 30), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = root
+        root.layoutSubtreeIfNeeded()
+        let disabledField = try XCTUnwrap(field(in: root))
+        XCTAssertFalse(disabledField.isEnabled)
+        XCTAssertFalse(disabledField.acceptsFirstResponder, "a click gives it no keyboard")
+        XCTAssertFalse(disabledField.canBecomeKeyView, "Tab skips it")
+
+        disabled = false
+        root.rootView = AnyView(host())
+        root.layoutSubtreeIfNeeded()
+        let enabledField = try XCTUnwrap(field(in: root))
+        XCTAssertTrue(enabledField.isEnabled)
+        XCTAssertTrue(enabledField.isEditable)
+    }
+
+    /// While a newer text's search runs, the older answers still show but do not belong to the text: Down, Return, Tab
+    /// and a click take none of them (an answer to "a" was taken for "ab" before its search finished).
+    func testAnswersToAnOlderTextCannotBeTakenWhileTheNewSearchRuns() async throws {
+        let model = AutocompleteModel<AutocompleteValue>()
+        let source = AutocompleteSource<AutocompleteValue>.search { text in
+            if text == "ab" { try await Task.sleep(for: .milliseconds(600)) }
+            return [AutocompleteValue("answer for \(text)")]
+        }
+        model.need(source, text: "a")
+        try await waitUntil { model.phase == .loaded }
+        XCTAssertTrue(model.answers(for: "a", source: source))
+
+        model.need(source, text: "ab")
+        XCTAssertEqual(model.answered?.map(\.title), ["answer for a"], "the older answers stay on screen")
+        XCTAssertFalse(model.answers(for: "ab", source: source), "but they do not belong to the new text")
+        try await waitUntil { model.phase == .loaded }
+        XCTAssertEqual(model.answered?.map(\.title), ["answer for ab"])
+        XCTAssertTrue(model.answers(for: "ab", source: source))
+
+        let list = AutocompleteSource<AutocompleteValue>.items([AutocompleteValue("Work")])
+        XCTAssertTrue(model.answers(for: "anything", source: list), "a fixed list is filtered by the text on screen")
     }
 
     // MARK: Folders

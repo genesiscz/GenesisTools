@@ -28,6 +28,12 @@ async function screenNote(ref: string, opts: { out?: string; json?: boolean }): 
 
     if (!existsSync(join(folder, "ocr.jsonl"))) {
         const pending = ocrBacklog(folder).length;
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify({ meeting: record.id, state: "ocr-pending", pending }, null, 2));
+            return;
+        }
+
         ui.warn(
             `${ocrPendingNote(pending)}: no frame of ${record.id} has its text yet. Read them now: ${TOOL} ocr ${record.id}`
         );

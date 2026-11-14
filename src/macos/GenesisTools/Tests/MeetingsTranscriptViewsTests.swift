@@ -150,6 +150,34 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(model.frame?.file, "unknown")
     }
 
+    /// In Auto a display keeps showing its last frame after focus moved to it, though that frame was taken while
+    /// another display had focus, so it is not in the Auto sequence. Previous and Next then step by time.
+    func testAutoDisplayStepsFromAFrameTakenBeforeFocusMovedToItsDisplay() throws {
+        func frame(_ file: String, _ time: Double, _ display: Int, _ focus: Int) -> TimelineFrame {
+            var value = TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                      displayId: display, width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+            value.focusedDisplayId = focus
+            return value
+        }
+        let frames = [frame("one-a", 5, 1, 1), frame("two-kept", 10, 2, 1), frame("one-b", 20, 1, 2), frame("two-b", 30, 2, 2)]
+        let suite = "meetings.focus.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timeline = ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames)
+        let model = FrameReviewModel(meeting: "m", file: "one-a", at: 5, player: nil, defaults: defaults, timeline: timeline)
+        model.selectTime(25)
+        XCTAssertEqual(model.frame?.file, "two-kept", "focus moved to display 2 at 20 s, whose last frame is from 10 s")
+        XCTAssertEqual(model.stepTarget(1)?.file, "two-b", "Next is enabled")
+        XCTAssertEqual(model.stepTarget(-1)?.file, "one-a", "Previous is enabled")
+        model.step(1, seek: false)
+        XCTAssertEqual(model.frame?.file, "two-b")
+        XCTAssertNil(model.stepTarget(1), "the last frame: Next is disabled")
+        model.selectTime(25)
+        model.step(-1, seek: false)
+        XCTAssertEqual(model.frame?.file, "one-a")
+        XCTAssertNil(model.stepTarget(-1), "the first frame: Previous is disabled")
+    }
+
     func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() async throws {
         func frame(_ file: String, _ time: Double, _ text: String, _ display: Int = 1) -> TimelineFrame {
             let box = OcrBox(x: 10, y: 20, width: 120, height: 30, text: text, confidence: 1)
@@ -491,6 +519,10 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         for (before, after) in zip(merged, merged.dropFirst()) {
             XCTAssertGreaterThanOrEqual(after.x - before.x, TalkTimeLayout.bannerWidth)
         }
+        // A merged banner lists each of its questions: a click opened only the first, and Q9 had no way to its row.
+        let choices = SpeakerTalkTimeLanes.bannerChoices(merged[0], questions: near)
+        XCTAssertEqual(choices.map(\.id), ["q7", "q9"])
+        XCTAssertEqual(choices.map(\.title), ["Q7 at 06:40", "Q9 at 07:40"])
     }
 
     func testRulerMarksUseARoundStep() {
@@ -558,6 +590,20 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         throttle.failed("f4")
         XCTAssertEqual(throttle.shown, "f1", "a failed decode keeps the old frame")
         XCTAssertEqual(throttle.offer("f4", at: 1.5), "f4", "and the next offer tries again")
+    }
+
+    /// One threshold: the tab shows the service's preview nearest the pane's "Apply above", so the preview and the
+    /// pane's marks agree (a second picker kept 70 % while this one said 90 %).
+    func testTheTranscriptTabShowsThePreviewOfTheOneThreshold() {
+        func line(_ speaker: String) -> TranscriptLine { TranscriptLine(id: "l1", startSec: 0, speaker: speaker, text: "Hello") }
+        let transcript = MeetingTranscript(previews: [.init(threshold: 0.7, entries: [line("at 70")]),
+                                                      .init(threshold: 0.9, entries: [line("at 90")])],
+                                           meeting: "m", entries: [line("plain")])
+        XCTAssertEqual(TranscriptTab.shown(transcript, applyAbove: 90).map(\.speaker), ["at 90"])
+        XCTAssertEqual(TranscriptTab.shown(transcript, applyAbove: 70).map(\.speaker), ["at 70"])
+        XCTAssertEqual(TranscriptTab.shown(transcript, applyAbove: 60).map(\.speaker), ["at 70"], "the nearest preview")
+        XCTAssertEqual(TranscriptTab.shown(MeetingTranscript(meeting: "m", entries: [line("plain")]), applyAbove: 90).map(\.speaker),
+                       ["plain"], "no previews: the entries")
     }
 
     func testTheFollowKeepsTheHeardLineOfALongBlockInView() {

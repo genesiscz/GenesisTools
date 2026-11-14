@@ -167,6 +167,8 @@ function scratchStore(): {
     store: MeetingStore;
     config: MeetingsConfigStore;
     linkedSource: (record: { id: string }) => LinkedSource | undefined;
+    /** REVIEW's source: a test counts its loads. */
+    source: TranscriptSource;
 } {
     stores += 1;
     const store = new MeetingStore(new Storage(`meetings-service-${process.pid}-${stores}`));
@@ -181,6 +183,7 @@ function scratchStore(): {
     return {
         store,
         config,
+        source,
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
@@ -261,7 +264,7 @@ const SKY = {
 /** The pid of a `listen --subscribe-answers --with-comments` the tests say runs; every other pid is gone. */
 const LISTENER_PID = 4343;
 const quietDeps: MeetingsHandlerDeps = {
-    localSourceAudio: [],
+    localSourceAudio: { sources: [], live: async () => undefined },
     now: () => NOW,
     listenerAlive: (pid) => pid === LISTENER_PID,
     ledger: () => undefined,
@@ -295,7 +298,7 @@ const quietDeps: MeetingsHandlerDeps = {
 async function startService(
     options: { dir?: string; watch?: MeetingsServiceOptions["watch"]; deps?: Partial<MeetingsHandlerDeps> } = {}
 ) {
-    const { store, config, linkedSource } = scratchStore();
+    const { store, config, linkedSource, source } = scratchStore();
     const dir = options.dir ?? serviceDir();
     const start = await startMeetingsService({
         dir,
@@ -314,7 +317,7 @@ async function startService(
     }
 
     closing.push(() => start.service.stop("test end"));
-    return { dir, store, config, service: start.service };
+    return { dir, store, config, source, service: start.service };
 }
 
 interface Adapter {
@@ -323,17 +326,19 @@ interface Adapter {
     store: MeetingStore;
     /** The meetings config the library methods change. */
     config: MeetingsConfigStore;
+    /** REVIEW's linked source (this process's object, also behind the socket adapter). */
+    source: TranscriptSource;
 }
 
 const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Promise<Adapter>> = {
     socket: async (caller = hello) => {
-        const { service, store, config } = await startService();
+        const { service, store, config, source } = await startService();
         const client = await SocketMeetingsClient.connect(service.entry, caller);
         closing.push(() => client.close());
-        return { client, store, config, emit: (event, params) => service.emit(event, params) };
+        return { client, store, config, source, emit: (event, params) => service.emit(event, params) };
     },
     "in-process": async (caller = hello) => {
-        const { store, config, linkedSource } = scratchStore();
+        const { store, config, linkedSource, source } = scratchStore();
         const events = new LocalMeetingsEvents();
         const client = new InProcessMeetingsClient({
             hello: caller,
@@ -341,7 +346,7 @@ const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Prom
             events,
         });
         closing.push(() => client.close());
-        return { client, store, config, emit: (event, params) => events.emit(event, params) };
+        return { client, store, config, source, emit: (event, params) => events.emit(event, params) };
     },
 };
 
@@ -366,14 +371,25 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 }
 
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
-    test("threshold previews load together without persisting a rendering preference or record mutation", async () => {
-        const { client, store } = await ADAPTERS[kind]();
+    test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
+        const { client, store, source } = await ADAPTERS[kind]();
+        // A suggested speaker for line l2 (9 s) at 0.82: the 0.5 and 0.7 previews apply it, the 1 preview only shows it.
+        const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
+        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
         const before = readFileSync(store.path(REVIEW.id));
+        const configBefore = SafeJSON.stringify(await new MeetingsConfigStore().read());
+        const load = spyOn(source, "load");
         const result = await client.call("meeting.transcript", { ref: REVIEW.id, previewThresholds: [0.5, 0.7, 1] });
+        // The corrections, the indicator and the three previews share one opened meeting.
+        expect(load).toHaveBeenCalledTimes(1);
+        load.mockRestore();
         expect(result.previews?.map((preview) => preview.threshold)).toEqual([0.5, 0.7, 1]);
-        expect(result.previews?.every((preview) => preview.entries.length > 0)).toBe(true);
+        expect(
+            result.previews?.map((preview) => preview.entries.find((entry) => entry.startSec === 9)?.speaker)
+        ).toEqual(["Dana Example", "Dana Example", "[Dana Example: 82 %]"]);
         expect(readFileSync(store.path(REVIEW.id))).toEqual(before);
-        expect(new MeetingStore(store.storage).read(REVIEW.id)?.id).toBe(REVIEW.id);
+        // No threshold is kept as the rendering preference.
+        expect(SafeJSON.stringify(await new MeetingsConfigStore().read())).toBe(configBefore);
     });
 
     test("a long-stretch preparation asks about lines below the threshold the caller gives", async () => {
@@ -579,6 +595,21 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         expect(mixed.entry?.changes).toHaveLength(1);
         expect(new MeetingStore(store.storage).read(REVIEW.id)!.history.at(-1)?.change).toBe("1 finding");
+    });
+
+    test("a seating save goes through decision.apply's set action, alone and beside another field", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const seats = { room: ["Dana Example"], remote: [{ name: "Alex Example", fromSec: 60, toSec: 600 }] };
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats } });
+        expect(store.read(REVIEW.id)?.seats).toEqual(seats);
+        const moved = { room: ["Dana Example", "Alex Example"], remote: [] };
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "set", seats: moved, title: "Seated review" },
+        });
+        expect(store.read(REVIEW.id)).toMatchObject({ seats: moved, title: "Seated review" });
+        const rows = await client.call("journal.read", { meeting: REVIEW.id });
+        expect(rows.entries).toHaveLength(2);
     });
 
     test("service journal reads retain the copied meeting's provenance", async () => {
@@ -1400,11 +1431,33 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         expect(store.resolve(REVIEW.id)?.project).toBeUndefined();
         expect(Object.keys((await config.read()).projects)).toEqual([]);
+
+        // The notice's Undo: the block and the meeting it left without a project come back, once.
+        expect(await client.call("projects.restore", { backup: removal.backup })).toMatchObject({
+            name: "Harbor",
+            meetings: [REVIEW.id],
+        });
+        expect(store.resolve(REVIEW.id)?.project).toBe("Harbor");
+        expect((await config.read()).projects.Harbor?.labels).toEqual(["Checkout"]);
+        expect((await failure(client.call("projects.restore", { backup: removal.backup }))).message).toContain(
+            "exists again"
+        );
     });
 
     test("the dictionary: add, show, test, a refused Undo's add, a rename and remove", async () => {
-        const { client } = await ADAPTERS[kind]();
+        const { client, config } = await ADAPTERS[kind]();
         const fix = { type: "fix" as const, value: "Atlass", substitution: "Atlas" };
+
+        // A new project and its entry are one write: an entry the config refuses adds no project either.
+        const badAbbr = { type: "abbr" as const, value: "MOP", substitution: "MOPsuffix" };
+        expect(
+            (await failure(client.call("dictionary.add", { entry: badAbbr, project: "Fresh", replace: "Gone" })))
+                .message
+        ).toContain('must contain "MOP" itself');
+        expect((await failure(client.call("dictionary.add", { entry: badAbbr, project: "Fresh" }))).message).toContain(
+            'must contain "MOP" itself'
+        );
+        expect(Object.keys((await config.read()).projects)).toEqual([]);
 
         expect(await client.call("dictionary.add", { entry: fix })).toEqual({
             entry: fix,
@@ -1937,6 +1990,7 @@ async function captureExamples(): Promise<Example[]> {
     const modelFiles = [wordTimingFile(model)];
     const { service, store, config } = await startService({
         deps: {
+            voiceFrames: async () => FIXTURE_VOICE_FRAMES,
             wordTimings: {
                 cache: new WordTimingCache(join(timingRoot, "cache")),
                 modelFiles: async () => modelFiles,
@@ -2454,8 +2508,60 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 }, quote: "Saved words" },
         "Keep audio outside the temporary clip cache and publish its Context entry."
     );
+    // Successes last, so the record they change is read by no example before them.
+    await ask(
+        window,
+        "meeting.voice",
+        { meeting: REVIEW.id },
+        "Each line's features per channel; a silent channel has no pitch."
+    );
+    await ask(
+        window,
+        "meeting.voice",
+        { meeting: REVIEW.id, voices: 2 },
+        "Voices asked: each line also carries its cluster, with a speaker only when a confirmed line anchors it."
+    );
+    await ask(
+        window,
+        "acoustic.inspect",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 5 },
+        "No calibrated channels: unknown, with the reason and no metric."
+    );
+    await ask(
+        window,
+        "voice.score",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 1, channel: 0 },
+        "A sample under 1.5 seconds is an unknown voice, not a refusal."
+    );
+    await ask(
+        window,
+        "meeting.people.edit",
+        { meeting: REVIEW.id, action: "add", name: "Robin Example", fromSec: 0, toSec: 30 },
+        "The record with the person and the stay."
+    );
+    await ask(
+        window,
+        "meeting.people.edit",
+        { meeting: REVIEW.id, action: "remove", name: "Robin Example" },
+        "The record without the person."
+    );
+    const removal = examples.findLast((example) => example.method === "projects.remove" && example.reply?.result);
+    await ask(
+        window,
+        "projects.restore",
+        { backup: (removal?.reply?.result as { backup?: string } | undefined)?.backup },
+        "The Undo of the removal: the block, its pairings and the meeting it left without a project come back."
+    );
     return examples;
 }
+
+/** Voice frames of the fixture's recording, as ffmpeg would decode them: the left channel speaks low for the first
+ * 20 seconds, the right one high after that, and the quiet side has no pitch. One frame is 50 ms. */
+const FIXTURE_VOICE_FRAMES = Array.from({ length: 900 }, (_, index) => {
+    const voiced = (pitchHz: number) => ({ rms: 0.2, lowBandShare: 0.6, tilt: -4, pitchHz, voicedShare: 1 });
+    const quiet = { rms: 0.002, lowBandShare: 0.1, tilt: 0, pitchHz: null, voicedShare: 0 };
+    return { channels: index * 0.05 < 20 ? [voiced(120), quiet] : [quiet, voiced(210)] };
+});
 
 /**
  * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
@@ -2477,6 +2583,9 @@ function normalized(examples: Example[]): unknown {
             )
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
+            // A record's history line carries the wall clock of its write, and a saved clip's line names its key.
+            .replace(/"at":"[^"]*","command":/g, '"at":"<now>","command":')
+            .replace(/"change":"([^"]*?)-[0-9a-z]+\.wav"/g, '"change":"$1-<key>.wav"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
             .replace(
                 /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,

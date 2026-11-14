@@ -247,6 +247,8 @@ export function planOcrTiles({ width, height }: ImageDimensions, tilePx = DEFAUL
 /** Region OCR already answers in full-image, bottom-left coordinates. Never scale those bounds again. */
 export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
     const blocks: OcrBlock[] = [];
+    /** `fold(blocks[i].text)`, kept beside each block so a comparison never folds a kept block's text again. */
+    const folded: string[] = [];
     const fold = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
     const overlapShare = (a: OcrBlock["bounds"], b: OcrBlock["bounds"]) => {
         const overlapWidth = Math.max(0, Math.min(+a.x + +a.width, +b.x + +b.width) - Math.max(+a.x, +b.x));
@@ -259,8 +261,8 @@ export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
         for (const block of part.blocks) {
             const text = fold(block.text);
             // The same line read twice, or a seam tile's cut piece of a line another tile read whole.
-            const duplicate = blocks.findIndex((other) => {
-                const otherText = fold(other.text);
+            const duplicate = blocks.findIndex((other, index) => {
+                const otherText = folded[index];
                 return (
                     (otherText.includes(text) || text.includes(otherText)) &&
                     overlapShare(other.bounds, block.bounds) > 0.5
@@ -269,15 +271,17 @@ export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
 
             if (duplicate < 0) {
                 blocks.push(block);
+                folded.push(text);
                 continue;
             }
 
-            const kept = fold(blocks[duplicate].text);
+            const kept = folded[duplicate];
             const longer = text.length > kept.length;
             const sameText = text === kept;
 
             if (longer || (sameText && block.confidence > blocks[duplicate].confidence)) {
                 blocks[duplicate] = block;
+                folded[duplicate] = text;
             }
         }
     }

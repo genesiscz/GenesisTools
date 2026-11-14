@@ -58,6 +58,20 @@ final class FailureNoticeTests: XCTestCase {
     failed, nothing was recorded: The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host
     """
 
+    /// A report delivered with an empty log and enriched later (`addingCallLog`, `deliver`) counts the events it has
+    /// now, and a report for another failure shows its own time: both stayed at the first report's values.
+    @MainActor
+    func testAReplacedReportUpdatesItsStepCountAndTime() {
+        let first = FailureReport(headline: "The camera failed.", log: "", time: Date(timeIntervalSince1970: 0))
+        let model = FailureNoticeModel(report: first, detailsOpen: false, retry: nil, dismiss: {})
+        XCTAssertEqual(model.stepCount, 0)
+        model.report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure, time: Date(timeIntervalSince1970: 3_725))
+        XCTAssertGreaterThan(model.stepCount, 0)
+        XCTAssertEqual(model.stepCount, FailureLog.events(in: Self.cameraFailure).count)
+        XCTAssertEqual(model.timeText, FailureNoticeModel.timeText(model.report))
+        XCTAssertNotEqual(model.timeText, FailureNoticeModel.timeText(first))
+    }
+
     // MARK: - Headline
 
     /// The defect: the notice's title read "The recording stopped at once (exit 1): {." because the first line that

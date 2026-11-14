@@ -3,7 +3,7 @@ import { ABBR_EXPANSIONS, dictionaryEntrySchema } from "@genesiscz/utils/transcr
 import { z } from "zod";
 import type { PhraseTest } from "./dictionary-test";
 import type { MatchPreviewRow } from "./match-preview";
-import type { ProjectRemoval, ProjectRename } from "./project-admin";
+import type { ProjectRemoval, ProjectRename, ProjectRestore } from "./project-admin";
 import type { PairedFromMeetings, ProjectMeetingPerson } from "./project-people";
 import type { ProjectSuggestions } from "./project-suggestions";
 import type { DictionaryShowView } from "./window-reads";
@@ -75,6 +75,15 @@ export const projectRemovalSchema = z.object({
     /** The file that keeps the removed block and its source pairings. */
     backup: z.string(),
 }) satisfies z.ZodType<ProjectRemoval>;
+
+/** A removed project given back from its backup (`projects restore --json`). */
+export const projectRestoreSchema = z.object({
+    name: z.string(),
+    /** The meetings that have the project again. */
+    meetings: z.array(z.string()),
+    /** The sources whose folder pairing came back. */
+    sources: z.array(z.string()),
+}) satisfies z.ZodType<ProjectRestore>;
 
 /** A person as a project pairing names one: a name, and the address when it is known. */
 export const pairedPersonRefSchema = z.object({ name: z.string(), email: z.string().optional() });

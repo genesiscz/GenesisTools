@@ -65,26 +65,18 @@ enum CatalogTool {
 
     @MainActor
     static func main() async {
-        var out: String?
-        var only: [String] = []
-        var list = false
-        var probe: String?
-        var arguments = Array(CommandLine.arguments.dropFirst())
-        while !arguments.isEmpty {
-            let flag = arguments.removeFirst()
-            switch flag {
-            case "--out": out = arguments.isEmpty ? nil : arguments.removeFirst()
-            case "--only": if !arguments.isEmpty { only.append(arguments.removeFirst()) }
-            case "--list": list = true
-            case "--probe": probe = arguments.isEmpty ? nil : arguments.removeFirst()
-            case "--help", "-h":
-                print(usage)
-                return
-            default:
-                FileHandle.standardError.write(Data("unknown argument: \(flag)\n\n\(usage)\n".utf8))
-                exit(2)
-            }
+        let options: KitCatalogArguments
+        do {
+            options = try KitCatalogArguments.parse(Array(CommandLine.arguments.dropFirst()))
+        } catch {
+            FileHandle.standardError.write(Data("\(error.localizedDescription)\n\n\(usage)\n".utf8))
+            exit(2)
         }
+        if options.help {
+            print(usage)
+            return
+        }
+        let (out, only, list, probe) = (options.out, options.only, options.list, options.probe)
 
         let entries = KitCatalog.entries
         if list {

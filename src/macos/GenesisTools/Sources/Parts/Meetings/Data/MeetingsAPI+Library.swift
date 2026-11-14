@@ -79,6 +79,18 @@ extension MeetingsAPI {
         typealias Result = ProjectRemoval
     }
 
+    /// `projects.restore`: the Undo of `projects.remove`, from the backup it answered. The block, its pairings and the
+    /// project of the meetings it left without one come back; refused while a project of that name exists.
+    enum ProjectsRestore: MeetingsServiceMethod {
+        static let name = "projects.restore"
+
+        struct Params: Codable, Equatable {
+            var backup: String
+        }
+
+        typealias Result = ProjectRestore
+    }
+
     /// `projects.labels`: a project's known labels, with `add` and `remove` applied.
     enum ProjectsLabels: MeetingsServiceMethod {
         static let name = "projects.labels"

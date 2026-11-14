@@ -11,6 +11,10 @@ final class KitCatalogTests: XCTestCase {
     /// Files in `Controls/` that draw nothing of their own.
     static let notDrawn: [String: String] = [
         "AutocompleteFloatingList.swift": "the child window of AutocompleteField; its entry draws the floating list",
+        "FailureLog.swift": "reads the events and the headline out of a failure's log",
+        "FailureNoticePanel.swift": "the window of FailureNoticeView; the failure-inline entry draws the view",
+        "FailureReport.swift": "a failure's facts and their text forms",
+        "IssueDraft.swift": "an issue draft's text and the command that posts it",
         "FrameProbe.swift": "reports a control's frame to a test",
         "GenRenderSwap.swift": "swaps content when it is ready",
         "GenResize.swift": "the state of a resize drag",
@@ -33,8 +37,10 @@ final class KitCatalogTests: XCTestCase {
         // The base's controls (GenesisKitBase/Controls) are held to the same rule.
         let folders = ["Sources/GenesisKit/Controls", "Sources/GenesisKitBase/Controls"].map { Self.kitRoot.appendingPathComponent($0) }
         let controls = folders[0]
+        // Every level: a control in a folder of its own (Controls/FailureNotice/) is held to the rule too.
         let files = try folders.flatMap { folder in
-            try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".swift") }
+            try FileManager.default.subpathsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".swift") }
+                .map { ($0 as NSString).lastPathComponent }
         }.sorted()
         XCTAssertGreaterThan(files.count, 20, "the Controls folder was not read: \(controls.path)")
         let catalogued = Set(KitCatalog.entries.flatMap { $0.source.components(separatedBy: " · ") }.map { ($0 as NSString).lastPathComponent })
@@ -53,6 +59,26 @@ final class KitCatalogTests: XCTestCase {
                 XCTAssertTrue(FileManager.default.fileExists(atPath: path), "\(entry.id) names a source that does not exist: \(source)")
             }
         }
+    }
+
+    /// A flag that takes a value refuses to go without one: a trailing `--only` drew the whole catalog and rewrote the
+    /// manifest and the board, which `--only` promises never to write.
+    func testTheCatalogToolRefusesAFlagWithoutItsValue() throws {
+        XCTAssertEqual(try KitCatalogArguments.parse(["--out", "/tmp/catalog", "--only", "hues", "--only", "badges"]),
+                       KitCatalogArguments(out: "/tmp/catalog", only: ["hues", "badges"]))
+        let refused: [([String], KitCatalogArguments.Failure)] = [
+            (["--out", "/tmp/catalog", "--only"], .missingValue("--only")),
+            (["--only", "--out", "/tmp/catalog"], .missingValue("--only")),
+            (["--out"], .missingValue("--out")),
+            (["--probe"], .missingValue("--probe")),
+            (["--draw"], .unknown("--draw")),
+        ]
+        for (arguments, failure) in refused {
+            XCTAssertThrowsError(try KitCatalogArguments.parse(arguments), "\(arguments)") { error in
+                XCTAssertEqual(error as? KitCatalogArguments.Failure, failure, "\(arguments)")
+            }
+        }
+        XCTAssertTrue(try KitCatalogArguments.parse(["--help", "--draw"]).help, "--help ends the reading")
     }
 
     func testDisabledAgentFieldRejectsAccessibilityWrites() throws {
@@ -109,11 +135,21 @@ final class KitCatalogTests: XCTestCase {
             XCTAssertFalse(entry.critique.isEmpty, "\(entry.id) has no critique")
             // One sheet per entry keeps the test short; the looks share the layout.
             let look = try XCTUnwrap(entry.looks.last)
-            let rendered = await KitCatalogRenderer.png(of: CatalogSheet(entry: entry, look: look), width: CatalogSheet.width, scale: 1)
-            let data = try XCTUnwrap(rendered, "\(entry.id) did not draw")
-            let image = try XCTUnwrap(NSBitmapImageRep(data: data))
+            let sheet = CatalogSheet(entry: entry, look: look)
+            let rendered = await KitCatalogRenderer.picture(of: sheet, width: CatalogSheet.width, scale: 1)
+            let picture = try XCTUnwrap(rendered, "\(entry.id) did not draw")
+            var image = try XCTUnwrap(NSBitmapImageRep(data: picture.png))
             XCTAssertEqual(image.pixelsWide, Int(CatalogSheet.width))
             XCTAssertGreaterThan(image.pixelsHigh, 200, "\(entry.id) drew an empty sheet")
+            // Without the window server (no Screen Recording grant, a display that cannot stream), `cacheDisplay`
+            // draws the sheet, and it leaves Liquid Glass and everything the glass covers transparent: the glass card
+            // of settings-rows blanked its whole sheet. That sheet's background is then checked on the opaque form the
+            // kit draws under Reduce Transparency, so the check runs on every machine.
+            if !picture.windowServer, (image.colorAt(x: 10, y: 10)?.alphaComponent ?? 0) <= 0.99 {
+                let opaque = await KitCatalogRenderer.png(of: sheet.environment(\.nativeSettingsReduceTransparency, true),
+                                                          width: CatalogSheet.width, scale: 1)
+                image = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(opaque, "\(entry.id) did not draw opaque")))
+            }
             XCTAssertGreaterThan(image.colorAt(x: 10, y: 10)?.alphaComponent ?? 0, 0.99,
                                  "\(entry.id) lost its background while capturing native materials")
         }
