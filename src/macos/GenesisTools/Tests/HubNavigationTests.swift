@@ -584,6 +584,7 @@ final class HubNavigationTests: XCTestCase {
         let pr = ReviewModel(repo: URL(fileURLWithPath: "/fixture/pr"), options: DiffViewOptions(), renderer: NullRenderer())
         model.review = session
         model.prs.review = pr
+        model.panes = [.transcript, .changes]
         let diffCommands = HubMenuCommands.view.filter { $0.id?.hasPrefix("hub.view.diff.") == true }
         XCTAssertEqual(diffCommands.count, 6)
         for mode in HubMode.allCases {
@@ -596,6 +597,12 @@ final class HubNavigationTests: XCTestCase {
             for command in diffCommands {
                 XCTAssertEqual(command.enabled?(model), model.mainReview != nil, "\(mode) \(command.title)")
             }
+        }
+        // With the Changes pane closed, Sessions and the Agents lead keep the review out of sight: the commands go off.
+        model.panes = [.transcript]
+        for mode in [HubMode.sessions, .agents] {
+            model.mode = mode
+            for command in diffCommands { XCTAssertEqual(command.enabled?(model), false, "\(mode) \(command.title)") }
         }
     }
 

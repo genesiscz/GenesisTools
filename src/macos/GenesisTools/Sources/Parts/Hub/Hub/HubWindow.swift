@@ -2577,6 +2577,17 @@ extension HubModel {
         }
     }
 
+    /// The review the View menu's diff commands act on: `mainReview` where the diff is on screen. Sessions and the
+    /// Agents lead show it in the Changes pane, so with that pane closed the slot is filled out of sight and the
+    /// commands are disabled instead of changing a hidden review.
+    @MainActor
+    var visibleReview: ReviewModel? {
+        switch mode {
+        case .sessions, .agents: return panes.contains(.changes) ? mainReview : nil
+        case .prs, .worktrees, .inbox, .timeline, .usage: return mainReview
+        }
+    }
+
     /// The screen shows a web diff a `--snapshot` must wait for: PRs mode, a worktree's review, or the Changes pane
     /// of an open session (Sessions, or a lead session in Agents). Inbox, Activity, the Agents list alone, worktree
     /// cleanup and a session without Changes have none, and their snapshots used to wait out the whole 30 s for a
