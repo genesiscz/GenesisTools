@@ -174,7 +174,10 @@ export async function workflowAgentUsage(
         }
     }
 
-    const ordered = [...calls.values()].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+    const ordered = [...calls.values()]
+        .map((call) => ({ call, at: Date.parse(call.t) }))
+        .sort((a, b) => a.at - b.at)
+        .map(({ call }) => call);
     const usage: WorkflowAgentUsage = {
         calls: 0,
         input: 0,
