@@ -37,6 +37,8 @@ export function pairingUriOf(params: PairingLinkParams): string {
 
 type PairOutcome = "paired" | "failed" | "replaced";
 
+const NOT_A_PAIRING_LINK = "That is not a DevDashboard pairing link.";
+
 /**
  * The pair screen's state (F5). Every link, a tunnel's or a managed one, first shows its address and waits for a
  * confirm, so a link from anyone cannot point the phone at their server unseen. A tunnel then connects without a
@@ -51,27 +53,21 @@ export function usePairingLink(params: PairingLinkParams) {
     const uri = useMemo(() => pairingUriOf({ tier, baseUrl, username, pk, apk }), [tier, baseUrl, username, pk, apk]);
     const pairing = useMemo(() => parsePairingPayload(uri), [uri]);
     const needsCode = pairing ? TIERS[pairing.tier].pairing === "device-code" : false;
-    const [error, setError] = useState<string | null>(null);
+    // The first link starts in its own state; the effect below resets it for every later link.
+    const [error, setError] = useState<string | null>(pairing ? null : NOT_A_PAIRING_LINK);
     const [busy, setBusy] = useState(false);
     const [asking, setAsking] = useState(false);
-    const [confirming, setConfirming] = useState(false);
+    const [confirming, setConfirming] = useState(pairing !== null);
     const [secret, setSecret] = useState("");
     const generation = useRef(0);
 
     useEffect(() => {
         generation.current += 1;
-        setError(null);
         setBusy(false);
         setAsking(false);
-        setConfirming(false);
         setSecret("");
-
-        if (!pairing) {
-            setError("That is not a DevDashboard pairing link.");
-            return;
-        }
-
-        setConfirming(true);
+        setConfirming(pairing !== null);
+        setError(pairing ? null : NOT_A_PAIRING_LINK);
     }, [pairing]);
 
     const pair = useCallback(

@@ -487,10 +487,10 @@ final class ActivityStoreTests: XCTestCase {
         let recorder = try XCTUnwrap(controller.recorder)
         let probe = AXFocusProbe.Result(title: "Fixture", url: nil, displayId: nil)
         recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
-        func countAKeyAndFlush() async throws {
+        func countAKeyAndFlush() async {
             recorder.recordKeyForTesting()
             recorder.flushOffMainForTesting()
-            try await Task.sleep(for: .milliseconds(100))
+            await recorder.waitForPersistence()
         }
         let now = Date()
         var other: OpaquePointer?
@@ -505,14 +505,14 @@ final class ActivityStoreTests: XCTestCase {
         }
         XCTAssertEqual(sqlite3_exec(other, "ROLLBACK;", nil, nil, nil), SQLITE_OK)
 
-        try await countAKeyAndFlush()
+        await countAKeyAndFlush()
         XCTAssertEqual(try store.inputTotals(from: 0, to: Int64(now.timeIntervalSince1970 * 1000) + 120_000).keys, 1,
                        "nothing was deleted, so the current minute is still recorded")
 
         // The same deletion once the ledger is free: it commits, and its period stays fenced.
         _ = try await controller.forgetActivity(from: now.addingTimeInterval(-3_600), to: now.addingTimeInterval(1))
         recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
-        try await countAKeyAndFlush()
+        await countAKeyAndFlush()
         XCTAssertTrue(try store.inputSeries(from: 0, to: Int64(now.timeIntervalSince1970 * 1000) + 120_000).isEmpty,
                       "a deletion that committed is not written back")
     }

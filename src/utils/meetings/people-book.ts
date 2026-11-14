@@ -205,17 +205,10 @@ export class PeopleBook {
         });
     }
 
-    /** Hides a person from the lists (`hidden: false` shows them again). Answers whether anything changed. */
-    async hide(person: PersonRefValue, hidden = true): Promise<boolean> {
+    /** Hides a person from the lists ({@link show} shows them again). Answers whether anything changed. */
+    async hide(person: PersonRefValue): Promise<boolean> {
         const ref = personRefSchema.parse(person);
         return this.change((data) => {
-            const before = data.hidden.length;
-
-            if (!hidden) {
-                data.hidden = data.hidden.filter((one) => !samePerson(one, ref));
-                return data.hidden.length < before;
-            }
-
             if (data.hidden.some((one) => samePerson(one, ref))) {
                 return false;
             }

@@ -1,4 +1,5 @@
 import { readdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
@@ -146,11 +147,14 @@ export async function revisionsRead(options: {
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
     const evidenceFolder = join(folder, "evidence");
-    const evidenceFiles = entries.some((entry) => entry.name === "evidence" && entry.isDirectory())
-        ? readdirSync(evidenceFolder)
-              .sort()
-              .map((name) => [name, fileIdentity(join(evidenceFolder, name))])
+    // A folder removed since the listing above reads as empty, so a revision poll never throws on that race.
+    const evidenceNames = entries.some((entry) => entry.name === "evidence" && entry.isDirectory())
+        ? await readdir(evidenceFolder).catch((error: unknown): string[] => {
+              log.debug({ error, meeting: record.id }, "the evidence folder went away while it was read");
+              return [];
+          })
         : [];
+    const evidenceFiles = evidenceNames.sort().map((name) => [name, fileIdentity(join(evidenceFolder, name))]);
     const speechDb = localSpeechDbPath();
     return revisionTokens({
         meeting: record.id,

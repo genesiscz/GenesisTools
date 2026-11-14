@@ -115,7 +115,7 @@ export function PrDetail({ pr, onMergeLine }: { pr: PrTriageRowDto; onMergeLine:
     };
 
     const failing = checks.data?.failing ?? null;
-    const failingUrl = failing?.url ?? null;
+    const failingUrl = failing?.url ?? undefined;
     const github = pr.provider === "github";
 
     return (
@@ -189,7 +189,8 @@ export function PrDetail({ pr, onMergeLine }: { pr: PrTriageRowDto; onMergeLine:
                             url: pr.url,
                             checkout: pr.checkout ?? "",
                             kind: "check",
-                            ...(failing ? { checkUrl: failingUrl ?? undefined, checkName: failing.name } : {}),
+                            checkUrl: failingUrl,
+                            checkName: failing?.name,
                             idempotencyKey: idempotencyKey(),
                         })
                     }

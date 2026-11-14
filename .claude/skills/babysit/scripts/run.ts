@@ -47,6 +47,30 @@ export function has(name: string): boolean {
 /** Exit code a launch reports when its deadline stopped the command, as coreutils `timeout` does. */
 export const DEADLINE_EXIT = 124;
 
+export interface DeadlineSpawn {
+    cwd?: string;
+    /** Bytes for the child's stdin. Without them stdin is closed, so a prompt cannot wait for input. */
+    stdin?: Uint8Array;
+    env?: Record<string, string | undefined>;
+    timeoutMs: number;
+}
+
+/**
+ * The one spawn every babysit launcher shares: pipes, the process env and a deadline that kills the child. A caller
+ * decides only how an expired deadline shows (`launch` returns DEADLINE_EXIT, `spawnGit` throws).
+ */
+export function spawnWithDeadline(cmd: string[], options: DeadlineSpawn) {
+    return Bun.spawnSync(cmd, {
+        cwd: options.cwd,
+        stdin: options.stdin ?? "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: options.env ?? env.getProcessEnv(),
+        timeout: options.timeoutMs,
+        killSignal: "SIGKILL",
+    });
+}
+
 /**
  * Run one command with a deadline. Every babysit launcher passes one sized for its slowest legitimate call, so a stuck
  * push, gate or `gh` call stops that script with a message instead of holding it until someone stops it. `out` is
@@ -56,14 +80,7 @@ export function launch(
     cmd: string[],
     options: { cwd?: string; timeoutMs: number }
 ): { code: number; stdout: string; out: string } {
-    const p = Bun.spawnSync(cmd, {
-        cwd: options.cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: env.getProcessEnv(),
-        timeout: options.timeoutMs,
-        killSignal: "SIGKILL",
-    });
+    const p = spawnWithDeadline(cmd, options);
     const stdout = p.stdout.toString();
     const out = `${stdout}${p.stderr.toString()}`;
     if (p.exitedDueToTimeout) {

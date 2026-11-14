@@ -554,7 +554,7 @@ async function decide(
 
     try {
         const decided =
-            filteredNothing({ filtered: filter !== undefined, ids }) ??
+            filteredNothing(filter, ids) ??
             (await withMeetingsClient((client) =>
                 client.call("decision.apply", {
                     meeting: record.id,

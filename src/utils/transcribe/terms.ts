@@ -534,16 +534,10 @@ export function meetingTermsOf(entries: TranscriptEntry[], vocab: VocabTerm[]): 
     return { scoped: vocab.filter((term) => spoken.has(term.term.toLowerCase())), acronyms };
 }
 
-/** A one-edit proposal uses scoped vocabulary or a stronger acronym spelling observed in this meeting. */
-export function meetingTermCandidates(options: {
-    heard: string;
-    entries: TranscriptEntry[];
-    vocab: VocabTerm[];
-}): TermCandidate[] {
-    return candidatesInMeeting(meetingTermsOf(options.entries, options.vocab), options.heard);
-}
-
-/** {@link meetingTermCandidates} on a meeting read once by {@link meetingTermsOf}. */
+/**
+ * A one-edit proposal uses scoped vocabulary or a stronger acronym spelling observed in this meeting, which
+ * {@link meetingTermsOf} reads once for every proposal.
+ */
 export function candidatesInMeeting(meeting: MeetingTerms, heard: string): TermCandidate[] {
     const acronym = ACRONYM_PATTERN.exec(heard);
     const base = acronym?.[1] ?? heard;

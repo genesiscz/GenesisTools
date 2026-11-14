@@ -21,25 +21,24 @@ async function savedSession(): Promise<ClarityApiConfig> {
  * driver. A session passed in is used as it is and never renewed, so nothing is written for it.
  */
 export class ClarityClient extends ClarityApi {
-    private readonly given: boolean;
+    /**
+     * False for a session passed in and for a diagnostic: an expired session fails as it is, and no driver signs in
+     * again or writes a session.
+     */
+    private readonly renews: boolean;
 
-    constructor(auth?: ClarityAuth) {
+    constructor(auth?: ClarityAuth, { renews = true }: { renews?: boolean } = {}) {
         super(auth ?? savedSession);
-        this.given = auth !== undefined;
+        this.renews = renews && auth === undefined;
     }
-
-    /** False for a diagnostic: an expired session fails as it is, and no driver signs in again or writes a session. */
-    private renews = true;
 
     /** The saved session for a status check or a preflight, which must never renew it (they only read). */
     static withoutRenew(): ClarityClient {
-        const client = new ClarityClient();
-        client.renews = false;
-        return client;
+        return new ClarityClient(undefined, { renews: false });
     }
 
     protected override async renewAuth(): Promise<boolean> {
-        if (this.given || !this.renews) {
+        if (!this.renews) {
             return false;
         }
 

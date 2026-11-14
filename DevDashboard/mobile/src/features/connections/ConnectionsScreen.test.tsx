@@ -43,7 +43,6 @@ mock.module("@/features/connections/ConnectionForm", () => ({
         }),
 }));
 
-const saved: string[] = [];
 const connects: { host: string }[] = [];
 const refused = { ok: false, failure: "error", error: "machine-b.test did not answer" };
 const state = {
@@ -53,10 +52,6 @@ const state = {
     connect: async (input: { host: string }) => {
         connects.push(input);
         return refused;
-    },
-    addConnection: async (input: { host: string }) => {
-        saved.push(input.host);
-        return "row-b";
     },
     activate: async () => refused,
     updateConnection: async () => undefined,
@@ -76,7 +71,6 @@ it("an added Mac that does not answer its probe is not saved, and the form shows
     await fireEvent.press(screen.getByTestId("btn-add-connection"));
     await fireEvent.press(screen.getByTestId("form-submit"));
 
-    expect(saved).toEqual([]);
     expect(connects).toMatchObject([{ tier: "lan", host: "machine-b.test", port: 3042, username: "alice" }]);
     expect(screen.getByLabelText("connections-error").props.children).toBe("machine-b.test did not answer");
 });

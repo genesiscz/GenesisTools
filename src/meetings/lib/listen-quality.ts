@@ -8,7 +8,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { personKey, personPresent } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
-import { openQuestions } from "./questions";
+import { questionOwnedItems } from "./transcript-corrections";
 
 export async function qualityVoiceFeatures(opened: OpenedMeeting): Promise<LineVoice[]> {
     const entries = (await opened.meeting()).transcript;
@@ -30,6 +30,8 @@ export function addQualityQuestions(options: {
     below?: number;
     features?: readonly LineVoice[];
     channel?: number;
+    /** At most this many new questions; a question already on the record does not count. */
+    limit?: number;
 }): string[] {
     const lines = qualityLines(options.record, options.entries);
     const groups: Array<{ group: "spot-check" | "long-stretch"; parts: QualityLine[][] }> = [
@@ -54,6 +56,7 @@ export function addQualityQuestions(options: {
         },
     ];
     const ids: string[] = [];
+    let created = 0;
     for (const { group, parts } of groups) {
         for (const part of parts) {
             const confidence = part.reduce((lowest, line) => Math.min(lowest, line.confidence), 1);
@@ -71,6 +74,9 @@ export function addQualityQuestions(options: {
                 known.priority ??= 1;
                 known.confidence ??= confidence;
                 ids.push(known.id);
+                continue;
+            }
+            if (options.limit !== undefined && created >= options.limit) {
                 continue;
             }
             const decides: string[] = [];
@@ -117,6 +123,7 @@ export function addQualityQuestions(options: {
             });
             options.record.items.push(question);
             ids.push(question.id);
+            created++;
         }
     }
     return ids;
@@ -138,11 +145,7 @@ export interface QualityLine {
 
 export function qualityLines(record: MeetingRecord, entries: readonly TranscriptEntry[]): QualityLine[] {
     const lines = new TranscriptLines(entries);
-    const questionOwned = new Set(
-        openQuestions(record)
-            .filter((question) => question.about === "speaker")
-            .flatMap((question) => question.decides)
-    );
+    const questionOwned = questionOwnedItems(record);
     return entries.map((entry, index) => {
         const matches = record.items.filter(
             (one) =>

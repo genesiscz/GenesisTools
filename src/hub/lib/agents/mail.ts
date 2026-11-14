@@ -140,7 +140,6 @@ export async function agentMail(options: AgentMailOptions): Promise<AgentMail> {
     }
 
     const meta = found
-        .filter((file) => existsSync(file.meta))
         .map((file) => readMetaName(file.meta))
         .find((entry) => entry.name !== null || entry.teamName !== null) ?? { name: null, teamName: null };
     const root = options.teamsRoot ?? teamsRoot();

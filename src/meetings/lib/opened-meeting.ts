@@ -415,21 +415,26 @@ export class OpenedMeeting {
         const chosen = options.attendance;
         const foreignChoice = chosen !== undefined && chosen.spec !== platform?.id;
 
-        if (!this.current.attendance && platform && platform.capabilities.attendance !== "none" && foreignChoice) {
-            notes.push({ ok: true, text: `attendance: this run reads ${chosen.spec}, so none is kept on the record` });
-        } else if (!this.current.attendance && platform && platform.capabilities.attendance !== "none") {
-            try {
-                const timeline = await this.timeline();
-                const loaded = await this.loadAttendance(platform.id, chosen?.id?.trim() || undefined);
-                this.current = await timeline.store(this.store, loaded, platform.id);
-                notes.push({ ok: true, text: `${loaded.note}, ${this.current.sections?.length ?? 0} sections` });
-            } catch (err) {
-                // The note below tells the user; the day log keeps the stack.
-                log.debug({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
+        if (!this.current.attendance && platform && platform.capabilities.attendance !== "none") {
+            if (foreignChoice) {
                 notes.push({
-                    ok: false,
-                    text: `attendance not collected: ${err instanceof Error ? err.message : String(err)}`,
+                    ok: true,
+                    text: `attendance: this run reads ${chosen.spec}, so none is kept on the record`,
                 });
+            } else {
+                try {
+                    const timeline = await this.timeline();
+                    const loaded = await this.loadAttendance(platform.id, chosen?.id?.trim() || undefined);
+                    this.current = await timeline.store(this.store, loaded, platform.id);
+                    notes.push({ ok: true, text: `${loaded.note}, ${this.current.sections?.length ?? 0} sections` });
+                } catch (err) {
+                    // The note below tells the user; the day log keeps the stack.
+                    log.debug({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
+                    notes.push({
+                        ok: false,
+                        text: `attendance not collected: ${err instanceof Error ? err.message : String(err)}`,
+                    });
+                }
             }
         }
 

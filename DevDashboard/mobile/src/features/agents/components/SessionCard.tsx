@@ -78,7 +78,8 @@ export const SessionCard = memo(function SessionCard({ session, now, onOpen }: S
     const c = useThemeColors();
     const meta = [session.provider, session.account, session.model].filter(Boolean).join(" · ");
     const [expanded, setExpanded] = useState(false);
-    const hidden = expanded ? 0 : Math.max(0, session.children.length - CHILDREN_SHOWN);
+    const shown = expanded ? session.children : session.children.slice(0, CHILDREN_SHOWN);
+    const hidden = session.children.length - shown.length;
     const showAll = () => setExpanded(true);
 
     return (
@@ -125,7 +126,7 @@ export const SessionCard = memo(function SessionCard({ session, now, onOpen }: S
             ) : null}
             {session.children.length > 0 ? (
                 <View className="gap-1 pt-1">
-                    {(expanded ? session.children : session.children.slice(0, CHILDREN_SHOWN)).map((child) => (
+                    {shown.map((child) => (
                         <ChildRow key={child.id} child={child} depth={0} />
                     ))}
                     {hidden > 0 ? (

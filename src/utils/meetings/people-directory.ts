@@ -720,9 +720,10 @@ export class PeopleDirectory {
 
     private async resolve(ref: string): Promise<{ person: KnownPerson; identity: Identity }> {
         const wanted = ref.trim();
-        const { identities } = await this.identities(sourceQuery(wanted), {});
-        const email = (wanted.startsWith("email:") ? wanted.slice(6) : wanted).toLowerCase();
-        const key = wanted.startsWith("name:") ? wanted.slice(5) : nameKey(wanted);
+        const parsed = parsePersonRef(wanted);
+        const { identities } = await this.identities(sourceQuery(parsed), {});
+        const email = (parsed.kind === "email" ? parsed.value : wanted).toLowerCase();
+        const key = parsed.kind === "name" ? parsed.value : nameKey(wanted);
         const found = identities.filter(
             (identity) =>
                 idOf(identity) === wanted ||
@@ -802,25 +803,30 @@ export class PeopleDirectory {
     }
 }
 
+/** A reference split once: an `email:` id with its email, a `name:` id with its name key, or plain text. */
+function parsePersonRef(ref: string): { kind: "email" | "name" | "text"; value: string } {
+    for (const kind of ["email", "name"] as const) {
+        if (ref.startsWith(`${kind}:`)) {
+            return { kind, value: ref.slice(kind.length + 1) };
+        }
+    }
+
+    return { kind: "text", value: ref };
+}
+
 /**
  * What a source is asked for a reference: an `email:` id asks for the email, a `name:` id for its longest name token
  * (a searching source such as Contacts knows no ids, and the key's tokens are sorted, not in the name's order).
  */
-function sourceQuery(ref: string): string {
-    if (ref.startsWith("email:")) {
-        return ref.slice(6);
+function sourceQuery(ref: ReturnType<typeof parsePersonRef>): string {
+    if (ref.kind !== "name") {
+        return ref.value;
     }
 
-    if (ref.startsWith("name:")) {
-        return (
-            ref
-                .slice(5)
-                .split(" ")
-                .reduce((longest, token) => (token.length > longest.length ? token : longest), "") || ref
-        );
-    }
-
-    return ref;
+    return (
+        ref.value.split(" ").reduce((longest, token) => (token.length > longest.length ? token : longest), "") ||
+        `name:${ref.value}`
+    );
 }
 
 /**
@@ -840,16 +846,23 @@ class IdentityGroups {
     add(kind: PersonSourceKind, person: SourcePerson): void {
         const found = this.matching(person);
         const identity = found[0] ?? this.create();
+        const united = person.email ? found.slice(1) : [];
 
-        if (person.email) {
-            for (const other of found.slice(1)) {
-                unite(identity, other);
-                this.drop(other);
-            }
+        for (const other of united) {
+            unite(identity, other);
+            this.drop(other);
         }
 
         absorb(identity, kind, person);
-        this.index(identity);
+
+        // Only what this add gave the identity is indexed: everything a united identity brought, and the person's own
+        // email and key. The rest already points at it.
+        for (const other of united) {
+            this.index(identity, other.emails, other.keys);
+        }
+
+        const key = nameKey(person.name);
+        this.index(identity, person.email ? [person.email.toLowerCase()] : [], key ? [key] : []);
     }
 
     /** The identities, in the order they were first seen. */
@@ -875,6 +888,10 @@ class IdentityGroups {
             }
         }
 
+        if (found.size <= 1) {
+            return [...found];
+        }
+
         return [...found].sort((a, b) => (this.order.get(a) ?? 0) - (this.order.get(b) ?? 0));
     }
 
@@ -892,12 +909,12 @@ class IdentityGroups {
         }
     }
 
-    private index(identity: Identity): void {
-        for (const email of identity.emails) {
+    private index(identity: Identity, emails: Iterable<string>, keys: Iterable<string>): void {
+        for (const email of emails) {
             this.byEmail.set(email, identity);
         }
 
-        for (const key of identity.keys) {
+        for (const key of keys) {
             const known = this.byKey.get(key) ?? new Set<Identity>();
             known.add(identity);
             this.byKey.set(key, known);

@@ -255,6 +255,9 @@ export interface WalkChangeLogsOptions {
  */
 const ROW_ORDER_SLACK_MS = 10 * 60_000;
 
+/** A row's `ts` as written on its raw line, so the backward read decides where to stop without parsing each row. */
+const RAW_TS = /"ts":"([^"\\]*)"/;
+
 /**
  * The rows of one log written at or after `since`, oldest first, read from the end and stopped at the first row older
  * than the window by more than `ROW_ORDER_SLACK_MS`. At most `max`, the newest kept.
@@ -273,17 +276,21 @@ function recentRows({
     const newestFirst: ChangeLogRow[] = [];
 
     for (const line of readLinesBackwardSync(path, { chunkBytes: WALK_CHUNK_BYTES })) {
-        const row = parseLine(line);
-
-        if (!row) {
-            if (line.trim().length > 0) {
-                log.debug({ path }, "change log: a line that is not a row");
-            }
-
+        if (line.trim().length === 0) {
             continue;
         }
 
-        const at = Date.parse(row.ts);
+        const rawTs = RAW_TS.exec(line)?.[1];
+        // Only a line whose `ts` is not written plainly is parsed for it; any other line is parsed once it is kept.
+        let row = rawTs === undefined ? parseLine(line) : undefined;
+        const ts = rawTs ?? row?.ts;
+
+        if (ts === undefined) {
+            log.debug({ path }, "change log: a line that is not a row");
+            continue;
+        }
+
+        const at = Date.parse(ts);
 
         if (at < since - ROW_ORDER_SLACK_MS) {
             break;
@@ -294,6 +301,13 @@ function recentRows({
         }
 
         if (keepLine && !keepLine(line)) {
+            continue;
+        }
+
+        row ??= parseLine(line);
+
+        if (!row) {
+            log.debug({ path }, "change log: a line that is not a row");
             continue;
         }
 

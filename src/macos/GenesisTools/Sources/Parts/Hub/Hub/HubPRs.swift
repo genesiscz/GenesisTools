@@ -2726,6 +2726,27 @@ struct PROpeningCover: View {
 
 // MARK: - Detail
 
+/// The sections' folds, one key each so every PR opens the same way. The current overview and the redesign layouts
+/// all read these, so a fold set in one holds in the others.
+struct PROverviewFolds: DynamicProperty {
+    @AppStorage("hub.prs.fold.sessions") var sessions = false
+    /// One choice for every PR: open by default, and a fold or unfold anywhere applies to all (Martin, 2026-11-10).
+    @AppStorage(HubPROverview.commitsFoldedKey, store: HubDefaults.store) var commits = false
+    @AppStorage("hub.prs.fold.checks") var checks = false
+}
+
+extension View {
+    /// The palette's "review" opens the review popover of whichever PR detail layout shows: the request is taken back
+    /// as it is read, so it opens once.
+    func opensReview(on prs: PRsModel, reviewing: Binding<Bool>) -> some View {
+        onChange(of: prs.reviewRequested, initial: true) { _, wanted in
+            guard wanted else { return }
+            prs.reviewRequested = false
+            reviewing.wrappedValue = true
+        }
+    }
+}
+
 struct PRDetailView: View {
     var model: HubModel
     @ObservedObject var prs: PRsModel
@@ -2733,20 +2754,17 @@ struct PRDetailView: View {
     @AppStorage("hub.prs.showDiff") private var showDiff = true
     // Folded sections, one key each so every PR opens the same way.
     @AppStorage("hub.prs.fold.description") private var foldDescription = false
-    @AppStorage("hub.prs.fold.sessions") private var foldSessions = false
-    /// One choice for every PR: open by default, and a fold or unfold anywhere applies to all (Martin, 2026-11-10).
-    @AppStorage(HubPROverview.commitsFoldedKey, store: HubDefaults.store) private var foldCommits = false
+    private var folds = PROverviewFolds()
     /// Settings, Hub, Panes, PR overview: every description in full instead of its first paragraph.
     @AppStorage(HubPROverview.descriptionWholeKey, store: HubDefaults.store) private var descriptionWhole = false
     /// The reader's Show description / Show less, per PR (`PRDescriptionChoices`).
     @AppStorage(HubPROverview.descriptionChoicesKey, store: HubDefaults.store) private var descriptionChoices = ""
-    @AppStorage("hub.prs.fold.checks") private var foldChecks = false
     @State private var launching = false
     @State private var reviewing = false
     @State private var width: CGFloat = 0
     /// The overview column's visible height: the description may take 60% of it before it folds.
     @State private var overviewHeight: CGFloat = 0
-    @State private var find = PanelFindModel(scope: "pr.overview", title: "this PR")
+    @State private var find = PRDetailView.overviewFind()
 
     /// The first message of a review session. Only the PR's URL comes from outside, and it came from
     /// `tools hub pr list`, not from a page; the agent pushes a proposal and never posts.
@@ -2861,11 +2879,7 @@ struct PRDetailView: View {
                         }
                     }
                     // The palette's "review": the same popover, with the command shown before Start.
-                    .onChange(of: prs.reviewRequested, initial: true) { _, wanted in
-                        guard wanted else { return }
-                        prs.reviewRequested = false
-                        reviewing = true
-                    }
+                    .opensReview(on: prs, reviewing: $reviewing)
                 }
                 if let path = pr.localWorktree {
                     Button {
@@ -3066,11 +3080,11 @@ struct PRDetailView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if let commits = detail?.commits, !commits.isEmpty {
                         if let review = prs.review {
-                            PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, total: detail?.commitsTotal, folded: $foldCommits) {
+                            PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, total: detail?.commitsTotal, folded: folds.$commits) {
                                 showDiff = true
                             }
                         } else {
-                            PRSection(title: "Commits", count: commits.count, folded: $foldCommits, flat: true) {
+                            PRSection(title: "Commits", count: commits.count, folded: folds.$commits, flat: true) {
                                 let authors = PRCommitRow.showsAuthors(commits)
                                 ForEach(commits.reversed()) { commit in
                                     PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
@@ -3082,10 +3096,10 @@ struct PRDetailView: View {
                         }
                     }
                     if let checks = detail?.checks, !checks.isEmpty {
-                        PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
+                        PRChecksSection(model: model, pr: pr, checks: checks, folded: folds.$checks)
                             .id(Self.checksID)
                     }
-                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
+                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: folds.$sessions)
                         .id(Self.sessionsID)
                 }
             }
@@ -3104,17 +3118,16 @@ struct PRDetailView: View {
 
     // MARK: Find (⌘F in the overview)
 
-    private static let sessionsID = "pr.sessions"
+    static let sessionsID = "pr.sessions"
     private static let descriptionSectionID = "pr.description.section"
-    private static let descriptionID = "pr.description"
-    static var descriptionRowID: String { descriptionID }
+    static let descriptionID = "pr.description"
     private static let checksID = "pr.checks"
 
     /// Changes when anything the overview shows changes: the sessions found, the detail, the PR.
     private var findRevision: [String] {
-        let sessions = Self.sessionFindRevision(model: model, prs: prs, pr: pr)
-        let description = (detail?.body?.trimmed).map { linkedDescription($0) } ?? ""
-        return sessions + [description, pr.id] + (detail?.commits ?? []).map(\.sha) + (detail?.checks ?? []).map(\.id)
+        let description = (detail?.body?.trimmed).map { linkedDescription($0) }
+        return Self.overviewFindRevision(markdown: description, model: model, prs: prs, pr: pr)
+            + (detail?.commits ?? []).map(\.sha) + (detail?.checks ?? []).map(\.id)
     }
 
     /// Description, commits, checks and sessions, in the order the overview shows them.
@@ -3134,9 +3147,6 @@ struct PRDetailView: View {
         return rows
     }
 
-    /// The id of the lazy container that holds the session rows, for a page that registers `sessionFindRows`.
-    static var sessionsFindContainer: String { sessionsID }
-
     /// The agent sessions on the PR as find rows, under the ids their rows mark (`PRSessionsSection`).
     static func sessionFindRows(model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
         PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
@@ -3153,6 +3163,17 @@ struct PRDetailView: View {
         }
     }
 
+    /// The overview's ⌘F, one scope and title for the current overview and the redesign layouts.
+    static func overviewFind() -> PanelFindModel {
+        PanelFindModel(scope: "pr.overview", title: "this PR")
+    }
+
+    /// The find revision of a page that shows the description and the agent sessions: the sessions found, the
+    /// description as the page draws it, the PR. The current overview adds its commits and checks.
+    static func overviewFindRevision(markdown: String?, model: HubModel, prs: PRsModel, pr: HubPR) -> [String] {
+        sessionFindRevision(model: model, prs: prs, pr: pr) + [markdown ?? "", pr.id]
+    }
+
     /// The find rows of a page that shows the description and the agent sessions (the redesign layouts' About and
     /// Overview pages). `markdown` is the description as the page draws it.
     static func descriptionAndSessionFindRows(markdown: String?, model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
@@ -3163,16 +3184,16 @@ struct PRDetailView: View {
     /// A match in a folded section opens it first.
     private func unfold(_ match: PanelFindMatch) {
         if match.row.hasPrefix("session:") {
-            foldSessions = false
+            folds.sessions = false
         } else if match.row == Self.descriptionID {
             foldDescription = false
             if !descriptionShownWhole {
                 descriptionChoices = PRDescriptionChoices.set(descriptionChoices, pr: pr.id, whole: true)
             }
         } else if match.row.hasPrefix("check:") {
-            foldChecks = false
+            folds.checks = false
         } else {
-            foldCommits = false
+            folds.commits = false
         }
     }
 }
@@ -3225,7 +3246,7 @@ struct PRDescriptionView: View {
         VStack(alignment: .leading, spacing: 6) {
             MarkdownContentView(markdown: markdown, style: .hub)
                 .findField("desc")
-                .findRow(PRDetailView.descriptionRowID)
+                .findRow(PRDetailView.descriptionID)
                 .tint(Color(red: 0.62, green: 0.78, blue: 1))
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: Bool.self, of: { $0.size.height > fold + 1 }) { overflows = $0 }

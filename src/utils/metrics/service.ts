@@ -237,6 +237,10 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
         for (let step = drain(); step.more; step = drain()) {
             log.debug({ lines: step.lines }, "a metrics spool backlog drains before prune");
         }
+
+        // The loop read the backlog to its end, so the follow-up drain a step scheduled has nothing left to read.
+        clearTimeout(backlog);
+        backlog = undefined;
     };
 
     const ingest = (params: z.output<typeof METRICS_METHODS.ingest>): MetricsResult<"ingest"> =>

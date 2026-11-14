@@ -155,12 +155,13 @@ export async function workflowAgentUsage(
     const reader = resolveHistoryProvider(provider).reader.analysis;
     const calls = new Map<string, SessionCall>();
 
-    for (const transcript of transcripts) {
-        const trace = await reader.callTrace(transcript);
+    // The transcripts are independent files, so they are read at once; the first unreadable one in order is logged.
+    const traces = await Promise.all(transcripts.map((transcript) => reader.callTrace(transcript)));
 
+    for (const [index, trace] of traces.entries()) {
         if (!trace.supported) {
             logger.warn(
-                { transcript, reason: trace.reason },
+                { transcript: transcripts[index], reason: trace.reason },
                 "[workflows] an agent transcript's calls cannot be read; the agent is missing from the usage sums"
             );
             return null;
@@ -173,7 +174,10 @@ export async function workflowAgentUsage(
         }
     }
 
-    const ordered = [...calls.values()].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+    const ordered = [...calls.values()]
+        .map((call) => ({ call, at: Date.parse(call.t) }))
+        .sort((a, b) => a.at - b.at)
+        .map(({ call }) => call);
     const usage: WorkflowAgentUsage = {
         calls: 0,
         input: 0,

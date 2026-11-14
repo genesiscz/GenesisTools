@@ -23,6 +23,12 @@ struct EditGesture {
 /// draws what the service answers. While no service answers, the same ops run in `tools recorder apply` (the CLI
 /// checks the revision too) and the file comes back through the watcher.
 extension EditorModel {
+    /// `runTools` with a short command's deadline unless the call passes a longer one.
+    func runToolsCommand(_ argv: [String], timeout: TimeInterval = ToolsRunner.defaultTimeout,
+                         done: @escaping @MainActor (Int32, String, String) -> Void) {
+        runTools(argv, timeout, done)
+    }
+
     /// How long a continuous change rests before it becomes one undo step.
     static let gestureRest: TimeInterval = 0.6
 
@@ -311,7 +317,7 @@ extension EditorModel {
         }
         guard let move = beginMove(undoing: true, counterpart: .edit(project)) else { return }
         ownOpsRunning += 1
-        runTools(["recorder", "undo", store.url.path], ToolsRunner.defaultTimeout) { [weak self] status, _, stderr in
+        runToolsCommand(["recorder", "undo", store.url.path]) { [weak self] status, _, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0, let next = self.readOwnFile() else {
@@ -439,7 +445,7 @@ extension EditorModel {
     private func runOps(_ ops: String, done: @escaping @MainActor (Result<EditProject, ApplyFailure>) -> Void) {
         ownOpsRunning += 1
         let target = FileManager.default.fileExists(atPath: store.url.path) ? store.url.path : project.source.video
-        runTools(["recorder", "apply", target, ops], ToolsRunner.defaultTimeout) { [weak self] status, stdout, stderr in
+        runToolsCommand(["recorder", "apply", target, ops]) { [weak self] status, stdout, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0 else {
@@ -482,7 +488,7 @@ extension EditorModel {
             }
             return
         }
-        runTools(argv, ToolsRunner.defaultTimeout) { [weak self] status, stdout, stderr in
+        runToolsCommand(argv) { [weak self] status, stdout, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0 else {
@@ -515,7 +521,7 @@ extension EditorModel {
         }
         // The CLI gets the call's deadline too (a first screen read of a long movie takes minutes), never less than a
         // short command's own, since its process start and file reads cost more than the service's call.
-        runTools(argv, max(timeout, ToolsRunner.defaultTimeout)) { status, stdout, stderr in
+        runToolsCommand(argv, timeout: max(timeout, ToolsRunner.defaultTimeout)) { status, stdout, stderr in
             guard status == 0 else {
                 done(.failure(ApplyFailure(reason: stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")))
                 return

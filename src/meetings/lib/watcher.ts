@@ -38,7 +38,9 @@ export async function ensureWatcher(): Promise<"started" | "running" | "disabled
         return "disabled";
     }
 
-    if (inspectPidFile(watcherPidPath(new MeetingStore())).status === "live") {
+    const pidPath = watcherPidPath(store);
+
+    if (inspectPidFile(pidPath).status === "live") {
         return "running";
     }
 
@@ -46,7 +48,7 @@ export async function ensureWatcher(): Promise<"started" | "running" | "disabled
     // "started" means the child owns the pidfile, so a second ensureWatcher in this window does not spawn another.
     const deadline = Date.now() + WATCHER_CLAIM_MS;
 
-    while (inspectPidFile(watcherPidPath(new MeetingStore())).status !== "live") {
+    while (inspectPidFile(pidPath).status !== "live") {
         if (Date.now() >= deadline) {
             throw new Error(
                 `The meetings watcher did not claim its pidfile within ${WATCHER_CLAIM_MS / 1000} seconds.`

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { measureAudio } from "./measure";
+import { measureAudio, parseLoudness } from "./measure";
 import { encodeMidi } from "./midi";
 import { publishAudio, runAudio, withMusicScratch } from "./process";
 import { soundfontPaths, verifySoundfont } from "./soundfont";
@@ -97,32 +97,23 @@ export async function renderScore(options: {
         await writeFile(midi, encodeMidi(score));
         await runAudio(["fluidsynth", ...fluidSynthArgs({ soundfont, midi, raw })]);
         // FluidSynth renders the release tail past the score's end. The gain is measured on what ships, the trimmed
-        // audio: measured on the whole render, the trim then moves the integrated loudness off the target.
-        const trimmed = join(folder, "trimmed.wav");
-        await runAudio([
+        // audio: measured on the whole render, the trim then moves the integrated loudness off the target. The same
+        // atrim runs in the analysis pass and in the mastering pass, so no trimmed copy is written to disk.
+        const trim = `atrim=duration=${score.seconds}`;
+        const analysis = await runAudio([
             "ffmpeg",
             "-hide_banner",
             "-nostdin",
-            "-v",
-            "error",
-            "-y",
             "-i",
             raw,
+            "-vn",
             "-af",
-            `atrim=duration=${score.seconds}`,
-            "-c:a",
-            "pcm_f32le",
-            "-map_metadata",
-            "-1",
-            "-fflags",
-            "+bitexact",
-            "-flags:a",
-            "+bitexact",
-            "-threads",
-            "1",
-            trimmed,
+            `${trim},loudnorm=I=-20:TP=-3:LRA=11:print_format=json`,
+            "-f",
+            "null",
+            "-",
         ]);
-        const measured = await measureAudio(trimmed);
+        const measured = parseLoudness(analysis.stderr);
         const gainDb = targetLufs - measured.lufs;
 
         if (measured.truePeakDb + gainDb > peakDb) {
@@ -141,9 +132,9 @@ export async function renderScore(options: {
                     "error",
                     "-y",
                     "-i",
-                    trimmed,
+                    raw,
                     "-af",
-                    `volume=${gainDb.toFixed(6)}dB`,
+                    `${trim},volume=${gainDb.toFixed(6)}dB`,
                     "-ar",
                     "48000",
                     "-ac",

@@ -104,6 +104,37 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
         return ok ? null : { ok: false, failure: TIERS[tier].probeFailure };
     }
 
+    /**
+     * The commit phase of a connect or activate, run exclusively: an attempt that is no longer the latest commits
+     * nothing; otherwise `save` answers the id to make active (storing the row first when needed), or the failure that
+     * stops the commit, and the saved id becomes the live connection.
+     */
+    function commitAttempt({
+        attempt,
+        transport,
+        save,
+    }: {
+        attempt: number;
+        transport: Transport;
+        save: () => Promise<string | ConnectResult>;
+    }): Promise<ConnectResult> {
+        return exclusive(async (): Promise<ConnectResult> => {
+            if (attempt !== latestAttempt) {
+                return SUPERSEDED;
+            }
+
+            const saved = await save();
+
+            if (typeof saved !== "string") {
+                return saved;
+            }
+
+            await markActivated(saved);
+            commit(saved, transport, await loadConnections());
+            return { ok: true, id: saved };
+        });
+    }
+
     return {
         tier: null,
         transport: null,
@@ -126,19 +157,10 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
                 const transport = await row.build(target);
                 const failed = await probed(input.tier, transport);
 
-                return await exclusive(async (): Promise<ConnectResult> => {
-                    if (attempt !== latestAttempt) {
-                        return SUPERSEDED;
-                    }
-
-                    if (failed) {
-                        return failed;
-                    }
-
-                    const id = await upsertConnection(input);
-                    await markActivated(id);
-                    commit(id, transport, await loadConnections());
-                    return { ok: true, id };
+                return await commitAttempt({
+                    attempt,
+                    transport,
+                    save: async () => failed ?? (await upsertConnection(input)),
                 });
             } catch (err) {
                 return { ok: false, failure: "error", error: err instanceof Error ? err.message : String(err) };
@@ -157,24 +179,18 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
                 const transport = await buildTransportFor(conn);
                 const failed = await probed(conn.tier, transport);
 
-                return await exclusive(async (): Promise<ConnectResult> => {
-                    if (attempt !== latestAttempt) {
-                        return SUPERSEDED;
-                    }
+                return await commitAttempt({
+                    attempt,
+                    transport,
+                    save: async () => {
+                        // remove() may have deleted the row while the probe ran: a removed Mac never becomes the live
+                        // one. A removal after this check waits for this commit, then drops the connection again.
+                        if (!(await getConnection(id))) {
+                            return { ok: false, failure: "error", error: `Connection ${id} was removed while it connected.` };
+                        }
 
-                    // remove() may have deleted the row while the probe ran: a removed Mac never becomes the live
-                    // one. A removal after this check waits for this commit, then drops the connection again.
-                    if (!(await getConnection(id))) {
-                        return { ok: false, failure: "error", error: `Connection ${id} was removed while it connected.` };
-                    }
-
-                    if (failed) {
-                        return failed;
-                    }
-
-                    await markActivated(id);
-                    commit(id, transport, await loadConnections());
-                    return { ok: true, id };
+                        return failed ?? id;
+                    },
                 });
             } catch (err) {
                 return { ok: false, failure: "error", error: err instanceof Error ? err.message : String(err) };

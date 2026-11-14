@@ -1,3 +1,4 @@
+import { withTimeout } from "@genesiscz/utils/async";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { CmuxCommandError } from "@genesiscz/utils/cmux/lib/command-error";
 import {
@@ -171,7 +172,7 @@ async function readOnce(options: ReadCmuxTreeOptions, run: TreeRunner, timeoutMs
         return { ok: false, reason: "backoff", error: skippedTreeError(skip) };
     }
 
-    const answer = await withDeadline({ call: run(TREE_ARGS, { timeoutMs }), timeoutMs, label: "cmux tree" });
+    const answer = await withDeadline(run(TREE_ARGS, { timeoutMs }), timeoutMs);
     let result: CmuxTreeRead;
     let unresponsive: { state: CmuxHealthState; appPid?: number } | undefined;
 
@@ -189,19 +190,23 @@ async function readOnce(options: ReadCmuxTreeOptions, run: TreeRunner, timeoutMs
         let error = answer.error;
         let state: CmuxHealthState | undefined;
         const probeTimeoutMs = options.probeTimeoutMs ?? CMUX_TREE_PROBE_TIMEOUT_MS;
-        const diagnosis = probe
-            ? await withDeadline({ call: probe("cmux tree"), timeoutMs: probeTimeoutMs, label: "cmux tree probe" })
-            : undefined;
+        const probeExpired = new Error(`cmux tree probe timed out after ${probeTimeoutMs} ms`);
 
-        if (diagnosis?.ok === false && diagnosis.expired) {
-            log.debug({ probeTimeoutMs }, "cmux tree probe did not finish in time; the command's error stands");
-        } else if (diagnosis?.ok === false && !diagnosis.expired) {
-            error = diagnosis.error;
+        try {
+            if (probe) {
+                await withTimeout(probe("cmux tree"), probeTimeoutMs, probeExpired);
+            }
+        } catch (probeError) {
+            if (probeError === probeExpired) {
+                log.debug({ probeTimeoutMs }, "cmux tree probe did not finish in time; the command's error stands");
+            } else {
+                error = probeError instanceof Error ? probeError.message : String(probeError);
 
-            if (diagnosis.thrown instanceof CmuxUnresponsiveError) {
-                const { appPid } = diagnosis.thrown.health;
-                state = diagnosis.thrown.health.state;
-                unresponsive = { state, ...(appPid !== undefined ? { appPid } : {}) };
+                if (probeError instanceof CmuxUnresponsiveError) {
+                    const { appPid } = probeError.health;
+                    state = probeError.health.state;
+                    unresponsive = { state, ...(appPid !== undefined ? { appPid } : {}) };
+                }
             }
         }
 
@@ -227,37 +232,26 @@ async function readOnce(options: ReadCmuxTreeOptions, run: TreeRunner, timeoutMs
     return result;
 }
 
-type RunAnswer =
-    | { ok: true; value: unknown }
-    | { ok: false; expired: true; timedOut: true; error: string }
-    | { ok: false; expired: false; timedOut: boolean; error: string; thrown: unknown };
+type RunAnswer = { ok: true; value: unknown } | { ok: false; timedOut: boolean; error: string };
 
 /**
- * The call's answer, or an expiry at `timeoutMs` whatever the call does: `runCmux` kills its child at the same
- * moment but waits a grace period for the exit, and an injected runner or probe may never answer at all.
+ * The runner's answer, or a timeout at `timeoutMs` whatever the runner does: `runCmux` kills its child at the same
+ * moment but waits a grace period for the exit, and an injected runner may never answer at all.
  */
-async function withDeadline(input: { call: Promise<unknown>; timeoutMs: number; label: string }): Promise<RunAnswer> {
+async function withDeadline(call: Promise<unknown>, timeoutMs: number): Promise<RunAnswer> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<RunAnswer>((resolve) => {
         timer = setTimeout(
-            () =>
-                resolve({
-                    ok: false,
-                    expired: true,
-                    timedOut: true,
-                    error: `${input.label} timed out after ${input.timeoutMs} ms`,
-                }),
-            input.timeoutMs
+            () => resolve({ ok: false, timedOut: true, error: `cmux tree timed out after ${timeoutMs} ms` }),
+            timeoutMs
         );
     });
-    const answered = input.call.then(
+    const answered = call.then(
         (value): RunAnswer => ({ ok: true, value }),
         (error): RunAnswer => ({
             ok: false,
-            expired: false,
             timedOut: error instanceof CmuxCommandError && error.result.timedOut === true,
             error: error instanceof Error ? error.message : String(error),
-            thrown: error,
         })
     );
 

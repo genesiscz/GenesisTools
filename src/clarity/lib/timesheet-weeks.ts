@@ -1,6 +1,6 @@
 import { clarityTasksOf } from "@app/clarity/lib/tasks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import type { TimesheetAppResponse, TimesheetResponse } from "@genesiscz/utils/clarity";
+import type { TimesheetAppResponse, TimesheetRecord, TimesheetResponse } from "@genesiscz/utils/clarity";
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -25,7 +25,7 @@ export interface TimesheetWeekReader {
     getTimesheet(timesheetId: number): Promise<TimesheetResponse>;
 }
 
-export type TimesheetRecord = TimesheetResponse["timesheets"]["_results"][number];
+export type { TimesheetRecord };
 
 /**
  * Resolve an explicit `--timesheet` argument. A flag that was passed at all must name a real
@@ -364,7 +364,8 @@ async function getTimesheetWeeks(
         }
     }
 
-    const records = new Map<number, TimesheetRecord>();
+    // Starts with the timesheets an earlier walk already read, so they are not read again.
+    const records = new Map<number, TimesheetRecord>(scope.known ?? []);
 
     if (!carousel?.length) {
         return { weeks: [], userId, records };
@@ -393,7 +394,7 @@ async function getTimesheetWeeks(
     if (needsCount.length > 0) {
         const results = await Promise.allSettled(
             needsCount.map(async (w) => {
-                const known = scope.known?.get(w.timesheetId);
+                const known = records.get(w.timesheetId);
                 if (known) {
                     return { timesheetId: w.timesheetId, record: known };
                 }
@@ -608,11 +609,6 @@ export async function loadTimesheetPeriods(
     scope: { month?: number; year?: number; known?: ReadonlyMap<number, TimesheetRecord> } = {}
 ): Promise<TimesheetPeriods> {
     const { weeks, userId, records } = await getTimesheetWeeks(api, scope);
-    for (const [timesheetId, record] of scope.known ?? []) {
-        if (!records.has(timesheetId)) {
-            records.set(timesheetId, record);
-        }
-    }
 
     return new TimesheetPeriods({ weeks, records, userId, month: scope.month, year: scope.year, api });
 }
@@ -628,12 +624,7 @@ async function firstNonEmptyCatalogue(periods: TimesheetPeriods, candidates: Tim
             continue;
         }
 
-        const record = await periods.record(candidate.timesheetId);
-        if (!record) {
-            throw new Error(`Timesheet ${candidate.timesheetId} not found`);
-        }
-
-        const tasks = clarityTasksOf(record);
+        const tasks = clarityTasksOf(await periods.record(candidate.timesheetId), candidate.timesheetId);
 
         if (tasks.length > 0) {
             return tasks;

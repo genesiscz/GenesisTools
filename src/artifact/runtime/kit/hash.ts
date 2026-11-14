@@ -68,12 +68,23 @@ export function sectionAnchor(hash: string): string {
 }
 
 const revealedOnLoad = new WeakSet<Document>();
+/** Mounted users of useSectionAnchor per window; the window keeps one hashchange listener while any is mounted. */
+const anchorUsers = new WeakMap<Window, number>();
+
+function revealSectionAnchor(): void {
+    const id = sectionAnchor(window.location.hash);
+
+    if (id) {
+        document.getElementById(id)?.scrollIntoView();
+    }
+}
 
 /**
  * Keep section deep links working for a component that stores its state in the hash. The browser looks the WHOLE
  * fragment up as an element id, so `#layers&d=…` scrolls nowhere. On the first mount in a document, and on every
  * hash navigation, scroll to the element the plain segment names. Only the first mount scrolls, so a component
- * that mounts later (inside a tab the reader opens) does not move the page.
+ * that mounts later (inside a tab the reader opens) does not move the page. Every mounted user shares one
+ * listener, so a hash change scrolls once, however many components ask for it.
  */
 export function useSectionAnchor(enabled: boolean): void {
     useEffect(() => {
@@ -81,21 +92,26 @@ export function useSectionAnchor(enabled: boolean): void {
             return;
         }
 
-        const reveal = () => {
-            const id = sectionAnchor(window.location.hash);
-
-            if (id) {
-                document.getElementById(id)?.scrollIntoView();
-            }
-        };
-
         if (!revealedOnLoad.has(document)) {
             revealedOnLoad.add(document);
-            reveal();
+            revealSectionAnchor();
         }
 
-        window.addEventListener("hashchange", reveal);
+        const win = window;
+        const users = anchorUsers.get(win) ?? 0;
+        anchorUsers.set(win, users + 1);
 
-        return () => window.removeEventListener("hashchange", reveal);
+        if (users === 0) {
+            win.addEventListener("hashchange", revealSectionAnchor);
+        }
+
+        return () => {
+            const left = (anchorUsers.get(win) ?? 1) - 1;
+            anchorUsers.set(win, left);
+
+            if (left === 0) {
+                win.removeEventListener("hashchange", revealSectionAnchor);
+            }
+        };
     }, [enabled]);
 }

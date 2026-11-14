@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { type PrLine, PrRow } from "@/features/prs/components/PrRow";
 import { usePrTriage } from "@/features/prs/hooks";
+import { uniqueId } from "@/lib/unique-id";
 import { useThemeColors } from "@/theme/colors";
 import { Empty } from "@/ui/Empty";
 
@@ -17,9 +18,9 @@ export default function PrsScreen() {
     const [mine, setMine] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
     const triage = usePrTriage(mine);
-    const [merges, setMerges] = useState<(PrLine & { id: number })[]>([]);
+    const [merges, setMerges] = useState<(PrLine & { id: string })[]>([]);
     const onMergeLine = useCallback((line: PrLine) => {
-        setMerges((current) => [{ ...line, id: Date.now() }, ...current]);
+        setMerges((current) => [{ ...line, id: uniqueId("merge") }, ...current]);
     }, []);
 
     return (

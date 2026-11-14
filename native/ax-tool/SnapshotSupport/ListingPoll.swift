@@ -3,6 +3,10 @@ import Foundation
 /// The pause between two listings of the windows while one is still missing.
 public let listingPause: TimeInterval = 0.1
 
+/// How long one ScreenCaptureKit call may take: a listing's first answer, or one stream update. The live display
+/// switch's deadline (`liveSwitchDeadline`) is built from it, so the two cannot drift apart.
+public let streamCallBudget: TimeInterval = 5
+
 /// A listing that did not answer within its budget (`answer(within:_:)`).
 public struct ListingTimedOut: LocalizedError, Equatable {
     public let seconds: TimeInterval
@@ -16,13 +20,27 @@ public struct ListingTimedOut: LocalizedError, Equatable {
     }
 }
 
-/// Hands the first answer on to the waiting caller, once.
+/// Hands the first answer on to the waiting caller, once, and then cancels the budget's timer.
 private final class AnswerRace<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var waiting: CheckedContinuation<T, Error>?
+    private var timer: Task<Void, Never>?
 
     init(_ waiting: CheckedContinuation<T, Error>) {
         self.waiting = waiting
+    }
+
+    /// Keeps the budget's `timer` to cancel at the first answer; an answer that already came cancels it at once.
+    func arm(_ timer: Task<Void, Never>) {
+        lock.lock()
+        let answered = waiting == nil
+        if !answered {
+            self.timer = timer
+        }
+        lock.unlock()
+        if answered {
+            timer.cancel()
+        }
     }
 
     /// False when the other side already answered.
@@ -31,8 +49,12 @@ private final class AnswerRace<T>: @unchecked Sendable {
         lock.lock()
         let continuation = waiting
         waiting = nil
+        let timer = self.timer
+        self.timer = nil
         lock.unlock()
         guard let continuation else { return false }
+        // An answer within the budget ends the timer's sleep, so it does not hold the race for the rest of the budget.
+        timer?.cancel()
         continuation.resume(with: result)
         return true
     }
@@ -51,12 +73,12 @@ public func answer<T>(within seconds: TimeInterval, _ operation: @escaping () as
                 race.finish(.failure(error))
             }
         }
-        Task {
+        race.arm(Task {
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
             if race.finish(.failure(ListingTimedOut(seconds: seconds))) {
                 work.cancel()
             }
-        }
+        })
     }
 }
 

@@ -202,11 +202,17 @@ struct UsageSettingsSketchPanesB: View {
     static func tab(for anchor: String) -> UsageSketchPaneTabB? {
         if anchor == "lists" { return .prs }
         guard anchor.hasPrefix("search/") else { return nil }
-        return UsageSketchPaneTabB.allCases.first { tab in
-            let row = NativeSettingsSearchEntry(kind: .row, title: "", card: tab.title).key
-            return anchor.contains("/" + row)
-        }
+        // `search/<page>/<key>`: the page id has no slash, so the key starts after the second one.
+        let rest = anchor.dropFirst("search/".count)
+        guard let pageEnd = rest.firstIndex(of: "/") else { return nil }
+        let key = rest[rest.index(after: pageEnd)...]
+        return rowKeys.first { key.hasPrefix($0.value) }?.key
     }
+
+    /// Each tab's row-key prefix (`row:<tab title>/`, a `NativeSettingsSearchEntry.key` with no title), built once.
+    private static let rowKeys: [UsageSketchPaneTabB: String] = Dictionary(uniqueKeysWithValues: UsageSketchPaneTabB.allCases.map {
+        ($0, NativeSettingsSearchEntry(kind: .row, title: "", card: $0.title).key)
+    })
 
     @ViewBuilder
     private func section(_ tab: UsageSketchPaneTabB) -> some View {

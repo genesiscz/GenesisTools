@@ -1569,13 +1569,12 @@ private struct MusicSection: View {
                     }
                     .accessibilityIdentifier("recorder.audio.music.remove")
                 }
-                .task(id: music.file) {
+                .fileMissing(music.file, into: $musicMissing)
+                // Again once the missing check answers, so a file that is gone is never opened for its length.
+                .task(id: "\(music.file)\n\(musicMissing)") {
                     fileSeconds = nil
                     stopPreview()
-                    let gone = await FileMissing.check(music.file)
-                    guard !Task.isCancelled else { return }
-                    musicMissing = gone
-                    guard !gone, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration) else { return }
+                    guard !musicMissing, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration) else { return }
                     fileSeconds = duration.seconds.isFinite ? duration.seconds : nil
                 }
                 if let fileSeconds, fileSeconds > 1 {

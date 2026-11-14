@@ -193,11 +193,7 @@ const TO_LINEAR_SRGB: Record<string, (t: string[]) => Vec3> = {
 
 /** WCAG 2 relative luminance, 0 (black) to 1 (white). */
 export function relativeLuminance({ r, g, b }: Rgb): number {
-    const channel = (value: number): number => {
-        const c = value / 255;
-
-        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    };
+    const channel = (value: number): number => decodeSrgb(value / 255);
 
     return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 }

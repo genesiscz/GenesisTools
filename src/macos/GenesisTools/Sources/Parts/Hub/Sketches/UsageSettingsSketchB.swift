@@ -291,12 +291,14 @@ struct UsageSettingsSketchLimitsB: View {
 
     /// One lane per account, its deciding window only (5h when it has one, else the week), 30 pt tall, under one axis.
     private var comparison: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // Each account's table row by id, built once per draw instead of a scan per lane.
+        let rows = Dictionary(usage.table.rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return VStack(alignment: .leading, spacing: 4) {
             UsageTimeAxis(domain: usage.domain, now: usage.builtAt)
                 .padding(.leading, 150 + 6)
             ForEach(usage.lanes) { account in
                 if let lane = UsageSketchRoomB.decidingLane(
-                    account.lanes, room: usage.table.rows.first { $0.id == account.account.id }.flatMap(UsageSketchRoomB.of))
+                    account.lanes, room: rows[account.account.id].flatMap(UsageSketchRoomB.of))
                 {
                     HStack(spacing: 6) {
                         HStack(spacing: 5) {

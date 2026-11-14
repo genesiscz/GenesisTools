@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { resolutionProblems } from "./conflicts";
+import { type DeadlineSpawn, spawnWithDeadline } from "./run";
 
 export const VERSION_FILES = new Set([
     ".claude-plugin/marketplace.json",
@@ -119,28 +120,28 @@ export function prepGit(cwd: string): GitRun {
  * forever, and one stuck child would hold resolve-same.ts past its round limit. */
 export const GIT_DEADLINE_MS = 300_000;
 
-interface GitSpawn {
-    cwd?: string;
-    stdin?: Uint8Array;
-    env?: Record<string, string | undefined>;
-    timeoutMs?: number;
-}
+type GitSpawn = Omit<DeadlineSpawn, "timeoutMs"> & { timeoutMs?: number };
 
 /** `git <args>` with a deadline. On expiry it throws, so the script stops with that reason instead of reading the
  * killed run as an ordinary exit code (a timed-out `rev-parse --verify` would read as "no such ref"). */
 export function spawnGit(args: string[], options: GitSpawn = {}) {
-    const timeout = options.timeoutMs ?? GIT_DEADLINE_MS;
-    const result = Bun.spawnSync(["git", ...args], {
-        cwd: options.cwd,
-        stdin: options.stdin ?? "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: options.env ?? env.getProcessEnv(),
-        timeout,
-    });
+    const timeoutMs = options.timeoutMs ?? GIT_DEADLINE_MS;
+    const result = spawnWithDeadline(["git", ...args], { ...options, timeoutMs });
     if (result.exitedDueToTimeout) {
         const shown = args.filter((arg, i) => arg !== "-c" && args[i - 1] !== "-c").join(" ");
-        throw new Error(`git ${shown} did not finish within ${timeout / 1000} s and was stopped`);
+        throw new Error(`git ${shown} did not finish within ${timeoutMs / 1000} s and was stopped`);
+    }
+
+    return result;
+}
+
+/** `spawnGit` for a call that must exit with one of `okCodes` (0 when unset). Any other exit throws
+ * `git <cmd>: <stderr>`. */
+export function mustGit(args: string[], options: GitSpawn & { okCodes?: number[] } = {}) {
+    const { okCodes = [0], ...spawn } = options;
+    const result = spawnGit(args, spawn);
+    if (!okCodes.includes(result.exitCode ?? -1)) {
+        throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
     }
 
     return result;
@@ -153,14 +154,7 @@ export function spawnGit(args: string[], options: GitSpawn = {}) {
  */
 export function unpickedCommits(options: { cwd: string; upstream: string; head: string; limit?: string }): string[] {
     const { cwd, upstream, head, limit } = options;
-    const must = (args: string[], stdin?: Uint8Array) => {
-        const result = spawnGit(args, { cwd, stdin });
-        if (result.exitCode !== 0) {
-            throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
-        }
-
-        return result.stdout.toString();
-    };
+    const must = (args: string[], stdin?: Uint8Array) => mustGit(args, { cwd, stdin }).stdout.toString();
     const patchIds = (range: string[]) => {
         const log = must([
             "log",
@@ -183,8 +177,26 @@ export function unpickedCommits(options: { cwd: string; upstream: string; head: 
         return ids;
     };
     const own = [`${upstream}..${head}`, ...(limit ? [`^${limit}`] : [])];
-    const upstreamIds = new Set(patchIds([`${head}..${upstream}`]).values());
     const ownIds = patchIds(own);
+    // An upstream commit holds an own commit's change only when it changes the same files, so only the upstream commits
+    // that touch a file of `own` are hashed: `head..upstream` is every commit master gained since the fork. The paths
+    // go on stdin, which has no argument limit; --full-history keeps a commit that history simplification would hide.
+    const ownFiles = [
+        ...new Set(
+            must(["log", "--no-merges", "--format=", "--name-only", "-z", ...own])
+                .split("\0")
+                .filter(Boolean)
+        ),
+    ];
+    const touching = ownFiles.length
+        ? must(
+              ["log", "--no-merges", "--full-history", "--format=%H", "--stdin"],
+              Buffer.from(`${head}..${upstream}\n--\n${ownFiles.map((file) => `:(literal)${file}\n`).join("")}`)
+          )
+              .split("\n")
+              .filter(Boolean)
+        : [];
+    const upstreamIds = new Set(touching.length ? patchIds(["--no-walk", ...touching]).values() : []);
     return must(["rev-list", "--no-merges", "--reverse", ...own])
         .split("\n")
         .filter(Boolean)

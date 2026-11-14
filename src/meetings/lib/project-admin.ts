@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
@@ -281,10 +282,9 @@ export async function restoreProject(options: {
 }): Promise<ProjectRestore> {
     const { config, store } = options;
     const folder = backupFolder(options.backupRoot);
-    const path = existsSync(options.backup) ? realpathSync(options.backup) : options.backup;
-    const inside = existsSync(folder) ? relative(realpathSync(folder), path) : "..";
+    const path = options.backup;
 
-    if (!existsSync(path) || inside.startsWith("..") || isAbsolute(inside)) {
+    if (!existsSync(path) || !isInsideDir(folder, path)) {
         throw new Error(`${options.backup} is not a project removal backup in ${folder}`);
     }
 

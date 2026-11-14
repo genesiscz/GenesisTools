@@ -195,24 +195,23 @@ export class Outbox {
     }
 
     send(text: string): void {
-        const message = Buffer.from(text);
-        this.offeredBytes += message.length;
+        // Counted before the copy: a message the outbox drops is never copied into a Buffer.
+        const length = Buffer.byteLength(text);
+        this.offeredBytes += length;
 
         if (this.dropping) {
             return;
         }
 
-        if (this.bytes > 0 && this.bytes + message.length > this.limit) {
-            this.dropping = true;
-            const held = this.bytes + message.length;
-            this.chunks.length = 0;
-            this.bytes = 0;
+        if (this.bytes > 0 && this.bytes + length > this.limit) {
+            const held = this.bytes + length;
+            this.discard();
             this.onFull(held);
             return;
         }
 
-        this.chunks.push(message);
-        this.bytes += message.length;
+        this.chunks.push(Buffer.from(text));
+        this.bytes += length;
         this.flush();
     }
 

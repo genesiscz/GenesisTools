@@ -31,17 +31,41 @@ function triviaShape(trivia: string): string {
 }
 
 /**
+ * The script parsed once, or null on a syntax error. A program of this one file (no lib, no imports, no emit) reports
+ * the errors of that parse, the ones transpileModule reported after a second parse and a full emit.
+ */
+function parseScript(file: string, text: string, kind: ts.ScriptKind): ts.SourceFile | null {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+    const program = ts.createProgram({
+        rootNames: [file],
+        options: { allowJs: true, noLib: true, noResolve: true, types: [] },
+        host: {
+            getSourceFile: () => source,
+            getDefaultLibFileName: () => "lib.d.ts",
+            writeFile: () => {},
+            getCurrentDirectory: () => "",
+            getCanonicalFileName: (name) => name,
+            useCaseSensitiveFileNames: () => true,
+            getNewLine: () => "\n",
+            fileExists: (name) => name === file,
+            readFile: () => undefined,
+        },
+    });
+    return program.getSyntacticDiagnostics(source).length ? null : source;
+}
+
+/**
  * The script as TypeScript reads it: each token's kind and exact text, after the comments and line breaks before it.
  * Only spaces between tokens on one line drop out, and JavaScript ignores those. A line break stays (automatic
  * semicolon insertion reads it), and a string, template, regular expression or JSX text keeps every space. null on a
  * syntax error: a parser that recovered can have split a literal into tokens.
  */
 function scriptTokens(file: string, text: string, kind: ts.ScriptKind): string[] | null {
-    if (ts.transpileModule(text, { fileName: file, reportDiagnostics: true }).diagnostics?.length) {
+    const source = parseScript(file, text, kind);
+    if (!source) {
         return null;
     }
 
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
     const tokens: string[] = [];
     let end = 0;
     const visit = (node: ts.Node): void => {
@@ -84,14 +108,11 @@ function jsonTokens(text: string): string[] | null {
 }
 
 /**
- * Whether two versions of a file mean the same. Scripts and JSON compare token by token; every other file (Python,
- * YAML, Markdown, a Makefile, shell) only when byte-identical, since its spaces or line breaks can carry meaning.
+ * Whether two versions of a file mean the same. Scripts and JSON compare token by token, so a side that does not parse
+ * matches nothing, itself included; every other file (Python, YAML, Markdown, a Makefile, shell) only when
+ * byte-identical, since its spaces or line breaks can carry meaning.
  */
 function sameMeaning(file: string, ours: string, theirs: string): boolean {
-    if (ours === theirs) {
-        return true;
-    }
-
     const extension = extname(file);
     const kind = SCRIPT_KINDS.get(extension);
     const tokenize =
@@ -101,7 +122,7 @@ function sameMeaning(file: string, ours: string, theirs: string): boolean {
               ? jsonTokens
               : undefined;
     if (!tokenize) {
-        return false;
+        return ours === theirs;
     }
 
     const a = tokenize(ours);
@@ -213,14 +234,12 @@ function run(cwd: string): number {
                 if (result.unresolved || result.text === original) {
                     return stop(`${commit}: ${file}: real or unsupported conflict`);
                 }
+                // A script result is its ours side, which sameMeaning parsed already. The JSON tokenizer checks tokens
+                // only, not how they nest, so JSON still gets a full parse.
                 if (file.endsWith(".json")) {
                     SafeJSON.parse(result.text, { strict: true });
-                } else {
-                    const ext = file.split(".").pop();
-                    if (ext === "ts" || ext === "tsx" || ext === "js") {
-                        new Bun.Transpiler({ loader: ext }).transformSync(result.text);
-                    }
                 }
+
                 writeFileSync(target, result.text);
                 const add = git(["--literal-pathspecs", "add", "--", file]);
                 if (add.exitCode !== 0) {

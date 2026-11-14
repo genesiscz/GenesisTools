@@ -7,6 +7,7 @@
 
 import type {
     AdoFetch,
+    AdoHttpMethod,
     AdoRequest,
     AdoResponse,
     ApiOptions,
@@ -355,38 +356,71 @@ export class Api {
             payload = SafeJSON.stringify(body);
         }
 
-        return this.underTimeout(`${method} ${shortUrl}`, async (signal) => {
-            const response = await this.http(url, { method, headers, body: payload, signal });
+        return this.exchange({
+            label: `${method} ${shortUrl}`,
+            url,
+            init: { method, headers, body: payload },
+            startTime,
+            refuse: (response) => {
+                // A token the org no longer accepts gets 401, 203 (sign-in page), or a redirect to /_signout.
+                const signedOut = response.redirected && response.url.includes("/_signout");
+
+                if (response.status === 401 || response.status === 203 || signedOut) {
+                    this.cachedToken = null;
+                    const how = signedOut ? "redirected to /_signout" : `HTTP ${response.status}`;
+                    throw new AzAuthError(
+                        `Azure DevOps rejected the access token (${how}) for ${method} ${shortUrl}. The az session is no longer valid; sign in again with az login.`,
+                        "",
+                        null
+                    );
+                }
+            },
+            read: async (response) => {
+                const type = response.headers.get("content-type") ?? "";
+
+                if (type.includes("text/html")) {
+                    const preview = (await response.text()).replace(/\s+/g, " ").slice(0, 160);
+                    throw new Error(
+                        `Azure DevOps returned HTML instead of JSON for ${method} ${shortUrl} (HTTP ${response.status}): ${preview}`
+                    );
+                }
+
+                return read(response);
+            },
+        });
+    }
+
+    /**
+     * The request step `send` and `fetchBinary` share, all under the request timeout: fetch, log the answer, let
+     * `refuse` throw for an answer this caller does not take, turn any other failed status into AdoHttpError, then
+     * `read` the body.
+     */
+    private async exchange<T>({
+        label,
+        url,
+        init,
+        startTime,
+        refuse,
+        read,
+    }: {
+        label: string;
+        url: string;
+        init: RequestInit & { method: AdoHttpMethod };
+        startTime: number;
+        refuse: (response: Response) => void;
+        read: (response: Response) => Promise<T>;
+    }): Promise<T> {
+        return this.underTimeout(label, async (signal) => {
+            const response = await this.http(url, { ...init, signal });
 
             const elapsed = Date.now() - startTime;
-            logger.debug(`[api] ${method} response: ${response.status} ${response.statusText} (${elapsed}ms)`);
-
-            // A token the org no longer accepts gets 401, 203 (sign-in page), or a redirect to /_signout.
-            const signedOut = response.redirected && response.url.includes("/_signout");
-
-            if (response.status === 401 || response.status === 203 || signedOut) {
-                this.cachedToken = null;
-                const how = signedOut ? "redirected to /_signout" : `HTTP ${response.status}`;
-                throw new AzAuthError(
-                    `Azure DevOps rejected the access token (${how}) for ${method} ${shortUrl}. The az session is no longer valid; sign in again with az login.`,
-                    "",
-                    null
-                );
-            }
+            logger.debug(`[api] ${label} response: ${response.status} ${response.statusText} (${elapsed}ms)`);
+            refuse(response);
 
             if (!response.ok) {
                 const errorText = await response.text();
                 logger.debug(`[api] Error response body: ${errorText.slice(0, 200)}`);
-                throw new AdoHttpError({ method, url, status: response.status, body: errorText });
-            }
-
-            const type = response.headers.get("content-type") ?? "";
-
-            if (type.includes("text/html")) {
-                const preview = (await response.text()).replace(/\s+/g, " ").slice(0, 160);
-                throw new Error(
-                    `Azure DevOps returned HTML instead of JSON for ${method} ${shortUrl} (HTTP ${response.status}): ${preview}`
-                );
+                throw new AdoHttpError({ method: init.method, url, status: response.status, body: errorText });
             }
 
             return read(response);
@@ -477,28 +511,18 @@ export class Api {
         }
 
         const token = await this.getAccessToken();
-        return this.underTimeout(`GET binary ${shortUrl}`, async (signal) => {
+        return this.exchange({
+            label: `GET binary ${shortUrl}`,
+            url,
             // A redirect would carry the Authorization header to a host the check above never saw.
-            const response = await this.http(url, {
-                method: "GET",
-                headers: { Authorization: `Bearer ${token}` },
-                redirect: "manual",
-                signal,
-            });
-
-            const elapsed = Date.now() - startTime;
-            logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
-
-            if (response.status >= 300 && response.status < 400) {
-                throw new Error(`Refusing to follow a redirect for ${shortUrl} (HTTP ${response.status})`);
-            }
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new AdoHttpError({ method: "GET", url, status: response.status, body: errorText });
-            }
-
-            return response.arrayBuffer();
+            init: { method: "GET", headers: { Authorization: `Bearer ${token}` }, redirect: "manual" },
+            startTime,
+            refuse: (response) => {
+                if (response.status >= 300 && response.status < 400) {
+                    throw new Error(`Refusing to follow a redirect for ${shortUrl} (HTTP ${response.status})`);
+                }
+            },
+            read: (response) => response.arrayBuffer(),
         });
     }
 
@@ -780,7 +804,7 @@ export class Api {
 
     async deleteComment({ workItemId, commentId }: { workItemId: number; commentId: number }): Promise<void> {
         const url = Api.commentsUrl(this.config, workItemId, { commentId });
-        await this.send("DELETE", url, { description: `delete comment ${commentId}` }, (response) => response.text());
+        await this.call({ method: "DELETE", url, description: `delete comment ${commentId}` });
     }
 
     private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {

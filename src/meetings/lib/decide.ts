@@ -56,9 +56,10 @@ type DecideOptions = {
     record: MeetingRecord;
     status: "confirmed" | "rejected";
     ids: string[];
-    /** The ids came from a filter (`reject --kind/--where`): none matching decides nothing, which is no failure. */
-    filtered?: boolean;
-    /** That filter: the journal checks it again under its lock, so an item decided since it was picked is skipped. */
+    /**
+     * The filter the ids came from (`reject --kind/--where`): none matching decides nothing, which is no failure. The
+     * journal checks it again under its lock, so an item decided since it was picked is skipped.
+     */
     filter?: RejectFilter;
     minConfidence?: number;
     speaker?: string;
@@ -66,8 +67,8 @@ type DecideOptions = {
 } & ActorOptions;
 
 /** A filter that matched nothing (a cleanup run again): nothing decided, and no journal entry minted. */
-export function filteredNothing(options: { filtered?: boolean; ids: readonly string[] }): Decided | undefined {
-    return options.filtered && options.ids.length === 0 ? { skipped: [] } : undefined;
+export function filteredNothing(filter: RejectFilter | undefined, ids: readonly string[]): Decided | undefined {
+    return filter !== undefined && ids.length === 0 ? { skipped: [] } : undefined;
 }
 
 type ReopenOptions = { store: MeetingStore; record: MeetingRecord; ids: string[]; token?: string } & ActorOptions;
@@ -84,7 +85,7 @@ export async function decideItems(options: DecideOptions): Promise<DecideResult>
 
 /** `decideItems` with its journal entry, for `confirm --json` and `reject --json`. */
 export async function decideEntry(options: DecideOptions): Promise<Decided> {
-    const nothing = filteredNothing(options);
+    const nothing = filteredNothing(options.filter, options.ids);
     if (nothing) {
         return nothing;
     }

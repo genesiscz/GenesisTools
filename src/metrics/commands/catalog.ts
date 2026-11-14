@@ -6,6 +6,7 @@ import { openMetricsService } from "@genesiscz/utils/metrics/service-client";
 import { metricsDbPath, spoolDir } from "@genesiscz/utils/metrics/spool";
 import { MetricsStore } from "@genesiscz/utils/metrics/store";
 import type { MetricCatalogEntry, SpoolFileState } from "@genesiscz/utils/metrics/types";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { renderCliHeader, renderCliKeyRow } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { printCatalog } from "../lib/display";
@@ -50,7 +51,7 @@ export function spoolBacklog(
         try {
             bytes = sizeOf(path);
         } catch (error) {
-            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            if (isMissingFileError(error)) {
                 log.debug({ path }, "a spool file was drained and deleted while the backlog was read");
                 return [];
             }

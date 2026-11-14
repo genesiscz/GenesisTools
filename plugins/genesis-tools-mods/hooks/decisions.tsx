@@ -683,10 +683,11 @@ export function pressDecisionOption(
 
 /**
  * What the Staged block shows and what send and put in prompt carry: the store's batch, then one line per local tick.
- * Empty means the block is not drawn; ticks alone still draw it, with its send.
+ * Empty means the block is not drawn; ticks alone still draw it, with its send. A render that already has the tick
+ * lines passes them, so the ticks are worked out once.
  */
-export function stagedPreview(outgoing: string): string {
-    return [outgoing, ...localLines(pendingTicks())].filter(Boolean).join("\n");
+export function stagedPreview(outgoing: string, ticks: string[] = localLines(pendingTicks())): string {
+    return [outgoing, ...ticks].filter(Boolean).join("\n");
 }
 
 /** The Decisions sidebar: a summary line, the decisions by state, each opening to its options and [jump to]. */
@@ -714,8 +715,8 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     const stage = (decision: ShownDecision, answer: { option?: string; text?: string }, key: string) =>
         stageDecision(host, { decision, answer, key });
     const pressOption = (decision: ShownDecision, letter: string) => pressDecisionOption(host, decision, letter);
-    const preview = stagedPreview(outgoing);
     const ticks = localLines(pendingTicks());
+    const preview = stagedPreview(outgoing, ticks);
     const send = (how: "send" | "fill") => sendDecisionAnswers(host, { outgoing, how });
 
     /**

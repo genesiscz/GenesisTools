@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { sha256Json } from "@genesiscz/utils/hash";
 import { z } from "zod";
 import { nameKey } from "./people";
 
@@ -104,8 +103,5 @@ export function migrateMeetingSeats(raw: unknown): MeetingSeats | undefined {
 
 /** Which seats a plan read: equal fingerprints mean the same room, remote people, their times and microphone groups. */
 export function seatsFingerprint(seats: MeetingSeats | undefined): string {
-    return createHash("sha256")
-        .update(SafeJSON.stringify(seats ?? null))
-        .digest("hex")
-        .slice(0, 16);
+    return sha256Json(seats ?? null).slice(0, 16);
 }

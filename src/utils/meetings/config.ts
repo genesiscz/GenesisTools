@@ -968,35 +968,8 @@ export class MeetingsConfigStore {
         const config = await this.update((raw) => {
             projectAdded = scope.kind === "project" && !isObject(objectAt(raw, "projects")[scope.project]);
             const level = dictionaryAt(raw, scope);
-            const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
-
-            if ("rename" in edit) {
-                const { previous, entry } = edit.rename;
-                const at = entries.findIndex((existing) => existing.value === previous);
-                const kept = entries.filter(
-                    (existing) => existing.value !== previous && existing.value !== entry.value
-                );
-                kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, entry);
-                level.entries = kept;
-                return;
-            }
-
-            const values = new Set(edit.put.map((entry) => entry.value));
-            const present = edit.ifAbsent
-                ? entries.find((existing) => typeof existing.value === "string" && values.has(existing.value))
-                : undefined;
-
-            if (present) {
-                throw new MeetingsConflictError(
-                    "dictionary-exists",
-                    `${String(present.value)} is in the ${scope.kind === "project" ? `project ${scope.project}` : "global"} dictionary already; it was left as it is`
-                );
-            }
-
-            level.entries = [
-                ...entries.filter((existing) => typeof existing.value !== "string" || !values.has(existing.value)),
-                ...edit.put,
-            ];
+            const entries = Array.isArray(level.entries) ? (level.entries as StoredDictionaryEntry[]) : [];
+            level.entries = "rename" in edit ? renamedEntries(entries, edit.rename) : putEntries(scope, entries, edit);
         });
 
         return { config, projectAdded };
@@ -1031,7 +1004,7 @@ export class MeetingsConfigStore {
 
         await this.update((raw) => {
             const level = dictionaryAt(raw, scope);
-            const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
+            const entries = Array.isArray(level.entries) ? (level.entries as StoredDictionaryEntry[]) : [];
             const kept = entries.filter((existing) => existing.value !== value);
             removed = kept.length !== entries.length;
             level.entries = kept;
@@ -1262,4 +1235,42 @@ function dictionaryAt(raw: Record<string, unknown>, scope: DictionaryScope): Rec
 
     projectNameSchema.parse(scope.project);
     return objectAt(objectAt(objectAt(raw, "projects"), scope.project), "dictionary");
+}
+
+type StoredDictionaryEntry = { value?: unknown };
+
+/** The level's entries with `previous` replaced by `entry` in its place; an older entry with the new value goes. */
+function renamedEntries(
+    entries: StoredDictionaryEntry[],
+    rename: { previous: string; entry: DictionaryEntry }
+): StoredDictionaryEntry[] {
+    const { previous, entry } = rename;
+    const at = entries.findIndex((existing) => existing.value === previous);
+    const kept = entries.filter((existing) => existing.value !== previous && existing.value !== entry.value);
+    kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, entry);
+    return kept;
+}
+
+/** The level's entries with `put` added or replacing their values; `ifAbsent` refuses a value already there. */
+function putEntries(
+    scope: DictionaryScope,
+    entries: StoredDictionaryEntry[],
+    edit: { put: DictionaryEntry[]; ifAbsent?: boolean }
+): StoredDictionaryEntry[] {
+    const values = new Set(edit.put.map((entry) => entry.value));
+    const present = edit.ifAbsent
+        ? entries.find((existing) => typeof existing.value === "string" && values.has(existing.value))
+        : undefined;
+
+    if (present) {
+        throw new MeetingsConflictError(
+            "dictionary-exists",
+            `${String(present.value)} is in the ${scope.kind === "project" ? `project ${scope.project}` : "global"} dictionary already; it was left as it is`
+        );
+    }
+
+    return [
+        ...entries.filter((existing) => typeof existing.value !== "string" || !values.has(existing.value)),
+        ...edit.put,
+    ];
 }

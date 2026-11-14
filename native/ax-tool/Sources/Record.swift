@@ -1666,9 +1666,10 @@ private final class ScreenStreamHost {
             ? recordOutputSize(options, points: geometry.bounds.size, scale: geometry.scale, maxLongSide: maxLongSide) : nil
     }
 
-    /// How long a live display switch may take: the listing (`listedContent`: 5 s for the first answer, 1 s for the
-    /// windows) and two stream updates. Past it the switch has failed and the recorder keeps its display.
-    static let liveSwitchDeadline: TimeInterval = 10
+    /// How long a live display switch may take: one `streamCallBudget` for the listing (`listedContent`: the first
+    /// answer, then 1 s for the windows) and one for the two stream updates. Past it the switch has failed and the
+    /// recorder keeps its display.
+    static let liveSwitchDeadline: TimeInterval = 2 * streamCallBudget
 
     @available(macOS 14.0, *)
     private func switchLive(to target: CGDirectDisplayID) {
@@ -1730,20 +1731,22 @@ private final class ScreenStreamHost {
                 let failsHere = owner.end(token)
                 // Undo what this switch changed, unless a newer switch began: that one sets its own size and filter.
                 if failsHere || owner.isLatest(token) {
-                    if filterChanged, let restoreFilter {
+                    /// One undo step, bounded like every stream call; a step that fails or stalls is only warned about.
+                    func restore(_ what: String, _ step: @escaping () async throws -> Void) async {
                         do {
-                            try await answer(within: 5) { try await stream.updateContentFilter(restoreFilter) }
+                            try await answer(within: streamCallBudget, step)
                         } catch {
-                            recorder.warn("could not put the recording back on display \(previousDisplay.id): \(error.localizedDescription)")
+                            recorder.warn("could not \(what): \(error.localizedDescription)")
+                        }
+                    }
+                    if filterChanged, let restoreFilter {
+                        await restore("put the recording back on display \(previousDisplay.id)") {
+                            try await stream.updateContentFilter(restoreFilter)
                         }
                     }
                     if sizeChanged, let previousSize {
-                        do {
-                            let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
-                            try await answer(within: 5) { try await stream.updateConfiguration(configuration) }
-                        } catch {
-                            recorder.warn("could not restore the recording size: \(error.localizedDescription)")
-                        }
+                        let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
+                        await restore("restore the recording size") { try await stream.updateConfiguration(configuration) }
                     }
                     recorder.cancelPendingDisplay()
                 }
@@ -1854,9 +1857,9 @@ private func unlistedExclusions(_ requested: Set<CGWindowID>, in content: SCShar
 /// The shareable content of a display switch or a restart once it lists every window in `requested`, asking again
 /// for at most `timeout` seconds (`awaitExclusionsListed`). Off-screen windows are listed too: a minimized window
 /// the movie leaves out must be in the filter when it comes back. Throws `UnresolvedExclusions` past the deadline, and
-/// `ListingTimedOut` when the first listing takes longer than `firstAnswer` (inside `LiveSwitch.deadline` and the 10 s
+/// `ListingTimedOut` when the first listing takes longer than `firstAnswer` (inside `liveSwitchDeadline` and the 10 s
 /// restart wait, so a listing that stalls ends with a reason instead of holding the recording).
-func listedContent(_ requested: Set<CGWindowID>, timeout: TimeInterval = 1, firstAnswer: TimeInterval = 5) async throws
+func listedContent(_ requested: Set<CGWindowID>, timeout: TimeInterval = 1, firstAnswer: TimeInterval = streamCallBudget) async throws
     -> SCShareableContent {
     try await awaitExclusionsListed(
         timeout: timeout,

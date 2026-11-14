@@ -154,6 +154,8 @@ final class RecorderRedactionEdgeTests: XCTestCase {
         edit.redactions = [box("before", Self.before, from: 2_000_000, to: 4_000_000)]
         zoom.update(edit)
         XCTAssertEqual(zoom.redactions(for: edit).first?.endUs, 4_100_000, "the frame at 3.95 s stays on screen until 4.10 s")
+        XCTAssertEqual(zoom.look(atOutput: 4_050_000).redactions.map(\.id), ["before"], "the held frame stays covered in the preview")
+        XCTAssertTrue(zoom.look(atOutput: 4_200_000).redactions.isEmpty, "the next frame shows the moved text, uncovered")
     }
 
     /// The joins without a movie: snapMs moves an end to the cut and closes a short gap; 0 leaves both.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
@@ -42,6 +42,13 @@ afterEach(() => {
         close();
     }
 });
+
+/** A fresh folder for a service's socket and entry, removed after the test once its services stopped. */
+function scratchDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+    closing.push(() => rmSync(dir, { recursive: true, force: true }));
+    return dir;
+}
 
 let stores = 0;
 
@@ -178,7 +185,7 @@ describe("meetings clients", () => {
     });
 
     test("after the service went, a call reaches a new service of the same code and the listeners hear it", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+        const dir = scratchDir();
         const first = await startService(dir);
         const client = await SocketMeetingsClient.connect(first.service.entry, hello);
         closing.push(() => client.close());
@@ -198,7 +205,7 @@ describe("meetings clients", () => {
     });
 
     test("calls that find the connection closed together share one new connection", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+        const dir = scratchDir();
         const first = await startService(dir);
         const client = await SocketMeetingsClient.connect(first.service.entry, hello);
         closing.push(() => client.close());
@@ -217,7 +224,7 @@ describe("meetings clients", () => {
     });
 
     test("a close while the client connects again leaves no connection to the new service open", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+        const dir = scratchDir();
         const first = await startService(dir);
         const client = await SocketMeetingsClient.connect(first.service.entry, hello);
         first.service.stop("test: restarted");
@@ -233,7 +240,7 @@ describe("meetings clients", () => {
     });
 
     test("with no service, a write is refused while the process it spoke to still runs; a read answers in-process", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+        const dir = scratchDir();
         const { service } = await startService(dir);
         // The entry as another process's service would write it: a pid that still runs (this test's parent).
         const client = await SocketMeetingsClient.connect(

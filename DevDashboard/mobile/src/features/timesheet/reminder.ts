@@ -76,6 +76,11 @@ export async function setReminder(on: boolean): Promise<boolean> {
         }
 
         await SecureStore.setItemAsync(DECIDED_ITEM, "1");
+
+        if (on) {
+            // It was just scheduled. Off still reads the real state below: a failed cancel is only logged.
+            return true;
+        }
     } catch (error) {
         console.warn(`[timesheet] the Friday reminder was not turned ${on ? "on" : "off"}`, error);
     }

@@ -859,11 +859,9 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             });
             // The look-alikes take the answer as it was stored (a matched person's own name), and only one person:
             // an ordered "Alice, then Bob" fits this range, not another range of the same voice.
+            const decided = new Set(question.decides);
             const severalVoices = record.items.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    question.decides.includes(item.id) &&
-                    (item.voices?.length ?? 0) > 1
+                (item) => item.kind === "speaker-range" && decided.has(item.id) && (item.voices?.length ?? 0) > 1
             );
             const alike =
                 action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
@@ -1033,16 +1031,13 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                     item.decidedAt = now;
                 }
             }
-            const { added, warnings } =
-                action.findings.length === 0
-                    ? { added: [], warnings: [] }
-                    : prepareFindings({
-                          findings: action.findings,
-                          items: record.items,
-                          allowDuplicates: action.allowDuplicates,
-                          force: action.force,
-                          ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
-                      });
+            const { added, warnings } = prepareFindings({
+                findings: action.findings,
+                items: record.items,
+                allowDuplicates: action.allowDuplicates,
+                force: action.force,
+                ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
+            });
             record.items.push(...added);
             return {
                 history: { command: "items add", change: `${added.length} finding${added.length === 1 ? "" : "s"}` },

@@ -665,7 +665,7 @@ final class FocusStudioModelTests: XCTestCase {
         recorder.flushOffMainForTesting()
         try store.forget(from: from, to: to)
         // The queued flush runs now, after the commit and before the reconciliation.
-        try await Task.sleep(for: .milliseconds(100))
+        await recorder.waitForPersistence()
         recorder.ledgerForgot(from: from, to: to)
         XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
                       "a minute inside the deleted period is not written back")
@@ -676,7 +676,7 @@ final class FocusStudioModelTests: XCTestCase {
         other.recordKeyForTesting()
         other.ledgerForgetting(from: from - 3_600_000, to: from)
         other.flushOffMainForTesting()
-        try await Task.sleep(for: .milliseconds(100))
+        await other.waitForPersistence()
         XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1, "a minute outside it is kept")
     }
 
@@ -688,17 +688,17 @@ final class FocusStudioModelTests: XCTestCase {
         recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
         let from = nowMs() - 3_600_000
         let to = nowMs() + 1_000
-        func countAKeyAndFlush() async throws {
+        func countAKeyAndFlush() async {
             recorder.recordKeyForTesting()
             recorder.flushOffMainForTesting()
-            try await Task.sleep(for: .milliseconds(100))
+            await recorder.waitForPersistence()
         }
 
         let refused = try XCTUnwrap(recorder.ledgerForgetting(from: from, to: to))
-        try await countAKeyAndFlush()
+        await countAKeyAndFlush()
         XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty, "held while the deletion runs")
         recorder.ledgerForgetEnded(refused)
-        try await countAKeyAndFlush()
+        await countAKeyAndFlush()
         XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1,
                        "the ledger refused the deletion, so the range records again")
 
@@ -709,7 +709,7 @@ final class FocusStudioModelTests: XCTestCase {
         // The deletion took the open segment, so the same window opens a new one inside the range.
         recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
         XCTAssertEqual(try store.openSegments().count, 1)
-        try await countAKeyAndFlush()
+        await countAKeyAndFlush()
         XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
                       "a deletion that committed stays fenced after its hold ends")
     }
@@ -725,13 +725,13 @@ final class FocusStudioModelTests: XCTestCase {
         recorder.ledgerForgetEnded(failing)
         recorder.recordKeyForTesting()
         recorder.flushOffMainForTesting()
-        try await Task.sleep(for: .milliseconds(100))
+        await recorder.waitForPersistence()
         XCTAssertTrue(try store.inputSeries(from: 0, to: nowMs() + 120_000).isEmpty,
                       "the other deletion is still running over the same range")
         recorder.ledgerForgetEnded(running)
         recorder.recordKeyForTesting()
         recorder.flushOffMainForTesting()
-        try await Task.sleep(for: .milliseconds(100))
+        await recorder.waitForPersistence()
         XCTAssertEqual(try store.inputTotals(from: 0, to: nowMs() + 120_000).keys, 1, "no deletion is left running")
         XCTAssertNil(recorder.ledgerForgetting(from: to, to: from), "an empty range holds nothing")
     }

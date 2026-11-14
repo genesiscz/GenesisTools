@@ -131,6 +131,15 @@ function withConfidence(readings: string[], confidence: number | undefined): str
     );
 }
 
+/** The items an open speaker question decides: their lines wait for the answer, whatever their confidence. */
+export function questionOwnedItems(record: MeetingRecord): Set<string> {
+    return new Set(
+        openQuestions(record)
+            .filter((question) => question.about === "speaker")
+            .flatMap((question) => question.decides)
+    );
+}
+
 /** The line address an item carries: its index in the source transcript, stored by suggest and `items add`. */
 export function lineOf(item: MeetingItem): number | undefined {
     const line = item.evidence?.transcriptLine;
@@ -158,11 +167,7 @@ export function correctionsOf(
         throw new RangeError("applyAbove must be between 0 and 1");
     }
     const markBelow = opts.applyAbove ?? Math.max(0.7, applyAbove);
-    const questionOwned = new Set(
-        openQuestions(record)
-            .filter((question) => question.about === "speaker")
-            .flatMap((question) => question.decides)
-    );
+    const questionOwned = questionOwnedItems(record);
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
         item.status === "confirmed" ||
@@ -193,36 +198,33 @@ export function correctionsOf(
     // A person's own assignments (`assign`) come after the items' ranges, so they win over a rule's or an answer's;
     // among them the latest act wins (`at`), since a stretch given again keeps its place and id in the list.
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
-    const ranges = [
-        ...used.flatMap((item) =>
-            item.kind === "speaker-range" && item.speaker
-                ? [
-                      {
-                          label: item.label,
-                          fromSec: item.fromSec,
-                          toSec: item.toSec,
-                          speaker: item.speaker,
-                          item: item.id,
-                      },
-                  ]
-                : []
-        ),
-        ...assignments.map((assignment) => ({
-            label: assignment.label,
-            fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
-            toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,
-            speaker: assignment.person,
-            overrideJoin: true,
-        })),
-    ];
+    const itemRanges = used.flatMap((item) =>
+        item.kind === "speaker-range" && item.speaker
+            ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker, item: item.id }]
+            : []
+    );
+    const assignmentRanges = assignments.map((assignment) => ({
+        label: assignment.label,
+        fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
+        toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,
+        speaker: assignment.person,
+        overrideJoin: true,
+    }));
+    const ranges = [...itemRanges, ...assignmentRanges];
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
     // after it, because joins apply before ranges and that range would no longer reach it. An assignment's bounds
-    // already carry the line tolerance, so only an item's range is widened here.
+    // already carry the line tolerance, so only an item's range is widened, once, here.
+    const voiceRanges = [
+        ...itemRanges.map((range) => ({
+            ...range,
+            fromSec: range.fromSec - LINE_AT_TOLERANCE_SEC,
+            toSec: range.toSec + LINE_AT_TOLERANCE_SEC,
+        })),
+        ...assignmentRanges,
+    ];
     const voiceAt = (label: string, atSec: number) =>
-        ranges.findLast((range) => {
-            const slack = "overrideJoin" in range ? 0 : LINE_AT_TOLERANCE_SEC;
-            return range.label === label && range.fromSec - slack <= atSec && atSec <= range.toSec + slack;
-        })?.speaker;
+        voiceRanges.findLast((range) => range.label === label && range.fromSec <= atSec && atSec <= range.toSec)
+            ?.speaker;
 
     return {
         labels: record.speakers.labels,

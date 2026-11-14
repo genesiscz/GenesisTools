@@ -192,7 +192,6 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     uncertain: "Uncertain: check the session",
 };
 
-
 /**
  * The queue with a stage the Mac took applied to its decision: the pick set (`""` clears it) and the note it staged.
  * Whatever the stage did not name stays as the queue had it. The Mac took the stage at `expectedRevision` only, so a
@@ -253,10 +252,10 @@ export function decisionsOf(session: WaitingSessionDto): WaitingDecisionDto[] {
  */
 export function stagedOf(
     session: WaitingSessionDto,
-    typedNotes: ReadonlySet<number> = new Set()
+    typedNotes: Readonly<Record<number, boolean>> = {}
 ): WaitingDecisionDto[] {
     return decisionsOf(session).filter(
-        (item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()) || typedNotes.has(item.number)
+        (item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()) || typedNotes[item.number] === true
     );
 }
 

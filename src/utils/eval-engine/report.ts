@@ -74,17 +74,26 @@ const ResultRank: Record<Result, number> = { fail: 0, inconclusive: 1, pass: 2 }
 /** A run's records by cell and scenario hash, built once per records list: every cell reads only its own bucket. */
 const recordsByCell = new WeakMap<readonly ConversationRecord[], Map<string, ConversationRecord[]>>();
 
+function cellRecordKey(cell: CellRef): string {
+    return `${cellKey(cell)}\u0000${cell.scenarioHash}`;
+}
+
 function cellRecords(view: RunView, cell: PlannedCell): ConversationRecord[] {
     let index = recordsByCell.get(view.records);
     if (!index) {
         index = new Map();
         for (const record of view.records) {
-            const key = `${cellKey(record.cell)}\u0000${record.cell.scenarioHash}`;
-            index.set(key, [...(index.get(key) ?? []), record]);
+            const key = cellRecordKey(record.cell);
+            const bucket = index.get(key);
+            if (bucket) {
+                bucket.push(record);
+            } else {
+                index.set(key, [record]);
+            }
         }
         recordsByCell.set(view.records, index);
     }
-    return index.get(`${cellKey(cell)}\u0000${cell.scenarioHash}`) ?? [];
+    return index.get(cellRecordKey(cell)) ?? [];
 }
 
 /** The fold from records to one cell's numbers and verdict. `ignore`: expectation ids left out (for `compare`). */

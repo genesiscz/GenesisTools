@@ -218,7 +218,7 @@ export function beforeCopier({
     copy?: typeof beforeCopy;
 }): (absolute: string) => string | null {
     let capture: Capture | undefined;
-    let members: Set<string> | null | undefined;
+    let members: Map<string, string> | null | undefined;
 
     return (absolute) => {
         if (capture === undefined) {
@@ -248,8 +248,11 @@ export function beforeCopier({
     };
 }
 
-/** The archive's member names in NFC (bsdtar stores NFD, see `extract`), `null` when `tar -tf` failed. */
-function archiveMembers(tar: string): Set<string> | null {
+/**
+ * The archive's members, keyed by their name in NFC (bsdtar stores NFD, see `extract`) to the name as stored; the first
+ * stored name wins a clash. `null` when `tar -tf` failed.
+ */
+function archiveMembers(tar: string): Map<string, string> | null {
     const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", ...TAR_READ });
 
     if (listed.status !== 0 || typeof listed.stdout !== "string") {
@@ -257,12 +260,17 @@ function archiveMembers(tar: string): Set<string> | null {
         return null;
     }
 
-    return new Set(
-        listed.stdout
-            .split("\n")
-            .filter(Boolean)
-            .map((name) => name.normalize("NFC"))
-    );
+    const members = new Map<string, string>();
+
+    for (const stored of listed.stdout.split("\n").filter(Boolean)) {
+        const name = stored.normalize("NFC");
+
+        if (!members.has(name)) {
+            members.set(name, stored);
+        }
+    }
+
+    return members;
 }
 
 /**
@@ -330,14 +338,7 @@ function extract(tar: string, member: string): Buffer | null {
     }
 
     // Any other rewriting the archiver may do: match on the listing, comparing in one form.
-    const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", ...TAR_READ });
-
-    if (listed.status !== 0 || typeof listed.stdout !== "string") {
-        return null;
-    }
-
-    const wanted = member.normalize("NFC");
-    const stored = listed.stdout.split("\n").find((name) => name.normalize("NFC") === wanted);
+    const stored = archiveMembers(tar)?.get(member.normalize("NFC"));
 
     return stored ? extractExact(tar, stored) : null;
 }

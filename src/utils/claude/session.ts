@@ -12,11 +12,12 @@
  * ```
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
 import { canonicalClaudeTranscript } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 import { claudeSubagentTranscripts } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
+import { mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 import { discoverSessionFiles } from "./discovery";
@@ -332,14 +333,6 @@ export class ClaudeSession {
             }
         }
 
-        const mtimeOf = (path: string): number => {
-            try {
-                return statSync(path).mtimeMs;
-            } catch {
-                return 0;
-            }
-        };
-
         for (const sessionTranscript of sessionTranscripts) {
             // The agents directly in `subagents/` and the agents of the session's Workflow tool runs. One agent can have
             // two transcripts: a Workflow agent revived through SendMessage writes its newer one directly in
@@ -359,9 +352,12 @@ export class ClaudeSession {
                     continue;
                 }
 
-                const jsonlPath = files
-                    .map((file) => file.transcript)
-                    .reduce((newest, path) => (mtimeOf(path) > mtimeOf(newest) ? path : newest));
+                const jsonlPath =
+                    files.length === 1
+                        ? files[0].transcript
+                        : files
+                              .map((file) => ({ path: file.transcript, mtimeMs: mtimeOf(file.transcript) }))
+                              .reduce((newest, file) => (file.mtimeMs > newest.mtimeMs ? file : newest)).path;
                 let meta: AgentMeta | null = null;
 
                 try {

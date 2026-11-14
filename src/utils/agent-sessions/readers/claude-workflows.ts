@@ -180,11 +180,10 @@ async function* journalRows(journalPath: string): AsyncGenerator<JournalRow> {
 
     try {
         for await (const raw of readLines(journalPath)) {
-            line++;
-            const row = raw.trim() ? parseRow(raw, journalPath) : null;
+            const row = journalRow(raw, ++line, journalPath);
 
             if (row) {
-                yield { line, row };
+                yield row;
             }
         }
     } catch (error) {
@@ -202,16 +201,21 @@ function* journalRowsSync(journalPath: string): Generator<JournalRow> {
 
     try {
         for (const raw of readLinesSync(journalPath)) {
-            line++;
-            const row = raw.trim() ? parseRow(raw, journalPath) : null;
+            const row = journalRow(raw, ++line, journalPath);
 
             if (row) {
-                yield { line, row };
+                yield row;
             }
         }
     } catch (error) {
         journalUnreadable(journalPath, line, error);
     }
+}
+
+/** One journal line as a row with its 1-based line, or null for a blank or unparseable line. */
+function journalRow(raw: string, line: number, journalPath: string): JournalRow | null {
+    const row = raw.trim() ? parseRow(raw, journalPath) : null;
+    return row ? { line, row } : null;
 }
 
 async function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>): Promise<void> {

@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import { sessionOpenDialog } from "@genesiscz/utils/agents/dialogs/session";
 import type { OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
@@ -11,6 +10,7 @@ import { cmuxDidNotAnswer, type ReadCmuxTreeOptions, readCmuxTree } from "@genes
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
 import { type ProcessEntry, processesOnTty } from "@genesiscz/utils/process/processes";
+import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import { EMPTY_TREE, type LocateOptions, liveSessionReads, locateLiveSurfaces } from "./locate";
 
@@ -127,8 +127,6 @@ export function agentsOnTtyNow(tty: string): AccountProviderAlias[] {
     return agentSessionsOf(own);
 }
 
-const SHELL = /^-?(?:ba|z|k|da|fi|tc|c)?sh$/;
-
 /**
  * One entry per agent session among the processes of one tty. An agent process counts once with the processes that
  * start it: a wrapper (`tools claude resume`) or a launcher of the same agent (Codex's npm script and its native
@@ -157,7 +155,7 @@ export function agentSessionsOf(processes: readonly ProcessEntry[]): AccountProv
                 return true;
             }
 
-            if (SHELL.test(basename(argvZero(parent)))) {
+            if (isShellProgram(parent.command ?? parent.name)) {
                 return false;
             }
 
@@ -173,10 +171,6 @@ export function agentSessionsOf(processes: readonly ProcessEntry[]): AccountProv
 
         return entry && !startedBySameAgent(entry, agent) ? [agent] : [];
     });
-}
-
-function argvZero(entry: ProcessEntry): string {
-    return entry.command?.trim().split(/\s+/)[0] || entry.name;
 }
 
 /**
@@ -215,6 +209,27 @@ function refusal(
 ): SessionInputOutcome {
     log.debug({ sessionId: input.sessionId, reason, detail }, "session input refused");
     return { delivered: false, reason, detail, ...extra };
+}
+
+/** Why a tty with these sessions must not take input meant for `agent`, or undefined when it runs only that one. */
+function ttySharedReason(agent: string, running: readonly string[]): string | undefined {
+    const own = running.filter((name) => name === agent).length;
+
+    if (own === 1 && running.length === 1) {
+        return undefined;
+    }
+
+    if (own > 1) {
+        return `it runs ${own} ${agent} sessions, so the input could reach another one`;
+    }
+
+    const others = [...new Set(running.filter((name) => name !== agent))];
+
+    if (own === 1) {
+        return `it also runs ${others.join(", ")}, so the input could reach that agent`;
+    }
+
+    return `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${agent}`;
 }
 
 /** Paste text and press keys into a running session's tab, after every guard; see the module comment. */
@@ -267,21 +282,10 @@ export async function sendToSession(input: SessionInput, deps: SessionInputDeps 
     const ref = target.surface.ref;
     const tty = target.tmux?.paneTty ?? target.surface.tty;
     const running: string[] = tty ? [...(deps.agentsOnTty ?? agentsOnTtyNow)(tty)] : [];
-    const own = running.filter((agent) => agent === target.agent).length;
+    const shared = ttySharedReason(target.agent, running);
 
-    if (own !== 1 || running.length > 1) {
-        const others = [...new Set(running.filter((agent) => agent !== target.agent))];
-        return refusal(
-            input,
-            "tty-shared",
-            `nothing was sent to ${ref}: ${
-                own > 1
-                    ? `it runs ${own} ${target.agent} sessions, so the input could reach another one`
-                    : own === 1
-                      ? `it also runs ${others.join(", ")}, so the input could reach that agent`
-                      : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${target.agent}`
-            }`
-        );
+    if (shared) {
+        return refusal(input, "tty-shared", `nothing was sent to ${ref}: ${shared}`);
     }
 
     const stillShown = deps.stillShown ?? tmuxPaneStillShownNow;

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { spawnGit } from "./versions";
+import { mustGit, spawnGit } from "./versions";
 
 interface PatchComparison {
     /** null: the old range does not change the file, only the restacked range does. */
@@ -128,13 +128,7 @@ function parseBranches(args: string[]): { branches: Branch[]; reference?: string
 
 function run(args: string[]): number {
     const { branches, reference, json } = parseBranches(args);
-    const git = (args: string[], stdin?: Uint8Array) => {
-        const result = spawnGit(args, { stdin });
-        if (result.exitCode !== 0) {
-            throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
-        }
-        return result.stdout;
-    };
+    const git = (args: string[], stdin?: Uint8Array) => mustGit(args, { stdin }).stdout;
     const diff = (base: string, head: string, file: string) =>
         git([
             "--literal-pathspecs",
@@ -159,22 +153,21 @@ function run(args: string[]): number {
         }
         return id;
     };
-    // A scratch index holds the new base, so the reverse check reads no checkout and touches none.
+    // A scratch index holds the new base, so the reverse check reads no checkout and touches none. `apply --check`
+    // leaves the index as it was, so one read-tree per new base serves every lost file of every branch on it.
+    const scratchDir = mkdtempSync(join(tmpdir(), "restack-verify-"));
+    // Both ends of this script are process.exit, also a thrown error.
+    process.on("exit", () => rmSync(scratchDir, { recursive: true, force: true }));
+    const scratchEnvs = new Map<string, Record<string, string | undefined>>();
     const absorbed = (base: string, patch: Uint8Array): boolean => {
-        const dir = mkdtempSync(join(tmpdir(), "restack-verify-"));
-        const scratch = { ...env.getProcessEnv(), GIT_INDEX_FILE: join(dir, "index") };
-        try {
-            const read = spawnGit(["read-tree", base], { env: scratch });
-            if (read.exitCode !== 0) {
-                throw new Error(`git read-tree: ${read.stderr.toString().trim()}`);
-            }
-
-            return (
-                spawnGit(["apply", "--cached", "--check", "--reverse"], { env: scratch, stdin: patch }).exitCode === 0
-            );
-        } finally {
-            rmSync(dir, { recursive: true, force: true });
+        let scratch = scratchEnvs.get(base);
+        if (!scratch) {
+            scratch = { ...env.getProcessEnv(), GIT_INDEX_FILE: join(scratchDir, `index-${scratchEnvs.size}`) };
+            mustGit(["read-tree", base], { env: scratch });
+            scratchEnvs.set(base, scratch);
         }
+
+        return spawnGit(["apply", "--cached", "--check", "--reverse"], { env: scratch, stdin: patch }).exitCode === 0;
     };
     const blob = (ref: string, file: string): string | null => {
         const result = spawnGit(["rev-parse", "--verify", `${ref}:${file}`]);

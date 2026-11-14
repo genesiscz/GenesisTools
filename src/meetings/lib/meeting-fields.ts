@@ -15,19 +15,40 @@ export interface MeetingFieldsChange {
     unlabel?: string[];
 }
 
+/** Every field of `MeetingFieldsChange`: the mapped type refuses to compile until a new field is listed here too. */
+const MEETING_FIELDS: { [K in keyof Required<MeetingFieldsChange>]: K } = {
+    project: "project",
+    title: "title",
+    seats: "seats",
+    labels: "labels",
+    unlabel: "unlabel",
+};
+
 /**
  * The fields a `set` action or another caller's object changes, every one `setMeetingFields` takes and none it does
  * not. The service's set adapter copied project, title and labels by hand and dropped `seats`, so every native seating
  * save failed with "Nothing to set" while the service answered.
  */
 export function meetingFieldsChange(source: MeetingFieldsChange): MeetingFieldsChange {
-    return {
-        ...(source.project ? { project: source.project } : {}),
-        ...(source.title ? { title: source.title } : {}),
-        ...(source.seats ? { seats: source.seats } : {}),
-        ...(source.labels ? { labels: source.labels } : {}),
-        ...(source.unlabel ? { unlabel: source.unlabel } : {}),
-    };
+    const change: MeetingFieldsChange = {};
+
+    for (const key of Object.values(MEETING_FIELDS)) {
+        copyField(change, source, key);
+    }
+
+    return change;
+}
+
+function copyField<K extends keyof MeetingFieldsChange>(
+    change: MeetingFieldsChange,
+    source: MeetingFieldsChange,
+    key: K
+): void {
+    const value = source[key];
+
+    if (value) {
+        change[key] = value;
+    }
 }
 
 /**
