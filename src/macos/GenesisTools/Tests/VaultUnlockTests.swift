@@ -423,6 +423,29 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(injected.onceOnlyReason, "extra code may be loaded")
     }
 
+    func testBunfigPreloadsAreReadFromTheTopLevelKeyOnly() {
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"./a.ts\", \"b.ts\"] # two\n[install]\nx = 1"), ["./a.ts", "b.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = \"./one.ts\"\n"), ["./one.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "[test]\npreload = [\"x.ts\"]"), [])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "# preload = [\"x.ts\"]\n"), [])
+    }
+
+    func testABunfigPreloadThatIsNotTheCheckoutsOwnIsExtraCode() throws {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
+        let home = root + "/home", work = root + "/work"
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "preload = [\"./evil.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
+
+        let found = VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [])
+        XCTAssertEqual(found, ["bunfig.toml preload ./evil.ts"])
+        let own: Set<String> = [((work + "/evil.ts") as NSString).standardizingPath]
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: own), [])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: nil, home: home, xdgConfigHome: nil, own: own).isEmpty,
+                       "an unknown working folder fails closed")
+    }
+
     func testGenesisToolsOwnPreloadsAreNotExtraCodeAndDoNotHideTheScript() {
         // `tools claude login-long admin` as the tools wrapper starts it (2026-10-15: the window named the preload as
         // the program and allowed it only once).
@@ -826,6 +849,18 @@ final class VaultUnlockTests: XCTestCase {
                        ["src/codex/daemon.ts": hour, "src/ai/commands/usage/poll-daemon.ts": 2 * hour])
         XCTAssertFalse(VaultDaemonNotices.mark("src/codex/daemon.ts", now: hour, in: folder + "/missing/stamp.json"),
                        "a stamp that cannot be saved says so")
+    }
+
+    func testOnlyOneReservationOfADaemonNoticeSucceedsInTheHour() throws {
+        let folder = NSTemporaryDirectory() + "vault-daemon-reserve-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow-notified.json"
+        XCTAssertTrue(VaultDaemonNotices.reserve("src/codex/daemon.ts", now: 1_000, everyHours: 24, in: path))
+        XCTAssertFalse(VaultDaemonNotices.reserve("src/codex/daemon.ts", now: 2_000, everyHours: 24, in: path))
+        XCTAssertTrue(VaultDaemonNotices.reserve("src/ai/commands/usage/poll-daemon.ts", now: 2_000, everyHours: 24, in: path),
+                      "another daemon's stamp is kept, not overwritten")
+        XCTAssertEqual(VaultDaemonNotices.load(from: path).count, 2)
     }
 
     func testTheSettingsFileKeepsDefaultsForMissingKeysAndTurnsOffWhenItDoesNotDecode() throws {
