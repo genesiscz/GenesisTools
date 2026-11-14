@@ -13,7 +13,6 @@ import {
     launchdStatus,
     parseLaunchdPid,
     plistPath,
-    refreshLaunchd,
     renderLaunchdPlist,
     runLaunchctlCommand,
     writeLaunchdPlist,
@@ -197,7 +196,7 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
         writeFileSync(path, "<plist>old</plist>");
         runner(() => ok);
 
-        await refreshLaunchd({ ...baseOptions(), env: { FIXTURE: "new" } });
+        await installLaunchd({ ...baseOptions(), env: { FIXTURE: "new" } });
         expect(calls.map((call) => call[0])).toEqual(["unload", "load", "kickstart"]);
         expect(readFileSync(path, "utf8")).toContain("<string>new</string>");
     });
@@ -207,7 +206,7 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
         writeFileSync(path, "<plist>old</plist>");
         runner((args, index) => (args[0] === "load" && index === 1 ? { exitCode: 5, stdout: "", stderr: "busy" } : ok));
 
-        await expect(refreshLaunchd(baseOptions())).rejects.toThrow("busy");
+        await expect(installLaunchd(baseOptions())).rejects.toThrow("busy");
         expect(readFileSync(path, "utf8")).toBe("<plist>old</plist>");
     });
 

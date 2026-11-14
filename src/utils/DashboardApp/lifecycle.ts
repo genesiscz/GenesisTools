@@ -24,7 +24,6 @@ import {
     installLaunchd,
     isLaunchdInstalled,
     plistPath,
-    refreshLaunchd,
     uninstallLaunchd,
 } from "@genesiscz/utils/process/launchd-agent";
 import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
@@ -356,7 +355,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
         }
 
         out.log.step(`Starting launchd agent ${ctx.plistLabel}…`);
-        await refreshLaunchd({
+        await installLaunchd({
             label: ctx.plistLabel,
             command,
             cwd: config.spawn.cwd,

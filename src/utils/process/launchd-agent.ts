@@ -160,8 +160,9 @@ export interface InstallLaunchdBehavior {
 }
 
 /**
- * Idempotent: a loaded job is unloaded first, so re-running install (for example to migrate) reloads
- * the new plist. The previous plist bytes are kept and, if the write or the load fails, written back
+ * Idempotent: a loaded job is unloaded first, so re-running install (for example to migrate, or to refresh the env,
+ * command or throttle) reloads the new plist. A loaded job keeps the definition it loaded, so a bare `load` would fail
+ * on "already loaded" and a kickstart would restart the old one. The previous plist bytes are kept and, if the write or the load fails, written back
  * and loaded again, so a failed install never leaves the user with no agent at all.
  */
 export async function installLaunchd(
@@ -337,7 +338,7 @@ function removeNewPlist(path: string, cause: unknown): void {
     }
 }
 
-/** Write the plist on disk only; `refreshLaunchd` and `installLaunchd` also reload the job. */
+/** Write the plist on disk only; `installLaunchd` also reloads the job. */
 export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
     if (process.platform !== "darwin") {
         throw new Error("Launchd integration is macOS-only.");
@@ -347,15 +348,6 @@ export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
     // not even for an instant. The temp file gets exactly 0600 (umask cannot strip it) before it is
     // renamed over the old plist, so the live file is never truncated or half-written either.
     writePlistFile(plistPath(opts.label), renderLaunchdPlist(opts), 0o600);
-}
-
-/**
- * Rewrite the plist (env, command, throttle) and make launchd run it. A loaded job keeps the definition it loaded, so
- * a bare `load` fails on "already loaded" and a kickstart restarts the old one: this is the install sequence, which
- * unloads first, reports a failed load and puts the previous plist back.
- */
-export async function refreshLaunchd(opts: LaunchdInstallOptions): Promise<void> {
-    await installLaunchd(opts);
 }
 
 export async function kickstartLaunchd(label: string): Promise<void> {
