@@ -38,6 +38,18 @@ function refuseRealAgentsDirInTest(action: string): void {
     }
 }
 
+/** Every plist write goes through here, so no write can skip the test refusal. */
+function writePlistFile(path: string, bytes: string | Uint8Array, mode: number): void {
+    refuseRealAgentsDirInTest("writing a launchd plist");
+    atomicWriteFileSync(path, bytes, { mode });
+}
+
+/** Every plist removal goes through here, so no removal can skip the test refusal. */
+function removePlistFile(path: string): void {
+    refuseRealAgentsDirInTest("removing a launchd plist");
+    unlinkSync(path);
+}
+
 export function defaultPlistLabel(key: string): string {
     return `com.genesis-tools.${key}`;
 }
@@ -226,8 +238,7 @@ async function restorePreviousPlist({
     }
 
     try {
-        refuseRealAgentsDirInTest("restoring a launchd plist");
-        atomicWriteFileSync(path, previous.bytes, { mode: previous.mode });
+        writePlistFile(path, previous.bytes, previous.mode);
         const { exitCode, stderr } = await launchctl(["load", path]);
 
         if (exitCode !== 0) {
@@ -311,8 +322,7 @@ function logPathsOf(opts: LaunchdInstallOptions): LaunchdLogPaths {
 function removeNewPlist(path: string, cause: unknown): void {
     try {
         if (existsSync(path)) {
-            refuseRealAgentsDirInTest("removing a launchd plist");
-            unlinkSync(path);
+            removePlistFile(path);
         }
 
         logger.warn(
@@ -333,12 +343,10 @@ export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
         throw new Error("Launchd integration is macOS-only.");
     }
 
-    refuseRealAgentsDirInTest("writing a launchd plist");
-
     // EnvironmentVariables can carry provider API keys, so the plist must never be group/world-readable,
     // not even for an instant. The temp file gets exactly 0600 (umask cannot strip it) before it is
     // renamed over the old plist, so the live file is never truncated or half-written either.
-    atomicWriteFileSync(plistPath(opts.label), renderLaunchdPlist(opts), { mode: 0o600 });
+    writePlistFile(plistPath(opts.label), renderLaunchdPlist(opts), 0o600);
 }
 
 /**
@@ -415,8 +423,7 @@ export async function uninstallLaunchd(label: string): Promise<void> {
 
     if (existsSync(path)) {
         await launchctl(["unload", path]).catch(() => undefined);
-        refuseRealAgentsDirInTest("removing a launchd plist");
-        unlinkSync(path);
+        removePlistFile(path);
     }
 }
 
