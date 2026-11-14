@@ -24,8 +24,7 @@ export async function channelEvidence(opened: OpenedMeeting, window?: { fromSec:
  * and a rounded 0.2004 would pass a 0.2 threshold the measured share fails.
  */
 export async function channelLines(opened: OpenedMeeting): Promise<ChannelLine[]> {
-    const meeting = await opened.meeting();
-    const evidence = await opened.evidence();
+    const [meeting, evidence] = await Promise.all([opened.meeting(), opened.evidence()]);
     return lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }).map((line) => ({
         index: line.index,
         fromSec: line.startSec,
