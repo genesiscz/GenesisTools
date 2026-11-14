@@ -227,6 +227,7 @@ describe("weeklyLimitHit", () => {
         windowsAccount("spent5h", 20, 100),
         windowsAccount("broken", 5, 5, { error: "401" }),
         windowsAccount("blocked", 5, 5, { orgBlocked: true }),
+        windowsAccount("freeorg", 1, 1, { subscriptionPlan: "claude_free" }),
         { accountName: "never" },
     ];
 
