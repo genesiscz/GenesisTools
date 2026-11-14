@@ -510,6 +510,36 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertTrue(writes.all.allSatisfy { $0.count > 2 && $0[2] == "draft" }, "\(writes.all)")
     }
 
+    /// DECISION 51 b: each stored row of a load says when it last changed, so a pick made here gives way on the next
+    /// load to an answer another client (the phone, the widget) wrote after the pick landed, instead of showing for
+    /// the engine's 15 s. A row from before the pick, or one with no time (transcript only), keeps it.
+    @MainActor
+    func testAnotherClientsNewerAnswerReplacesAPendingPickOnTheNextLoad() async throws {
+        let inbox = HubInboxModel()
+        let item = try Self.decision(#"{"revision":1}"#)
+        let session = Self.session("s1", items: [item])
+        let settled = expectation(description: "the write landed")
+        settled.assertForOverFulfill = false
+        inbox.captureWrite = { _ in ProcessCapture(status: 0, stdout: Data("{}".utf8), stderr: Data()) }
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        let landed = Date().timeIntervalSince1970 * 1000
+        inbox.draft(item, in: session, option: "a", text: nil)
+        await fulfillment(of: [settled], timeout: 3)
+        XCTAssertEqual(inbox.letters(item), "a", "the pick shows until a load confirms it")
+
+        let load = { (fields: String) throws -> [String: DecisionAnswering.Engine.Row] in
+            HubInboxModel.stagingRows([Self.session("s1", items: [try Self.decision(fields)])])
+        }
+        inbox.staging.reconcile(try load(#"{"draftOption":"b"}"#))
+        XCTAssertEqual(inbox.letters(item), "a", "a row with no time cannot say it came after the pick")
+        inbox.staging.reconcile(try load(#"{"draftOption":"b","updatedAt":\#(landed - 60_000)}"#))
+        XCTAssertEqual(inbox.letters(item), "a", "a row written before the pick landed keeps it")
+        let phone = try Self.decision(#"{"draftOption":"b","updatedAt":\#(Date().timeIntervalSince1970 * 1000 + 1_000)}"#)
+        XCTAssertNotNil(phone.updatedAt, "the load's updatedAt decodes")
+        inbox.staging.reconcile(HubInboxModel.stagingRows([Self.session("s1", items: [phone])]))
+        XCTAssertEqual(inbox.letters(phone), "b", "the other client's newer answer shows on the next load")
+    }
+
     /// The set's card with a and c ticked: check boxes, a Send that names the set, and the recommended set one click away.
     @MainActor
     func testASetsCardSendsNamesTheTickedLetters() throws {

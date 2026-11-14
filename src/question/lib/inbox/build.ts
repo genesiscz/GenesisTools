@@ -129,6 +129,12 @@ export interface InboxDecision {
      * `--expected-revision`, so a pick made on text the agent has since changed is refused, as in the widget.
      */
     revision: number;
+    /**
+     * Milliseconds since 1970 of the stored row's last change (a pick, a note or an answer, from any client). Absent
+     * for a decision only the transcript shows. The hub's staging engine reads it: a row written after its own pick
+     * landed is another client's answer, and that answer shows on the next load.
+     */
+    updatedAt?: number;
 }
 
 export interface InboxQuestion {
@@ -415,6 +421,7 @@ export function decisionPick(row: Pick<DecisionRecord, "proposal" | "reasoning">
  */
 export function fromRecord(row: DecisionRecord): InboxDecision {
     const shown = shownDecisionText(row);
+    const updatedAt = Date.parse(row.updatedTs);
     return {
         kind: "decision",
         id: row.id,
@@ -452,6 +459,7 @@ export function fromRecord(row: DecisionRecord): InboxDecision {
         draft: row.draft || null,
         delivery: inboxDelivery(row.delivery),
         revision: row.revision ?? 1,
+        ...(Number.isFinite(updatedAt) ? { updatedAt } : {}),
     };
 }
 
