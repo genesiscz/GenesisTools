@@ -115,6 +115,32 @@ describe("redactHar", () => {
         expect(text).toContain("message=hello");
     });
 
+    test("redacts the secret part of a multipart/form-data body text", () => {
+        const text = [
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="note"',
+            "",
+            "hello",
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="client_secret"',
+            "Content-Type: text/plain",
+            "",
+            "part-secret",
+            "--fixture-boundary--",
+            "",
+        ].join("\r\n");
+        const har = makeHar([
+            makeEntry({
+                request: { postData: { mimeType: "multipart/form-data; boundary=fixture-boundary", text } },
+            }),
+        ]);
+
+        const redacted = redactedText(redactHar(har).har);
+
+        expect(redacted).not.toContain("part-secret");
+        expect(redacted).toContain("hello");
+    });
+
     test("redacts postData params array", () => {
         const har = makeHar([
             makeEntry({
