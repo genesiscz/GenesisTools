@@ -318,7 +318,7 @@ export async function refreshGrokAuthOrThrow(options: {
     const { token: refreshed, error } = await refreshGrokAuthDetailed({
         path: options.authPath,
         force: options.force,
-        ...(options.expectedSubject === undefined ? {} : { expectedSubject: options.expectedSubject }),
+        expectedSubject: options.expectedSubject,
     });
 
     if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
