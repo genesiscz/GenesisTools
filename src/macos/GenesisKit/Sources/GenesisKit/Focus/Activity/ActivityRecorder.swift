@@ -668,6 +668,14 @@ public final class ActivityRecorder: ObservableObject {
                     self.collectedInput = nil
                     let now = self.nowMs()
                     self.closeCurrentSegment(at: now)
+                    // A transition already handed to the store queue (an attach or a changed probe) can open a new
+                    // segment after the main actor read `segmentId`, and its result is applied only after this hook
+                    // returns. The store reads below queue behind that work, so they see what it persisted, and
+                    // every segment still open is finished here rather than left for the next launch to repair.
+                    for open in (try? self.store.openSegments()) ?? [] {
+                        do { try self.store.closeSegment(id: open.id, at: max(now, open.startedMs)) }
+                        catch { FlowFocusLog.focus.error("segment \(open.id) close at quit failed: \(error.localizedDescription)") }
+                    }
                     self.openGap("app_not_running", at: now)
                 }
             }
