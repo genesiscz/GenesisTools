@@ -1938,8 +1938,13 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(meeting.record.items).toHaveLength(1);
         // The answer is the added item, not the meeting record (NR5).
         expect(answer).toMatchObject({ added: [{ kind: "question", status: "suggested" }], warnings: [] });
-        expect(Object.keys(answer as object).sort()).toEqual(["added", "duplicates", "warnings"]);
+        expect(Object.keys(answer as object).sort()).toEqual(["added", "duplicates", "token", "warnings"]);
         const store = new MeetingStore();
+        // An addition is journaled as `items add` journals it, so its token reaches Undo and `reopen --token`.
+        const [entry] = new DecisionJournal({ store }).read(record.id);
+        expect(entry).toMatchObject({ action: { kind: "add" } });
+        expect(entry?.actor).toBeDefined();
+        expect(answer).toMatchObject({ token: entry!.token });
         const before = readFileSync(store.path(record.id), "utf8");
         const retry = await meeting.items.add({
             findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],

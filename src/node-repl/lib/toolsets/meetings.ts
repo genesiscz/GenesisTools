@@ -68,12 +68,7 @@ import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import {
-    MEETING_UNCHANGED,
-    type MeetingItem,
-    type MeetingRecord,
-    MeetingStore,
-} from "@genesiscz/utils/meetings/record";
+import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { type recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
@@ -449,39 +444,44 @@ export class MeetingsToolset extends ReplToolset {
                             return undefined;
                         });
                     // NR5 (2026-11-06): this answered the whole meeting record, 88 KB with the calendar attendees.
-                    let added: MeetingItem[] = [];
-                    let duplicates: MeetingItem[] = [];
-                    let warnings: string[] = [];
-                    const record = await store.update(
-                        id,
-                        { command: "items add", change: `${findings.length} findings` },
-                        (current) => {
-                            const prepared = prepareFindings({
-                                findings,
-                                items: current.items,
-                                transcript: source?.transcript,
-                                allowDuplicates,
-                                force,
-                            });
+                    // The journal drops the duplicates again under its lock; this read only names them.
+                    const { duplicates } = prepareFindings({
+                        findings,
+                        items: current().items,
+                        transcript: source?.transcript,
+                        allowDuplicates,
+                        force,
+                    });
+                    // An addition is a decision, as `items add` makes it: journaled with who made it, so Undo and
+                    // `reopen --token` reach the added items.
+                    const decided = await new DecisionJournal({
+                        store,
+                        ...(source ? { split: { transcript: async () => source.transcript } } : {}),
+                    }).apply({
+                        meeting: id,
+                        action: {
+                            kind: "add",
+                            findings,
+                            ...(allowDuplicates ? { allowDuplicates: true } : {}),
+                            ...(force ? { force: true } : {}),
+                        },
+                        actor: callerActor(),
+                    });
+                    const warnings = decided.warnings ?? [];
 
-                            for (const warning of prepared.warnings) {
-                                log.warn({ meeting: id }, warning);
-                            }
+                    for (const warning of warnings) {
+                        log.warn({ meeting: id }, warning);
+                    }
 
-                            current.items.push(...prepared.added);
-                            added = prepared.added;
-                            warnings = prepared.warnings;
-                            duplicates = prepared.duplicates;
-
-                            if (added.length === 0) {
-                                return MEETING_UNCHANGED;
-                            }
-                        }
+                    const record = current();
+                    const added = (decided.entry?.changes ?? []).flatMap((change) =>
+                        change.after ? [change.after] : []
                     );
                     return {
                         added: added.map((item) => itemRow(record, item)),
                         duplicates: duplicates.map((item) => item.id),
                         warnings,
+                        token: decided.entry?.token ?? null,
                     };
                 },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
