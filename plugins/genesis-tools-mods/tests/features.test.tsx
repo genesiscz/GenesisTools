@@ -541,6 +541,19 @@ test("decisions sidebar: a decision that takes any set toggles letters; a single
     expect(shownDecisions([], { open: asked }).map((d) => d.multiple)).toEqual([true, undefined]);
 });
 
+/** A host `run` result: `stdout`, with an empty stderr and exit 0 unless given. */
+function runResult(stdout: string, { stderr = "", exitCode = 0, isStdoutTruncated = false } = {}) {
+    return { stdout, stderr, exitCode, isStdoutTruncated, isStderrTruncated: false };
+}
+
+/** Forgets the settings, the probe, the answers log and the decisions, so a decision sidebar test starts clean. */
+function resetDecisionState(): void {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    forgetDecisions();
+}
+
 /** DECISION 16, asked in the chat as a several-letter ask the decision log does not have. */
 const ASK_16 = { role: "assistant", text: "❓ DECISION 16 which parts?\na) x\nb) y\nc) z\nPick several letters." };
 const ASK_16_OPTIONS = {
@@ -602,10 +615,7 @@ test("decisions sidebar: ticks on an unlogged several-letter ask reach the promp
 });
 
 test("decisions sidebar: without the tools CLI a press answers in the prompt or ticks, never only an error", async () => {
-    forgetSettings();
-    forgetGenesisProbe();
-    forgetAnswers();
-    forgetDecisions();
+    resetDecisionState();
     const filled: { text: string; mode?: string }[] = [];
     const host: Host = {
         ...checkoutHost(),
@@ -630,28 +640,15 @@ test("decisions sidebar: without the tools CLI a press answers in the prompt or 
     await pressDecisionOption(host, { ...ASK_16_OPTIONS, multiple: true }, "c");
     expect(stagedPreview("")).toBe("D16: c)");
     expect(filled).toHaveLength(1);
-    forgetDecisions();
-    forgetAnswers();
-    forgetGenesisProbe();
-    forgetSettings();
+    resetDecisionState();
 });
 
 test("decisions sidebar: ticks the log takes over stay local until the stage succeeds", async () => {
-    forgetSettings();
-    forgetGenesisProbe();
-    forgetAnswers();
-    forgetDecisions();
+    resetDecisionState();
     const base = checkoutHost();
     let logged = false;
     let refuses = true;
     let draftOption = "";
-    const result = (stdout: string, stderr = "", exitCode = 0) => ({
-        stdout,
-        stderr,
-        exitCode,
-        isStdoutTruncated: false,
-        isStderrTruncated: false,
-    });
     const snapshot = () => ({
         sessionId: "sess-1",
         full: true,
@@ -669,20 +666,20 @@ test("decisions sidebar: ticks the log takes over stay local until the stage suc
         },
         async run(argv, init) {
             if (argv[1] === "genesis-tools") {
-                return result(JSON.stringify({ links: {}, router: {} }));
+                return runResult(JSON.stringify({ links: {}, router: {} }));
             }
 
             if (argv.includes("draft")) {
                 if (refuses) {
-                    return result("", "the decision store is locked", 1);
+                    return runResult("", { stderr: "the decision store is locked", exitCode: 1 });
                 }
 
                 draftOption = argv[argv.indexOf("--option") + 1] ?? "";
-                return result(JSON.stringify({ state: "drafted", draftOption }));
+                return runResult(JSON.stringify({ state: "drafted", draftOption }));
             }
 
             if (argv[1] === "question" && argv[2] === "inbox") {
-                return result(JSON.stringify(snapshot()));
+                return runResult(JSON.stringify(snapshot()));
             }
 
             return base.run(argv, init);
@@ -704,30 +701,17 @@ test("decisions sidebar: ticks the log takes over stay local until the stage suc
     expect(draftOption).toBe("ac");
     expect(stagedPreview("")).toBe("");
     await refreshAnswers(host, "after", true);
-    forgetDecisions();
-    forgetAnswers();
-    forgetGenesisProbe();
-    forgetSettings();
+    resetDecisionState();
 });
 
 test("decisions sidebar: local ticks alone offer send, quick presses build on each other, and the last untick clears", async () => {
-    forgetSettings();
-    forgetGenesisProbe();
-    forgetAnswers();
-    forgetDecisions();
+    resetDecisionState();
     const base = checkoutHost();
     const drafts: string[] = [];
     const submitted: string[] = [];
     let open = () => {};
     const gate = new Promise<void>((resolve) => {
         open = resolve;
-    });
-    const result = (stdout: string, stderr = "", exitCode = 0) => ({
-        stdout,
-        stderr,
-        exitCode,
-        isStdoutTruncated: false,
-        isStderrTruncated: false,
     });
     const host: Host = {
         ...base,
@@ -739,7 +723,7 @@ test("decisions sidebar: local ticks alone offer send, quick presses build on ea
         },
         async run(argv, init) {
             if (argv[1] === "genesis-tools") {
-                return result(JSON.stringify({ links: {}, router: {} }));
+                return runResult(JSON.stringify({ links: {}, router: {} }));
             }
 
             if (argv.includes("draft")) {
@@ -750,7 +734,7 @@ test("decisions sidebar: local ticks alone offer send, quick presses build on ea
                     await gate;
                 }
 
-                return result("", "DECISION 16 is not waiting", 1);
+                return runResult("", { stderr: "DECISION 16 is not waiting", exitCode: 1 });
             }
 
             return base.run(argv, init);
@@ -782,10 +766,7 @@ test("decisions sidebar: local ticks alone offer send, quick presses build on ea
     expect(stagedPreview("")).toBe("");
     await sendDecisionAnswers(host, { outgoing: "", how: "send" });
     expect(submitted).toHaveLength(1);
-    forgetDecisions();
-    forgetAnswers();
-    forgetGenesisProbe();
-    forgetSettings();
+    resetDecisionState();
 });
 
 test("decisions sidebar: a tick on an unlogged several-letter ask shows [send], and unticking its last letter clears it", async ($, on) => {
@@ -3160,13 +3141,6 @@ test("older CLI fallback retries truncated output and matches old entries before
     });
     const starts: string[] = [];
     let searches = 0;
-    const result = (stdout: string, exitCode = 0, isStdoutTruncated = false, stderr = "") => ({
-        stdout,
-        stderr,
-        exitCode,
-        isStdoutTruncated,
-        isStderrTruncated: false,
-    });
     const host: Host = {
         ...base,
         async stat(path) {
@@ -3174,16 +3148,18 @@ test("older CLI fallback retries truncated output and matches old entries before
         },
         async run(argv) {
             if (argv[1] === "genesis-tools") {
-                return result(JSON.stringify({ links: {}, router: {} }));
+                return runResult(JSON.stringify({ links: {}, router: {} }));
             }
 
             if (argv[1] === "question") {
-                return result("", 1, false, "unknown command");
+                return runResult("", { exitCode: 1, stderr: "unknown command" });
             }
 
             starts.push(argv[5] ?? "");
             searches++;
-            return result(`${row}\n__SEARCH_BYTES__${searches === 1 ? 100 : 50}\n`, 0, searches === 1);
+            return runResult(`${row}\n__SEARCH_BYTES__${searches === 1 ? 100 : 50}\n`, {
+                isStdoutTruncated: searches === 1,
+            });
         },
     };
     const entry = {
@@ -3335,13 +3311,6 @@ test("older CLI fallback continues at the last complete byte across chunks", asy
     forgetGenesisProbe();
     const base = checkoutHost();
     const starts: string[] = [];
-    const result = (stdout: string, exitCode = 0, stderr = "") => ({
-        stdout,
-        stderr,
-        exitCode,
-        isStdoutTruncated: false,
-        isStderrTruncated: false,
-    });
     const row = JSON.stringify({
         type: "assistant",
         uuid: "ask-row",
@@ -3354,15 +3323,15 @@ test("older CLI fallback continues at the last complete byte across chunks", asy
         },
         async run(argv) {
             if (argv[1] === "genesis-tools") {
-                return result(JSON.stringify({ links: {}, router: {} }));
+                return runResult(JSON.stringify({ links: {}, router: {} }));
             }
 
             if (argv[1] === "question") {
-                return result("", 1, "unknown command");
+                return runResult("", { exitCode: 1, stderr: "unknown command" });
             }
 
             starts.push(argv[5] ?? "");
-            return result(starts.length === 1 ? "__SEARCH_BYTES__50\n" : `${row}\n__SEARCH_BYTES__50\n`);
+            return runResult(starts.length === 1 ? "__SEARCH_BYTES__50\n" : `${row}\n__SEARCH_BYTES__50\n`);
         },
     };
 
@@ -3919,10 +3888,7 @@ test("decision actions fill the exact preview and send an answered batch with no
     expect(filled).toEqual([outgoing]);
     await sendDecisionAnswers(host, { outgoing, how: "send" });
     expect(submitted.at(-1)).toBe(outgoing);
-    forgetDecisions();
-    forgetAnswers();
-    forgetGenesisProbe();
-    forgetSettings();
+    resetDecisionState();
 });
 
 test("an automatic stall check cannot continue a newer stall captured while it checked agents", async () => {
