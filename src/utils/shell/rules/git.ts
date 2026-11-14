@@ -30,8 +30,9 @@ interface GitInvocation extends GitCall {
     /** The statements of the unit the invocation sits in, and the index of its own statement there. */
     unit: Span[];
     statement: number;
-    /** Index of the element in its statement's pipeline. */
+    /** Index of the element in its statement's pipeline, and the number of elements in that pipeline. */
     pipe: number;
+    pipeLength: number;
 }
 
 // `git <sub>` in one pipeline element, with `git -C dir` / `git --no-pager` global options skipped.
@@ -74,7 +75,7 @@ function gitInvocations(scan: ShellScan): GitInvocation[] {
                 const call = gitCall(elements[pipe], scan.command);
 
                 if (call) {
-                    out.push({ ...call, element: elements[pipe], unit, statement, pipe });
+                    out.push({ ...call, element: elements[pipe], unit, statement, pipe, pipeLength: elements.length });
                 }
             }
         }
@@ -776,7 +777,16 @@ function undoesOwnSwap(scan: ShellScan, inv: GitInvocation, paths: string[]): bo
         for (let pipe = 0; pipe < elements.length; pipe++) {
             const call = gitCall(elements[pipe], scan.command);
             const read = call ? REVERTS.get(call.tokens[call.sub].text) : undefined;
-            const swap = call && read?.(scan, { ...call, element: elements[pipe], unit: inv.unit, statement: s, pipe });
+            const swap =
+                call &&
+                read?.(scan, {
+                    ...call,
+                    element: elements[pipe],
+                    unit: inv.unit,
+                    statement: s,
+                    pipe,
+                    pipeLength: elements.length,
+                });
 
             if (!call || !swap?.ref || swap.ref === "HEAD" || gitPlace(scan, call) !== place) {
                 continue;
@@ -1380,7 +1390,7 @@ export const gitCommitPiped: ShellRule = {
                 continue;
             }
 
-            if (inv.pipe < splitPipeline(inv.unit[inv.statement]).length - 1) {
+            if (inv.pipe < inv.pipeLength - 1) {
                 return elementMatch(scan, inv);
             }
         }
