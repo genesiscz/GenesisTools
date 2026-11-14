@@ -130,16 +130,19 @@ export async function agentMail(options: AgentMailOptions): Promise<AgentMail> {
     }
 
     const parent = await resolveTranscript(options.session, {}, "claude");
-    const found = claudeSubagentCandidates(parent.filePath, agentId).find((file) => existsSync(file.transcript));
-    if (!found) {
+    // A revived workflow agent has two files: its revival directly in `subagents/` (no metadata) and its original
+    // transcript and metadata in the run folder. Its name comes from the file that has metadata, its mail from both.
+    const found = claudeSubagentCandidates(parent.filePath, agentId).filter((file) => existsSync(file.transcript));
+    if (found.length === 0) {
         throw new Error(
             `No agent ${agentId} under session ${parent.sessionId} (${claudeSubagentsDir(parent.filePath)})`
         );
     }
 
-    const { transcript, meta: metaPath } = found;
-
-    const meta = readMetaName(metaPath);
+    const meta = found
+        .filter((file) => existsSync(file.meta))
+        .map((file) => readMetaName(file.meta))
+        .find((entry) => entry.name !== null || entry.teamName !== null) ?? { name: null, teamName: null };
     const root = options.teamsRoot ?? teamsRoot();
     const team = meta.teamName ?? sessionTeamName(parent.sessionId);
     const unread = meta.name
@@ -149,6 +152,13 @@ export async function agentMail(options: AgentMailOptions): Promise<AgentMail> {
               text: entry.text,
           }))
         : [];
-    logger.debug({ transcript, team, name: meta.name }, "[hub agents] reading teammate mail");
-    return readAgentMail(transcript, unread);
+    const transcripts = found.map((file) => file.transcript);
+    logger.debug({ transcripts, team, name: meta.name }, "[hub agents] reading teammate mail");
+    const parts = transcripts.map((transcript) => readAgentMail(transcript, []));
+    const byTime = <T extends { at: string | null }>(a: T, b: T) => (a.at ?? "").localeCompare(b.at ?? "");
+    return {
+        received: parts.flatMap((part) => part.received).sort(byTime),
+        sent: parts.flatMap((part) => part.sent).sort(byTime),
+        unread,
+    };
 }

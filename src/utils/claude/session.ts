@@ -332,16 +332,36 @@ export class ClaudeSession {
             }
         }
 
+        const mtimeOf = (path: string): number => {
+            try {
+                return statSync(path).mtimeMs;
+            } catch {
+                return 0;
+            }
+        };
+
         for (const sessionTranscript of sessionTranscripts) {
-            // The agents directly in `subagents/` and the agents of the session's Workflow tool runs.
-            for (const { agentId, transcript: jsonlPath, meta: metaPath } of claudeSubagentTranscripts(
-                sessionTranscript
-            )) {
-                // Only an agent with a meta file is listed: the meta holds the name and description a query matches.
-                if (!existsSync(metaPath)) {
+            // The agents directly in `subagents/` and the agents of the session's Workflow tool runs. One agent can have
+            // two transcripts: a Workflow agent revived through SendMessage writes its newer one directly in
+            // `subagents/`, with no meta file beside it.
+            const byAgent = new Map<string, { transcript: string; meta: string }[]>();
+
+            for (const { agentId, transcript, meta } of claudeSubagentTranscripts(sessionTranscript)) {
+                byAgent.set(agentId, [...(byAgent.get(agentId) ?? []), { transcript, meta }]);
+            }
+
+            for (const [agentId, files] of byAgent) {
+                // An agent is listed when one of its transcripts has a meta file: it holds the name and description a
+                // query matches. The tail follows the newest transcript, which is the revival's when there is one.
+                const metaPath = files.find((file) => existsSync(file.meta))?.meta;
+
+                if (!metaPath) {
                     continue;
                 }
 
+                const jsonlPath = files
+                    .map((file) => file.transcript)
+                    .reduce((newest, path) => (mtimeOf(path) > mtimeOf(newest) ? path : newest));
                 let meta: AgentMeta | null = null;
 
                 try {
@@ -377,11 +397,7 @@ export class ClaudeSession {
         const mtimeMap = new Map<string, number>();
 
         for (const target of results) {
-            try {
-                mtimeMap.set(target.filePath, statSync(target.filePath).mtimeMs);
-            } catch {
-                mtimeMap.set(target.filePath, 0);
-            }
+            mtimeMap.set(target.filePath, mtimeOf(target.filePath));
         }
 
         results.sort((a, b) => (mtimeMap.get(b.filePath) ?? 0) - (mtimeMap.get(a.filePath) ?? 0));

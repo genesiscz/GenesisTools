@@ -52,6 +52,16 @@ export async function sessionCallsWithAgents(resolved: ResolvedTranscript): Prom
     for (const file of files) {
         const trace = traces.get(file);
 
+        // A reader answers a file it could not read (missing, no permission) as unsupported, not by throwing.
+        if (trace && !trace.supported) {
+            unreadable.push(file);
+            logger.warn(
+                { file, reason: trace.reason },
+                "[transcripts] agent transcript unreadable, its calls are not counted"
+            );
+            continue;
+        }
+
         for (const call of trace ? factsOf(trace) : []) {
             if (!seen.has(call.id)) {
                 seen.add(call.id);

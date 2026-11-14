@@ -45,6 +45,11 @@ export interface WorkflowAgent {
     startedAt: string | null;
     /** Absolute path of the agent's transcript, or null when no file exists. Never a guessed path. */
     transcript: string | null;
+    /**
+     * The transcripts a revival of this agent wrote (the lead sent it another message after the run), oldest first:
+     * their calls and text are this agent's too. Empty for an agent nobody revived.
+     */
+    revivals: string[];
     bytes: number;
     /** The journal holds a result row for this agent: its final structured answer. */
     hasResult: boolean;
@@ -58,6 +63,11 @@ export interface WorkflowAgent {
      * for an agent with a result, and for the last attempt of a step.
      */
     supersededBy: WorkflowSupersession | null;
+}
+
+/** Every transcript of an agent: its own first, then its revivals. Usage and grep read all of them. */
+export function workflowAgentTranscripts(agent: Pick<WorkflowAgent, "transcript" | "revivals">): string[] {
+    return [...(agent.transcript ? [agent.transcript] : []), ...agent.revivals];
 }
 
 export interface WorkflowRun {
@@ -84,7 +94,9 @@ export interface WorkflowRun {
 }
 
 export interface WorkflowGrepHit {
-    /** 1-based line of the agent's transcript. */
+    /** The transcript the line is in: the agent's own, or one of its revivals. */
+    transcript: string;
+    /** 1-based line of that transcript. */
     line: number;
     timestamp: string | null;
     /**

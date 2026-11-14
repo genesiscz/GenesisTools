@@ -19,7 +19,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isDir } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { concurrentMap } from "@genesiscz/utils/async";
-import { readLines } from "@genesiscz/utils/fs/read-lines";
+import { readLines, readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -35,6 +35,7 @@ import type {
     WorkflowRun,
     WorkflowSupersession,
 } from "../workflow-types";
+import { workflowAgentTranscripts } from "../workflow-types";
 import { parseRow } from "./analysis-lines";
 import {
     type ClaudeSubagentFile,
@@ -156,29 +157,65 @@ function readRecordAgents(record: Row | null, drafts: Map<string, AgentDraft>): 
     }
 }
 
-/** The journal's rows with their 1-based line: a line is the evidence a caller cites. */
-function journalRows(journalPath: string): Array<{ line: number; row: Row }> {
+type JournalRow = { line: number; row: Row };
+
+function journalUnreadable(journalPath: string, line: number, error: unknown): void {
+    logger.warn(
+        { error, path: journalPath, readLines: line },
+        "[claude-workflows] journal unreadable: its agents keep what the record and the folder name, without journal lines or results past this line"
+    );
+}
+
+/**
+ * The journal's rows with their 1-based line (a line is the evidence a caller cites), read line by line, so a listing
+ * holds one row at a time and never the whole journal with every agent's result. An unreadable journal (removed after
+ * the check, a folder, no permission) ends the rows with a warning instead of failing every run of the session.
+ */
+async function* journalRows(journalPath: string): AsyncGenerator<JournalRow> {
     if (!existsSync(journalPath)) {
-        return [];
+        return;
     }
 
-    const rows: Array<{ line: number; row: Row }> = [];
+    let line = 0;
 
-    readFileSync(journalPath, "utf8")
-        .split("\n")
-        .forEach((raw, index) => {
+    try {
+        for await (const raw of readLines(journalPath)) {
+            line++;
             const row = raw.trim() ? parseRow(raw, journalPath) : null;
 
             if (row) {
-                rows.push({ line: index + 1, row });
+                yield { line, row };
             }
-        });
-
-    return rows;
+        }
+    } catch (error) {
+        journalUnreadable(journalPath, line, error);
+    }
 }
 
-function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>): void {
-    for (const { line, row } of journalRows(journalPath)) {
+/** {@link journalRows} for the synchronous `results`: the one caller that wants the result bodies. */
+function* journalRowsSync(journalPath: string): Generator<JournalRow> {
+    if (!existsSync(journalPath)) {
+        return;
+    }
+
+    let line = 0;
+
+    try {
+        for (const raw of readLinesSync(journalPath)) {
+            line++;
+            const row = raw.trim() ? parseRow(raw, journalPath) : null;
+
+            if (row) {
+                yield { line, row };
+            }
+        }
+    } catch (error) {
+        journalUnreadable(journalPath, line, error);
+    }
+}
+
+async function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>): Promise<void> {
+    for await (const { line, row } of journalRows(journalPath)) {
         const agentId = text(row.agentId);
 
         if (!agentId) {
@@ -271,13 +308,15 @@ function sizeOf(path: string): number {
     }
 }
 
-function readRun(input: {
+async function readRun(input: {
     runId: string;
     recordsDir: string;
     runDir: string | null;
     files: ClaudeSubagentFile[];
-}): WorkflowRun {
-    const { runId, recordsDir, runDir, files } = input;
+    /** The session's direct sub-agent transcripts by agent id: a workflow agent's own is its revival. */
+    direct: ReadonlyMap<string, string[]>;
+}): Promise<WorkflowRun> {
+    const { runId, recordsDir, runDir, files, direct } = input;
     const recordFile = join(recordsDir, `${runId}.json`);
     const record = existsSync(recordFile) ? readJsonFile(recordFile) : null;
     const journalFile = runDir ? join(runDir, JOURNAL) : null;
@@ -286,7 +325,7 @@ function readRun(input: {
     readRecordAgents(record, drafts);
 
     if (journalFile) {
-        readJournalAgents(journalFile, drafts);
+        await readJournalAgents(journalFile, drafts);
     }
 
     readDiskAgents(files, drafts);
@@ -305,6 +344,7 @@ function readRun(input: {
             attempt: draft.attempt,
             startedAt: draft.startedAt,
             transcript,
+            revivals: direct.get(draft.agentId) ?? [],
             bytes: transcript ? sizeOf(transcript) : 0,
             hasResult: draft.hasResult,
             resultBytes: draft.resultBytes,
@@ -348,7 +388,7 @@ function readRun(input: {
 }
 
 /** Every run of a session: the union of the run records and the run folders, oldest first. */
-export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
+export async function claudeWorkflowRuns(sessionTranscript: string): Promise<WorkflowRun[]> {
     const recordsDir = claudeWorkflowRecordsDir(sessionTranscript);
     const runDirs = new Map<string, string>();
 
@@ -359,17 +399,31 @@ export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
     }
 
     const filesByRun = new Map<string, ClaudeSubagentFile[]>();
+    const direct = new Map<string, string[]>();
 
     for (const file of claudeSubagentTranscripts(sessionTranscript)) {
         if (file.runId !== null) {
             filesByRun.set(file.runId, [...(filesByRun.get(file.runId) ?? []), file]);
+        } else {
+            direct.set(file.agentId, [...(direct.get(file.agentId) ?? []), file.transcript]);
         }
     }
 
     const runIds = [...new Set([...listRecordRunIds(recordsDir), ...runDirs.keys()])].sort();
-    const runs = runIds.map((runId) =>
-        readRun({ runId, recordsDir, runDir: runDirs.get(runId) ?? null, files: filesByRun.get(runId) ?? [] })
-    );
+    // One run after another: each journal streams, so a listing holds one row of one journal at a time.
+    const runs: WorkflowRun[] = [];
+
+    for (const runId of runIds) {
+        runs.push(
+            await readRun({
+                runId,
+                recordsDir,
+                runDir: runDirs.get(runId) ?? null,
+                files: filesByRun.get(runId) ?? [],
+                direct,
+            })
+        );
+    }
 
     // Unknown start times sort last: a run with no record was stopped before it could write one.
     return runs.sort(
@@ -380,7 +434,7 @@ export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
 function claudeWorkflowResults(run: WorkflowRun): Map<string, unknown> {
     const results = new Map<string, unknown>();
 
-    for (const { row } of run.journalPath ? journalRows(run.journalPath) : []) {
+    for (const { row } of run.journalPath ? journalRowsSync(run.journalPath) : []) {
         const agentId = text(row.agentId);
 
         if (row.type === "result" && agentId) {
@@ -409,39 +463,47 @@ async function grepAgent(
     run: WorkflowRun,
     agent: WorkflowAgent,
     pattern: RegExp,
-    options: Required<Pick<WorkflowGrepOptions, "maxHits" | "context">> & Pick<WorkflowGrepOptions, "before">
+    options: Required<Pick<WorkflowGrepOptions, "maxHits" | "context">> & { beforeMs: number | null }
 ): Promise<WorkflowAgentGrep | null> {
-    if (!agent.transcript) {
-        return null;
-    }
-
     const hits: WorkflowGrepHit[] = [];
     let matchingLines = 0;
-    let lineNumber = 0;
 
-    for await (const line of readLines(agent.transcript)) {
-        lineNumber++;
-        pattern.lastIndex = 0;
-        const match = pattern.exec(line);
+    // The agent's own transcript, then each revival's: a revived agent's later words are its words too.
+    for (const transcript of workflowAgentTranscripts(agent)) {
+        let lineNumber = 0;
 
-        if (!match) {
-            continue;
-        }
+        for await (const line of readLines(transcript)) {
+            lineNumber++;
+            pattern.lastIndex = 0;
+            const match = pattern.exec(line);
 
-        const row = parseRow(line, agent.transcript) ?? {};
-        const timestamp = text(row.timestamp);
+            if (!match) {
+                continue;
+            }
 
-        if (options.before && timestamp && timestamp >= options.before) {
-            continue;
-        }
+            const row = parseRow(line, transcript) ?? {};
+            const timestamp = text(row.timestamp);
+            // Compared as instants: "11:00+02:00" is before "10:00Z", which a string comparison gets wrong.
+            const at = timestamp ? Date.parse(timestamp) : Number.NaN;
 
-        matchingLines++;
+            if (options.beforeMs !== null && Number.isFinite(at) && at >= options.beforeMs) {
+                continue;
+            }
 
-        // A transcript line is a whole tool result and can be megabytes, so a hit is a bounded excerpt.
-        if (hits.length < options.maxHits) {
-            const start = Math.max(0, match.index - options.context);
-            const end = Math.min(line.length, match.index + match[0].length + options.context);
-            hits.push({ line: lineNumber, timestamp, where: whereOf(row), excerpt: line.slice(start, end) });
+            matchingLines++;
+
+            // A transcript line is a whole tool result and can be megabytes, so a hit is a bounded excerpt.
+            if (hits.length < options.maxHits) {
+                const start = Math.max(0, match.index - options.context);
+                const end = Math.min(line.length, match.index + match[0].length + options.context);
+                hits.push({
+                    transcript,
+                    line: lineNumber,
+                    timestamp,
+                    where: whereOf(row),
+                    excerpt: line.slice(start, end),
+                });
+            }
         }
     }
 
@@ -453,14 +515,22 @@ async function claudeWorkflowGrep(
     pattern: RegExp,
     options: WorkflowGrepOptions = {}
 ): Promise<WorkflowAgentGrep[]> {
-    const jobs = runs.flatMap((run) => run.agents.map((agent) => ({ run, agent })));
+    const beforeMs = options.before === undefined ? null : Date.parse(options.before);
+
+    if (beforeMs !== null && !Number.isFinite(beforeMs)) {
+        throw new Error(`before must be an ISO instant, got "${options.before}"`);
+    }
+
+    const jobs = runs.flatMap((run) =>
+        run.agents.filter((agent) => workflowAgentTranscripts(agent).length > 0).map((agent) => ({ run, agent }))
+    );
     const found = await concurrentMap({
         items: jobs,
         fn: ({ run, agent }) =>
             grepAgent(run, agent, pattern, {
                 maxHits: options.maxHits ?? 3,
                 context: options.context ?? 100,
-                before: options.before,
+                beforeMs,
             }),
         concurrency: PARALLEL_TRANSCRIPTS,
         onError: ({ agent }, error) =>
@@ -472,7 +542,7 @@ async function claudeWorkflowGrep(
 
 export const claudeWorkflows: SessionWorkflowReader = {
     support: { supported: true },
-    runs: async (sessionTranscript) => ({ supported: true, items: claudeWorkflowRuns(sessionTranscript) }),
+    runs: async (sessionTranscript) => ({ supported: true, items: await claudeWorkflowRuns(sessionTranscript) }),
     results: claudeWorkflowResults,
     grep: claudeWorkflowGrep,
 };

@@ -2,10 +2,12 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readTaskNotifications, scanAppendOnly, scanClaudeToolCalls, scanFileMatches } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
+import { sessionCallsWithAgents } from "./session-calls";
 import { listSubagents, SPAWN_PROMPT_CHARS } from "./subagents";
 
 const root = mkdtempSync(join(tmpdir(), "gt-subagents-"));
@@ -343,5 +345,26 @@ describe("listSubagents: meta and head fields", () => {
             { promptChars: Number.POSITIVE_INFINITY }
         ).subagents;
         expect(mate.spawnPrompt).toBe("p".repeat(20_000));
+    });
+});
+
+describe("sessionCallsWithAgents", () => {
+    test("an agent transcript its reader answers as unsupported is unreadable, not an agent with no calls", async () => {
+        const analysis = resolveHistoryProvider("claude").reader.analysis;
+        const original = analysis.callTrace.bind(analysis);
+        const lost = join(dir, "agent-atwo.jsonl");
+        const trace = spyOn(analysis, "callTrace").mockImplementation((path) =>
+            path === lost
+                ? Promise.resolve({ supported: false, reason: "the transcript could not be read: EACCES" })
+                : original(path)
+        );
+
+        try {
+            const result = await sessionCallsWithAgents(claude);
+            expect(result.agentTranscripts).toBe(3);
+            expect(result.unreadable).toEqual([lost]);
+        } finally {
+            trace.mockRestore();
+        }
     });
 });

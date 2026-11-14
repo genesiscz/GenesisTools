@@ -1104,6 +1104,31 @@ describe("ClaudeSession.findSubagents", () => {
         expect(ClaudeSession.findSubagents({ project: "/work/never-existed" })).toEqual([]);
     });
 
+    it("tails a revived Workflow agent's newer transcript, described by the meta of its run file", () => {
+        const revivedLead = "5e550003-cccc-4ccc-8ccc-cccccccccccc";
+        const revivedDir = join(projectsDir, "-work-sub", revivedLead, "subagents");
+        agent(
+            join(revivedDir, "workflows", "run-1"),
+            "feed01",
+            { agentType: "w", description: "Workflow reviewer" },
+            5_000
+        );
+        agent(revivedDir, "feed01", null, 6_000);
+
+        const targets = ClaudeSession.findSubagents({ project: "/work/sub", sessionId: "5e550003" });
+
+        expect(targets).toEqual([
+            {
+                filePath: join(revivedDir, "agent-feed01.jsonl"),
+                label: "Workflow reviewer",
+                sessionId: revivedLead,
+                agentId: "feed01",
+                agentDescription: "Workflow reviewer",
+                isAgent: true,
+            },
+        ]);
+    });
+
     it("scans every project folder with allProjects", () => {
         const targets = ClaudeSession.findSubagents({ allProjects: true, query: "other session" });
 
