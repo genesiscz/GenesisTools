@@ -308,9 +308,11 @@ export async function correctedTranscriptRead(options: {
     flags: TranscriptReadOptions;
     /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
     linked?: LinkedSource;
+    /** The caller's opened meeting, so a read that also enriches the lines loads the source once. */
+    opened?: OpenedMeeting;
 }): Promise<{ markdown?: ReturnType<typeof transcriptMarkdown>; applied: CorrectedTranscript }> {
     const { store, record, format, flags, linked } = options;
-    const meeting = await OpenedMeeting.of(store, record, linked).meeting();
+    const meeting = await (options.opened ?? OpenedMeeting.of(store, record, linked)).meeting();
     const config = await new MeetingsConfigStore().read();
     if (flags.applyAbove !== undefined) {
         const threshold = Number(flags.applyAbove);
