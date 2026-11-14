@@ -33,6 +33,11 @@ export interface TriageFailure {
     kind?: "deadline";
 }
 
+/** What the hub server answered a health ask with: its counters, or that it was too busy or not there. */
+export type HubServerState =
+    | { state: "answers"; pid: number; upMin: number; calls: number; errors: number; footprintMb: number }
+    | { state: "busy" | "absent" };
+
 export interface TriageReport {
     at: string;
     /** How long the whole gather took. */
@@ -41,10 +46,7 @@ export interface TriageReport {
     load: TriagePart<{ one: number; five: number; fifteen: number; cores: number }>;
     memory: TriagePart<{ totalGb: number; freeGb: number; pressure: string | null; swapUsedGb: number | null }>;
     processes: TriagePart<{ count: number; topCpu: TriageProcess[]; topMemory: TriageProcess[] }>;
-    hubServer: TriagePart<
-        | { state: "answers"; pid: number; upMin: number; calls: number; errors: number; footprintMb: number }
-        | { state: "busy" | "absent" }
-    >;
+    hubServer: TriagePart<HubServerState>;
     faces: TriagePart<Array<{ face: string; pid: number; startedAt: string | null }>>;
     failures: TriagePart<Array<TriageFailure>>;
     slowCalls: TriagePart<string[]>;
@@ -66,7 +68,7 @@ export interface TriageSources {
         rssBytes: number;
         startMs: number | null;
     }>;
-    hubServer: () => Promise<TriageReport["hubServer"] extends TriagePart<infer T> ? T : never>;
+    hubServer: () => Promise<HubServerState>;
     failures: (since: Date, until: Date) => Array<TriageFailure>;
     perfLogTail: () => string[];
     crashes: (since: Date, until: Date) => Array<{ process: string; at: string; path: string }>;
