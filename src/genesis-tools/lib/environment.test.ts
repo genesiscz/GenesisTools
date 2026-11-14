@@ -236,6 +236,12 @@ describe("triage", () => {
             "bun hub/index.ts"
         );
         expect(processLabel("launchd", null)).toBe("launchd");
+        // Inline code and option values are never a label: they can carry a secret.
+        expect(processLabel("node", "/usr/bin/node -e require('client').login('fixture-secret')")).toBe("node");
+        expect(processLabel("node", "/usr/bin/node --eval=fixture-secret")).toBe("node");
+        expect(processLabel("python3", "/usr/bin/python3 -c print('fixture-secret')")).toBe("python3");
+        expect(processLabel("bun", "/usr/bin/bun --port fixture-secret")).toBe("bun");
+        expect(processLabel("bun", "/usr/bin/bun run /repo/src/hub/index.ts")).toBe("bun hub/index.ts");
     });
 
     test("reports every part, and a part that fails does not fail the report", async () => {
