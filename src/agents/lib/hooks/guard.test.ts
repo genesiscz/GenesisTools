@@ -116,6 +116,17 @@ describe("evaluateGuard", () => {
         }
     });
 
+    it("still returns a verdict for a context rule past its session cap, so the hook can count it", () => {
+        const verdict = evaluateGuard(payload({ command: "ls x 2>/dev/null | head -3", sessionId: undefined }), {
+            ...DEFAULT_HOOKS_CONFIG,
+            guard: { ...DEFAULT_HOOKS_CONFIG.guard, contextCapPerSession: 0 },
+        });
+
+        expect(verdict?.outcome).toBe("allow");
+        expect(verdict?.violations.map((violation) => violation.ruleId)).toContain("stderr-discarded-then-read");
+        expect(verdict?.message).toBe("");
+    });
+
     it("passes a clean command", () => {
         expect(evaluateGuard(payload(), DEFAULT_HOOKS_CONFIG)).toBeNull();
     });
