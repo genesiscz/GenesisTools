@@ -804,7 +804,7 @@ export class Api {
 
     async deleteComment({ workItemId, commentId }: { workItemId: number; commentId: number }): Promise<void> {
         const url = Api.commentsUrl(this.config, workItemId, { commentId });
-        await this.send("DELETE", url, { description: `delete comment ${commentId}` }, (response) => response.text());
+        await this.call({ method: "DELETE", url, description: `delete comment ${commentId}` });
     }
 
     private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {
