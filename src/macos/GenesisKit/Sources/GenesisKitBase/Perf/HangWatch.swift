@@ -443,8 +443,6 @@ public enum HangWatch {
             return now - lastAt >= cooldown
         }
 
-        static func line(load: Double) -> String { probe(load: load).text }
-
         /// One `ps`, as the log line; `failed` when it gave no listing (it could not start, exited non-zero or was
         /// killed at `timeout`).
         static func probe(load: Double) -> (text: String, failed: Bool) {

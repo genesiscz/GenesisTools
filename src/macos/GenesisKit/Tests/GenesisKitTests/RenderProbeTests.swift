@@ -91,7 +91,7 @@ final class LoadTopTests: XCTestCase {
     }
 
     func testLineNamesTheLoadAndRealProcesses() {
-        let line = HangWatch.LoadTop.line(load: 150)
+        let line = HangWatch.LoadTop.probe(load: 150).text
         XCTAssertTrue(line.hasPrefix("load-top load=150.0: "), line)
         XCTAssertTrue(line.contains("%"), line)
     }
