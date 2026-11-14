@@ -323,7 +323,8 @@ describe("buildAssignmentView", () => {
         const result = await view("2026-08", fakes);
 
         expect(result.tasks.map((task) => task.taskId)).toEqual([700003]);
-        expect(fakes.clarity.timesheetCalls.slice(5)).toEqual([ts("2026-08-10"), ts("2026-08-31"), ts("2026-08-24")]);
+        // Discovery already read the other August weeks, so the catalogue search reads only the mid-month one.
+        expect(fakes.clarity.timesheetCalls.slice(5)).toEqual([ts("2026-08-10")]);
     });
 
     test("a month with no rows anywhere widens to the current window and takes its newest catalogue", async () => {
@@ -338,14 +339,10 @@ describe("buildAssignmentView", () => {
 
         expect(result.tasks.map((task) => task.taskId)).toEqual([700002]);
         expect(result.unassigned.map((row) => row.recommendation?.task.taskId)).toEqual([700002, undefined, undefined]);
-        // The month's six weeks, newest first after the mid-month one, then the current window's.
+        // Discovery already read the month's other weeks and the current window, so the catalogue search reads the
+        // mid-month week and each window week once, never a week a second time.
         expect(fakes.clarity.timesheetCalls.slice(5)).toEqual([
             ts("2026-08-10"),
-            ts("2026-08-31"),
-            ts("2026-08-24"),
-            ts("2026-08-17"),
-            ts("2026-08-03"),
-            ts("2026-08-01"),
             ts("2026-10-12"),
             ts("2026-10-19"),
             ts("2026-10-26"),
@@ -354,9 +351,6 @@ describe("buildAssignmentView", () => {
             ts("2026-11-16"),
             ts("2026-11-23"),
             ts("2026-11-30"),
-            ts("2026-11-30"),
-            ts("2026-11-23"),
-            ts("2026-11-16"),
         ]);
     });
 });
