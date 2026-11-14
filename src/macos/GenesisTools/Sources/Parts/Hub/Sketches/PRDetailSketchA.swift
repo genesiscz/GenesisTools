@@ -413,7 +413,7 @@ struct PRDetailSketchA: View {
     private func unfold(_ match: PanelFindMatch) {
         if match.row.hasPrefix("session:") {
             foldSessions = false
-        } else if match.row == PRDetailView.descriptionRowID, !descriptionShownWhole {
+        } else if match.row == PRDetailView.descriptionID, !descriptionShownWhole {
             descriptionChoices = PRDescriptionChoices.set(descriptionChoices, pr: pr.id, whole: true)
         }
     }
@@ -442,7 +442,7 @@ struct PRDetailSketchA: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
                 }
-                .id(PRDetailView.sessionsFindContainer)
+                .id(PRDetailView.sessionsID)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)

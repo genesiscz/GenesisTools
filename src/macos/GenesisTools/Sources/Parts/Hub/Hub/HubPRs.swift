@@ -3104,10 +3104,9 @@ struct PRDetailView: View {
 
     // MARK: Find (⌘F in the overview)
 
-    private static let sessionsID = "pr.sessions"
+    static let sessionsID = "pr.sessions"
     private static let descriptionSectionID = "pr.description.section"
-    private static let descriptionID = "pr.description"
-    static var descriptionRowID: String { descriptionID }
+    static let descriptionID = "pr.description"
     private static let checksID = "pr.checks"
 
     /// Changes when anything the overview shows changes: the sessions found, the detail, the PR.
@@ -3133,9 +3132,6 @@ struct PRDetailView: View {
         rows += Self.sessionFindRows(model: model, prs: prs, pr: pr)
         return rows
     }
-
-    /// The id of the lazy container that holds the session rows, for a page that registers `sessionFindRows`.
-    static var sessionsFindContainer: String { sessionsID }
 
     /// The agent sessions on the PR as find rows, under the ids their rows mark (`PRSessionsSection`).
     static func sessionFindRows(model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
@@ -3225,7 +3221,7 @@ struct PRDescriptionView: View {
         VStack(alignment: .leading, spacing: 6) {
             MarkdownContentView(markdown: markdown, style: .hub)
                 .findField("desc")
-                .findRow(PRDetailView.descriptionRowID)
+                .findRow(PRDetailView.descriptionID)
                 .tint(Color(red: 0.62, green: 0.78, blue: 1))
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: Bool.self, of: { $0.size.height > fold + 1 }) { overflows = $0 }

@@ -398,7 +398,7 @@ struct PRDetailSketchB: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
                 }
-                .id(PRDetailView.sessionsFindContainer)
+                .id(PRDetailView.sessionsID)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
