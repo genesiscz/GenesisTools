@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
-import { currentTraceId } from "@genesiscz/utils/trace";
 import { appendFailure, type FailureCaller, type ToolFailure } from "./record";
-import { agentCaller, currentRunFacts, redactCurrentRunText, TOOLS_ROOT } from "./watch";
+import {
+    agentCaller,
+    currentRunFacts,
+    FAILURE_MESSAGE_CHARS,
+    FAILURE_STACK_CHARS,
+    FAILURE_TAIL_CHARS,
+    processFailureFields,
+    redactCurrentRunText,
+} from "./watch";
 
 /** A handled MCP or REPL failure must be written before its response, rather than waiting for process exit. */
 export function recordHandledFailure(options: {
@@ -30,26 +37,20 @@ export function recordHandledFailure(options: {
 
         const message = clean(error?.message ?? String(options.error));
         const failure: ToolFailure = {
-            v: 1,
+            ...processFailureFields(new Date()),
             id: randomUUID(),
-            at: new Date().toISOString(),
             kind: "error",
             tool: run?.tool ?? options.tool,
             command: run?.command ?? run?.tool ?? options.tool,
             argv,
             operation: { transport: "mcp", server: options.tool, name: options.call },
             exitCode: null,
-            message: message.slice(0, 2000),
+            message: message.slice(0, FAILURE_MESSAGE_CHARS),
             errorName: error?.name ?? null,
-            stack: error?.stack ? clean(error.stack).slice(0, 8000) : null,
-            stderrTail: message.slice(-4000),
+            stack: error?.stack ? clean(error.stack).slice(0, FAILURE_STACK_CHARS) : null,
+            stderrTail: message.slice(-FAILURE_TAIL_CHARS),
             fatal: false,
             durationMs: Math.max(0, Math.round(options.durationMs ?? 0)),
-            pid: process.pid,
-            ppid: process.ppid,
-            cwd: process.cwd(),
-            traceId: currentTraceId() ?? null,
-            toolsRoot: TOOLS_ROOT,
             caller,
         };
         appendFailure(failure, options.dir);

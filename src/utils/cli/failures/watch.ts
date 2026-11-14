@@ -9,9 +9,12 @@ import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure } from "./record";
 import { takeRunId } from "./run-id";
 
-const TAIL_CHARS = 4000;
+/** How much of a failure's output, message and stack a record keeps. */
+export const FAILURE_TAIL_CHARS = 4000;
+export const FAILURE_MESSAGE_CHARS = 2000;
+export const FAILURE_STACK_CHARS = 8000;
 /** The GenesisTools checkout this code runs from: the main one or a worktree. */
-export const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
+const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
 const SECRET_WORD = "(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential)";
 const SECRET_FLAG = new RegExp(`^--?[\\w-]*${SECRET_WORD}[\\w-]*$`, "i");
 /** A positional argument whose declared name is secret-shaped (`[secret]`) takes a secret value. */
@@ -433,7 +436,7 @@ function text(chunk: unknown): string {
 
 function remember(chunk: unknown): void {
     if (run) {
-        run.stderr = (run.stderr + text(chunk)).slice(-TAIL_CHARS);
+        run.stderr = (run.stderr + text(chunk)).slice(-FAILURE_TAIL_CHARS);
     }
 }
 
@@ -447,7 +450,7 @@ function tapStderr(): void {
     const writeOut = process.stdout.write;
     process.stdout.write = function (this: NodeJS.WriteStream, ...args: Parameters<typeof writeOut>) {
         if (run) {
-            run.stdout = (run.stdout + text(args[0])).slice(-TAIL_CHARS);
+            run.stdout = (run.stdout + text(args[0])).slice(-FAILURE_TAIL_CHARS);
         }
 
         return Reflect.apply(writeOut, this, args);
@@ -503,6 +506,25 @@ export function currentRunFacts(): { tool: string; command: string | null; argv:
     };
 }
 
+/**
+ * The fields every record this process writes shares (a run's end, a command deadline, a handled call): the process,
+ * its checkout and its trace. Each writer adds its kind, its id and its message, cut to
+ * {@link FAILURE_MESSAGE_CHARS} and {@link FAILURE_STACK_CHARS}.
+ */
+export function processFailureFields(
+    now: Date
+): Pick<ToolFailure, "v" | "at" | "pid" | "ppid" | "cwd" | "traceId" | "toolsRoot"> {
+    return {
+        v: 1,
+        at: now.toISOString(),
+        pid: process.pid,
+        ppid: process.ppid,
+        cwd: process.cwd(),
+        traceId: currentTraceId() ?? null,
+        toolsRoot: TOOLS_ROOT,
+    };
+}
+
 function caller(): FailureCaller | null {
     try {
         return run?.caller() ?? null;
@@ -528,26 +550,21 @@ function write(kind: FailureKind, exitCode: number | null, fatal: boolean): void
             : error !== undefined && error !== null
               ? String(error)
               : (jsonErrorMessage(run.stdout) ?? messageOfTail(tail));
+        const now = new Date();
         const failure: ToolFailure = {
-            v: 1,
-            id: `${Date.now().toString(36)}-${process.pid}`,
-            at: new Date().toISOString(),
+            ...processFailureFields(now),
+            id: `${now.getTime().toString(36)}-${process.pid}`,
             kind,
             tool: run.tool,
             command: run.commandPath()?.replace(/^tools /, "") ?? null,
             argv: redactArgv(run.argv, secrets),
             exitCode,
-            message: message ? redact(stripAnsi(message)).slice(0, 2000) : null,
+            message: message ? redact(stripAnsi(message)).slice(0, FAILURE_MESSAGE_CHARS) : null,
             errorName: err?.name ?? null,
-            stack: err?.stack ? redact(err.stack).slice(0, 8000) : null,
+            stack: err?.stack ? redact(err.stack).slice(0, FAILURE_STACK_CHARS) : null,
             stderrTail: tail || null,
             fatal,
             durationMs: Math.round(performance.now()),
-            pid: process.pid,
-            ppid: process.ppid,
-            cwd: process.cwd(),
-            traceId: currentTraceId() ?? null,
-            toolsRoot: TOOLS_ROOT,
             caller: caller(),
             ...(run.runId ? { runId: run.runId } : {}),
         };
