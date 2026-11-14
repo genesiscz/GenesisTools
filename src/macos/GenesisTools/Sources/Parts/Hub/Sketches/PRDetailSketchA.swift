@@ -406,7 +406,7 @@ struct PRDetailSketchA: View {
     }
 
     private var findRevision: [String] {
-        PRDetailView.sessionFindRows(model: model, prs: prs, pr: pr).map(\.id) + [detail?.body ?? "", pr.id]
+        PRDetailView.sessionFindRevision(model: model, prs: prs, pr: pr) + [findMarkdown ?? "", pr.id]
     }
 
     /// A match in a folded part opens it first.

@@ -3112,8 +3112,9 @@ struct PRDetailView: View {
 
     /// Changes when anything the overview shows changes: the sessions found, the detail, the PR.
     private var findRevision: [String] {
-        let sessions = PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map(\.id)
-        return sessions + [detail?.body ?? "", pr.id] + (detail?.commits ?? []).map(\.sha) + (detail?.checks ?? []).map(\.id)
+        let sessions = Self.sessionFindRevision(model: model, prs: prs, pr: pr)
+        let description = (detail?.body?.trimmed).map { linkedDescription($0) } ?? ""
+        return sessions + [description, pr.id] + (detail?.commits ?? []).map(\.sha) + (detail?.checks ?? []).map(\.id)
     }
 
     /// Description, commits, checks and sessions, in the order the overview shows them.
@@ -3140,6 +3141,15 @@ struct PRDetailView: View {
     static func sessionFindRows(model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
         PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
             PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: sessionsID)
+        }
+    }
+
+    /// The session part of a page's find revision: each row's id with the texts the find searches, so a session that
+    /// is renamed refreshes the find as one that comes or goes does. Built from `sessionFindRows`, so a field added
+    /// there is covered here too.
+    static func sessionFindRevision(model: HubModel, prs: PRsModel, pr: HubPR) -> [String] {
+        sessionFindRows(model: model, prs: prs, pr: pr).map { row in
+            ([row.id] + row.fields.map(\.text)).joined(separator: "\u{1}")
         }
     }
 

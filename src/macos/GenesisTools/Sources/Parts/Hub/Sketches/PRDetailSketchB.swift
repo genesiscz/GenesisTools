@@ -367,7 +367,7 @@ struct PRDetailSketchB: View {
     }
 
     private var findRevision: [String] {
-        PRDetailView.sessionFindRows(model: model, prs: prs, pr: pr).map(\.id) + [detail?.body ?? "", pr.id]
+        PRDetailView.sessionFindRevision(model: model, prs: prs, pr: pr) + [findMarkdown ?? "", pr.id]
     }
 
     /// The description as the page draws it, for the find.
