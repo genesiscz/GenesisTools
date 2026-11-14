@@ -28,6 +28,8 @@ describe("resolveEnumFlag", () => {
 
     it("lists the possible values and sets exit code 1 for a bare or an invalid flag without a terminal", async () => {
         const lines: string[] = [];
+        const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
         const spy = spyOn(out, "printlnErr").mockImplementation((line: string) => {
             lines.push(line);
         });
@@ -43,6 +45,11 @@ describe("resolveEnumFlag", () => {
             expect(process.exitCode).toBe(1);
         } finally {
             spy.mockRestore();
+            if (tty) {
+                Object.defineProperty(process.stdin, "isTTY", tty);
+            } else {
+                Reflect.deleteProperty(process.stdin, "isTTY");
+            }
         }
     });
 });
