@@ -82,7 +82,7 @@ public actor FailureCaptureStore {
     /// raw report and the archived one share a key when the headline held a credential.
     public nonisolated static func key(_ report: FailureReport) -> String {
         let identity = report.call.map { "call:\($0.traceId):\(Int64(($0.started.timeIntervalSince1970 * 1000).rounded()))" }
-            ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(report.title):\(ToolsCallTrace.redactedText(report.headline, argv: []))"
+            ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(ToolsCallTrace.redactedText(report.title, argv: [])):\(ToolsCallTrace.redactedText(report.headline, argv: []))"
         return digest(identity)
     }
 
@@ -213,6 +213,13 @@ public actor FailureCaptureStore {
         safe.summary = report.summary.map { ToolsCallTrace.redactedText($0, argv: argv) }
         safe.log = ToolsCallTrace.redactedText(report.log, argv: argv)
         safe.command = report.command.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        // The other free text: the remote error's stack repeats its message, which can carry an argv credential.
+        safe.title = ToolsCallTrace.redactedText(report.title, argv: argv)
+        safe.nextStep = report.nextStep.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.action = report.action.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.expected = report.expected.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.stack = report.stack.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.issue?.title = report.issue?.title.map { ToolsCallTrace.redactedText($0, argv: argv) }
         if var safeCall = report.call {
             safeCall.argv = ToolsCallTrace.redacted(safeCall.argv)
             safeCall.stderr = safeCall.stderr.map { ToolsCallTrace.redactedText($0, argv: argv) }

@@ -723,6 +723,23 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertFalse(ready.log.contains("fixture-token-123"))
     }
 
+    func testTheStackAndTheOtherReportTextAreRedactedBeforeTheyAreArchived() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
+        let secret = "Authorization: Bearer fixture-token-123"
+        var report = FailureReport(headline: "failed", log: "")
+        report.title = "sent \(secret)"
+        report.stack = "Error: sent \(secret)\n    at fixture (a.ts:1:1)"
+        report.nextStep = "retry \(secret)"
+        report.action = "run \(secret)"
+        report.expected = "no \(secret)"
+        report.issue = FailureIssue(tool: "fixture", title: "bug \(secret)")
+        let ready = await store.prepared(report)
+        XCTAssertFalse(ready.stack?.contains("fixture-token-123") ?? true)
+        let text = try String(contentsOf: store.file(for: report), encoding: .utf8)
+        XCTAssertFalse(text.contains("fixture-token-123"), "no field of the archive repeats the credential")
+    }
+
     func testAHeadlineWithACredentialKeepsOneArchiveKeyBeforeAndAfterRedaction() {
         let raw = FailureReport(headline: "sent Authorization: Bearer fixture-token-123", log: "")
         var archived = raw
