@@ -8,7 +8,9 @@
 // checkout. On 2026-10-27 a session working in two checkouts wrote "GenesisPlayground is pushed, and its one fix is in
 // #102 (fix(tools): ...)", and #102 was linked in the other checkout's repository: so the plain name counts, and a
 // session in several checkouts with no such word links a number only when the title the reply wrote after it matches
-// that repository's PR. Standalone, as every runtime plugin file.
+// that repository's PR. On 2026-11-14 "Reservine #923, #925 to #927, #929 and #930, and ReservineBack #1255" linked
+// #930 in ReservineBack, the nearer name: so a repository named before a list of numbers owns the whole list.
+// Standalone, as every runtime plugin file.
 import { type ForgeProject, forgeProject } from "./commit-links";
 import type { Host } from "./shared";
 
