@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import {
     appendFileSync,
     chmodSync,
@@ -57,6 +58,33 @@ import {
     type LocalSourceAudio,
     planSourceAudio,
 } from "./source-audio-discovery";
+
+/**
+ * A merge refusal awaited with every file move and clone made to throw: a move the merge undid later would leave the
+ * same end state, so the refusal must come before the first one.
+ */
+async function refusedBeforeAnyMove(merge: () => Promise<unknown>, message: string): Promise<void> {
+    const moved = spyOn(fs, "renameSync").mockImplementation(() => {
+        throw new Error("a file moved before the refusal");
+    });
+    const cloned = spyOn(cloneFiles, "cloneOrCopy").mockImplementation(() => {
+        throw new Error("a file was cloned before the refusal");
+    });
+
+    try {
+        await expect(merge()).rejects.toThrow(message);
+        expect(moved).not.toHaveBeenCalled();
+        expect(cloned).not.toHaveBeenCalled();
+    } finally {
+        moved.mockRestore();
+        cloned.mockRestore();
+    }
+}
+
+/** Every lock file or lock folder under `dir`, as paths relative to it. */
+function lockFilesUnder(dir: string): string[] {
+    return readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((path) => /\.lock(?:$|\.)/.test(path));
+}
 
 function gate(enabled: boolean, linkHost: string | null = "links.example"): LinkGate {
     return {
@@ -328,6 +356,10 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         expect(existsSync(join(result.backup ?? "", "before", from, "frames", "14-03-00-000-d1.jpg"))).toBe(true);
         expect(existsSync(join(result.backup ?? "", "before", into, "recording.json"))).toBe(true);
         expect(existsSync(join(result.backup ?? "", "moved", from, "meeting.json"))).toBe(true);
+        // The folder of the record that went away is gone itself, so its id is free again, and no lock the merge held
+        // went into the backup: a restore from it must not bring back a lock.
+        expect(existsSync(store.folder(from))).toBe(false);
+        expect(lockFilesUnder(result.backup ?? "")).toEqual([]);
         expect(cancelled).toEqual(["form-1"]);
         expect(result.withdrawn).toBe("form-1");
         expect(store.resolve("wisprflow:call-1")?.id).toBe(into);
@@ -359,7 +391,8 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
             const ocr = join(store.folder(from), name);
             writeFileSync(ocr, '{"at":"2026-11-05T13:03:00.000Z"}\n{"file":"frames/cut');
 
-            await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+            await refusedBeforeAnyMove(
+                () => mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot }),
                 `${ocr}:2 is not a JSON row`
             );
             expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
@@ -477,7 +510,8 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
             return acquire(options);
         };
 
-        await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+        await refusedBeforeAnyMove(
+            () => mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot }),
             "hold different source meetings"
         );
         expect(existsSync(backupRoot)).toBe(false);
@@ -556,15 +590,17 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
     test("records of two calls, or frames that share a name, are refused before anything moves", async () => {
         const two = await call({ otherSource: true });
 
-        await expect(
-            mergeMeetings({ store: two.store, fromId: two.from, intoId: two.into, inbox: two.inbox })
-        ).rejects.toThrow("hold different source meetings");
+        await refusedBeforeAnyMove(
+            () => mergeMeetings({ store: two.store, fromId: two.from, intoId: two.into, inbox: two.inbox }),
+            "hold different source meetings"
+        );
 
         const same = await call({ collide: true });
 
-        await expect(
-            mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox })
-        ).rejects.toThrow("frames/14-03-00-000-d1.jpg is in both records");
+        await refusedBeforeAnyMove(
+            () => mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox }),
+            "frames/14-03-00-000-d1.jpg is in both records"
+        );
         expect(readdirSync(join(same.store.folder(same.from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
     });
 });
