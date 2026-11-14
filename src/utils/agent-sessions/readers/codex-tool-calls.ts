@@ -8,6 +8,8 @@ import { readToolCallLines } from "./tool-calls";
 
 /** A rollout's first row (`session_meta`) carries the base instructions too, so its cwd is looked for this far. */
 const HEAD_BYTES = 256 * 1024;
+/** The head is read in chunks this size, so a short first row costs one small read. */
+const HEAD_CHUNK_BYTES = 16 * 1024;
 /** The windows before a read in which its turn's `turn_context` is looked for, each wider than the last. */
 const TURN_LOOKBACK_BYTES = [64 * 1024, 1024 * 1024, 8 * 1024 * 1024];
 const TURN_CONTEXT = Buffer.from('"turn_context"');
@@ -15,79 +17,97 @@ const PATCH_FILE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/
 const SHELLS = new Set(["bash", "zsh", "sh"]);
 
 /**
- * The cwd of the latest `turn_context` row before `offset` (a row start), so a read that starts mid-session gives its
- * calls the cwd a read from the file start gives them. `capped`: the widest window ended before the file start.
+ * The cwd the calls of a read that starts at `offset` (a row start) run in until their own `turn_context`: the latest
+ * `turn_context` cwd before `offset`, else the cwd the rollout's first row (`session_meta`) names. So a read that starts
+ * mid-session gives its calls the cwd a read from the file start gives them. `capped`: the widest window ended before
+ * the file start.
  */
-function turnCwdBefore(path: string, offset: number): { cwd?: string; capped: boolean } {
+function cwdBefore(path: string, offset: number): { cwd: string | undefined; capped: boolean } {
     let fd: number;
 
     try {
         fd = openSync(path, "r");
     } catch {
-        return { capped: false };
+        return { cwd: undefined, capped: false };
     }
 
     try {
-        for (const size of TURN_LOOKBACK_BYTES) {
-            const start = Math.max(0, offset - size);
-            const buf = Buffer.allocUnsafe(offset - start);
-            const data = buf.subarray(0, readSync(fd, buf, 0, buf.length, start));
-            let hit = data.lastIndexOf(TURN_CONTEXT);
-
-            while (hit !== -1) {
-                const lineStart = data.lastIndexOf(0x0a, hit) + 1;
-
-                // The row began before this window: the next, wider one reads it whole.
-                if (lineStart === 0 && start > 0) {
-                    break;
-                }
-
-                const lineEnd = data.indexOf(0x0a, hit);
-                const row = parseTranscriptLine(
-                    data.subarray(lineStart, lineEnd === -1 ? undefined : lineEnd).toString("utf8")
-                );
-                const payload = row?.type === "turn_context" && isObject(row.payload) ? row.payload : null;
-                const cwd = text(payload?.cwd);
-
-                if (cwd) {
-                    return { cwd, capped: false };
-                }
-
-                hit = lineStart === 0 ? -1 : data.lastIndexOf(TURN_CONTEXT, lineStart - 1);
-            }
-
-            if (start === 0) {
-                return { capped: false };
-            }
-        }
-
-        return { capped: true };
+        const before = turnCwdBefore(fd, offset);
+        return { cwd: before.cwd ?? headCwd(fd), capped: before.capped };
     } finally {
         closeSync(fd);
     }
 }
 
-/** The cwd the rollout's first row (`session_meta`) names, for calls made before any `turn_context`. */
-function headCwd(path: string): string | undefined {
-    let fd: number;
+/** The cwd of the latest `turn_context` row before `offset`. Each wider window reads only the bytes it adds. */
+function turnCwdBefore(fd: number, offset: number): { cwd?: string; capped: boolean } {
+    let data = Buffer.alloc(0);
+    let start = offset;
 
-    try {
-        fd = openSync(path, "r");
-    } catch {
-        return undefined;
+    for (const size of TURN_LOOKBACK_BYTES) {
+        const wider = Math.max(0, offset - size);
+        const added = Buffer.allocUnsafe(start - wider);
+        data = Buffer.concat([added.subarray(0, readSync(fd, added, 0, added.length, wider)), data]);
+        start = wider;
+        let hit = data.lastIndexOf(TURN_CONTEXT);
+
+        while (hit !== -1) {
+            const lineStart = data.lastIndexOf(0x0a, hit) + 1;
+
+            // The row began before this window: the next, wider one reads it whole.
+            if (lineStart === 0 && start > 0) {
+                break;
+            }
+
+            const lineEnd = data.indexOf(0x0a, hit);
+            const row = parseTranscriptLine(
+                data.subarray(lineStart, lineEnd === -1 ? undefined : lineEnd).toString("utf8")
+            );
+            const payload = row?.type === "turn_context" && isObject(row.payload) ? row.payload : null;
+            const cwd = text(payload?.cwd);
+
+            if (cwd) {
+                return { cwd, capped: false };
+            }
+
+            hit = lineStart === 0 ? -1 : data.lastIndexOf(TURN_CONTEXT, lineStart - 1);
+        }
+
+        if (start === 0) {
+            return { capped: false };
+        }
     }
 
-    try {
-        const buf = Buffer.allocUnsafe(HEAD_BYTES);
-        const data = buf.subarray(0, readSync(fd, buf, 0, HEAD_BYTES, 0));
-        const end = data.indexOf(0x0a);
-        const row = end === -1 ? null : parseTranscriptLine(data.subarray(0, end).toString("utf8"));
-        const payload = row && isObject(row.payload) ? row.payload : null;
+    return { capped: true };
+}
 
-        return text(payload?.cwd) ?? undefined;
-    } finally {
-        closeSync(fd);
+/** The cwd the rollout's first row (`session_meta`) names, read in small chunks up to its first newline. */
+function headCwd(fd: number): string | undefined {
+    const chunks: Buffer[] = [];
+    let read = 0;
+
+    while (read < HEAD_BYTES) {
+        const chunk = Buffer.allocUnsafe(Math.min(HEAD_CHUNK_BYTES, HEAD_BYTES - read));
+        const got = readSync(fd, chunk, 0, chunk.length, read);
+
+        if (got === 0) {
+            return undefined;
+        }
+
+        const end = chunk.subarray(0, got).indexOf(0x0a);
+
+        if (end !== -1) {
+            chunks.push(chunk.subarray(0, end));
+            const row = parseTranscriptLine(Buffer.concat(chunks).toString("utf8"));
+            const payload = row && isObject(row.payload) ? row.payload : null;
+            return text(payload?.cwd) ?? undefined;
+        }
+
+        chunks.push(chunk.subarray(0, got));
+        read += got;
     }
+
+    return undefined;
 }
 
 /** A shell call's command as one string: the script of `bash -lc <script>`, else the words joined. */
@@ -137,7 +157,7 @@ export function codexToolCalls(transcriptPath: string, fromOffset: number): Tool
     const currentCwd = (lineOffset: number, issues: NativeSourceIssue[]): string | undefined => {
         if (cwd === undefined && !recovered) {
             recovered = true;
-            const before = turnCwdBefore(transcriptPath, lineOffset);
+            const before = cwdBefore(transcriptPath, lineOffset);
 
             if (before.capped) {
                 issues.push({
@@ -146,7 +166,7 @@ export function codexToolCalls(transcriptPath: string, fromOffset: number): Tool
                 });
             }
 
-            cwd = before.cwd ?? headCwd(transcriptPath);
+            cwd = before.cwd;
         }
 
         return cwd;
