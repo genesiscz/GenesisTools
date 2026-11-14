@@ -746,14 +746,18 @@ export async function testApp(args: readonly string[], timeoutMs = APP_TEST_TIME
         stdio: ["inherit", "inherit", "inherit"],
     });
     let timedOut = false;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
     const deadline = setTimeout(() => {
         timedOut = true;
         // SIGINT first: swift test cancels its build and test children on it, as it does on Ctrl-C.
         proc.kill("SIGINT");
-        setTimeout(() => proc.kill("SIGKILL"), 10_000).unref();
+        escalation = setTimeout(() => proc.kill("SIGKILL"), 10_000);
     }, timeoutMs);
-    const code = await proc.exited;
-    clearTimeout(deadline);
+    // Both timers end with the process, so no SIGKILL can reach it after it exited.
+    const code = await proc.exited.finally(() => {
+        clearTimeout(deadline);
+        clearTimeout(escalation);
+    });
 
     if (timedOut) {
         logger.error({ cmd, timeoutMs }, "swift test passed its deadline and was stopped");
