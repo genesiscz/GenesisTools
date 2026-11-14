@@ -21,6 +21,7 @@ import {
     type DecisionStatus,
     findAskRows,
     jumpTo,
+    type LoggedDecision,
     NO_TOOLS_CLI,
     refreshAnswers,
     sendStaged,
@@ -91,16 +92,19 @@ function setLocal(n: number, letters: string): string {
  * decision the log does not have, or one whose move into the log failed).
  */
 function stagedSetOf(n: number): string {
-    const logged = answersOf()?.decisions.find((decision) => decision.n === n);
-
-    return logged?.draftOption ?? localPick.get(n) ?? "";
+    return loggedDecision(n)?.draftOption ?? localPick.get(n) ?? "";
 }
 
 /** Whether the log holds a staged answer of its own for decision `n`, which then wins over the sidebar's ticks. */
 function logHasDraft(n: number): boolean {
-    const logged = answersOf()?.decisions.find((decision) => decision.n === n);
+    const logged = loggedDecision(n);
 
     return Boolean(logged?.draftOption || logged?.draft);
+}
+
+/** Decision `n` as the answers log holds it, when the log has it. */
+function loggedDecision(n: number): LoggedDecision | undefined {
+    return answersOf()?.decisions.find((decision) => decision.n === n);
 }
 
 /**
@@ -558,7 +562,7 @@ export async function sendDecisionAnswers(
 
     const fields = new Map(
         [...typed].filter(([number, text]) => {
-            const decision = answersOf()?.decisions.find((held) => held.n === number);
+            const decision = loggedDecision(number);
             return text === (decision?.draft ?? decision?.answer);
         })
     );
