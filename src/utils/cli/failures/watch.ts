@@ -506,14 +506,23 @@ export function currentRunFacts(): { tool: string; command: string | null; argv:
     };
 }
 
+/** The process half of every failure record, the part {@link processFailureFields} fills in. */
+export interface ProcessFailureFields {
+    v: ToolFailure["v"];
+    at: string;
+    pid: number;
+    ppid: number;
+    cwd: string;
+    traceId: string | null;
+    toolsRoot: string;
+}
+
 /**
  * The fields every record this process writes shares (a run's end, a command deadline, a handled call): the process,
  * its checkout and its trace. Each writer adds its kind, its id and its message, cut to
  * {@link FAILURE_MESSAGE_CHARS} and {@link FAILURE_STACK_CHARS}.
  */
-export function processFailureFields(
-    now: Date
-): Pick<ToolFailure, "v" | "at" | "pid" | "ppid" | "cwd" | "traceId" | "toolsRoot"> {
+export function processFailureFields(now: Date): ProcessFailureFields {
     return {
         v: 1,
         at: now.toISOString(),
