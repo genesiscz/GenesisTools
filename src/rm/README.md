@@ -133,9 +133,15 @@ The first rule that answers decides.
    cloud folders; secrets in `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.password-store` and the GenesisTools
    vault and AI config; virtual-machine disks of OrbStack, Docker Desktop, colima, lima and minikube; plus `protect`
    in the config) and every folder that holds one.
-2. **not-movable** (refuse): a path this user cannot rename: an item of another user in a sticky folder (root's
-   spindump files in `/private/var/tmp`), or an item in a folder this user may not change. The move into the trash
-   would fail, so no approval could carry it out. The approval window refuses such a path too.
+2. **not-movable** (refuse): a path this user cannot rename, even with an administrator's help: an item of another
+   user in a sticky folder that is not root's file below, or an item in a folder this user may not change. The move
+   into the trash would fail, so no approval could carry it out. The approval window refuses such a path too.
+   **needs-admin** (ask, right after it, macOS only): root's file in a sticky folder, such as a spindump file in
+   `/private/var/tmp`. No rule allows it and it never moves aside. After a person approves it, the system asks once
+   per approval for an administrator's password, `chown -h` gives the file (or symlink) to this user, and the normal
+   verified rename takes it to the trash; a restore puts it back owned by this user. A folder, a file with more than
+   one hard link, and a file with a folder above it that this user could swap stay `not-movable`: the password typed
+   for one file must never hand over another. Delete those with `sudo` yourself.
 3. **aside-pending** (refuse): a path that is, holds, or sits in an aside folder whose request still waits. The
    aside folder lives in the session's scratch, so without this rule the scratch rule would let the agent delete it.
 4. **registered-worktree** (refuse): a linked worktree git still lists. Use `git worktree remove`, which refuses
@@ -272,6 +278,11 @@ for its requests before a window opens. `tools rm requests` only reads: it marks
   "outside an agent" is read from environment variables an agent can clear, and a terminal an agent fakes types a
   code as well as a person.
 
+No person check runs as root. Under `sudo` the window and the dialog run as root too, so the system asks for the root
+account's password ("System Administrator"), which the person does not have, and the files a decision writes into
+`~/.genesis-tools` become root's (2026-11-14). The check says so before any prompt: run the verb without `sudo`. A
+file only root may move asks for an administrator's password itself, after the approval (rule `needs-admin`).
+
 The setting `approval` picks the way: `auto` (the default: Touch ID when the installed app offers it, else the
 dialog), `touch-id` (refuse without the app) or `code` (never Touch ID: the typed code on a terminal outside an
 agent, else the dialog). `tools rm config set approval code` asks the person the current way first. When the app's
@@ -383,7 +394,7 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
   it for an agent. An agent's run that gets past the guard drains early only the batches its own session made; a
   batch of another session, or one a person approved ("Move to the trash"), keeps its grace and its restore.
 - An approved path the move cannot rename (EACCES, EPERM) stays where it is with a `refuse` line (`not-movable`); the
-  other paths of the batch still move. When a move stops halfway, what reached the trash counts as approved and the
+  other paths of the batch still move. So does a `needs-admin` file whose administrator prompt was cancelled. When a move stops halfway, what reached the trash counts as approved and the
   rest stays pending, and in a window of several requests one that fails is named and the others are still decided.
 - The deletion code only deletes inside a trash root, at batch or item depth (`assertInsideTrash`), so a bug that
   builds a wrong path deletes nothing.
@@ -400,7 +411,8 @@ so on stderr. On a full disk on 2026-11-05, `approve` failed with ENOSPC at its 
 `~/.genesis-tools/rm/ledger.jsonl` holds one line per move, aside, return, drain, restore, refusal, request, decision,
 root, profile and setting change. The actions are `move`, `aside`, `measure`, `return`, `drain`, `restore`, `refuse`,
 `request`, `approve`, `deny`, `root-add`, `root-remove`, `profile-set`, `profile-remove`, `config-set`, `close`,
-`lost`, `finish` and `fail`. Each line carries the time, the folder, the path and where it went, the rule, the bytes
+`lost`, `take-over` (an administrator gave root's file to this user for an approved move), `finish` and `fail`. Each
+line carries the time, the folder, the path and where it went, the rule, the bytes
 (moved: measured right after the rename; reclaimed: at the drain) and the caller: agent, session id and title, model,
 project, and the operating-system user for a person. A line a person check decided also carries `person`
 (`{ via, opened }`); `caller` stays the environment the command ran in, which is the agent's session when a person
@@ -570,6 +582,10 @@ tools rm preset bun-cache --in ~/.bun/install/cache
 - **`Request <id>: 1 denied path waits aside to go home`.** A deny found the path taken (or could not write its
   folder), and the path is free now. Run `tools rm deny <id>` to put the copy back. A denied path whose copy is gone
   since then has nothing to put back: `approve` reports it as `lost` and closes the request.
+- **`Not confirmed: the person check does not run as root (sudo)`.** Run `tools rm approve` without `sudo`. Root's
+  file in `/private/var/tmp` asks for an administrator's password after you approve it.
+- **`refuse ...: only an administrator can move it, and the administrator's password was not given`.** The
+  administrator prompt was cancelled; the file stays and the request stays pending. Approve it again.
 - **`Not changing trash-root: the trash at ... still holds N batches`.** Restore what you want back, run
   `tools rm drain --now`, then set `trash-root` again.
 - **A batch stays in `tools rm trash` after its grace.** The drain could not delete an item (a `fail` line in

@@ -16,6 +16,7 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
+    type AdminTakeoverResult,
     type ApprovalDeps,
     type ApprovalItemUpdate,
     type ApprovalPrompt,
@@ -42,6 +43,7 @@ import {
     type RmConfig,
     type RmRequest,
     type RmRequestTarget,
+    type RmTarget,
     readRmLedger,
     recoverAsideJournals,
     requestBatchIds,
@@ -3195,6 +3197,108 @@ describe("a move that cannot finish", () => {
                     entry.action === "refuse" && entry.rule === "not-movable" && entry.path === entries[0]?.wanted.path
             )
         ).toBe(true);
+    });
+
+    /** Root's file in a sticky folder, as the move sees it: its rename fails until an administrator gave it away. */
+    function adminTakeover(rootOwned: string, answer: AdminTakeoverResult) {
+        const takes: string[][] = [];
+        let taken = false;
+        return {
+            takes,
+            takeover: {
+                needed: (target: RmTarget) => (target.path === rootOwned ? "it belongs to root" : null),
+                take: (paths: readonly string[]) => {
+                    takes.push([...paths]);
+                    taken = answer.ok;
+                    return answer;
+                },
+            },
+            hooks: {
+                beforeRename: () => {
+                    if (!taken) {
+                        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+                    }
+                },
+            },
+        };
+    }
+
+    test("root's file in a sticky folder moves once an administrator's password gave it to this user", () => {
+        const request = asideRequest("admin-takeover");
+        const entries = entriesOf(request);
+        const rootOwned = entries[0]?.target;
+        const seam = adminTakeover(rootOwned?.path ?? "", { ok: true });
+        const refused: string[] = [];
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (_entry, reason) => refused.push(reason),
+            adminTakeover: seam.takeover,
+            hooks: seam.hooks,
+        });
+
+        expect(refused).toEqual([]);
+        // One prompt for the batch, on the item's real path.
+        expect(seam.takes).toEqual([[rootOwned?.canonical ?? ""]]);
+        expect(batch?.items.map((item) => item.original)).toEqual(entries.map((entry) => entry.wanted.path));
+        expect(
+            readRmLedger().some((entry) => entry.action === "take-over" && entry.path === entries[0]?.wanted.path)
+        ).toBe(true);
+    });
+
+    test("a cancelled administrator's password keeps that file where it is; the rest of the batch moves", () => {
+        const request = asideRequest("admin-cancelled");
+        const entries = entriesOf(request);
+        const rootOwned = entries[0]?.target;
+        const seam = adminTakeover(rootOwned?.path ?? "", {
+            ok: false,
+            reason: "the administrator's password was not given",
+        });
+        const refused: Array<{ path: string; reason: string }> = [];
+        let renames = 0;
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (entry, reason) => refused.push({ path: entry.wanted.path, reason }),
+            adminTakeover: seam.takeover,
+            hooks: { beforeRename: () => renames++ },
+        });
+
+        expect(refused).toEqual([
+            {
+                path: entries[0]?.wanted.path ?? "",
+                reason: "only an administrator can move it, and the administrator's password was not given",
+            },
+        ]);
+        // It never reached its rename: nothing tried to move it without the password.
+        expect(renames).toBe(1);
+        expect(batch?.items.map((item) => item.original)).toEqual([entries[1]?.wanted.path]);
+        expect(existsSync(rootOwned?.path ?? "")).toBe(true);
+    });
+
+    test("a batch with nothing of root's never asks for an administrator's password", () => {
+        const request = asideRequest("admin-not-needed");
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entriesOf(request),
+            denied: [],
+            choices,
+            adminTakeover: {
+                needed: () => null,
+                take: () => {
+                    throw new Error("no administrator step for this user's own files");
+                },
+            },
+        });
+
+        expect(batch?.items).toHaveLength(2);
     });
 
     test("a move that stops halfway records what reached the trash, so those copies never read as lost", () => {

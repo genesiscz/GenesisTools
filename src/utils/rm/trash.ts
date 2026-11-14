@@ -23,6 +23,7 @@ import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/pro
 import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { testProcessReason } from "@genesiscz/utils/test-process";
+import { type AdminTakeover, needsAdminReason } from "./admin";
 import { isTrashRootName, loadRmConfig, type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
 import {
@@ -264,6 +265,12 @@ export interface MoveOptions {
      * record; when it is no longer `config`'s root, nothing moves.
      */
     currentTrashRoot?: () => string;
+    /**
+     * Set only when a person approved these moves: an item only an administrator can move (root's file in a sticky
+     * folder) is given to this user first, with one administrator prompt for the batch. Without it such an item is
+     * refused when its rename fails.
+     */
+    adminTakeover?: AdminTakeover | null;
     hooks?: RenameHooks & {
         beforeTrashRoot?: (request: MoveRequest) => void;
         beforeVolumeTrash?: (request: MoveRequest) => void;
@@ -296,7 +303,7 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
         items: [],
         incomplete: true,
     };
-    const planned: Array<{ request: MoveRequest; item: TrashItem }> = [];
+    let planned: Array<{ request: MoveRequest; item: TrashItem }> = [];
 
     for (const [index, request] of requests.entries()) {
         const inTest = testProcessRefusal(request.target);
@@ -330,6 +337,20 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
         };
         planned.push({ request, item });
         batch.items.push(item);
+    }
+
+    const notTaken = takeOverForMove(
+        planned.map(({ request }) => request),
+        options
+    );
+
+    if (notTaken.size > 0) {
+        for (const [request, reason] of notTaken) {
+            refuseNotMovable({ request, reason, options });
+        }
+
+        planned = planned.filter(({ request }) => !notTaken.has(request));
+        batch.items = planned.map(({ item }) => item);
     }
 
     if (planned.length === 0) {
@@ -443,9 +464,8 @@ function moveOne(context: {
         // The trash folder was just made, so a refused rename is the item's own folder: root's file in a sticky
         // folder, or a folder this user may not change. That item stays where it is; the batch goes on.
         if (code === "EACCES" || code === "EPERM") {
-            throw new RmNotMovableError(notMovableReason(request.target) ?? `this user may not move it (${code})`, {
-                cause: error,
-            });
+            const why = notMovableReason(request.target) ?? needsAdminReason(request.target);
+            throw new RmNotMovableError(why ?? `this user may not move it (${code})`, { cause: error });
         }
 
         if (code !== "EXDEV") {
@@ -647,6 +667,41 @@ function refuseNotMovable({ request, reason, options }: MoveRefusal): void {
         caller: options.caller,
     });
     options.onRefused?.(request, reason);
+}
+
+/**
+ * Gives the planned items only an administrator can move to this user, with one administrator prompt for all of them,
+ * when a person approved the move (`adminTakeover`). Returns the items that stay where they are, with why.
+ */
+function takeOverForMove(requests: readonly MoveRequest[], options: MoveOptions): Map<MoveRequest, string> {
+    const takeover = options.adminTakeover;
+
+    if (!takeover) {
+        return new Map();
+    }
+
+    const needed = requests.flatMap((request) => (takeover.needed(request.target) ? [request] : []));
+
+    if (needed.length === 0) {
+        return new Map();
+    }
+
+    const taken = takeover.take(needed.map((request) => request.target.canonical));
+
+    if (!taken.ok) {
+        return new Map(needed.map((request) => [request, `only an administrator can move it, and ${taken.reason}`]));
+    }
+
+    for (const request of needed) {
+        appendRmLedger({
+            action: "take-over",
+            path: request.original ?? request.target.path,
+            reason: "an administrator gave it to this user so the approved move could rename it",
+            caller: options.caller,
+        });
+    }
+
+    return new Map();
 }
 
 function batchFile(paths: TrashPaths, id: string): string {

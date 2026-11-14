@@ -17,6 +17,7 @@ import {
 } from "./rules";
 import { listBatches, type TrashPaths, trashHasEntries } from "./trash";
 
+export * from "./admin";
 export * from "./approval";
 export * from "./aside";
 export * from "./config";

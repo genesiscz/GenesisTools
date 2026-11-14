@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { formatCount } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
+    type AdminTakeover,
     type ApprovalChoices,
     type ApprovalItem,
     type ApprovalItemUpdate,
@@ -13,6 +14,7 @@ import {
     appendRmLedger,
     approvalAsker,
     approvalItemReason,
+    defaultAdminTakeover,
     disposalGraceMinutes,
     folderStats,
     freshMeasurement,
@@ -989,6 +991,11 @@ export function approveDelete(input: {
     choices: ApprovalChoices;
     /** An approved path the trash refused (unavailable, or changed since the check): it stays where it is. */
     onRefused?: (entry: ApproveEntry, reason: string) => void;
+    /**
+     * The administrator step for root's file in a sticky folder (default: this platform's, `defaultAdminTakeover`): a
+     * person approved, so such an item asks for an administrator's password instead of being refused. Tests replace it.
+     */
+    adminTakeover?: AdminTakeover | null;
     /** Test seams of the trash move (an unwritable trash root, a swap before the rename). */
     hooks?: MoveOptions["hooks"];
     /** Sizes measured for the window, by request path: the drain then does not walk those trees again. */
@@ -1015,6 +1022,7 @@ export function approveDelete(input: {
                 caller: request.caller,
                 graceMinutes,
                 hooks: input.hooks,
+                adminTakeover: input.adminTakeover === undefined ? defaultAdminTakeover() : input.adminTakeover,
                 onRefused: (move, reason) => {
                     out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
                     const entry = byTarget.get(move.target);
