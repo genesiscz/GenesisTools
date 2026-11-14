@@ -220,12 +220,19 @@ function frameOf(mark: Mark, box: DocBox, preset: AnnotationPreset): ShotFramePa
     };
 }
 
-/** Horizontal strips an ellipse's stroke is covered with: each strip adds at most its own height of slack. */
-const ELLIPSE_STRIPS = 32;
+/** Half the width of an ellipse with radii `rx`, `ry` at `dy` from its centre; 0 at or past its top and bottom. */
+function ellipseHalfWidth(rx: number, ry: number, dy: number): number {
+    if (rx <= 0 || ry <= 0 || Math.abs(dy) >= ry) {
+        return 0;
+    }
+
+    return rx * Math.sqrt(1 - (dy / ry) ** 2);
+}
 
 /**
- * An unfilled ellipse's stroke as horizontal strips: in each strip, the span between the inner and the outer edge of
- * the stroke on the left and on the right (the whole outer span where the strip passes above the inner edge).
+ * An unfilled ellipse's stroke as horizontal strips about one stroke band high, so a strip's slack follows the stroke
+ * and not the ellipse's size: in each strip, the span between the inner and the outer edge of the stroke on the left
+ * and on the right (the whole outer span where the strip passes above the inner edge).
  */
 function ellipseStrokeArea(frame: ShotFramePaint): DocBox[] {
     // The stroke lies inside the box; the outer edge also takes half a stroke of slack, as a centred stroke would.
@@ -234,19 +241,18 @@ function ellipseStrokeArea(frame: ShotFramePaint): DocBox[] {
     const slack = frame.strokeWidth / 2 + 1;
     const outer = { rx: frame.box.w / 2 + slack, ry: frame.box.h / 2 + slack };
     const inner = { rx: frame.box.w / 2 - frame.strokeWidth - 1, ry: frame.box.h / 2 - frame.strokeWidth - 1 };
-    const reach = (r: { rx: number; ry: number }, dy: number): number =>
-        Math.abs(dy) >= r.ry ? 0 : r.rx * Math.sqrt(1 - (dy / r.ry) ** 2);
     const areas: DocBox[] = [];
-    const height = (2 * outer.ry) / ELLIPSE_STRIPS;
+    const strips = Math.max(1, Math.ceil((2 * outer.ry) / (frame.strokeWidth + 2)));
+    const height = (2 * outer.ry) / strips;
 
-    for (let strip = 0; strip < ELLIPSE_STRIPS; strip++) {
+    for (let strip = 0; strip < strips; strip++) {
         const top = cy - outer.ry + strip * height;
         const bottom = top + height;
         // The outer edge is widest at the row nearest the centre, the inner edge narrowest at the row farthest away.
         const nearest = top <= cy && bottom >= cy ? 0 : Math.min(Math.abs(top - cy), Math.abs(bottom - cy));
         const farthest = Math.max(Math.abs(top - cy), Math.abs(bottom - cy));
-        const out = Math.ceil(reach(outer, nearest)) + 1;
-        const within = inner.rx > 0 && inner.ry > 0 ? Math.floor(reach(inner, farthest)) - 1 : 0;
+        const out = Math.ceil(ellipseHalfWidth(outer.rx, outer.ry, nearest)) + 1;
+        const within = Math.floor(ellipseHalfWidth(inner.rx, inner.ry, farthest)) - 1;
         const y = Math.floor(top);
         const h = Math.ceil(bottom) - y;
 
