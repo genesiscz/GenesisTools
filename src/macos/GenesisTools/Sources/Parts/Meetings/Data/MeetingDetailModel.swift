@@ -489,6 +489,20 @@ final class MeetingDetailModel {
         }
     }
 
+    /// After a journal decision: the record and the overview read again, and a made change gets its notice with an Undo
+    /// that takes back exactly it (G64). False when the engine skipped the change, so the caller says why.
+    func finishDecision(_ result: DecisionResult, done: String, reloadTranscript: Bool) -> Bool {
+        readRecord(quiet: true)
+        window?.loadOverview(quiet: true)
+        if reloadTranscript { transcriptChanged() }
+        guard let entry = result.entry else { return false }
+        ownTokens.insert(entry.token)
+        notices.push(StackedNotice(text: done, actions: [.undo { [weak self] notice in
+            self?.revert(token: entry.token, items: nil, replacing: notice)
+        }]))
+        return true
+    }
+
     /// One change of the meeting through the decision journal, as the window: its notice has an Undo that takes back
     /// exactly it (G64). Without a service the command `orRun` makes it, as before.
     func journalChange(_ key: String, _ action: DecisionAction, done: String, orRun args: [String], reloadTranscript: Bool,
@@ -506,17 +520,10 @@ final class MeetingDetailModel {
             defer { if !handedOver { busy.remove(key) } }
             do {
                 let result = try await service.call(MeetingsAPI.DecisionApply.self, .init(meeting: id, action: action, onDecided: "refuse"))
-                readRecord(quiet: true)
-                window?.loadOverview(quiet: true)
-                if reloadTranscript { transcriptChanged() }
-                guard let entry = result.entry else {
+                guard finishDecision(result, done: done, reloadTranscript: reloadTranscript) else {
                     notices.push(StackedNotice(text: result.skipped.first?.reason ?? "Nothing changed"))
                     return
                 }
-                ownTokens.insert(entry.token)
-                notices.push(StackedNotice(text: done, actions: [.undo { [weak self] id in
-                    self?.revert(token: entry.token, items: nil, replacing: id)
-                }]))
                 applied?()
             } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 busy.remove(key)

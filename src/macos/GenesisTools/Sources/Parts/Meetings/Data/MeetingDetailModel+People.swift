@@ -122,18 +122,10 @@ extension MeetingDetailModel {
         var action = DecisionAction(kind: "set")
         action.seats = seats
         let result = try await Self.applyDecision(meeting: id, action: action, reason: nil, service: service)
-        readRecord(quiet: true)
-        window?.loadOverview(quiet: true)
-        guard let entry = result.entry else {
-            if let skipped = result.skipped.first {
-                throw MeetingsCLI.Failure(sentence: skipped.reason, detail: "set seats: \(skipped.id)")
-            }
-            return
+        if finishDecision(result, done: "Updated seats and microphones", reloadTranscript: false) { return }
+        if let skipped = result.skipped.first {
+            throw MeetingsCLI.Failure(sentence: skipped.reason, detail: "set seats: \(skipped.id)")
         }
-        ownTokens.insert(entry.token)
-        notices.push(StackedNotice(text: "Updated seats and microphones", actions: [.undo { [weak self] notice in
-            self?.revert(token: entry.token, items: nil, replacing: notice)
-        }]))
     }
 
     func editMeetingPerson(_ params: MeetingsAPI.MeetingPeopleEdit.Params) async throws {
