@@ -269,6 +269,8 @@ describe("writeTargets", () => {
         ["cd src/utils/ai && touch example.ts", ["src/utils/ai/example.ts"]],
         ["cd src && cd utils && echo x > ai/b.ts", ["src/utils/ai/b.ts"]],
         ["cd /tmp/w && touch a.ts", ["/tmp/w/a.ts"]],
+        // The shell opens a redirect target before it runs the `cd`, so it resolves against the directory before it.
+        ["cd src > src/utils/example.ts", ["src/utils/example.ts"]],
         ['cd "$D" && touch a.ts', ["a.ts"]],
         // A `cd` in a subshell may end with it: the write also counts against the cwd, so its rule is never dropped.
         ["(cd /tmp); touch src/utils/example.ts", ["/tmp/src/utils/example.ts", "src/utils/example.ts"]],

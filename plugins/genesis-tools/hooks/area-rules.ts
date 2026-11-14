@@ -744,17 +744,17 @@ export function writeTargets(command: string): WriteTargets {
     for (const segment of shellSegments(command)) {
         const words = segment.flatMap((token) => (token.kind === "word" ? [token.text] : []));
 
+        for (const token of segment) {
+            if (token.kind === "redirect" && token.target) {
+                add(token.target);
+            }
+        }
+
         if (words[0] === "cd") {
             const to = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
             // `cd -` and `cd $DIR` go somewhere this scan cannot know: later paths stay against the cwd, as before.
             dir = to === undefined ? "~" : to === "-" || /[$`]/.test(to) ? "" : from(to);
             continue;
-        }
-
-        for (const token of segment) {
-            if (token.kind === "redirect" && token.target) {
-                add(token.target);
-            }
         }
 
         const call = commandOf(words);
