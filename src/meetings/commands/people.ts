@@ -191,7 +191,8 @@ async function merge(a: string, b: string, opts: { name?: string; yes?: boolean;
             }
 
             printPlan(plan);
-            ui.info(`Merge them: ${TOOL} people merge "${a}" "${b}"${opts.name ? ` --name "${opts.name}"` : ""} --yes`);
+            const nameArgs = opts.name ? ["--name", opts.name] : [];
+            ui.info(`Merge them: ${toolCommand("meetings people merge", a, b, ...nameArgs, "--yes")}`);
             return;
         }
 

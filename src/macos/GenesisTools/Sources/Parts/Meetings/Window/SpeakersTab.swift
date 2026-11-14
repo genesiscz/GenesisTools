@@ -41,18 +41,20 @@ struct SpeakersTab: View {
                         lanes(stats, names: renames)
                             .listRowSeparator(.hidden)
                         ForEach(speakers) { speaker in
-                            SpeakerRow(speaker: speaker, rename: renames[speaker.label], stacked: stacked,
-                                       hints: MeetingsWords.speakerHintLines(stats.hints, for: speaker.label),
-                                       play: speaker.firstSec.map { first in { detail.play(at: first, from: .speakerChip) } },
-                                       chips: { line in
-                                           if !line.ranges.isEmpty {
-                                               SpeakerHintChips(ranges: line.ranges, longestClipSec: longestClipSec,
-                                                                maxShown: hintChips > 0 ? hintChips : MeetingsPreferences.Speakers.hintChips.defaultValue,
-                                                                play: { from, to in playRange(from, to) },
-                                                                zoom: { from, to in zoom(from, to) },
-                                                                review: { reviewing = ReviewHint(label: speaker.label, ranges: line.ranges) })
-                                           }
-                                       }, commit: { detail.rename(label: speaker.label, to: $0) })
+                            // A value row: a rename, a play or a hint chip re-runs only the rows whose values changed,
+                            // and its controls rest until the pointer is on it.
+                            SpeakerListRow(speaker: speaker, rename: renames[speaker.label], stacked: stacked,
+                                           hints: MeetingsWords.speakerHintLines(stats.hints, for: speaker.label),
+                                           longestClipSec: longestClipSec,
+                                           maxShown: hintChips > 0 ? hintChips : MeetingsPreferences.Speakers.hintChips.defaultValue,
+                                           actions: SpeakerListRow.Actions(
+                                               playFirst: { detail.play(at: $0, from: .speakerChip) },
+                                               playRange: { from, to in playRange(from, to) },
+                                               zoom: { from, to in zoom(from, to) },
+                                               review: { line in reviewing = ReviewHint(label: speaker.label, ranges: line.ranges) },
+                                               rename: { detail.rename(label: speaker.label, to: $0) }))
+                                .equatable()
+                                .liveRow()
                         }
                     }
                     .listStyle(.inset)
@@ -126,6 +128,46 @@ struct SpeakersTab: View {
             return value
         }
         return 30
+    }
+}
+
+/// One speaker of the list as values: a dense row takes values and compares them, so an update of the tab re-runs only
+/// the rows whose values changed. The closures only run the row's actions, so `==` leaves them out.
+struct SpeakerListRow: View, Equatable {
+    struct Actions {
+        /// Plays the label from its first line (the second it starts at).
+        var playFirst: (Double) -> Void
+        var playRange: (Double, Double) -> Void
+        var zoom: (Double, Double) -> Void
+        /// "Review all N" under one hint line: that line's ranges.
+        var review: (SpeakerHintLine) -> Void
+        var rename: (String) -> Void
+    }
+
+    let speaker: SpeakerStat
+    let rename: String?
+    let stacked: Bool
+    let hints: [SpeakerHintLine]
+    let longestClipSec: Double
+    let maxShown: Int
+    // lint-rules-ignore: closures only (the row's actions), which run on a click and show nothing, so == leaves them out
+    let actions: Actions
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.speaker == rhs.speaker && lhs.rename == rhs.rename && lhs.stacked == rhs.stacked && lhs.hints == rhs.hints
+            && lhs.longestClipSec == rhs.longestClipSec && lhs.maxShown == rhs.maxShown
+    }
+
+    var body: some View {
+        SpeakerRow(speaker: speaker, rename: rename, stacked: stacked, hints: hints,
+                   play: speaker.firstSec.map { first in { actions.playFirst(first) } },
+                   chips: { line in
+                       if !line.ranges.isEmpty {
+                           SpeakerHintChips(ranges: line.ranges, longestClipSec: longestClipSec, maxShown: maxShown,
+                                            play: actions.playRange, zoom: actions.zoom,
+                                            review: { actions.review(line) })
+                       }
+                   }, commit: actions.rename)
     }
 }
 

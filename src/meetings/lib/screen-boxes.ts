@@ -249,6 +249,8 @@ export interface MeetingScreenRequest {
     limit?: number;
     /** Draw the boxes and write the crops (`renderScreenBoxes`). */
     boxes?: { level?: OcrBoxLevel; outDir: string; pad?: number; maxCrops?: number };
+    /** Also return the OCR blocks of the picked frames (`frameBlocks`), from the rows this lookup reads anyway. */
+    blocks?: true;
 }
 
 export interface MeetingScreen {
@@ -262,6 +264,8 @@ export interface MeetingScreen {
     boxes?: ScreenBoxFrame[];
     /** Kept frames the OCR worker has not read yet; they are among the frames, as `pending` with no text. */
     pending: number;
+    /** With `blocks`: each picked frame's OCR blocks, by its file. */
+    frameBlocks?: Record<string, OcrRow["blocks"]>;
 }
 
 /** The running recorder's display intervals when it records this meeting; they are newer than the record's. */
@@ -316,6 +320,13 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
         frames,
         pending,
     };
+
+    if (request.blocks) {
+        const files = new Set(frames.map((frame) => frame.file));
+        screen.frameBlocks = Object.fromEntries(
+            rows.filter((row) => files.has(row.file)).map((row) => [row.file, row.blocks])
+        );
+    }
 
     if (request.boxes) {
         screen.boxes = await renderScreenBoxes({

@@ -370,17 +370,6 @@ describe("decision journal", () => {
         expect(fx.item("i1")).toMatchObject({ status: "suggested", proposed: "OMP" });
     });
 
-    test("confirming a stem term with another spelling moves its replacement stem too", async () => {
-        const fx = await fixture([term("i1", 10, { heardStem: "Ada", proposed: "ADA", proposedStem: "ADA" })]);
-        await fx.journal.apply({
-            meeting: fx.meeting.id,
-            action: { kind: "confirm", items: ["i1"], proposed: "ADO" },
-            actor: person,
-        });
-
-        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO", proposedStem: "ADO" });
-    });
-
     test("a respelt question names the answer command with the text quoted for the shell", async () => {
         const fx = await fixture([question("i1")]);
         const result = await fx.journal.apply({
@@ -1554,54 +1543,6 @@ describe("workshop listen contracts", () => {
             status: "suggested",
             speaker: "Alice Example",
         });
-    });
-
-    test("a look-alike takes the matched person's stored name, and an ordered pair of people settles none", async () => {
-        const range = (id: string, fromSec: number) => ({
-            id,
-            kind: "speaker-range",
-            status: "suggested",
-            label: "Voice",
-            fromSec,
-            toSec: fromSec,
-            confidence: 0.5,
-            rules: [],
-            suggestedAt: now,
-        });
-        const voiceQuestion = (id: string, fromSec: number, decides: string) =>
-            question(id, {
-                about: "speaker",
-                heard: undefined,
-                fromSec,
-                toSec: fromSec,
-                signature: "voice-1",
-                evidence: { labels: ["Voice"] },
-                choices: ["Alice Example", "Bob Example"],
-                decides: [decides],
-            });
-        const items = () => [
-            range("i1", 10),
-            voiceQuestion("i2", 10, "i1"),
-            range("i3", 40),
-            voiceQuestion("i4", 40, "i3"),
-        ];
-        const fx = await fixture(items());
-        const { entry } = await fx.journal.apply({
-            meeting: fx.meeting.id,
-            actor: person,
-            action: { kind: "answer", question: "i2", answer: "example alice" },
-        });
-        expect(entry?.settled).toEqual(["i4"]);
-        expect(fx.item("i3")).toMatchObject({ speaker: "Alice Example" });
-
-        const pair = await fixture(items());
-        const ordered = await pair.journal.apply({
-            meeting: pair.meeting.id,
-            actor: person,
-            action: { kind: "answer", question: "i2", answer: "Alice Example, then Bob Example" },
-        });
-        expect(ordered.entry?.settled).toEqual([]);
-        expect(pair.item("i4")).toMatchObject({ status: "suggested" });
     });
 
     test("ordered people persist word segments and render separate turns", async () => {

@@ -1,6 +1,8 @@
+import { dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
+import { classifyPid } from "@genesiscz/utils/process-identity";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "@genesiscz/utils/rpc/errors";
 import { readLiveServiceEntry, type ServiceEntry } from "@genesiscz/utils/rpc/service-entry";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -99,10 +101,8 @@ export function subscriptionHears(
  * so it is refused as invalid params (-32602), as the service refuses it.
  */
 function checkedFilter<F extends { meeting?: string; events?: readonly string[] }>(filter: F): F {
-    const parsed = subscribeParamsSchema.safeParse({
-        ...filter,
-        ...(filter.events ? { events: [...filter.events] } : {}),
-    });
+    // The filter itself, never a copy: a spread would turn a string `events` into its characters, which the schema takes.
+    const parsed = subscribeParamsSchema.safeParse(filter);
 
     if (!parsed.success) {
         const issue = parsed.error.issues[0];
@@ -180,6 +180,11 @@ export class InProcessMeetingsClient implements MeetingsClient {
         params: MeetingsParams<M>,
         options: MeetingsCallOptions = {}
     ): Promise<MeetingsResult<M>> {
+        // A cancelled call stops before any handler runs, as `RpcPeer.request` stops it on a socket.
+        if (options.signal?.aborted) {
+            throw clientError(new RpcError(RPC_CANCELLED, `${method}: cancelled`));
+        }
+
         const context: MeetingsCallContext = {
             ...(this.caller ? { caller: this.caller } : {}),
             ...(options.signal ? { signal: options.signal } : {}),
@@ -222,7 +227,28 @@ export class InProcessMeetingsClient implements MeetingsClient {
     }
 }
 
-/** A connection to the running service, greeted with `hello`. */
+/** A connection to the service `entry` names, greeted with `hello`; throws when it does not answer or refuses. */
+async function greetedConnection(entry: ServiceEntry, hello: MeetingsHello): Promise<RpcSocketClient> {
+    const client = await RpcSocketClient.connect({
+        socket: entry.socket,
+        logScope: "meetings-client",
+        label: "meetings service",
+    });
+
+    try {
+        await client.call("hello", hello, { timeoutMs: 5_000 });
+        return client;
+    } catch (error) {
+        client.close();
+        throw error;
+    }
+}
+
+/**
+ * A connection to the running service, greeted with `hello`. A closed connection proves only that this client lost
+ * it, not that the service stopped: the next call connects again to a live service of the same code (its listeners'
+ * subscription restored), and answers in this process only when no service runs.
+ */
 export class SocketMeetingsClient implements MeetingsClient {
     readonly kind = "socket";
     private readonly listeners = new Set<{
@@ -231,35 +257,21 @@ export class SocketMeetingsClient implements MeetingsClient {
     }>();
 
     private fallback?: InProcessMeetingsClient;
+    /** Stops this process's event bus reaching the listeners; set while calls answer in this process. */
+    private stopLocal?: () => void;
+    private ended = false;
 
     private constructor(
-        private readonly client: RpcSocketClient,
-        private readonly hello: MeetingsHello
+        private client: RpcSocketClient,
+        private readonly hello: MeetingsHello,
+        private entry: ServiceEntry
     ) {
-        client.onNotification((notification) => {
-            for (const each of this.listeners) {
-                if (subscriptionHears(each.filter, notification.method, notification.params)) {
-                    each.listener(notification);
-                }
-            }
-        });
+        this.attach(client);
     }
 
     /** Connects and says hello; throws when the socket does not answer or the service refuses the hello. */
     static async connect(entry: ServiceEntry, hello: MeetingsHello): Promise<SocketMeetingsClient> {
-        const client = await RpcSocketClient.connect({
-            socket: entry.socket,
-            logScope: "meetings-client",
-            label: "meetings service",
-        });
-
-        try {
-            await client.call("hello", hello, { timeoutMs: 5_000 });
-            return new SocketMeetingsClient(client, hello);
-        } catch (error) {
-            client.close();
-            throw error;
-        }
+        return new SocketMeetingsClient(await greetedConnection(entry, hello), hello, entry);
     }
 
     async call<M extends MeetingsMethod>(
@@ -267,11 +279,10 @@ export class SocketMeetingsClient implements MeetingsClient {
         params: MeetingsParams<M>,
         options: MeetingsCallOptions = {}
     ): Promise<MeetingsResult<M>> {
-        // The service went before this call left (it stopped for a code change while a listen round waited): nothing
-        // reached it, so any call, a decision included, answers in this process.
-        if (this.client.closed) {
-            log.debug({ method }, "the meetings service went before this call; answering in-process");
-            return this.inProcess().call(method, params, options);
+        // The connection went before this call left (the service stopped for a code change while a listen round
+        // waited): nothing reached the service, so the call goes to a live one again, or answers without it.
+        if (this.client.closed && !(await this.reconnect())) {
+            return this.withoutService(method, params, options);
         }
 
         try {
@@ -280,8 +291,8 @@ export class SocketMeetingsClient implements MeetingsClient {
             // The connection went (the service stopped for a code change between the hello and this call): a read
             // answers in this process, as it would have with no service. A write may have reached it, so it throws.
             if (!(error instanceof RpcError) && meetingsMethod(method).effect === "read") {
-                log.debug({ error, method }, "the meetings service went during a read; answering in-process");
-                return this.inProcess().call(method, params, options);
+                log.debug({ error, method }, "the meetings service went during a read");
+                return this.withoutService(method, params, options);
             }
 
             throw clientError(error);
@@ -299,10 +310,21 @@ export class SocketMeetingsClient implements MeetingsClient {
     ): Promise<() => void> {
         const entry = { filter: checkedFilter(filter), listener };
         this.listeners.add(entry);
+
         // One subscription per connection on the service: the union of the listeners' events and meetings.
-        await this.resubscribe();
+        if (!this.client.closed) {
+            await this.resubscribe();
+        } else if (!(await this.reconnect())) {
+            this.listenInProcess();
+        }
+
         return () => {
             this.listeners.delete(entry);
+
+            if (this.client.closed) {
+                return;
+            }
+
             void this.resubscribe().catch((error: unknown) => {
                 log.debug({ error }, "a meetings unsubscribe found the connection closed");
             });
@@ -310,9 +332,105 @@ export class SocketMeetingsClient implements MeetingsClient {
     }
 
     close(): void {
+        this.ended = true;
         this.listeners.clear();
+        this.stopLocal?.();
         this.fallback?.close();
         this.client.close();
+    }
+
+    private attach(client: RpcSocketClient): void {
+        this.client = client;
+        client.onNotification((notification) => this.deliver(notification));
+    }
+
+    private deliver(event: MeetingsEventMessage): void {
+        for (const each of this.listeners) {
+            if (subscriptionHears(each.filter, event.method, event.params)) {
+                each.listener(event);
+            }
+        }
+    }
+
+    /** The folder of the service's service.json: the meetings service listens on `<dir>/service.sock`. */
+    private serviceDir(): string {
+        return dirname(this.entry.socket);
+    }
+
+    /**
+     * A new connection after the last one closed, when the folder names a live service of this protocol and code (as
+     * `openMeetingsClient` would take it); the listeners' subscription is restored on it. False when no such service
+     * runs or it refuses this caller.
+     */
+    private async reconnect(): Promise<boolean> {
+        if (this.ended) {
+            return false;
+        }
+
+        const entry = readLiveServiceEntry(this.serviceDir());
+
+        if (!entry || entry.protocol !== MEETINGS_PROTOCOL || (entry.code && entry.code !== this.hello.code)) {
+            return false;
+        }
+
+        try {
+            this.attach(await greetedConnection(entry, this.hello));
+            this.entry = entry;
+
+            if (this.listeners.size > 0) {
+                await this.resubscribe();
+            }
+        } catch (error) {
+            log.debug({ error, pid: entry.pid }, "the meetings service did not take this caller again");
+            return false;
+        }
+
+        this.stopLocal?.();
+        this.stopLocal = undefined;
+        log.debug({ pid: entry.pid }, "connected to the meetings service again");
+        return true;
+    }
+
+    /**
+     * A call with no connection to a service. A read answers in this process. A write does so only once the service is
+     * gone, since until then it may still own the store or still run an earlier call; it is refused before then.
+     */
+    private withoutService<M extends MeetingsMethod>(
+        method: M,
+        params: MeetingsParams<M>,
+        options: MeetingsCallOptions
+    ): Promise<MeetingsResult<M>> {
+        if (meetingsMethod(method).effect !== "read" && !this.serviceGone()) {
+            throw clientError(
+                new Error(
+                    `${method}: the meetings service closed this connection but has not exited yet; nothing was changed, try again`
+                )
+            );
+        }
+
+        log.debug({ method }, "no meetings service runs; answering in-process");
+        this.listenInProcess();
+        return this.inProcess().call(method, params, options);
+    }
+
+    /** No live service in the folder, and the process this client spoke to has exited. */
+    private serviceGone(): boolean {
+        if (readLiveServiceEntry(this.serviceDir())) {
+            return false;
+        }
+
+        // A service in this process removed its entry in the same step that closed its connections.
+        if (this.entry.pid === process.pid) {
+            return true;
+        }
+
+        const status = classifyPid(this.entry.pid, this.entry.pidCommand).status;
+        return status === "dead" || status === "foreign";
+    }
+
+    /** The in-process adapter emits on this process's event bus, so the listeners hear its writes there. */
+    private listenInProcess(): void {
+        this.stopLocal ??= localMeetingsEvents.listen({}, (event) => this.deliver(event));
     }
 
     /**

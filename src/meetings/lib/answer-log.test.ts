@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -342,6 +342,21 @@ describe("comments for the listening agent (comments.ndjson)", () => {
         });
         expect(other.stage({ target: selection, text: "Next writer", actor: person }).id).toBe("c2");
         expect(new MeetingComments(first.path).list().map((comment) => comment.id)).toEqual(["c1", "c2"]);
+    });
+
+    test("a new comment id stays above every kept id when an older staged line no longer reads", () => {
+        const comments = commentsFile();
+        comments.stage({ target: selection, text: "First", actor: person });
+        comments.stage({ target: selection, text: "Second", actor: person });
+        comments.markSent(comments.staged(["c2"]), { token: "t-1", at, actor: person });
+        const text = readFileSync(comments.path, "utf8").replace('"id":"c1"', '"id":1');
+        writeFileSync(comments.path, text);
+
+        expect(comments.stage({ target: selection, text: "Third", actor: person }).id).toBe("c3");
+        expect(comments.list().map((comment) => [comment.id, comment.state])).toEqual([
+            ["c2", "sent"],
+            ["c3", "staged"],
+        ]);
     });
 
     test("staged comments stay until sent or unstaged; a sent one cannot change, and a torn line is passed over", () => {

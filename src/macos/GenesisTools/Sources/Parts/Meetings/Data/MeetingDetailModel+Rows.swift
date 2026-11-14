@@ -699,14 +699,25 @@ extension MeetingDetailModel {
             + (reason.map { ["--reason", $0] } ?? []) + ["--json"]
     }
 
-    /// A command's `--json` answer as a decision result; a command that printed another shape decided what it says.
+    /// A command's `--json` answer as a decision result.
     private static func decodedDecision(_ args: [String]) async throws -> DecisionResult {
-        let data = try await MeetingsCLI.run(args, timeoutSeconds: 120)
-        if let result = try? JSONDecoder().decode(DecisionResult.self, from: data) { return result }
-        if let entry = try? JSONDecoder().decode(JournalEntry.self, from: data) {
+        try decodeDecision(try await MeetingsCLI.run(args, timeoutSeconds: 120), command: args)
+    }
+
+    /// `listen --answer --json` prints the bare journal entry, and `confirm`, `reject`, `reopen` and `decide` print
+    /// `{ entry, skipped }`. The bare entry is read first: as a `DecisionResult` it decodes with no entry, so the
+    /// answer had no token and no Undo. An answer of neither shape is a failure, never an empty result.
+    static func decodeDecision(_ data: Data, command: [String]) throws -> DecisionResult {
+        let decoder = JSONDecoder()
+        if let entry = try? decoder.decode(JournalEntry.self, from: data) {
             return DecisionResult(entry: entry, skipped: entry.skipped, warnings: nil)
         }
-        return DecisionResult(entry: nil, skipped: [], warnings: nil)
+        do {
+            return try decoder.decode(DecisionResult.self, from: data)
+        } catch {
+            throw MeetingsCLI.Failure(sentence: "The decision was sent, but its answer could not be read. Reload to see what changed.",
+                                      detail: "\(command.prefix(2).joined(separator: " ")): \(error)")
+        }
     }
 }
 

@@ -208,6 +208,18 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertEqual(MeetingsContactsView.mergeCandidates(people, except: alex, query: "exam").count, people.count - 1)
     }
 
+    /// "Merge with…" asks the window's own service, as every other read of the window does, not the shared one.
+    func testTheMergeSearchAsksTheWindowsService() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meetings-merge-\(UUID().uuidString)")
+        let service = MeetingsService(folder: folder)
+        let suite = "meetings.merge.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, service: service, loadDetail: { _ in })
+        XCTAssertTrue(window.people.mergeSearch().service === service)
+        XCTAssertEqual(window.people.mergeSearch().limit, 50, "the whole directory, not the list's page")
+    }
+
     // MARK: Snapshots
 
     /// F10: the command forms the window runs when no Meetings service answers, with the query after `--`.

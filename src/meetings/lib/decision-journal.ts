@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
 import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -471,7 +472,7 @@ function respellItem(record: MeetingRecord, item: MeetingItem, text: string): De
             const label = questionLabel(record, item.id);
             return {
                 id: item.id,
-                reason: `${label} is a question; answer it: ${TOOL} listen ${record.id} --item ${label} --answer "${text}"`,
+                reason: `${label} is a question; answer it: ${toolCommand("meetings listen", record.id, "--item", label, "--answer", text)}`,
                 needs: "listen",
             };
         }

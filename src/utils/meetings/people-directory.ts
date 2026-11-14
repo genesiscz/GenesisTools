@@ -327,6 +327,7 @@ function textMatches(identity: Identity, query: string): boolean {
     }
 
     return (
+        foldText(shownName(identity)).includes(query) ||
         [...identity.names.keys()].some((name) => foldText(name).includes(query)) ||
         [...identity.emails].some((email) => email.includes(query))
     );
@@ -703,13 +704,15 @@ export class PeopleDirectory {
         return { ...added, person: found };
     }
 
-    /** Hides a person from the lists, or shows them again; answers whether that changed anything. */
+    /**
+     * Hides a person from the lists, or shows them again; answers whether that changed anything. Showing clears every
+     * hidden reference the person answers to, so a merged person whose other member was hidden shows too.
+     */
     async hide(ref: string, hidden = true): Promise<{ person: KnownPerson; changed: boolean }> {
-        const { person } = await this.resolve(ref);
-        const changed = await this.options.book.hide(
-            { name: person.name, ...(person.email ? { email: person.email } : {}) },
-            hidden
-        );
+        const { person, identity } = await this.resolve(ref);
+        const changed = hidden
+            ? await this.options.book.hide({ name: person.name, ...(person.email ? { email: person.email } : {}) })
+            : await this.options.book.show((one) => matches(identity, one));
         // The person as the lists show them now: resolved before the change, so their `hidden` is the old one.
         const { hidden: _before, ...shown } = person;
         return { person: hidden ? { ...shown, hidden: true as const } : shown, changed };
@@ -717,7 +720,7 @@ export class PeopleDirectory {
 
     private async resolve(ref: string): Promise<{ person: KnownPerson; identity: Identity }> {
         const wanted = ref.trim();
-        const { identities } = await this.identities(wanted.startsWith("email:") ? wanted.slice(6) : wanted, {});
+        const { identities } = await this.identities(sourceQuery(wanted), {});
         const email = (wanted.startsWith("email:") ? wanted.slice(6) : wanted).toLowerCase();
         const key = wanted.startsWith("name:") ? wanted.slice(5) : nameKey(wanted);
         const found = identities.filter(
@@ -766,7 +769,7 @@ export class PeopleDirectory {
                 }
             })
         );
-        const identities: Identity[] = [];
+        const identities = new IdentityGroups();
 
         for (const { source, answer } of answers) {
             if (answer.state !== "ok") {
@@ -774,19 +777,12 @@ export class PeopleDirectory {
             }
 
             for (const person of answer.people) {
-                let identity = identities.find((one) => matches(one, person));
-
-                if (!identity) {
-                    identity = newIdentity();
-                    identities.push(identity);
-                }
-
-                absorb(identity, source.kind, person);
+                identities.add(source.kind, person);
             }
         }
 
         const book = this.options.book.read();
-        const grouped = applyMerges(identities, book.merges);
+        const grouped = applyMerges(identities.list(), book.merges);
 
         for (const identity of grouped) {
             identity.hidden ||= book.hidden.some((hidden) => matches(identity, hidden));
@@ -806,24 +802,145 @@ export class PeopleDirectory {
     }
 }
 
-/** Each merge joins the identities of its two people into one; a merge whose people are unknown changes nothing. */
+/**
+ * What a source is asked for a reference: an `email:` id asks for the email, a `name:` id for its longest name token
+ * (a searching source such as Contacts knows no ids, and the key's tokens are sorted, not in the name's order).
+ */
+function sourceQuery(ref: string): string {
+    if (ref.startsWith("email:")) {
+        return ref.slice(6);
+    }
+
+    if (ref.startsWith("name:")) {
+        return (
+            ref
+                .slice(5)
+                .split(" ")
+                .reduce((longest, token) => (token.length > longest.length ? token : longest), "") || ref
+        );
+    }
+
+    return ref;
+}
+
+/**
+ * The identities while the sources are grouped, found through an email index and a name-token index instead of a
+ * scan of every identity per source person (that scan was quadratic in the people of every query).
+ */
+class IdentityGroups {
+    private readonly order = new Map<Identity, number>();
+    private readonly byEmail = new Map<string, Identity>();
+    private readonly byKey = new Map<string, Set<Identity>>();
+    private next = 0;
+
+    /**
+     * Absorbs one source person into the identity it is. A person with an email can link identities the names kept
+     * apart (one without an email, one with that email): they are one person, so they become one identity.
+     */
+    add(kind: PersonSourceKind, person: SourcePerson): void {
+        const found = this.matching(person);
+        const identity = found[0] ?? this.create();
+
+        if (person.email) {
+            for (const other of found.slice(1)) {
+                unite(identity, other);
+                this.drop(other);
+            }
+        }
+
+        absorb(identity, kind, person);
+        this.index(identity);
+    }
+
+    /** The identities, in the order they were first seen. */
+    list(): Identity[] {
+        return [...this.order.keys()];
+    }
+
+    /** Every identity a reference matches, first seen first. */
+    private matching(ref: PersonRef): Identity[] {
+        const found = new Set<Identity>();
+        const email = ref.email?.toLowerCase();
+        const byEmail = email ? this.byEmail.get(email) : undefined;
+
+        if (byEmail) {
+            found.add(byEmail);
+        }
+
+        const key = nameKey(ref.name);
+
+        for (const identity of (key ? this.byKey.get(key) : undefined) ?? []) {
+            if (matches(identity, ref)) {
+                found.add(identity);
+            }
+        }
+
+        return [...found].sort((a, b) => (this.order.get(a) ?? 0) - (this.order.get(b) ?? 0));
+    }
+
+    private create(): Identity {
+        const identity = newIdentity();
+        this.order.set(identity, this.next++);
+        return identity;
+    }
+
+    private drop(identity: Identity): void {
+        this.order.delete(identity);
+
+        for (const key of identity.keys) {
+            this.byKey.get(key)?.delete(identity);
+        }
+    }
+
+    private index(identity: Identity): void {
+        for (const email of identity.emails) {
+            this.byEmail.set(email, identity);
+        }
+
+        for (const key of identity.keys) {
+            const known = this.byKey.get(key) ?? new Set<Identity>();
+            known.add(identity);
+            this.byKey.set(key, known);
+        }
+    }
+}
+
+/**
+ * Each merge joins the identities of its two people into one; a merge whose people are both unknown changes nothing.
+ * A source can answer only one member (a search for B finds no A): the merge still names that one. The merged person
+ * answers to both members and to the name it shows, so a hide of either member, a search for the shown name and a
+ * later merge that names it all find it.
+ */
 function applyMerges(identities: Identity[], merges: PeopleMerge[]): Identity[] {
     let groups = [...identities];
 
     for (const merge of merges) {
         const first = groups.find((identity) => matches(identity, merge.people[0]));
         const second = groups.find((identity) => identity !== first && matches(identity, merge.people[1]));
+        const target = first ?? second;
 
-        if (!first) {
+        if (!target) {
             continue;
         }
 
-        if (second) {
+        if (first && second) {
             unite(first, second);
             groups = groups.filter((identity) => identity !== second);
         }
 
-        first.merge = merge;
+        target.merge = merge;
+
+        for (const ref of [...merge.people, { name: merge.name }]) {
+            const key = nameKey(ref.name);
+
+            if (key) {
+                target.keys.add(key);
+            }
+
+            if (ref.email) {
+                target.emails.add(ref.email.toLowerCase());
+            }
+        }
     }
 
     return groups;

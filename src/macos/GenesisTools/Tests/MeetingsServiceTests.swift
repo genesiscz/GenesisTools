@@ -891,6 +891,29 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(fake.count("hello"), 2, "without a subscription nothing connects again")
     }
 
+    /// A subscribe reply that lands after `unsubscribe()` is no live subscription: the window would wait for events
+    /// that cannot arrive (70bdca87c1). The reply is read while the main thread is busy, so its continuation runs only
+    /// after the unsubscribe, the order a real reply on its way meets.
+    func testASubscribeReplyAfterUnsubscribeLeavesTheSubscriptionOff() async throws {
+        try writeServiceEntry()
+        fake.silent.insert(MeetingsAPI.Subscribe.name)
+        let service = makeService()
+        let subscribing = Task { try await service.subscribe(meeting: Self.design, events: ["meeting.changed"]) }
+        for _ in 0..<150 where fake.count(MeetingsAPI.Subscribe.name) == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        let request = try XCTUnwrap(fake.received.last { $0["method"] as? String == MeetingsAPI.Subscribe.name })
+        let id = try XCTUnwrap(request["id"])
+        fake.send(["jsonrpc": "2.0", "id": id, "result": ["events": ["meeting.changed"]]])
+        Self.holdMainThread(seconds: 0.5)
+        service.unsubscribe()
+        _ = try? await subscribing.value
+        XCTAssertFalse(service.isSubscribed, "the reply came after the unsubscribe")
+    }
+
+    /// Keeps the main thread busy, so work the socket queue sends to it waits.
+    private nonisolated static func holdMainThread(seconds: Double) {
+        usleep(useconds_t(seconds * 1_000_000))
+    }
+
     func testACancelledReadIsCancelledOnTheWireAndRunsNoCommand() async throws {
         try writeServiceEntry()
         fake.silent = ["meeting.transcript"]

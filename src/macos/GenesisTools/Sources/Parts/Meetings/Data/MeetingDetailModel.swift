@@ -500,7 +500,10 @@ final class MeetingDetailModel {
         guard !busy.contains(key) else { return }
         busy.insert(key)
         Task {
-            defer { busy.remove(key) }
+            // The command fallback takes the busy key over; this task must not drop it while that command runs, or a
+            // second change starts beside it and the older one can finish last.
+            var handedOver = false
+            defer { if !handedOver { busy.remove(key) } }
             do {
                 let result = try await service.call(MeetingsAPI.DecisionApply.self, .init(meeting: id, action: action, onDecided: "refuse"))
                 readRecord(quiet: true)
@@ -517,6 +520,7 @@ final class MeetingDetailModel {
                 applied?()
             } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 busy.remove(key)
+                handedOver = true
                 change(key, args, done: done, reloadTranscript: reloadTranscript, applied: applied)
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in

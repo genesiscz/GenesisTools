@@ -24,9 +24,9 @@ struct TimelineDock: View {
     @AppStorage(MeetingsPreferences.Panes.pinLanes.key) private var pinLanes = MeetingsPreferences.Panes.pinLanes.defaultValue
     @AppStorage(MeetingsPreferences.Panes.waveform.key) private var waveform = MeetingsPreferences.Panes.waveform.defaultValue.rawValue
     @Environment(\.kitLook) private var look
-    /// The last span that had a Moment: the view holds it while the next clip is cut, so the timeline does not jump to
-    /// the whole meeting and back.
-    @State private var lastSpan: ZoomSpan?
+    /// The last span that had a Moment, with its meeting: the view holds it while the next clip of that meeting is cut,
+    /// so the timeline does not jump to the whole meeting and back.
+    @State private var lastSpan: HeldSpan?
     @State private var width: CGFloat = 0
 
     /// The dock's horizontal padding (TimelineDockBody) and the screen pane beside the timeline.
@@ -37,7 +37,7 @@ struct TimelineDock: View {
         if let top = player.top {
             let dock = player.timeline
             let meeting = top.meeting
-            let span = Self.span(of: top) ?? (top.kind == .moment ? lastSpan : nil)
+            let span = Self.span(of: top) ?? Self.heldSpan(lastSpan, for: top)
             let duration = dock.durationSec(meeting, fallback: window?.meeting(meeting)?.durationSec)
             let view = TimelineDockModel.view(zoom: dock.zoom, span: span, override: dock.viewOverride, layer: top.id,
                                               contextSec: contextSec, durationSec: duration)
@@ -92,7 +92,7 @@ struct TimelineDock: View {
                 .task(id: ZoomRead(meeting: meeting, view: view)) {
                     dock.ensureZoomPeaks(meeting, view: view, durationSec: duration)
                 }
-                .onChange(of: Self.span(of: top)) { _, next in if let next { lastSpan = next } }
+                .onChange(of: Self.span(of: top)) { _, next in if let next { lastSpan = HeldSpan(meeting: meeting, span: next) } }
                 .onChange(of: top.moment?.tone?.sound.fallback, initial: true) { _, message in
                     if let message { window?.notices.push(StackedNotice(text: message)) }
                 }
@@ -120,6 +120,19 @@ struct TimelineDock: View {
     static func span(of layer: MomentLayer) -> ZoomSpan? {
         guard layer.kind == .moment, let moment = layer.moment else { return nil }
         return ZoomSpan(moment: moment)
+    }
+
+    /// A span the dock keeps while the next clip is cut, and the meeting it belongs to.
+    struct HeldSpan: Equatable {
+        let meeting: String
+        let span: ZoomSpan
+    }
+
+    /// The held span for a Moment that is still being cut: only one of the same meeting. Another meeting's clip
+    /// bounds and asked point beside this meeting's waveform and pins drew a span that is not there.
+    static func heldSpan(_ held: HeldSpan?, for layer: MomentLayer) -> ZoomSpan? {
+        guard layer.kind == .moment, let held, held.meeting == layer.meeting else { return nil }
+        return held.span
     }
 
     /// The row a layer plays, when it plays a row of `meeting` that is not a question. The engine labels such a

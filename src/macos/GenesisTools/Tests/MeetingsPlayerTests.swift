@@ -658,3 +658,36 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(sounds[0].rate, 1.5)
     }
 }
+
+// MARK: Review round 2 (PR 759)
+
+extension MeetingsPlayerTests {
+    func testAWholeMeetingFileThatEndsNeitherRepeatsNorOffersMore() async throws {
+        engine.audio = .init(path: engine.folder.appendingPathComponent("upload.ogg").path, tracks: 1, channels: 2, durationSec: 3600)
+        defaults.set("once", forKey: MeetingsPreferences.Playback.repeatClip.key)
+        defaults.set("continue", forKey: MeetingsPreferences.Playback.afterClip.key)
+        let player = makePlayer()
+        player.playMeeting("m", at: 3590)
+        try await until("it plays") { player.phase == .playing }
+        XCTAssertEqual(player.top?.kind, .file)
+        sounds[0].finish()
+        XCTAssertEqual(player.phase, .ended(offerMore: false), "the recording's end is the end: no repeat, no more past it")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(engine.cuts.isEmpty, "nothing past the recording is cut")
+        XCTAssertEqual(player.phase, .ended(offerMore: false))
+    }
+
+    func testPoppingBackToAMomentWhoseCutWasCancelledCutsItAgain() async throws {
+        engine.holdCuts = true
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("the first cut waits") { self.engine.cuts.count == 1 }
+        player.play(.stretch(atSec: 40, speaker: "Dana Example"), in: "m", from: .speakerChip)
+        try await until("the pushed cut waits") { self.engine.cuts.count == 2 }
+        player.pop()
+        try await until("the first Moment is cut again") { self.engine.cuts.count == 3 }
+        engine.release()
+        try await until("the first Moment plays") { player.phase == .playing }
+        XCTAssertEqual(player.top?.target, .item("i1"))
+    }
+}

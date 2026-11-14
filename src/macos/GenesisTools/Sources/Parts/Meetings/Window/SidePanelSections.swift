@@ -384,6 +384,7 @@ enum SidePanelCatalog {
             row(Panes.frameFocusSingle, value: Panes.frameFocusSingle.value(defaults)),
             row(Panes.frameAutoDisplay, value: Panes.frameAutoDisplay.value(defaults)),
             row(Panes.frameSeek, value: Panes.frameSeek.value(defaults)),
+            row(MeetingsPreferences.Screen.onlyNewText, value: MeetingsPreferences.Screen.onlyNewText.value(defaults)),
             SidePanelRow(store: .window(key: MeetingsPreferences.lookKey), title: "Window look",
                          detail: "Aurora: raised surfaces and a colour per meaning, including list needs and counts. Candy: capsules and gradients. Glass: hairlines and colour on state. Classic: grey controls, needs and counts.",
                          choices: KitLook.allCases.map { SidePanelChoice(value: .text($0.rawValue), title: $0.title) },

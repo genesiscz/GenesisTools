@@ -130,6 +130,12 @@ export function putAssignments(record: MeetingRecord, assigned: Assigned[], now:
         const known = index >= 0 ? next[index] : undefined;
 
         if (known && known.person === one.person && known.email === one.email) {
+            // The latest act wins in the transcript (`at`): a later assignment that gave part of this stretch to
+            // someone else is undone by giving the stretch again, so the entry becomes the latest act once more.
+            if (overriddenSince(next, known)) {
+                next[index] = { ...known, at: now };
+            }
+
             continue;
         }
 
@@ -143,6 +149,19 @@ export function putAssignments(record: MeetingRecord, assigned: Assigned[], now:
     }
 
     record.speakers.assignments = next;
+}
+
+/** Whether an assignment made after this one gives part of its stretch (the line tolerance at both ends) to another person. */
+function overriddenSince(assignments: readonly SpeakerAssignment[], known: SpeakerAssignment): boolean {
+    return assignments.some(
+        (other) =>
+            other.id !== known.id &&
+            other.label === known.label &&
+            other.at > known.at &&
+            (other.person !== known.person || other.email !== known.email) &&
+            other.fromSec - LINE_AT_TOLERANCE_SEC <= known.toSec + LINE_AT_TOLERANCE_SEC &&
+            known.fromSec - LINE_AT_TOLERANCE_SEC <= other.toSec + LINE_AT_TOLERANCE_SEC
+    );
 }
 
 /** The assignments a decision changed, by id: added (no before), changed, or removed (no after). */

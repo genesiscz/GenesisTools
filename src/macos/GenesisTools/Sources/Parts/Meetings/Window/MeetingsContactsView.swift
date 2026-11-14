@@ -113,12 +113,15 @@ struct MeetingsContactsView: View {
     var grantContacts: () -> Void = {}
     /// Optional: show a person's meetings (the meetings list filtered to them).
     var showMeetings: ((KnownPerson) -> Void)?
+    /// The search "Merge with…" asks: the whole directory (`people.known`), not the list's query or its limit.
+    var mergeSearch: () -> PeopleSearch = { PeopleSearch(meeting: nil, limit: 50, service: MeetingsService.shared) }
 
     @State private var adding = false
     @State private var newName = ""
     @State private var newEmail = ""
     @State private var mergeFrom: KnownPerson?
     @State private var mergeQuery = ""
+    @State private var mergeSearching: PeopleSearch?
 
     private var access: ContactsAccessState { switches.contacts ? ContactsAccessState.from(sources) : .off }
 
@@ -269,18 +272,21 @@ struct MeetingsContactsView: View {
                     ForEach(people) { person in
                         ContactsPersonRow(
                             person: person,
-                            mergeWith: { mergeFrom = person; mergeQuery = "" },
+                            mergeWith: { startMerge(from: person) },
                             setHidden: { setHidden(person, $0) },
                             unmerge: person.merge.map { token in { unmerge(token) } },
                             showMeetings: showMeetings.map { show in { show(person) } })
+                        .equatable()
                         .popover(isPresented: Binding(get: { mergeFrom?.id == person.id },
-                                                      set: { if !$0 { mergeFrom = nil } }), arrowEdge: .trailing) {
+                                                      set: { if !$0 { endMerge() } }), arrowEdge: .trailing) {
                             PersonPicker(
-                                people: Self.mergeCandidates(people, except: person, query: mergeQuery),
-                                query: $mergeQuery, title: "Merge \(person.name) with", prompt: "Search people",
+                                people: Self.mergeCandidates(mergeSearching?.people ?? [], except: person, query: ""),
+                                query: $mergeQuery, sources: mergeSearching?.sources ?? [],
+                                title: "Merge \(person.name) with", prompt: "Search people",
                                 addRule: .noResults,
-                                pick: { other in mergeFrom = nil; requestMerge(person, other) },
-                                cancel: { mergeFrom = nil })
+                                pick: { other in endMerge(); requestMerge(person, other) },
+                                cancel: { endMerge() })
+                            .onChange(of: mergeQuery) { _, now in mergeSearching?.ask(now) }
                         }
                         Divider().padding(.leading, 52)
                     }
@@ -289,7 +295,24 @@ struct MeetingsContactsView: View {
         }
     }
 
-    /// The people "Merge with…" offers: everyone else in the list whose name, alias or address holds the text.
+    /// "Merge with…" asks its own search over the whole directory, so a person the list's query or limit left out
+    /// can be picked (Alice found in the list, merged with Bob).
+    private func startMerge(from person: KnownPerson) {
+        mergeSearching?.cancel()
+        let search = mergeSearch()
+        mergeQuery = ""
+        search.ask("", after: .zero)
+        mergeSearching = search
+        mergeFrom = person
+    }
+
+    private func endMerge() {
+        mergeSearching?.cancel()
+        mergeSearching = nil
+        mergeFrom = nil
+    }
+
+    /// The people "Merge with…" offers: everyone else whose name, alias or address holds the text.
     static func mergeCandidates(_ people: [KnownPerson], except person: KnownPerson, query: String) -> [KnownPerson] {
         let key = PeopleText.fold(query)
         return people.filter { other in
@@ -419,7 +442,16 @@ struct ContactsPersonRow: View {
     }
 }
 
-/// The merge confirmation (R24: "a merge first asks, naming the meetings it changes"): the two people, the name the
+/// The list can hold 500 rows, and closures never compare equal: a row draws again only when the person it shows or
+/// the actions it offers change (`.equatable()` at the list).
+extension ContactsPersonRow: Equatable {
+    static func == (lhs: ContactsPersonRow, rhs: ContactsPersonRow) -> Bool {
+        lhs.person == rhs.person && (lhs.unmerge == nil) == (rhs.unmerge == nil)
+            && (lhs.showMeetings == nil) == (rhs.showMeetings == nil)
+    }
+}
+
+/// The merge confirmation (R24:"a merge first asks, naming the meetings it changes"): the two people, the name the
 /// merged person shows, the meetings that name either, and the labels that will show the merged name.
 struct ContactsMergeSheet: View {
     let plan: PeopleMergePlan

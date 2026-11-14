@@ -216,14 +216,13 @@ export function correctionsOf(
         })),
     ];
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
-    // after it, because joins apply before ranges and that range would no longer reach it.
+    // after it, because joins apply before ranges and that range would no longer reach it. An assignment's bounds
+    // already carry the line tolerance, so only an item's range is widened here.
     const voiceAt = (label: string, atSec: number) =>
-        ranges.findLast(
-            (range) =>
-                range.label === label &&
-                range.fromSec - LINE_AT_TOLERANCE_SEC <= atSec &&
-                atSec <= range.toSec + LINE_AT_TOLERANCE_SEC
-        )?.speaker;
+        ranges.findLast((range) => {
+            const slack = "overrideJoin" in range ? 0 : LINE_AT_TOLERANCE_SEC;
+            return range.label === label && range.fromSec - slack <= atSec && atSec <= range.toSec + slack;
+        })?.speaker;
 
     return {
         labels: record.speakers.labels,

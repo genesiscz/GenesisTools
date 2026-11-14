@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    symlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
@@ -48,6 +57,7 @@ import {
 } from "./client";
 import { MeetingsFolderWatch } from "./folder-watch";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
+import { previewTone } from "./moment-handlers";
 import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
@@ -1655,6 +1665,55 @@ describe("the Meetings service's connections", () => {
         } finally {
             await watcher.stop();
         }
+    });
+
+    test("folder watch makes a missing meetings root, so writes that come later are heard without a restart", async () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "mtg-watch-missing-")));
+        const root = join(scratch, "not-yet", "meetings");
+        const source = fakeFolderEvents();
+        const heard = eventQueue();
+        const watcher = new MeetingsFolderWatch({
+            root,
+            emit: () => {},
+            commentsChanged: (meeting) => heard.push({ method: "comment.changed", params: { meeting } }),
+            subscribe: source.subscribe,
+            coalesceMs: 0,
+        });
+        await watcher.start();
+        try {
+            source.raise(join(root, "fixture", "comments.ndjson"));
+            expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: "fixture" } });
+        } finally {
+            await watcher.stop();
+        }
+    });
+
+    test("a tone preview is published only after it is made, so a failed run is made again by the next preview", async () => {
+        const sound = { hz: 431, sec: 0.27, volume: 0.31 };
+        const made: string[] = [];
+        const failing: MeetingsHandlerDeps = {
+            ...quietDeps,
+            tone: async (_sound, path) => {
+                mkdirSync(dirname(path), { recursive: true });
+                writeFileSync(path, "RI");
+                throw new Error("ffmpeg stopped halfway");
+            },
+        };
+        const working: MeetingsHandlerDeps = {
+            ...quietDeps,
+            tone: async (_sound, path) => {
+                made.push(path);
+                writeFileSync(path, "RIFF");
+            },
+        };
+
+        await expect(previewTone({ sound }, failing)).rejects.toThrow("ffmpeg stopped halfway");
+        const preview = await previewTone({ sound }, working);
+
+        expect(made).toHaveLength(1);
+        expect(made[0]).not.toBe(preview.path);
+        expect(existsSync(made[0]!)).toBe(false);
+        expect(readFileSync(preview.path, "utf8")).toBe("RIFF");
     });
 
     test("listener journal changes refresh the meeting's comment receiver state", async () => {

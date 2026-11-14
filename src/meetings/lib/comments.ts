@@ -14,7 +14,7 @@ import {
     type MeetingComment,
     type StagedComment,
 } from "./comment-schema";
-import { appendLines } from "./ndjson-lines";
+import { appendLines, parseJsonLine } from "./ndjson-lines";
 
 export {
     type CommentListener,
@@ -65,17 +65,35 @@ export class CommentError extends Error {
     }
 }
 
-/** A line of the file, or nothing for a line that does not read (a torn last line, a future kind). */
-export function parseCommentLine(line: string): CommentLine | undefined {
-    if (!line.trim()) {
-        return undefined;
+/** A line of the file, or nothing for a line that does not read (a torn last line, logged; a future kind). */
+export function parseCommentLine(line: string, path: string): CommentLine | undefined {
+    return commentLineOf(parseJsonLine(line, path));
+}
+
+/**
+ * The number of the next comment id: above every id a staged or sent line still holds, and above the count of staged
+ * lines, so a line that stopped reading never hands its id to a new comment that `list()` would merge with an old one.
+ */
+function nextCommentNumber(lines: CommentLine[]): number {
+    let highest = 0;
+    let staged = 0;
+
+    for (const line of lines) {
+        const ids =
+            line.kind === "staged"
+                ? [line.comment.id]
+                : line.kind === "sent"
+                  ? line.comments.map((comment) => comment.id)
+                  : [];
+        staged += line.kind === "staged" ? 1 : 0;
+
+        for (const id of ids) {
+            const number = /^c(\d+)$/.exec(id)?.[1];
+            highest = Math.max(highest, number ? Number(number) : 0);
+        }
     }
 
-    try {
-        return commentLineOf(SafeJSON.parse(line, { jsonl: true }));
-    } catch {
-        return undefined;
-    }
+    return Math.max(highest, staged) + 1;
 }
 
 /** A parsed line as a comment line, or nothing for another shape. */
@@ -124,7 +142,7 @@ export class MeetingComments {
             return [];
         }
 
-        return Array.from(readLinesSync(this.path)).flatMap((line) => parseCommentLine(line) ?? []);
+        return Array.from(readLinesSync(this.path)).flatMap((line) => parseCommentLine(line, this.path) ?? []);
     }
 
     /** The staged and sent comments, in the order they were staged (an unstaged one is gone). */
@@ -179,9 +197,8 @@ export class MeetingComments {
         actor: DecisionActor;
     }): MeetingComment {
         return this.transaction(() => {
-            const staged = this.lines().filter((line) => line.kind === "staged").length;
             const comment: StagedComment = {
-                id: `c${staged + 1}`,
+                id: `c${nextCommentNumber(this.lines())}`,
                 at: this.now(),
                 target: input.target,
                 text: input.text,
@@ -316,7 +333,7 @@ export class MeetingComments {
 
         if (options.fromStart) {
             for (const line of snapshot.subarray(0, replayEnd).toString("utf8").split("\n")) {
-                print(parseCommentLine(line));
+                print(parseCommentLine(line, this.path));
             }
         }
 

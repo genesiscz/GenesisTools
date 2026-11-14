@@ -561,7 +561,12 @@ final class MomentPlayer {
     private func abortCut() {
         cutTask?.cancel()
         cutTask = nil
-        if let cutKey { inFlight[cutKey]?.cancel() }
+        // The cancelled cut leaves the table now: a cut of the same Moment right after (push B, pop back to A) starts
+        // a new one instead of awaiting this one's CancellationError and staying in `.cutting`.
+        if let cutKey, let running = inFlight[cutKey] {
+            running.cancel()
+            inFlight[cutKey] = nil
+        }
         cutKey = nil
     }
 
@@ -638,10 +643,11 @@ final class MomentPlayer {
     private func clip(_ params: MeetingsAPI.MomentParams) async throws -> MomentClip {
         let key = cacheKey(params)
         if let kept = cachedClip(key) { return kept }
-        if let running = inFlight[key] { return try await running.value }
+        if let running = inFlight[key], !running.isCancelled { return try await running.value }
         let task = Task { @MainActor in try await engine.cut(params) }
         inFlight[key] = task
-        defer { inFlight[key] = nil }
+        // Only this cut's own entry: an older cut that ends later must not drop the cut that replaced it.
+        defer { if inFlight[key] == task { inFlight[key] = nil } }
         let clip = try await task.value
         clips.removeAll { $0.key == key }
         clips.append((key, clip))
@@ -700,6 +706,11 @@ final class MomentPlayer {
             // The next stretch is the same play: the range the reader zoomed to stays.
             timeline.moveView(from: top.id, to: next.id)
             cut(next.id, Self.rollingParams(top.meeting, from: top.endSec))
+            return
+        }
+        // A whole-meeting file played to the recording's end: no repeat, and nothing past the end to offer or cut.
+        if top.kind == .file {
+            phase = .ended(offerMore: false)
             return
         }
         if MeetingsPreferences.Playback.repeatClip.value(defaults) == .once, !repeated.contains(id), let sound = sounds[id] {

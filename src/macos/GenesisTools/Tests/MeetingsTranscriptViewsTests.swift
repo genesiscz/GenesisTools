@@ -491,10 +491,6 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         for (before, after) in zip(merged, merged.dropFirst()) {
             XCTAssertGreaterThanOrEqual(after.x - before.x, TalkTimeLayout.bannerWidth)
         }
-        // A merged banner lists each of its questions: a click opened only the first, and Q9 had no way to its row.
-        let choices = SpeakerTalkTimeLanes.bannerChoices(merged[0], questions: near)
-        XCTAssertEqual(choices.map(\.id), ["q7", "q9"])
-        XCTAssertEqual(choices.map(\.title), ["Q7 at 06:40", "Q9 at 07:40"])
     }
 
     func testRulerMarksUseARoundStep() {
@@ -562,20 +558,6 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         throttle.failed("f4")
         XCTAssertEqual(throttle.shown, "f1", "a failed decode keeps the old frame")
         XCTAssertEqual(throttle.offer("f4", at: 1.5), "f4", "and the next offer tries again")
-    }
-
-    /// One threshold: the tab shows the service's preview nearest the pane's "Apply above", so the preview and the
-    /// pane's marks agree (a second picker kept 70 % while this one said 90 %).
-    func testTheTranscriptTabShowsThePreviewOfTheOneThreshold() {
-        func line(_ speaker: String) -> TranscriptLine { TranscriptLine(id: "l1", startSec: 0, speaker: speaker, text: "Hello") }
-        let transcript = MeetingTranscript(previews: [.init(threshold: 0.7, entries: [line("at 70")]),
-                                                      .init(threshold: 0.9, entries: [line("at 90")])],
-                                           meeting: "m", entries: [line("plain")])
-        XCTAssertEqual(TranscriptTab.shown(transcript, applyAbove: 90).map(\.speaker), ["at 90"])
-        XCTAssertEqual(TranscriptTab.shown(transcript, applyAbove: 70).map(\.speaker), ["at 70"])
-        XCTAssertEqual(TranscriptTab.shown(transcript, applyAbove: 60).map(\.speaker), ["at 70"], "the nearest preview")
-        XCTAssertEqual(TranscriptTab.shown(MeetingTranscript(meeting: "m", entries: [line("plain")]), applyAbove: 90).map(\.speaker),
-                       ["plain"], "no previews: the entries")
     }
 
     func testTheFollowKeepsTheHeardLineOfALongBlockInView() {

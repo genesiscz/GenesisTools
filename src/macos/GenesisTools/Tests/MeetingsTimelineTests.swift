@@ -269,6 +269,38 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(TimelineGeometry.bars([0.1, 0.9, 0.2, 0.4], peaksRange: 0...4, view: 0...4, count: 2), [0.9, 0.4])
     }
 
+    /// A view's margin before 0 or past the recording's end is silent: it repeated the first and the last peak.
+    func testBarsOutsideTheRecordingAreSilent() {
+        let peaks = [0.8, 0.1, 0.2, 0.7]
+        XCTAssertEqual(TimelineGeometry.bars(peaks, peaksRange: 0...4, view: -2...6, count: 4), [0, 0.8, 0.7, 0])
+        XCTAssertEqual(TimelineGeometry.bars(peaks, peaksRange: 0...4, view: -3...(-1), count: 2), [0, 0], "wholly before the start")
+        XCTAssertEqual(TimelineGeometry.bars(peaks, peaksRange: 0...4, view: 5...7, count: 2), [0, 0], "wholly after the end")
+        XCTAssertEqual(TimelineGeometry.bars(peaks, peaksRange: 0...4, view: -1...1, count: 2), [0, 0.8], "a bar that overlaps keeps its peak")
+    }
+
+    /// A meeting shorter than the context length is the whole view, not 60 s of time that does not exist.
+    func testTheContextViewOfAShortMeetingStopsAtItsEnd() {
+        let span = ZoomSpan(startSec: 2, endSec: 8, fromSec: 4, toSec: 6, spotSec: 5, label: "x")
+        XCTAssertEqual(span.contextView(contextSec: 60, durationSec: 20), 0...20)
+        XCTAssertEqual(span.contextView(contextSec: 60, durationSec: 0), 0...60, "an unknown duration keeps the context length")
+        XCTAssertEqual(ZoomSpan(startSec: 90, endSec: 98, fromSec: 94, toSec: 96, spotSec: 95, label: "x")
+            .contextView(contextSec: 60, durationSec: 100), 40...100, "near the end it stays inside the meeting")
+    }
+
+    /// A Moment still being cut keeps the last span only when that span is of the same meeting.
+    func testTheHeldSpanBelongsToItsMeeting() {
+        let span = ZoomSpan(startSec: 2, endSec: 8, fromSec: 4, toSec: 6, spotSec: 5, label: "x")
+        let held = TimelineDock.HeldSpan(meeting: "a", span: span)
+        let sameMeeting = MomentLayer(meeting: "a", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        let otherMeeting = MomentLayer(meeting: "b", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        let whole = MomentLayer(meeting: "a", target: .time(0), source: .row, kind: .file, label: "a")
+        XCTAssertEqual(TimelineDock.heldSpan(held, for: sameMeeting), span)
+        XCTAssertNil(TimelineDock.heldSpan(held, for: otherMeeting), "meeting b drew meeting a's clip bounds and asked point")
+        XCTAssertNil(TimelineDock.heldSpan(held, for: whole), "the whole meeting has no span")
+        XCTAssertNil(TimelineDock.heldSpan(nil, for: sameMeeting))
+    }
+
+
 
     /// G-CARD-1: the card opens after the hover delay, stays while the pointer travels into it, closes 300 ms after
     /// both are left, and moves to another pin at once while it is open.

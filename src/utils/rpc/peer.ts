@@ -291,11 +291,14 @@ function parseOrNull(text: string, log: RpcLog, label: string): unknown {
     }
 }
 
-/** Stops a call that runs or waits: its signal aborts and it is answered with `RPC_CANCELLED`. */
+/**
+ * Stops a call that runs or waits: it is answered with `RPC_CANCELLED`, and its signal aborts. The rejection comes
+ * first, so a handler whose promise settles inside its abort listener cannot win the race against the cancel.
+ */
 function cancel(running: Running, message: string): void {
     const error = new RpcError(RPC_CANCELLED, message);
-    running.controller.abort(error);
     running.cancelled.reject(error);
+    running.controller.abort(error);
 }
 
 export class RpcPeer {
@@ -416,9 +419,7 @@ export class RpcPeer {
         }
 
         for (const running of this.running.values()) {
-            const error = new RpcError(RPC_CANCELLED, reason);
-            running.controller.abort(error);
-            running.cancelled.reject(error);
+            cancel(running, reason);
         }
     }
 

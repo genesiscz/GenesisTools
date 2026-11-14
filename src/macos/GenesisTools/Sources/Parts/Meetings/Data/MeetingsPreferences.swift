@@ -358,6 +358,13 @@ extension MeetingsPreferences {
             title: "Offer a new speaker", detail: "When no one has the typed name, or only when no one matches it at all.")
     }
 
+    /// The Screen tab's list.
+    enum Screen {
+        static let onlyNewText = MeetingsWindowSetting(
+            key: "meetings.screen.onlyNewText", defaultValue: true, choices: [true, false],
+            title: "Only frames with new text", detail: "The Screen tab leaves out the frames whose text the display already showed.")
+    }
+
     /// The timeline and the panes (F9 reads them; the side panel shows them).
     enum Panes {
         enum TranscriptPane: String, CaseIterable { case auto, always, never }

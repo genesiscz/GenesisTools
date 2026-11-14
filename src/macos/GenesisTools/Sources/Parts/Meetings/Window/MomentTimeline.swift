@@ -47,9 +47,12 @@ struct ZoomSpan: Equatable {
     }
 
     /// The Context view: `contextSec` (meetings.playback.contextSec) centred on the asked spot, never before 0 nor past
-    /// `durationSec`.
+    /// `durationSec`. A meeting shorter than `contextSec` is the whole view; a duration not known yet (0) leaves
+    /// `contextSec` as the bound.
     func contextView(contextSec: Double, durationSec: Double) -> ClosedRange<Double> {
-        ConversationStrip.centred(0...max(1, contextSec), at: spotSec, within: 0...max(contextSec, durationSec))
+        let end = durationSec > 0 ? durationSec : contextSec
+        let length = max(1, min(contextSec, end))
+        return ConversationStrip.centred(0...length, at: spotSec, within: 0...max(length, end))
     }
 
     /// Where a flag click plays from (G-PLAY-3).
@@ -160,7 +163,9 @@ enum TimelineGeometry {
         }
     }
 
-    /// The peaks of a whole-range waveform that fall inside `view`, resampled to `count` bars.
+    /// The peaks of a whole-range waveform that fall inside `view`, resampled to `count` bars. A bar wholly outside
+    /// `peaksRange` (a view's margin before 0 or past the meeting's end) is silent: it repeated the edge peak, so the
+    /// timeline drew sound where nothing was recorded.
     static func bars(_ peaks: [Double], peaksRange: ClosedRange<Double>, view: ClosedRange<Double>, count: Int) -> [Double] {
         guard !peaks.isEmpty, count > 0 else { return [] }
         let length = peaksRange.upperBound - peaksRange.lowerBound
@@ -169,6 +174,7 @@ enum TimelineGeometry {
         return (0..<count).map { bar in
             let from = view.lowerBound + viewLength * Double(bar) / Double(count)
             let to = view.lowerBound + viewLength * Double(bar + 1) / Double(count)
+            guard to > peaksRange.lowerBound, from < peaksRange.upperBound else { return 0 }
             let first = Int(((from - peaksRange.lowerBound) / length * Double(peaks.count)).rounded(.down))
             let last = Int(((to - peaksRange.lowerBound) / length * Double(peaks.count)).rounded(.up))
             let lo = max(0, min(peaks.count - 1, first)), hi = max(lo + 1, min(peaks.count, last))

@@ -8,7 +8,9 @@ import SwiftUI
 struct ScreenTab: View {
     @Bindable var detail: MeetingDetailModel
     @State private var display: Int = -1
-    @State private var hideQuiet = true
+    /// The filter the list opens with, kept with the window's other settings: as a state of the tab, each new Screen tab
+    /// hid the quiet frames again whatever the reader had picked.
+    @AppStorage(MeetingsPreferences.Screen.onlyNewText.key) private var hideQuiet = MeetingsPreferences.Screen.onlyNewText.defaultValue
     /// Below this width a frame's text goes under its thumbnail: beside a 220 pt thumbnail at the window's smallest
     /// size the time, the display and the lines had about 60 pt and wrapped one or two letters per line.
     static let stackWidth: CGFloat = 520
