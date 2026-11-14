@@ -92,45 +92,50 @@ export async function probeCodesignKey({
     file?: string;
 }): Promise<CodesignKeyProbe> {
     let folder: string | undefined;
-    let target = file ?? "";
 
     try {
-        if (file === undefined) {
-            folder = makeTempDir("gt-codesign-probe-");
-            target = join(folder, "codesign-trust-probe.txt");
-        } else {
-            mkdirSync(dirname(file), { recursive: true });
+        let target = file;
+
+        try {
+            if (target === undefined) {
+                folder = makeTempDir("gt-codesign-probe-");
+                target = join(folder, "codesign-trust-probe.txt");
+            } else {
+                mkdirSync(dirname(target), { recursive: true });
+            }
+
+            writeFileSync(target, "GenesisTools codesign trust probe\n");
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            const where = target ? ` ${target}` : "";
+            return { ok: false, ms: 0, dialog: false, detail: `could not write the test file${where}: ${reason}` };
         }
 
-        writeFileSync(target, "GenesisTools codesign trust probe\n");
-    } catch (error) {
-        if (folder) {
-            rmSync(folder, { recursive: true, force: true });
+        let dialog = false;
+        const watch = setInterval(() => {
+            dialog ||= dialogOpen();
+        }, 500);
+        const started = performance.now();
+
+        try {
+            const result = await runCommand({
+                command: ["codesign", "--force", "--sign", sign, "--timestamp=none", target],
+                timeoutMs,
+            });
+            const ms = Math.round(performance.now() - started);
+            dialog ||= dialogOpen();
+            const failure = result.error ? result.error.message : result.status === 0 ? "" : `exit ${result.status}`;
+
+            return {
+                ok: failure === "",
+                ms,
+                dialog,
+                detail: [result.stderr.trim(), failure].filter(Boolean).join("\n"),
+            };
+        } finally {
+            clearInterval(watch);
         }
-
-        const reason = error instanceof Error ? error.message : String(error);
-        return { ok: false, ms: 0, dialog: false, detail: `could not write the test file ${target}: ${reason}` };
-    }
-
-    let dialog = false;
-    const watch = setInterval(() => {
-        dialog ||= dialogOpen();
-    }, 500);
-    const started = performance.now();
-
-    try {
-        const result = await runCommand({
-            command: ["codesign", "--force", "--sign", sign, "--timestamp=none", target],
-            timeoutMs,
-        });
-        const ms = Math.round(performance.now() - started);
-        dialog ||= dialogOpen();
-        const failure = result.error ? result.error.message : result.status === 0 ? "" : `exit ${result.status}`;
-
-        return { ok: failure === "", ms, dialog, detail: [result.stderr.trim(), failure].filter(Boolean).join("\n") };
     } finally {
-        clearInterval(watch);
-
         if (folder) {
             rmSync(folder, { recursive: true, force: true });
         }
