@@ -19,15 +19,15 @@ function missing(error: unknown): boolean {
     return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 
-/** A folder name that is not a valid escape (`source%old`) is skipped alone, so it cannot stop the whole scan. */
+/**
+ * A folder name that is not a valid escape (`source%old`) is skipped alone, so it cannot stop the whole scan. The
+ * caller logs the skip; decodeURIComponent throws nothing but a URIError.
+ */
 function decodedName(name: string): string | undefined {
     try {
         return decodeURIComponent(name);
-    } catch (error) {
-        if (error instanceof URIError) {
-            return undefined;
-        }
-        throw error;
+    } catch {
+        return undefined;
     }
 }
 
