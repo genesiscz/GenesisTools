@@ -71,12 +71,10 @@ public final class FailureReporter {
         }
     }
 
-    /// Kept for existing hosts. New callers pass the failure to `prepare` so the result belongs to its event.
+    /// Kept for existing hosts, and does nothing: `prepare(report)` gathers the context of each failure, and a fetch
+    /// that is not tied to one failure has no place to keep its result.
     @available(*, deprecated, message: "Use prepare(report) when the failure occurs")
-    public func prefetchEnvironment() {
-        let load = environment
-        Task { _ = await load() }
-    }
+    public func prefetchEnvironment() {}
 
     private func preparedReport(_ report: FailureReport) async -> FailureReport {
         prepare(report)
