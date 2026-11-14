@@ -1611,13 +1611,39 @@ function evidenceItems(options: {
             (found) => found.kind !== "speaker-range" || !voiced.has(`${found.label}|${found.fromSec}`)
         );
         for (const item of findings) {
-            if (item.kind === "speaker-range" && item.speaker === selfName) {
+            if (item.kind !== "speaker-range") {
+                continue;
+            }
+
+            if (item.speaker === selfName) {
                 const room = microphoneCandidates(options.record, item.fromSec);
                 if (room.length > 1) {
                     delete item.speaker;
                     item.candidates = [selfName, ...room.filter((name) => !sameName(name, selfName))];
                     item.confidence = 0.4;
                 }
+            }
+
+            // A swap range carries typed candidate scores as every other speaker range does, from its one line.
+            const line = swapLines.find((one) => one.label === item.label && one.startSec === item.fromSec);
+            if (line) {
+                const candidates = item.candidates;
+                const scores = scoreCandidates({
+                    tallies: lineTallies({
+                        lines: [line],
+                        selfName,
+                        nearby: [],
+                        micHolds: micSure,
+                        samePerson: options.samePerson,
+                    }).tallies,
+                    lines: 1,
+                    label: item.label,
+                    speaker: item.speaker,
+                    confidence: item.confidence ?? 0,
+                    rules: item.rules,
+                    samePerson: options.samePerson,
+                }).filter((score) => !candidates || candidates.some((name) => sameName(name, score.speaker)));
+                item.evidence = { ...item.evidence, ...scoresEvidence(scores) };
             }
         }
         items.push(...findings);

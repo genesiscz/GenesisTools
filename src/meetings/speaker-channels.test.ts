@@ -170,6 +170,18 @@ describe("the recorder swapped the user's label and another person's for a stret
         expect(swaps.filter((item) => item.speaker === USER)).toHaveLength(30);
         expect(swaps.filter((item) => item.speaker === "Bob Example")).toHaveLength(30);
         expect(found.filter((item) => item.fromSec >= 600 && !item.rules.includes("R20"))).toEqual([]);
+
+        // Both sides of the swap carry typed scores: the named speaker first, at the range's confidence, with R20.
+        for (const speaker of [USER, "Bob Example"]) {
+            const swap = swaps.find((item) => item.speaker === speaker);
+            const scores = swap?.evidence?.candidateScores;
+            expect(Array.isArray(scores) ? scores[0] : undefined).toMatchObject({
+                speaker,
+                confidence: 0.9,
+                lines: 1,
+                evidence: expect.arrayContaining([{ kind: "voice", rule: "R20" }]),
+            });
+        }
     });
 
     test("labels that read swapped through the whole call, or for under 10 min, are left to the per-line rules", () => {
