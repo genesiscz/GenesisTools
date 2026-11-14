@@ -1074,10 +1074,13 @@ enum HubBenchAccessibilityClient {
 /// detail arrives), then opens `--file` when one was asked for, so the capture shows the lines
 /// that carry the comments instead of the first file of the diff.
 enum HubSnapshotFocus {
+    /// The longest the focus wait holds a capture; the run's give-up timer counts it (`HubSnapshotLoads.giveUp`).
+    static let wait: TimeInterval = 30
+
     @MainActor
     static func whenReady(review: @escaping @MainActor () -> ReviewModel?, file: String?, style: DiffViewOptions.Style? = nil,
                           showsDiff: @escaping @MainActor () -> Bool = { true },
-                          deadline: Date = Date().addingTimeInterval(30), then done: @escaping () -> Void) {
+                          deadline: Date = Date().addingTimeInterval(wait), then done: @escaping () -> Void) {
         var stableSince: Date?
         func check() {
             // No diff on screen (Inbox, Activity, the Agents list, worktree cleanup, a session without Changes):

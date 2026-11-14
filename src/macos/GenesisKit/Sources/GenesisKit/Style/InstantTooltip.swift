@@ -162,6 +162,18 @@ public final class TooltipPresenter {
         startWatchdog()
     }
 
+    /// The text `owner`'s sensor holds changed: its bubble, when it is the one up, shows the new text at once. A row's
+    /// tooltip that a hover load fills (a PR row's failed checks) kept the old text until the pointer left and came back.
+    /// Another owner's bubble stays as it is.
+    func update(owner: UUID, content: TooltipContent, anchorView: NSView, below: Bool) {
+        guard currentOwner == owner else { return }
+        guard !content.isEmpty else {
+            hideNow()
+            return
+        }
+        show(owner: owner, content: content, anchorView: anchorView, below: below)
+    }
+
     func hide(owner: UUID) {
         guard currentOwner == owner else { return }
         hideNow()
@@ -315,7 +327,13 @@ private struct TooltipHoverSensor: NSViewRepresentable {
         /// Ownership token — a UUID, never an address, so a recycled allocation
         /// can't steal a live tooltip's hide (see the app-side history).
         let tooltipToken = UUID()
-        var content = TooltipContent()
+        var content = TooltipContent() {
+            didSet {
+                // A bubble already up for this sensor follows the new text (`TooltipPresenter.update`).
+                guard content != oldValue, window != nil else { return }
+                TooltipPresenter.shared.update(owner: tooltipToken, content: content, anchorView: self, below: below)
+            }
+        }
         var below = true
         private var tracking: NSTrackingArea?
         private var pending: DispatchWorkItem?
