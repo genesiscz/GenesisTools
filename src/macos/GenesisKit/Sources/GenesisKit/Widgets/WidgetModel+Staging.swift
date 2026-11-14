@@ -86,7 +86,7 @@ extension WidgetModel {
     /// the staged pick, and the field empties only once the hub has the note (`sendDecisionNow`); media cannot be staged,
     /// so it goes with the pick and the words through the durable outbox, as a click with media does. False when the
     /// field is empty, so the staged pick and note go as they are.
-    func sendOwnAnswerWithStage(_ card: WidgetCard) -> Bool {
+    func sendOwnAnswerWithStage(_ card: WidgetCard, thenClose: Bool = false) -> Bool {
         let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard card.kind == "decision", card.needsAnswer, !typed.isEmpty || !draft.assetIds.isEmpty else { return false }
         PerfLog.mark("widget.send-staged own answer goes with \(card.sourceId)")
@@ -94,7 +94,7 @@ extension WidgetModel {
             submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true)
             return true
         }
-        sendDecisionNow(card, option: nil, note: typed)
+        sendDecisionNow(card, option: nil, note: typed, thenClose: thenClose)
         return true
     }
 
@@ -221,7 +221,8 @@ extension WidgetModel {
     /// Sends a card's selected option by staging its pick and note, then sending the staged decision.
     /// `option` nil keeps the staged letters, `note` nil keeps the staged note; typed words leave the composer
     /// once the hub has them. Text-only own answers use the durable outbox and carry their staged pick there.
-    func sendDecisionNow(_ card: WidgetCard, option: String?, note: String?) {
+    /// `thenClose`: the send came from a Send on the way out of the panel, which folds once the hub took the answer.
+    func sendDecisionNow(_ card: WidgetCard, option: String?, note: String?, thenClose: Bool = false) {
         guard let selected, let revision = card.revision else { return }
         let item = Self.inboxItem(card)
         let key = selectedKey
@@ -235,7 +236,7 @@ extension WidgetModel {
                       self.setText("")
                       if self.ownAnswerCardID == card.id { self.ownAnswerCardID = nil }
                   }
-                  self.deliverDecisions([item], action: .sendStaged)
+                  self.deliverDecisions([item], action: .sendStaged, thenClose: thenClose)
               })
     }
 
@@ -455,7 +456,7 @@ extension WidgetModel {
         // them. Send sent the ticked set alone, and the words left with the field when the card closed (2026-11-10: a
         // 957-character note on a decision that takes several options).
         if let card = ownAnswerCard, ids.contains(card.sourceId), !sendingDecisionIDs.contains(card.sourceId),
-           sendOwnAnswerWithStage(card) {
+           sendOwnAnswerWithStage(card, thenClose: thenClose) {
             let rest = ids.filter { $0 != card.sourceId }
             if !rest.isEmpty { sendStaged(rest, thenClose: thenClose, known: known) }
             return
