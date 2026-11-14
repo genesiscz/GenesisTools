@@ -5,7 +5,6 @@ import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type LineVoice, lineVoices, type VoiceFrame, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
-import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { contextEntryText } from "./context-file";
@@ -176,21 +175,18 @@ export async function runSuggest(options: {
     }
 
     const roomSize = collected.seats?.room.length ?? 0;
+    // One set of line voice features, on the transcript's own line spans, serves the clustering and the questions.
+    const features = frames ? lineVoices({ frames, spans: entrySpans(meeting.transcript) }) : undefined;
     let voice: LineVoice[] | undefined;
 
-    if (frames && roomSize > 1) {
+    if (features && roomSize > 1) {
         // Clustering is optional evidence: without it the shared-device lines keep their candidates.
         try {
-            const spans = lineEvidence(meeting.transcript, { segments: [], speaking: [] }).map((line) => ({
-                index: line.index,
-                fromSec: line.startSec,
-                toSec: line.endSec,
-            }));
             const micChannel = energy.calibration?.layout === "right-mic" ? 1 : 0;
             voice = anchoredMeetingVoices({
                 record: collected,
                 transcript: meeting.transcript,
-                features: lineVoices({ frames, spans }),
+                features,
                 voices: roomSize,
                 channel: micChannel,
                 micChannel,
@@ -226,7 +222,6 @@ export async function runSuggest(options: {
             : {}),
         now: new Date().toISOString(),
     };
-    const features = frames ? lineVoices({ frames, spans: entrySpans(meeting.transcript) }) : undefined;
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
     const known = knownWord(wordCheck);
