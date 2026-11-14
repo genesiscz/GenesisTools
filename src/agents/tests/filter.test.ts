@@ -20,7 +20,7 @@ import {
     trackRearm,
 } from "../lib/leave";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
-import type { AgentRecord, FeedEvent } from "../lib/types";
+import type { AgentRecord, FeedEvent, SessionPaths } from "../lib/types";
 
 const agentAlpha: AgentRecord = {
     agent_id: "agt_alpha",
@@ -280,6 +280,24 @@ describe("filter.filterForAgent", () => {
 });
 
 describe("agent_left", () => {
+    /** A stream login of the agent, which announces a join when it is one. */
+    const loginAgent = (paths: SessionPaths, agent: { agentId: string; name: string; loginId: string }) =>
+        logInAndAnnounceJoin(paths, {
+            agent_id: agent.agentId,
+            agent_name: agent.name,
+            mode: "stream",
+            login_id: agent.loginId,
+        });
+    /** The login's Monitor was killed: a signal logout whose re-arm grace runs until `until` (epoch ms). */
+    const appendKilled = (paths: SessionPaths, login: { agentId: string; loginId: string; until: number }) =>
+        appendFeed(paths, {
+            type: "logged_out",
+            agent_id: login.agentId,
+            reason: "signal",
+            mode: "stream",
+            login_id: login.loginId,
+            rearm_until: new Date(login.until).toISOString(),
+        });
     const loggedIn = (seq: number, id: string, name: string, loginId?: string): FeedEvent => ({
         seq,
         ts: "2026-01-01T00:00:01Z",
@@ -448,12 +466,7 @@ describe("agent_left", () => {
             for (const [round, order] of ["leave-first", "login-first", "together"].entries()) {
                 const paths = sessionPaths(`join-race-${round}`);
                 ensureSessionDir(paths);
-                await logInAndAnnounceJoin(paths, {
-                    agent_id: "agt_alpha",
-                    agent_name: "alpha",
-                    mode: "stream",
-                    login_id: "old",
-                });
+                await loginAgent(paths, { agentId: "agt_alpha", name: "alpha", loginId: "old" });
                 const leave = () =>
                     announceLeave(paths, {
                         agent_id: "agt_alpha",
@@ -461,13 +474,7 @@ describe("agent_left", () => {
                         reason: "signal",
                         login_id: "old",
                     });
-                const login = () =>
-                    logInAndAnnounceJoin(paths, {
-                        agent_id: "agt_alpha",
-                        agent_name: "alpha",
-                        mode: "stream",
-                        login_id: "new",
-                    });
+                const login = () => loginAgent(paths, { agentId: "agt_alpha", name: "alpha", loginId: "new" });
 
                 if (order === "leave-first") {
                     await leave();
@@ -500,31 +507,22 @@ describe("agent_left", () => {
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             const paths = sessionPaths("rearm");
             ensureSessionDir(paths);
-            const login = (agentId: string, name: string, loginId: string) =>
-                logInAndAnnounceJoin(paths, { agent_id: agentId, agent_name: name, mode: "stream", login_id: loginId });
-            const killed = (agentId: string, loginId: string, until: number) =>
-                appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: agentId,
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: loginId,
-                    rearm_until: new Date(until).toISOString(),
-                });
             const now = Date.now();
 
-            await login("main_lead", "lead", "lead-1");
-            await login("agt_beta", "beta", "beta-1");
-            await login("agt_gamma", "gamma", "gamma-1");
+            await loginAgent(paths, { agentId: "main_lead", name: "lead", loginId: "lead-1" });
+            await loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId: "beta-1" });
+            await loginAgent(paths, { agentId: "agt_gamma", name: "gamma", loginId: "gamma-1" });
 
             // beta's Monitor expires and is re-armed inside the grace: no presence event at all.
-            await killed("agt_beta", "beta-1", now + REARM_GRACE_MS);
+            await appendKilled(paths, { agentId: "agt_beta", loginId: "beta-1", until: now + REARM_GRACE_MS });
             expect(notListening(await readFeed(paths), ["agt_beta"])).toMatchObject([{ state: "rearming" }]);
-            expect(await login("agt_beta", "beta", "beta-2")).toEqual({ joined: false });
+            expect(await loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId: "beta-2" })).toEqual({
+                joined: false,
+            });
             expect(pendingRearms(await readFeed(paths)).size).toBe(0);
 
             // gamma's is not re-armed: nothing before the grace ends, one lapsed leave after it.
-            await killed("agt_gamma", "gamma-1", now + REARM_GRACE_MS);
+            await appendKilled(paths, { agentId: "agt_gamma", loginId: "gamma-1", until: now + REARM_GRACE_MS });
             expect(await announceLapses(paths, now + REARM_GRACE_MS - 1)).toEqual([]);
             const lapsed = await announceLapses(paths, now + REARM_GRACE_MS);
             expect(lapsed).toMatchObject([
@@ -538,7 +536,9 @@ describe("agent_left", () => {
             ]);
 
             // Its late re-arm is a join again.
-            expect(await login("agt_gamma", "gamma", "gamma-2")).toEqual({ joined: true });
+            expect(await loginAgent(paths, { agentId: "agt_gamma", name: "gamma", loginId: "gamma-2" })).toEqual({
+                joined: true,
+            });
 
             const presenceEvents = (await readFeed(paths)).filter(
                 (event) => event.type === "agent_left" || event.type === "agent_joined"
@@ -560,22 +560,10 @@ describe("agent_left", () => {
             const paths = sessionPaths("rearm-leave");
             ensureSessionDir(paths);
             const now = Date.now();
-            await logInAndAnnounceJoin(paths, {
-                agent_id: "agt_beta",
-                agent_name: "beta",
-                mode: "stream",
-                login_id: "beta-1",
-            });
+            await loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId: "beta-1" });
             await announceLeave(paths, { agent_id: "agt_beta", agent_name: "beta", reason: "leave", note: "done" });
             // The Monitor it stops afterwards still writes its logged_out with a grace.
-            await appendFeed(paths, {
-                type: "logged_out",
-                agent_id: "agt_beta",
-                reason: "signal",
-                mode: "stream",
-                login_id: "beta-1",
-                rearm_until: new Date(now).toISOString(),
-            });
+            await appendKilled(paths, { agentId: "agt_beta", loginId: "beta-1", until: now });
 
             expect(await announceLapses(paths, now + REARM_GRACE_MS)).toEqual([]);
             expect((await readFeed(paths)).filter((event) => event.type === "agent_left")).toHaveLength(1);
@@ -589,22 +577,8 @@ describe("agent_left", () => {
             const paths = sessionPaths("rearm-late");
             ensureSessionDir(paths);
             const now = Date.now();
-            const killed = (loginId: string) =>
-                appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: "agt_beta",
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: loginId,
-                    rearm_until: new Date(now).toISOString(),
-                });
-            const login = (loginId: string) =>
-                logInAndAnnounceJoin(paths, {
-                    agent_id: "agt_beta",
-                    agent_name: "beta",
-                    mode: "stream",
-                    login_id: loginId,
-                });
+            const killed = (loginId: string) => appendKilled(paths, { agentId: "agt_beta", loginId, until: now });
+            const login = (loginId: string) => loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId });
 
             // Login A released its slot before writing its logout, so B logged in and out first.
             await login("beta-a");
@@ -638,29 +612,15 @@ describe("agent_left", () => {
             ensureSessionDir(paths);
             // In the past, so a check that took a fresh time after the lock would call every entry below due.
             const cutoff = Date.now() - 60_000;
-            const killed = (agentId: string, loginId: string, until: number) =>
-                appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: agentId,
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: loginId,
-                    rearm_until: new Date(until).toISOString(),
-                });
 
             for (const name of ["beta", "gamma", "delta"]) {
-                await logInAndAnnounceJoin(paths, {
-                    agent_id: `agt_${name}`,
-                    agent_name: name,
-                    mode: "stream",
-                    login_id: `${name}-1`,
-                });
+                await loginAgent(paths, { agentId: `agt_${name}`, name, loginId: `${name}-1` });
             }
 
-            await killed("agt_beta", "beta-1", cutoff);
+            await appendKilled(paths, { agentId: "agt_beta", loginId: "beta-1", until: cutoff });
             // Falls due while the check waits for the feed lock: not announced by it, so it must stay.
-            await killed("agt_gamma", "gamma-1", cutoff + 1);
-            await killed("agt_delta", "delta-1", cutoff);
+            await appendKilled(paths, { agentId: "agt_gamma", loginId: "gamma-1", until: cutoff + 1 });
+            await appendKilled(paths, { agentId: "agt_delta", loginId: "delta-1", until: cutoff });
 
             const fold = foldRearms(await readFeed(paths));
             const check = announceDueLapses(paths, fold, cutoff);
@@ -689,22 +649,9 @@ describe("agent_left", () => {
             const paths = sessionPaths("rearm-fence");
             ensureSessionDir(paths);
             const now = Date.now();
-            const login = (loginId: string) =>
-                logInAndAnnounceJoin(paths, {
-                    agent_id: "agt_beta",
-                    agent_name: "beta",
-                    mode: "stream",
-                    login_id: loginId,
-                });
+            const login = (loginId: string) => loginAgent(paths, { agentId: "agt_beta", name: "beta", loginId });
             const killed = (loginId: string, until: number) =>
-                appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: "agt_beta",
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: loginId,
-                    rearm_until: new Date(until).toISOString(),
-                });
+                appendKilled(paths, { agentId: "agt_beta", loginId, until });
 
             // beta-1 released its slot, beta-2 logged in and was killed, and only then beta-1's logout landed.
             await login("beta-1");
@@ -781,20 +728,8 @@ describe("agent_left", () => {
                 ["agt_beta", "beta", cutoff],
                 ["agt_gamma", "gamma", cutoff + 1],
             ] as const) {
-                await logInAndAnnounceJoin(paths, {
-                    agent_id: agentId,
-                    agent_name: name,
-                    mode: "stream",
-                    login_id: `${name}-1`,
-                });
-                await appendFeed(paths, {
-                    type: "logged_out",
-                    agent_id: agentId,
-                    reason: "signal",
-                    mode: "stream",
-                    login_id: `${name}-1`,
-                    rearm_until: new Date(until).toISOString(),
-                });
+                await loginAgent(paths, { agentId, name, loginId: `${name}-1` });
+                await appendKilled(paths, { agentId, loginId: `${name}-1`, until });
             }
 
             const fold = foldRearms(await readFeed(paths));
