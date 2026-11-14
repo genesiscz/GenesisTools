@@ -103,6 +103,11 @@ function partAsync<T>(name: string, read: () => Promise<T>): Promise<TriagePart<
     );
 }
 
+/** One part's value turned into another part's; a part that could not be read stays unread with its error. */
+function mapPart<T, U>(source: TriagePart<T>, map: (value: T) => U): TriagePart<U> {
+    return source.ok ? { ok: true, value: map(source.value) } : source;
+}
+
 /** `bun` or `node` with the script it runs ("bun hub/index.ts"); any other process by its executable's name. */
 export function processLabel(name: string, command: string | null): string {
     if (!command) {
@@ -170,17 +175,8 @@ export async function gatherTriage(sources: TriageSources = realTriageSources())
         environment: part("environment", sources.environment),
         load: part("load", sources.load),
         memory: part("memory", sources.memory),
-        processes: processes.ok
-            ? {
-                  ok: true,
-                  value: {
-                      count: processes.value.count,
-                      topCpu: processes.value.topCpu,
-                      topMemory: processes.value.topMemory,
-                  },
-              }
-            : processes,
-        faces: processes.ok ? { ok: true, value: processes.value.faces } : processes,
+        processes: mapPart(processes, ({ faces: _faces, ...summary }) => summary),
+        faces: mapPart(processes, (value) => value.faces),
         failures: part("failures", () =>
             sources.failures(new Date(now.getTime() - FAILURE_WINDOW_MS), now).slice(0, TOP)
         ),
