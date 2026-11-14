@@ -251,11 +251,15 @@ function parseSpoolLines(text: string, context: { path: string; firstLine: numbe
     return { events, definitions, checkpoints, lines: lines.length, bad };
 }
 
-/** Reads one file from its stored offset; answers the counts of what it took in, and whether it is read to the end. */
+/**
+ * Reads one file from its stored offset up to `size` (the caller's stat of it); answers the counts of what it took
+ * in, and whether it is read to the end.
+ */
 function drainFile(
     store: MetricsStore,
     path: string,
     options: {
+        size: number;
         now: number;
         chunkBytes: number;
         staleTail: boolean;
@@ -263,8 +267,8 @@ function drainFile(
         budget: { left: number };
         onEvents?: (events: readonly StoredEvent[]) => void;
     }
-): { lines: number; events: number; checkpoints: number; bad: number; atEnd: boolean; size: number } {
-    const size = statSync(path).size;
+): { lines: number; events: number; checkpoints: number; bad: number; atEnd: boolean } {
+    const { size } = options;
     const stored = store.spoolFile(path);
     let offset = stored?.offset ?? 0;
     let lineNo = stored?.lines ?? 0;
@@ -324,7 +328,7 @@ function drainFile(
         counts.bad += parsed.bad;
     }
 
-    return { ...counts, atEnd: offset >= size, size };
+    return { ...counts, atEnd: offset >= size };
 }
 
 /**
@@ -370,6 +374,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
             const before = statSync(path);
             const stale = earlier && now - before.mtimeMs > (options.staleTailMs ?? STALE_TAIL_MS);
             const read = drainFile(store, path, {
+                size: before.size,
                 now,
                 chunkBytes,
                 staleTail: stale,
@@ -390,7 +395,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
             result.checkpoints += read.checkpoints;
             result.bad += read.bad;
 
-            if (earlier && read.atEnd && stale && unchangedSince(path, before, read.size)) {
+            if (earlier && read.atEnd && stale && unchangedSince(path, before)) {
                 unlinkSync(path);
                 store.forgetSpoolFile(path);
                 result.removed.push(path);
@@ -409,7 +414,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
 }
 
 /** The file still has the size the drain read to and the time of its last write before the drain. */
-function unchangedSince(path: string, before: { mtimeMs: number }, size: number): boolean {
+function unchangedSince(path: string, before: { size: number; mtimeMs: number }): boolean {
     const after = statSync(path);
-    return after.size === size && after.mtimeMs === before.mtimeMs;
+    return after.size === before.size && after.mtimeMs === before.mtimeMs;
 }
