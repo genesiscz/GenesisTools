@@ -49,7 +49,7 @@ export function parseCssColor(value: string): Rgb | null {
 
     const body = fn[2].split("/")[0].trim().split(/\s+/);
     const space = fn[1] === "color" ? body.shift() : fn[1];
-    const convert = space ? TO_LINEAR_SRGB[space] : undefined;
+    const convert = space && Object.hasOwn(TO_LINEAR_SRGB, space) ? TO_LINEAR_SRGB[space] : undefined;
 
     if (!convert || body.length !== 3) {
         return null;

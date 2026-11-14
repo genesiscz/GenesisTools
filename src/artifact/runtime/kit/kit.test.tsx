@@ -662,6 +662,9 @@ describe("colour maths", () => {
         near("color(display-p3 1 0 0)", [255, 0, 0]);
         near("color(srgb-linear 0.5 0.5 0.5)", [188, 188, 188]);
         expect(parseCssColor("color(rec2020 1 0 0)")).toBeNull();
+        expect(parseCssColor("color(__proto__ 0 0 0)")).toBeNull();
+        expect(parseCssColor("color(constructor 0 0 0)")).toBeNull();
+        expect(readableInlineInk("color(toString 0 0 0)")).toBe("");
         expect(readableTextOn("oklch(95% 0 0)")).toBe("#111318");
         expect(readableTextOn("oklch(0.25 0.05 260)")).toBe("#ffffff");
     });
