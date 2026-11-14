@@ -93,8 +93,9 @@ struct PrivateDataSection: View {
     @State private var busy = false
     @State private var failure: String?
     @State private var phrase = ""
-    /// Off by default: a fixed area (a header) can hold the very name being hidden, and an area left visible shows it.
-    @State private var leaveFixed = false
+    /// Off: the text is hidden in a fixed header too. A fixed area can hold a name or a contract number, so leaving
+    /// it visible is the reader's explicit choice, never the default.
+    @State private var keepFixedAreas = false
 
     /// The op the Hide button sends. Fixed areas stay hidden unless the person chose to leave them visible.
     static func hideTextOp(_ text: String, leaveFixed: Bool) -> EditOp {
@@ -115,11 +116,11 @@ struct PrivateDataSection: View {
                     .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll")
                     .accessibilityIdentifier("recorder.hide.textButton")
             }
-            Toggle("Leave fixed areas visible", isOn: $leaveFixed)
+            Toggle("Leave fixed areas visible", isOn: $keepFixedAreas)
                 .toggleStyle(.checkbox)
                 .font(.system(size: 11.5))
-                .instantTooltip("A tab bar or a toast that stays still while the text scrolls is not blurred. Leave this off when a fixed header holds a name or a number: an area left visible shows the text inside it.")
-                .accessibilityIdentifier("recorder.hide.leaveFixed")
+                .instantTooltip("On: a header or bar that stays still while the page scrolls keeps the text. Leave it off when such an area can show a name or a number")
+                .accessibilityIdentifier("recorder.hide.keepFixed")
             SectionLabel(text: "Private data", value: hits.map { Plural.count($0.count, "hit") })
             Text("Emails, tokens and keys, phone numbers, IBANs and card numbers on the screen. The text is read on this Mac with Vision; nothing leaves it.")
                 .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -130,8 +131,7 @@ struct PrivateDataSection: View {
                 .instantTooltip("Reads the screen text (a movie: one frame a second, the first time can take minutes) and lists what looks private")
                 .accessibilityIdentifier("recorder.hide.findPrivate")
             if let failure {
-                Text(verbatim: failure).font(.system(size: 11.5)).foregroundStyle(Color(red: 1, green: 0.45, blue: 0.42))
-                    .fixedSize(horizontal: false, vertical: true)
+                FailureInline(message: failure, outcome: "The private parts could not be found", action: "Find private text on screen", area: "recorder", identifier: "recorder.hide.failure")
             }
             if let hits {
                 if hits.isEmpty {
@@ -199,12 +199,12 @@ struct PrivateDataSection: View {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
         busy = true
-        let leftVisible = leaveFixed
-        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leftVisible)])) { result in
+        let leaveFixed = keepFixedAreas
+        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leaveFixed)])) { result in
             busy = false
             switch result {
             case .success:
-                model.show(leftVisible
+                model.show(leaveFixed
                     ? "Hid “\(text)” where it moves; a header or bar that stays still was left visible. ⌘Z brings it back."
                     : "Hid every place “\(text)” shows. ⌘Z brings it back.", error: false)
                 phrase = ""
@@ -284,8 +284,7 @@ struct WaitsSection: View {
                 .instantTooltip("Compares the picture four times a second (once per movie, then cached) and proposes 4× to 8×")
                 .accessibilityIdentifier("recorder.clip.findWaits")
             if let failure {
-                Text(verbatim: failure).font(.system(size: 11.5)).foregroundStyle(Color(red: 1, green: 0.45, blue: 0.42))
-                    .fixedSize(horizontal: false, vertical: true)
+                FailureInline(message: failure, outcome: "The waits could not be found", action: "Find the waits in the clip", area: "recorder", identifier: "recorder.waits.failure")
             }
             if let waits {
                 if waits.isEmpty {

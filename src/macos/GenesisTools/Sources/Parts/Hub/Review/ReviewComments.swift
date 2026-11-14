@@ -77,8 +77,7 @@ final class ReviewCommentStore {
 
     init(repo: URL, directory override: URL? = nil) {
         let key = repo.path.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
-        directory = override ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".genesis-tools/review", isDirectory: true)
+        directory = override ?? GenesisToolsHome.url("review", isDirectory: true)
             .appendingPathComponent(key, isDirectory: true)
         load()
     }

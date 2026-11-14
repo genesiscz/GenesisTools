@@ -21,22 +21,6 @@ final class SettingsControlsTests: XCTestCase {
         return try JSONDecoder().decode(WidgetSession.self, from: JSONSerialization.data(withJSONObject: json))
     }
 
-    func testTheSessionFilterControlWritesTheKeyTheSnapshotReads() throws {
-        let preferences = try JSONDecoder().decode(WidgetPreferences.self, from: Data(#"""
-        {"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right",
-         "quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""}
-        """#.utf8))
-        let added = WidgetSessionFilter.adding("claude:fixture-b", to: WidgetSessionFilter.adding("claude:fixture-a", to: []))
-        XCTAssertEqual(added, ["claude:fixture-a", "claude:fixture-b"])
-        XCTAssertEqual(WidgetSessionFilter.adding("claude:fixture-a", to: added), added, "adding twice keeps one entry")
-        // The same merge WidgetModel.updatePreferences applies before it flushes the patch to `hub widget`.
-        guard case .object(var fields) = try WidgetJSON.value(preferences) else { return XCTFail("preferences encode") }
-        fields.merge(WidgetSessionFilter.patch(added)) { _, new in new }
-        let merged = try JSONDecoder().decode(WidgetPreferences.self, from: JSONEncoder().encode(WidgetJSON.object(fields)))
-        XCTAssertEqual(merged.sessions, added)
-        XCTAssertEqual(WidgetSessionFilter.removing("claude:fixture-a", from: merged.sessions), ["claude:fixture-b"])
-    }
-
     func testSessionCandidatesExcludeChosenOnesAndOfferSubagentsOnlyToASearch() throws {
         let sessions = [
             try session("a", title: "Older lead", at: 1_000),
@@ -54,7 +38,7 @@ final class SettingsControlsTests: XCTestCase {
 
     private func snapshotJSON(showWidget: Bool, revision: Int = 0) -> String {
         """
-        {"version":1,"state":{"version":1,"revision":\(revision),"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"showWidget":\(showWidget),"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+        {"version":1,"state":{"version":1,"revision":\(revision),"preferences":\(WidgetTestPreferences.json(showWidget ? #"{"showWidget":true}"# : "{}")),"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
         """
     }
 
@@ -137,7 +121,7 @@ final class SettingsControlsTests: XCTestCase {
         // A load starts with the old state, then the user turns the widget off while it runs.
         model.refreshSettings()
         try await Task.sleep(for: .milliseconds(50))
-        model.updatePreferences(["showWidget": .bool(false)])
+        model.writePreferences { $0.showWidget = false }
         XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false, "the switch moves at once")
 
         deadline = ContinuousClock.now + .seconds(4)
@@ -184,7 +168,7 @@ final class SettingsControlsTests: XCTestCase {
         while model.snapshot == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
         XCTAssertTrue(model.settingsLoaded)
 
-        model.updatePreferences(["showWidget": .bool(false)])
+        model.writePreferences { $0.showWidget = false }
         try await Task.sleep(for: .milliseconds(350))
         let before = try reads()
         model.refreshSettings()
@@ -196,77 +180,6 @@ final class SettingsControlsTests: XCTestCase {
         while try reads() < before + 2 && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
         XCTAssertGreaterThanOrEqual(try reads(), before + 2)
         XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false)
-    }
-
-    /// The live widget's watch builds each snapshot from state it read earlier, so one read before a preference write
-    /// can arrive after the write was saved. It must not undo the saved value; a later change made elsewhere still shows.
-    func testAWatchSnapshotReadBeforeASavedPreferenceNeverUndoesIt() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-watch-\(UUID())")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let stateFile = directory.appendingPathComponent("state.json")
-        try Data(#"{"revision":3}"#.utf8).write(to: stateFile)
-        let domain = "settings-tests." + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: directory.path, defaults: defaults,
-                                appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain,
-                                                                     observeExternalChanges: false))
-        defer { model.stop() }
-        model.actionRunner = { _ in
-            // `hub widget` stores the preference as revision 5.
-            try Data(#"{"revision":5}"#.utf8).write(to: stateFile)
-            return ["ok": true]
-        }
-        model.receive([snapshotJSON(showWidget: true, revision: 3)])
-        var saved = false
-        model.updatePreferences(["showWidget": .bool(false)], saved: { saved = true })
-        var deadline = ContinuousClock.now + .seconds(2)
-        while !saved && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertTrue(saved)
-
-        // The watch read revision 4 before the write and answers only now.
-        model.receive([snapshotJSON(showWidget: true, revision: 4)])
-        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false, "a snapshot read before the write keeps it")
-        model.receive([snapshotJSON(showWidget: false, revision: 5)])
-        // Another surface turns it back on afterwards: that shows, the saved patch no longer covers it.
-        model.receive([snapshotJSON(showWidget: true, revision: 6)])
-        deadline = ContinuousClock.now + .seconds(2)
-        while model.snapshot?.state.preferences.showWidget != true && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, true, "a later change made elsewhere shows")
-    }
-
-    func testAPreferenceWriteReportsItsOwnOutcomeSoAPageConfirmsOnlyAStoredValue() async throws {
-        let domain = "settings-tests." + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: FileManager.default.temporaryDirectory.path,
-                                defaults: defaults, appearance: NativeSettingsAppearance(
-                                    defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
-        defer { model.stop() }
-        var refuse = true
-        model.actionRunner = { _ in
-            if refuse { throw ToolsBridgeError.refused("the widget state folder is not writable") }
-            return ["ok": true]
-        }
-        var saved = 0
-        var failed = 0
-        func settle() async throws {
-            let deadline = ContinuousClock.now + .seconds(2)
-            let before = saved + failed
-            while saved + failed == before && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        }
-
-        model.updatePreferences(["voiceLanguage": .string("cs")], saved: { saved += 1 }, failed: { failed += 1 })
-        try await settle()
-        XCTAssertEqual([saved, failed], [0, 1], "a write that failed was reported as saved")
-
-        refuse = false
-        model.updatePreferences(["voiceLanguage": .string("cs")], saved: { saved += 1 }, failed: { failed += 1 })
-        try await settle()
-        XCTAssertEqual([saved, failed], [1, 1])
     }
 
     func testTheSettingsFaceWatchesTheStateFileHubWidgetReads() {

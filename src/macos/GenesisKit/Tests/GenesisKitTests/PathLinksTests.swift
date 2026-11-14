@@ -137,11 +137,7 @@ final class PathLinksTests: XCTestCase {
     }
 
     func testTheWidgetPreferencesCarryTheSetting() throws {
-        let json = #"""
-        {"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right",
-         "quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","fileLinkClick":"ask"}
-        """#
-        let preferences = try JSONDecoder().decode(WidgetPreferences.self, from: Data(json.utf8))
+        let preferences = try WidgetTestPreferences.decode(#"{"fileLinkClick":"ask"}"#)
         XCTAssertEqual(FileLinkClick(preference: preferences.fileLinkClick), .ask)
     }
 

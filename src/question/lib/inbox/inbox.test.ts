@@ -776,6 +776,13 @@ describe("sessionDecisions", () => {
             [3, "drafted", "store"],
             [4, "waiting", "transcript"],
         ]);
+        // A stored row says when it last changed, so the hub's staging engine lets another client's newer answer win;
+        // a decision only the transcript shows has no row and no time (DECISION 51 b).
+        expect(sessionDecisions({ sessionId: "s-alpha", rows, scan }).map((item) => item.updatedAt)).toEqual([
+            Date.parse("2026-03-01T08:00:00.000Z"),
+            Date.parse("2026-03-01T10:05:00.000Z"),
+            undefined,
+        ]);
         expect(sessionDecisions({ sessionId: "s-gamma", rows, scan: null })).toEqual([]);
     });
 });

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitBase
 
 /// One GenesisTools tile in the Dock (DECISION 72 b, 2026-10-08). The Dock shows one tile per
 /// process, and every face is its own process of the same bundle, so nine faces showed nine tiles.
@@ -44,7 +45,7 @@ package enum DockTile {
     private static var observers: [NSObjectProtocol] = []
 
     private static var lockFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/app/dock-tile.lock")
+        GenesisToolsHome.url("app/dock-tile.lock")
     }
 
     /// The policy this face should have now. Takes or gives back the tile lock as a side effect.

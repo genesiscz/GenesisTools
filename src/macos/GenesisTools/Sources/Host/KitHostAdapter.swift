@@ -31,7 +31,7 @@ open class HostKitAdapter: NSObject, GenesisKitBaseHost {
             environmentKey: "GENESIS_TOOLS_PERF",
             enabledByDefault: true,
             subsystem: "com.genesiscz.genesistools",
-            logDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/logs"),
+            logDirectory: GenesisToolsHome.url("logs"),
             fileName: "app-perf.log",
             appName: "GenesisTools",
             alertBundlePrefix: "com.genesiscz.genesistools",
@@ -51,7 +51,7 @@ open class HostKitAdapter: NSObject, GenesisKitBaseHost {
         if let path = ProcessInfo.processInfo.environment["OBSIDIAN_VAULT_PATH"], !path.isEmpty {
             return path
         }
-        let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/plugins/config.json")
+        let config = GenesisToolsHome.url("plugins/config.json")
         guard let data = try? Data(contentsOf: config),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let root = (object["obsidian"] as? [String: Any])?["vaultRoot"] as? String, !root.isEmpty
@@ -61,6 +61,6 @@ open class HostKitAdapter: NSObject, GenesisKitBaseHost {
 
     /// The user's own keys, one file per library (`hub.json`, `markdown.json`); read by a full `GenesisKitHost`.
     open var keymapDirectory: URL? {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/keymaps", isDirectory: true)
+        GenesisToolsHome.url("keymaps", isDirectory: true)
     }
 }

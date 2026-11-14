@@ -3,6 +3,23 @@
 Domain terms that name modules and seams in GenesisTools. One meaning per word; the code, the plans and the reviews use
 these names.
 
+## Tools, doors and the app
+
+- **Door**: one surface through which a caller reaches a tool's core in `src/<tool>/lib/`: a CLI command
+  (`commands/`), an HTTP route (`lib/server/routes/`) or an MCP tool. A door parses input, calls the core and renders
+  the result; it holds no behaviour the other doors lack. The ai-proxy's chat, responses and messages endpoints are its
+  three model doors, and `serveModelDoor` (`src/ai-proxy/lib/request-lifecycle.ts`) runs the steps they share.
+- **Registrar table**: a tool's list of command trees (`LazyRegistrar[]`, `src/utils/cli/lazy-registrars.ts`), passed
+  to `runTool` as `registrars`. A run imports only the tree its command names.
+- **Tool group**: the tools of one GenesisTools tool that the `genesis-tools` MCP server mounts. It is one row in
+  `TOOL_GROUPS` (`src/genesis-tools-mcp/lib/groups.ts`) plus the tool's `src/<tool>/mcp/genesis-tools.ts`, which
+  exports `toolGroup()`; the row loads that module only when a capability list exposes the group.
+- **Part**: one optional library of GenesisTools.app under `Sources/Parts/` (hub, widget, meetings, recorder, ...). A
+  build links some parts; a part never imports another part (`.claude/rules/macos-app-parts.md`).
+- **Face**: what the app shows when it starts with a face flag (`--hub`, `--recorder`, `--meetings`, ...). A part serves
+  each face (`partForFace`). `ensureFaceReady` (`src/macos/lib/permissions/part-readiness.ts`) builds or refuses a
+  missing or stale part before a tool opens its face.
+
 ## Recorder and editor
 
 - **Recording**: one capture in the recordings library (`<genesis-tools root>/recordings/library/<id>/`), or a meeting's

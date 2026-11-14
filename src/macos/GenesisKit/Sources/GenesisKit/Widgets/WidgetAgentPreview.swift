@@ -208,7 +208,7 @@ struct AgentWidgetPreview: View {
     private func row(_ session: WidgetSession) -> some View {
         let inbox = model.inboxFor(session.key)
         let question = Self.pendingQuestion(inbox?.pendingItem,
-            enabled: model.snapshot?.state.preferences.previewQuestion ?? true)
+            enabled: model.preferences.previewQuestion)
         return WidgetPreviewRosterRow(
             session: session, inbox: inbox, question: question, pulse: model.inboxPulseFor(session.key),
             reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete,

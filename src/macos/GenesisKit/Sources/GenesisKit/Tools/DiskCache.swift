@@ -13,8 +13,7 @@ public struct DiskCache: Sendable {
     public let namespace: String
 
     public init(folder: String, namespace: String) {
-        self.directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".genesis-tools/\(folder)/cache", isDirectory: true)
+        self.directory = GenesisToolsHome.url("\(folder)/cache", isDirectory: true)
         self.namespace = namespace
     }
 

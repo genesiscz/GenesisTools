@@ -120,7 +120,7 @@ public final class WidgetShelfStore: ObservableObject {
         onCaptureStaged: @escaping () -> Void = {},
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
         attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil,
-        undoSeconds: @escaping @MainActor () -> Double = { WidgetModel.undoSeconds(nil) }
+        undoSeconds: @escaping @MainActor () -> Double = { WidgetModel.undoSeconds(.hubDefaults) }
     ) {
         screenCaptureAccess = { PermissionAccess.live.isGranted(.screenRecording) }
         permissionGate = { await PermissionCenter.shared.ensure($0) }

@@ -454,12 +454,4 @@ extension MeetingsTimelineTests {
         return MomentPlayer(engine: engine, load: { _ in SilentSound() }, defaults: defaults,
                             timeline: timeline ?? TimelineDockModel(reads: Self.noReads, defaults: defaults))
     }
-
-    private func until(_ what: String, timeout: TimeInterval = 3, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() {
-            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
 }

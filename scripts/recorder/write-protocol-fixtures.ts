@@ -4,7 +4,9 @@
  * `src/recorder/lib/__fixtures__/service-protocol.schemas.json` (protocolJsonSchemas) and
  * `src/recorder/lib/__fixtures__/editor-golden.json` (editorGolden: example ops, edits, op tags, hello's methods) and
  * `src/recorder/lib/__fixtures__/screen-hit-ops.json` (screenHitOpsFixture: screen hits with their edit ops).
- * `src/recorder/lib/service.test.ts` fails when a committed file differs from what this writes.
+ * The service error metadata of `service-protocol.json` is refreshed through rpcErrorBody; the captured method
+ * examples and Swift host replies stay as they are. A live protocol refusal is checked against its error example
+ * in `src/recorder/lib/service.test.ts`, beside the schema and generated-file checks.
  *
  * It also writes `src/utils/recording-editor/__fixtures__/frame-rules.json` (frameRules below): cases of the four frame
  * rules that the TypeScript side and the Swift renderer both compute (output and source time, join detection, the zoom

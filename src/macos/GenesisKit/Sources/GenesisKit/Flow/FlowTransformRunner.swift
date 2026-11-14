@@ -136,8 +136,7 @@ public enum FlowTransformRunner {
     /// is only read for a loopback HTTP origin and only used on its configured listener port.
     public static func resolveToken(configured: String, baseURL: String = "") -> String? {
         resolveToken(configured: configured, baseURL: baseURL) {
-            let url = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".genesis-tools/ai-proxy/config.json")
+            let url = GenesisToolsHome.url("ai-proxy/config.json")
             return readPrivateProxyConfiguration(at: url)
         }
     }

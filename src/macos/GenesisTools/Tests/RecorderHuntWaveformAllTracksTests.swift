@@ -6,9 +6,6 @@ import XCTest
 /// not only the movie's first track, and a muted track leaves it.
 @MainActor
 final class RecorderHuntWaveformAllTracksTests: XCTestCase {
-    /// The fixture writer stopped taking a track's samples for 10 s: the test fails instead of waiting for good.
-    private struct WriterStalled: Error { let track: Int }
-
     private var folder: URL!
 
     override func setUp() async throws {
@@ -72,11 +69,7 @@ final class RecorderHuntWaveformAllTracksTests: XCTestCase {
                                                                      presentationTimeStamp: CMTime(value: Int64(start), timescale: Int32(rate)),
                                                                      packetDescriptions: nil, sampleBufferOut: &made)
                 let buffer = try XCTUnwrap(made)
-                let ready = Date().addingTimeInterval(10)
-                while !input.isReadyForMoreMediaData {
-                    guard Date() < ready else { throw WriterStalled(track: index) }
-                    try await Task.sleep(for: .milliseconds(5))
-                }
+                try await input.waitUntilReady()
                 XCTAssertTrue(input.append(buffer), "track \(index) takes its samples: \(String(describing: writer.error))")
             }
         }

@@ -69,7 +69,10 @@ let kitTargets: [Target] = [
     .target(name: "GenesisKitPosture", dependencies: ["GenesisKit", "GenesisKitCamera"], path: "Sources/GenesisKitPosture"),
     .target(name: "GenesisKitDisk", dependencies: ["GenesisKit"], path: "Sources/GenesisKitDisk"),
     // Disk/: the frozen CLI contracts and real `tools` JSON output the disk decoders are tested against.
-    .target(name: "GenesisKitFixtures", path: "Sources/GenesisKitFixtures", resources: [.copy("Disk"), .copy("Git")]),
+    // Widget/: the golden widget snapshots src/hub/lib/widget/snapshot-golden.test.ts writes from the real builder.
+    .target(
+        name: "GenesisKitFixtures", path: "Sources/GenesisKitFixtures",
+        resources: [.copy("Disk"), .copy("Git"), .copy("Widget")]),
     // Tests only: a window asked to become key is only ordered front, and the app never activates, so a test run
     // never takes the user's keyboard focus.
     .target(name: "GenesisKitTestHooks", path: "Sources/GenesisKitTestHooks", linkerSettings: [.linkedFramework("AppKit")]),
