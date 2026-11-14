@@ -3879,22 +3879,36 @@ describe("a path this user cannot move", () => {
                 kind: "never",
                 reason: expect.stringContaining("this user could replace /private/var"),
             });
+            // A sticky folder of another user (not root): its owner can rename root's entry while the prompt is open.
+            const other = { ...rootDir(0o1777), uid: 777 };
+            expect(block(SPINDUMP, facts({ "/private/var/tmp": other }))).toMatchObject({
+                kind: "never",
+                reason: expect.stringContaining("this user could replace"),
+            });
         });
 
         test("the administrator prompt runs chown on the item itself, quoted, and never in a test", () => {
-            const argv = adminTakeoverCommand(['/private/var/tmp/it\'s "a" file'], ME);
+            const argv = adminTakeoverCommand(
+                [{ path: '/private/var/tmp/it\'s "a" file', identity: "16777232:42" }],
+                ME
+            );
             expect(argv.slice(0, 2)).toEqual(["/usr/bin/osascript", "-e"]);
-            expect(argv[2]).toStartWith(
-                `do shell script "'/usr/sbin/chown' '-h' '501' '/private/var/tmp/it'\\\\''s \\"a\\" file'" with prompt "GenesisTools moves /private/var/tmp/it's \\"a\\" file to its trash.`
+            expect(argv[2]).toStartWith("do shell script ");
+            expect(argv[2]).toContain("'/usr/sbin/chown' '-h' '501' '/private/var/tmp/it'\\\\''s \\\"a\\\" file'");
+            expect(argv[2]).toContain(
+                'with prompt "GenesisTools moves /private/var/tmp/it\'s \\"a\\" file to its trash.'
             );
             expect(argv[2]).toEndWith("with administrator privileges");
+            // The owner changes only while the inode is still the approved one.
+            expect(argv[2]).toContain("/usr/bin/stat");
+            expect(argv[2]).toContain("16777232:42");
 
             const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
                 throw new Error("a test must never ask for an administrator's password");
             });
 
             try {
-                expect(MAC_ADMIN_TAKEOVER.take([SPINDUMP])).toMatchObject({
+                expect(MAC_ADMIN_TAKEOVER.take([{ path: SPINDUMP, identity: null }])).toMatchObject({
                     ok: false,
                     reason: expect.stringContaining("a test process never asks for an administrator's password"),
                 });
