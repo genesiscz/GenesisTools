@@ -108,8 +108,12 @@ public final class ActivityStore {
     }
 
     private func onQueue<Value>(_ operation: () throws -> Value) rethrows -> Value {
+        // The guard is a debug check: a release build skips the main-thread test and the task-local reads on every
+        // ledger call, the per-tick `touchSegment` among them.
+        #if DEBUG
         Self.suspendingAccessAssertion(!Thread.isMainThread || !Self.suspendingAccessRequired,
                                       "Focus intent ledger access on main must await ActivityStore.perform")
+        #endif
         if DispatchQueue.getSpecific(key: queueKey) == true { return try operation() }
         return try queue.sync(execute: operation)
     }
