@@ -169,6 +169,19 @@ describe("fableCapableAccounts never recommends a dead account", () => {
 
         expect(fableCapableAccounts([errored], NOW)).toEqual([]);
     });
+
+    test("an account whose plan cannot run Claude Code is excluded, however full its buckets look", () => {
+        const free: AccountUsage = {
+            accountName: "freeorg",
+            subscriptionPlan: "claude_free",
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 0, resets_at: null },
+            },
+        };
+
+        expect(fableCapableAccounts([free], NOW)).toEqual([]);
+    });
 });
 
 describe("deadBucketForAccount", () => {
