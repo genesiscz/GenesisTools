@@ -25,10 +25,6 @@ export type { LocalAudioFile, LocalAudioMeeting, LocalSourceAudio };
  */
 export type LiveSourceMeeting = (sourceId: MeetingSourceId) => Promise<string | undefined>;
 
-function linkedRecords(store: MeetingStore, sourceId: string, sourceMeetingId: string): MeetingRecord[] {
-    return store.list().filter((record) => record.sources[sourceId]?.meetingId === sourceMeetingId);
-}
-
 /** One store snapshot per pass: the records linked to each of the source's meetings. */
 function linkedIndex(records: MeetingRecord[], sourceId: string): Map<string, MeetingRecord[]> {
     const index = new Map<string, MeetingRecord[]>();
@@ -75,7 +71,7 @@ export async function sourceAudioRecords(options: {
         sourceId: source.id,
         sourceMeetingId,
         fn: async () => {
-            const existing = linkedRecords(store, source.id, sourceMeetingId);
+            const existing = linkedIndex(store.list(), source.id).get(sourceMeetingId) ?? [];
             if (existing.length) {
                 return existing;
             }
