@@ -181,18 +181,19 @@ export async function resolveGrokSubToken(
         // account's token and quietly cross a billing boundary. So the default
         // file is used only when it PROVES it carries the same identity as the
         // copy that expired; without that proof, expiry stays fatal.
-        if (isTokenExpired(decodeJwtClaims(storedToken))) {
-            const subject = decodeJwtClaims(storedToken)?.sub;
-            const entry = await sameIdentityEntry(subject, authPath);
+        const claims = decodeJwtClaims(storedToken);
 
-            if (subject && entry) {
+        if (isTokenExpired(claims)) {
+            const proven = await sameIdentityEntry(claims?.sub, authPath);
+
+            if (proven) {
                 logger.info(
                     { account: account.name, authPath },
                     "grok: stored accessToken expired; the default auth file proves the same identity, resolving from it"
                 );
 
                 return {
-                    token: await sameIdentityToken({ entry, subject, authPath, noRefresh: options?.noRefresh }),
+                    token: await sameIdentityToken({ ...proven, authPath, noRefresh: options?.noRefresh }),
                     authPath,
                     account: pick(account),
                 };
@@ -235,17 +236,20 @@ export async function resolveGrokSubToken(
  * The entry's own `user_id` counts as proof too: it is the same xAI user id, and
  * it still identifies the file when the active token itself will not decode.
  *
- * The entry itself is returned, so the token handed out is the one this read proved,
- * never a second read of a file the Grok CLI may have switched to another account.
+ * The entry itself is returned, with the subject it proved, so the token handed out is the one this read proved,
+ * never a second read of a file the Grok CLI may have switched to another account. Null for a missing subject.
  */
-async function sameIdentityEntry(subject: string | undefined, authPath: string): Promise<GrokAuthEntry | null> {
+async function sameIdentityEntry(
+    subject: string | undefined,
+    authPath: string
+): Promise<{ entry: GrokAuthEntry; subject: string } | null> {
     if (!subject) {
         return null;
     }
 
     const active = getActiveAuthEntry(await readAuthFileAsync(authPath));
 
-    return active && entryHoldsSubject(active, subject) ? active : null;
+    return active && entryHoldsSubject(active, subject) ? { entry: active, subject } : null;
 }
 
 /**
@@ -291,7 +295,7 @@ function pastedTokenRecovery(options: {
 }): StoredGrantSource {
     const { accountName, storedToken, authPath, noRefresh } = options;
     const hint = `Run: ${grokLoginCommand(accountName)}`;
-    const subject = decodeJwtClaims(storedToken)?.sub;
+    const claimedSubject = decodeJwtClaims(storedToken)?.sub;
     // The token this recovery last handed out. The client holds it, so a later forced call
     // means the upstream refused THIS one, not the pasted copy the recovery started from.
     let current = storedToken;
@@ -299,9 +303,9 @@ function pastedTokenRecovery(options: {
     return {
         hint,
         refresh: async (reason, force) => {
-            const entry = await sameIdentityEntry(subject, authPath);
+            const proven = await sameIdentityEntry(claimedSubject, authPath);
 
-            if (!subject || !entry) {
+            if (!proven) {
                 logger.warn(
                     { account: accountName, authPath, reason },
                     "grok: the stored accessToken needs a new token and no auth file proves it belongs to this account"
@@ -309,6 +313,8 @@ function pastedTokenRecovery(options: {
 
                 throw new GrokAuthExpiredError(undefined, { hint });
             }
+
+            const { entry, subject } = proven;
 
             // A newer token of the same identity is used as is. Only when the file still
             // holds the very token the upstream refused does a forced grant help.
