@@ -159,14 +159,15 @@ public final class FocusStudioModel: ObservableObject {
         await PerfLog.spanAsync("focus.studio.reload") {
             reloadGeneration += 1
             let generation = reloadGeneration
+            // Only the range and the session filter shape the ledger read. The tag, project and search filters are
+            // read when the snapshot is applied, so a change to them during the read keeps the snapshot valid.
             let from = range.fromMs, to = range.toMs, selectedSession = sessionFilter
-            let tag = tagFilter, project = projectFilter, query = search
             let clock = Int64(now.timeIntervalSince1970 * 1000)
             guard let snapshot = try? await store.perform({ store in
                 Self.readSnapshot(store: store, from: from, to: to, session: selectedSession, now: clock)
             }) else { return }
             guard generation == reloadGeneration, range.fromMs == from, range.toMs == to,
-                  sessionFilter == selectedSession, tagFilter == tag, projectFilter == project, search == query else { return }
+                  sessionFilter == selectedSession else { return }
             reloadSnapshot(now: now, ledger: snapshot)
         }
     }
