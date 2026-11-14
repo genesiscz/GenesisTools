@@ -29,6 +29,7 @@ import {
     stagedOf,
     togglePick,
     withRecentReceipt,
+    withStaged,
 } from "@/features/answer-queue/units";
 
 const client = fixtureDashboardClient;
@@ -149,6 +150,26 @@ describe("answer queue rules", () => {
         });
         expect(reconcileNote(typed, { revision: 2, draft: null })).toEqual(typed);
         expect(reconcileNote(typed, { revision: 1, draft: null })).toBe(typed);
+    });
+
+    it("a stage the Mac took lands only on the revision it was staged against, never on a re-posted decision", async () => {
+        resetFixtureQueue();
+        const decisionOf = (data: Awaited<ReturnType<typeof queue>> | undefined) =>
+            data?.sessions[0].items.find((item) => item.kind === "decision" && item.number === 4);
+        const stage = { session: "s-parser", number: 4, option: "a", text: "keep it warm" };
+
+        const shown = await queue();
+        expect(decisionOf(withStaged(shown, { ...stage, expectedRevision: 1 }))).toMatchObject({
+            revision: 1,
+            draftOption: "a",
+            draft: "keep it warm",
+        });
+
+        // The agent re-posts while the stage is in flight; the refresh brings revision 2 before the stage settles.
+        fixtureRepost("s-parser", 4);
+        const reposted = await queue();
+        expect(decisionOf(withStaged(reposted, { ...stage, expectedRevision: 1 }))).toEqual(decisionOf(reposted));
+        resetFixtureQueue();
     });
 
     it("a failed pick in flight stops the send until a later pick succeeds", async () => {
