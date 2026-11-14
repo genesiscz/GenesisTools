@@ -2335,6 +2335,16 @@ static int big_kept(const char *name) {
     return 0;
 }
 
+// Store one --ext or --keep-prefix value. A value past MAX_BIG_NAMES is refused (-1), never dropped.
+static int push_big_name(const char **names, int *count, const char *flag, const char *value) {
+    if (*count == MAX_BIG_NAMES) {
+        fprintf(stderr, "clonesize: more than %d %s values\n", MAX_BIG_NAMES, flag);
+        return -1;
+    }
+    names[(*count)++] = value;
+    return 0;
+}
+
 static void big_setup_attrlist(void) {
     memset(&g_big_al, 0, sizeof g_big_al);
     g_big_al.bitmapcount = ATTR_BIT_MAP_COUNT;
@@ -3622,11 +3632,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--no-private"))             g_idx_private = 0;
         else if (!strcmp(a, "--stall-seconds") && i + 1 < argc) g_idx_stall_s = atof(argv[++i]);
         else if (!strcmp(a, "--compressed-only"))       g_big_compressed_only = 1;
-        else if ((!strcmp(a, "--ext") || !strcmp(a, "--keep-prefix")) && i + 1 < argc) {
-            int ext = !strcmp(a, "--ext");
-            int *count = ext ? &g_big_nexts : &g_big_nkeep;
-            if (*count == MAX_BIG_NAMES) { fprintf(stderr, "clonesize: more than %d %s values\n", MAX_BIG_NAMES, a); free(roots); return 2; }
-            (ext ? g_big_exts : g_big_keep)[(*count)++] = argv[++i];
+        else if (!strcmp(a, "--ext") && i + 1 < argc) {
+            if (push_big_name(g_big_exts, &g_big_nexts, a, argv[++i]) != 0) { free(roots); return 2; }
+        }
+        else if (!strcmp(a, "--keep-prefix") && i + 1 < argc) {
+            if (push_big_name(g_big_keep, &g_big_nkeep, a, argv[++i]) != 0) { free(roots); return 2; }
         }
         else if (!strcmp(a, "--prune-name") && i + 1 < argc) {
             // Refused, never dropped: an unread name is a folder the listing silently enters.
