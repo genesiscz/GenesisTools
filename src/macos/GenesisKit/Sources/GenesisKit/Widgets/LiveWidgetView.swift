@@ -826,7 +826,7 @@ public struct LiveWidgetView: View {
 
     /// The cards `filter` shows (`WidgetModel.filteredOut`).
     static func filtered(_ cards: [WidgetCard], by filter: String) -> [WidgetCard] {
-        cards.filter { !WidgetModel.filteredOut(kind: $0.kind.rawValue, by: filter) }
+        cards.filter { !WidgetModel.filteredOut(kind: $0.kind, by: filter) }
     }
 
     /// A composer message lands under the list, and the list follows it. An answer sent from a card leaves the list
@@ -857,6 +857,7 @@ public struct LiveWidgetView: View {
 
     static func kindLabel(_ card: WidgetCard) -> String {
         if card.needsAnswer { return "Waiting for your answer" }
+        let kind = card.kind.rawValue
         switch card.kind {
         // An agent message (inbox_send, tools question message, a tools rm request notice) rides the answer card with
         // status "message"; it answers nothing, so it reads as a message.
@@ -867,11 +868,11 @@ public struct LiveWidgetView: View {
         case "decision":
             if let replacement = card.supersededBy { return "Decision · Superseded by " + WidgetWords.decision(replacement.number) }
             if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
-                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind.rawValue)
+                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: kind)
             }
-            return "Decision · " + statusPhrase(card.status, kind: card.kind.rawValue)
-        case "form": return "Question · " + statusPhrase(card.status, kind: card.kind.rawValue)
-        default: return sentenceCase(card.kind.rawValue) + " · " + statusPhrase(card.status, kind: card.kind.rawValue)
+            return "Decision · " + statusPhrase(card.status, kind: kind)
+        case "form": return "Question · " + statusPhrase(card.status, kind: kind)
+        default: return sentenceCase(kind) + " · " + statusPhrase(card.status, kind: kind)
         }
     }
 
