@@ -350,27 +350,30 @@ public final class FocusController: ObservableObject {
         controller.present()
     }
 
-    /// Tags used in the last month, newest first. Read when the HUD is built rather than in a
-    /// body: this is a query, and a body is not allowed to run one.
+    /// The recent tags the intent drain read last (`refreshIntentTags`), for a HUD built while the drain may not
+    /// read the ledger on the main thread.
     private var intentTags: [String] = []
 
     private func refreshIntentTags() async {
         guard let store else { return }
-        let now = Date()
-        let from = Int64(now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000)
-        let to = Int64(now.timeIntervalSince1970 * 1000) + 1
-        let sessions = (try? await store.perform { try $0.sessions(from: from, to: to) }) ?? []
+        let window = Self.tagWindow()
+        let sessions = (try? await store.perform { try $0.sessions(from: window.from, to: window.to) }) ?? []
         intentTags = Self.tagNames(in: sessions, limit: 8)
     }
 
+    /// Tags used in the last month, newest first. Read when the HUD is built rather than in a
+    /// body: this is a query, and a body is not allowed to run one.
     private func recentTags(limit: Int = 8) -> [String] {
         if ActivityStore.suspendingAccessRequired { return Array(intentTags.prefix(limit)) }
         guard let store else { return [] }
-        let now = Date()
-        let from = Int64(now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000)
-        let to = Int64(now.timeIntervalSince1970 * 1000) + 1
-        guard let sessions = try? store.sessions(from: from, to: to) else { return [] }
+        let window = Self.tagWindow()
+        guard let sessions = try? store.sessions(from: window.from, to: window.to) else { return [] }
         return Self.tagNames(in: sessions, limit: limit)
+    }
+
+    /// The last 30 days up to and including now, in ledger milliseconds: the sessions whose tags the HUD offers.
+    private static func tagWindow(now: Date = Date()) -> (from: Int64, to: Int64) {
+        (Int64(now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000), Int64(now.timeIntervalSince1970 * 1000) + 1)
     }
 
     private static func tagNames(in sessions: [ActivityStore.FocusSession], limit: Int) -> [String] {
