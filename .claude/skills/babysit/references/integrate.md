@@ -46,6 +46,12 @@ commit already there, resolves a version-only conflict in `.claude-plugin/market
 Give the listed ones to a free worker in a scratch worktree detached at the unified head (resolve keeping both sides,
 `cherry-pick -x` each), check its tests and Biome, then fast-forward unified to it if unified has not moved.
 
+This pick is the master's step in every variant, also when a brief lets the worker push its PR branch itself. Check
+it with `bun .claude/skills/babysit/scripts/unified-behind.ts --branch <unified> origin/<pr-branch>` (exit 0: a merge of
+the branch into unified would change no file; exit 1: it lists the files unified lacks, the commits that touch them and
+the pick command; a file both sides changed in one place is printed and does not fail it). `land.ts` runs the same check
+and refuses the landing; `--allow-unified-behind` lands anyway and needs its reason in the round summary.
+
 ## Unified mode
 
 The worker committed on unified in the main checkout; the correction goes there too. Then:

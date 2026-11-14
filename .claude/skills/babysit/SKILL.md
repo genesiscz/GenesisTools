@@ -322,6 +322,14 @@ then posts the thread replies, resolves acted-on items, leaves policy-deferred t
 - unified mode: correction on unified; cherry-pick both onto a scratch worktree of the PR branch; resolve context
   conflicts by keeping the PR branch's side plus the worker's change; verify; push.
 
+🛑 **The pick onto unified belongs to the round, not to whoever pushes.** A brief that lets the worker push its own
+branch still leaves the pick to the master, as its next step after that push. Before a round is reported as done:
+`bun .claude/skills/babysit/scripts/unified-behind.ts --branch <unified> origin/<pr-branch>` exits 0 (on exit 1 it
+lists the files unified lacks, the branch commits that touch them and the `pick-unified.ts` command). `land.ts` refuses to land a PR while unified lacks one of its
+commits. On 2026-11-10 a master wrote "you push and you answer the threads" into its briefs; its own pick step hung off
+its own push, so it never ran: 55 `#NNN followup` commits landed on master and were missing from unified for three
+days, and the next merge of master into unified had 440 conflicts.
+
 Every conflict, in any step, is resolved through `bun .claude/skills/babysit/scripts/conflicts.ts`: `resolve <file>
 <ours|theirs|both|base> ...` (one side per block, in file order), or edit the file yourself and run `check <file> ...`,
 which fails on a leftover conflict marker and on a JSON file that does not parse. Run `check` before `cherry-pick
@@ -399,6 +407,10 @@ file-set check for a recommitted stacked branch included), which
 `bun .claude/skills/babysit/scripts/land.ts --run <dir> --pr <N> --merge` runs as one command (without `--merge` it
 only prepares and prints the squash; every git call is an argument array, because a hand-typed
 `--force-with-lease=$B:c1a…` in zsh read `:c` as a modifier and pushed without the lease):
+
+After every landing, merge master into unified in the checkout that has it (`git merge origin/master`), also after a
+squash: unified then holds what landed, and its merge base with master stays fresh. A merge base that is a week old
+turns the same merge into hundreds of conflicts.
 
 0. Optional, only when asked for a PR: a commit limit (for example "10 commits max" for a handed-over PR). It is not
    a rule for every PR. Regroup a longer history into thematic commits with exactly the same final tree

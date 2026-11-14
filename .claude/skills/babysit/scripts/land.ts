@@ -7,7 +7,7 @@
  * in zsh read `:c` as a modifier and pushed without the lease (2026-10-14, #502).
  *
  *   bun land.ts --run <dir> --pr <N> [--wt <dir>] [--merge] [--no-push-hooks] [--max-commits <n>] [--head <sha>]
- *               [--squash]
+ *               [--squash] [--allow-unified-behind]
  *
  * --head: start from a prepared regroup (thematic commits made by hand, step 0 of the recipe) instead of the PR's
  * remote head. Its tree must equal the remote head's tree, and the push lease is still the remote head. Without it
@@ -24,6 +24,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { probeAddedLines } from "./probe";
 import { flag, has, loadRun, worktreeFor } from "./run";
+import { behindReport, behindUnified, lacksChanges } from "./unified-behind";
 import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall, prepGit } from "./versions";
 
 export function recordLandingPush(options: {
@@ -218,6 +219,18 @@ async function main(): Promise<void> {
     const newHead = must(git(["rev-parse", "HEAD"]), "rev-parse");
     if (!genesisTools && newHead !== oldHead && !probeAddedLines({ wt, from: oldHead, to: newHead })) {
         process.exit(1);
+    }
+
+    // A PR does not land while the integration branch lacks one of its commits (2026-11-10: 55 review fixes landed on
+    // master and never reached unified). The remote head is checked: its commits are the ones a round pushed.
+    const integration = main(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
+    if (integration.endsWith("-unified") && !has("--allow-unified-behind")) {
+        const behind = behindUnified({ cwd: run.main, branch: integration, refs: [oldHead] });
+        if (lacksChanges(behind)) {
+            console.error(behindReport(integration, behind).join("\n"));
+            console.error("Then run this again. --allow-unified-behind lands anyway (say why in the round summary).");
+            process.exit(1);
+        }
     }
 
     if (!has("--merge")) {
