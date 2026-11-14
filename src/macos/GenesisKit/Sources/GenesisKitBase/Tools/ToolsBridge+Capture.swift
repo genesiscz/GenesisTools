@@ -139,7 +139,10 @@ extension ToolsBridge {
         let span = PerfSpans.begin("tools.\(argv.prefix(3).joined(separator: "."))")
         defer { span.end() }
         let binary = binaryPath
-        guard Self.isExecutableFile(binary) else { throw ToolsBridgeError.binaryNotFound(binary) }
+        guard Self.isExecutableFile(binary) else {
+            Self.recordLaunchFailure(ToolsBridgeError.binaryNotFound(binary), traceId: traceId, argv: argv, started: started)
+            throw ToolsBridgeError.binaryNotFound(binary)
+        }
         let process = Process()
         let plan = Self.launchPlan(binaryPath: binary, argv: argv)
         process.executableURL = plan.executable
@@ -159,7 +162,23 @@ extension ToolsBridge {
                 traceId: traceId, via: "process-timeout", argv: argv, started: started, exit: -1, outBytes: 0, stderr: ""
             )
             throw ToolsBridgeError.timeout(seconds: Self.limitSeconds(timeout), command: ToolsBridgeError.command(argv))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The child never ran, or its streams failed: the failure observer must still hear of it, as it does of an
+            // exit status.
+            Self.recordLaunchFailure(error, traceId: traceId, argv: argv, started: started)
+            throw error
         }
+    }
+
+    /// A call that failed before a child returned (a missing executable, a launch error): recorded with exit -1 and the
+    /// error's words as its stderr, so the failure observer and the ledger see it as they see a nonzero exit.
+    private static func recordLaunchFailure(_ error: Error, traceId: String, argv: [String], started: Date) {
+        ToolsCallTrace.record(
+            traceId: traceId, via: "process-launch", argv: argv, started: started, exit: -1, outBytes: 0,
+            stderr: String(describing: error)
+        )
     }
 }
 
