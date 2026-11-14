@@ -110,11 +110,6 @@ public final class ActivityRecorder: ObservableObject {
         case noteTick(Int64), forgotten(Int64, Int64), downtime(Date), barrier
         case generatedProbe(AXFocusProbe.Result, String, String, Bool, UInt64)
     }
-    private enum DeferredUI {
-        case start, stop, settings(FocusSettings), pause(Date), resume, attach(Int64?), permission
-        case probe(AXFocusProbe.Result, String, String, FocusSettings, Bool)
-        case noteTick(Int64), forgotten(Int64, Int64), forgetEnded(DeletionFence), downtime(Date)
-    }
     private enum MainOnlyRequest { case settings(FocusSettings), permission, forgetEnded(DeletionFence) }
     private enum Request {
         case ui(MainOnlyRequest)
@@ -523,22 +518,20 @@ public final class ActivityRecorder: ObservableObject {
         finishTransition(prepared.work(store), transition: prepared.transition, destination: prepared.destination)
     }
 
-    private func deferUI(_ operation: DeferredUI) -> Bool {
+    /// Queues a capture transition behind the persistence still pending, in order; false when nothing is pending,
+    /// so the caller runs it now.
+    private func deferTransition(_ transition: CaptureTransition) -> Bool {
+        deferRequest(.transition(transition, nil))
+    }
+
+    /// `deferTransition` for a change that only the main actor applies (`replay`).
+    private func deferUI(_ request: MainOnlyRequest) -> Bool {
+        deferRequest(.ui(request))
+    }
+
+    private func deferRequest(_ request: Request) -> Bool {
         guard !replayingUI, hasPendingPersistence else { return false }
-        switch operation {
-        case .pause(let date): requests.append(.transition(.pause(date), nil))
-        case .resume: requests.append(.transition(.resume, nil))
-        case .attach(let session): requests.append(.transition(.attach(session), nil))
-        case .start: requests.append(.transition(.start, nil))
-        case .stop: requests.append(.transition(.stop, nil))
-        case .probe(let probe, let bundle, let name, let policy, let idle): requests.append(.transition(.probe(probe, bundle, name, policy, idle), nil))
-        case .noteTick(let at): requests.append(.transition(.noteTick(at), nil))
-        case .forgotten(let from, let to): requests.append(.transition(.forgotten(from, to), nil))
-        case .downtime(let date): requests.append(.transition(.downtime(date), nil))
-        case .settings(let settings): requests.append(.ui(.settings(settings)))
-        case .permission: requests.append(.ui(.permission))
-        case .forgetEnded(let fence): requests.append(.ui(.forgetEnded(fence)))
-        }
+        requests.append(request)
         runNextRequest()
         return true
     }
@@ -647,13 +640,13 @@ public final class ActivityRecorder: ObservableObject {
     /// measured, and the ledger says so rather than leaving a hole the views would have to
     /// guess about.
     public func closeDowntime(launchedAt: Date = Date()) {
-        if deferUI(.downtime(launchedAt)) { return }
+        if deferTransition(.downtime(launchedAt)) { return }
         guard remoteCommand == nil else { return }
         performSync(.downtime(launchedAt))
     }
 
     public func start() {
-        if deferUI(.start) { return }
+        if deferTransition(.start) { return }
         guard remoteCommand == nil else { return }
         performSync(.start)
     }
@@ -681,7 +674,7 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func stop() {
-        if deferUI(.stop) { return }
+        if deferTransition(.stop) { return }
         if remoteCommand != nil { isCapturing = false; return }
         performSync(.stop)
     }
@@ -702,7 +695,7 @@ public final class ActivityRecorder: ObservableObject {
     /// Pauses capture for a while. The current segment closes immediately — a paused recorder
     /// must never leave a segment open that later looks like hours of focus.
     public func pauseCapture(until date: Date) {
-        if deferUI(.pause(date)) { return }
+        if deferTransition(.pause(date)) { return }
         if let remoteCommand {
             do { remoteCommand("focus.capture.pause", try JSONEncoder().encode(date)) }
             catch { FlowFocusLog.focus.error("capture pause encoding failed: \(error.localizedDescription)") }
@@ -736,7 +729,7 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func resumeCapture() {
-        if deferUI(.resume) { return }
+        if deferTransition(.resume) { return }
         if let remoteCommand { remoteCommand("focus.capture.resume", Data()); return }
         performSync(.resume)
     }
@@ -768,7 +761,7 @@ public final class ActivityRecorder: ObservableObject {
     /// The pomodoro engine calls this on every phase boundary: the current segment is split so
     /// no segment ever straddles two sessions.
     public func attach(sessionId newValue: Int64?) {
-        if deferUI(.attach(newValue)) { return }
+        if deferTransition(.attach(newValue)) { return }
         guard remoteCommand == nil else { return }
         performSync(.attach(newValue))
     }
@@ -802,7 +795,7 @@ public final class ActivityRecorder: ObservableObject {
     /// Ticks stop while the Mac sleeps. A silence far longer than the poll interval was never
     /// observed, so it ends the open segment where the last tick saw it instead of stretching it.
     func noteTick(at now: Int64) {
-        if deferUI(.noteTick(now)) { return }
+        if deferTransition(.noteTick(now)) { return }
         performSync(.noteTick(now))
     }
 
@@ -833,7 +826,7 @@ public final class ActivityRecorder: ObservableObject {
     /// Direct probe application also enforces privacy; test sources use the same persistence path.
     public func applyProbe(_ probe: AXFocusProbe.Result, bundle: String, appName: String,
                             settings: FocusSettings, idle: Bool) {
-        if deferUI(.probe(probe, bundle, appName, settings, idle)) { return }
+        if deferTransition(.probe(probe, bundle, appName, settings, idle)) { return }
         guard remoteCommand == nil else { return }
         performSync(.probe(probe, bundle, appName, settings, idle))
     }
@@ -877,7 +870,7 @@ public final class ActivityRecorder: ObservableObject {
         guard remoteCommand == nil, from < to else { return }
         fence(from: from, to: to)
         counter.discardPending(overlapping: from, to: to)
-        if deferUI(.forgotten(from, to)) { return }
+        if deferTransition(.forgotten(from, to)) { return }
         performSync(.forgotten(from, to))
     }
 
