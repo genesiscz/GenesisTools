@@ -78,13 +78,22 @@ function component(token: string, percent: number): number {
     return token.endsWith("%") ? (Number.parseFloat(token) / 100) * percent : Number(token);
 }
 
-/** A hue token in degrees (`deg`, `rad`, `grad`, `turn` or a bare number). */
-function hue(token: string): number {
-    const n = Number.parseFloat(token);
-    const units: Record<string, number> = { rad: 180 / Math.PI, grad: 0.9, turn: 360 };
-    const unit = Object.keys(units).find((u) => token.endsWith(u));
+/** Degrees per hue unit. A bare number is degrees. */
+const HUE_UNITS: Record<string, number> = { deg: 1, grad: 0.9, rad: 180 / Math.PI, turn: 360 };
 
-    return token === "none" ? 0 : unit ? n * units[unit] : n;
+/**
+ * A hue token in degrees (`deg`, `rad`, `grad`, `turn` or a bare number). The unit is every letter after the
+ * number, so `100grad` reads as grad and never as its `rad` suffix.
+ */
+function hue(token: string): number {
+    if (token === "none") {
+        return 0;
+    }
+
+    const n = Number.parseFloat(token);
+    const unit = /[a-z]+$/.exec(token)?.[0];
+
+    return unit && unit in HUE_UNITS ? n * HUE_UNITS[unit] : n;
 }
 
 function map3<T>(values: readonly T[], f: (value: T) => number): Vec3 {
