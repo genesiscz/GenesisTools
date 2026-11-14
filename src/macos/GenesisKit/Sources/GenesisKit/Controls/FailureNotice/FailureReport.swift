@@ -2,7 +2,7 @@ import Foundation
 
 /// What the app knows about its own build, for a report an agent acts on: the version, and the checkout, branch and
 /// commit the installed bundle was built from (`~/.genesis-tools/app/manifest.json`, written by every build).
-public struct FailureAppFacts: Equatable, Sendable {
+public struct FailureAppFacts: Codable, Equatable, Sendable {
     public var name: String
     public var version: String?
     public var branch: String?
@@ -22,10 +22,10 @@ public struct FailureAppFacts: Equatable, Sendable {
 
     /// The running bundle's version and the build manifest under `home`. Reads one small file; call it when a
     /// failure is reported, not in a view body.
-    public static func current(home: String = NSHomeDirectory(), bundle: Bundle = .main) -> FailureAppFacts {
+    public static func current(home: String = GenesisToolsHome.home(), bundle: Bundle = .main) -> FailureAppFacts {
         let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "GenesisTools"
         var facts = FailureAppFacts(name: name, version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
-        let manifest = URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/app/manifest.json")
+        let manifest = GenesisToolsHome.url("app/manifest.json", in: home)
         guard let data = try? Data(contentsOf: manifest),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return facts }
         facts.branch = object["sourceBranch"] as? String
@@ -54,7 +54,7 @@ public struct FailureAppFacts: Equatable, Sendable {
 
 /// A failure a person reads and an agent can act on: a one-sentence headline, what ran, where its output and files
 /// are, and the raw output. The notice draws `detailsMarkdown()`; "Copy context for agents" copies `agentContext()`.
-public struct FailureReport: Equatable, Sendable {
+public struct FailureReport: Codable, Equatable, Sendable {
     /// The window's title, a few words on what failed ("Recording failed").
     public var title: String
     /// The real error in one sentence (`FailureLog.headline`), never a cut line of raw output.
@@ -88,15 +88,17 @@ public struct FailureReport: Equatable, Sendable {
     public var environment: FailureEnvironment?
     /// The failed `tools` call, from the task's `ToolsCallLedger`: its trace id, argv, how it ran and its stderr.
     public var call: ToolsCallLedger.Call?
-    /// The remote failure evidence, retained in Details and the context copied for agents.
+    /// The stack of the error where it was thrown (a TypeScript service's error reply carries it), as it printed.
     public var stack: String?
+    /// The issue the place that threw named: the tool whose process failed and, when it gave one, a short title.
     public var issue: FailureIssue?
 
     public init(title: String = "Failed", headline: String, summary: String? = nil, nextStep: String? = nil,
                 action: String? = nil, command: String? = nil, exitStatus: Int32? = nil, folder: String? = nil,
                 logFile: String? = nil, logLine: Int? = nil, dayLog: String? = nil, log: String = "", time: Date = Date(),
                 app: FailureAppFacts? = nil, expected: String? = nil, area: String? = nil,
-                environment: FailureEnvironment? = nil, stack: String? = nil, issue: FailureIssue? = nil) {
+                environment: FailureEnvironment? = nil, call: ToolsCallLedger.Call? = nil, stack: String? = nil,
+                issue: FailureIssue? = nil) {
         self.title = title
         self.headline = headline
         self.summary = summary
@@ -114,6 +116,7 @@ public struct FailureReport: Equatable, Sendable {
         self.expected = expected
         self.area = area
         self.environment = environment
+        self.call = call
         self.stack = stack
         self.issue = issue
     }
@@ -123,21 +126,62 @@ public struct FailureReport: Equatable, Sendable {
             || !(stack ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The checkbox lines of the bug form's Impact question (GitHub task list markdown): the poster ticks one.
+    public static let impactChoices = [
+        "Blocks my work completely",
+        "Frequent failure or major degradation",
+        "Occasional failure",
+        "Cosmetic",
+    ]
+
+    /// The tool the failure belongs to: the one that threw (`issue.tool`), else the report's area.
+    public var issueTool: String? {
+        [issue?.tool, area].compactMap { $0?.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+    }
+
+    /// The issue's title before any length cut: `[<tool>] <title>`, the title the place that threw gave, else the
+    /// headline. Without a tool: `<window title>: <headline>`.
+    public var issueTitle: String {
+        var text = (issue?.title?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? headline.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasSuffix(".") {
+            text.removeLast()
+        }
+        guard let tool = issueTool else { return "\(title): \(text)" }
+        return "[\(tool)] \(text)"
+    }
+
+    /// The stack's frames (`at …` lines), trimmed.
+    var stackFrames: [String] {
+        (stack ?? "").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("at ") }
+    }
+
     /// `<home>/.genesis-tools/logs/<local date>.log`, the file every `tools` process and the app log to that day.
-    public static func dayLogPath(home: String = NSHomeDirectory(), time: Date = Date(), timeZone: TimeZone = .current) -> String {
+    public static func dayLogPath(home: String = GenesisToolsHome.home(), time: Date = Date(), timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd"
-        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/logs/\(formatter.string(from: time)).log").path
+        return GenesisToolsHome.url("logs/\(formatter.string(from: time)).log", in: home).path
     }
 
     // MARK: - Markdown
 
+    /// " (exit N)" after a command or a step that failed, empty without an exit status: the one spelling the agent
+    /// context, the steps and the "Actual" block share.
+    private var exitSuffix: String {
+        exitStatus.map { " (exit \($0))" } ?? ""
+    }
+
     /// A markdown block an agent can act on without asking: the issue body under a heading, then every environment
     /// fact `tools genesis-tools env` gave.
     public func agentContext(timeZone: TimeZone = .current) -> String {
-        var text = "## \(app?.name ?? "GenesisTools") failure: \(headline)\n\n" + issueBody(timeZone: timeZone)
+        var text = "## \(app?.name ?? "GenesisTools") failure: \(headline)\n\n"
+        text += "- **Issue title:** \(issueTitle)\n"
+        if let command {
+            text += "- **Command:** `\(command)`" + exitSuffix + "\n"
+        }
+        text += "\n" + issueBody(timeZone: timeZone)
         if let environment, !environment.fields.isEmpty, !environment.markdown.isEmpty {
             text += "\n### All environment facts\n\n" + environment.markdown + "\n"
         }
@@ -161,16 +205,16 @@ public struct FailureReport: Equatable, Sendable {
         let fields = environment?.fields.filter { $0.type != "checkboxes" } ?? []
         guard !fields.isEmpty else {
             let environmentText = environment?.markdown.isEmpty == false ? environment?.markdown ?? "" : fallbackEnvironment()
-            return [
+            return PathDisplay.shortenHome(in: [
                 section("What happened", whatHappened()),
                 section("Steps to reproduce", steps()),
                 section("Expected", expected ?? "It works without an error."),
                 section("Actual (error + log)", fenced(actual(timeZone: timeZone), "shell")),
                 section("Environment", environmentText),
-            ].joined(separator: "\n")
+            ].joined(separator: "\n"))
         }
 
-        return fields.map { field in
+        return PathDisplay.shortenHome(in: fields.map { field in
             let value: String
             switch field.id {
             case "what-happened": value = whatHappened()
@@ -178,11 +222,11 @@ public struct FailureReport: Equatable, Sendable {
             case "expected": value = expected ?? "It works without an error."
             case "actual": value = actual(timeZone: timeZone)
             case "area": value = area ?? "other"
-            case "impact": value = "Choose one: Blocks my work completely, Frequent failure or major degradation, Occasional failure, Cosmetic"
+            case "impact": value = Self.impactChoices.map { "- [ ] \($0)" }.joined(separator: "\n")
             default: value = environment?.values[field.id] ?? "_No response_"
             }
             return section(field.label, field.render.map { fenced(value, $0) } ?? value)
-        }.joined(separator: "\n")
+        }.joined(separator: "\n"))
     }
 
     private func section(_ label: String, _ value: String) -> String {
@@ -206,7 +250,7 @@ public struct FailureReport: Equatable, Sendable {
         } else {
             lines.append("1. (what you did)")
         }
-        lines.append("2. It failed" + (exitStatus.map { " (exit \($0))" } ?? "") + ".")
+        lines.append("2. It failed" + exitSuffix + ".")
         return lines.joined(separator: "\n")
     }
 
@@ -218,11 +262,11 @@ public struct FailureReport: Equatable, Sendable {
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
         var lines = ["error: \(headline)"]
-        if let issue {
-            lines.append("tool: \(issue.tool)" + (issue.title.map { " (issue: \($0))" } ?? ""))
+        if let issueTool {
+            lines.append("tool: \(issueTool)" + (issue?.title.map { " (issue: \($0))" } ?? ""))
         }
         if let command {
-            lines.append("command: \(command)" + (exitStatus.map { " (exit \($0))" } ?? ""))
+            lines.append("command: \(command)" + exitSuffix)
         }
         if let logFile {
             lines.append("log: \(logFile)" + (logLine.map { " (from line \($0))" } ?? ""))
@@ -261,13 +305,14 @@ public struct FailureReport: Equatable, Sendable {
     public func detailsMarkdown() -> String {
         let events = FailureLog.events(in: log)
         var lines: [String] = []
-        if let stack = stack?.trimmingCharacters(in: .newlines), !stack.isEmpty {
-            lines += ["### Stack", "", fenced(stack, "text"), ""]
+
+        if let stack = Self.stackLine(stackFrames) {
+            lines += ["### Stack", "", stack + " (the whole stack is under Raw log)"]
         }
 
         let warnings = events.filter { $0.level == .warning || ($0.level == .error && (!$0.fields.isEmpty || !$0.stack.isEmpty)) }
         if !warnings.isEmpty {
-            lines += ["### Warnings (\(warnings.count))"]
+            lines += (lines.isEmpty ? [] : [""]) + ["### Warnings (\(warnings.count))"]
             for warning in warnings {
                 lines += ["", Self.title(warning)]
                 var short: [String] = []
@@ -300,7 +345,7 @@ public struct FailureReport: Equatable, Sendable {
                 lines.append(line)
             }
         }
-        return lines.joined(separator: "\n") + "\n"
+        return PathDisplay.shortenHome(in: lines.joined(separator: "\n") + "\n")
     }
 
     /// "**Warning** · `recorder-camera` the camera did not start".
@@ -363,10 +408,30 @@ public struct FailureReport: Equatable, Sendable {
     }
 }
 
+/// The issue a failure is filed as, from the error reply of the process that failed (`rpcErrorBody` in
+/// src/utils/rpc/errors.ts): the tool whose process answered (`meetings`, filled by that process, never typed at a
+/// throw) and the short title the place that threw gave. The drafted title is `[<tool>] <title>`.
+public struct FailureIssue: Codable, Equatable, Sendable {
+    public var tool: String
+    public var title: String?
+
+    public init(tool: String, title: String? = nil) {
+        self.tool = tool
+        self.title = title
+    }
+
+    /// The `issue` member of a JSON-RPC error; nil when there is none or it names no tool.
+    public init?(json: Any?) {
+        guard let object = json as? [String: Any], let tool = object["tool"] as? String, !tool.isEmpty else { return nil }
+        let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.init(tool: tool, title: title?.isEmpty == false ? title : nil)
+    }
+}
+
 /// What `tools genesis-tools triage --json` (or `env --json`) answered: the environment bullets, the bug form's fields in order (empty when
 /// the checkout has no `.github/ISSUE_TEMPLATE/bug_report.yml`), and the environment answers by field id.
-public struct FailureEnvironment: Equatable, Sendable {
-    public struct Field: Equatable, Sendable {
+public struct FailureEnvironment: Codable, Equatable, Sendable {
+    public struct Field: Codable, Equatable, Sendable {
         public var id: String
         public var label: String
         public var type: String
@@ -407,29 +472,15 @@ public struct FailureEnvironment: Equatable, Sendable {
     /// failed and the calls that were slow just before). A checkout without `triage` answers through `env --json`,
     /// which has the same shape without the state. Nil when both fail.
     public static func load(bridge: ToolsBridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())) async -> FailureEnvironment? {
+        let deadline = Date().addingTimeInterval(4)
         for command in ["triage", "env"] {
-            if let run = try? await bridge.run(subcommand: "genesis-tools", args: [command, "--json"], timeoutSeconds: 20),
+            let remaining = Int(deadline.timeIntervalSinceNow.rounded(.down))
+            guard remaining > 0 else { break }
+            if let run = try? await bridge.run(subcommand: "genesis-tools", args: [command, "--json"], timeoutSeconds: remaining),
                run.exitCode == 0, let environment = parse(json: run.stdout) {
                 return environment
             }
         }
         return nil
-    }
-}
-
-public struct FailureIssue: Codable, Equatable, Sendable {
-    public var tool: String
-    public var title: String?
-
-    public init(tool: String, title: String? = nil) {
-        self.tool = tool
-        self.title = title
-    }
-
-    /// The `issue` member of a JSON-RPC error; nil when there is none or it names no tool.
-    public init?(json: Any?) {
-        guard let object = json as? [String: Any], let tool = object["tool"] as? String, !tool.isEmpty else { return nil }
-        let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.init(tool: tool, title: title?.isEmpty == false ? title : nil)
     }
 }

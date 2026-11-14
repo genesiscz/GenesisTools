@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -416,17 +417,21 @@ final class HubInboxModel: ObservableObject {
     /// Each answered item's delivery, by item id, until the next answer to it.
     @Published private(set) var deliveries: [String: InboxDelivery] = [:]
     @Published private(set) var sending: Set<String> = []
-    /// Decisions being drafted or dismissed right now (a pending write), by item id.
+    /// Dialog answers being pressed right now, by item id. A decision's own writes are `staging`'s.
     @Published private(set) var writing: Set<String> = []
     /// Why the last draft or dismiss of an item failed, by item id, until its next write starts.
     @Published private(set) var writeErrors: [String: String] = [:]
-    /// The newest draft or dismiss asked for while one ran for the same item: it runs next, so a
-    /// second pick or a note saved during a pick is never dropped.
-    private var pendingWrites: [String: [String]] = [:]
-    /// The write running for each item, so a note queued behind a pick keeps that pick.
-    private var runningWrites: [String: [String]] = [:]
-    /// The write runner and reload seam used by the inbox's existing write queue.
-    var captureWrite: @Sendable ([String]) throws -> ProcessCapture = { try ToolsCLIRunner.capture($0) }
+    /// The decision staging engine the widget shares (`DecisionAnswering.Engine`): the pick and note staged a moment
+    /// ago, one write queue per decision, the held Dismiss, and the confirmation by the next load. It writes through
+    /// `tools question inbox` (`HubInboxDecisionLog`).
+    private(set) lazy var staging = makeStaging()
+    private let decisionLog = HubInboxDecisionLog()
+    private var stagingChanges: AnyCancellable?
+    /// The write runner of the staging engine's adapter (tests replace it), and the reload after a decision's writes.
+    var captureWrite: @Sendable ([String]) throws -> ProcessCapture {
+        get { decisionLog.capture }
+        set { decisionLog.capture = newValue }
+    }
     var reloadAfterWrite: (() -> Void)?
     /// A load asked for while one ran (a write finished meanwhile). It runs when that one ends.
     private var reloadPending = false
@@ -465,19 +470,11 @@ final class HubInboxModel: ObservableObject {
     var onLoaded: (() -> Void)?
     /// The widget's settings for answering a decision (Decision click, ⌘ does the other, Return in an own answer):
     /// the Inbox answers the way the widget does (`DecisionAnswering`). Read again on each load and before each click.
-    @Published private(set) var preferences: WidgetPreferences?
+    @Published private(set) var preferences: WidgetPreferences = .hubDefaults
     /// The decision whose note field has the keyboard: ⌘-Return there belongs to the note, not to the Send bar.
     @Published var noteFocusID: String?
-    /// Work waiting for an item's draft writes to land: a send at once waits for its pick.
-    private var afterWrites: [String: [() -> Void]] = [:]
-    /// The letters a click staged a moment ago, by item id, shown until the reload after its write (the widget's
-    /// `pendingStage`): a second ⇧-click builds on them instead of on the last load.
-    @Published private(set) var pendingLetters: [String: String] = [:]
     /// Staged ids whose send waits for the session's running send to end, by session id.
     private var queuedSends: [String: [String]] = [:]
-    /// Dismisses held for their Undo, by item id: the write happens when the hold ends (the widget's Dismiss).
-    @Published private(set) var heldDismiss: Set<String> = []
-    private var dismissTasks: [String: Task<Void, Never>] = [:]
     /// A decision's note as typed in its card and not staged yet, by item id. Not published: a keystroke redraws its own
     /// card only. It outlives the lazy row, so a note survives scrolling away and a reload. Nothing is staged until
     /// Return, ⌘-Return, Stage note or an option click (UX audit 2026-10-27, F3: a pause in typing staged it and
@@ -545,10 +542,10 @@ final class HubInboxModel: ObservableObject {
             let span = HubPerf.begin("inbox.load")
             let ledger = ToolsCallLedger()
             let result = Result {
-                try JSONDecoder().decode(InboxEnvelope.self, from: ledger.recordSync { try ToolsCLIRunner.run(["question", "inbox", "--json"]) })
+                try JSONDecoder().decode(InboxEnvelope.self, from: ledger.recordSync { try HubSource.bridge.output(["question", "inbox", "--json"]) })
             }
             span.end((try? result.get()).map { "\($0.sessions.count) sessions, tools \($0.elapsedMs ?? -1) ms" } ?? "failed")
-            let preferences = WidgetPreferencesFile.shared.current()
+            let preferences = WidgetPreferencesFile.shared.current() ?? .hubDefaults
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -561,11 +558,9 @@ final class HubInboxModel: ObservableObject {
                     }
                     switch result {
                     case .success(let envelope):
-                        // A pick the reload now shows (or that another surface changed meanwhile) is the store's.
-                        // Each assignment publishes, and every view of the Inbox runs again: only a change assigns.
-                        let pending = self.pendingLetters.filter { self.writing.contains($0.key)
-                            || self.pendingWrites[$0.key] != nil }
-                        if pending != self.pendingLetters { self.pendingLetters = pending }
+                        // A pick the load shows is confirmed; one no load showed in time gives way to the store.
+                        // The engine publishes only a change, so an unchanged load redraws nothing for it.
+                        self.staging.reconcile(Self.stagingRows(envelope.sessions))
                         // An unchanged Inbox (the usual reload on a mode switch) redraws nothing.
                         if self.sessions != envelope.sessions {
                             HubMainBusy.measure("inbox.render")
@@ -690,7 +685,7 @@ final class HubInboxModel: ObservableObject {
         let sessionId = target.sessionId
         let number = target.number
         DispatchQueue.global(qos: .userInitiated).async {
-            let found = try? JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(
+            let found = try? JSONDecoder().decode(SessionDecisionsEnvelope.self, from: HubSource.bridge.output(
                 ["question", "inbox", "--session", sessionId, "--json"]))
             let item = found?.decisions.first { $0.id == id }
             DispatchQueue.main.async { [weak self] in
@@ -728,30 +723,69 @@ final class HubInboxModel: ObservableObject {
     /// `""` to clear the pick); `text` is the note, nil to keep the stored one. `then` runs once the write landed (a
     /// send at once). The item's revision goes along, so a pick on text the agent has since changed is refused.
     func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?, then: (() -> Void)? = nil) {
-        guard let sessionId = session.sessionId, let number = item.number else { return }
-        var args = ["question", "inbox", "draft", "--session", sessionId, "--decision", String(number)]
-        if let option {
-            args += ["--option", option]
-            pendingLetters[item.id] = option
-        }
-        if let text { args += ["--text", text] }
-        if let provider = session.provider { args += ["--provider", provider] }
-        if let cwd = session.cwd, !cwd.isEmpty { args += ["--cwd", cwd] }
-        if let revision = item.revision { args += ["--expected-revision", String(revision)] }
-        write(args, item: item, then: then)
+        guard let address = Self.address(item, in: session) else { return }
+        writeErrors[item.id] = nil
+        writeErrorDetails[item.id] = nil
+        staging.stage(address, option: option, note: text, then: then)
     }
 
     /// The letters a card shows as staged: a click's a moment ago, else the last load's.
     func letters(_ item: InboxItem) -> String {
-        pendingLetters[item.id] ?? item.draftOption ?? ""
+        staging.letters(item.id, stored: item.draftOption)
+    }
+
+    /// `item` as the decision log's writes address it.
+    nonisolated static func address(_ item: InboxItem, in session: InboxSession) -> DecisionAddress? {
+        guard let sessionId = session.sessionId, let number = item.number else { return nil }
+        return DecisionAddress(id: item.id, sessionId: sessionId, number: number, revision: item.revision,
+                               provider: session.provider, cwd: session.cwd)
+    }
+
+    /// Each decision's stored pick and note in a load, for the staging engine's confirmation.
+    nonisolated static func stagingRows(_ sessions: [InboxSession]) -> [String: DecisionAnswering.Engine.Row] {
+        var rows: [String: DecisionAnswering.Engine.Row] = [:]
+        for item in sessions.flatMap(\.items) where item.isDecision {
+            rows[item.id] = DecisionAnswering.Engine.Row(option: item.draftOption, note: item.draft)
+        }
+        return rows
+    }
+
+    private func makeStaging() -> DecisionAnswering.Engine {
+        let engine = DecisionAnswering.Engine(log: decisionLog)
+        engine.written = { [weak self] id, action, answer in self?.written(id, action, answer) }
+        engine.drained = { [weak self] _ in
+            guard let self else { return }
+            if let reload = self.reloadAfterWrite { reload() } else { self.load() }
+        }
+        stagingChanges = engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        return engine
+    }
+
+    /// A decision's write ended: a note it saved is acknowledged on its card, the Decisions pane reloads, and a refused
+    /// one says why on the card.
+    private func written(_ id: String, _ action: DecisionLogAction, _ answer: DecisionLogAnswer) {
+        switch answer {
+        case .done:
+            if case .stage(_, _, let note?) = action, noteTexts[id] == note {
+                noteTexts[id] = nil
+                noteAcknowledgements[id, default: 0] += 1
+            }
+            writeGeneration += 1
+        case .refused(let text, let detail):
+            writeErrors[id] = "Not saved: \(text)"
+            writeErrorDetails[id] = detail
+        case .unanswered(let seconds):
+            writeErrors[id] = "Not saved: tools did not answer within \(seconds) seconds. Try again."
+            writeErrorDetails[id] = nil
+        }
     }
 
     /// What `item`'s card draws of this model, as values: the card compares them and skips a publish that changed none.
     func cardState(for item: InboxItem, in session: InboxSession, hubSession: HubSession?) -> InboxCardState {
         InboxCardState(
             letters: letters(item),
-            heldDismiss: heldDismiss.contains(item.id),
-            writing: writing.contains(item.id),
+            heldDismiss: staging.held.contains(item.id),
+            writing: writing.contains(item.id) || staging.writing.contains(item.id),
             sessionSending: session.sessionId.map { sendingSessions.contains($0) } ?? false,
             writeError: writeErrors[item.id],
             writeErrorDetail: writeErrorDetails[item.id],
@@ -764,8 +798,8 @@ final class HubInboxModel: ObservableObject {
     }
 
     /// The widget's settings as they are now: a click follows a change made since the last load.
-    private func freshPreferences() -> WidgetPreferences? {
-        let current = WidgetPreferencesFile.shared.current()
+    private func freshPreferences() -> WidgetPreferences {
+        let current = WidgetPreferencesFile.shared.current() ?? .hubDefaults
         if current != preferences { preferences = current }
         return current
     }
@@ -782,7 +816,7 @@ final class HubInboxModel: ObservableObject {
             answerDialog(item, letter: letter)
             return
         }
-        let plan = Self.clickPlan(letters: letters(item), letter: letter, shift: shift,
+        let plan = DecisionAnswering.clickPlan(letters: letters(item), letter: letter, shift: shift,
                                   stages: DecisionAnswering.clickStages(freshPreferences(), command: command),
                                   multiple: item.takesSeveral)
         keyCardID = item.id
@@ -790,14 +824,6 @@ final class HubInboxModel: ObservableObject {
         if let note { noteTexts[item.id] = note }
         draft(item, in: session, option: plan.option, text: note,
               then: plan.send ? { [weak self] in self?.sendStaged([item.id], in: session) } : nil)
-    }
-
-    /// What a click on `letter` does with the staged `letters`: the pick it stores, and whether it is sent at once. A
-    /// decision that takes any set of its options (`multiple`) toggles the letter and never sends, as ⇧ does.
-    nonisolated static func clickPlan(letters: String, letter: String, shift: Bool, stages: Bool,
-                                      multiple: Bool = false) -> (option: String, send: Bool) {
-        if shift || multiple { return (InboxDecisionCard.toggled(letters, letter, add: true), false) }
-        return stages ? (InboxDecisionCard.toggled(letters, letter, add: false), false) : (letter, true)
     }
 
     /// "Pick the recommended a + b + c": the staged pick becomes exactly `option`, with the card's changed note.
@@ -856,82 +882,15 @@ final class HubInboxModel: ObservableObject {
     /// Drops a decision that no longer matters, without sending anything. The write waits for the Undo window the
     /// widget's Dismiss has (`WidgetModel.undoSeconds`); meanwhile no send takes the decision.
     func dismiss(_ item: InboxItem, in session: InboxSession) {
-        guard let sessionId = session.sessionId, let number = item.number, !heldDismiss.contains(item.id) else { return }
-        var args = ["question", "inbox", "dismiss", "--session", sessionId, "--decision", String(number)]
-        if let revision = item.revision { args += ["--expected-revision", String(revision)] }
-        heldDismiss.insert(item.id)
-        let seconds = WidgetModel.undoSeconds(freshPreferences())
-        dismissTasks[item.id] = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-            guard let self, self.heldDismiss.contains(item.id) else { return }
-            self.heldDismiss.remove(item.id)
-            self.dismissTasks[item.id] = nil
-            self.write(args, item: item)
-        }
+        guard let address = Self.address(item, in: session), !staging.held.contains(item.id) else { return }
+        writeErrors[item.id] = nil
+        writeErrorDetails[item.id] = nil
+        staging.hold(item.id, .dismiss(address), seconds: WidgetModel.undoSeconds(freshPreferences()))
     }
 
     /// Undo of a held Dismiss: nothing was written, the decision waits as before.
     func undoDismiss(_ item: InboxItem) {
-        dismissTasks.removeValue(forKey: item.id)?.cancel()
-        heldDismiss.remove(item.id)
-    }
-
-    /// A draft or dismiss write: run it, then reload so the stored pick shows. No delivery banner;
-    /// a failed write says why on the card. `queued`: a write that waited behind another one; it
-    /// leaves the card's error alone, so a failure of the one before it stays readable.
-    private func write(_ args: [String], item: InboxItem, queued: Bool = false, then: (() -> Void)? = nil) {
-        if let then { afterWrites[item.id, default: []].append(then) }
-        guard !writing.contains(item.id) else {
-            pendingWrites[item.id] = Self.keepingPick(args, from: pendingWrites[item.id] ?? runningWrites[item.id])
-            return
-        }
-
-        writing.insert(item.id)
-        runningWrites[item.id] = args
-        if !queued {
-            writeErrors[item.id] = nil
-            writeErrorDetails[item.id] = nil
-        }
-        let captureWrite = captureWrite
-        DispatchQueue.global(qos: .userInitiated).async {
-            let span = HubPerf.begin("inbox.draft")
-            let failure: (text: String, raw: String?)?
-            do {
-                let capture = try captureWrite(args)
-                failure = capture.status == 0 ? nil : Self.refusal(capture)
-            } catch {
-                failure = ("the hub could not run tools. Try again.", "\(error)")
-            }
-            span.end(failure == nil ? "ok" : "failed")
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.writing.remove(item.id)
-                    self.runningWrites[item.id] = nil
-                    if let failure {
-                        self.writeErrors[item.id] = "Not saved: \(failure.text)"
-                        self.writeErrorDetails[item.id] = failure.raw
-                        // A send waiting on this pick must not send what was stored before it.
-                        self.afterWrites[item.id] = nil
-                        self.pendingLetters[item.id] = nil
-                    } else {
-                        if args.count > 2, args[2] == "draft", let index = args.firstIndex(of: "--text"),
-                           index + 1 < args.count, self.noteTexts[item.id] == args[index + 1] {
-                            self.noteTexts[item.id] = nil
-                            self.noteAcknowledgements[item.id, default: 0] += 1
-                        }
-                        self.writeGeneration += 1
-                    }
-                    if let next = self.pendingWrites.removeValue(forKey: item.id) {
-                        self.write(next, item: item, queued: true)
-                    } else {
-                        let waiting = self.afterWrites.removeValue(forKey: item.id) ?? []
-                        if let reload = self.reloadAfterWrite { reload() } else { self.load() }
-                        waiting.forEach { $0() }
-                    }
-                }
-            }
-        }
+        staging.undo(item.id)
     }
 
     /// Why a `tools question inbox` write was refused: the `{ "error" }` sentence it prints on stdout ("DECISION 4
@@ -945,16 +904,6 @@ final class HubInboxModel: ObservableObject {
         let stderr = String(decoding: capture.stderr, as: UTF8.self).trimmed
         return ("the decision log refused the change. Try again.",
                 "tools exited \(capture.status)" + (stderr.isEmpty ? "" : ": \(stderr)"))
-    }
-
-    /// A note-only draft (`--text`, no `--option`) that waits behind a pick keeps that pick's letters:
-    /// it replaces the queued pick, and the running pick may still fail. A dismiss never gets letters.
-    nonisolated static func keepingPick(_ args: [String], from earlier: [String]?) -> [String] {
-        guard args.count > 2, args[2] == "draft", !args.contains("--option"),
-              let earlier, earlier.count > 2, earlier[2] == "draft",
-              let at = earlier.firstIndex(of: "--option"), at + 1 < earlier.count
-        else { return args }
-        return args + ["--option", earlier[at + 1]]
     }
 
     /// Resolves where a session's answers would go right now (a live cmux pane, a codex worker, or
@@ -971,7 +920,7 @@ final class HubInboxModel: ObservableObject {
             // fell through to a send that queued the answers silently.
             let resolved: Result<InboxTargetResolution, Error>
             do {
-                let output = try ToolsCLIRunner.output(of: await ToolsCLIRunner.captureCancellable(targetArgs), targetArgs)
+                let output = try ToolsFailure.check(await HubSource.bridge.captureCancellable(targetArgs), argv: targetArgs)
                 resolved = Result { try JSONDecoder().decode(InboxTargetResolution.self, from: output) }
             } catch is CancellationError {
                 self?.endSend(sessionId, cancelled: true)
@@ -1081,10 +1030,10 @@ final class HubInboxModel: ObservableObject {
             let delivery: InboxDelivery
             do {
                 // The wait for a resumed pane sits inside the run: give it room beyond the default.
-                let capture = try await ToolsCLIRunner.captureCancellable(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
+                let capture = try await HubSource.bridge.captureCancellable(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("Nothing was sent: the send did not finish.",
-                                raw: ToolsCLIRunner.exitDetail(capture, args))
+                                raw: ToolsFailure(argv: args, capture: capture).summary)
             } catch is CancellationError {
                 delivery = .cancelled
             } catch {
@@ -1150,7 +1099,7 @@ final class HubInboxModel: ObservableObject {
 
     /// A session's staged decisions that can go now: one whose Dismiss waits for its Undo stays out.
     func sendableIDs(_ session: InboxSession) -> [String] {
-        session.draftedItems.map(\.id).filter { !heldDismiss.contains($0) }
+        session.draftedItems.map(\.id).filter { !staging.held.contains($0) }
     }
 
     /// A session's send result: shown under its Send bar, read out by VoiceOver (F17), and a delivered one fades after
@@ -1160,7 +1109,7 @@ final class HubInboxModel: ObservableObject {
         GenAnnounce.post(delivery.summary)
         resultFades.removeValue(forKey: sessionId)?.cancel()
         guard !delivery.isError, !delivery.isQueued else { return }
-        let seconds = max(0, min(60, preferences?.noteSeconds ?? 6))
+        let seconds = max(0, min(60, preferences.noteSeconds))
         guard seconds > 0 else { return }
         resultFades[sessionId] = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
@@ -1178,7 +1127,7 @@ final class HubInboxModel: ObservableObject {
         do {
             try JSONEncoder().encode(request).write(to: file)
             // The send can wait on a busy receiver: room beyond the default. Cancel (F19) stops it before it writes.
-            let run = try await ToolsCLIRunner.captureStoppable(["hub", "widget", "call", "--input", file.path], timeout: 120)
+            let run = try await HubSource.bridge.captureStoppable(["hub", "widget", "call", "--input", file.path], timeout: 120)
             return widgetDelivery(run.capture, stopped: run.stopped, ids: ids, titles: titles, resend: resend)
         } catch is CancellationError {
             return .cancelled
@@ -1194,7 +1143,7 @@ final class HubInboxModel: ObservableObject {
         guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
             if stopped { return .cancelled }
             return .failure("Nothing was sent: the widget's sender did not answer. The answers stay staged.",
-                            raw: ToolsCLIRunner.exitDetail(capture, ["hub", "widget", "call"]))
+                            raw: ToolsFailure(argv: ["hub", "widget", "call"], capture: capture).summary)
         }
         var delivery = InboxDelivery.outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
         if stopped, delivery.error == nil, let text = delivery.outcomeText {
@@ -1299,9 +1248,9 @@ final class HubInboxModel: ObservableObject {
             let delivery: InboxDelivery
             do {
                 let callArgs = ["hub", "widget", "call", "--input", file.path]
-                let capture = try ToolsCLIRunner.capture(callArgs)
+                let capture = try HubSource.bridge.capture(callArgs)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
-                    ?? .failure("the hub did not answer.", raw: ToolsCLIRunner.exitDetail(capture, callArgs))
+                    ?? .failure("the hub did not answer.", raw: ToolsFailure(argv: callArgs, capture: capture).summary)
             } catch {
                 delivery = .failure("the hub could not run tools.", raw: "\(error)")
             }
@@ -1331,10 +1280,10 @@ final class HubInboxModel: ObservableObject {
             let span = HubPerf.begin("inbox.answer")
             let delivery: InboxDelivery
             do {
-                let capture = try ToolsCLIRunner.capture(args)
+                let capture = try HubSource.bridge.capture(args)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("The answer was not sent. Try again.",
-                                raw: ToolsCLIRunner.exitDetail(capture, args))
+                                raw: ToolsFailure(argv: args, capture: capture).summary)
             } catch {
                 delivery = .failure("The answer was not sent: the hub could not run tools.", raw: "\(error)")
             }
@@ -1366,7 +1315,7 @@ final class HubInboxModel: ObservableObject {
         let tool = cmuxTool(provider: session.provider)
         DispatchQueue.global(qos: .userInitiated).async {
             // --first as CmuxHost.focus passes it: without a terminal, a session open in two panes fails.
-            let capture = try? ToolsCLIRunner.capture([tool, "cmux", "focus", sessionId, "--first"])
+            let capture = try? HubSource.bridge.capture([tool, "cmux", "focus", sessionId, "--first"])
             let failed = capture.map { $0.status != 0 } ?? true
             // One sentence on screen; the tool's own words go to the log (F10).
             if failed {
@@ -2148,7 +2097,7 @@ struct InboxCardState: Equatable {
     var sessionSending: Bool
     var writeError: String?
     var writeErrorDetail: String?
-    var preferences: WidgetPreferences?
+    var preferences: WidgetPreferences
     /// Changes only when the card's current note was successfully saved.
     var noteAcknowledgement: Int
     /// The note-focus request's count while it names this card, nil otherwise: a change moves the keyboard into it.
@@ -2433,7 +2382,7 @@ struct InboxDecisionCard: View, Equatable {
     private var noteField: some View {
         let keys = LiveWidgetView.ownAnswerKeys(ownAnswer: true,
                                                 returnStages: DecisionAnswering.returnStages(state.preferences, command: false),
-                                                commandSwaps: state.preferences?.decisionCommandSwaps ?? true)
+                                                commandSwaps: state.preferences.decisionCommandSwaps)
         let placeholder = (item.choices ?? []).isEmpty ? "Your answer…" : "Write my own answer…"
         return VStack(alignment: .leading, spacing: 4) {
             Group {
@@ -2552,7 +2501,9 @@ struct InboxDecisionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             if let failure = state.writeError {
                 // One sentence; the tool's own words behind Details, never cut in the middle (F10).
-                NoticePill(text: failure, more: state.writeErrorDetail, tone: .error)
+                NoticePill(text: failure, more: state.writeErrorDetail, tone: .error,
+                           fixes: [.unexpectedDetails(state.writeErrorDetail ?? failure, outcome: failure,
+                                                      action: "Send the answer")])
             }
             if let record = item.delivery {
                 VStack(alignment: .leading, spacing: 2) {
@@ -2719,7 +2670,7 @@ struct InboxDecisionCard: View, Equatable {
                         ? "This decision is closed: \(statusPhrase)"
                         : sessionSending ? "This session's send is running"
                         : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
-                                                          swaps: preferences?.decisionCommandSwaps ?? true,
+                                                          swaps: preferences.decisionCommandSwaps,
                                                           key: index < 9 ? index + 1 : nil, multiple: multiple))
             } else {
                 label.restingButton(enabled: enabled, action: choose)
@@ -2754,17 +2705,6 @@ struct InboxDecisionCard: View, Equatable {
             .foregroundColor(ReviewPalette.dim)
             .padding(.leading, 6)
         }
-    }
-
-    /// Toggles one letter in a pick string. Plain click replaces the set; ⇧-click adds or removes.
-    nonisolated static func toggled(_ current: String, _ id: String, add: Bool) -> String {
-        var set = Set(current.map(String.init))
-        if add {
-            if set.contains(id) { set.remove(id) } else { set.insert(id) }
-        } else {
-            set = set == [id] ? [] : [id]
-        }
-        return set.sorted().joined()
     }
 }
 
@@ -3434,4 +3374,18 @@ struct InboxFormCard: View {
 func inlineMarkdown(_ text: String) -> AttributedString {
     (try? AttributedString(markdown: text, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
         ?? AttributedString(text)
+}
+
+/// The Inbox mode's answers to the hub (Hub/HubModeModel.swift).
+extension HubInboxModel: HubModeModel {
+    /// The list is the content itself, so the mode alone is a place worth going back to.
+    var navSelection: String? { selectedID ?? HubModel.wholeList }
+
+    func navTitle(selection: String) -> String {
+        selection == HubModel.wholeList ? "Inbox" : "Inbox: " + (sessions.first { $0.id == selection }?.displayTitle ?? "a session")
+    }
+
+    var showsTitlebarHeader: Bool { true }
+
+    func reload() { load() }
 }

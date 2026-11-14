@@ -20,21 +20,27 @@ public struct ToolsRunResult: Equatable, Sendable {
 /// `CustomStringConvertible` too: callers show `"\(error)"`, which printed `binaryNotFound("…")` instead of the sentence.
 public enum ToolsBridgeError: Error, LocalizedError, Equatable, CustomStringConvertible {
     case binaryNotFound(String)
-    case timeout(seconds: Int)
+    /// `command` is the call's first words (`tools hub pr list`, `command(_:)`), so the text says which call it was.
+    case timeout(seconds: Int, command: String = "tools")
     case refused(String)
 
     public var errorDescription: String? {
         switch self {
         case .binaryNotFound(let path):
             return "The tools command is not at \(path). Run ./install.sh in your GenesisTools checkout, then reopen the app."
-        case .timeout(let seconds):
-            return "tools call exceeded \(seconds)s"
+        case .timeout(let seconds, let command):
+            return "\(command) did not finish within \(seconds) s"
         case .refused(let reason):
             return reason
         }
     }
 
     public var description: String { errorDescription ?? "tools call failed" }
+
+    /// "tools hub pr list": the first three words of `argv`, as `ToolsFailure.summary` names a call.
+    public static func command(_ argv: [String]) -> String {
+        (["tools"] + argv.prefix(3)).joined(separator: " ")
+    }
 }
 
 /// Scrubbed `tools <sub> …` runner. Argv only, never a shell.
@@ -48,6 +54,35 @@ public struct ToolsBridge: Sendable {
     /// checked it with the kernel), so `tools` skips both launcher stages when that is already GenesisTools.
     /// GENESIS_TOOLS_HOME and GENESIS_TOOLS_DAEMON_DIR pass through too: a process started against a sandbox home
     /// must not let its `tools` children read or change the real user's data (src/utils/storage/root.ts).
+    ///
+    /// The hub's calls passed the whole environment until 2026-11-10, when they moved onto this list. The names
+    /// added then, with the tools that read them:
+    /// - `GH_TOKEN`: `gh` and the forge client behind `tools hub pr` (src/utils/env, `env.github`).
+    /// - `GITLAB_TOKEN`, `GITLAB_HOST`: the GitLab client behind `tools hub pr` on a GitLab project
+    ///   (src/gitlab/lib/client.ts).
+    /// - `GIT_*` (`envAllowlistPrefixes`): git's own settings (`GIT_SSH_COMMAND`, `GIT_CONFIG_GLOBAL`, …) for every
+    ///   `tools hub` verb that runs git (worktrees, PR fetch, readiness), apart from the location names in
+    ///   `envGitLocationKeys`.
+    /// - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms: git, gh, glab and the forge
+    ///   requests behind a proxy.
+    /// - `LC_ALL`, `LC_CTYPE`: the locale git and the CLI print in, beside `LANG`.
+    /// - `TMPDIR`: the per-user temporary folder that git, gh and the CLI write into.
+    /// - `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`: the agent homes `tools ai sessions`, `tools claude history`
+    ///   and the cmux verbs read (src/utils/providers/session-paths.ts).
+    /// - `GENESIS_HUB_SERVER`: `GENESIS_HUB_SERVER=0` keeps a child's own `tools` calls off the resident server too.
+    /// - `PROFILE_TO_STDERR`: the hub turns it off for the `PROFILE` it sets on `tools hub pr` (`HubSource.bridge`).
+    /// - `GITHUB_PERSONAL_ACCESS_TOKEN`: `env.github.getToken()` reads it after `GITHUB_TOKEN` and `GH_TOKEN`
+    ///   (src/utils/env/envVariables.ts `GITHUB_TOKEN_KEYS`, used by src/utils/github/octokit.ts), for every `tools hub pr` verb.
+    /// - `TOOLS_SKIP_AUTOINSTALL`, `TOOLS_AUTOINSTALL`, `GENESIS_TOOLS_NO_EXEC`: the switches of the `tools` launcher
+    ///   script at the repository root (its dependency install and its exec into the tool).
+    /// - `GENESIS_TOOLS_MASTER_KEY`: the vault key of a headless start (`env.security.getMasterKey()`, the first rung of
+    ///   src/utils/security/keyring/headless.ts), for `tools ai usage` and `tools ai-spend`.
+    /// - `XDG_CONFIG_HOME`: src/utils/obsidian/discovery.ts finds Obsidian's vault list under it.
+    /// - `GITLAB_PROJECT`: the GitLab project of `tools hub pr` on a GitLab forge (src/gitlab/lib/client.ts).
+    /// - `T3CODE_HOME`, `LC_TIME`, `GENESIS_TOOLS_APP_HOME`: T3 Code's home, the date locale and the home of the
+    ///   GenesisTools.app bundle (src/utils/env/envVariables.ts).
+    /// - `CODEBUFF_DATA_DIR`, `KIMI_DATA_DIR`, `OPENCLAW_DIR`, `HERMES_HOME`, `GOOSE_PATH_ROOT`: the data folders the
+    ///   spend reports read (src/utils/ai/usage/spend/reports/sources.ts).
     public static let envAllowlist: Set<String> = [
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
@@ -55,7 +90,34 @@ public struct ToolsBridge: Sendable {
         "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE", "GENESIS_TOOLS_NO_APP",
         "GENESIS_TOOLS_HOME", "GENESIS_TOOLS_DAEMON_DIR",
         ToolsCallTrace.environmentKey,
+        "GH_TOKEN", "GITLAB_TOKEN", "GITLAB_HOST",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+        "LC_ALL", "LC_CTYPE", "TMPDIR",
+        "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME",
+        "GENESIS_HUB_SERVER", "PROFILE_TO_STDERR",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "TOOLS_SKIP_AUTOINSTALL", "TOOLS_AUTOINSTALL", "GENESIS_TOOLS_NO_EXEC",
+        "GENESIS_TOOLS_MASTER_KEY",
+        "XDG_CONFIG_HOME", "GITLAB_PROJECT",
+        "T3CODE_HOME", "LC_TIME", "GENESIS_TOOLS_APP_HOME",
+        "CODEBUFF_DATA_DIR", "KIMI_DATA_DIR", "OPENCLAW_DIR", "HERMES_HOME", "GOOSE_PATH_ROOT",
     ]
+
+    /// Names that pass by their prefix: git reads a family of `GIT_` variables.
+    public static let envAllowlistPrefixes: [String] = ["GIT_"]
+
+    /// `GIT_` names that the prefix does not pass. They name a repository, and a face started from a git hook carries
+    /// them, so every git in every child would run against that repository instead of the one its command names.
+    public static let envGitLocationKeys: Set<String> = [
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+    ]
+
+    /// Whether `key` reaches a `tools` child.
+    public static func allowsEnvironmentKey(_ key: String) -> Bool {
+        if envAllowlist.contains(key) { return true }
+        return !envGitLocationKeys.contains(key) && envAllowlistPrefixes.contains { key.hasPrefix($0) }
+    }
 
     public typealias OutputSink = @Sendable (
         ToolsRunResult,
@@ -73,22 +135,30 @@ public struct ToolsBridge: Sendable {
 
     public var binaryPath: String { resolveBinaryPath() }
 
+    /// Variables a caller adds for some argvs (the hub's `PROFILE` for `tools hub pr`). Only allowlisted names pass.
+    public typealias ChildEnvironment = @Sendable (_ argv: [String]) -> [String: String]
+    private let extraChildEnvironment: ChildEnvironment?
+
     /// `server` nil asks `ToolsServerClient.shared`, the app's resident server, when the app set one.
-    public init(binaryPath: String, outputSink: OutputSink? = nil, server: ToolsServerClient? = nil) {
+    public init(binaryPath: String, outputSink: OutputSink? = nil, server: ToolsServerClient? = nil,
+                childEnvironment: ChildEnvironment? = nil) {
         let captured = binaryPath
         self.resolveBinaryPath = { captured }
         self.outputSink = outputSink
         self.server = server ?? ToolsServerClient.shared
+        self.extraChildEnvironment = childEnvironment
     }
 
     public init(
         resolveBinaryPath: @escaping @Sendable () -> String,
         outputSink: OutputSink? = nil,
-        server: ToolsServerClient? = nil
+        server: ToolsServerClient? = nil,
+        childEnvironment: ChildEnvironment? = nil
     ) {
         self.resolveBinaryPath = resolveBinaryPath
         self.outputSink = outputSink
         self.server = server ?? ToolsServerClient.shared
+        self.extraChildEnvironment = childEnvironment
     }
 
     public var binaryExists: Bool {
@@ -230,7 +300,7 @@ public struct ToolsBridge: Sendable {
     public static func scrubbedEnvironment(
         from env: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
-        var out = env.filter { envAllowlist.contains($0.key) }
+        var out = env.filter { allowsEnvironmentKey($0.key) }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extras = ["\(home)/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         var path = out["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -242,6 +312,16 @@ public struct ToolsBridge: Sendable {
             out["GENESIS_TOOLS_NO_APP"] = "1"
         }
         return out
+    }
+
+    /// A process child's environment: the scrubbed one, this bridge's additions for `argv`, and the call's trace id.
+    func childEnvironment(argv: [String], traceId: String) -> [String: String] {
+        var environment = Self.scrubbedEnvironment()
+        for (key, value) in extraChildEnvironment?(argv) ?? [:] where Self.allowsEnvironmentKey(key) {
+            environment[key] = value
+        }
+        environment[ToolsCallTrace.environmentKey] = traceId
+        return environment
     }
 
     public func run(
@@ -259,9 +339,12 @@ public struct ToolsBridge: Sendable {
             )
         }
         let argv = [subcommand] + args
-        let traceId = ToolsCallTrace.newId()
-        let started = Date()
-        if let server, let result = await server.call(argv: argv, timeoutSeconds: timeoutSeconds, traceId: traceId) {
+        let (traceId, started) = Self.beginCall(argv)
+        // The server gets a part of the call's limit (`serverPatience`), so a server that is busy or starved costs a
+        // wait and then a process, never the whole limit and an error. Its own "exceeded" answer is no answer.
+        let patience = Self.serverPatience(timeoutSeconds: timeoutSeconds)
+        if let server, let result = await server.call(argv: argv, timeoutSeconds: patience, traceId: traceId),
+           !Self.isServerDeadline(result) {
             // Same span name as the process path with `.srv`, so app-perf.log shows which path answered.
             MonitorPerf.record(Self.spanLabel(subcommand: subcommand, args: args) + ".srv", ms: Double(result.wallMs))
             ToolsCallTrace.record(
@@ -274,6 +357,23 @@ public struct ToolsBridge: Sendable {
 
         // A task cancelled while the server had the call never starts the process fallback.
         try Task.checkCancellation()
+        let waited = Date().timeIntervalSince(started)
+        if waited >= Double(patience) {
+            MonitorPerf.mark("\(Self.spanLabel(subcommand: subcommand, args: args)) the hub server did not answer in \(patience)s; running the process")
+        }
+
+        // The server had the call for its whole limit, and the process shares that limit: it would be started and
+        // killed in the same moment. Five days of app-perf.log had 41 such starts (31 of `ai sessions tail`, each
+        // after 31.0 to 31.2 s), every one a `tools` start on a Mac that was already slow.
+        guard Self.processBudget(timeoutSeconds: timeoutSeconds, waited: Date().timeIntervalSince(started)) != nil else {
+            let spanLabel = Self.spanLabel(subcommand: subcommand, args: args)
+            MonitorPerf.record(spanLabel, ms: Date().timeIntervalSince(started) * 1000)
+            MonitorPerf.mark("\(spanLabel) TIMEOUT after \(timeoutSeconds)s (the hub server did not answer; no process started)")
+            ToolsCallTrace.record(
+                traceId: traceId, via: "server-timeout", argv: argv, started: started, exit: -1, outBytes: 0, stderr: ""
+            )
+            throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
+        }
 
         guard Self.isExecutableFile(resolvedBinaryPath) else {
             throw ToolsBridgeError.binaryNotFound(resolvedBinaryPath)
@@ -284,11 +384,10 @@ public struct ToolsBridge: Sendable {
         let process = Process()
         process.executableURL = plan.executable
         process.arguments = plan.arguments
-        var environment = Self.scrubbedEnvironment()
-        for (key, value) in extraEnv where Self.envAllowlist.contains(key) {
+        var environment = childEnvironment(argv: argv, traceId: traceId)
+        for (key, value) in extraEnv where Self.allowsEnvironmentKey(key) {
             environment[key] = value
         }
-        environment[ToolsCallTrace.environmentKey] = traceId
         process.environment = environment
         process.currentDirectoryURL = plan.workingDirectory
         process.qualityOfService = .userInitiated
@@ -335,6 +434,31 @@ public struct ToolsBridge: Sendable {
         }
     }
 
+    /// The seconds the hub server may hold a call before the same argv runs as a process: a third of the call's
+    /// limit and at least 5 s, so the process keeps two thirds. A limit of 5 s or less goes to the server whole (a
+    /// process started with nothing left is killed at once).
+    ///
+    /// The server answers in milliseconds to a few seconds. When it does not, it is blocked or starved (2026-11-10:
+    /// its event loop answered nobody for 248 to 330 s while the Mac ran at a load of 200), and a call that waited
+    /// its whole limit for it ended as "tools call exceeded 30s" on screen, although the same argv as a process
+    /// took 0.4 s.
+    static func serverPatience(timeoutSeconds: Int) -> Int {
+        min(timeoutSeconds, max(5, timeoutSeconds / 3))
+    }
+
+    /// True for the answer the server gives when a door ran past the limit the call named (exit 124 and the
+    /// server's own sentence): the door did not finish, so the process runs.
+    static func isServerDeadline(_ result: ToolsRunResult) -> Bool {
+        result.exitCode == 124 && result.stderr.hasPrefix("hub server: ")
+    }
+
+    /// The seconds a process may still run after `waited` seconds went to the hub server, or nil when none is
+    /// left: the call's limit covers the server's try and the process together.
+    static func processBudget(timeoutSeconds: Int, waited: TimeInterval) -> TimeInterval? {
+        let remaining = Double(timeoutSeconds) - waited
+        return remaining > 0 ? remaining : nil
+    }
+
     private func finish(
         process: Process,
         stdout outReader: ToolsPipeCollector,
@@ -355,7 +479,7 @@ public struct ToolsBridge: Sendable {
             do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
             catch { return }
             timedOutFlag.fired = true
-            let error = ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            let error = ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
             outReader.stop(error)
             errReader.stop(error)
             ToolsProcessExit.terminate(process)
@@ -380,7 +504,7 @@ public struct ToolsBridge: Sendable {
                     traceId: traceId, via: "process-timeout", argv: argv, started: started,
                     exit: process.terminationStatus, outBytes: 0, stderr: ""
                 )
-                throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+                throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
             }
             MonitorPerf.mark("tools.\(subcommand) incomplete output: \(error.localizedDescription)")
             throw error
@@ -417,7 +541,7 @@ public struct ToolsBridge: Sendable {
         outputSink?(result, turnId, callId, argv)
 
         if timedOut {
-            throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
         }
         return result
     }

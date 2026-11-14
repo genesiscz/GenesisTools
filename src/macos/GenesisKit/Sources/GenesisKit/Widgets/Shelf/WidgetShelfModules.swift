@@ -119,8 +119,7 @@ struct WidgetShelfModuleView: View {
 
     @ViewBuilder private var status: some View {
         if let error = store.error {
-            Text(error).font(.system(size: 11)).foregroundStyle(KitPalette.removed)
-                .fixedSize(horizontal: false, vertical: true)
+            FailureInline(message: error, outcome: "The shelf action failed", action: "Change the shelf", area: "widget", identifier: "widget.shelf.failure")
         } else if let removed = store.removed, !captureOnly || removed.kind == .capture {
             HStack(spacing: 8) {
                 Text(removed.kind == .capture ? "\(removed.name) was removed."

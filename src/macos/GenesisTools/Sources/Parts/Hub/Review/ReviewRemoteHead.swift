@@ -81,7 +81,7 @@ extension ReviewRemoteHead {
         }
         guard let branch = values["--remote-branch"], let sha = values["--remote-sha"] else { return nil }
         self.init(branch: branch, sha: sha, base: values["--remote-base"],
-                  forge: ForgeWeb(kind: values["--remote-forge"], web: values["--remote-web"]))
+                  forge: ForgeWeb(kind: Forge(kind: values["--remote-forge"]), web: values["--remote-web"]))
     }
 }
 

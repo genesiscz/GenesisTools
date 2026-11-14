@@ -91,8 +91,19 @@ final class LoadTopTests: XCTestCase {
     }
 
     func testLineNamesTheLoadAndRealProcesses() {
-        let line = HangWatch.LoadTop.line(load: 150)
+        let line = HangWatch.LoadTop.probe(load: 150).text
         XCTAssertTrue(line.hasPrefix("load-top load=150.0: "), line)
         XCTAssertTrue(line.contains("%"), line)
+    }
+
+    /// A `ps` killed at its limit means the process table is slow for every reader; the next probe waits ten
+    /// minutes, where it came back a minute later (41 killed probes in two hours on 2026-11-10).
+    func testAFailedProbeWaitsTenMinutesAndAGoodOneAMinute() {
+        let top = HangWatch.LoadTop.self
+        XCTAssertFalse(top.isDue(now: 1_059, lastAt: 1_000, failedAt: nil))
+        XCTAssertTrue(top.isDue(now: 1_060, lastAt: 1_000, failedAt: nil))
+        XCTAssertFalse(top.isDue(now: 1_060, lastAt: 1_000, failedAt: 1_000), "a minute after a failed ps is too soon")
+        XCTAssertFalse(top.isDue(now: 1_599, lastAt: 1_000, failedAt: 1_000))
+        XCTAssertTrue(top.isDue(now: 1_600, lastAt: 1_000, failedAt: 1_000))
     }
 }

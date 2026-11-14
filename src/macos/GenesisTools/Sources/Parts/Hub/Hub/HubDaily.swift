@@ -31,7 +31,7 @@ enum HubDailyCLI {
         let span = HubPerf.begin(name, args.dropFirst().prefix(3).joined(separator: " "), awaits: true)
         do {
             let value = try await Task.detached(priority: .userInitiated) { () throws -> T in
-                let data = try ToolsCLIRunner.run(["hub"] + args)
+                let data = try HubSource.bridge.json(["hub"] + args)
                 return try JSONDecoder().decode(T.self, from: data)
             }.value
             span.end()
@@ -47,7 +47,7 @@ enum HubDailyCLI {
     static func run(_ args: [String], span name: String) async throws {
         let span = HubPerf.begin(name, args.prefix(2).joined(separator: " "), awaits: true)
         do {
-            _ = try await Task.detached(priority: .userInitiated) { try ToolsCLIRunner.run(["hub"] + args) }.value
+            _ = try await Task.detached(priority: .userInitiated) { try HubSource.bridge.output(["hub"] + args) }.value
             span.end()
         } catch {
             span.end("failed")

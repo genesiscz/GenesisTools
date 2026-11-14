@@ -160,6 +160,44 @@ final class HubSessionInsightsTests: XCTestCase {
         XCTAssertEqual(HubStuck.arguments(["s-1", "s-2"]), ["hub", "stuck", "check", "--json", "--session", "s-1", "s-2"])
     }
 
+    /// The session list starts a new watch on every change of the watched sessions, and a check that runs is not
+    /// stopped by that. Each change started one more `tools hub stuck check` beside it; now the newest ask waits
+    /// for the running check and the asks between are dropped.
+    @MainActor
+    func testAStuckCheckThatRunsTakesNoSecondOneBesideIt() async throws {
+        let json = """
+        {"thresholds":{"toolMinutes":10,"repeats":5,"maxAgeHours":6,"activeMinutes":30,"ignoreLongTools":[],"ignoreRepeatTools":[]},
+         "checked":0,"sessions":[]}
+        """
+        let envelope = try HubStuck.decode(Data(json.utf8))
+        let asked = StuckAsks()
+        let gate = DispatchSemaphore(value: 0)
+        let firstAsk = expectation(description: "the first stuck check starts")
+        let store = HubStuckStore()
+        // Only the first check waits, so a second one started beside it shows in `asked` and cannot hang the test.
+        store.check = { ids in
+            if asked.add(ids) == 1 {
+                firstAsk.fulfill()
+                _ = gate.wait(timeout: .now() + 10)
+            }
+            return envelope
+        }
+        let first = Task { await store.refresh(["a"]) }
+        await fulfillment(of: [firstAsk], timeout: 10)
+        guard !asked.all.isEmpty else {
+            // The refresh never asked: the expectation's timeout failed the test; the gate opens for a late check.
+            gate.signal()
+            await first.value
+            return
+        }
+        await store.refresh(["a", "b"])
+        await store.refresh(["a", "b", "c"])
+        XCTAssertEqual(asked.all, [["a"]], "an ask during a check starts no check of its own")
+        gate.signal()
+        await first.value
+        XCTAssertEqual(asked.all, [["a"], ["a", "b", "c"]], "one check follows, for the newest ask")
+    }
+
     private func session(cwd: String, account: String?, title: String) throws -> HubSession {
         var object: [String: Any] = [
             "provider": "claude", "sessionId": "sess-1", "title": title, "cwd": cwd, "cwdShort": cwd,
@@ -229,5 +267,22 @@ final class HubSessionInsightsTests: XCTestCase {
         requests.pending = HubHandoffRequests.firstSelection
         XCTAssertNil(requests.resolve(in: sessions), "the first-selection marker is not an id prefix")
         requests.pending = nil
+    }
+}
+
+/// The session ids each stuck check was asked for, from any thread.
+private final class StuckAsks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var asks: [[String]] = []
+
+    var all: [[String]] { lock.withLock { asks } }
+
+    /// Records one ask and returns how many there are now.
+    @discardableResult
+    func add(_ ids: [String]) -> Int {
+        lock.withLock {
+            asks.append(ids)
+            return asks.count
+        }
     }
 }

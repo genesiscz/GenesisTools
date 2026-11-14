@@ -194,7 +194,7 @@ final class AgentProcsStore: ObservableObject {
         let args = ["hub", "procs", "--json"] + (energy ? ["--energy"] : [])
         let span = HubPerf.begin("procs.refresh", energy ? "energy" : "", awaits: true)
         let result = await Task.detached(priority: .utility) { () -> Result<ProcsReport, Error> in
-            Result { try JSONDecoder().decode(ProcsReport.self, from: ToolsCLIRunner.run(args)) }
+            Result { try JSONDecoder().decode(ProcsReport.self, from: HubSource.bridge.json(args)) }
         }.value
         loading = false
         switch result {
@@ -246,7 +246,7 @@ final class AgentProcsStore: ObservableObject {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<ProcStopOutcome, Error> in
                 Result {
                     // Exit 1 means "not stopped"; the JSON on stdout still says why.
-                    let capture = try ToolsCLIRunner.capture(["hub", "procs", "--stop", String(pid), "--grace", String(AgentProcs.graceSeconds), "--yes", "--json"], timeout: 60)
+                    let capture = try HubSource.bridge.capture(["hub", "procs", "--stop", String(pid), "--grace", String(AgentProcs.graceSeconds), "--yes", "--json"], timeout: 60)
                     return try JSONDecoder().decode(ProcStopOutcome.self, from: capture.stdout)
                 }
             }.value

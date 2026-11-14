@@ -20,7 +20,7 @@ const patterns: [string, RegExp][] = [
     ["Transcript*", /Transcript/],
     ["HubLiveResize / PaneHold", /HubLiveResize|PaneHold|ResizableSidePanel/],
     ["AttributeGraph update", /AG::Graph::UpdateStack::update/],
-    ["ToolsCLIRunner (a process wait)", /ToolsCLIRunner|runCapturing/],
+    ["ToolsBridge.capture (a process wait)", /processCapture|runCapturing/],
     ...extra.map((p): [string, RegExp] => [p, new RegExp(p)]),
 ];
 const lines = (await Bun.file(file).text()).split("\n");

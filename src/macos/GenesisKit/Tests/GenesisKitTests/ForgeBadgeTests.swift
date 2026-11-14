@@ -33,6 +33,20 @@ final class ForgeBadgeTests: XCTestCase {
         XCTAssertNil(Forge(kind: nil))
     }
 
+    func testForgeFactsPerForge() {
+        let expected: [(Forge, mark: String, label: String, noun: String, longNoun: String, filesPhrase: String)] = [
+            (.github, "#", "#436", "PR", "pull request", "PR's files"),
+            (.gitlab, "!", "!436", "MR", "merge request", "MR's changes"),
+        ]
+        for row in expected {
+            XCTAssertEqual(row.0.mark, row.mark, row.0.rawValue)
+            XCTAssertEqual(row.0.label(436), row.label, row.0.rawValue)
+            XCTAssertEqual(row.0.noun, row.noun, row.0.rawValue)
+            XCTAssertEqual(row.0.longNoun, row.longNoun, row.0.rawValue)
+            XCTAssertEqual(row.0.filesPhrase, row.filesPhrase, row.0.rawValue)
+        }
+    }
+
     func testProviderMarksParseToTheEndAndFillTheirBox() {
         for kind in AIProviderMark.Kind.allCases {
             let box = (AIProviderMark.paths[kind] ?? Path()).boundingRect

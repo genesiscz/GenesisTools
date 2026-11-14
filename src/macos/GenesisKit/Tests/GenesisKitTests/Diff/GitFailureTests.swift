@@ -59,6 +59,15 @@ final class GitFailureTests: XCTestCase {
         XCTAssertEqual(unknown.message, "Git could not read this file.")
         XCTAssertEqual(unknown.detail, "fatal: something new")
 
+        // A `tools` call's own line is not git's text: the summary keeps the `fatal:` line for the sentence and Details.
+        let tools = ToolsFailure(argv: ["hub", "git", "show"], capture: ProcessCapture(
+            status: 1, stdout: Data(),
+            stderr: Data("✗ git show failed\nfatal: path 'a.md' exists on disk, but not in 'HEAD'\n".utf8)))
+        XCTAssertEqual(tools.message, "git show failed")
+        let fromTools = GitFailure(tools, fallback: "fallback")
+        XCTAssertEqual(fromTools.message, "That version of the file is not in git.")
+        XCTAssertEqual(fromTools.detail?.contains("fatal: path 'a.md'"), true, fromTools.detail ?? "")
+
         let outside = GitFailure(ReviewError.notRepository("/tmp/x"), fallback: "fallback")
         XCTAssertTrue(outside.message.hasSuffix("is not a git repository, so it has no changes to show."), outside.message)
         XCTAssertNil(outside.detail, "the sentence is the whole story")

@@ -10,6 +10,14 @@ import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
+import {
+    answerDoorJob,
+    type DoorReply,
+    type DoorWorker,
+    type DoorWorkerMessage,
+    DoorWorkerRunner,
+    offEventLoop,
+} from "./door-runner";
 import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./doors/changes";
 import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { HUB_SERVER_DOORS } from "./doors/index";
@@ -915,5 +923,155 @@ describe("askHubServer and ensureHubServer", () => {
         expect(
             await ensureHubServer({ probe: absent, start: () => 4242, stampPath: join(blocker, "started-at") })
         ).toBe("start failed");
+    });
+});
+
+describe("DoorWorkerRunner", () => {
+    type FakeWorker = DoorWorker & { messages: DoorWorkerMessage[]; terminated: boolean };
+
+    function fakeWorkers(): { workers: FakeWorker[]; create: () => DoorWorker } {
+        const workers: FakeWorker[] = [];
+        return {
+            workers,
+            create: () => {
+                const worker: FakeWorker = {
+                    messages: [],
+                    terminated: false,
+                    onmessage: null,
+                    onerror: null,
+                    postMessage(message) {
+                        this.messages.push(message);
+                    },
+                    terminate() {
+                        this.terminated = true;
+                    },
+                };
+                workers.push(worker);
+                return worker;
+            },
+        };
+    }
+
+    const reply = (worker: FakeWorker, data: DoorReply): void => {
+        worker.onmessage?.({ data } as MessageEvent<DoorReply>);
+    };
+    const inline = async () => ({ stdout: "inline", stderr: "", exit: 0 });
+    const job = (runner: DoorWorkerRunner, signal = new AbortController().signal) =>
+        runner.run({ door: "changes", parsed: { session: "s1" }, signal, traceId: "t1", inline });
+
+    it("sends a job to the worker and answers with its result, and the event loop never runs the door", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        const answer = job(runner);
+        expect(workers[0].messages).toEqual([
+            { op: "run", id: 1, door: "changes", parsed: { session: "s1" }, traceId: "t1" },
+        ]);
+        expect(runner.running).toBe(1);
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "worker", stderr: "", exit: 0 } });
+        expect((await answer).stdout).toBe("worker");
+        expect(runner.running).toBe(0);
+        runner.stop();
+    });
+
+    it("runs the door inline when no worker can start", async () => {
+        const runner = new DoorWorkerRunner({
+            createWorker: () => {
+                throw new Error("no threads here");
+            },
+        });
+        expect((await job(runner)).stdout).toBe("inline");
+    });
+
+    it("hands a job the worker lost to the process, and starts a new worker for the next ask", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        const lost = job(runner);
+        workers[0].onerror?.({ message: "out of memory" } as ErrorEvent);
+        await expect(lost).rejects.toBeInstanceOf(DoorUnsupported);
+        expect(workers[0].terminated).toBe(true);
+
+        const next = job(runner);
+        expect(workers).toHaveLength(2);
+        reply(workers[1], { id: 2, ok: true, result: { stdout: "again", stderr: "", exit: 0 } });
+        expect((await next).stdout).toBe("again");
+        runner.stop();
+    });
+
+    it("tells the worker to stop a job its caller gave up", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        const controller = new AbortController();
+        const answer = job(runner, controller.signal);
+        controller.abort();
+        expect(workers[0].messages.at(-1)).toEqual({ op: "cancel", id: 1 });
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "", stderr: "cancelled", exit: 130 } });
+        expect((await answer).exit).toBe(130);
+        runner.stop();
+    });
+
+    it("frees memory by ending an idle worker, and asks a busy one to drop its caches", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        const answer = job(runner);
+        runner.release();
+        expect(workers[0].terminated).toBe(false);
+        expect(workers[0].messages.at(-1)).toEqual({ op: "release" });
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "done", stderr: "", exit: 0 } });
+        await answer;
+
+        runner.release();
+        expect(workers[0].terminated).toBe(true);
+    });
+
+    it("ends a worker whose job hung, so its caller runs the process", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create, jobTimeoutMs: 5 });
+        await expect(job(runner)).rejects.toBeInstanceOf(DoorUnsupported);
+        expect(workers[0].terminated).toBe(true);
+    });
+
+    it("answers a job on the worker with the named door, and names a door it does not have", async () => {
+        const door: CallDoor<{ session: string }> = {
+            kind: "call",
+            name: "changes",
+            command: ["agents", "changes"],
+            match: () => null,
+            run: async (parsed) => ({ stdout: `${parsed.session}:${currentTraceId()}`, stderr: "", exit: 0 }),
+        };
+        const signal = new AbortController().signal;
+        const run = { op: "run", id: 7, parsed: { session: "s1" }, traceId: "t9" } as const;
+        expect(await answerDoorJob({ ...run, door: "changes" }, [door], signal)).toEqual({
+            id: 7,
+            ok: true,
+            result: { stdout: "s1:t9", stderr: "", exit: 0 },
+        });
+        expect(await answerDoorJob({ ...run, door: "other" }, [door], signal)).toMatchObject({
+            ok: false,
+            unsupported: true,
+        });
+    });
+
+    it("gives a door wrapped for the worker to the runner on the main thread, with the door itself as the inline run", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        let ran = 0;
+        const door: CallDoor<{ session: string }> = {
+            kind: "call",
+            name: "changes",
+            command: ["agents", "changes"],
+            match: () => ({ session: "s1" }),
+            run: async () => {
+                ran++;
+                return { stdout: "door", stderr: "", exit: 0 };
+            },
+        };
+        const wrapped = offEventLoop(door, () => runner);
+        expect(wrapped.name).toBe("changes");
+        const answer = wrapped.run({ session: "s1" }, { signal: new AbortController().signal });
+        expect(workers[0].messages[0]).toMatchObject({ op: "run", door: "changes", parsed: { session: "s1" } });
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "worker", stderr: "", exit: 0 } });
+        expect((await answer).stdout).toBe("worker");
+        expect(ran).toBe(0);
+        runner.stop();
     });
 });

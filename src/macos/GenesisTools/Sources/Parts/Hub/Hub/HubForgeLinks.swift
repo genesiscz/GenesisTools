@@ -5,17 +5,13 @@ import Foundation
 /// src/utils/git/origins/web.ts), so every hub view links through the same rules instead of
 /// pasting URL strings. Nil for any other host: a guessed page is worse than plain text.
 struct ForgeWeb: Equatable {
-    enum Kind: String {
-        case github
-        case gitlab
-    }
-
-    let kind: Kind
+    let kind: Forge
     /// `https://host/owner/repo` (GitLab: `https://host/group/sub/project`), an http(s) port kept.
     let project: String
 
-    init?(kind: String?, web: String?) {
-        guard let kind = kind.flatMap(Kind.init(rawValue:)), let web else { return nil }
+    /// `kind` from `Forge(kind:)` over the origin's kind; nil (no forge) or no project gives no pages.
+    init?(kind: Forge?, web: String?) {
+        guard let kind, let web else { return nil }
         let trimmed = web.hasSuffix("/") ? String(web.dropLast()) : web
         guard let url = URL(string: trimmed), url.host != nil, url.path.count > 1 else { return nil }
         self.kind = kind
@@ -34,21 +30,27 @@ struct ForgeWeb: Equatable {
 
     /// Another project on the same host (a fork), by its path (`owner/repo`).
     func sibling(_ path: String) -> ForgeWeb? {
-        ForgeWeb(kind: kind.rawValue, web: "\(hostRoot)/\(path)")
+        ForgeWeb(kind: kind, web: "\(hostRoot)/\(path)")
     }
 
     /// GitLab puts project pages under `/-/`.
-    private var pages: String { kind == .gitlab ? "\(project)/-" : project }
+    private var pages: String {
+        switch kind {
+        case .github: project
+        case .gitlab: "\(project)/-"
+        }
+    }
 
     /// A user's profile. GitHub apps (`app/dependabot` in `gh` output) live under `/apps/<name>`.
     func user(_ login: String) -> URL? {
         let login = login.trimmingCharacters(in: .whitespaces)
         guard !login.isEmpty else { return nil }
-        if kind == .github, login.hasPrefix("app/") {
+        switch kind {
+        case .github where login.hasPrefix("app/"):
             return URL(string: "\(hostRoot)/apps/\(Self.encodeSegment(String(login.dropFirst(4))))")
+        case .github, .gitlab:
+            return URL(string: "\(hostRoot)/\(Self.encodeSegment(login))")
         }
-
-        return URL(string: "\(hostRoot)/\(Self.encodeSegment(login))")
     }
 
     func branch(_ name: String) -> URL? {
@@ -60,8 +62,12 @@ struct ForgeWeb: Equatable {
     func compare(base: String, head: String, headOwner: String? = nil) -> URL? {
         guard !base.isEmpty, !head.isEmpty else { return nil }
         if let headOwner {
-            guard kind == .github else { return nil }
-            return URL(string: "\(pages)/compare/\(Self.encodePath(base))...\(Self.encodeSegment(headOwner)):\(Self.encodePath(head))")
+            switch kind {
+            case .github:
+                return URL(string: "\(pages)/compare/\(Self.encodePath(base))...\(Self.encodeSegment(headOwner)):\(Self.encodePath(head))")
+            case .gitlab:
+                return nil
+            }
         }
 
         return URL(string: "\(pages)/compare/\(Self.encodePath(base))...\(Self.encodePath(head))")
@@ -102,15 +108,27 @@ struct ForgeWeb: Equatable {
 
     /// A PR by number (GitHub `/pull/n`), or a GitLab MR (`!n`, `/-/merge_requests/n`).
     func pullRequest(_ number: Int) -> URL? {
-        URL(string: kind == .gitlab ? "\(pages)/merge_requests/\(number)" : "\(project)/pull/\(number)")
+        switch kind {
+        case .github: URL(string: "\(project)/pull/\(number)")
+        case .gitlab: URL(string: "\(pages)/merge_requests/\(number)")
+        }
     }
 
     /// The project's PRs/MRs with this label.
     func label(_ name: String) -> URL? {
-        guard !name.isEmpty, var components = URLComponents(string: kind == .gitlab ? "\(pages)/merge_requests" : "\(project)/pulls") else { return nil }
-        components.queryItems = kind == .gitlab
-            ? [URLQueryItem(name: "label_name[]", value: name)]
-            : [URLQueryItem(name: "q", value: "is:pr label:\"\(name)\"")]
+        guard !name.isEmpty else { return nil }
+        let list: String
+        let query: URLQueryItem
+        switch kind {
+        case .github:
+            list = "\(project)/pulls"
+            query = URLQueryItem(name: "q", value: "is:pr label:\"\(name)\"")
+        case .gitlab:
+            list = "\(pages)/merge_requests"
+            query = URLQueryItem(name: "label_name[]", value: name)
+        }
+        guard var components = URLComponents(string: list) else { return nil }
+        components.queryItems = [query]
         return components.url
     }
 
@@ -129,7 +147,7 @@ struct ForgeWeb: Equatable {
 
 extension HubPR {
     /// The PR's own project (base branch, commits, labels, users).
-    var forge: ForgeWeb? { ForgeWeb(kind: origin?.kind, web: origin?.web) }
+    var forge: ForgeWeb? { ForgeWeb(kind: Forge(kind: origin?.kind), web: origin?.web) }
 
     /// The project that holds the head branch: a fork's, when the host named it; nil for a fork it did not name.
     var headForge: ForgeWeb? { forge?.head(crossRepository: crossRepository, headRepo: headRepo) }
@@ -144,7 +162,13 @@ extension HubPR {
     }
 
     /// The project that serves the PR's commits and their files.
-    var commitForge: ForgeWeb? { isGitLab ? headForge : forge }
+    var commitForge: ForgeWeb? {
+        switch forge?.kind {
+        case .github: forge
+        case .gitlab: headForge
+        case nil: nil
+        }
+    }
 
     /// A file of one of the PR's commits, by the same rule as `commitURL`.
     func blobURL(_ sha: String, path: String, line: Int? = nil) -> URL? {

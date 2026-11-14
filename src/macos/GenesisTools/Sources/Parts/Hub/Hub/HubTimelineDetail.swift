@@ -245,7 +245,7 @@ enum TimelineDetail {
 
     /// Blocking: runs `tools` and decodes; call off the main thread.
     static func load(_ args: [String]) throws -> TimelineDetail {
-        let capture = try ToolsCLIRunner.capture(args)
+        let capture = try HubSource.bridge.capture(args)
         if capture.status != 0, let failure = try? JSONDecoder().decode(TimelineDetailError.self, from: capture.stdout) {
             throw failure
         }
@@ -628,12 +628,7 @@ struct TimelinePushDetailView: View {
                             Text(verbatim: DetailFormat.clock(commit.at)).font(.system(size: 10.5, design: .monospaced)).foregroundColor(ReviewPalette.dim)
                             Button {
                                 guard let repo = event.repo else { return }
-                                model.setMode(.worktrees)
-                                model.selectedWorktree = repo
-                                let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions.remembered())
-                                next.embedded = true
-                                next.setScope(.commit(sha: commit.sha, title: commit.subject))
-                                model.review = next
+                                model.showCommit(repo: repo, sha: commit.sha, title: commit.subject)
                             } label: {
                                 HStack(spacing: 6) {
                                     Text(verbatim: commit.shortSha).font(.system(size: 11, design: .monospaced)).foregroundColor(ReviewPalette.dim)

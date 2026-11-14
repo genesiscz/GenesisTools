@@ -5,7 +5,7 @@ import { splitLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
-import type { SessionTranscript } from "@genesiscz/utils/session-changes/types";
+import type { SessionToolCall, SessionTranscript } from "@genesiscz/utils/session-changes/types";
 import type { SessionChangesRead } from "../types";
 import {
     applyToolResult,
@@ -194,7 +194,6 @@ function merge(main: FileFold, agents: Array<{ fold: FileFold; parentToolUseId: 
     };
 
     for (const { fold, parentToolUseId } of agents) {
-        const before = new Set(state.calls.keys());
         for (const cwd of fold.state.cwds) {
             state.cwds.add(cwd);
         }
@@ -217,14 +216,24 @@ function merge(main: FileFold, agents: Array<{ fold: FileFold; parentToolUseId: 
             state.inputs.set(id, input);
         }
 
+        // Only this file's own calls are walked: a walk of every call of the session per sub-agent file cost
+        // 28,345 calls times 151 files on each refresh of one large session (650 to 870 ms warm, 2026-11-11).
+        const added: SessionToolCall[] = [];
         for (const [id, call] of fold.state.calls) {
-            state.calls.set(id, { ...call });
+            const copy = { ...call };
+            if (!state.calls.has(id)) {
+                added.push(copy);
+            }
+
+            state.calls.set(id, copy);
         }
 
         const parentTurn = parentToolUseId ? state.calls.get(parentToolUseId)?.turnId : undefined;
-        for (const [id, call] of state.calls) {
-            if (!before.has(id) && parentTurn && !state.turns.has(call.turnId)) {
-                call.turnId = parentTurn;
+        if (parentTurn) {
+            for (const call of added) {
+                if (!state.turns.has(call.turnId)) {
+                    call.turnId = parentTurn;
+                }
             }
         }
     }

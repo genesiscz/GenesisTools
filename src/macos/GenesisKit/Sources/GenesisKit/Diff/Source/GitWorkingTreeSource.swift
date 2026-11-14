@@ -880,9 +880,13 @@ public struct GitWorkingTreeSource {
     }
 }
 
-public enum ReviewError: Error, CustomStringConvertible {
+/// `LocalizedError` too: `localizedDescription` read "The operation couldn't be completed. (GenesisKit.ReviewError
+/// error 0.)" in every view that showed it.
+public enum ReviewError: Error, CustomStringConvertible, LocalizedError {
     case git(String)
     case notRepository(String)
+
+    public var errorDescription: String? { description }
 
     public var description: String {
         switch self {

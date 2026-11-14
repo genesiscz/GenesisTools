@@ -49,6 +49,9 @@ import GenesisToolsMeetings
 #endif
 
 func registerLinkedParts() {
+    #if GENESIS_PART_HUB || GENESIS_PART_FEATURES || GENESIS_PART_WIDGET || GENESIS_PART_CLICKY || GENESIS_PART_MARKDOWN || GENESIS_PART_RECORDER || GENESIS_PART_MEETINGS
+    FailureCapture.enable()
+    #endif
     #if GENESIS_PART_FEATURES
     // `--clicky` is the face's old name (relaunch records, scripts).
     AppParts.register(part: "features", faces: ["--features": { runFeatures($0) }, "--clicky": { runFeatures($0) }])

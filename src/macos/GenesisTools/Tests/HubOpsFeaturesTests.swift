@@ -105,7 +105,7 @@ final class HubOpsFeaturesTests: XCTestCase {
         XCTAssertEqual(result.filled, ["branch"])
 
         let failure = #"{"error":"\"explain-file\" needs --var file=…","code":"missing-vars","missing":["file"]}"#
-        let error = try JSONDecoder().decode(PromptCLIError.self, from: Data(failure.utf8))
+        let error = ToolsFailure(argv: ["hub", "prompts", "send"], capture: ProcessCapture(status: 1, stdout: Data(failure.utf8), stderr: Data()))
         XCTAssertEqual(error.missing, ["file"])
     }
 

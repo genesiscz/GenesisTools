@@ -9,18 +9,24 @@ public final class FailureNoticeModel: ObservableObject {
         case summary, raw
     }
 
+    /// The environment arrives after the window opens; the texts built from the report follow it.
     @Published public var report: FailureReport {
         didSet {
             guard report != oldValue else { return }
             detailsMarkdown = report.detailsMarkdown()
             rawMarkdown = Self.rawMarkdown(report)
-            // A report enriched after delivery (`addingCallLog`) brings its events, or another failure its time.
-            timeText = Self.timeText(report)
-            stepCount = Self.stepCount(report)
+            // A report enriched after delivery (`addingCallLog`) brings its events, or another failure its time. An
+            // environment-only update changes none of these, so the log is not parsed again for it.
+            if report.log != oldValue.log || report.stack != oldValue.stack {
+                stackText = Self.stackText(report)
+                stepCount = Self.stepCount(report)
+            }
+            if report.time != oldValue.time { timeText = Self.timeText(report) }
         }
     }
     @Published public var detailsOpen: Bool
     @Published public var tab: Tab = .summary
+    @Published var stackOpen = false
     @Published public var userSized = false
     @Published var copied: CopyKind?
     /// The tallest the details may grow before they scroll, while the window fits its content.
@@ -32,6 +38,7 @@ public final class FailureNoticeModel: ObservableObject {
     /// The details as markdown and the time line, built once per report rather than per body.
     private(set) var detailsMarkdown: String
     private(set) var rawMarkdown: String
+    private(set) var stackText: String?
     private(set) var timeText: String
     private(set) var stepCount: Int
 
@@ -48,23 +55,38 @@ public final class FailureNoticeModel: ObservableObject {
         self.dismiss = dismiss
         detailsMarkdown = report.detailsMarkdown()
         rawMarkdown = Self.rawMarkdown(report)
+        stackText = Self.stackText(report)
         timeText = Self.timeText(report)
         stepCount = Self.stepCount(report)
     }
 
-    static func timeText(_ report: FailureReport) -> String {
+    private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .medium
-        return formatter.string(from: report.time)
+        return formatter
+    }()
+
+    static func timeText(_ report: FailureReport) -> String {
+        timeFormatter.string(from: report.time)
     }
 
     static func stepCount(_ report: FailureReport) -> Int {
         FailureLog.events(in: report.log).count
     }
 
-    private static func rawMarkdown(_ report: FailureReport) -> String {
+    /// "Raw log": everything the report knows as plain text (`FailureReport.rawText`), in one code block.
+    static func rawMarkdown(_ report: FailureReport) -> String {
         "```text\n" + report.rawText().trimmingCharacters(in: .newlines) + "\n```\n"
+    }
+
+    static func stackText(_ report: FailureReport) -> String? {
+        var stacks: [String] = []
+        for value in [report.stack].compactMap({ $0 }) + FailureLog.events(in: report.log).map({ $0.stack.joined(separator: "\n") }) {
+            let stack = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !stack.isEmpty, !stacks.contains(stack) { stacks.append(stack) }
+        }
+        return stacks.isEmpty ? nil : stacks.joined(separator: "\n\n")
     }
 
     public func copyContext() {
@@ -108,7 +130,7 @@ public final class FailureNoticeModel: ObservableObject {
 
 /// A failure in a window of its own: the real error as the headline, what was running and what to do, the actions
 /// (Try again, Copy context for agents, Copy log, Open log, Show folder), and the log rendered as markdown: the error,
-/// each warning with its fields and pretty JSON (stacks folded to their first frame), then every step. "Raw log"
+/// each warning with its fields and pretty JSON, then every step. A disclosure shows the whole stack; "Raw log"
 /// shows the output as it came. The window is the container: no card inside it.
 public struct FailureNoticeView: View {
     @ObservedObject var model: FailureNoticeModel
@@ -257,8 +279,19 @@ public struct FailureNoticeView: View {
 
     @ViewBuilder
     private var details: some View {
-        let content = MarkdownContentView(markdown: model.tab == .summary ? model.detailsMarkdown : model.rawMarkdown,
-                                          style: Self.style)
+        let content = VStack(alignment: .leading, spacing: 8) {
+            if model.tab == .summary, let stack = model.stackText {
+                GenDisclosure("Stack trace", isExpanded: $model.stackOpen, identifier: "failure-notice.stack") {
+                    Text(verbatim: PathDisplay.shortenHome(in: stack))
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            MarkdownContentView(markdown: model.tab == .summary ? model.detailsMarkdown : model.rawMarkdown,
+                                style: Self.style)
+        }
             .padding(.horizontal, Self.inset)
             .padding(.bottom, 14)
             .id(model.tab)

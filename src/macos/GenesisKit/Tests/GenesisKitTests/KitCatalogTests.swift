@@ -11,6 +11,7 @@ final class KitCatalogTests: XCTestCase {
     /// Files in `Controls/` that draw nothing of their own.
     static let notDrawn: [String: String] = [
         "AutocompleteFloatingList.swift": "the child window of AutocompleteField; its entry draws the floating list",
+        "FailureCapture.swift": "captures a failure's machine facts when it happens",
         "FailureLog.swift": "reads the events and the headline out of a failure's log",
         "FailureNoticePanel.swift": "the window of FailureNoticeView; the failure-inline entry draws the view",
         "FailureReport.swift": "a failure's facts and their text forms",

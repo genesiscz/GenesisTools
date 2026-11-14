@@ -56,7 +56,7 @@ struct CmuxHost: TerminalHost {
         do {
             // Not `run`: with cmux unreachable the command prints {available: false, error} and exits 1,
             // and the picker shows that error only if the JSON is decoded despite the exit status.
-            let capture = try ToolsCLIRunner.capture(["ai", "cmux", "tree", "--json"])
+            let capture = try HubSource.bridge.capture(["ai", "cmux", "tree", "--json"])
             return try CmuxTree.decode(capture.stdout)
         } catch {
             HubPerf.log("cmux.tree failed: \(error)")
@@ -66,7 +66,7 @@ struct CmuxHost: TerminalHost {
 
     func focus(sessionId: String, provider: String?) -> String? {
         do {
-            let capture = try ToolsCLIRunner.capture([cmuxTool(provider: provider), "cmux", "focus", sessionId, "--first", "--json"])
+            let capture = try HubSource.bridge.capture([cmuxTool(provider: provider), "cmux", "focus", sessionId, "--first", "--json"])
             return Self.focusFailure(status: capture.status, stdout: capture.stdout, stderr: capture.stderr)
         } catch {
             return "\(error)"
@@ -82,7 +82,7 @@ struct CmuxHost: TerminalHost {
     func send(sessionId: String, provider: String?, text: String) -> String? {
         do {
             // After `--`: a line that starts with a hyphen ("- fix this") is text, not an unknown option.
-            _ = try ToolsCLIRunner.run([cmuxTool(provider: provider), "cmux", "send", "--first", "--", sessionId, text])
+            _ = try HubSource.bridge.output([cmuxTool(provider: provider), "cmux", "send", "--first", "--", sessionId, text])
             return nil
         } catch {
             return "\(error)"
@@ -96,7 +96,7 @@ struct CmuxHost: TerminalHost {
         case .resume(let session) where Harness(rawValue: session.provider)?.cmuxOpenSession == true:
             if let args = Self.openSessionArgs(target) {
                 do {
-                    let capture = try ToolsCLIRunner.capture([session.provider, "cmux", "open-session", session.sessionId] + args + ["--json"])
+                    let capture = try HubSource.bridge.capture([session.provider, "cmux", "open-session", session.sessionId] + args + ["--json"])
                     return capture.status == 0 ? nil : Self.failure(of: capture)
                 } catch {
                     return "\(error)"

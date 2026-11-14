@@ -103,7 +103,7 @@ enum PRRefLinker {
 
         guard let symbol = group(2), let number = group(3).flatMap(Int.init) else { return nil }
         // GitLab's `#12` is an issue and GitHub has no `!12`: both stay text.
-        guard symbol == (forge.kind == .gitlab ? "!" : "#") else { return nil }
+        guard symbol == forge.kind.mark else { return nil }
         let project = group(1)
         guard let target = project.map({ forge.sibling($0) }) ?? forge, let url = target.pullRequest(number) else { return nil }
         return "[\(project ?? "")\(symbol)\(number)](\(url.absoluteString))"
@@ -343,7 +343,7 @@ enum PRRefMenu {
             }
         }
         let label = "\(target.label) \(info.title.prefix(40))"
-        return (["--review", "--repo", repo, "--pr", target.url, "--range", "\(base)..\(head)", "--label", label], nil)
+        return (ReviewLaunch.launchArguments(repo: repo, target: .range(base: base, head: head, label: label), pr: target.url), nil)
     }
 
     nonisolated private static func commitIsLocal(_ sha: String, repo: String) -> Bool {
@@ -472,7 +472,7 @@ enum CommitMenu {
     /// A review window on one commit. `--commit`, not `<sha>^..<sha>`: a root commit has no parent, and
     /// the commit scope diffs it against the empty tree.
     static func newWindowArguments(repo: String, sha: String, subject: String) -> [String] {
-        ["--review", "--repo", repo, "--commit", sha, "--label", subject]
+        ReviewLaunch.launchArguments(repo: repo, target: .commit(sha: sha, label: subject))
     }
 
     /// Blocking git: only from the detached task.

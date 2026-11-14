@@ -112,13 +112,13 @@ struct SessionInsightsPayload: Decodable, Equatable {
 
 enum HubInsights {
     static func decode(_ data: Data) throws -> SessionInsightsPayload {
-        try JSONDecoder().decode(SessionInsightsPayload.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(SessionInsightsPayload.self, from: data)
     }
 
     /// Blocking (a `tools` run; a cache hit is ~0.4 s, a large session's first run a few seconds): off the main thread.
     static func load(sessionId: String) throws -> SessionInsightsPayload {
         // The cache key names the transcript's size and mtime, so a week-old entry is still exact.
-        let data = try ToolsCLIRunner.run(["hub", "insights", sessionId, "--json", "--max-cache-age", "604800"])
+        let data = try HubSource.bridge.json(["hub", "insights", sessionId, "--json", "--max-cache-age", "604800"])
         let payload = try decode(data)
         cache.writeData(data, key: sessionId)
         return payload

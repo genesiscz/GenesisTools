@@ -5,8 +5,8 @@ import XCTest
 /// PR/MR descriptions with their references and branch names as links (Hub/HubPRLinks.swift), the
 /// PR and issue URLs they use (Hub/HubForgeLinks.swift), and the colors of state-like labels.
 final class HubPRLinksTests: XCTestCase {
-    private let github = ForgeWeb(kind: "github", web: "https://github.com/acme/web")!
-    private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.test/group/app")!
+    private let github = ForgeWeb(kind: .github, web: "https://github.com/acme/web")!
+    private let gitlab = ForgeWeb(kind: .gitlab, web: "https://gitlab.example.test/group/app")!
 
     func testPullRequestAndIssuePages() {
         XCTAssertEqual(github.pullRequest(12)?.absoluteString, "https://github.com/acme/web/pull/12")

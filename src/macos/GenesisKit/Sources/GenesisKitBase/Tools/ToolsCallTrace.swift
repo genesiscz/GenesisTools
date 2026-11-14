@@ -45,6 +45,23 @@ public enum ToolsCallTrace {
         return out
     }
 
+    /// Values hidden in argv must not reappear in a persisted error's message or stderr.
+    public static func redactedText(_ text: String, argv: [String]) -> String {
+        var safe = text
+        for (raw, masked) in zip(argv, redacted(argv)) where raw != masked {
+            let secret: String
+            if masked.hasSuffix("=***"), let equals = raw.firstIndex(of: "=") {
+                secret = String(raw[raw.index(after: equals)...])
+            } else {
+                secret = raw
+            }
+            guard !secret.isEmpty, safe.contains(secret) else { continue }
+            if secret.count < 4 { return "[withheld: the error repeats a credential]" }
+            safe = safe.replacingOccurrences(of: secret, with: "***")
+        }
+        return safe
+    }
+
     private static let stamp: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
@@ -58,9 +75,19 @@ public enum ToolsCallTrace {
     /// `ToolsCallTrace.$ledger.withValue(ledger) { try await … }`, then `ledger.last` names the call that failed.
     @TaskLocal public static var ledger: ToolsCallLedger?
 
-    /// A call starts: noted in the task's ledger, when it has one.
+    private static let observerLock = NSLock()
+    nonisolated(unsafe) private static var failureObserver: (@Sendable (ToolsCallLedger.Call) -> Void)?
+
+    /// The host's failure capture. Every caller reaches it, including older callers without a task ledger.
+    public static func observeFailures(_ observer: (@Sendable (ToolsCallLedger.Call) -> Void)?) {
+        observerLock.withLock { failureObserver = observer }
+    }
+
+    /// A call starts: logged before dispatch, and noted in the task's ledger when it has one.
     public static func began(traceId: String, argv: [String], started: Date = Date()) {
         ledger?.began(ToolsCallLedger.Call(traceId: traceId, argv: argv, started: started))
+        PerfLog.diagnostic("call-start t=\(traceId) pid=\(ProcessInfo.processInfo.processIdentifier) argv="
+            + String(redacted(argv).joined(separator: " ").prefix(300)))
     }
 
     public static func record(
@@ -72,9 +99,21 @@ public enum ToolsCallTrace {
         outBytes: Int,
         stderr: String
     ) {
-        ledger?.ended(traceId: traceId, via: via, exit: exit, stderr: stderr, ended: Date())
-        guard PerfLog.enabled else { return }
-        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        let ended = Date()
+        ledger?.ended(traceId: traceId, via: via, exit: exit, stderr: stderr, ended: ended)
+        let gathersContext = argv.count > 1 && argv[0] == "genesis-tools" && ["triage", "env"].contains(argv[1])
+        if exit != 0, !gathersContext, let observer = observerLock.withLock({ failureObserver }) {
+            observer(ToolsCallLedger.Call(traceId: traceId, argv: redacted(argv), started: started, via: via,
+                                           exit: exit, stderr: stderr.isEmpty ? nil : String(redactedText(stderr, argv: argv).prefix(4096)), ended: ended))
+        }
+        PerfLog.diagnostic(callLine(traceId: traceId, via: via, argv: argv, started: started, ended: ended, exit: exit,
+                                    outBytes: outBytes, stderr: stderr))
+    }
+
+    /// The `call` trace line of a call that ended. Built only when diagnostics write it (`PerfLog.diagnostic`).
+    private static func callLine(traceId: String, via: String, argv: [String], started: Date, ended: Date, exit: Int32,
+                                 outBytes: Int, stderr: String) -> String {
+        let ms = Int(ended.timeIntervalSince(started) * 1000)
         let start = stampLock.withLock { stamp.string(from: started) }
         var line = "call t=\(traceId) via=\(via) pid=\(ProcessInfo.processInfo.processIdentifier) ms=\(ms) exit=\(exit) out=\(outBytes)B start=\(start) argv="
         line += String(redacted(argv).joined(separator: " ").prefix(300))
@@ -83,14 +122,14 @@ public enum ToolsCallTrace {
         if exit != 0, !stderr.isEmpty {
             line += " err=\(stderr.utf8.count)B"
         }
-        PerfLog.mark(line)
+        return line
     }
 }
 
 /// The `tools` calls one piece of work made, in order: what a failure report names as "what ran". Bound to a task
 /// through `ToolsCallTrace.ledger`; `ToolsBridge.run` and the hub's runner note each call's start and end in it.
 public final class ToolsCallLedger: @unchecked Sendable {
-    public struct Call: Equatable, Sendable {
+    public struct Call: Codable, Equatable, Sendable {
         public var traceId: String
         public var argv: [String]
         public var started: Date

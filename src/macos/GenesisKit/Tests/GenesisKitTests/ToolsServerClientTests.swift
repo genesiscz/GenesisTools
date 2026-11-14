@@ -5,8 +5,9 @@ import XCTest
 
 /// A unix-socket server on a thread, one connection at a time: each request line goes to `reply`, whose lines
 /// are written back. `fragmented` writes every answer in two pieces; `breakFirst` answers the first connection's
-/// first request with half a line and hangs up, so the client has to reconnect.
-private final class FakeServer: @unchecked Sendable {
+/// first request with half a line and hangs up, so the client has to reconnect. `ToolsClientTests` uses it as the
+/// fake server adapter.
+final class FakeServer: @unchecked Sendable {
     let path: String
     private let listenFd: Int32
     private let reply: @Sendable ([String: Any]) -> [[String: Any]]
@@ -240,6 +241,21 @@ final class ToolsServerClientTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
+    /// A server that kept a call for its whole limit: the bridge reports the timeout and does not reach for the
+    /// process (here a `tools` that does not exist, which the process path would report instead). The process
+    /// shares the call's limit, so it was started and killed at once before.
+    func testAServerThatUsedTheWholeLimitStartsNoProcess() async throws {
+        let server = try FakeServer { _ in [] }
+        defer { server.stop() }
+        let bridge = ToolsBridge(binaryPath: "/nonexistent/gk-no-tools", server: ToolsServerClient(socketPath: server.path))
+        do {
+            _ = try await bridge.run(subcommand: "slow", args: [], timeoutSeconds: 1)
+            XCTFail("a call the server never answered cannot succeed")
+        } catch {
+            XCTAssertEqual(error as? ToolsBridgeError, .timeout(seconds: 1, command: "tools slow"))
+        }
+    }
+
     @MainActor
     func testSubscriptionDeliversLinesThenEnd() async throws {
         let server = try FakeServer { request in
@@ -315,5 +331,22 @@ final class LineSplitterTests: XCTestCase {
         XCTAssertEqual(got.count, 1)
         XCTAssertEqual(got.first?.count, line.count)
         XCTAssertLessThan(seconds, 0.5)
+    }
+}
+
+final class GenesisToolsHomeTests: XCTestCase {
+    func testASandboxHomeMovesTheWholeTreeAndTheServerSocket() {
+        let sandbox = ["GENESIS_TOOLS_HOME": "/tmp/sandbox"]
+        XCTAssertEqual(GenesisToolsHome.home(environment: sandbox), "/tmp/sandbox")
+        XCTAssertEqual(GenesisToolsHome.path("hub/server/hub.sock", environment: sandbox),
+                       "/tmp/sandbox/.genesis-tools/hub/server/hub.sock")
+        XCTAssertEqual(GenesisToolsHome.path(environment: sandbox), "/tmp/sandbox/.genesis-tools")
+        XCTAssertEqual(ToolsServerClient.defaultSocketPath(home: "/tmp/sandbox"), "/tmp/sandbox/.genesis-tools/hub/server/hub.sock")
+    }
+
+    func testAnEmptyOrBlankOverrideIsTheHomeFolder() {
+        XCTAssertEqual(GenesisToolsHome.home(environment: [:]), NSHomeDirectory())
+        XCTAssertEqual(GenesisToolsHome.home(environment: ["GENESIS_TOOLS_HOME": " "]), NSHomeDirectory())
+        XCTAssertEqual(GenesisToolsHome.path("logs", environment: [:]), NSHomeDirectory() + "/.genesis-tools/logs")
     }
 }

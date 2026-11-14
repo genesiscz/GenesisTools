@@ -94,15 +94,11 @@ enum FixThreadsCLI {
     /// Blocking: off the main thread only. A failed send still prints the result (with `error`) and
     /// exits 1, so stdout is read first; anything else is the verb's `{error, code}`.
     static func run(_ args: [String]) throws -> FixThreadsResult {
-        let result = try ToolsCLIRunner.capture(args)
+        let result = try HubSource.bridge.capture(args)
         if let decoded = try? JSONDecoder().decode(FixThreadsResult.self, from: result.stdout) {
             return decoded
         }
-        if let failure = try? JSONDecoder().decode(PRCLIError.self, from: result.stdout) {
-            throw failure
-        }
-        let message = String(decoding: result.stderr, as: UTF8.self)
-        throw ReviewError.git("tools hub pr fix exited \(result.status): \(message.trimmed.suffix(300))")
+        throw ToolsFailure(argv: args, capture: result)
     }
 
     /// Brings cmux forward on the pane a new agent opened in (its workspace was created focused).
@@ -263,7 +259,8 @@ struct PRTaskForm<Summary: View>: View {
                 }
             }
             if let planError {
-                Text(verbatim: planError).font(.system(size: 11.5)).foregroundColor(ReviewPalette.removed).lineLimit(3)
+                FailureInline(message: planError, outcome: "The sessions that could fix these threads did not load",
+                              action: "Find the owning sessions", area: "review", identifier: "fix-threads.failure")
             }
             ForEach(plan?.candidates ?? []) { owner in
                 targetRow(id: owner.sessionId, selected: choice == owner.sessionId) {
