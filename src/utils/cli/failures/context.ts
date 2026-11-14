@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
-import { captureRuntimeFacts, type RuntimeFacts } from "@genesiscz/utils/diagnostics/runtime";
+import { captureRuntimeFacts, type RuntimeFacts, runtimeFactsSchema } from "@genesiscz/utils/diagnostics/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
@@ -18,12 +18,6 @@ export interface FailureContext {
     triage?: { capturedAt: string; markdown: string };
 }
 
-const processRowSchema = z.object({
-    pid: z.number(),
-    name: z.string(),
-    cpuPercent: z.number().nullable(),
-    rssMb: z.number(),
-});
 const contextSchema = z.object({
     version: z.literal(1),
     failureId: z.string(),
@@ -31,28 +25,7 @@ const contextSchema = z.object({
     preparedAt: z.string().nullable(),
     runtime: z.discriminatedUnion("state", [
         z.object({ state: z.literal("unavailable"), reason: z.string() }),
-        z.object({
-            state: z.literal("captured"),
-            facts: z.object({
-                capturedAt: z.string(),
-                os: z.object({ platform: z.string(), release: z.string(), arch: z.string() }),
-                load: z.object({ one: z.number(), five: z.number(), fifteen: z.number(), cores: z.number() }),
-                memory: z.object({ totalGb: z.number(), freeGb: z.number() }),
-                process: z.object({
-                    pid: z.number(),
-                    rss: z.number(),
-                    heapTotal: z.number(),
-                    heapUsed: z.number(),
-                    external: z.number(),
-                    arrayBuffers: z.number(),
-                    cpu: z.object({ user: z.number(), system: z.number() }),
-                }),
-                processCount: z.number(),
-                topCpu: z.array(processRowSchema),
-                topMemory: z.array(processRowSchema),
-                errors: z.array(z.string()),
-            }),
-        }),
+        z.object({ state: z.literal("captured"), facts: runtimeFactsSchema }),
     ]),
     markdown: z.string(),
     triage: z.object({ capturedAt: z.string(), markdown: z.string() }).optional(),

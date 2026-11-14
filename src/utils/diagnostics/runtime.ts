@@ -1,7 +1,38 @@
 import { cpus, freemem, loadavg, release, totalmem } from "node:os";
 import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { z } from "zod";
 
 const GB = 1024 ** 3;
+
+const processRowSchema = z.object({
+    pid: z.number(),
+    name: z.string(),
+    cpuPercent: z.number().nullable(),
+    rssMb: z.number(),
+});
+
+/** The one description of {@link captureRuntimeFacts}'s result; a stored failure context is read back through it. */
+export const runtimeFactsSchema = z.object({
+    capturedAt: z.string(),
+    os: z.object({ platform: z.string(), release: z.string(), arch: z.string() }),
+    load: z.object({ one: z.number(), five: z.number(), fifteen: z.number(), cores: z.number() }),
+    memory: z.object({ totalGb: z.number(), freeGb: z.number() }),
+    process: z.object({
+        pid: z.number(),
+        rss: z.number(),
+        heapTotal: z.number(),
+        heapUsed: z.number(),
+        external: z.number(),
+        arrayBuffers: z.number(),
+        cpu: z.object({ user: z.number(), system: z.number() }),
+    }),
+    processCount: z.number(),
+    topCpu: z.array(processRowSchema),
+    topMemory: z.array(processRowSchema),
+    errors: z.array(z.string()),
+});
+
+export type RuntimeFacts = z.infer<typeof runtimeFactsSchema>;
 
 /** The shared hardware readers used by live triage and failure-time capture. */
 export function runtimeLoad() {
@@ -26,7 +57,7 @@ export function runtimeProcesses(options: { commands?: boolean } = {}) {
 }
 
 /** Small synchronous facts captured after the failure event has been written, without network requests. */
-export function captureRuntimeFacts() {
+export function captureRuntimeFacts(): RuntimeFacts {
     const errors: string[] = [];
     let rows: ReturnType<typeof runtimeProcesses> = [];
     try {
@@ -60,5 +91,3 @@ export function captureRuntimeFacts() {
         errors,
     };
 }
-
-export type RuntimeFacts = ReturnType<typeof captureRuntimeFacts>;
