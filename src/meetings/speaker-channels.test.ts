@@ -965,59 +965,66 @@ test("a first manual stay keeps the roster's presence, and a time edit keeps a p
     expect(saved.seats!.remote.map((seat) => seat.name)).toContain("Gil Example");
 });
 
-test("streamed synthetic stereo voice features preserve pitch, level, silence and anchored clusters", async () => {
-    const folder = new Storage(`room-voice-audio-${process.pid}`).getBaseDir();
-    mkdirSync(folder, { recursive: true });
-    const file = join(folder, "stereo.wav");
-    const rate = 8000,
-        samples = rate * 2;
-    const wav = Buffer.alloc(44 + samples * 4);
-    wav.write("RIFF", 0);
-    wav.writeUInt32LE(wav.length - 8, 4);
-    wav.write("WAVEfmt ", 8);
-    wav.writeUInt32LE(16, 16);
-    wav.writeUInt16LE(1, 20);
-    wav.writeUInt16LE(2, 22);
-    wav.writeUInt32LE(rate, 24);
-    wav.writeUInt32LE(rate * 4, 28);
-    wav.writeUInt16LE(4, 32);
-    wav.writeUInt16LE(16, 34);
-    wav.write("data", 36);
-    wav.writeUInt32LE(samples * 4, 40);
-    for (let i = 0; i < samples; i++) {
-        wav.writeInt16LE(Math.round(16000 * Math.sin((2 * Math.PI * (i < rate ? 125 : 250) * i) / rate)), 44 + i * 4);
-        wav.writeInt16LE(i < rate ? Math.round(4000 * Math.sin((2 * Math.PI * 200 * i) / rate)) : 0, 46 + i * 4);
+// The features stream through ffmpeg, which a runner without it (CI) lacks.
+test.skipIf(!Bun.which("ffmpeg"))(
+    "streamed synthetic stereo voice features preserve pitch, level, silence and anchored clusters",
+    async () => {
+        const folder = new Storage(`room-voice-audio-${process.pid}`).getBaseDir();
+        mkdirSync(folder, { recursive: true });
+        const file = join(folder, "stereo.wav");
+        const rate = 8000,
+            samples = rate * 2;
+        const wav = Buffer.alloc(44 + samples * 4);
+        wav.write("RIFF", 0);
+        wav.writeUInt32LE(wav.length - 8, 4);
+        wav.write("WAVEfmt ", 8);
+        wav.writeUInt32LE(16, 16);
+        wav.writeUInt16LE(1, 20);
+        wav.writeUInt16LE(2, 22);
+        wav.writeUInt32LE(rate, 24);
+        wav.writeUInt32LE(rate * 4, 28);
+        wav.writeUInt16LE(4, 32);
+        wav.writeUInt16LE(16, 34);
+        wav.write("data", 36);
+        wav.writeUInt32LE(samples * 4, 40);
+        for (let i = 0; i < samples; i++) {
+            wav.writeInt16LE(
+                Math.round(16000 * Math.sin((2 * Math.PI * (i < rate ? 125 : 250) * i) / rate)),
+                44 + i * 4
+            );
+            wav.writeInt16LE(i < rate ? Math.round(4000 * Math.sin((2 * Math.PI * 200 * i) / rate)) : 0, 46 + i * 4);
+        }
+        writeFileSync(file, wav);
+        const frames = await voiceFrames({ audioPath: file });
+        expect(frames.length).toBe(40);
+        const lines = lineVoices({
+            frames,
+            spans: [
+                { index: 0, fromSec: 0, toSec: 1 },
+                { index: 1, fromSec: 1, toSec: 2 },
+            ],
+        });
+        expect(lines[0]!.channels[0]!.pitchHz!).toBeCloseTo(125, 0);
+        expect(lines[1]!.channels[0]!.pitchHz!).toBeCloseTo(250, 0);
+        expect(lines[0]!.channels[0]!.rms / lines[0]!.channels[1]!.rms).toBeCloseTo(4, 1);
+        expect(lines[1]!.channels[1]!.pitchHz).toBeNull();
+        expect(lines[1]!.channels[0]!.lowBandShare).toBeLessThan(lines[0]!.channels[0]!.lowBandShare);
+        expect(lines[1]!.channels[0]!.tilt).toBeGreaterThan(lines[0]!.channels[0]!.tilt);
+        const clustered = clusterVoices({
+            lines,
+            voices: 2,
+            channel: 0,
+            anchors: new Map([
+                [0, "Dana"],
+                [1, "Robin"],
+            ]),
+        });
+        expect(clustered.map((line) => line.cluster?.speaker)).toEqual(["Dana", "Robin"]);
+        expect(clustered.every((line) => line.cluster!.confidence > 0.9)).toBe(true);
+        expect(measureVoice(new Float32Array(400)).pitchHz).toBeNull();
+        expect(() => clusterVoices({ lines, voices: 0, channel: 0 })).toThrow();
     }
-    writeFileSync(file, wav);
-    const frames = await voiceFrames({ audioPath: file });
-    expect(frames.length).toBe(40);
-    const lines = lineVoices({
-        frames,
-        spans: [
-            { index: 0, fromSec: 0, toSec: 1 },
-            { index: 1, fromSec: 1, toSec: 2 },
-        ],
-    });
-    expect(lines[0]!.channels[0]!.pitchHz!).toBeCloseTo(125, 0);
-    expect(lines[1]!.channels[0]!.pitchHz!).toBeCloseTo(250, 0);
-    expect(lines[0]!.channels[0]!.rms / lines[0]!.channels[1]!.rms).toBeCloseTo(4, 1);
-    expect(lines[1]!.channels[1]!.pitchHz).toBeNull();
-    expect(lines[1]!.channels[0]!.lowBandShare).toBeLessThan(lines[0]!.channels[0]!.lowBandShare);
-    expect(lines[1]!.channels[0]!.tilt).toBeGreaterThan(lines[0]!.channels[0]!.tilt);
-    const clustered = clusterVoices({
-        lines,
-        voices: 2,
-        channel: 0,
-        anchors: new Map([
-            [0, "Dana"],
-            [1, "Robin"],
-        ]),
-    });
-    expect(clustered.map((line) => line.cluster?.speaker)).toEqual(["Dana", "Robin"]);
-    expect(clustered.every((line) => line.cluster!.confidence > 0.9)).toBe(true);
-    expect(measureVoice(new Float32Array(400)).pitchHz).toBeNull();
-    expect(() => clusterVoices({ lines, voices: 0, channel: 0 })).toThrow();
-});
+);
 
 /** A line channel's voice features: only the loudness and the pitch differ between the clustering tests. */
 function voiceFeature({ pitchHz, rms = 0.05 }: { pitchHz: number; rms?: number }) {
