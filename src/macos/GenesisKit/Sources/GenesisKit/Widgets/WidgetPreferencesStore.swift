@@ -41,6 +41,12 @@ public final class WidgetPreferencesStore {
     private var readAfterWrites = false
     private var writeTask: Task<Void, Never>?
     private var pending: [String: WidgetJSON] = [:]
+    /// The generation of the newest change to each pending key, and the generation last handed to the hub. A patch is
+    /// sent for the keys changed since their last send, and its acknowledgement retires a key only when no newer change
+    /// came meanwhile, whatever value that change has (a toggle off and on again equals the value in flight).
+    private var generation = 0
+    private var generations: [String: Int] = [:]
+    private var sent: [String: Int] = [:]
     /// What the callers of `write` asked to hear about the write that carries their change.
     private var pendingOutcomes: [(saved: () -> Void, failed: () -> Void)] = []
     /// Saved patches, still shown over every snapshot until one read at or after their write arrives (`fence`:
@@ -85,9 +91,12 @@ public final class WidgetPreferencesStore {
                 unreadableReported = true
                 wiring.report(Unreadable(detail: detail))
             }
-        } else {
-            unreadableReported = false
+            // The last good ones are not what this snapshot stored: its revision confirms no saved write, so the
+            // saved patches stay shown and `received` keeps the revision of the last snapshot that decoded.
+            return try overlaid(preferences)
         }
+
+        unreadableReported = false
         received = (preferences, state.revision)
         saved.removeAll { entry in entry.fence.map { state.revision >= $0 } ?? false }
         return try overlaid(preferences)
@@ -128,6 +137,8 @@ public final class WidgetPreferencesStore {
     /// knows the field writes it with `write`.
     func update(_ patch: [String: WidgetJSON], saved: (() -> Void)? = nil, failed: (() -> Void)? = nil) {
         pending.merge(patch) { _, new in new }
+        generation += 1
+        for key in patch.keys { generations[key] = generation }
         WidgetLiveSettings.postPreferences(patch)
         if saved != nil || failed != nil {
             pendingOutcomes.append((saved ?? {}, failed ?? {}))
@@ -144,8 +155,11 @@ public final class WidgetPreferencesStore {
 
     /// Sends the pending writes now.
     func flush() {
-        let patch = pending
+        // Only the keys changed since their last send: one still in flight is not sent again.
+        let patch = pending.filter { sent[$0.key] != generations[$0.key] }
         guard !patch.isEmpty else { return }
+        let stamp = generations.filter { patch[$0.key] != nil }
+        for (key, value) in stamp { sent[key] = value }
         let outcomes = pendingOutcomes
         pendingOutcomes = []
         writeEpoch += 1
@@ -154,8 +168,10 @@ public final class WidgetPreferencesStore {
         @discardableResult func acknowledge() -> Bool {
             writeEpoch += 1
             writesInFlight -= 1
-            for (key, value) in patch where pending[key] == value {
+            for (key, value) in stamp where generations[key] == value {
                 pending.removeValue(forKey: key)
+                generations.removeValue(forKey: key)
+                sent.removeValue(forKey: key)
             }
             guard writesInFlight == 0, readAfterWrites, !wiring.stopping() else { return false }
             readAfterWrites = false
