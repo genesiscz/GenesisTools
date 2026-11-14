@@ -114,8 +114,14 @@ enum PRDescriptionLinker {
     private static func reference(_ text: String, owner: String?, marker: String, number: Int, context: PRLinkContext) -> String? {
         guard let forge = context.forge else { return nil }
         // GitHub has no `!n`; a GitLab `#n` is an issue, never an MR.
-        let isChange = forge.kind == .gitlab ? marker == "!" : true
-        if forge.kind == .github, marker == "!" { return nil }
+        let isChange: Bool
+        switch forge.kind {
+        case .github:
+            if marker == "!" { return nil }
+            isChange = true
+        case .gitlab:
+            isChange = marker == "!"
+        }
         let target: ForgeWeb?
         if let owner {
             target = forge.sibling(owner)
@@ -123,9 +129,11 @@ enum PRDescriptionLinker {
             target = forge
         }
         guard let target else { return nil }
-        let web = forge.kind == .gitlab
-            ? (isChange ? target.pullRequest(number) : target.issue(number))
-            : target.issue(number)
+        let web: URL?
+        switch forge.kind {
+        case .github: web = target.issue(number)
+        case .gitlab: web = isChange ? target.pullRequest(number) : target.issue(number)
+        }
         guard let web else { return nil }
         if owner == nil, isChange, let id = context.inApp(number), let app = inAppURL(prID: id) {
             return "[\(text)](<\(app.absoluteString)>)[↗](<\(web.absoluteString)>)"

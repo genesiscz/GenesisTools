@@ -414,7 +414,7 @@ enum HubCommitLookup {
         }
         guard let found = try? JSONDecoder().decode(Found.self, from: data), let provider = found.provider,
               let number = found.number else { return nil }
-        return provider == "gitlab" ? "!\(number)" : "#\(number)"
+        return (Forge(kind: provider) ?? .github).label(number)
     }
 
     /// The first parent of `sha` in the checkout at `root`, the base of a range that starts at `sha`: git's empty

@@ -772,7 +772,7 @@ struct PRThreadsList: View {
                            placement: placement, fresh: fresh.intersection(thread.comments.map(\.id)), atHead: atHead, headSha: headSha, compact: compact,
                            proposed: proposed, folded: foldedThreads.contains(id), changed: store.changed.contains(id),
                            forge: store.pr?.forge, label: store.label,
-                           isGitLab: store.pr?.identity.isGitLab == true, clicks: clicks, editors: editors,
+                           forgeKind: store.pr?.identity.forgeKind ?? .github, clicks: clicks, editors: editors,
                            toggleFold: { toggle(thread: id) },
                            resolve: { store.resolve(thread: id, resolved: $0) },
                            reply: { body, draft, finished in
@@ -1209,7 +1209,7 @@ private struct PRThreadRow: View, Equatable {
     let forge: ForgeWeb?
     /// "#12" / "!34", for the confirmations.
     let label: String
-    let isGitLab: Bool
+    let forgeKind: Forge
     /// The list's click router: a plain click anywhere on the card shows the thread in the diff.
     let clicks: PRCardClicks
     /// Where an unsent reply or draft edit waits while its file is folded (the card itself is gone then).
@@ -1231,7 +1231,7 @@ private struct PRThreadRow: View, Equatable {
     static func == (a: PRThreadRow, b: PRThreadRow) -> Bool {
         let shown = a.thread == b.thread && a.selected == b.selected && a.placement == b.placement && a.folded == b.folded
         let marks = a.fresh == b.fresh && a.atHead == b.atHead && a.headSha == b.headSha && a.changed == b.changed
-        let store = a.forge == b.forge && a.label == b.label && a.isGitLab == b.isGitLab
+        let store = a.forge == b.forge && a.label == b.label && a.forgeKind == b.forgeKind
         return shown && marks && store && a.compact == b.compact && a.proposed == b.proposed
     }
 
@@ -1727,7 +1727,7 @@ private struct PRThreadRow: View, Equatable {
     }
 
     private func confirmPost() -> Bool {
-        PRConfirm.post(replyText, label: label, isGitLab: isGitLab,
+        PRConfirm.post(replyText, label: label, forge: forgeKind,
                        where_: "A reply in the thread on \(thread.path):\(thread.line).")
     }
 
@@ -1861,10 +1861,10 @@ private struct PRWriteDisabled: ViewModifier {
 /// The same alerts for the threads list and the diff's thread cards.
 enum PRConfirm {
     /// From values, so a card that observes no store (`PRThreadRow`) asks the same question.
-    static func post(_ text: String, label: String, isGitLab: Bool, where_: String) -> Bool {
+    static func post(_ text: String, label: String, forge: Forge, where_: String) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Post on \(label) now?"
-        alert.informativeText = "Everyone on the \(isGitLab ? "merge request" : "pull request") sees it at once."
+        alert.informativeText = "Everyone on the \(forge.longNoun) sees it at once."
             + " \(where_)\n\n\(text.prefix(400))"
         alert.addButton(withTitle: "Post")
         alert.addButton(withTitle: "Cancel")
@@ -1971,8 +1971,11 @@ private struct SubmitReviewForm: View {
     @State private var summary = ""
 
     private var events: [PRReviewEvent] {
+        switch store.pr?.identity.forgeKind ?? .github {
+        case .github: PRReviewEvent.allCases
         // GitLab has no "request changes" review.
-        store.pr?.identity.isGitLab == true ? [.comment, .approve] : PRReviewEvent.allCases
+        case .gitlab: [.comment, .approve]
+        }
     }
 
     var body: some View {
@@ -2029,7 +2032,7 @@ private struct SubmitReviewForm: View {
         let drafts = store.payload?.draftCount ?? 0
         let alert = NSAlert()
         alert.messageText = "Submit your review on \(store.label)?"
-        var text = "\(store.pr?.title ?? "")\n\n\(event.title). \(drafts) pending \(drafts == 1 ? "draft goes" : "drafts go") out with it, and everyone on the \(store.pr?.identity.isGitLab == true ? "merge request" : "pull request") sees the review at once."
+        var text = "\(store.pr?.title ?? "")\n\n\(event.title). \(drafts) pending \(drafts == 1 ? "draft goes" : "drafts go") out with it, and everyone on the \((store.pr?.identity.forgeKind ?? .github).longNoun) sees the review at once."
         if !summary.trimmed.isEmpty {
             text += "\n\nSummary: \(summary.trimmed.prefix(300))"
         }

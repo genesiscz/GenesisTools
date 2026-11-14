@@ -41,8 +41,8 @@ enum PRFetch {
 
     static func arguments(_ pr: HubPR, root: String, base: String?) -> [String] {
         var args = ["hub", "pr", "fetch", "\(root)#\(pr.number)", "--json"]
-        if let kind = pr.origin?.kind, kind == "github" || kind == "gitlab" {
-            args += ["--provider", kind]
+        if let forge = Forge(kind: pr.origin?.kind) {
+            args += ["--provider", forge.rawValue]
         }
         if let head = pr.headSha, !head.isEmpty {
             args += ["--head", head]
@@ -99,7 +99,7 @@ struct PRFetchStatus: View {
                     .font(.system(size: 11.5))
                     .foregroundColor(ReviewPalette.dim)
             }
-            .instantTooltip("No local worktree has \(pr.headBranch): git fetch puts the \(pr.isGitLab ? "MR" : "PR") head into refs/genesis/pr/\(pr.number)/head of \(pr.repoRoot ?? "the checkout"). Nothing is checked out.")
+            .instantTooltip("No local worktree has \(pr.headBranch): git fetch puts the \(pr.forgeKind.noun) head into refs/genesis/pr/\(pr.number)/head of \(pr.repoRoot ?? "the checkout"). Nothing is checked out.")
         case .failed(let message):
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -109,7 +109,7 @@ struct PRFetchStatus: View {
                     .foregroundColor(ReviewPalette.removed)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                IconButton(systemName: "arrow.clockwise", tooltip: "Fetch the \(pr.isGitLab ? "MR" : "PR") head again", action: retry)
+                IconButton(systemName: "arrow.clockwise", tooltip: "Fetch the \(pr.forgeKind.noun) head again", action: retry)
             }
             .frame(maxWidth: 420, alignment: .trailing)
             .instantTooltip("No diff: \(message)")

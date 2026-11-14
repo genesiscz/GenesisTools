@@ -135,9 +135,10 @@ struct RepoFacts: Codable, Equatable {
         let target: String
         let url: String
 
-        /// "PR !12" on GitLab, "PR #12" on GitHub, with the state when it is not open.
+        /// "MR !12" on GitLab, "PR #12" on GitHub, with the state when it is not open.
         func label(kind: String?) -> String {
-            let number = kind == "gitlab" ? "MR !\(self.number)" : "PR #\(self.number)"
+            let forge = Forge(kind: kind) ?? .github
+            let number = "\(forge.noun) \(forge.label(self.number))"
             return state == "OPEN" ? number : "\(number) (\(state.lowercased()))"
         }
     }
@@ -156,7 +157,7 @@ struct RepoFacts: Codable, Equatable {
     var webURL: URL? { origin?.web.flatMap(URL.init(string:)) }
     var branchURL: URL? { branchUrl.flatMap(URL.init(string:)) }
     var prURL: URL? { pr.flatMap { URL(string: $0.url) } }
-    var forge: ForgeWeb? { ForgeWeb(kind: origin?.kind, web: origin?.web) }
+    var forge: ForgeWeb? { ForgeWeb(kind: Forge(kind: origin?.kind), web: origin?.web) }
     /// The branch against its PR/MR's target; nil without a PR.
     var compareURL: URL? {
         guard let pr, let branch else { return nil }

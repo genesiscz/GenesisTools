@@ -19,15 +19,16 @@ enum PRTarget: Equatable {
     }
 }
 
-/// The PR's host, project and number: its label, and whether GitLab's words apply.
+/// The PR's host, project and number: its label, and which forge's words apply.
 struct PRIdentity: Codable, Equatable {
     var provider: String
     var host: String
     var project: String
     var number: Int
 
-    var isGitLab: Bool { provider == "gitlab" }
-    var label: String { isGitLab ? "!\(number)" : "#\(number)" }
+    /// GitHub's words when the provider is not a forge `Forge` knows.
+    var forgeKind: Forge { Forge(kind: provider) ?? .github }
+    var label: String { forgeKind.label(number) }
 }
 
 struct PRDraftOwnership: Codable, Equatable {
@@ -168,7 +169,7 @@ struct PRInfo: Decodable, Equatable {
 
     var identity: PRIdentity { PRIdentity(provider: provider, host: host, project: project, number: number) }
     /// The PR's project on the host, for user and branch pages; nil for a host that is not GitHub or GitLab.
-    var forge: ForgeWeb? { ForgeWeb(kind: provider, web: "https://\(host)/\(project)") }
+    var forge: ForgeWeb? { ForgeWeb(kind: Forge(kind: provider), web: "https://\(host)/\(project)") }
     /// The source branch's page, in the fork for a fork PR (the same rule as `HubPR.headBranchURL`).
     var sourceBranchURL: URL? {
         sourceBranch.flatMap { forge?.head(crossRepository: crossRepository, headRepo: headRepo)?.branch($0) }

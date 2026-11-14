@@ -613,8 +613,8 @@ final class PRThreadsTests: XCTestCase {
 
     // MARK: references, head files, card clicks
 
-    private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.com/group/shop")
-    private let github = ForgeWeb(kind: "github", web: "https://github.com/acme/shop")
+    private let gitlab = ForgeWeb(kind: .gitlab, web: "https://gitlab.example.com/group/shop")
+    private let github = ForgeWeb(kind: .github, web: "https://github.com/acme/shop")
 
     func testCommitIdsLinkToTheHostAsCode() {
         let text = "Jo, `phase2.md` odsud vyhodím, zůstane jen na oracle větvi (44a8c867b4)."

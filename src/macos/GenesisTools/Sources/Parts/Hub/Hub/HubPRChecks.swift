@@ -367,7 +367,7 @@ struct CheckSendForm: View {
         let ref = pr.url.isEmpty ? "\(repo)#\(pr.number)" : pr.url
         PRTaskForm(
             title: "Send the \(check.name) log",
-            subtitle: "The failing log goes into a task file; the agent gets one line that names it. Nothing is posted on the \(pr.isGitLab ? "MR" : "PR").",
+            subtitle: "The failing log goes into a task file; the agent gets one line that names it. Nothing is posted on the \(pr.forgeKind.noun).",
             what: "the \(check.name) log",
             cwd: repo,
             newAgentName: "Fix \(pr.repo) \(pr.label) CI",

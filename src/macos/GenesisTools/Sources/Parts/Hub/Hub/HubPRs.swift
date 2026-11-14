@@ -59,8 +59,9 @@ struct HubPR: Decodable, Identifiable, Equatable {
     /// The project the PR belongs to (the same key `tools hub pr list` groups checkouts by); `repo` is
     /// only its display name.
     var project: String { origin?.web ?? repoRoot ?? repo }
-    var isGitLab: Bool { origin?.kind == "gitlab" }
-    var label: String { isGitLab ? "!\(number)" : "#\(number)" }
+    /// The forge whose words and marks apply; GitHub's when `tools` named no kind.
+    var forgeKind: Forge { Forge(kind: origin?.kind) ?? .github }
+    var label: String { forgeKind.label(number) }
     var updated: Date? { HubFormat.date(updatedAt) }
     /// Which stored proposal the embedded review shows. The path is fixed per PR, so a second "Review
     /// with agent" run on the same PR changes only the push stamp.
@@ -1173,7 +1174,7 @@ final class PRsModel: ObservableObject {
         pendingCommit = nil
         let sha = missing ?? pending.sha
         review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
-        let whole = shown.isGitLab ? "MR" : "PR"
+        let whole = shown.forgeKind.noun
         // A link to the commit that merged the PR (an agent naming "the commit of !6958") is the whole PR, not a miss.
         if let merged = details[shown.id]?.mergedSha, HubCommitSha.matches(sha, merged) {
             HubPerf.log("prs.commit \(shown.label) \(sha) is its merge commit")
@@ -2368,7 +2369,7 @@ struct PRRow: View, Equatable {
             parts.append("Failed: " + failedChecks.joined(separator: ", "))
         }
         if let usualCI, usualCI != pr.ci {
-            parts.append("Most \(pr.repo) \(pr.isGitLab ? "MRs" : "PRs"): \(CIBadge.sentence(usualCI).lowercased())")
+            parts.append("Most \(pr.repo) \(pr.forgeKind.noun)s: \(CIBadge.sentence(usualCI).lowercased())")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
@@ -2461,7 +2462,7 @@ struct PRRow: View, Equatable {
 
     @ViewBuilder
     private var linksMenu: some View {
-        let kind = pr.isGitLab ? "MR" : "PR"
+        let kind = pr.forgeKind.noun
         let pages: [(String, URL?)] = [
             ("Open the \(kind) \(pr.label)", URL(string: pr.url)),
             ("Open \(pr.author ?? "the author")'s profile", pr.authorURL),
@@ -2584,7 +2585,7 @@ struct PRLabelPill: View {
             font: .system(size: 10.5, weight: tone == nil ? .regular : .medium),
             color: tone?.color ?? ReviewPalette.dim,
             glyph: .onHover,
-            tooltip: "\(pr.isGitLab ? "MRs" : "PRs") labelled \(label)"
+            tooltip: "\(pr.forgeKind.noun)s labelled \(label)"
         )
         .padding(.horizontal, 6)
         .background(Capsule().fill((tone?.color ?? Color.white).opacity(tone == nil ? 0.08 : 0.16)))
@@ -2860,7 +2861,7 @@ struct PRDetailView: View {
                     Toggle("Diff", isOn: $showDiff)
                         .toggleStyle(.button)
                         .instantTooltip(pr.localWorktree == nil
-                            ? "Show the \(pr.isGitLab ? "MR" : "PR") diff beside it (its head, fetched into \(pr.repo) without a checkout)"
+                            ? "Show the \(pr.forgeKind.noun) diff beside it (its head, fetched into \(pr.repo) without a checkout)"
                             : "Show the branch diff beside the PR")
                 } else if let fetch = prs.fetchState(pr) {
                     PRFetchStatus(pr: pr, state: fetch) { prs.retryFetch(pr) }
@@ -2917,7 +2918,7 @@ struct PRDetailView: View {
                             url: filesURL,
                             font: .system(size: 11.5),
                             glyph: .onHover,
-                            tooltip: "The changed files on the \(pr.isGitLab ? "MR" : "PR")"
+                            tooltip: "The changed files on the \(pr.forgeKind.noun)"
                         )
                     }
                     if let add = detail.additions, let del = detail.deletions {
@@ -2956,12 +2957,12 @@ struct PRDetailView: View {
             Text(verbatim: "+\(added)").foregroundColor(ReviewPalette.added)
             Text(verbatim: "−\(removed)").foregroundColor(ReviewPalette.removed)
         }
-        let hostPage = pr.isGitLab ? "MR's changes" : "PR's files"
+        let hostPage = pr.forgeKind.filesPhrase
         if prs.review != nil {
             HStack(spacing: 2) {
                 Button { showWholeDiff() } label: { label }
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Lines added and removed: show the whole \(pr.isGitLab ? "MR" : "PR") in the diff here" + (url == nil ? "" : "\n↗ or right-click opens the \(hostPage) on the host"))
+                    .instantTooltip("Lines added and removed: show the whole \(pr.forgeKind.noun) in the diff here" + (url == nil ? "" : "\n↗ or right-click opens the \(hostPage) on the host"))
                     .accessibilityLabel(Text(verbatim: "+\(added) −\(removed) lines, show the diff"))
                 if let url {
                     IconButton(systemName: "arrow.up.right", tooltip: "Open the \(hostPage) on the host\n\(url.absoluteString)", size: 9.5) {
@@ -2980,7 +2981,7 @@ struct PRDetailView: View {
             Button { ExternalOpener.open(url) } label: { label }
                 .buttonStyle(.genHoverPlain())
                 .hoverCursor(.pointingHand)
-                .instantTooltip("Lines added and removed: open the \(pr.isGitLab ? "MR's changes" : "PR's files") on the host\n\(url.absoluteString)")
+                .instantTooltip("Lines added and removed: open the \(pr.forgeKind.filesPhrase) on the host\n\(url.absoluteString)")
                 .accessibilityRemoveTraits(.isButton)
                 .accessibilityAddTraits(.isLink)
                 .accessibilityLabel(Text(verbatim: "+\(added) −\(removed) lines"))
@@ -3021,15 +3022,15 @@ struct PRDetailView: View {
             branches.insert(other.headBranch)
             branches.insert(other.baseBranch)
         }
-        let kindMatches = pr.isGitLab
+        let kind = pr.forgeKind
         return PRLinkContext(forge: pr.forge, branches: branches) { number in
-            siblings.first { $0.number == number && $0.isGitLab == kindMatches }?.id
+            siblings.first { $0.number == number && $0.forgeKind == kind }?.id
         }
     }
 
     /// The description with its links, made once per body and link context (`PRDescriptionCache`).
     private func linkedDescription(_ body: String) -> String {
-        let siblings = prs.prs.filter { $0.project == pr.project }.map { "\($0.number)\($0.isGitLab ? "!" : "#")\($0.headBranch)>\($0.baseBranch)" }
+        let siblings = prs.prs.filter { $0.project == pr.project }.map { "\($0.number)\($0.forgeKind.mark)\($0.headBranch)>\($0.baseBranch)" }
         let key = [pr.id, body, (detail?.branchMentions ?? []).joined(separator: " "), siblings.sorted().joined(separator: " ")]
             .joined(separator: "\u{1}")
         return PRDescriptionCache.linked(key: key) { PRDescriptionLinker.linkify(body, context: linkContext) }
@@ -3417,7 +3418,7 @@ struct PRCommitsSection: View {
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11.5))
-                .instantTooltip("Show the whole \(pr.isGitLab ? "MR" : "PR") in the diff again")
+                .instantTooltip("Show the whole \(pr.forgeKind.noun) in the diff again")
         )) {
             let authors = PRCommitRow.showsAuthors(commits)
             ForEach(commits.reversed()) { commit in

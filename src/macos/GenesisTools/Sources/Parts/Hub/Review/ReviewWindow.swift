@@ -1135,7 +1135,7 @@ final class ReviewModel: ObservableObject {
         }
         let path = repo.path
         if let facts = MainActor.assumeIsolated({ RepoFactsStore.shared.facts(for: path, pr: true) }), let pull = facts.pr {
-            return facts.origin?.kind == "gitlab" ? "!\(pull.number)" : "#\(pull.number)"
+            return (Forge(kind: facts.origin?.kind) ?? .github).label(pull.number)
         }
         return "the PR"
     }
@@ -2558,7 +2558,7 @@ final class ReviewModel: ObservableObject {
         }
         switch input.confirmation {
         case .post?:
-            if !PRConfirm.post(input.body?.trimmed ?? "", label: store.label, isGitLab: store.pr?.identity.isGitLab == true,
+            if !PRConfirm.post(input.body?.trimmed ?? "", label: store.label, forge: store.pr?.identity.forgeKind ?? .github,
                                where_: "A reply in the existing thread.") {
                 return finished(false)
             }
@@ -2769,10 +2769,10 @@ final class ReviewModel: ObservableObject {
     }
 
     private func confirmPost(_ item: Suggestion) -> Bool {
-        let gitLab = prIdentity?.isGitLab ?? false
+        let forge = prIdentity?.forgeKind ?? .github
         let alert = NSAlert()
         alert.messageText = "Post on \(prLabel) now?"
-        alert.informativeText = "Everyone on the \(gitLab ? "merge request" : "pull request") sees it at once. \(item.thread == nil ? "A new thread on \(item.path):\(item.line)." : "A reply in the existing thread.")\n\n\(item.text.prefix(400))"
+        alert.informativeText = "Everyone on the \(forge.longNoun) sees it at once. \(item.thread == nil ? "A new thread on \(item.path):\(item.line)." : "A reply in the existing thread.")\n\n\(item.text.prefix(400))"
         alert.addButton(withTitle: "Post")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn

@@ -709,16 +709,7 @@
         "src/zsh/lib/completions/rc-block.ts": 1
     },
     "roster-swift-cli-runner-type-outside-bridge": {},
-    "roster-swift-forge-kind-compare-outside-forge": {
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubCommitLink.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubComponents.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubNotify.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRFetch.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/PRThreads.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewProposal.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewWindow.swift": 1
-    },
+    "roster-swift-forge-kind-compare-outside-forge": {},
     "roster-swift-genesis-tools-home-name-outside-owner": {
         "src/browser-router/native/Router.swift": 1,
         "src/macos/GenesisTools/Sources/Host/App/SettingsModel.swift": 1,

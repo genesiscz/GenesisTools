@@ -1,4 +1,5 @@
 import Foundation
+import GenesisKit
 
 /// The window's side of `src/hub/lib/proposal.ts`. Read and written through JSONSerialization so
 /// a write-back (status, edited text) keeps every field the TypeScript side knows and this does not.
@@ -71,7 +72,7 @@ final class ProposalDocument {
     var confidence: Int? { verdict["confidence"] as? Int }
     var agent: String { (root["author"] as? [String: Any])?["agent"] as? String ?? "agent" }
 
-    var label: String { "\(provider == "gitlab" ? "!" : "#")\(number)" }
+    var label: String { (Forge(kind: provider) ?? .github).label(number) }
 
     var drafts: [Draft] {
         (root["drafts"] as? [[String: Any]] ?? []).compactMap { raw in

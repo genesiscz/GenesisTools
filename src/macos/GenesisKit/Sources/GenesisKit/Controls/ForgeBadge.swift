@@ -12,12 +12,63 @@ public enum Forge: String, Sendable {
         self = forge
     }
 
-    public var name: String { self == .github ? "GitHub" : "GitLab" }
+    public var name: String {
+        switch self {
+        case .github: "GitHub"
+        case .gitlab: "GitLab"
+        }
+    }
+
+    /// The mark before a PR number: `#` on GitHub, `!` on GitLab.
+    public var mark: String {
+        switch self {
+        case .github: "#"
+        case .gitlab: "!"
+        }
+    }
+
     /// `#436` on GitHub, `!7412` on GitLab.
-    public func label(_ number: Int) -> String { self == .github ? "#\(number)" : "!\(number)" }
-    public var noun: String { self == .github ? "PR" : "MR" }
+    public func label(_ number: Int) -> String { "\(mark)\(number)" }
+
+    /// `PR` on GitHub, `MR` on GitLab.
+    public var noun: String {
+        switch self {
+        case .github: "PR"
+        case .gitlab: "MR"
+        }
+    }
+
+    /// `pull request` on GitHub, `merge request` on GitLab.
+    public var longNoun: String {
+        switch self {
+        case .github: "pull request"
+        case .gitlab: "merge request"
+        }
+    }
+
+    /// The host's page of a PR's changed files, as a phrase: "PR's files", "MR's changes".
+    public var filesPhrase: String {
+        switch self {
+        case .github: "PR's files"
+        case .gitlab: "MR's changes"
+        }
+    }
+
+    /// How strongly the badge's capsule shows the tint: GitHub's near-white needs less.
+    var badgeFillOpacity: Double {
+        switch self {
+        case .github: 0.14
+        case .gitlab: 0.2
+        }
+    }
+
     /// The mark's own colour: GitHub's is monochrome, GitLab's tanuki orange.
-    public var tint: Color { self == .github ? Color.white.opacity(0.92) : Color(red: 0.99, green: 0.43, blue: 0.15) }
+    public var tint: Color {
+        switch self {
+        case .github: Color.white.opacity(0.92)
+        case .gitlab: Color(red: 0.99, green: 0.43, blue: 0.15)
+        }
+    }
 }
 
 /// The forge's logo as a shape, from its 16 × 16 SVG path, scaled to the frame it is given.
@@ -29,7 +80,10 @@ public struct ForgeMark: Shape {
     }
 
     public func path(in rect: CGRect) -> Path {
-        let unit = forge == .github ? Self.github : Self.gitlab
+        let unit = switch forge {
+        case .github: Self.github
+        case .gitlab: Self.gitlab
+        }
         let scale = min(rect.width, rect.height) / 16
         let dx = rect.minX + (rect.width - 16 * scale) / 2
         let dy = rect.minY + (rect.height - 16 * scale) / 2
@@ -76,7 +130,7 @@ public struct ForgeBadge: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 3)
-        .background(Capsule().fill(forge.tint.opacity(forge == .github ? 0.14 : 0.2)))
+        .background(Capsule().fill(forge.tint.opacity(forge.badgeFillOpacity)))
         .overlay(Capsule().stroke(forge.tint.opacity(0.45), lineWidth: 0.75))
         .fixedSize()
         if let url {

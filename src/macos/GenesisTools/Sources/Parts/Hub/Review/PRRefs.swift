@@ -103,7 +103,7 @@ enum PRRefLinker {
 
         guard let symbol = group(2), let number = group(3).flatMap(Int.init) else { return nil }
         // GitLab's `#12` is an issue and GitHub has no `!12`: both stay text.
-        guard symbol == (forge.kind == .gitlab ? "!" : "#") else { return nil }
+        guard symbol == forge.kind.mark else { return nil }
         let project = group(1)
         guard let target = project.map({ forge.sibling($0) }) ?? forge, let url = target.pullRequest(number) else { return nil }
         return "[\(project ?? "")\(symbol)\(number)](\(url.absoluteString))"
