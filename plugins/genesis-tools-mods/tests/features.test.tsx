@@ -601,6 +601,41 @@ test("decisions sidebar: ticks on an unlogged several-letter ask reach the promp
     forgetAnswers();
 });
 
+test("decisions sidebar: without the tools CLI a press answers in the prompt or ticks, never only an error", async () => {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    forgetDecisions();
+    const filled: { text: string; mode?: string }[] = [];
+    const host: Host = {
+        ...checkoutHost(),
+        async messages() {
+            return [ASK_16];
+        },
+        async run() {
+            throw new Error("spawn tools ENOENT");
+        },
+        async fill(args) {
+            filled.push({ text: args.text, mode: args.mode });
+            return {};
+        },
+    };
+    await readChat(host);
+
+    // A one-letter decision: the answer goes into the prompt as `D16: b)`.
+    await pressDecisionOption(host, ASK_16_OPTIONS, "b");
+    expect(filled).toEqual([{ text: "D16: b)\n", mode: "append" }]);
+
+    // A several-letter decision: the press ticks in the sidebar, and the Staged block carries the line.
+    await pressDecisionOption(host, { ...ASK_16_OPTIONS, multiple: true }, "c");
+    expect(stagedPreview("")).toBe("D16: c)");
+    expect(filled).toHaveLength(1);
+    forgetDecisions();
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+});
+
 test("decisions sidebar: ticks the log takes over stay local until the stage succeeds", async () => {
     forgetSettings();
     forgetGenesisProbe();

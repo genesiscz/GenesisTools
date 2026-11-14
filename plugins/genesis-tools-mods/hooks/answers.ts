@@ -1103,10 +1103,13 @@ export async function jumpTo(host: Host, key: string, target: { decision: number
     await pressed(host, key, `Opened the transcript search at ${what}. q or Esc leaves it.`);
 }
 
+/** The error a store command answers on a Mac without the `tools` CLI, where a decision is answered in the chat. */
+export const NO_TOOLS_CLI = "the tools CLI is not installed";
+
 /** What a store command answered: its JSON, or the error it printed. */
 async function questionCommand(host: Host, args: readonly string[]): Promise<Record<string, unknown>> {
     if (!(await genesisProbe(host)).tools) {
-        return { error: "the tools CLI is not installed" };
+        return { error: NO_TOOLS_CLI };
     }
 
     const session = await host.sessionId();

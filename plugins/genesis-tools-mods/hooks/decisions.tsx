@@ -21,6 +21,7 @@ import {
     type DecisionStatus,
     findAskRows,
     jumpTo,
+    NO_TOOLS_CLI,
     refreshAnswers,
     sendStaged,
     stageAnswer,
@@ -640,22 +641,25 @@ async function stageDecision(
         return;
     }
 
+    // No store takes the answer (the log does not have the decision, or there is no `tools` CLI to stage it with): the
+    // chat carries it instead. Any other error is a real staging failure and stays one.
+    const noCli = done.error === NO_TOOLS_CLI;
+    const inChat = noCli || /not waiting/.test(done.error);
+
     // Only tick, the last tick's removal too: the one `D<n>: ac)` line is written when the person sends or puts it in
     // the prompt, so an emptied set must leave the ticks empty rather than keep the letter just unticked.
-    if (/not waiting/.test(done.error) && answer.option !== undefined && decision.multiple) {
+    if (inChat && answer.option !== undefined && decision.multiple) {
         const ticked = setLocal(decision.n, answer.option);
 
         await pressed(host, key, ticked ? `Ticked ${ticked})` : "Unticked.");
         return;
     }
 
-    if (/not waiting/.test(done.error) && words) {
+    if (inChat && words) {
+        const why = noCli ? "The tools CLI is not installed" : `The decision log does not have DECISION ${decision.n}`;
+
         await host.fill({ text: `D${decision.n}: ${words}\n`, mode: "append" });
-        await pressed(
-            host,
-            key,
-            `The decision log does not have DECISION ${decision.n}; "D${decision.n}: ${words}" is in the prompt instead.`
-        );
+        await pressed(host, key, `${why}; "D${decision.n}: ${words}" is in the prompt instead.`);
         return;
     }
 
