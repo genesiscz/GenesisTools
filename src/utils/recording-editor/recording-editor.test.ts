@@ -4227,6 +4227,9 @@ describe("cutting by the transcript", () => {
             { text: "you know", fromUs: 30_000_000, toUs: 30_600_000, line: 30, estimated: false },
         ]);
         expect(() => wordCuts({ segments, atSec: 25, words: "x" })).toThrow("nobody speaks at 25 s");
+        expect(() => wordCuts({ segments, atSec: 31, words: "you know", padMs: Number.NaN })).toThrow("padMs");
+        expect(() => wordCuts({ segments, atSec: 31, words: "you know", padMs: -5 })).toThrow("padMs");
+        expect(() => fillerCuts({ segments, fillers: ["um"], padMs: Number.NaN })).toThrow("padMs");
         expect(() => wordCuts({ segments, atSec: 11, words: "goodbye" })).toThrow('does not say "goodbye"');
     });
 

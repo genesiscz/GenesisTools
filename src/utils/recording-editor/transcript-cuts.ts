@@ -110,6 +110,12 @@ export function lineAt(segments: readonly TranscriptSegment[], atSec: number): T
     );
 }
 
+function assertPadMs(padMs: number | undefined): void {
+    if (padMs !== undefined && !(Number.isFinite(padMs) && padMs >= 0)) {
+        throw new RangeError(`padMs must be a finite, non-negative number of milliseconds, not ${padMs}`);
+    }
+}
+
 /**
  * Where `words` (one or more words, in order) are said in the line at `atSec`: every place they occur, or with
  * `occurrence` only that one (1 is the first place in the line). `picked` (the words' start and end, source seconds,
@@ -124,6 +130,8 @@ export function wordCuts(options: {
     picked?: { start: number; end: number };
     padMs?: number;
 }): CutMatch[] {
+    assertPadMs(options.padMs);
+
     const segment = lineAt(options.segments, options.atSec);
 
     if (!segment) {
@@ -225,6 +233,8 @@ export function fillerCuts(options: {
     fillers: readonly string[];
     padMs?: number;
 }): CutMatch[] {
+    assertPadMs(options.padMs);
+
     const fillers = new Set(options.fillers.map(foldWord));
     const padSec = (options.padMs ?? 40) / 1000;
     const matches: CutMatch[] = [];
