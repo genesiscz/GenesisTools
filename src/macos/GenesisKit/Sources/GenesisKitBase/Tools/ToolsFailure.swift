@@ -43,12 +43,14 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
         let command = "tools \(argv.prefix(3).joined(separator: " ")) exited \(capture.status)"
         let whole = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         let summary = command + (whole.isEmpty ? "" : ": \(whole)")
+        // Stripped of colour codes once, for both readers of a human-facing stderr line.
+        let plainLines = Self.stripColour(stderr).split(whereSeparator: \.isNewline)
         if let json = Self.jsonError(stdout) {
             self.init(message: json.message, code: json.code, missing: json.missing, exitCode: capture.status, stderrTail: tail,
                       summary: summary)
-        } else if let marked = Self.markedLine(stderr) {
+        } else if let marked = Self.markedLine(plainLines) {
             self.init(message: marked.message, code: marked.code, exitCode: capture.status, stderrTail: tail, summary: summary)
-        } else if let commander = Self.commanderError(stderr) {
+        } else if let commander = Self.commanderError(plainLines) {
             self.init(message: commander, exitCode: capture.status, stderrTail: tail, summary: summary)
         } else {
             // A tool that prints its reason on stdout only (no JSON, empty stderr) still says it.
@@ -102,9 +104,9 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
         return nil
     }
 
-    /// The last `✗` line without colour codes; a leading `[code]` is the code and leaves the message.
-    private static func markedLine(_ stderr: String) -> (message: String, code: String?)? {
-        let lines = stripColour(stderr).split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+    /// The last `✗` line of stderr's lines without colour codes; a leading `[code]` is the code and leaves the message.
+    private static func markedLine(_ plainLines: [Substring]) -> (message: String, code: String?)? {
+        let lines = plainLines.map { $0.trimmingCharacters(in: .whitespaces) }
         guard let last = lines.last(where: { $0.hasPrefix("✗") }) else { return nil }
         var line = String(last.dropFirst()).trimmingCharacters(in: .whitespaces)
         var code: String?
@@ -116,8 +118,8 @@ public struct ToolsFailure: Error, LocalizedError, CustomStringConvertible, Equa
     }
 
     /// Commander's `error: …` line. Only lines at column 0 count: an indented `    error: {` is a field of a log entry.
-    private static func commanderError(_ stderr: String) -> String? {
-        let lines = stripColour(stderr).split(whereSeparator: \.isNewline).filter { $0.first.map { !$0.isWhitespace } ?? false }
+    private static func commanderError(_ plainLines: [Substring]) -> String? {
+        let lines = plainLines.filter { $0.first.map { !$0.isWhitespace } ?? false }
         guard let line = lines.first(where: { $0.lowercased().hasPrefix("error:") }) else { return nil }
         let message = line.dropFirst("error:".count).trimmingCharacters(in: .whitespaces)
         return message.isEmpty ? nil : message
