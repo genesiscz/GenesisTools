@@ -376,7 +376,7 @@ private func writeReply(notificationId: String, actionId: String, text: String?,
 /// to tell those apart after the fact.
 func logClick(_ message: String) {
     let dir = GenesisToolsHome.path("app")
-    let path = (dir as NSString).appendingPathComponent("notify-clicks.log")
+    let path = GenesisToolsHome.path("app/notify-clicks.log")
     let stamp = ISO8601DateFormatter().string(from: Date())
     // Several faces of the bundle write here (the relay, a window, a click-launched instance): the pid tells them apart.
     let line = "\(stamp) pid=\(getpid()) \(message)\n"
@@ -410,8 +410,7 @@ private func clickGivesFocusBack(userInfo: [AnyHashable: Any], actionIdentifier:
 /// When a notification was last clicked, for every face of the bundle: a click also sends the running relay a
 /// "reopen", which must not open a window on top of what the click did (LinkRelay.swift).
 func lastNotificationClickPath() -> String {
-    (GenesisToolsHome.path("app") as NSString)
-        .appendingPathComponent("last-notification-click")
+    GenesisToolsHome.path("app/last-notification-click")
 }
 
 func noteNotificationClick() {
