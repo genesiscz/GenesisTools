@@ -4,12 +4,20 @@ import type { MissingCredential } from "@genesiscz/utils/ai/providers/account-fe
 import { grokLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveSecret } from "@genesiscz/utils/security";
-import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
+import {
+    decodeJwtClaims,
+    entryHoldsSubject,
+    getActiveAuthEntry,
+    isTokenExpired,
+    readAuthFileAsync,
+    tokenNamesOtherSubject,
+} from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import type { StoredGrantSource } from "./client";
 import { grokAuthPath } from "./paths";
 import { refreshGrokAuthOrThrow } from "./refresh";
 import { resolveStoredGrokGrant } from "./stored-grant";
+import type { GrokAuthEntry } from "./types";
 
 export interface ResolvedGrokSubToken {
     token: string;
@@ -74,7 +82,7 @@ async function tokenFromAuthFile(authPath: string, noRefresh?: boolean): Promise
         throw new GrokAuthExpiredError(authPath);
     }
 
-    return ensureFreshToken(active.key, authPath, noRefresh);
+    return ensureFreshToken(active.key, authPath, { noRefresh });
 }
 
 export async function resolveGrokSubToken(
@@ -174,14 +182,17 @@ export async function resolveGrokSubToken(
         // file is used only when it PROVES it carries the same identity as the
         // copy that expired; without that proof, expiry stays fatal.
         if (isTokenExpired(decodeJwtClaims(storedToken))) {
-            if (await holdsSameIdentity(storedToken, authPath)) {
+            const subject = decodeJwtClaims(storedToken)?.sub;
+            const entry = await sameIdentityEntry(subject, authPath);
+
+            if (subject && entry) {
                 logger.info(
                     { account: account.name, authPath },
                     "grok: stored accessToken expired; the default auth file proves the same identity, resolving from it"
                 );
 
                 return {
-                    token: await tokenFromAuthFile(authPath, options?.noRefresh),
+                    token: await sameIdentityToken({ entry, subject, authPath, noRefresh: options?.noRefresh }),
                     authPath,
                     account: pick(account),
                 };
@@ -213,7 +224,7 @@ export async function resolveGrokSubToken(
 }
 
 /**
- * Does `authPath` hold the SAME paying identity as the stored copy?
+ * The active entry of `authPath` when it holds the SAME paying identity as the stored copy.
  *
  * The `sub` claim of a Grok JWT is the xAI user id, and it survives expiry —
  * decoding does not check `exp`. So an expired copy still names who it belonged
@@ -223,21 +234,44 @@ export async function resolveGrokSubToken(
  *
  * The entry's own `user_id` counts as proof too: it is the same xAI user id, and
  * it still identifies the file when the active token itself will not decode.
+ *
+ * The entry itself is returned, so the token handed out is the one this read proved,
+ * never a second read of a file the Grok CLI may have switched to another account.
  */
-async function holdsSameIdentity(storedToken: string, authPath: string): Promise<boolean> {
-    const stored = decodeJwtClaims(storedToken)?.sub;
-
-    if (!stored) {
-        return false;
+async function sameIdentityEntry(subject: string | undefined, authPath: string): Promise<GrokAuthEntry | null> {
+    if (!subject) {
+        return null;
     }
 
     const active = getActiveAuthEntry(await readAuthFileAsync(authPath));
 
-    if (!active) {
-        return false;
+    return active && entryHoldsSubject(active, subject) ? active : null;
+}
+
+/**
+ * The usable token of an entry that proved `subject`. An expired one is refreshed under the
+ * same proof (checked again inside the refresh lock, right before the grant is spent), and a
+ * result that names another user is refused rather than sent on this account's behalf.
+ */
+async function sameIdentityToken(options: {
+    entry: GrokAuthEntry;
+    subject: string;
+    authPath: string;
+    noRefresh?: boolean;
+}): Promise<string> {
+    const { entry, subject, authPath, noRefresh } = options;
+    const token = await ensureFreshToken(entry.key, authPath, { noRefresh, subject });
+
+    return requireSubject(token, subject, authPath);
+}
+
+function requireSubject(token: string, subject: string, authPath: string): string {
+    if (tokenNamesOtherSubject(token, subject)) {
+        logger.warn({ authPath }, "grok: the token the auth file yielded belongs to another identity, refusing it");
+        throw new GrokAuthExpiredError(authPath);
     }
 
-    return decodeJwtClaims(active.key)?.sub === stored || active.user_id === stored;
+    return token;
 }
 
 /**
@@ -257,11 +291,17 @@ function pastedTokenRecovery(options: {
 }): StoredGrantSource {
     const { accountName, storedToken, authPath, noRefresh } = options;
     const hint = `Run: ${grokLoginCommand(accountName)}`;
+    const subject = decodeJwtClaims(storedToken)?.sub;
+    // The token this recovery last handed out. The client holds it, so a later forced call
+    // means the upstream refused THIS one, not the pasted copy the recovery started from.
+    let current = storedToken;
 
     return {
         hint,
         refresh: async (reason, force) => {
-            if (!(await holdsSameIdentity(storedToken, authPath))) {
+            const entry = await sameIdentityEntry(subject, authPath);
+
+            if (!subject || !entry) {
                 logger.warn(
                     { account: accountName, authPath, reason },
                     "grok: the stored accessToken needs a new token and no auth file proves it belongs to this account"
@@ -270,12 +310,11 @@ function pastedTokenRecovery(options: {
                 throw new GrokAuthExpiredError(undefined, { hint });
             }
 
-            const live = await tokenFromAuthFile(authPath, noRefresh);
-
             // A newer token of the same identity is used as is. Only when the file still
             // holds the very token the upstream refused does a forced grant help.
-            if (!force || live !== storedToken) {
-                return live;
+            if (!force || entry.key !== current) {
+                current = await sameIdentityToken({ entry, subject, authPath, noRefresh });
+                return current;
             }
 
             // Guard above the consuming call: the grant rotates the Grok CLI's refresh token.
@@ -285,13 +324,17 @@ function pastedTokenRecovery(options: {
                 );
             }
 
-            return refreshGrokAuthOrThrow({
+            const refreshed = await refreshGrokAuthOrThrow({
                 authPath,
                 force: true,
+                expectedSubject: subject,
                 context: { account: accountName, reason },
                 onSuccess: "grok: refreshed the default auth file, which proves the stored token's identity",
                 onFailure: "grok: OIDC refresh of the identity-matched default auth file did not yield a usable token",
             });
+
+            current = requireSubject(refreshed, subject, authPath);
+            return current;
         },
     };
 }
@@ -303,7 +346,13 @@ function pastedTokenRecovery(options: {
  * and the reason provider detection used to fail outright. Only a refresh that
  * cannot be attempted (no refresh fields) or that the issuer rejects is fatal.
  */
-async function ensureFreshToken(token: string, authPath: string, noRefresh?: boolean): Promise<string> {
+async function ensureFreshToken(
+    token: string,
+    authPath: string,
+    options: { noRefresh?: boolean; subject?: string }
+): Promise<string> {
+    const { noRefresh, subject } = options;
+
     if (!isTokenExpired(decodeJwtClaims(token))) {
         return token;
     }
@@ -319,6 +368,7 @@ async function ensureFreshToken(token: string, authPath: string, noRefresh?: boo
 
     return refreshGrokAuthOrThrow({
         authPath,
+        ...(subject === undefined ? {} : { expectedSubject: subject }),
         context: {},
         onSuccess: "grok: refreshed the expired grok-sub token via OIDC",
         onFailure: "grok: OIDC refresh did not yield a usable token for the grok-sub account",

@@ -322,6 +322,17 @@ describe("spawnLabel", () => {
         expect(spawnLabel(["git", "push", "-u", "origin", "HEAD:main"])).toBe("git push -u origin HEAD:main");
     });
 
+    test("hides a password whose user is empty, and the whole URL password when it holds an @", () => {
+        expect(spawnLabel(["curl", "-u", ":example123", "--user=:example123", "-u:example123"])).toBe(
+            "curl -u *** *** ***"
+        );
+        const label = spawnLabel(["git", "clone", "https://alice:first@second@example.com/repo"]);
+        expect(label).toBe("git clone https://alice:[redacted]@example.com/repo");
+        expect(spawnLabel(["git", "clone", "https://:example123@example.com/repo"])).toBe(
+            "git clone https://:[redacted]@example.com/repo"
+        );
+    });
+
     test("cuts long and many arguments", () => {
         const label = spawnLabel(["gh", "api", "graphql", "-f", `query=${"x".repeat(200)}`, "a", "b", "c"]);
         expect(label.endsWith(" …")).toBe(true);

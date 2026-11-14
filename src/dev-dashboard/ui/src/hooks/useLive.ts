@@ -67,12 +67,20 @@ export interface LiveConnectionDeps {
     onFrame?: (frame: LiveDataFrame) => void;
     /** `true` when the stream dropped, `false` once it delivers again. */
     onStatus?: (down: boolean) => void;
+    /** A connection opened (its hello arrived): a notice channel's consumer refetches what it covers. */
+    onOpen?: () => void;
 }
 
 /** What a caller of `useLive` adds to the built-in cache writes. Read through a ref, so a fresh closure is fine. */
 export interface LiveListeners {
     onFrame?: (frame: LiveDataFrame) => void;
     onStatus?: (down: boolean) => void;
+    /**
+     * Each time a connection opens, the first one included. Channels without a snapshot (qa, decisions, handoffs) are
+     * notices, and a client that was away (a hidden tab, a dropped network) missed the ones sent meanwhile, so the
+     * live contract asks it to refetch everything the channel covers here.
+     */
+    onOpen?: () => void;
 }
 
 /**
@@ -104,6 +112,7 @@ export function openLiveConnection(
                 connIdRef.current = frame.payload.connId;
                 setConnId(frame.payload.connId);
                 setLastError(null);
+                deps.onOpen?.();
                 return;
             }
 
@@ -190,13 +199,26 @@ export class LiveConnectionManager {
     private readonly connIdRef: { current: string | null } = { current: null };
     private open: { key: string; close: () => void } | undefined;
     private scheduled = false;
+    /** The open stream's last error and whether it is down, replayed to a consumer that joins it. */
+    private lastError: string | null = null;
+    private down = false;
 
     constructor(private readonly deps: LiveConnectionManagerDeps) {}
 
-    /** Adds a consumer; the returned function removes it. The stream follows on the next reconcile. */
+    /**
+     * Adds a consumer; the returned function removes it. The stream follows on the next reconcile. A consumer that
+     * joins an open stream gets its connection id, its last error and, when it is down, the down status at once.
+     */
     register(consumer: LiveConsumer): () => void {
         this.consumers.add(consumer);
-        consumer.setConnId(this.connIdRef.current);
+        this.notify(consumer, () => {
+            consumer.setConnId(this.connIdRef.current);
+            consumer.setLastError(this.lastError);
+
+            if (this.down) {
+                consumer.listeners().onStatus?.(true);
+            }
+        });
         this.schedule();
 
         return () => {
@@ -227,19 +249,28 @@ export class LiveConnectionManager {
 
         this.open?.close();
         this.open = undefined;
+        this.lastError = null;
+        this.down = false;
         const close = openLiveConnection(key, true, {
             qc: this.deps.qc,
             connIdRef: this.connIdRef,
             EventSourceCtor: this.deps.EventSourceCtor,
             setConnId: (id) => this.each((consumer) => consumer.setConnId(id)),
-            setLastError: (message) => this.each((consumer) => consumer.setLastError(message)),
+            setLastError: (message) => {
+                this.lastError = message;
+                this.each((consumer) => consumer.setLastError(message));
+            },
             onFrame: (frame) =>
                 this.each((consumer) => {
                     if (consumer.channels.includes(frame.channel)) {
                         consumer.listeners().onFrame?.(frame);
                     }
                 }),
-            onStatus: (down) => this.each((consumer) => consumer.listeners().onStatus?.(down)),
+            onStatus: (down) => {
+                this.down = down;
+                this.each((consumer) => consumer.listeners().onStatus?.(down));
+            },
+            onOpen: () => this.each((consumer) => consumer.listeners().onOpen?.()),
         });
 
         if (close) {
@@ -247,9 +278,21 @@ export class LiveConnectionManager {
         }
     }
 
+    /** Runs `run` for every consumer; one that throws is reported and the others, and the cache writes, still run. */
     private each(run: (consumer: LiveConsumer) => void): void {
         for (const consumer of [...this.consumers]) {
-            run(consumer);
+            this.notify(consumer, () => run(consumer));
+        }
+    }
+
+    private notify(consumer: LiveConsumer, run: () => void): void {
+        try {
+            run();
+        } catch (error) {
+            console.error("[live] a consumer callback failed; the other consumers still get the frame", {
+                channels: consumer.channels,
+                error,
+            });
         }
     }
 }

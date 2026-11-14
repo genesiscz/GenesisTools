@@ -275,6 +275,31 @@ describe("hard deny", () => {
 
         expect(vmDataReason("C:\\Users\\fixture\\Movies\\export.mov", home)).toBeNull();
     });
+
+    test("on macOS and Linux a backslash stays part of a name, so it cannot reach the emulator exemption", () => {
+        const home = "/Users/alice";
+
+        expect(vmDataReason(`${home}/.android/avd/test.avd\\userdata-qemu.img.qcow2`, home)).toContain(
+            "virtual machine disk image"
+        );
+        expect(vmDataReason(`${home}/Movies/cut\\export.mov`, home)).toBeNull();
+    });
+
+    test("the VM and Photos denials ignore case, and the emulator exemption does not", () => {
+        const home = "/Users/alice";
+
+        for (const path of [
+            `${home}/VMs/disk.VMDK`,
+            `${home}/Downloads/DOCKER.RAW`,
+            `${home}/Pictures/Archive.PHOTOSLIBRARY/database`,
+            `${home}/.Colima/default/data`,
+            `${home}/.android/avd/old.avd/USERDATA-QEMU.IMG.QCOW2`,
+        ]) {
+            expect(vmDataReason(path, home)).not.toBeNull();
+        }
+
+        expect(vmDataReason(`${home}/Movies/Export.MOV`, home)).toBeNull();
+    });
 });
 
 describe("presets", () => {

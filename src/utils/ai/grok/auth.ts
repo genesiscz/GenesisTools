@@ -94,6 +94,21 @@ export function decodeJwtClaims(token: string): GrokJwtClaims | null {
     return result.payload as GrokJwtClaims;
 }
 
+/**
+ * Does this auth entry belong to the xAI user `subject`? The token's `sub` claim survives
+ * expiry, and the entry's own `user_id` still names the user when the token will not decode.
+ */
+export function entryHoldsSubject(entry: GrokAuthEntry, subject: string): boolean {
+    return decodeJwtClaims(entry.key)?.sub === subject || entry.user_id === subject;
+}
+
+/** A token whose `sub` claim names another user than `subject`. An undecodable token names nobody. */
+export function tokenNamesOtherSubject(token: string, subject: string): boolean {
+    const sub = decodeJwtClaims(token)?.sub;
+
+    return sub !== undefined && sub !== subject;
+}
+
 export function getTokenPrefix(token: string): string {
     if (token.length <= 8) {
         return token;

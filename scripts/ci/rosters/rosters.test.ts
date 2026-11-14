@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
-import { checkSource, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
+import { checkSource, langFor, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
 import appStatusOutsidePermissions from "./app-status-outside-permissions.definition";
 import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
@@ -111,7 +111,8 @@ const ROSTER_CASES: RosterCase[] = [
         definition: cmuxSendOutsideSurfaceInput,
         form: "an argv kept in an object first, in a file that runs cmux",
         bad: 'const steps = [{ args: ["send-key", ...where, "enter"] }];\nawait runCmuxOk(steps[0].args);',
-        good: 'import { runCmuxOk } from "./cmux";\nconst verb = z.enum(["send", "confirm"]);',
+        // The same verbs kept for a schema in a file that also runs cmux: the array never reaches a cmux runner.
+        good: 'import { runCmuxOk } from "./cmux";\nconst verbs = ["send", "confirm"];\nz.enum(verbs);',
         owner: "src/utils/cmux/surface-input.ts",
         planted: "src/planted/roster.ts",
     },
@@ -128,7 +129,8 @@ const ROSTER_CASES: RosterCase[] = [
         bad:
             'import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";\n' +
             'const TREE_ARGS = ["--id-format", "both", "tree", "--all"] as const;\nawait run(TREE_ARGS);',
-        good: 'const TREE_ARGS = ["tree", "--app", app];\nawait runAx(TREE_ARGS);',
+        // Another program's argv kept the same way in a file that also runs cmux: its consumer is `runAx`.
+        good: 'import { runCmux } from "./cmux";\nconst AX_ARGS = ["tree", "--app", app];\nawait runAx(AX_ARGS);',
         owner: "src/utils/cmux/tree-read.ts",
         planted: "src/planted/roster.ts",
     },
@@ -209,6 +211,28 @@ describe("roster patterns", () => {
         expect(new Set(ROSTER_CASES.map((rosterCase) => rosterCase.definition.name))).toEqual(
             new Set(ROSTER_DEFINITIONS.map((definition) => definition.name))
         );
+    });
+
+    test("every matcher compiles in each grammar its scope admits, so no .js file aborts a roster run", () => {
+        const refused = ROSTER_CASES.flatMap(({ definition, planted }) =>
+            [".ts", ".tsx", ".js"].flatMap((extension) => {
+                const file = planted.replace(/\.[^./]+$/, extension);
+                const lang = langFor(file);
+
+                if (lang === null || !(definition.onlyIn?.test(file) ?? true)) {
+                    return [];
+                }
+
+                try {
+                    parse(lang, "").root().findAll(definition.matcher);
+                    return [];
+                } catch (error) {
+                    return [`${definition.name} in ${file}: ${String(error).split("\n")[0]}`];
+                }
+            })
+        );
+
+        expect(refused).toEqual([]);
     });
 
     for (const { definition, bad, good, owner, planted, form } of ROSTER_CASES) {

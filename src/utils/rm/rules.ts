@@ -328,13 +328,22 @@ export const VM_DISK_EXTENSIONS = [".vmdk", ".vdi", ".hdd", ".qcow2", ".raw"];
 /** The one VM-shaped file a removal may take: an Android emulator's user-data disk (the AVD definition stays). */
 const ANDROID_USERDATA_GLOB = "~/.android/avd/*.avd/userdata-qemu.img.qcow2";
 
-/** The globs know only `/`: a Windows path (`C:\Users\x\a.photoslibrary\db`) is matched with its separators turned into `/`. */
+/**
+ * The globs know only `/`: a Windows path (`C:\Users\x\a.photoslibrary\db`, a `\\server\share` path, or any path on
+ * Windows) is matched with its separators turned into `/`. On macOS and Linux a backslash is a character of a name,
+ * so a POSIX path keeps it.
+ */
 function withForwardSlashes(path: string): string {
-    return path.replaceAll("\\", "/");
+    const windows = process.platform === "win32" || /^(?:[A-Za-z]:[\\/]|\\\\)/.test(path);
+    return windows ? path.replaceAll("\\", "/") : path;
 }
 
-/** A path glob as a regex: a double star with a slash is any folders, a double star anything, a single star one segment, and a leading `~` the home folder. */
-export function pathGlobRegex(glob: string, home: string): RegExp {
+/**
+ * A path glob as a regex: a double star with a slash is any folders, a double star anything, a single star one
+ * segment, and a leading `~` the home folder. `ignoreCase` is for a denial: macOS and Windows name `disk.VMDK` and
+ * `disk.vmdk` the same file.
+ */
+export function pathGlobRegex(glob: string, home: string, options: { ignoreCase?: boolean } = {}): RegExp {
     const expanded = glob.replace(/^~(?=$|\/)/, () => withForwardSlashes(home));
     const escaped = expanded.replace(/[.+^${}()|[\]\\]/g, "\\$&");
     const pattern = escaped
@@ -343,8 +352,10 @@ export function pathGlobRegex(glob: string, home: string): RegExp {
         .replace(/\*/g, "[^/]*")
         .replace(/§ANYDIRS§/g, "(?:.*/)?")
         .replace(/§ANY§/g, ".*");
-    return new RegExp(`^${pattern}$`);
+    return new RegExp(`^${pattern}$`, options.ignoreCase ? "i" : "");
 }
+
+const VM_DISK_NAMES_LOWER = new Set([...VM_DISK_NAMES].map((name) => name.toLowerCase()));
 
 /** Why `path` is a VM or container disk, a Photos library or Tresorit's sync database; null when it is none of these. */
 export function vmDataReason(nativePath: string, home: string): string | null {
@@ -355,24 +366,26 @@ export function vmDataReason(nativePath: string, home: string): string | null {
         return null;
     }
 
+    // The exemption above stays exact; the denials below ignore case, since macOS and Windows do.
     const name = basename(path);
+    const lowerName = name.toLowerCase();
 
-    if (VM_DISK_NAMES.has(name)) {
+    if (VM_DISK_NAMES_LOWER.has(lowerName)) {
         return `${name} is a VM disk: deleting it destroys every container, image and volume inside. Prune inside the guest instead.`;
     }
 
-    if (VM_DISK_EXTENSIONS.some((ext) => name.endsWith(ext))) {
+    if (VM_DISK_EXTENSIONS.some((ext) => lowerName.endsWith(ext))) {
         return `${name} is a virtual machine disk image`;
     }
 
-    if (name === "local.db" && path.includes("/.tresorit/")) {
+    if (lowerName === "local.db" && path.toLowerCase().includes("/.tresorit/")) {
         return "Tresorit's sync database";
     }
 
     const candidates = [path, `${path}/`];
 
     for (const glob of VM_DATA_DENY_GLOBS) {
-        const regex = pathGlobRegex(glob, home);
+        const regex = pathGlobRegex(glob, home, { ignoreCase: true });
 
         if (candidates.some((candidate) => regex.test(candidate))) {
             return glob.includes("photoslibrary")

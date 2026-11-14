@@ -3892,6 +3892,39 @@ describe("widget inbox notifications", () => {
             }
         );
     });
+
+    test("one session's forms past the cards' read limit count on its row as they count on the badge", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                const db = openPendingStore(toolDataDir("question", "qa.db"));
+                const insert = db.query(
+                    "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question','one-asker','/fixture','/fixture','[]')"
+                );
+                db.transaction(() => {
+                    for (let index = 0; index < WIDGET_FORMS_LIMIT + 8; index++) {
+                        insert.run(`form-${index}`, now - 10_000 + index);
+                    }
+                })();
+                db.close();
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: realWidgetSources.forms,
+                    formHeads: realWidgetSources.formHeads,
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: () => ({ answers: [], complete: true, truncated: false }),
+                };
+                const notifications = (await widgetSnapshot({ root: directory, sources, now })).notifications;
+
+                expect(notifications?.needsAnswer).toBe(WIDGET_FORMS_LIMIT + 8);
+                expect(notifications?.sessions.map((session) => session.needsAnswer)).toEqual([WIDGET_FORMS_LIMIT + 8]);
+            }
+        );
+    });
 });
 
 describe("private Widget voice notes", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { LiveChannel, LiveDataFrame } from "@app/dev-dashboard/lib/live/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { QueryClient } from "@tanstack/react-query";
@@ -341,5 +341,84 @@ describe("LiveConnectionManager", () => {
         expect(created).toHaveLength(2);
         expect(created[1]?.closed).toBe(true);
         expect(handoffs.state.connId).toBeNull();
+    });
+
+    test("a consumer that joins a stream which is down gets its error and the down status without a reopen", () => {
+        const { live, created, flush } = manager();
+        const first = consumer(["ports", "pulse"]);
+        const late = consumer(["ports"]);
+
+        live.register(first.consumer);
+        flush();
+        created[0]?.hello("conn-1");
+        created[0]?.onerror?.();
+        live.register(late.consumer);
+        flush();
+
+        expect(created).toHaveLength(1);
+        expect(late.state.lastError).toBe("live stream disconnected");
+        expect(late.statuses).toEqual([true]);
+    });
+
+    test("a consumer whose callback throws does not stop the others or the cache writes", () => {
+        const written: unknown[] = [];
+        const created: FakeEventSource[] = [];
+        const queued: Array<() => void> = [];
+        const live = new LiveConnectionManager({
+            qc: {
+                setQueryData: (key: unknown) => written.push(key),
+                invalidateQueries: async () => {},
+            } as unknown as QueryClient,
+            EventSourceCtor: fakeDeps(created).EventSourceCtor,
+            schedule: (run) => queued.push(run),
+        });
+        const healthy = consumer(["ports"]);
+        const errors = spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            live.register({
+                ...consumer(["ports"]).consumer,
+                listeners: () => ({
+                    onFrame: () => {
+                        throw new Error("a broken consumer");
+                    },
+                    onStatus: () => {
+                        throw new Error("a broken status listener");
+                    },
+                }),
+            });
+            live.register(healthy.consumer);
+
+            for (const run of queued.splice(0)) {
+                run();
+            }
+
+            const frame = { v: 1, channel: "ports", type: "snapshot", payload: { ports: [] } };
+            created[0]?.onmessage?.({ data: SafeJSON.stringify(frame) } as MessageEvent);
+
+            expect(healthy.frames).toEqual(["ports"]);
+            expect(healthy.statuses).toEqual([false]);
+            expect(written).toEqual([["ports"]]);
+            expect(errors).toHaveBeenCalled();
+        } finally {
+            errors.mockRestore();
+        }
+    });
+
+    test("every consumer hears each connection open, so a notice channel can refetch what it missed", () => {
+        const { live, created, flush } = manager();
+        const opened: string[] = [];
+        const qa = consumer(["qa"]);
+
+        live.register({
+            ...qa.consumer,
+            listeners: () => ({ ...qa.consumer.listeners(), onOpen: () => opened.push("qa") }),
+        });
+        flush();
+        created[0]?.hello("conn-1");
+        created[0]?.onerror?.();
+        created[0]?.hello("conn-2");
+
+        expect(opened).toEqual(["qa", "qa"]);
     });
 });

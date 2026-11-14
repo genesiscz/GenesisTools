@@ -666,6 +666,127 @@ describe("a peer on a child's stdio", () => {
         await expect(waiting).rejects.toThrow("agent exited with code 9");
     });
 
+    test("the grace that ends an exit with stdout still open cancels the stdout read before ended settles", async () => {
+        const order: string[] = [];
+        const { ended } = connectChildStdio({
+            child: {
+                stdin: { write: () => undefined },
+                // A grandchild holds the pipe: nothing comes and it never ends, until the reader cancels it.
+                stdout: new ReadableStream<Uint8Array>({
+                    cancel(reason) {
+                        order.push(`cancelled: ${String(reason)}`);
+                    },
+                }),
+                exited: Promise.resolve(9),
+            },
+            exitGraceMs: 20,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+
+        await ended.then(() => order.push("ended"));
+        expect(order).toEqual(["cancelled: agent exited with code 9", "ended"]);
+    });
+
+    /** A child whose stdin writes each wait for the test to finish their flush, one promise per write. */
+    function heldPipe() {
+        const pipe = childPipe();
+        const flushes: Array<ReturnType<typeof Promise.withResolvers<void>>> = [];
+        const stdin = {
+            write: (chunk: string) => pipe.written.push(chunk),
+            flush: () => {
+                const flush = Promise.withResolvers<void>();
+                flushes.push(flush);
+                return flush.promise;
+            },
+        };
+        return { pipe, flushes, child: { ...pipe.child, stdin } };
+    }
+
+    test("a failed write closes the peer, and a later finished write sends nothing its outbox still held", async () => {
+        const { pipe, flushes, child } = heldPipe();
+        const { peer, written } = connectChildStdio({
+            child,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const third = "z".repeat(Math.floor(CHILD_STDIN_HIGH_WATER_BYTES / 3) + 1);
+        const calls = ["one", "two", "three"].map((method) => peer.request(method, { third }, { timeoutMs: 60_000 }));
+        const outcomes = Promise.allSettled(calls);
+        const waiting = written();
+        waiting.catch(() => undefined);
+
+        await Bun.sleep(0);
+        expect(pipe.written).toHaveLength(2);
+        expect(flushes).toHaveLength(2);
+        flushes[0]?.reject(new Error("stdin broke"));
+        await expect(waiting).rejects.toThrow("stdin broke");
+        expect(peer.closed).toBe(true);
+        flushes[1]?.resolve();
+        await Bun.sleep(0);
+
+        expect((await outcomes).map((outcome) => outcome.status)).toEqual(["rejected", "rejected", "rejected"]);
+        expect(pipe.written).toHaveLength(2);
+    });
+
+    test("written() rejects when the outbox dropped a message it covers, though the write in flight finished", async () => {
+        const { flushes, child } = heldPipe();
+        const { peer, written } = connectChildStdio({
+            child,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const frame = { text: "x".repeat(1024 * 1024) };
+
+        peer.notify("first", {});
+
+        for (let index = 0; index < 10; index++) {
+            peer.notify("frame", frame);
+        }
+
+        const waiting = written();
+        waiting.catch(() => undefined);
+        await Bun.sleep(0);
+        expect(flushes).toHaveLength(1);
+        flushes[0]?.resolve();
+
+        expect(peer.closed).toBe(true);
+        await expect(waiting).rejects.toThrow("agent closed before its messages were written");
+    });
+
+    test("written() waits for the messages sent before it, not for one sent while it waits", async () => {
+        const { pipe, flushes, child } = heldPipe();
+        const { peer, written } = connectChildStdio({
+            child,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        let done = false;
+
+        peer.notify("answer", {});
+        const earlier = written().then(() => {
+            done = true;
+        });
+        peer.notify("later", {});
+        await Bun.sleep(0);
+        expect(pipe.written).toHaveLength(2);
+
+        flushes[0]?.resolve();
+        await earlier;
+        expect(done).toBe(true);
+        expect(flushes).toHaveLength(2);
+        flushes[1]?.resolve();
+        peer.close("done");
+    });
+
     test("a child that stops reading its stdin reaches the backlog limit and its connection ends", async () => {
         const pipe = childPipe();
         const { peer } = connectChildStdio({

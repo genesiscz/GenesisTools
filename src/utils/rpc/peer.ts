@@ -169,12 +169,14 @@ export const OUTBOX_LIMIT_BYTES = 8 * 1024 * 1024;
 /**
  * Writes a whole message even when the socket takes only part of it now; the rest goes on `drain`. The queue is a
  * list of the unsent messages, so a slow reader costs no copy per message, and it holds at most `limit` bytes: the
- * message that would pass it calls `onFull` once, and the outbox drops it and every later one.
+ * message that would pass it calls `onFull` once, and the outbox drops it and every later one. `discard()` drops the
+ * held messages and every later one the same way.
  */
 export class Outbox {
     private readonly chunks: Buffer[] = [];
     private bytes = 0;
-    private full = false;
+    private dropping = false;
+    private offeredBytes = 0;
 
     constructor(
         private readonly write: (bytes: Buffer) => number,
@@ -187,15 +189,21 @@ export class Outbox {
         return this.bytes;
     }
 
+    /** The bytes of every message handed to `send`, the dropped ones included: a write that reaches it wrote them all. */
+    get offered(): number {
+        return this.offeredBytes;
+    }
+
     send(text: string): void {
-        if (this.full) {
+        const message = Buffer.from(text);
+        this.offeredBytes += message.length;
+
+        if (this.dropping) {
             return;
         }
 
-        const message = Buffer.from(text);
-
         if (this.bytes > 0 && this.bytes + message.length > this.limit) {
-            this.full = true;
+            this.dropping = true;
             const held = this.bytes + message.length;
             this.chunks.length = 0;
             this.bytes = 0;
@@ -206,6 +214,13 @@ export class Outbox {
         this.chunks.push(message);
         this.bytes += message.length;
         this.flush();
+    }
+
+    /** Drops the held messages and every later one: nothing reaches the socket any more. */
+    discard(): void {
+        this.dropping = true;
+        this.chunks.length = 0;
+        this.bytes = 0;
     }
 
     flush(): void {
@@ -344,8 +359,17 @@ export class RpcPeer {
         }
     }
 
-    /** The socket can take more bytes. */
+    /** The bytes of every message this peer sent, the ones it dropped or still holds included. */
+    get sentBytes(): number {
+        return this.outbox.offered;
+    }
+
+    /** The socket can take more bytes. A closed peer writes nothing more. */
     flush(): void {
+        if (this.closed) {
+            return;
+        }
+
         this.outbox.flush();
     }
 
@@ -405,13 +429,17 @@ export class RpcPeer {
         });
     }
 
-    /** The connection ended: every request still waiting rejects with `reason`, every running call's signal aborts. */
+    /**
+     * The connection ended: every request still waiting rejects with `reason`, every running call's signal aborts, and
+     * the messages the outbox still holds are dropped, so the other side runs no request its caller saw fail.
+     */
     close(reason: string): void {
         if (this.closedReason) {
             return;
         }
 
         this.closedReason = reason;
+        this.outbox.discard();
 
         for (const [id, waiting] of this.outgoing) {
             this.drop(id, waiting);

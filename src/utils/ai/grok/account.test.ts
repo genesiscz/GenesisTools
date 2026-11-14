@@ -348,6 +348,45 @@ describe("resolveGrokSubToken: recovering a pasted token", () => {
         expect(calls.some((url) => url === `${ISSUER}/oauth2/token`)).toBe(true);
     });
 
+    it("forces a second grant when the token the first recovery returned is refused too", async () => {
+        const firstGrant = jwt(3_600 + 60, MINE);
+        const secondGrant = jwt(3_600 + 120, MINE);
+        const grants = [firstGrant, secondGrant];
+        account = grokAccount({ accessToken: FRESH_MINE });
+        writeAuth(expiredEntries({ key: FRESH_MINE, user_id: MINE }));
+        const calls: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request) => {
+            const url = typeof input === "string" ? input : input.toString();
+            calls.push(url);
+
+            if (url.endsWith("/.well-known/openid-configuration")) {
+                return new Response("no", { status: 404 });
+            }
+
+            return Response.json({ access_token: grants.shift(), refresh_token: `refresh-${calls.length}` });
+        }) as typeof fetch;
+
+        const resolved = await resolveGrokSubToken("grok");
+
+        // The client now holds the first grant; the upstream refuses it as well.
+        expect(await resolved.storedGrant?.refresh("upstream returned 401", true)).toBe(firstGrant);
+        expect(await resolved.storedGrant?.refresh("upstream returned 401", true)).toBe(secondGrant);
+        expect(calls.filter((url) => url === `${ISSUER}/oauth2/token`)).toHaveLength(2);
+    });
+
+    it("refuses a grant whose new token names another identity", async () => {
+        account = grokAccount({ accessToken: FRESH_MINE });
+        writeAuth(expiredEntries({ key: FRESH_MINE, user_id: MINE }));
+        const calls: string[] = [];
+        stubFetch({ calls, token: { body: SafeJSON.stringify({ access_token: jwt(3_600, THEIRS) }) } });
+
+        const resolved = await resolveGrokSubToken("grok");
+
+        await expect(resolved.storedGrant?.refresh("upstream returned 401", true)).rejects.toThrow(
+            GrokAuthExpiredError
+        );
+    });
+
     it("never forces that grant during a probe", async () => {
         account = grokAccount({ accessToken: FRESH_MINE });
         writeAuth(expiredEntries({ key: FRESH_MINE, user_id: MINE }));
