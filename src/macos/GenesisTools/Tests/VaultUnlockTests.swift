@@ -430,6 +430,23 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(VaultCaller.bunfigPreloads(in: "# preload = [\"x.ts\"]\n"), [])
     }
 
+    func testBunfigPreloadsReadLiteralStringsQuotedKeysAndMultilineLists() {
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = ['./evil.ts']"), ["./evil.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "\"preload\" = [\"./a.ts\"]"), ["./a.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "'preload' = \"./b.ts\""), ["./b.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\n  \"a.ts\", # one\n  'b.ts',\n]\n"), ["a.ts", "b.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"has # hash.ts\"]"), ["has # hash.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = \"\"\"./m.ts\"\"\""), ["./m.ts"])
+    }
+
+    func testBunfigPreloadsThatCannotBeReadFailClosed() {
+        let unreadable = [VaultCaller.unreadablePreload]
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"a.ts\""), unreadable)
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [./a.ts]"), unreadable)
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"\\u0041.ts\"]"), unreadable)
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = { a = 1 }"), unreadable)
+    }
+
     func testABunfigPreloadThatIsNotTheCheckoutsOwnIsExtraCode() throws {
         let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
         let home = root + "/home", work = root + "/work"
@@ -861,6 +878,21 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertTrue(VaultDaemonNotices.reserve("src/ai/commands/usage/poll-daemon.ts", now: 2_000, everyHours: 24, in: path),
                       "another daemon's stamp is kept, not overwritten")
         XCTAssertEqual(VaultDaemonNotices.load(from: path).count, 2)
+    }
+
+    func testAHeldReservationLockSkipsTheNoticeInsteadOfWaiting() throws {
+        let folder = NSTemporaryDirectory() + "vault-daemon-lock-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow-notified.json"
+        let held = open(path + ".lock", O_CREAT | O_RDWR, 0o600)
+        XCTAssertGreaterThanOrEqual(held, 0)
+        XCTAssertEqual(flock(held, LOCK_EX), 0)
+        defer { close(held) }
+        let started = Date()
+        XCTAssertFalse(VaultDaemonNotices.reserve("src/codex/daemon.ts", now: 1_000, everyHours: 24, in: path))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        XCTAssertTrue(VaultDaemonNotices.load(from: path).isEmpty, "no stamp is written without the lock")
     }
 
     func testTheSettingsFileKeepsDefaultsForMissingKeysAndTurnsOffWhenItDoesNotDecode() throws {

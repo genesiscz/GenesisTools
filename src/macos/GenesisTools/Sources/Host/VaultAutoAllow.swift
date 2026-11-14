@@ -252,7 +252,7 @@ enum VaultDaemonNotices {
     }
 
     /// Reads the stamps, checks the daemon is due and saves its new stamp as one step, under a lock that other
-    /// processes share: two unlock processes that read the same expired stamp can no longer both pass, and one
+    /// processes share, taken without waiting (a held lock skips the notification): two unlock processes that read the same expired stamp can no longer both pass, and one
     /// daemon's stamp can no longer overwrite another's. True for the one process that may post.
     static func reserve(_ daemon: String, now: Int64, everyHours: Double, in path: String = path) -> Bool {
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -263,7 +263,12 @@ enum VaultDaemonNotices {
         }
 
         defer { close(lock) }
-        guard flock(lock, LOCK_EX) == 0 else { return false }
+        // Never wait on another process: an optional notification is skipped when the lock is held.
+        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else {
+            logClick("vault.unlock auto-allow: the daemon notification lock is held by another process; skipped")
+            return false
+        }
+
         defer { flock(lock, LOCK_UN) }
         guard isDue(daemon, now: now, everyHours: everyHours, stamps: load(from: path)) else { return false }
         return mark(daemon, now: now, in: path)

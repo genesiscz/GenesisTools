@@ -224,27 +224,110 @@ struct VaultCaller {
         return found
     }
 
+    /// What `bunfigPreloads` returns for a `preload` value it cannot read as a list of TOML strings. It is no real
+    /// path, so it is never one of a checkout's own preloads, and the caller fails closed (the approval has no window).
+    static let unreadablePreload = "(the preload value is not a list of strings)"
+
     /// The strings of the top-level `preload` key of a bunfig.toml (before its first `[table]`, where `[test]` has its
-    /// own `preload` that only `bun test` reads). Comments are cut first.
+    /// own `preload` that only `bun test` reads). The key may be bare or quoted; a string is basic (`"x"`, with escapes)
+    /// or literal (`'x'`), single-line or triple-quoted. A value that is anything else, an escape this does not know,
+    /// or a list that does not end, gives `unreadablePreload`: a config this cannot fully understand is not trusted.
     static func bunfigPreloads(in text: String) -> [String] {
         var top: [Substring] = []
         for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("[") { break }
-            top.append(raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? raw)
+            if raw.trimmingCharacters(in: .whitespaces).hasPrefix("[") { break }
+            top.append(raw)
         }
 
         let joined = top.joined(separator: "\n")
-        guard let key = joined.range(of: #"(?m)^\s*preload\s*="#, options: .regularExpression) else { return [] }
-        var rest = joined[key.upperBound...].drop { $0 == " " || $0 == "\t" }
-        if rest.hasPrefix("[") {
-            rest = rest[..<(rest.firstIndex(of: "]") ?? rest.endIndex)]
-        } else if let newline = rest.firstIndex(of: "\n") {
-            rest = rest[..<newline]
+        guard let key = joined.range(of: #"(?m)^\s*(?:preload|"preload"|'preload')\s*="#, options: .regularExpression) else {
+            return []
         }
 
-        return rest.split(separator: "\"", omittingEmptySubsequences: false).enumerated()
-            .filter { $0.offset % 2 == 1 }.map { String($0.element) }.filter { !$0.isEmpty }
+        var scanner = TOMLScanner(Array(joined[key.upperBound...]))
+        scanner.skipSpace(newlines: false)
+        if scanner.peek == "[" {
+            scanner.advance()
+            var entries: [String] = []
+            while true {
+                scanner.skipSpace(newlines: true)
+                if scanner.peek == "]" { return entries.filter { !$0.isEmpty } }
+                if scanner.peek == "," {
+                    scanner.advance()
+                    continue
+                }
+
+                guard let entry = scanner.string() else { return [unreadablePreload] }
+                entries.append(entry)
+            }
+        }
+
+        guard let entry = scanner.string() else { return [unreadablePreload] }
+        return entry.isEmpty ? [] : [entry]
+    }
+
+    /// A cursor over TOML text that reads strings and skips comments: just what `bunfigPreloads` needs.
+    private struct TOMLScanner {
+        let chars: [Character]
+        var index = 0
+
+        init(_ chars: [Character]) { self.chars = chars }
+
+        var peek: Character? { index < chars.count ? chars[index] : nil }
+
+        mutating func advance() { index += 1 }
+
+        /// Skips blanks and, with `newlines`, line ends and `#` comments.
+        mutating func skipSpace(newlines: Bool) {
+            while let c = peek {
+                if c == " " || c == "\t" {
+                    advance()
+                } else if newlines, c == "\n" || c == "\r" {
+                    advance()
+                } else if newlines, c == "#" {
+                    while let d = peek, d != "\n" { advance() }
+                } else {
+                    return
+                }
+            }
+        }
+
+        private func has(_ quote: Character, times: Int) -> Bool {
+            index + times <= chars.count && chars[index..<index + times].allSatisfy { $0 == quote }
+        }
+
+        /// One TOML string at the cursor, or nil when none starts here or it does not end.
+        mutating func string() -> String? {
+            guard let quote = peek, quote == "\"" || quote == "'" else { return nil }
+            let multiline = has(quote, times: 3)
+            index += multiline ? 3 : 1
+            var out = ""
+            while let c = peek {
+                if multiline ? has(quote, times: 3) : c == quote {
+                    index += multiline ? 3 : 1
+                    return out
+                }
+
+                if !multiline, c == "\n" { return nil }
+                if quote == "\"", c == "\\" {
+                    advance()
+                    guard let escaped = peek else { return nil }
+                    switch escaped {
+                    case "\"", "\\": out.append(escaped)
+                    case "n": out.append("\n")
+                    case "t": out.append("\t")
+                    default: return nil
+                    }
+                    advance()
+                    continue
+                }
+
+                out.append(c)
+                advance()
+            }
+
+            return nil
+        }
     }
 
     /// Why this request can only be allowed once, or nil when an allow may be remembered.

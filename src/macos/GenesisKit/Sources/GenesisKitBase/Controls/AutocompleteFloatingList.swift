@@ -59,23 +59,65 @@ public enum AutocompleteLaunch {
         opened = false
     }
 
+    /// Waiters of `waitUntilOpened`, each with the task that ends its wait at the deadline.
+    private static var waiters: [UUID: (continuation: CheckedContinuation<Bool, Never>, timeout: Task<Void, Never>)] = [:]
+
     /// The field has opened its list through its model (`whenInSight` ran).
     static func markOpened() {
         opened = true
+        for id in Array(waiters.keys) {
+            finishWait(id, opened: true)
+        }
+    }
+
+    /// Ends one wait with its outcome, once: a second call for the same wait finds nothing.
+    private static func finishWait(_ id: UUID, opened: Bool) {
+        guard let waiter = waiters.removeValue(forKey: id) else { return }
+        waiter.timeout.cancel()
+        waiter.continuation.resume(returning: opened)
     }
 
     /// Waits until the field named in `open(_:)` has opened its list, then a moment for its floating panel to appear
     /// as a child window. True at once when no field was requested; false when the field did not open within
-    /// `timeout` seconds (it never came into sight), so a caller can report that instead of capturing a closed list.
+    /// `timeout` seconds (it never came into sight) or the waiting task was cancelled, so a caller can report that
+    /// instead of capturing a closed list. `markOpened` wakes the wait; nothing polls.
     public static func waitUntilOpened(timeout: TimeInterval = 20) async -> Bool {
         guard requested != nil else { return true }
-        let deadline = ContinuousClock.now + .seconds(timeout)
-        while !opened, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(50))
+        if !opened {
+            let id = UUID()
+            let arrived = await withTaskCancellationHandler {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    MainActor.assumeIsolated {
+                        guard !Task.isCancelled else {
+                            continuation.resume(returning: false)
+                            return
+                        }
+
+                        let deadline = Task { @MainActor in
+                            do {
+                                try await Task.sleep(for: .seconds(timeout))
+                            } catch {
+                                return
+                            }
+
+                            finishWait(id, opened: false)
+                        }
+                        waiters[id] = (continuation, deadline)
+                    }
+                }
+            } onCancel: {
+                Task { @MainActor in finishWait(id, opened: false) }
+            }
+
+            guard arrived else { return false }
         }
 
-        guard opened else { return false }
-        try? await Task.sleep(for: .milliseconds(300))
+        do {
+            try await Task.sleep(for: .milliseconds(300))
+        } catch {
+            return false
+        }
+
         return true
     }
 
