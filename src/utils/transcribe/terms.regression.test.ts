@@ -5,7 +5,6 @@ import {
     candidatesInMeeting,
     findSuspectTerms,
     findUnknownWords,
-    meetingTermCandidates,
     meetingTermsOf,
     scopedVocabulary,
 } from "./terms";
@@ -139,6 +138,6 @@ test("the meeting is read once for every proposal, and a proposal from it equals
     expect(meeting.scoped.map((term) => term.term)).toEqual(["Kubernetes"]);
 
     for (const heard of ["XYYku", "Kubernetis", "XYZ"]) {
-        expect(candidatesInMeeting(meeting, heard)).toEqual(meetingTermCandidates({ heard, entries, vocab }));
+        expect(candidatesInMeeting(meeting, heard)).toEqual(candidatesInMeeting(meetingTermsOf(entries, vocab), heard));
     }
 });
