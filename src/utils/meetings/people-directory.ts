@@ -846,16 +846,23 @@ class IdentityGroups {
     add(kind: PersonSourceKind, person: SourcePerson): void {
         const found = this.matching(person);
         const identity = found[0] ?? this.create();
+        const united = person.email ? found.slice(1) : [];
 
-        if (person.email) {
-            for (const other of found.slice(1)) {
-                unite(identity, other);
-                this.drop(other);
-            }
+        for (const other of united) {
+            unite(identity, other);
+            this.drop(other);
         }
 
         absorb(identity, kind, person);
-        this.index(identity);
+
+        // Only what this add gave the identity is indexed: everything a united identity brought, and the person's own
+        // email and key. The rest already points at it.
+        for (const other of united) {
+            this.index(identity, other.emails, other.keys);
+        }
+
+        const key = nameKey(person.name);
+        this.index(identity, person.email ? [person.email.toLowerCase()] : [], key ? [key] : []);
     }
 
     /** The identities, in the order they were first seen. */
@@ -881,6 +888,10 @@ class IdentityGroups {
             }
         }
 
+        if (found.size <= 1) {
+            return [...found];
+        }
+
         return [...found].sort((a, b) => (this.order.get(a) ?? 0) - (this.order.get(b) ?? 0));
     }
 
@@ -898,12 +909,12 @@ class IdentityGroups {
         }
     }
 
-    private index(identity: Identity): void {
-        for (const email of identity.emails) {
+    private index(identity: Identity, emails: Iterable<string>, keys: Iterable<string>): void {
+        for (const email of emails) {
             this.byEmail.set(email, identity);
         }
 
-        for (const key of identity.keys) {
+        for (const key of keys) {
             const known = this.byKey.get(key) ?? new Set<Identity>();
             known.add(identity);
             this.byKey.set(key, known);
