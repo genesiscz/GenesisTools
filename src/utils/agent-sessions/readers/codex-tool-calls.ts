@@ -18,9 +18,9 @@ const SHELLS = new Set(["bash", "zsh", "sh"]);
 
 /**
  * The cwd the calls of a read that starts at `offset` (a row start) run in until their own `turn_context`: the latest
- * `turn_context` cwd before `offset`, else the cwd the rollout's first row (`session_meta`) names. So a read that starts
- * mid-session gives its calls the cwd a read from the file start gives them. `capped`: the widest window ended before
- * the file start.
+ * `turn_context` cwd before `offset`, else the cwd the rollout's first row (`session_meta`) names. So a read that
+ * starts mid-session gives its calls the cwd a read from the file start gives them. `capped`: the widest window ended
+ * before the file start.
  */
 function cwdBefore(path: string, offset: number): { cwd: string | undefined; capped: boolean } {
     let fd: number;
