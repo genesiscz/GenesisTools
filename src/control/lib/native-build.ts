@@ -105,7 +105,11 @@ export function recordNativeBuild({
     }
     const receipt: NativeBuildReceipt = { version: RECEIPT_VERSION, sources: after, binary: binarySignature(binary) };
     atomicWriteFileSync(receiptPath(binary), SafeJSON.stringify(receipt));
-    markBuildKept(binary);
+    try {
+        markBuildKept(binary);
+    } catch (error) {
+        logger.warn({ error, binary }, "native build: could not write .purge-keep; build-purge may delete this build");
+    }
 }
 
 /**
