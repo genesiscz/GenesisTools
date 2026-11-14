@@ -15,10 +15,13 @@ public final class FailureNoticeModel: ObservableObject {
             guard report != oldValue else { return }
             detailsMarkdown = report.detailsMarkdown()
             rawMarkdown = Self.rawMarkdown(report)
-            stackText = Self.stackText(report)
-            // A report enriched after delivery (`addingCallLog`) brings its events, or another failure its time.
-            timeText = Self.timeText(report)
-            stepCount = Self.stepCount(report)
+            // A report enriched after delivery (`addingCallLog`) brings its events, or another failure its time. An
+            // environment-only update changes none of these, so the log is not parsed again for it.
+            if report.log != oldValue.log || report.stack != oldValue.stack {
+                stackText = Self.stackText(report)
+                stepCount = Self.stepCount(report)
+            }
+            if report.time != oldValue.time { timeText = Self.timeText(report) }
         }
     }
     @Published public var detailsOpen: Bool
@@ -57,11 +60,15 @@ public final class FailureNoticeModel: ObservableObject {
         stepCount = Self.stepCount(report)
     }
 
-    static func timeText(_ report: FailureReport) -> String {
+    private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .medium
-        return formatter.string(from: report.time)
+        return formatter
+    }()
+
+    static func timeText(_ report: FailureReport) -> String {
+        timeFormatter.string(from: report.time)
     }
 
     static func stepCount(_ report: FailureReport) -> Int {
