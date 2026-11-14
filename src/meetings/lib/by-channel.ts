@@ -97,19 +97,13 @@ export function planByChannel(options: {
     const remoteNames = seats.remote.map((seat) => seat.name);
     // The microphone channel is the owner's microphone (group `self`), else a group under this label; the system
     // channel narrows to a remote device group under this label. Without a group every seated person stays possible.
+    const labelGroup = groups.find((group) => group.label === input.label);
     const roomGroup =
         groupPeople(
             groups.find((group) => group.id === "self"),
             seats.room
-        ) ??
-        groupPeople(
-            groups.find((group) => group.label === input.label),
-            seats.room
-        );
-    const remoteGroup = groupPeople(
-        groups.find((group) => group.label === input.label),
-        remoteNames
-    );
+        ) ?? groupPeople(labelGroup, seats.room);
+    const remoteGroup = groupPeople(labelGroup, remoteNames);
     const result: ByChannelPlan = {
         ranges: [],
         roomOnly: [],
@@ -155,7 +149,7 @@ export function planByChannel(options: {
                     to: run.to,
                     label: input.label,
                     candidates: run.candidates,
-                    confidence: confidence,
+                    confidence,
                     reason,
                 });
                 result.questions.push({
