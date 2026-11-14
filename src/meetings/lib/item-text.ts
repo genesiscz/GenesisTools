@@ -72,6 +72,7 @@ type AppliedCounts = Omit<CorrectionsApplied, "entries" | "outcomes">;
 
 /** Each counter of `transcript`'s summary with its words for one and for more, in the order the corrections apply. */
 const APPLIED_PARTS: Array<[keyof AppliedCounts, string, string]> = [
+    ["removed", "removed local speech line", "removed local speech lines"],
     ["labels", "renamed line", "renamed lines"],
     ["ranges", "re-attributed line", "re-attributed lines"],
     ["joins", "join", "joins"],

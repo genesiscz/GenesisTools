@@ -8,9 +8,15 @@ export interface LocalSpeech {
     ts: number;
     text: string;
 }
+
+/** The speech history `tools say` keeps; its SQLite WAL beside it holds the calls not yet checkpointed. */
+export function localSpeechDbPath(): string {
+    return toolDataDir("say", "calls.db");
+}
+
 /** Reads only completed audible calls, without creating or migrating the speech database. */
 export function localSpeechDuring(options: { start: string; end?: string; dbPath?: string }): LocalSpeech[] {
-    const file = options.dbPath ?? toolDataDir("say", "calls.db");
+    const file = options.dbPath ?? localSpeechDbPath();
     if (!existsSync(file)) {
         return [];
     }

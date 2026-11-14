@@ -25,11 +25,12 @@ export function diagnoseTermAddress(options: {
     }
 
     const lines = new TranscriptLines(transcript);
+    // A marked term (meaning or quote) applies as a mark on the literal heard word, never through its stem.
+    const marked = Boolean(item.meaning || item.quote);
     const stemPattern = termFixPattern({
         heard: item.heard,
         replacement: item.proposed ?? item.heard,
-        heardStem: item.heardStem,
-        proposedStem: item.proposedStem,
+        ...(marked ? {} : { heardStem: item.heardStem, proposedStem: item.proposedStem }),
     });
     const pattern = new RegExp(stemPattern.source, stemPattern.flags.replace("g", ""));
     const explicit = item.evidence?.transcriptLine;

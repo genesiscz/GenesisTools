@@ -447,6 +447,54 @@ describe("applyCorrections", () => {
         expect(applied).toMatchObject({ joins: 1, ranges: 1, terms: 1, expansions: 1 });
     });
 
+    test("a removal hides its line though the dictionary rewrote it, and counts it", () => {
+        const applied = applyCorrections(lines, {
+            removals: [{ item: "i1", fromSec: 60, toSec: 60, heard: "A MOP je hotový.", line: 3 }],
+            dictionary: {
+                abbrExpansion: "every",
+                entries: [{ type: "abbr", value: "MOP", substitution: "MOP (Obchodní partner)" }],
+            },
+        });
+
+        expect(applied.entries.map((e) => e.startSec)).toEqual([0, 20, 21, 200]);
+        expect(applied.outcomes).toEqual([{ item: "i1", status: "applied", lines: [{ index: 3, startSec: 60 }] }]);
+        expect(applied.removed).toBe(1);
+    });
+
+    test("a removal goes before a join, so the removed line gives no word to the line before the cut", () => {
+        const applied = applyCorrections(lines, {
+            removals: [{ item: "i1", fromSec: 21, toSec: 21, heard: "áhnu tu druhou queryu." }],
+            joins: [{ atSec: 21, item: "i2" }],
+        });
+
+        expect(applied.entries.map((e) => e.text)).toEqual([
+            "Začneme s UVČ.",
+            "jak já vlastně dot",
+            "A MOP je hotový.",
+            "Pak ještě něco.",
+        ]);
+        expect(applied.outcomes.map((outcome) => [outcome.item, outcome.status])).toEqual([
+            ["i1", "applied"],
+            ["i2", "not-found"],
+        ]);
+        expect(applied.joins).toBe(0);
+    });
+
+    test("two same-time lines with the removal's text: its address picks one, and without one neither goes", () => {
+        const twice = [line("Alice Example", 5, "Hotovo."), line("Bob Example", 5, "Hotovo.")];
+        const addressed = applyCorrections(twice, {
+            removals: [{ item: "i1", fromSec: 5, toSec: 5, heard: "Hotovo.", line: 1 }],
+        });
+        const unaddressed = applyCorrections(twice, {
+            removals: [{ item: "i1", fromSec: 5, toSec: 5, heard: "Hotovo." }],
+        });
+
+        expect(addressed.entries.map((e) => e.speaker)).toEqual(["Alice Example"]);
+        expect(unaddressed.entries.map((e) => e.speaker)).toEqual(["Alice Example", "Bob Example"]);
+        expect(unaddressed.outcomes[0]?.status).toBe("ambiguous");
+        expect(unaddressed.removed).toBe(0);
+    });
+
     test("a range matches the label a line came with, so a line moved to a name that is also a label stays", () => {
         const spoken = [line("Speaker 2", 10, "Jedna."), line("Alice Example", 12, "Dvě.")];
         const applied = applyCorrections(spoken, {

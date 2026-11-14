@@ -579,13 +579,156 @@ test("an exact attendance id reaches the Teams reader and chooses only that fixt
                 "chat-b",
                 "--json",
             ]);
-            expect(exec).toHaveBeenCalledTimes(3);
+            // One opened meeting reads one chat's attendance once, whichever step asks for it again.
+            expect(exec).toHaveBeenCalledTimes(1);
         } finally {
             of.mockRestore();
             collect.mockRestore();
         }
     } finally {
         exec.mockRestore();
+    }
+});
+
+test("suggest's exact attendance id reaches the automatic collection, so the record keeps that chat's attendance", async () => {
+    const cli = await import("@genesiscz/utils/cli");
+    const { runSuggest } = await import("./suggest-run");
+    const { store, record } = await newRecord({ platform: "teams" });
+    const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+    const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    // Any lookup without the chosen id finds chat A, whose attendance names another person.
+    const exec = spyOn(cli, "execTool").mockImplementation(async (args) => ({
+        success: true,
+        exitCode: 0,
+        stderr: "",
+        stdout: SafeJSON.stringify([
+            {
+                meeting: {
+                    title: "Planning",
+                    startedAt: "2026-11-02T15:00:05.000Z",
+                    endedAt: "2026-11-02T15:10:05.000Z",
+                },
+                attendance: [
+                    {
+                        name: args.includes("chat-b") ? "Bob Example" : "Carol Example",
+                        joinedAt: "2026-11-02T15:00:05.000Z",
+                        leftAt: "2026-11-02T15:10:05.000Z",
+                    },
+                ],
+            },
+        ]),
+    }));
+    try {
+        await runSuggest({ store, record, rules: [], attendance: "teams", attendanceId: "chat-b" });
+        const lookups = exec.mock.calls.map(([args]) => args).filter((args) => args.includes("attendance"));
+        expect(lookups.length).toBeGreaterThan(0);
+        expect(lookups.every((args) => args.includes("chat-b"))).toBe(true);
+        expect(store.read(record.id)?.attendance?.people.map((stay) => stay.name)).toEqual(["Bob Example"]);
+
+        // A file (or another platform) is the run's own attendance: collection keeps none and looks nothing up.
+        of.mockRestore();
+        const other = await newRecord({ platform: "teams" });
+        exec.mockClear();
+        const outcome = await OpenedMeeting.of(other.store, other.record, {
+            source: fakeSource(),
+            sourceMeetingId: "abc",
+        }).collect({ attendance: { spec: join(other.store.root, "attendance.csv") } });
+        expect(exec).not.toHaveBeenCalled();
+        expect(outcome.notes.map((note) => note.text).join("\n")).toContain("so none is kept on the record");
+        expect(other.store.read(other.record.id)?.attendance).toBeUndefined();
+    } finally {
+        exec.mockRestore();
+        of.mockRestore();
+    }
+});
+
+test("a failed automatic collection is a warning of the suggest result, and a terms-only run judges no indicator gap", async () => {
+    const { runSuggest } = await import("./suggest-run");
+    const { store, record } = await newRecord();
+    const source = fakeSource();
+    const meeting = await source.load("abc");
+    const load = spyOn(source, "load").mockResolvedValue({
+        ...meeting,
+        transcript: Array.from({ length: 10 }, (_, index) => ({
+            speaker: "Alice Example",
+            startSec: index * 10,
+            text: "A long enough line.",
+        })),
+    });
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    const collect = spyOn(opened, "collect").mockResolvedValue({
+        record,
+        notes: [
+            { ok: true, text: "platform: Teams" },
+            { ok: false, text: "attendance not collected: fixture refused" },
+        ],
+    });
+    try {
+        const result = await runSuggest({ store, record, rules: ["terms"], wordCheck: "off" });
+
+        expect(result.warnings).toContain("attendance not collected: fixture refused");
+        expect(result.warnings.some((warning) => warning.startsWith("Speaking indicator gap"))).toBe(false);
+    } finally {
+        collect.mockRestore();
+        of.mockRestore();
+        load.mockRestore();
+    }
+});
+
+test("suggest keeps the cached voice matches when the echo cache wraps the energy share", async () => {
+    const echoModule = await import("@genesiscz/utils/meetings/echo");
+    const { runSuggest } = await import("./suggest-run");
+    const { store, record } = await newRecord();
+    const source = fakeSource();
+    const meeting = await source.load("abc");
+    const load = spyOn(source, "load").mockResolvedValue({
+        ...meeting,
+        speakers: [{ speakerId: 1, name: "Bob Example", origin: "platform" }],
+        transcript: [{ speaker: "Bob Example", startSec: 10, text: "The harbor plan is ready." }],
+    });
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    const collect = spyOn(opened, "collect").mockResolvedValue({ record, notes: [] });
+    const evidence = spyOn(opened, "evidence").mockResolvedValue({
+        selfName: "Alice Example",
+        segments: [{ startSec: 0, endSec: 60, channel: "system" }],
+        speaking: [],
+        files: [],
+        audioPath: join(tmpdir(), "missing-fixture-recording.wav"),
+    });
+    const share = Object.assign((_fromSec: number, _toSec: number): number | undefined => 0.1, {
+        voice: () => ({
+            model: "fixture:v1",
+            quality: "matched" as const,
+            person: "Carol Example",
+            candidates: [{ person: "Carol Example", score: 0.9 }],
+            reason: "threshold and margin met",
+        }),
+    });
+    const energy = spyOn(opened, "energy").mockResolvedValue({
+        share,
+        calibration: { layout: "left-mic", segments: { mic: 0, system: 1 } },
+    });
+    const echo = spyOn(echoModule, "collectEcho").mockResolvedValue({ ranges: [] } as never);
+    const range = spyOn(echoModule, "echoForRange").mockReturnValue(undefined);
+    try {
+        const result = await runSuggest({ store, record, rules: ["evidence"] });
+
+        expect(
+            result.fresh.some(
+                (item) =>
+                    item.kind === "speaker-range" && item.speaker === "Carol Example" && item.rules.includes("voice")
+            )
+        ).toBe(true);
+    } finally {
+        range.mockRestore();
+        echo.mockRestore();
+        energy.mockRestore();
+        evidence.mockRestore();
+        collect.mockRestore();
+        of.mockRestore();
+        load.mockRestore();
     }
 });
 

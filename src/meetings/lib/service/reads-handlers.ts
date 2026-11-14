@@ -48,18 +48,18 @@ export async function readSpeakers(
     deps: MeetingsHandlerDeps
 ): Promise<MeetingsResult<"meeting.speakers">> {
     const record = recordOf(store, params.meeting);
-    const linked = deps.linkedSource?.(record);
+    // One opened meeting for the statistics and the evidence: the source and the attendance load once.
+    const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
     const stats = await speakerStatsRead({
         store,
         record,
-        ...(linked ? { linked } : {}),
+        opened,
         gapSec: params.gapSec ?? DEFAULT_SPAN_GAP_SEC,
         ...(params.attendance ? { attendance: params.attendance } : {}),
     });
     if (!params.evidence) {
         return stats;
     }
-    const opened = OpenedMeeting.of(store, record, linked);
     const meeting = await opened.meeting();
     const energy = await opened.energy();
     const raw = rawMeeting({

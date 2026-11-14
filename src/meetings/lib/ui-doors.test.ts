@@ -547,6 +547,34 @@ describe("window revisions", () => {
         expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
     });
 
+    test("the speech history and the evidence caches the Speakers pane reads change its token", async () => {
+        const facts = {
+            meeting: "m1",
+            recordFile: 1,
+            config: 2,
+            source: "r1",
+            screen: [3],
+            speakerEvidence: [[], null],
+        };
+        const first = revisionTokens(facts);
+        // A call became `spoken` in the speech history after the pane read: only the speakers token moves.
+        const spoken = revisionTokens({ ...facts, speakerEvidence: [[], { ino: 1, size: 9, mtimeMs: 2, ctimeMs: 2 }] });
+        expect(spoken.speakers).not.toBe(first.speakers);
+        expect({ ...spoken, speakers: first.speakers }).toEqual(first);
+
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Energy", start: "2026-11-05T10:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const before = await revisionsRead({ store: meetings, record: created });
+        mkdirSync(join(meetings.folder(created.id), "evidence"), { recursive: true });
+        writeFileSync(join(meetings.folder(created.id), "evidence", "energy.bin"), "energy");
+        const after = await revisionsRead({ store: meetings, record: created });
+        expect(after.speakers).not.toBe(before.speakers);
+        expect(after.transcript).toBe(before.transcript);
+    });
+
     test("word evidence invalidates only the transcript and unknown evidence forces a read", () => {
         const facts = { meeting: "m1", recordFile: 1, config: 2, source: "r1", screen: [3], transcriptEvidence: "w1" };
         const first = revisionTokens(facts);

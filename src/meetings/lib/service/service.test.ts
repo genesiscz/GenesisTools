@@ -1232,7 +1232,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 
     test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
-        const { client } = await ADAPTERS[kind]();
+        const { client, source } = await ADAPTERS[kind]();
         const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
         const speakers = await client.call("meeting.speakers", { meeting: REVIEW.id });
         const screen = await client.call("meeting.screen", { meeting: REVIEW.id });
@@ -1249,7 +1249,11 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             [9, expect.any(Number)],
         ]);
         expect(speakers).toMatchObject({ meeting: REVIEW.id, timed: true });
+        const load = spyOn(source, "load");
         const facts = await client.call("meeting.speakers", { meeting: REVIEW.id, evidence: true });
+        // The statistics and the evidence share one opened meeting: one source load.
+        expect(load).toHaveBeenCalledTimes(1);
+        load.mockRestore();
         expect(facts.evidence?.lines).toContain("|mic?|e?");
         expect(facts.evidence?.lines.split("\n")).toHaveLength(transcript.entries.length + 1);
         expect(facts.evidence?.summary).toEqual(expect.any(Array));

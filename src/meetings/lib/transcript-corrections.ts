@@ -227,9 +227,10 @@ export function correctionsOf(
 
     return {
         labels: record.speakers.labels,
+        // The removal's own line address, so two identical lines at one second are told apart, never both refused.
         removals: used.flatMap((item) =>
             item.kind === "removal"
-                ? [{ item: item.id, fromSec: item.fromSec, toSec: item.toSec, heard: item.heard }]
+                ? [{ item: item.id, fromSec: item.fromSec, toSec: item.toSec, heard: item.heard, ...address(item) }]
                 : []
         ),
         ranges,
@@ -645,13 +646,15 @@ export function checkAnchors(
         const atSec = item.atSec;
         const heard = item.kind === "term" ? item.heard : undefined;
         const anchor = { atSec, line: lineOf(item) };
+        // A mark applies on the literal heard word (`marks` in correctionsOf), so only a term that is replaced
+        // anchors on its stem.
         const found =
             item.kind === "join"
                 ? joinLine(lines, { ...anchor, ...(item.joined ? { joined: item.joined } : {}) })
                 : heardLineAt(
                       lines,
                       anchor,
-                      item.heardStem && item.proposedStem
+                      item.heardStem && item.proposedStem && !marked
                           ? termFixPattern({
                                 heard: item.heard,
                                 replacement: item.proposedStem,

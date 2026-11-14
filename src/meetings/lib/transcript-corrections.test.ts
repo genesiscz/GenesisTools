@@ -631,6 +631,26 @@ test("a persisted confirmed removal hides only the matched speech line", async (
     expect(transformed.entries.map((line) => line.startSec)).toEqual([100]);
 });
 
+test("a confirmed removal names its line, so one of two identical lines at one second is hidden", () => {
+    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 5, "Fixture task done.")];
+    const record = {
+        ...base,
+        items: [
+            item({
+                id: "i1",
+                kind: "removal",
+                fromSec: 5,
+                toSec: 5,
+                heard: "Fixture task done.",
+                evidence: { transcriptLine: 1 },
+            }),
+        ],
+    };
+    const corrected = correctTranscript({ record, transcript, config, format: "txt", dictionary: false });
+    expect(corrected.entries).toHaveLength(1);
+    expect(corrected.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "applied" }));
+});
+
 test("a line-scoped stem fixes the addressed inflected form and leaves its neighbour", () => {
     const transcript = [line("Alice", 5, "i na browserem"), line("Alice", 8, "i na browseru")];
     const prepared = prepareFindings({
@@ -718,81 +738,4 @@ test("a marked term anchors on its literal heard word, as its mark applies", () 
     expect(
         correctTranscript({ record, transcript: literal, config, format: "txt", dictionary: false }).outcomes
     ).toMatchObject([{ status: "applied" }]);
-});
-
-test("only an open speaker question marks its lines questioned", () => {
-    const questioned = (fields: Record<string, unknown>) =>
-        correctTranscript({
-            record: meetingRecordSchema.parse({
-                ...base,
-                items: [item({ id: "i1", kind: "question", fromSec: 0, toSec: 0, question: "Who?", ...fields })],
-            }),
-            transcript: transcript.slice(0, 1),
-            config,
-            format: "txt",
-            dictionary: false,
-        }).entries[0]?.questioned;
-
-    expect(questioned({ about: "speaker", status: "suggested" })).toBe(true);
-    expect(questioned({ about: "speaker", status: "confirmed", answer: "Alice Example" })).toBeUndefined();
-    expect(questioned({ about: "speaker", status: "rejected" })).toBeUndefined();
-    expect(questioned({ about: "term", heard: "Jak", status: "suggested" })).toBeUndefined();
-});
-
-test("a multi-voice split cuts only its own source line, with distinct ids, words and times", () => {
-    const timed = (location: number, length: number, startSec: number) => ({
-        range: { location, length },
-        startSec,
-        endSec: startSec + 0.4,
-        sourceId: "l1",
-    });
-    const source: TranscriptEntry[] = [
-        {
-            id: "l1",
-            speaker: "Voice",
-            startSec: 10,
-            text: "First sentence. Second sentence.",
-            words: [timed(0, 5, 10), timed(6, 9, 10.4), timed(16, 6, 11.5), timed(23, 9, 12)],
-        },
-        { id: "l2", speaker: "Voice", startSec: 15, text: "Another sentence here." },
-    ];
-    const record = meetingRecordSchema.parse({
-        ...base,
-        items: [
-            item({
-                id: "i1",
-                kind: "speaker-range",
-                label: "Voice",
-                fromSec: 10,
-                toSec: 15,
-                speaker: "Alice Example + Bob Example",
-                voices: ["Alice Example", "Bob Example"],
-                segments: [
-                    { fromWord: 0, speaker: "Alice Example" },
-                    { fromWord: 2, speaker: "Bob Example" },
-                ],
-            }),
-        ],
-    });
-    const entries = correctTranscript({
-        record,
-        transcript: source,
-        config: meetingsConfigSchema.parse({ languages: { cs: { render: { unclearLabel: "unclear" } } } }),
-        format: "json",
-        dictionary: false,
-    }).entries;
-
-    expect(entries.map((entry) => [entry.id, entry.speaker, entry.text, entry.startSec])).toEqual([
-        ["l1", "Alice Example", "First sentence.", 10],
-        ["l1#1", "Bob Example", "Second sentence.", 11.5],
-        ["l2", "[unclear: Alice Example + Bob Example]", "Another sentence here.", 15],
-    ]);
-    expect(entries[0]?.words?.map((word) => word.range)).toEqual([
-        { location: 0, length: 5 },
-        { location: 6, length: 9 },
-    ]);
-    expect(entries[1]?.words?.map((word) => word.range)).toEqual([
-        { location: 0, length: 6 },
-        { location: 7, length: 9 },
-    ]);
 });

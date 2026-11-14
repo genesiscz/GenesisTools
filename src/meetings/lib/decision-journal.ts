@@ -412,7 +412,7 @@ function decideItems(
 
         if (status === "confirmed" && item.kind === "term") {
             if (proposed) {
-                item.proposed = proposed;
+                spellTerm(item, proposed);
             }
             if (reach !== undefined) {
                 item.reach = structuredClone(reach);
@@ -433,6 +433,14 @@ function decideItems(
     };
 }
 
+/** A term's new spelling; a stem term's replacement stem follows it, or the transcript would keep the old one. */
+function spellTerm(item: Extract<MeetingItem, { kind: "term" }>, text: string): void {
+    item.proposed = text;
+    if (item.heardStem) {
+        item.proposedStem = text;
+    }
+}
+
 /** The value a respelling sets, per kind: a refusal for a kind that has no text to edit. */
 function respellItem(record: MeetingRecord, item: MeetingItem, text: string): DecisionSkip | undefined {
     switch (item.kind) {
@@ -441,10 +449,7 @@ function respellItem(record: MeetingRecord, item: MeetingItem, text: string): De
                 return { id: item.id, reason: `it is confirmed as "${text}" already`, needs: "nothing" };
             }
 
-            item.proposed = text;
-            if (item.heardStem) {
-                item.proposedStem = text;
-            }
+            spellTerm(item, text);
             delete item.quote;
             delete item.meaning;
             return undefined;

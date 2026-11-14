@@ -41,7 +41,7 @@ import { personStays, rosterPresence } from "./person-stays";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
-import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
+import { enrolRemoteVoices, scoreRemoteLines } from "./voice-enrolment";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -368,6 +368,28 @@ describe("decision journal", () => {
 
         await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: { kind: "window" } });
         expect(fx.item("i1")).toMatchObject({ status: "suggested", proposed: "OMP" });
+    });
+
+    test("confirming a stem term with another spelling moves its replacement stem too", async () => {
+        const fx = await fixture([term("i1", 10, { heardStem: "Ada", proposed: "ADA", proposedStem: "ADA" })]);
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"], proposed: "ADO" },
+            actor: person,
+        });
+
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO", proposedStem: "ADO" });
+    });
+
+    test("a respelt question names the answer command with the text quoted for the shell", async () => {
+        const fx = await fixture([question("i1")]);
+        const result = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "respell", item: "i1", text: 'Alice "Work" $(id)' },
+            actor: { kind: "window" },
+        });
+
+        expect(result.skipped?.[0]?.reason).toEndWith(`--answer 'Alice "Work" $(id)'`);
     });
 
     test("spelling reach survives reopen, changes only selected lines and can decline dictionary teaching", async () => {
@@ -932,6 +954,40 @@ describe("speaker assignments (assign)", () => {
         expect(speakers()).toEqual(["Dana Example", "Alex Example", "Lee Example", "S1", "S3"]);
         await journal.revert({ meeting: fx.meeting.id, token: lee.entry!.token, actor: person });
         expect(speakers()).toEqual(["Dana Example", "Alex Example", "Dana Example", "S1", "S3"]);
+    });
+
+    test("giving a stretch again to the same person takes back a later assignment inside it", async () => {
+        const fx = await assignFixture();
+        let tick = 0;
+        const journal = new DecisionJournal({
+            store: fx.store,
+            ledger: () => undefined,
+            split: { transcript: async () => transcript },
+            now: () => new Date(Date.parse(now) + 1000 * tick++),
+        });
+        const give = (who: string, fromSec: number, toSec: number) =>
+            journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "assign", person: who, stretches: [{ label: "S1", fromSec, toSec }] },
+                actor: person,
+            });
+        await give("Dana Example", 5, 35);
+        await give("Lee Example", 25, 35);
+        const again = await give("Dana Example", 5, 35);
+        const speakers = () =>
+            correctTranscript({
+                record: fx.record(),
+                transcript,
+                config: meetingsConfigSchema.parse({}),
+                format: "txt",
+            }).entries.map((line) => line.speaker);
+
+        expect(again.entry).toBeDefined();
+        expect(speakers()).toEqual(["Dana Example", "Alex Example", "Dana Example", "S1", "S3"]);
+        expect(fx.record().speakers.assignments?.map((one) => [one.id, one.person])).toEqual([
+            ["a1", "Dana Example"],
+            ["a2", "Lee Example"],
+        ]);
     });
 
     test("a rename to a name another label holds says both labels become one person (G-PPL-4)", async () => {
@@ -1769,75 +1825,6 @@ describe("workshop listen contracts", () => {
         expect(scoreRemoteLines({ embeddings, samples }).find((line) => line.index === 2)?.match.person).toBe(
             "Bob Example"
         );
-    });
-
-    test("remote enrolment skips confirmed multi-voice windows and windows a second stay touches", () => {
-        const channel = (fromSec: number) => ({
-            quality: "ready" as const,
-            track: "isolated-call" as const,
-            source: { audioPath: "/fixture.wav", size: 42, mtimeMs: 1 },
-            channel: 1 as const,
-            model: "fixture-model",
-            fromSec,
-            toSec: fromSec + 10,
-            embedding: [1, 0],
-        });
-        const embeddings = [
-            { index: 0, channels: [channel(10)] },
-            { index: 1, channels: [channel(40)] },
-        ];
-        const record = (items: unknown[]) =>
-            meetingRecordSchema.parse({ id: "voice", title: "", start: now, createdAt: now, createdBy: "new", items });
-        const alice = { name: "Alice Example", fromSec: 0, toSec: 100 };
-        const enrolled = (items: unknown[], remote: Array<{ name: string; fromSec: number; toSec: number }>) =>
-            enrolRemoteVoices({ record: record(items), embeddings, remote }).map((sample) => sample.fromSec);
-
-        expect(enrolled([], [alice])).toEqual([10, 40]);
-        expect(enrolled([], [alice, { name: "Bob Example", fromSec: 15, toSec: 30 }])).toEqual([40]);
-        expect(
-            enrolled(
-                [
-                    {
-                        id: "i1",
-                        kind: "speaker-range",
-                        label: "Voice",
-                        fromSec: 40,
-                        toSec: 40,
-                        status: "confirmed",
-                        speaker: "Alice Example + Bob Example",
-                        voices: ["Alice Example", "Bob Example"],
-                        rules: [],
-                        suggestedAt: now,
-                    },
-                ],
-                [alice]
-            )
-        ).toEqual([10]);
-    });
-
-    test("a remote seat is cut to its person's stays, so a departure and a rejoin stay apart", () => {
-        const record = meetingRecordSchema.parse({
-            id: "voice",
-            title: "",
-            start: now,
-            createdAt: now,
-            createdBy: "new",
-            seats: { remote: ["Alice Example", { name: "Bob Example", fromSec: 50 }] },
-        });
-        const presence = [
-            { name: "Alice Example", fromSec: 0, toSec: 100 },
-            { name: "Alice Example", fromSec: 200, toSec: 300 },
-        ];
-
-        expect(remoteStays({ record, presence, endSec: 400 })).toEqual([
-            { name: "Alice Example", fromSec: 0, toSec: 100 },
-            { name: "Alice Example", fromSec: 200, toSec: 300 },
-            { name: "Bob Example", fromSec: 50, toSec: 400 },
-        ]);
-        expect(remoteStays({ record, presence: undefined, endSec: 400 })).toEqual([
-            { name: "Alice Example", fromSec: 0, toSec: 400 },
-            { name: "Bob Example", fromSec: 50, toSec: 400 },
-        ]);
     });
 });
 
