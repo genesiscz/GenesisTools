@@ -125,10 +125,11 @@ public enum PerfLog {
         }
     }
 
-    /// Functional diagnostic evidence must remain available when optional performance profiling is disabled.
-    public static func diagnostic(_ label: String) {
+    /// Functional diagnostic evidence must remain available when optional performance profiling is disabled. The
+    /// label is built only when the line is written, so a caller on a hot path pays nothing while diagnostics are off.
+    public static func diagnostic(_ label: @autoclosure () -> String) {
         guard PerfConfiguration.current.enabledByDefault || enabled else { return }
-        append("mark \(label)")
+        append("mark \(label())")
     }
 
     private static func emit(_ label: String, ms: Double) {

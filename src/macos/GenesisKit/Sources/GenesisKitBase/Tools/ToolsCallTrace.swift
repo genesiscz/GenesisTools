@@ -106,7 +106,14 @@ public enum ToolsCallTrace {
             observer(ToolsCallLedger.Call(traceId: traceId, argv: redacted(argv), started: started, via: via,
                                            exit: exit, stderr: stderr.isEmpty ? nil : String(redactedText(stderr, argv: argv).prefix(4096)), ended: ended))
         }
-        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        PerfLog.diagnostic(callLine(traceId: traceId, via: via, argv: argv, started: started, ended: ended, exit: exit,
+                                    outBytes: outBytes, stderr: stderr))
+    }
+
+    /// The `call` trace line of a call that ended. Built only when diagnostics write it (`PerfLog.diagnostic`).
+    private static func callLine(traceId: String, via: String, argv: [String], started: Date, ended: Date, exit: Int32,
+                                 outBytes: Int, stderr: String) -> String {
+        let ms = Int(ended.timeIntervalSince(started) * 1000)
         let start = stampLock.withLock { stamp.string(from: started) }
         var line = "call t=\(traceId) via=\(via) pid=\(ProcessInfo.processInfo.processIdentifier) ms=\(ms) exit=\(exit) out=\(outBytes)B start=\(start) argv="
         line += String(redacted(argv).joined(separator: " ").prefix(300))
@@ -115,7 +122,7 @@ public enum ToolsCallTrace {
         if exit != 0, !stderr.isEmpty {
             line += " err=\(stderr.utf8.count)B"
         }
-        PerfLog.diagnostic(line)
+        return line
     }
 }
 
