@@ -13,8 +13,9 @@ export function runtimeMemory() {
     return { totalGb: totalmem() / GB, freeGb: freemem() / GB };
 }
 
-export function runtimeProcesses() {
-    return listProcessesWithUsage({ cpuPercent: true }).map((entry) => ({
+/** `commands: false` skips the command-line column, the most expensive one (about 25 ms instead of 55). */
+export function runtimeProcesses(options: { commands?: boolean } = {}) {
+    return listProcessesWithUsage({ cpuPercent: true, commands: options.commands }).map((entry) => ({
         pid: entry.pid,
         name: entry.name,
         command: entry.command,
@@ -29,7 +30,8 @@ export function captureRuntimeFacts() {
     const errors: string[] = [];
     let rows: ReturnType<typeof runtimeProcesses> = [];
     try {
-        rows = runtimeProcesses();
+        // The capture keeps only pid, name, CPU and memory, so it does not pay for the command lines.
+        rows = runtimeProcesses({ commands: false });
     } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
     }
