@@ -339,6 +339,12 @@ export function chosenPlan(frames: readonly SourceFrame[], options: ProxyOptions
     }
 
     const windowSec = options.windowSec ?? DEFAULT_WINDOW_SEC;
+    const windowUs = Math.round(windowSec * 1_000_000);
+
+    if (!Number.isSafeInteger(windowUs) || windowUs <= 0) {
+        throw new Error("proxy window must round to a positive number of microseconds");
+    }
+
     const single = typeof options.display === "number" ? options.display : undefined;
 
     if (single !== undefined && !displays.has(single)) {
@@ -346,9 +352,7 @@ export function chosenPlan(frames: readonly SourceFrame[], options: ProxyOptions
     }
 
     const base =
-        single !== undefined
-            ? [{ fromUs: 0, toUs: endUs, displayId: single }]
-            : planMostChange(frames, Math.round(windowSec * 1_000_000));
+        single !== undefined ? [{ fromUs: 0, toUs: endUs, displayId: single }] : planMostChange(frames, windowUs);
     const ranges = overrideRanges(base, options.overrides ?? []);
     return {
         version: 1,

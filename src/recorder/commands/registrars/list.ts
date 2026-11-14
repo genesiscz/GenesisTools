@@ -13,8 +13,10 @@ export function register(program: Command): void {
         .option("--limit <n>", "at most this many rows", "20")
         .option("--json", "JSON on stdout")
         .action((flags: { live?: boolean; limit: string; json?: boolean }) => {
+            const limit = Math.max(1, Number(flags.limit) || 20);
+
             if (flags.live) {
-                const entries = listLiveRecordings();
+                const entries = listLiveRecordings().slice(0, limit);
                 if (flags.json) {
                     out.result(entries);
                     return;
@@ -35,7 +37,7 @@ export function register(program: Command): void {
                 return;
             }
 
-            const rows = listLibrary({ limit: Math.max(1, Number(flags.limit) || 20) });
+            const rows = listLibrary({ limit });
             if (flags.json) {
                 out.result(rows);
                 return;

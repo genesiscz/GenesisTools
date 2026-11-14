@@ -183,7 +183,7 @@ export function framesCell(row: LibraryRow): string {
 export function listLibrary(options: string | { root?: string; limit?: number } = {}): LibraryRow[] {
     const { root, limit = Infinity } = typeof options === "string" ? { root: options } : options;
     const roots = root === undefined ? recordingStores().map((store) => store.root()) : [root];
-    const rows: LibraryRow[] = [];
+    const found: { folder: string; read: ManifestRead; startedAt: string }[] = [];
     const live = liveRecordingFolders();
 
     for (const dir of roots) {
@@ -192,17 +192,35 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
         }
 
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
-            const row = entry.isDirectory() ? libraryRow(join(dir, entry.name), live) : undefined;
+            const folder = join(dir, entry.name);
+            const read = entry.isDirectory() ? readRecordingManifestSafe(folder) : undefined;
 
-            if (row) {
-                rows.push(row);
+            if (read) {
+                found.push({ folder, read, startedAt: startedAtOf(folder, read) });
             }
         }
     }
 
-    return rows
+    // The order needs every manifest's start, but a row (movie lookup, edit file check) is built only for the rows kept.
+    return found
         .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || basename(b.folder).localeCompare(basename(a.folder)))
-        .slice(0, Math.max(0, limit));
+        .slice(0, Math.max(0, limit))
+        .map((entry) => rowOfManifest(entry.folder, entry.read, live));
+}
+
+type ManifestRead = NonNullable<ReturnType<typeof readRecordingManifestSafe>>;
+
+function rawText(read: ManifestRead, key: string): string | undefined {
+    const value = read.raw[key];
+    return typeof value === "string" && value ? value : undefined;
+}
+
+function startedAtOf(folder: string, read: ManifestRead): string {
+    if (read.manifest) {
+        return read.manifest.startedAt;
+    }
+
+    return rawText(read, "startedAt") ?? statSync(join(folder, "recording.json")).mtime.toISOString();
 }
 
 /**
@@ -212,10 +230,10 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
 export function libraryRow(folder: string, live: ReadonlySet<string> = liveRecordingFolders()): LibraryRow | undefined {
     const read = readRecordingManifestSafe(folder);
 
-    if (!read) {
-        return undefined;
-    }
+    return read ? rowOfManifest(folder, read, live) : undefined;
+}
 
+function rowOfManifest(folder: string, read: ManifestRead, live: ReadonlySet<string>): LibraryRow {
     const recording = live.has(resolve(folder)) ? { recording: true as const } : {};
 
     const manifest = read.manifest;
@@ -223,15 +241,12 @@ export function libraryRow(folder: string, live: ReadonlySet<string> = liveRecor
     if (!manifest) {
         // The window lists such a folder too (readRecents takes any JSON object): each field on its own.
         log.warn({ folder, problem: read.problem }, "recording.json does not match the schema; listed from its keys");
-        const text = (key: string) => {
-            const value = read.raw[key];
-            return typeof value === "string" && value ? value : undefined;
-        };
+        const text = (key: string) => rawText(read, key);
         return {
             id: text("id") ?? basename(folder),
             title: text("title") ?? basename(folder),
             folder,
-            startedAt: text("startedAt") ?? statSync(join(folder, "recording.json")).mtime.toISOString(),
+            startedAt: startedAtOf(folder, read),
             ...(text("endedAt") ? { endedAt: text("endedAt") } : {}),
             movie: movieOf(folder),
             frames: Array.isArray(read.raw.frames) ? read.raw.frames.length : 0,

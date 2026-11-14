@@ -529,6 +529,14 @@ describe("a display switch keeps the proxy's picture, and the edit made on it", 
         expect(box.height).toBeCloseTo(0.09, 6);
     });
 
+    it("refuses a window that is not positive, also for a single display", () => {
+        const frames = [{ path: "a.png", atUs: 0, displayId: 1 }];
+
+        expect(() => chosenPlan(frames, { display: 1, windowSec: 0 })).toThrow("proxy window");
+        expect(() => chosenPlan(frames, { display: 1, windowSec: Number.NaN })).toThrow("proxy window");
+        expect(chosenPlan(frames, { display: 1, windowSec: 5 }).windowSec).toBe(5);
+    });
+
     it("a switch past the last frame leaves no empty range that pulls in another display's frame", () => {
         const frames = [
             { path: "a.png", atUs: 0, displayId: 1 },
