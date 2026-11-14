@@ -551,14 +551,13 @@ export function settle(o: Outcome, openInodes: Set<number>): Outcome {
     };
 }
 
-/** The identity and timestamps of a name, compared before and after a decision so a rewrite in between is seen. */
-function nameState(path: string): { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint } {
-    const st = lstatSync(path, { bigint: true });
-    return { ino: st.ino, size: st.size, mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs };
-}
-
-function sameNameState(a: ReturnType<typeof nameState>, b: ReturnType<typeof nameState>): boolean {
-    return a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+/**
+ * A name's inode, and a stamp of its inode, size, mtime and ctime: equal stamps before and after a decision mean no
+ * rewrite in between.
+ */
+function nameState(path: string): { ino: bigint; stamp: string } {
+    const { ino, size, mtimeNs, ctimeNs } = lstatSync(path, { bigint: true });
+    return { ino, stamp: `${ino}:${size}:${mtimeNs}:${ctimeNs}` };
 }
 
 /**
@@ -621,7 +620,9 @@ export async function resolveStale(
         return "dropped";
     }
 
-    if (!equalStableFiles(path, target, Number(aside.ino), Number(current.ino))) {
+    const originalInode = Number(aside.ino);
+    const targetInode = Number(current.ino);
+    if (!equalStableFiles(path, target, originalInode, targetInode)) {
         preserveConflict(path, target);
         return "conflict";
     }
@@ -637,7 +638,7 @@ export async function resolveStale(
     options.afterCompare?.();
     let unchanged = false;
     try {
-        unchanged = sameNameState(nameState(path), aside) && sameNameState(nameState(target), current);
+        unchanged = nameState(path).stamp === aside.stamp && nameState(target).stamp === current.stamp;
     } catch (error) {
         logger.debug({ error, path, target }, "a stale aside or its target changed after the byte comparison");
     }
@@ -647,8 +648,6 @@ export async function resolveStale(
         return "conflict";
     }
 
-    const originalInode = Number(aside.ino);
-    const targetInode = Number(current.ino);
     if (held.has(originalInode)) {
         if (held.has(targetInode)) {
             preserveConflict(path, target);
