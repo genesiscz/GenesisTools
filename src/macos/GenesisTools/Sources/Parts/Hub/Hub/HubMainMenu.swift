@@ -318,7 +318,7 @@ enum HubMenuCommands {
 
     /// The main view's review: the PR's in PRs mode, the session's otherwise.
     static func review(of hub: HubModel) -> ReviewModel? {
-        hub.mode == .prs ? hub.prs.review : hub.review
+        hub.mainReview
     }
 
     private static func toggleGlass() {
