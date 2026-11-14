@@ -1634,14 +1634,17 @@ test("readToolCalls: timed shell and patch calls from the rollout, in the sessio
             at: Date.parse("2026-11-13T10:00:04.000Z"),
         },
     ]);
-    // A later call starts at the offset; a row still being written waits, and the session_meta cwd answers again.
+    // A later call starts at the offset; a row still being written waits, and the latest turn_context before the
+    // offset still answers, as it does in a read from the file start.
     writeFileSync(
         file,
         `${readFileSync(file, "utf8")}${call("2026-11-13T10:00:05.000Z", "shell", { command: ["ls"] })}{"partial`
     );
     const next = codexHistoryReader.readToolCalls(file, first.offset);
     expect(next.supported && next.calls).toEqual([
-        { tool: "shell", input: { command: "ls" }, cwd: "/work/app", at: Date.parse("2026-11-13T10:00:05.000Z") },
+        { tool: "shell", input: { command: "ls" }, cwd: "/work/lib", at: Date.parse("2026-11-13T10:00:05.000Z") },
     ]);
     expect(next.supported && next.offset).toBe(readFileSync(file).length - '{"partial'.length);
+    const full = codexHistoryReader.readToolCalls(file, 0);
+    expect(full.supported && full.calls.at(-1)?.cwd).toBe("/work/lib");
 });
