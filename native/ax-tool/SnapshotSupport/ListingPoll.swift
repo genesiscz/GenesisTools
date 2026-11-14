@@ -3,6 +3,10 @@ import Foundation
 /// The pause between two listings of the windows while one is still missing.
 public let listingPause: TimeInterval = 0.1
 
+/// How long one ScreenCaptureKit call may take: a listing's first answer, or one stream update. The live display
+/// switch's deadline (`liveSwitchDeadline`) is built from it, so the two cannot drift apart.
+public let streamCallBudget: TimeInterval = 5
+
 /// A listing that did not answer within its budget (`answer(within:_:)`).
 public struct ListingTimedOut: LocalizedError, Equatable {
     public let seconds: TimeInterval
