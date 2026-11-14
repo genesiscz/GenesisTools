@@ -197,7 +197,7 @@ const ADMIN_PROMPT_TIMEOUT_MS = 10 * 60_000;
 export function adminTakeoverCommand(paths: readonly string[], uid: number): string[] {
     const command = shellCommandLine(["/usr/sbin/chown", "-h", String(uid), ...paths]);
     const what = paths.length === 1 ? (paths[0] ?? "") : formatCount(paths.length, "file");
-    const prompt = `tools rm moves ${what} to its trash. Only root may move it: enter an administrator's password to give it to you first.`;
+    const prompt = `GenesisTools moves ${what} to its trash. Only root may move it: enter an administrator's password to give it to you first.`;
     return [
         "/usr/bin/osascript",
         "-e",

@@ -3885,7 +3885,7 @@ describe("a path this user cannot move", () => {
             const argv = adminTakeoverCommand(['/private/var/tmp/it\'s "a" file'], ME);
             expect(argv.slice(0, 2)).toEqual(["/usr/bin/osascript", "-e"]);
             expect(argv[2]).toStartWith(
-                `do shell script "'/usr/sbin/chown' '-h' '501' '/private/var/tmp/it'\\\\''s \\"a\\" file'" with prompt "tools rm moves /private/var/tmp/it's \\"a\\" file to its trash.`
+                `do shell script "'/usr/sbin/chown' '-h' '501' '/private/var/tmp/it'\\\\''s \\"a\\" file'" with prompt "GenesisTools moves /private/var/tmp/it's \\"a\\" file to its trash.`
             );
             expect(argv[2]).toEndWith("with administrator privileges");
 
