@@ -24,7 +24,18 @@ export function watcherPidPath(store: MeetingStore): string {
  * Starts the watcher unless it runs already or no capture, missing linked audio or project step needs it.
  * The daemon calls it at login.
  */
-export async function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
+export function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
+    // Several startup triggers can call this at once: they share one attempt, so only one child is spawned.
+    inFlight ??= startWatcher().finally(() => {
+        inFlight = undefined;
+    });
+
+    return inFlight;
+}
+
+let inFlight: Promise<"started" | "running" | "disabled"> | undefined;
+
+async function startWatcher(): Promise<"started" | "running" | "disabled"> {
     const config = await new MeetingsConfigStore().read();
 
     const store = new MeetingStore();
@@ -45,7 +56,7 @@ export async function ensureWatcher(): Promise<"started" | "running" | "disabled
     }
 
     const pid = spawnToolDetached(["meetings", "watch"]);
-    // "started" means the child owns the pidfile, so a second ensureWatcher in this window does not spawn another.
+    // "started" means the child owns the pidfile. A second call in this window shares this attempt (`inFlight`).
     const deadline = Date.now() + WATCHER_CLAIM_MS;
 
     while (inspectPidFile(pidPath).status !== "live") {
