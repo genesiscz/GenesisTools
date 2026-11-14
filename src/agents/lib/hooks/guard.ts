@@ -157,12 +157,13 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
     }
 
     // A block always shows (the command did not run). A warn or a note the loop saw a few minutes ago says nothing new.
-    const quieted = [
-        ...new Set(resolved.map((violation) => violation.ruleId).filter((ruleId) => seenRecently(ruleId))),
-    ];
+    const quietedRules = new Set(
+        resolved.map((violation) => violation.ruleId).filter((ruleId) => seenRecently(ruleId))
+    );
+    const quieted = [...quietedRules];
     const shown = resolved.filter(
         (violation) =>
-            !quieted.includes(violation.ruleId) &&
+            !quietedRules.has(violation.ruleId) &&
             (violation.outcome !== "context" || (counts[violation.ruleId] ?? 0) < cap)
     );
 
