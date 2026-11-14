@@ -626,6 +626,14 @@ export async function resolveStale(
         return "conflict";
     }
 
+    // Same bytes is not the same file: a chmod, an owner, a flag, an extended attribute or an ACL the original got
+    // after the swap would be lost with it. The settlement sees such a change in the original's ctime; a killed run
+    // left no ctime to compare with, so the two names' metadata is compared instead.
+    if (!(await samePartnerMetadata(path, target))) {
+        preserveConflict(path, target);
+        return "conflict";
+    }
+
     options.afterCompare?.();
     let unchanged = false;
     try {

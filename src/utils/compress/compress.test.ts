@@ -2725,6 +2725,19 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         expect(names.length).toBe(1);
         expect(readFileSync(join(c.path, "..", names[0]!), "utf8").endsWith("\nlate-writer")).toBe(true);
     });
+    it("keeps a stale aside whose permissions changed after the swap, though its bytes still match", async () => {
+        const c = fixture("stale-chmod");
+        const swapped = await swapTransparent(c);
+        const stale = join(c.path, "..", ".cold-old-99997-session.jsonl");
+        renameSync(swapped.old!.path, stale);
+        chmodSync(stale, 0o600);
+        chmodSync(c.path, 0o644);
+
+        expect(await resolveStale(stale, () => false, new Set())).toBe("conflict");
+        const names = readdirSync(join(c.path, "..")).filter((name) => name.includes("cold-conflict"));
+        expect(names.length).toBe(1);
+        expect(statSync(join(c.path, "..", names[0]!)).mode & 0o777).toBe(0o600);
+    });
     it("restores stale asides held by a descriptor instead of dropping later writes", async () => {
         const c = fixture("stale-held");
         const swapped = await swapTransparent(c);

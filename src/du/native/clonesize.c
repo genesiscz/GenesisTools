@@ -739,6 +739,32 @@ static void scan_shared_file(ThreadOut *t, int fd, off_t size, int group, int no
     }
 }
 
+/**
+ * decmpfs keeps a compressed file's payload in its resource fork, so a compressed file is mapped through that fork
+ * (opening the data fork asks APFS for logical bytes) and a plain one through its data fork. Both phases of the
+ * partner query and the scan use this one choice, so their ranges describe the same blocks. Sets *span to the
+ * bytes to map: 0 when nothing is mapped (an inline compressed file has no fork). Returns the fd, or -1 with errno.
+ */
+static int open_mapped_payload(int dfd, const char *name, uint32_t fflags, off_t dlen, off_t *span) {
+    *span = dlen;
+    if (!(fflags & UF_COMPRESSED)) return openat(dfd, name, O_RDONLY | O_NONBLOCK);
+
+    size_t plen = strlen(name) + sizeof "/..namedfork/rsrc";
+    char *forkname = malloc(plen);
+    if (!forkname) { perror("malloc resource fork"); exit(1); }
+    snprintf(forkname, plen, "%s/..namedfork/rsrc", name);
+    int fd = openat(dfd, forkname, O_RDONLY | O_NONBLOCK);
+    free(forkname);
+    *span = 0;
+    struct stat st;
+    if (fd >= 0 && fstat(fd, &st) == 0 && st.st_size > 0) {
+        // APFS can reserve blocks beyond the resource fork's EOF.
+        // Query those too or an otherwise shared fork loses its tail allocation.
+        *span = st.st_blocks * 512 > st.st_size ? st.st_blocks * 512 : st.st_size;
+    }
+    return fd;
+}
+
 /** Partner mode: same walk, but sum the file's overlap with the target ranges. */
 static uint64_t overlap_shared_file(int fd, off_t size) {
     off_t off = 0;
@@ -909,22 +935,12 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
             // decmpfs keeps its payload outside the data fork. Map the resource
             // fork directly; opening the data fork asks APFS for logical bytes.
             if ((fflags & UF_COMPRESSED) && !g_partner_mode) {
-                size_t plen = strlen(name) + sizeof "/..namedfork/rsrc";
-                char *forkname = malloc(plen);
-                if (!forkname) { perror("malloc resource fork"); exit(1); }
-                snprintf(forkname, plen, "%s/..namedfork/rsrc", name);
-                int rfd = openat(dfd, forkname, O_RDONLY | O_NONBLOCK);
-                free(forkname);
-                struct stat rst;
+                off_t span;
+                int rfd = open_mapped_payload(dfd, name, fflags, dlen, &span);
                 size_t start = t->n;
                 if (rfd >= 0) {
                     t->files_opened++;
-                    if (fstat(rfd, &rst) == 0 && rst.st_size > 0) {
-                        // APFS can reserve blocks beyond the resource fork's EOF.
-                        // Query those too or an otherwise shared fork loses its tail allocation.
-                        off_t span = rst.st_blocks * 512 > rst.st_size ? rst.st_blocks * 512 : rst.st_size;
-                        scan_shared_file(t, rfd, span, g, g_maxdepth >= 0 ? dirnode : -1, next_file_id(t));
-                    }
+                    if (span > 0) scan_shared_file(t, rfd, span, g, g_maxdepth >= 0 ? dirnode : -1, next_file_id(t));
                     close(rfd);
                 }
                 if (t->n == start) {
@@ -949,14 +965,17 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
                 if (!full) { perror("malloc partner path"); exit(1); }
                 memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
                 if (under_partner_target(full)) { free(full); continue; }
-                int pfd = openat(dfd, name, O_RDONLY | O_NONBLOCK);
+                // The target's ranges (phase 1) hold a compressed file's resource-fork extents, so a compressed
+                // holder is mapped through its fork here too; its data fork would never meet them.
+                off_t span;
+                int pfd = open_mapped_payload(dfd, name, fflags, dlen, &span);
                 if (pfd < 0) {
                     if (errno == EACCES || errno == EPERM) note_denied(full, 0);
                     free(full);
                     continue;
                 }
                 t->files_opened++;
-                uint64_t ov = overlap_shared_file(pfd, dlen);
+                uint64_t ov = span > 0 ? overlap_shared_file(pfd, span) : 0;
                 close(pfd);
                 if (ov > 0) partner_push(t, full, ov);
                 free(full);
@@ -2289,6 +2308,32 @@ static uint64_t g_big_cloud_pruned = 0;
 // --dusize: the mounted volumes inside the root the walk does not cross, where du would.
 static uint64_t g_big_mounts_skipped = 0;
 static uint64_t g_big_dataless_skipped = 0;   // dataless files left out of a --bigfiles listing
+// --ext / --keep-prefix / --compressed-only (`tools compress transparent`): bound the listing at discovery, so a
+// broad root returns only the files a caller can use instead of every regular file for it to filter afterwards.
+#define MAX_BIG_NAMES 64
+static const char *g_big_exts[MAX_BIG_NAMES];   // listed extensions, case-insensitive; none = every extension
+static int g_big_nexts = 0;
+static const char *g_big_keep[MAX_BIG_NAMES];   // a name with one of these prefixes is listed whatever its size or type
+static int g_big_nkeep = 0;
+static int g_big_compressed_only = 0;           // list only UF_COMPRESSED files
+
+// The extension as `tools compress` reads it: after the last dot, or the whole name when there is none.
+static int big_ext_ok(const char *name) {
+    if (!g_big_nexts) return 1;
+    const char *dot = strrchr(name, '.');
+    const char *ext = dot ? dot + 1 : name;
+    for (int i = 0; i < g_big_nexts; i++) {
+        if (strcasecmp(ext, g_big_exts[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int big_kept(const char *name) {
+    for (int i = 0; i < g_big_nkeep; i++) {
+        if (strncmp(name, g_big_keep[i], strlen(g_big_keep[i])) == 0) return 1;
+    }
+    return 0;
+}
 
 static void big_setup_attrlist(void) {
     memset(&g_big_al, 0, sizeof g_big_al);
@@ -2444,7 +2489,9 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
                     __atomic_add_fetch(&g_big_dataless_skipped, 1, __ATOMIC_RELAXED);
                     continue;
                 }
-                if ((uint64_t)dlen < g_big_min) continue;
+                if (!big_kept(name) &&
+                    ((uint64_t)dlen < g_big_min || !big_ext_ok(name) ||
+                     (g_big_compressed_only && !(fflags & UF_COMPRESSED)))) continue;
             }
 
             char *full = idx_child_path(dirpath, name);
@@ -3514,6 +3561,9 @@ static void usage(const char *me) {
         "  --volume             print the volume's authoritative used/free bytes\n"
         "  --bigfiles           list every regular file >= --min-bytes under ALL given dirs (JSON)\n"
         "  --prune-name NAME    with --bigfiles: never enter a directory with this name (repeatable)\n"
+        "  --ext EXT            with --bigfiles: list only files with this extension (repeatable, any case)\n"
+        "  --keep-prefix P      with --bigfiles: list a file whose name starts with P whatever its size or extension\n"
+        "  --compressed-only    with --bigfiles: list only UF_COMPRESSED (decmpfs) files\n"
         "  --cache-dir DIR      extent-cache directory (omit to disable the cache)\n"
         "  --no-cache           ignore the cache when reading (still writes it)\n"
         "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive, and open cloud-backed files\n"
@@ -3571,6 +3621,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--big-file-limit") && i + 1 < argc) g_idx_big_limit = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--no-private"))             g_idx_private = 0;
         else if (!strcmp(a, "--stall-seconds") && i + 1 < argc) g_idx_stall_s = atof(argv[++i]);
+        else if (!strcmp(a, "--compressed-only"))       g_big_compressed_only = 1;
+        else if ((!strcmp(a, "--ext") || !strcmp(a, "--keep-prefix")) && i + 1 < argc) {
+            int ext = !strcmp(a, "--ext");
+            int *count = ext ? &g_big_nexts : &g_big_nkeep;
+            if (*count == MAX_BIG_NAMES) { fprintf(stderr, "clonesize: more than %d %s values\n", MAX_BIG_NAMES, a); free(roots); return 2; }
+            (ext ? g_big_exts : g_big_keep)[(*count)++] = argv[++i];
+        }
         else if (!strcmp(a, "--prune-name") && i + 1 < argc) {
             // Refused, never dropped: an unread name is a folder the listing silently enters.
             if (nprune == MAX_PRUNE_NAMES) { fprintf(stderr, "clonesize: more than %d --prune-name names\n", MAX_PRUNE_NAMES); free(roots); return 2; }

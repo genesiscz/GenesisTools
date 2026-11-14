@@ -2,8 +2,14 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 // lint-rules-ignore: compress intentionally reuses du's native read-only metadata walker instead of implementing a second filesystem scan.
-import { listCompressionFiles } from "@app/du/lib/engine";
-import { type Mirror, openPaths, plan, type TransparentWriter } from "@genesiscz/utils/compress/transparent";
+import { listCompressionFiles, listCompressionListing } from "@app/du/lib/engine";
+import {
+    type Mirror,
+    openPaths,
+    plan,
+    TMP_PREFIX,
+    type TransparentWriter,
+} from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
 import { applyTransparent } from "@genesiscz/utils/compress/transparent-run";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -115,15 +121,23 @@ export async function runTransparentPaths({
         throw new Error("--older requires a duration such as 3d");
     }
 
+    const exts = new Set((options.ext?.split(",") ?? config.defaults.exts).map((ext) => ext.trim().toLowerCase()));
+    // The walker returns only files of a listed type at or above the floor, plus every transaction remnant
+    // (`.cold-*`, any size) so its recovery still runs. Memory follows the candidates, not the whole tree.
+    // A clone partner below the floor or of another type is not seen here; the clone index still names it.
+    const listings = await Promise.all(
+        roots.map((root) =>
+            listCompressionListing(root, { minBytes: minKb * 1024, exts: [...exts], keepPrefixes: [TMP_PREFIX] })
+        )
+    );
     const entries = [
-        ...new Map(
-            (await Promise.all(roots.map(listCompressionFiles))).flat().map((entry) => [entry.path, entry])
-        ).values(),
+        ...new Map(listings.flatMap((listing) => listing.entries).map((entry) => [entry.path, entry])).values(),
     ];
+    const discoveryFiltered = listings.reduce((sum, listing) => sum + listing.walked - listing.entries.length, 0);
     const first = plan(entries, {
         olderThanMs,
         minBytes: minKb * 1024,
-        exts: new Set((options.ext?.split(",") ?? config.defaults.exts).map((ext) => ext.trim().toLowerCase())),
+        exts,
         open: new Set(),
         now: Date.now(),
         maxBytes: writer.maxBytes,
@@ -168,6 +182,8 @@ export async function runTransparentPaths({
         files: candidates.length,
         inputBytes: candidates.reduce((sum, candidate) => sum + candidate.alloc, 0),
         skips: first.skips,
+        /** Regular files the walker left out at discovery: below the size floor or not a listed type. */
+        discoveryFiltered,
         tooBigBytes: first.tooBigBytes,
         tooBigReason: `writer ${writer.name} limit ${writer.maxBytes} bytes; transcripts are never split`,
         candidates,
@@ -192,7 +208,12 @@ export async function runTransparentPaths({
 
             const mirrorRoot = join(mirror.to, suffix);
             if (existsSync(mirrorRoot)) {
-                for (const entry of await listCompressionFiles(mirrorRoot)) {
+                // Only the remnants: no regular file reaches this floor, and the prefix is listed whatever its size.
+                const remnants = await listCompressionFiles(mirrorRoot, {
+                    minBytes: Number.MAX_SAFE_INTEGER,
+                    keepPrefixes: [TMP_PREFIX],
+                });
+                for (const entry of remnants) {
                     if (basename(entry.path).startsWith(".cold-")) {
                         stale.add(entry.path);
                     }

@@ -1702,3 +1702,37 @@ src/du/lib/format.test.ts src/macos/lib/clones/daemon-tasks.test.ts` completed 1
 `f8f8a369b5d1052095ae5d61ebf067c83b8e1c9e`, with uncommitted changes. Biome checked 17 touched TypeScript
 files, no changes needed. `git diff --check` on owned paths was clean. A broader cloud suite cannot write its
 existing File Provider xattr fixture on this OS, returning EPERM before the scanner runs; no cloud test was weakened.
+
+## 2026-11-13 23:41 — `--bigfiles` discovery bounds (`--ext`, `--keep-prefix`, `--compressed-only`)
+
+`tools compress transparent` listed every regular file of each root with `--min-bytes 0` and filtered by size,
+extension and age in TypeScript, so its memory followed the whole tree. The listing walk now takes three filters,
+applied where a record would be kept: `--ext EXT` (repeatable, any case, the text after the last dot), `--keep-prefix
+P` (a name starting with P is kept whatever its size, extension or flags: the `.cold-*` transaction remnants), and
+`--compressed-only` (only UF_COMPRESSED files, for `tools du` compressed listings). The walk itself is unchanged: every
+directory is still read, `files_listed` still counts every regular file, and a run without the new flags keeps its
+output. The scan modes (`bench.sh` matrix) do not run this code, so the matrix was not rerun.
+
+Measured on this worktree (`.` = the repo with `node_modules`, 106172 regular files), `/usr/bin/time -l`, two
+interleaved runs per arm, load average 138.74 (very loaded). Unbounded `--min-bytes 0`: 106172 records, 20736494 JSON
+bytes, max RSS 48.3 MB and 48.6 MB, system CPU 2.51 s and 2.44 s. Bounded as the transparent plan now asks
+(`--min-bytes 65536 --ext jsonl --ext json --ext txt --ext log --ext md --keep-prefix .cold-`): 121 records, 22812
+JSON bytes, max RSS 4.1 MB and 4.0 MB, system CPU 2.51 s and 2.07 s. The kernel walk dominates the system time in
+both arms; the saving is the records the caller no longer receives, parses and keeps.
+
+## 2026-11-13 23:43 — partner query maps compressed holders through their resource fork
+
+`--partners-of` scanned the target with the scan walk (phase 1), which maps a UF_COMPRESSED file through
+`..namedfork/rsrc`, and then mapped every candidate holder in phase 2 through its data fork. A data fork of a decmpfs
+file never meets the target's fork extents, so two compressed clones were counted as shared by the scan while the
+partner query named no holder. Both phases now choose the mapped payload in one function (`open_mapped_payload`): the
+resource fork, with its reserved tail, for a compressed file, the data fork otherwise, and nothing for an inline
+compressed file. The scan branch only moved into that function, so scan totals must not move.
+
+Semantic control on this worktree (`--json .`, 106172 files, old and new binaries interleaved, two runs each, load
+average 68.77 at start, 67.50 at end): files_scanned 106098, files_opened 93531, naive_bytes 1801003008, unique_bytes
+1360890153, unique_allocated_bytes 1619451904, apparent_bytes 1502120086, shared_bytes 181551104 and every group's
+naive_bytes are identical in both arms. System CPU old 22.42 s and 23.14 s, new 23.33 s and 22.25 s: noise at this
+load. The partner change runs only for compressed files in phase 2, which this tree does not hold.
+Regression: `src/du/lib/clone-controls.test.ts` now asks the partner query for a third compressed clone and expects
+both other clones; on the old engine it returned no partner file.

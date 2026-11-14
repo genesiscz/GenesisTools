@@ -2,13 +2,7 @@ import { dirname, resolve } from "node:path";
 // lint-rules-ignore: the explicit task-registration command delegates to the daemon owner; read-only scans never register or enable it.
 import { ensureColdCompressTask } from "@app/macos/lib/clones/daemon-tasks";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import {
-    availableTransparentWriter,
-    openPaths,
-    plan,
-    sampleRatio,
-    UF_COMPRESSED,
-} from "@genesiscz/utils/compress/transparent";
+import { availableTransparentWriter, openPaths, plan, sampleRatio } from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
 import { parseDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -97,12 +91,17 @@ export async function compressionSuggestions(root: string) {
 
     const writer = availableTransparentWriter();
     const algorithm = writer.algorithm;
-    const [entries, open] = await Promise.all([listCompressionFiles(root), openPaths()]);
+    const minBytes = config.defaults.minKb * 1024;
+    // The same floor and types reach the walker, so a broad root does not return every regular file.
+    const [entries, open] = await Promise.all([
+        listCompressionFiles(root, { minBytes, exts: config.defaults.exts }),
+        openPaths(),
+    ]);
     const ranked = rankCompressible({
         entries,
         open,
         olderThanMs: age,
-        minBytes: config.defaults.minKb * 1024,
+        minBytes,
         maxBytes: writer.maxBytes,
         exts: new Set(config.defaults.exts),
         now: Date.now(),
@@ -113,7 +112,7 @@ export async function compressionSuggestions(root: string) {
 }
 
 export async function compressedListing(root: string) {
-    const files = (await listCompressionFiles(root)).filter((file) => (file.flags & UF_COMPRESSED) !== 0);
+    const files = await listCompressionFiles(root, { compressedOnly: true });
     const compressed = files.reduce(
         (sum, file) => ({
             files: sum.files + 1,

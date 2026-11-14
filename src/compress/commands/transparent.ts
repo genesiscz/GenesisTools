@@ -72,7 +72,9 @@ export function registerTransparentCommands(program: Command): void {
                         `${mode === "plan" ? "Dry run" : "Apply"}: ${result.files} files, ${formatBytes(result.inputBytes)} allocated, ${result.writer}/${result.algorithm}`
                     );
                     out.println(
-                        `Left out: ${Object.entries(result.skips)
+                        `Left out: ${result.discoveryFiltered} at discovery (small or another type), ${Object.entries(
+                            result.skips
+                        )
                             .map(([reason, count]) => `${count} ${reason}`)
                             .join(", ")}`
                     );
