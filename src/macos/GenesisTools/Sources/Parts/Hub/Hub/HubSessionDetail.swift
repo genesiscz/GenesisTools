@@ -546,7 +546,17 @@ struct HubSessionDetailHost: View {
                                                  call: ledger.failed, title: "Transcript did not load", area: "hub",
                                                  expected: "The session's latest turns show in the transcript.")
             let first = document.sections.isEmpty
-            let retry: @MainActor () -> Void = { Task { await retryFirstPage() } }
+            // A failed refresh keeps its earlier pages: it asks for the same window again. Only a failure with nothing
+            // on screen starts over with the first page.
+            let retry: @MainActor () -> Void = {
+                Task {
+                    if first {
+                        await retryFirstPage()
+                    } else {
+                        await load(offset: offset, limit: limit, throughEnd: throughEnd)
+                    }
+                }
+            }
             showFailure(report, first: first, retry: retry)
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             // The details' log (this call's lines in app-perf.log and the calls of the minute before) is read off the

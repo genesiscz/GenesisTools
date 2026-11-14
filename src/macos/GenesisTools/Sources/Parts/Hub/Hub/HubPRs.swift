@@ -1555,8 +1555,13 @@ final class PRsModel: ObservableObject {
             ref = threads
         }
         var target = ReviewLaunch.Target.folder
-        if case .range(let base, let head, let label, _) = review.scope {
+        switch review.scope {
+        case .range(let base, let head, let label, _):
             target = .range(base: base, head: head, label: label)
+        case .commit(let sha, let title):
+            target = .commit(sha: sha, label: title)
+        default:
+            break
         }
         var args = ReviewLaunch.launchArguments(repo: review.repo.path, target: target, pr: ref, proposal: pr.proposal?.path)
         // No local worktree: the folder is on another branch, so the window opens the host's files and the PR's commits.
