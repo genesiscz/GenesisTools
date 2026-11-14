@@ -1,6 +1,6 @@
 import { clarityTasksOf } from "@app/clarity/lib/tasks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import type { TimesheetAppResponse, TimesheetResponse } from "@genesiscz/utils/clarity";
+import type { TimesheetAppResponse, TimesheetRecord, TimesheetResponse } from "@genesiscz/utils/clarity";
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -25,7 +25,7 @@ export interface TimesheetWeekReader {
     getTimesheet(timesheetId: number): Promise<TimesheetResponse>;
 }
 
-export type TimesheetRecord = TimesheetResponse["timesheets"]["_results"][number];
+export type { TimesheetRecord };
 
 /**
  * Resolve an explicit `--timesheet` argument. A flag that was passed at all must name a real
@@ -624,12 +624,7 @@ async function firstNonEmptyCatalogue(periods: TimesheetPeriods, candidates: Tim
             continue;
         }
 
-        const record = await periods.record(candidate.timesheetId);
-        if (!record) {
-            throw new Error(`Timesheet ${candidate.timesheetId} not found`);
-        }
-
-        const tasks = clarityTasksOf(record);
+        const tasks = clarityTasksOf(await periods.record(candidate.timesheetId), candidate.timesheetId);
 
         if (tasks.length > 0) {
             return tasks;

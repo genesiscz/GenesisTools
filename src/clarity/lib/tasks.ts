@@ -1,5 +1,5 @@
 import type { ClarityTask } from "@app/clarity/lib/types";
-import type { TimeEntryRecord, TimesheetResponse } from "@genesiscz/utils/clarity";
+import type { TimeEntryRecord, TimesheetRecord, TimesheetResponse } from "@genesiscz/utils/clarity";
 
 export interface TimesheetReader {
     getTimesheet(timesheetId: number): Promise<TimesheetResponse>;
@@ -45,17 +45,19 @@ export async function listClarityTasks({
     timesheetId: number;
 }): Promise<ClarityTask[]> {
     const data = await api.getTimesheet(timesheetId);
-    const timesheet = data.timesheets._results[0];
 
+    return clarityTasksOf(data.timesheets._results[0], timesheetId);
+}
+
+/**
+ * The task rows of a timesheet already read, so a caller holding the record does not read it again. A missing
+ * record means Clarity has no timesheet with that id.
+ */
+export function clarityTasksOf(timesheet: TimesheetRecord | undefined, timesheetId: number): ClarityTask[] {
     if (!timesheet) {
         throw new Error(`Timesheet ${timesheetId} not found`);
     }
 
-    return clarityTasksOf(timesheet);
-}
-
-/** The task rows of a timesheet already read, so a caller holding the record does not read it again. */
-export function clarityTasksOf(timesheet: TimesheetResponse["timesheets"]["_results"][number]): ClarityTask[] {
     return (timesheet.timeentries?._results ?? []).map((entry: TimeEntryRecord) => ({
         taskId: entry.taskId,
         taskName: entry.taskName,
