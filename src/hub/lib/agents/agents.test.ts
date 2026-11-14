@@ -963,8 +963,8 @@ describe("the process's one reader of the open sessions", () => {
         expect(reads).toHaveLength(2);
     });
 
-    test("a one-session read keeps its own short timeout, and a failed read is asked again", async () => {
-        const { reader, reads } = slowTable();
+    test("a one-session read keeps its own short timeout, and a failure is kept per timeout", async () => {
+        const { reader, reads, at } = slowTable();
         const whole = reader();
         const one = reader(3_000);
 
@@ -977,8 +977,31 @@ describe("the process's one reader of the open sessions", () => {
 
         expect((await outcomes).map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
 
-        void reader();
-        expect(reads).toHaveLength(3);
+        at(1_000);
+        const again = Promise.allSettled([reader(), reader(3_000)]);
+        expect(reads).toHaveLength(2);
+        expect((await again).map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
+    });
+
+    // Regression test: a timed-out read recorded nothing, so every refresh under load started another one at once.
+    test("a failed read is not asked again for the reuse window, then it is", async () => {
+        const { reader, reads, at } = slowTable();
+        const first = Promise.allSettled([reader()]);
+        at(20_000);
+        reads[0].fail();
+        await first;
+
+        at(20_001);
+        const during = await Promise.allSettled([reader(), reader()]);
+        expect(during.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
+        expect(reads).toHaveLength(1);
+
+        at(79_999);
+        await Promise.allSettled([reader()]);
+        expect(reads).toHaveLength(1);
+        at(80_000);
+        void Promise.allSettled([reader()]);
+        expect(reads).toHaveLength(2);
     });
 });
 
