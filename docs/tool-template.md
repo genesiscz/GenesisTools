@@ -117,7 +117,7 @@ We support two prompt libraries. Choose based on your needs:
 
 ```typescript
 import { Command } from "commander";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import clipboardy from "clipboardy";
 import logger from "../logger";
@@ -218,7 +218,7 @@ A flag with a known list of values (`--detail phases|all`, `--provider macOS|xai
 ```typescript
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 
 const DETAILS = ["phases", "all"] as const;
 
@@ -300,7 +300,7 @@ watcher.on("change", (path) => {
 **Progress Indicators** (with @clack/prompts - preferred):
 
 ```typescript
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 
 const spinner = p.spinner();
 spinner.start("Processing...");
