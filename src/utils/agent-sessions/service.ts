@@ -219,6 +219,20 @@ function byFirstTimestampDesc(a: CachedHistoryMetadata, b: CachedHistoryMetadata
     return left < right ? 1 : -1;
 }
 
+/** The newest file modification first. */
+function byMtimeDesc(a: CachedHistoryMetadata, b: CachedHistoryMetadata): number {
+    return b.mtime - a.mtime;
+}
+
+/** The newest-first comparator of each `catalogOrder`, for rows merged after the repository sorted them. */
+const CATALOG_ORDER: Record<
+    NonNullable<AgentSearchFilters["catalogOrder"]>,
+    (a: CachedHistoryMetadata, b: CachedHistoryMetadata) => number
+> = {
+    firstTimestamp: byFirstTimestampDesc,
+    mtime: byMtimeDesc,
+};
+
 /** One provider-independent query path. The owner supplies an initialized canonical repository. */
 /**
  * The listing refreshes of the default index (the services with a `freshness` marker) running in this process, by
@@ -612,7 +626,7 @@ export class HistoryService {
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
                 .slice(0, filters.newest);
             metadata.push(...newest);
-            metadata.sort(orderBy === "mtime" ? (left, right) => right.mtime - left.mtime : byFirstTimestampDesc);
+            metadata.sort(CATALOG_ORDER[orderBy]);
         }
 
         return filters.limit == null ? metadata : metadata.slice(0, Math.max(0, filters.limit));
