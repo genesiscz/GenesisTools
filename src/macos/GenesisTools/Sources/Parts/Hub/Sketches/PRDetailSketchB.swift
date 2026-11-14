@@ -22,13 +22,36 @@ struct PRDetailSketchB: View {
     @State private var reviewing = false
     @State private var launching = false
     @State private var pickingFiles = false
+    /// The sections' folds, under the keys the current overview saves them, so each fold control works.
+    @AppStorage("hub.prs.fold.sessions") private var foldSessions = false
+    @AppStorage(HubPROverview.commitsFoldedKey, store: HubDefaults.store) private var foldCommits = false
+    @AppStorage("hub.prs.fold.checks") private var foldChecks = false
+    /// ⌘F on the Overview page, in the current overview's scope.
+    @State private var find = PanelFindModel(scope: "pr.overview", title: "this PR")
 
     init(model: HubModel, prs: PRsModel, pr: HubPR) {
         self.model = model
         _prs = ObservedObject(wrappedValue: prs)
         self.pr = pr
-        // The existing "threads list open" setting (`--set review.prThreads.open=true`) opens on Threads; else the diff.
-        _tab = State(initialValue: HubDefaults.store.bool(forKey: "review.prThreads.open") ? .threads : .changes)
+        _tab = State(initialValue: Self.openingTab(
+            HubPRDetailOpeningTab.stored(HubDefaults.store.string(forKey: HubPRDetailOpeningTab.key)),
+            threadsOpen: HubDefaults.store.bool(forKey: "review.prThreads.open")))
+    }
+
+    /// The page the PR opens on (Settings → Hub, "Open a PR on"). Auto keeps the existing "threads list open" setting
+    /// (`--set review.prThreads.open=true`): Threads, else the diff.
+    fileprivate static func openingTab(_ choice: HubPRDetailOpeningTab, threadsOpen: Bool) -> DocumentTab {
+        switch choice {
+        case .auto: return threadsOpen ? .threads : .changes
+        case .overview: return .overview
+        case .changes: return .changes
+        case .threads: return .threads
+        }
+    }
+
+    /// The opening page's name, for tests.
+    static func openingTabName(_ choice: HubPRDetailOpeningTab, threadsOpen: Bool) -> String {
+        openingTab(choice, threadsOpen: threadsOpen).rawValue
     }
 
     private var detail: HubPRDetail? {
@@ -80,11 +103,9 @@ struct PRDetailSketchB: View {
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .instantTooltip(pr.title)
-                    .contextMenu {
-                        Button("Copy title") { Clipboard.copy(pr.title, what: "title") }
-                        Button("Copy \(pr.label) and title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") }
-                    }
+                    // Plain text in the title bar row: no tooltip or menu takes the strip's pointer, so a double-click
+                    // on it zooms the window; the copies are in the More menu.
+                    .titlebarLabel()
                     .layoutPriority(1)
                 PRHeaderState(pr: pr, mergeable: detail?.mergeable)
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
@@ -107,6 +128,12 @@ struct PRDetailSketchB: View {
                             reviewing = false
                             model.postLaunchNotice(outcome)
                         }
+                    }
+                    // The palette's "review": the same popover, as the current PR detail opens it.
+                    .onChange(of: prs.reviewRequested, initial: true) { _, wanted in
+                        guard wanted else { return }
+                        prs.reviewRequested = false
+                        reviewing = true
                     }
                 }
                 moreMenu
@@ -232,6 +259,7 @@ struct PRDetailSketchB: View {
             }
             items.append(.divider)
             items.append(.action("Copy Title") { Clipboard.copy(pr.title, what: "title") })
+            items.append(.action("Copy \(pr.label) and Title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") })
             items.append(.action("Copy Link") { PathOpener.copy(pr.url) })
             return items
         } label: {
@@ -288,7 +316,7 @@ struct PRDetailSketchB: View {
                     if let review = prs.review {
                         // A commit opens its diff: the Changes tab, scoped to that commit.
                         PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, total: detail?.commitsTotal,
-                                         folded: .constant(false)) { tab = .changes }
+                                         folded: $foldCommits) { tab = .changes }
                     } else {
                         let authors = PRCommitRow.showsAuthors(commits)
                         ForEach(commits.reversed()) { commit in
@@ -305,7 +333,7 @@ struct PRDetailSketchB: View {
         case .checks:
             if let checks = detail?.checks, !checks.isEmpty {
                 readable {
-                    PRChecksSection(model: model, pr: pr, checks: checks, folded: .constant(false))
+                    PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
                 }
             } else {
                 EmptyState(symbol: "checkmark.seal", text: detail == nil ? "Reading the checks" : "No checks on this PR")
@@ -328,12 +356,36 @@ struct PRDetailSketchB: View {
         }
     }
 
-    /// The description in full, as a page, then the agent sessions on the PR.
+    /// The description in full, as a page, then the agent sessions on the PR. ⌘F as in the current overview: the bar
+    /// is its own row above the scroll view.
     private var overview: some View {
+        VStack(spacing: 0) {
+            PanelFindBar(find: find)
+            overviewScroll
+        }
+        .panelFind(find, revision: findRevision, onReveal: { match in
+            if match.row.hasPrefix("session:") { foldSessions = false }
+        }) {
+            PRDetailView.descriptionAndSessionFindRows(markdown: findMarkdown, model: model, prs: prs, pr: pr)
+        }
+    }
+
+    private var findRevision: [String] {
+        PRDetailView.sessionFindRows(model: model, prs: prs, pr: pr).map(\.id) + [detail?.body ?? "", pr.id]
+    }
+
+    /// The description as the page draws it, for the find.
+    private var findMarkdown: String? {
+        guard let body = detail?.body?.trimmed, !body.isEmpty else { return nil }
+        return linkedDescription(body)
+    }
+
+    private var overviewScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let body = detail?.body?.trimmed, !body.isEmpty {
-                    PRDescriptionView(markdown: linkedDescription(body), whole: true, foldHeight: PRDescriptionView.minimumFold) { _ in }
+                    PRDescriptionView(markdown: linkedDescription(body), whole: true, foldHeight: PRDescriptionView.minimumFold,
+                                      foldable: false) { _ in }
                         .environment(\.openURL, OpenURLAction { url in
                             if let id = PRDescriptionLinker.prID(from: url) {
                                 if !prs.open(id: id) { model.post("That PR is no longer in the list", .warning) }
@@ -348,8 +400,9 @@ struct PRDetailSketchB: View {
                     Text("No description").foregroundColor(ReviewPalette.dim)
                 }
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: .constant(false))
+                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
                 }
+                .id(PRDetailView.sessionsFindContainer)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)

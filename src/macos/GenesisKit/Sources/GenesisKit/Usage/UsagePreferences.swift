@@ -84,6 +84,10 @@ public struct UsageSettings: Codable, Equatable, Sendable {
     public var spendStack: UsageSpendStack = .provider
     /// The hub digest draws a small cone beside each account's forecast.
     public var digestCone = true
+    /// The Limits table shows every window, the burn rate and the trend, not the four decision columns.
+    public var limitsAllWindows = false
+    /// The Limits lanes compare every account on one axis, not only the focused or selected ones.
+    public var compareAllAccounts = false
 
     public init() {}
 
@@ -110,6 +114,8 @@ public struct UsageSettings: Codable, Equatable, Sendable {
         hideEmptyColumns = value(.hideEmptyColumns, defaults.hideEmptyColumns)
         spendStack = value(.spendStack, defaults.spendStack)
         digestCone = value(.digestCone, defaults.digestCone)
+        limitsAllWindows = value(.limitsAllWindows, defaults.limitsAllWindows)
+        compareAllAccounts = value(.compareAllAccounts, defaults.compareAllAccounts)
     }
 
     /// The saved text: JSON with sorted keys.

@@ -226,4 +226,30 @@ final class HubPreferencesTests: XCTestCase {
         XCTAssertEqual(order.firstIndex(of: "hub"), order.firstIndex(of: "widgets").map { $0 + 1 })
     }
 
+    /// A settings search result names its row by section and title (`row:<section>/<title>`), not by the control's
+    /// identifier: option B's Panes page opens the tab of every row a search can jump to, Sessions included or not.
+    func testASearchJumpOpensTheTabOfItsRowOnOptionBsPanesPage() {
+        let rows: [(String, String, UsageSketchPaneTabB)] = [
+            ("PRs", "PR rows show CI", .prs), ("Changes", "Diff layout", .changes),
+            ("Sessions", "Hide what every session in a group shares", .sessions),
+            ("Agents", "Measure energy impact of agent processes", .agents),
+            ("Worktrees", "Removable after idle for", .worktrees),
+            ("Every mode", "Show a Glass button beside Settings", .window),
+        ]
+        for (section, title, tab) in rows {
+            let key = NativeSettingsSearchEntry(kind: .row, title: title, card: section).key
+            let anchor = NativeSettingsSearch.anchor(page: "hub.panes", key: key)
+            XCTAssertEqual(UsageSettingsSketchPanesB.tab(for: anchor), tab, anchor)
+        }
+        XCTAssertEqual(UsageSettingsSketchPanesB.tab(for: "lists"), .prs)
+        XCTAssertNil(UsageSettingsSketchPanesB.tab(for: "search/hub.panes/row:Elsewhere/Diff layout"))
+        XCTAssertNil(UsageSettingsSketchPanesB.tab(for: "hub.prs.rowCI"))
+    }
+
+    func testThePanesPageOpensOnSessionsUnlessTheLastTabIsChosen() {
+        XCTAssertEqual(UsageSketchPanesOpening.stored("").tab(last: "prs"), .sessions, "Sessions is the default")
+        XCTAssertEqual(UsageSketchPanesOpening.sessions.tab(last: "prs"), .sessions)
+        XCTAssertEqual(UsageSketchPanesOpening.last.tab(last: "prs"), .prs)
+        XCTAssertEqual(UsageSketchPanesOpening.last.tab(last: "gone"), .sessions, "a tab that no longer exists opens Sessions")
+    }
 }

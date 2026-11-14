@@ -413,4 +413,32 @@ final class HubUsageDoorTests: XCTestCase {
     func testLimitsLoadsItsDriftVerdict() {
         XCTAssertTrue(HubUsageSection.limits.doors(UsageSettings()).contains(.drift))
     }
+
+    /// "Compare all" in Limits option B plots the window the room bar calls the tightest: a week at 90% beside a
+    /// session at 10% plots the week, not the session.
+    func testTheComparisonPlotsTheWindowTheRoomCallsTightest() {
+        let account = UsageAccountKey(provider: "claude", accountId: "work", accountName: "work")
+        let lanes = [
+            UsageLane(id: "s", account: account, key: "session", kind: "session", title: "5h", samples: []),
+            UsageLane(id: "w", account: account, key: "weekly", kind: "weekly", title: "Week", samples: []),
+        ]
+        let week = UsageSketchRoomB(window: "week", used: 90, resetsAt: nil, severity: "critical")
+        let session = UsageSketchRoomB(window: "5h", used: 70, resetsAt: nil, severity: "ok")
+        XCTAssertEqual(UsageSketchRoomB.decidingLane(lanes, room: week)?.kind, "weekly")
+        XCTAssertEqual(UsageSketchRoomB.decidingLane(lanes, room: session)?.kind, "session")
+        XCTAssertEqual(UsageSketchRoomB.decidingLane(lanes, room: nil)?.kind, "session")
+    }
+
+    /// The two Limits display choices are preferences: an older saved value without them reads as the defaults, and
+    /// a saved choice comes back.
+    func testTheLimitsDisplayChoicesAreSavedPreferences() {
+        XCTAssertFalse(UsageSettings.decoded(#"{"range":"7d"}"#).limitsAllWindows)
+        XCTAssertFalse(UsageSettings.decoded(#"{"range":"7d"}"#).compareAllAccounts)
+        var settings = UsageSettings()
+        settings.limitsAllWindows = true
+        settings.compareAllAccounts = true
+        let reread = UsageSettings.decoded(settings.encoded())
+        XCTAssertTrue(reread.limitsAllWindows)
+        XCTAssertTrue(reread.compareAllAccounts)
+    }
 }

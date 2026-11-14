@@ -297,6 +297,11 @@ struct UsageSettingsSketchChartsA: View {
             NativeSettingsToggle("Hide empty columns", detail: "Leave out a window column that no account has a reading for.",
                                  identifier: "usage.hideEmptyColumns", isOn: preferences.binding(\.hideEmptyColumns))
                 .usageSketchRowA()
+            toggle("Show every window",
+                   "The table lists every window, the burn rate and the trend instead of the room left, the reset and the run-out.",
+                   "usage.limitsAllWindows", \.limitsAllWindows)
+            toggle("Compare every account", "The burn lanes under the table show every account on one axis, not only the one you picked.",
+                   "usage.compareAllAccounts", \.compareAllAccounts)
         }
         UsageSettingsSketchGroupA("Burn lanes", symbol: "chart.xyaxis.line") {
             UsageSettingsSketchChoiceA(

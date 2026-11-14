@@ -488,15 +488,30 @@ extension ListsSketchB {
             open = nil
         }
 
-        /// The open line of the table; nil opens the first one.
+        /// The open line of the table; nil opens the first one, `allClosed` none.
         @Published var open: String?
+
+        /// The reader closed the open line: no line is open, and the first one does not open in its place.
+        static let allClosed = ""
+
+        /// The line the table opens: the picked one while the filters show it, none after the reader closed it, else
+        /// the first shown. The closed state fell back to the first line, so the first line could not be closed and
+        /// closing another one opened the first.
+        static func openLine(_ picked: String?, shown: [String]) -> String? {
+            if picked == allClosed { return nil }
+            return picked.flatMap { id in shown.contains(id) ? id : nil } ?? shown.first
+        }
     }
 
     @MainActor
     static func entries(_ inbox: HubInboxModel, filter: String) -> [Entry] {
+        entries(inbox.sessions, filter: filter)
+    }
+
+    static func entries(_ sessions: [InboxSession], filter: String) -> [Entry] {
         let needle = filter.trimmed.lowercased()
         var entries: [Entry] = []
-        for session in inbox.sessions {
+        for session in sessions {
             for item in session.items {
                 let bucket: Bucket
                 if !item.isOpen {
@@ -538,10 +553,13 @@ extension ListsSketchB {
         @ObservedObject var inbox: HubInboxModel
         @ObservedObject private var pick = InboxPick.shared
 
-        private static func projects(_ all: [Entry]) -> [(name: String, count: Int)] {
-            let open = all.filter { $0.bucket == .needsAnswer }
-            let grouped: [String: [Entry]] = Dictionary(grouping: open, by: { $0.session.projectName })
-            let rows: [(name: String, count: Int)] = grouped.map { (name: $0.key, count: $0.value.count) }
+        /// Every project with a question in any section, so the project filter reaches one that holds only staged or
+        /// quiet questions; the count is its questions that need an answer, which may be 0.
+        static func projects(_ all: [Entry]) -> [(name: String, count: Int)] {
+            let grouped: [String: [Entry]] = Dictionary(grouping: all, by: { $0.session.projectName })
+            let rows: [(name: String, count: Int)] = grouped.map { name, entries in
+                (name: name, count: entries.filter { $0.bucket == .needsAnswer }.count)
+            }
             return rows.sorted { a, b in a.count == b.count ? a.name < b.name : a.count > b.count }
         }
 
@@ -641,8 +659,9 @@ extension ListsSketchB {
             let shown = all.filter { entry in
                 (pick.bucket == nil || entry.bucket == pick.bucket) && (pick.project == nil || entry.session.projectName == pick.project)
             }
-            // An open id that the filters hide no longer opens anything: the first shown line opens instead.
-            let open = pick.open.flatMap { id in shown.contains { $0.id == id } ? id : nil } ?? shown.first?.id
+            // An open id that the filters hide no longer opens anything: the first shown line opens instead, unless
+            // the reader closed the open line.
+            let open = InboxPick.openLine(pick.open, shown: shown.map(\.id))
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
                 PanelFindBarSlot()
@@ -677,15 +696,18 @@ extension ListsSketchB {
                 .onChange(of: open) { _, id in
                     if let id { proxy.scrollTo(id, anchor: .center) }
                 }
+                // A banner or a deep link: clear the filters, open the line and scroll to it. Each request scrolls, also
+                // when the line is open already, after the layout that the filter change causes.
+                .onChange(of: inbox.focusRequest, initial: true) { _, _ in
+                    guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
+                    pick.bucket = nil
+                    pick.project = nil
+                    pick.open = id
+                    DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onChange(of: inbox.focusRequest, initial: true) { _, _ in
-                guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
-                pick.bucket = nil
-                pick.project = nil
-                pick.open = id
-            }
             .modifier(ListVariantInboxKeys(inbox: inbox, entries: shown.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: open, focused: $keys) { entry in
                 inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id; pick.open = entry.item.id
             })
@@ -695,7 +717,7 @@ extension ListsSketchB {
         private func line(_ entry: Entry, open: Bool) -> some View {
             TableLine(entry: entry, open: open) {
                 GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
-                    pick.open = open ? "" : entry.id
+                    pick.open = open ? InboxPick.allClosed : entry.id
                 }
             }
             .equatable()
@@ -897,26 +919,14 @@ extension ListsSketchB {
             let commits = sorted.filter { $0.timelineKind == .commit }
             let pushes = sorted.filter { $0.timelineKind == .push }
             let others = sorted.filter { $0.timelineKind != .commit && $0.timelineKind != .push }
-            // A push takes the commits from its head down to the next older push's head (or the end of the page).
-            var groups: [CommitGroup] = []
-            var taken = Set<String>()
-            let pushHeads = Set(pushes.compactMap(\.sha))
-            for push in pushes {
-                guard let head = push.sha, let start = commits.firstIndex(where: { $0.sha == head }) else { continue }
-                var run: [TimelineEvent] = []
-                for commit in commits[start...] {
-                    if taken.contains(commit.id) { break }
-                    if commit.id != commits[start].id, let sha = commit.sha, pushHeads.contains(sha) { break }
-                    run.append(commit)
-                    taken.insert(commit.id)
-                }
-                groups.append(CommitGroup(key: push.id, push: push, author: run.first?.author, commits: run))
-            }
+            var groups = ListsSketchB.pushGroups(pushes: pushes, commits: commits)
+            let taken = Set(groups.flatMap { $0.commits.map(\.id) })
             let loose = Dictionary(grouping: commits.filter { !taken.contains($0.id) }) { $0.author ?? "" }
             for (author, run) in loose {
                 groups.append(CommitGroup(key: "\(name)|\(author)", push: nil, author: author.isEmpty ? nil : author, commits: run))
             }
-            let unmatchedPushes = pushes.filter { push in !groups.contains { $0.push?.id == push.id } }
+            let grouped = Set(groups.compactMap { $0.push?.id })
+            let unmatchedPushes = pushes.filter { !grouped.contains($0.id) }
             let needs = others.filter(\.waitsForMe)
             let rest = (others.filter { !$0.waitsForMe } + unmatchedPushes)
                 .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
@@ -932,6 +942,52 @@ extension ListsSketchB {
         return digests.sorted { ($0.newest ?? .distantPast) > ($1.newest ?? .distantPast) }
     }
 
+    /// The commits each push sent, by ancestry: from the push's head through the commits' parents down to its old tip
+    /// (`fromSha`), never past another push's head or a commit an earlier push took. A commit with no parents on record
+    /// (an older CLI) belongs to the push only as its head. The suffix of the commits sorted by time used to go to the
+    /// push, so a parallel branch's commit read as pushed. A push whose head another push took makes no group (it was a
+    /// "Pushed x · 0 commits" row); it stays in the feed as a push.
+    static func pushGroups(pushes: [TimelineEvent], commits: [TimelineEvent]) -> [CommitGroup] {
+        var bySha: [String: TimelineEvent] = [:]
+        for commit in commits {
+            if let sha = commit.sha, bySha[sha] == nil { bySha[sha] = commit }
+        }
+        let pushHeads = Set(pushes.compactMap(\.sha))
+        var taken = Set<String>()
+        var groups: [CommitGroup] = []
+        for push in pushes {
+            guard let head = push.sha, let first = bySha[head], !taken.contains(first.id) else { continue }
+            var run: [TimelineEvent] = []
+            var next = [head]
+            var seen = Set<String>()
+            while let sha = next.popLast() {
+                guard seen.insert(sha).inserted, sha != push.fromSha, let commit = bySha[sha], !taken.contains(commit.id),
+                      sha == head || !pushHeads.contains(sha) else { continue }
+                run.append(commit)
+                taken.insert(commit.id)
+                next.append(contentsOf: commit.parents ?? [])
+            }
+            let ordered = run.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            groups.append(CommitGroup(key: push.id, push: push, author: first.author, commits: ordered))
+        }
+        return groups
+    }
+
+    /// The digests of the last feed the page drew: opening a commit group or "Show all" draws the page again without
+    /// grouping every event again (`digests` sorts and groups the whole page).
+    @MainActor
+    final class DigestCache {
+        private var events: [TimelineEvent]?
+        private var value: [ProjectDigest] = []
+
+        func digests(for events: [TimelineEvent]) -> [ProjectDigest] {
+            if let known = self.events, known == events { return value }
+            value = HubPerf.measure("lists.b.digests", "\(events.count) events") { ListsSketchB.digests(events) }
+            self.events = events
+            return value
+        }
+    }
+
     /// The Activity page by project. The filter rail is today's; its project filter narrows to one section.
     struct ActivityByProject: View {
         var model: HubModel
@@ -941,6 +997,7 @@ extension ListsSketchB {
         @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
         @State private var searching = false
         @State private var openGroups: Set<String> = []
+        @State private var digestCache = DigestCache()
         @GenReduceMotion private var reduceMotion
         @AppStorage(HubActivityRows.allActionsKey, store: HubDefaults.store) private var allActions = false
         @AppStorage(HubActivityRows.commitPrefixKey, store: HubDefaults.store) private var commitPrefix = false
@@ -949,7 +1006,7 @@ extension ListsSketchB {
 
         var body: some View {
             let events = timeline.shown(filter: model.filter)
-            let digests = ListsSketchB.digests(events)
+            let digests = digestCache.digests(for: events)
             VStack(spacing: 0) {
                 header(events: events.count, projects: digests.count)
                 PanelFindBar(find: find)

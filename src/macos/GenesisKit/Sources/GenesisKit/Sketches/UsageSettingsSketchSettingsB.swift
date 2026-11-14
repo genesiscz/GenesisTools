@@ -109,13 +109,47 @@ enum UsageSketchPaneTabB: String, CaseIterable, Hashable {
     }
 }
 
+/// Which tab the Panes page opens on. Sessions by default; the last tab keeps the one you left it on.
+enum UsageSketchPanesOpening: String, CaseIterable, Hashable {
+    case sessions, last
+    static let key = "hub.settings.panesOpensOn"
+    /// The tab the page showed last, for `last`.
+    static let lastTabKey = "hub.settings.panesLastTab"
+
+    static func stored(_ raw: String) -> Self { Self(rawValue: raw) ?? .sessions }
+
+    var title: String {
+        switch self {
+        case .sessions: return "Sessions"
+        case .last: return "Last tab"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .sessions: return "Panes opens on its Sessions tab."
+        case .last: return "Panes opens on the tab you left it on."
+        }
+    }
+
+    /// The tab the page opens on, with `lastTab` the stored raw value of the tab shown last.
+    func tab(last lastTab: String) -> UsageSketchPaneTabB {
+        switch self {
+        case .sessions: return .sessions
+        case .last: return UsageSketchPaneTabB(rawValue: lastTab) ?? .sessions
+        }
+    }
+}
+
 /// Hub → Panes, option B: one tab per hub mode, flat rows. The settings search sees every tab.
 @MainActor
 struct UsageSettingsSketchPanesB: View {
     @ObservedObject var preferences: HubPreferences
     @Environment(\.nativeSettingsIndexing) private var indexing
-    /// The open tab. View state only: the page opens on Sessions.
-    @State private var tab: UsageSketchPaneTabB = .sessions
+    /// The tab picked on this visit; nil until one is, and the page shows the tab `opening` names.
+    @State private var picked: UsageSketchPaneTabB?
+    @AppStorage(UsageSketchPanesOpening.key) private var opening = UsageSketchPanesOpening.sessions.rawValue
+    @AppStorage(UsageSketchPanesOpening.lastTabKey) private var lastTab = UsageSketchPaneTabB.sessions.rawValue
     @ObservedObject private var center = NativeSettingsHighlightCenter.shared
     @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
     @AppStorage(HubResizeGrips.key) private var resizeGrips = HubResizeGrips.auto.rawValue
@@ -133,6 +167,15 @@ struct UsageSettingsSketchPanesB: View {
     @AppStorage(TranscriptOutputFold.key) private var transcriptOutputFold = TranscriptOutputFold.defaultLines
     @AppStorage(HubChrome.glassButtonKey) private var glassButton = false
 
+    private var tab: UsageSketchPaneTabB {
+        picked ?? UsageSketchPanesOpening.stored(opening).tab(last: lastTab)
+    }
+
+    private func show(_ tab: UsageSketchPaneTabB) {
+        picked = tab
+        lastTab = tab.rawValue
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if indexing {
@@ -140,35 +183,29 @@ struct UsageSettingsSketchPanesB: View {
             } else {
                 GenSegmentedTabs(
                     "Hub mode", items: UsageSketchPaneTabB.allCases.map { GenSegmentedTabs.Item($0, $0.title) },
-                    selection: $tab, minSegmentWidth: 56, identifier: "usageSketchB.panes.mode", fillsWidth: true)
+                    selection: Binding(get: { tab }, set: { show($0) }), minSegmentWidth: 56,
+                    identifier: "usageSketchB.panes.mode", fillsWidth: true)
                 section(tab)
             }
         }
         // A search hit or the `lists` anchor opens the tab that holds its row first, so the row is on screen to pulse.
         .onChange(of: center.token, initial: true) {
-            guard let anchor = center.anchor, let owner = Self.tab(for: anchor),
+            guard !indexing, let anchor = center.anchor, let owner = Self.tab(for: anchor),
                   let at = center.requestedAt, Date().timeIntervalSince(at) < 3 else { return }
-            tab = owner
+            show(owner)
         }
     }
 
-    /// The tab of each searchable row, by its settings identifier.
-    static let tabOfKey: [String: UsageSketchPaneTabB] = [
-        "hub.sessions.hideShared": .sessions, "sessionTranscript.outputFold": .sessions,
-        "hub.diff.layout": .changes, "hub.files.foldAbove": .changes, "hub.commitPicker.click": .changes,
-        "hub.prs.descriptionWhole": .prs, "hub.prs.rowCI": .prs, "hub.prs.hoverChecks": .prs,
-        "hub.inbox.contextOpen": .inbox,
-        "hub.activity.allActions": .activity, "hub.activity.commitPrefix": .activity,
-        "hub.agents.openNewest": .agents, "hub.agents.foldFinished": .agents, "hub.agents.motion": .agents,
-        "hub.procs.energy": .agents,
-        "hub.cleanup.idleDays": .worktrees,
-        "hub.resizeGrips": .window, "hub.chrome.glassButton": .window,
-    ]
-
+    /// The tab that holds a jump target. A search result names its row by the section it sits in and its title
+    /// (`search/<page>/row:<section>/<title>`, `NativeSettingsSearchEntry.key`), and each tab is one section titled
+    /// as the tab. The control identifiers (`hub.prs.rowCI`) are not in the anchor, so a lookup by them found no tab.
     static func tab(for anchor: String) -> UsageSketchPaneTabB? {
         if anchor == "lists" { return .prs }
         guard anchor.hasPrefix("search/") else { return nil }
-        return tabOfKey.first { anchor.hasSuffix("/" + $0.key) }?.value
+        return UsageSketchPaneTabB.allCases.first { tab in
+            let row = NativeSettingsSearchEntry(kind: .row, title: "", card: tab.title).key
+            return anchor.contains("/" + row)
+        }
     }
 
     @ViewBuilder
@@ -283,6 +320,12 @@ struct UsageSettingsSketchPanesB: View {
                 "Show a Glass button beside Settings", detail: "Off: Glass stays in View → Glass (⌘⇧G), the command palette and Appearance.",
                 identifier: "hub.chrome.glassButton", isOn: $glassButton)
                 .usageSketchRowB()
+            UsageSettingsSketchRuleB()
+            UsageSettingsSketchChoiceB(
+                title: "This page opens on", identifier: UsageSketchPanesOpening.key,
+                options: UsageSketchPanesOpening.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                selection: Binding(get: { UsageSketchPanesOpening.stored(opening) }, set: { opening = $0.rawValue }),
+                minSegmentWidth: 80)
         }
     }
 
@@ -304,6 +347,7 @@ struct UsageSettingsSketchPanesB: View {
 enum UsageSketchGlyphB: Hashable {
     case step, linear, band, noLane, auto, raw, bins
     case resets, severity, projection, cone, safePace, spikes, events, coverage, scoped, digestCone, hideColumns
+    case allWindows, compareAll
 }
 
 /// A small drawing of one chart element, accent when the setting draws it, faint when it does not.
@@ -437,6 +481,19 @@ struct UsageSketchGlyphViewB: View {
                 context.fill(Path(roundedRect: rect, cornerRadius: 1.5),
                              with: .color(index == 2 ? (on ? Color.primary.opacity(0.08) : base) : base))
             }
+        case .allWindows:
+            // Three columns always; three more for the other windows when the setting shows them.
+            for (index, x) in [0.06, 0.21, 0.36, 0.51, 0.66, 0.81].enumerated() {
+                let rect = CGRect(x: w * x, y: h * 0.25, width: w * 0.11, height: h * 0.5)
+                context.fill(Path(roundedRect: rect, cornerRadius: 1.5), with: .color(index < 3 ? base : ink))
+            }
+        case .compareAll:
+            // The picked account's lane, and the other accounts' lanes on the same axis when the setting shows them.
+            context.stroke(baseLine(size), with: .color(base), lineWidth: 1.2)
+            for offset in [0.12, 0.24] {
+                let lane = baseLine(CGSize(width: w, height: h * 0.8)).applying(CGAffineTransform(translationX: 0, y: h * offset))
+                context.stroke(lane, with: .color(ink), lineWidth: 1)
+            }
         }
     }
 }
@@ -487,6 +544,12 @@ struct UsageSettingsSketchChartsB: View {
             UsageSettingsSketchSectionB("Limits table", subtitle: "One row per account, one column per window.") {
                 toggle(.hideColumns, "Hide empty columns", "Leave out a window column that no account has a reading for.",
                        "usage.hideEmptyColumns", \.hideEmptyColumns)
+                toggle(.allWindows, "Show every window",
+                       "The table lists every window, the burn rate and the trend instead of the room left, the reset and the run-out.",
+                       "usage.limitsAllWindows", \.limitsAllWindows)
+                toggle(.compareAll, "Compare every account",
+                       "The burn lanes under the table show every account on one axis, not only the one you picked.",
+                       "usage.compareAllAccounts", \.compareAllAccounts)
             }
             UsageSettingsSketchSectionB("Burn lanes", subtitle: "One lane per window of each account, on one time axis.") {
                 UsageSettingsSketchChoiceB(

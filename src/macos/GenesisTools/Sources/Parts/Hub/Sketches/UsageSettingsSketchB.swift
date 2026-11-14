@@ -26,6 +26,18 @@ struct UsageSketchRoomB: Equatable {
         }
         return readings.max { $0.used < $1.used }
     }
+
+    /// The lane "Compare all" plots for an account: the window its room names as the tightest, so the comparison and
+    /// the room bars point at one window. The session lane won always before, so a week at 90% beside a session at 10%
+    /// plotted the session. Without a reading: the session lane when it has data now, else the week.
+    static func decidingLane(_ lanes: [UsageLane], room: UsageSketchRoomB?) -> UsageLane? {
+        switch room?.window {
+        case "week": if let weekly = lanes.first(where: { $0.kind == "weekly" }) { return weekly }
+        case "5h": if let session = lanes.first(where: { $0.kind == "session" }) { return session }
+        default: break
+        }
+        return lanes.first { $0.kind == "session" && !$0.absentNow } ?? lanes.first { $0.kind == "weekly" }
+    }
 }
 
 /// A thin bar of the room left, coloured by how much of the window is used.
@@ -197,8 +209,10 @@ struct UsageSketchSidebarAccountRowB: View, Equatable {
 struct UsageSettingsSketchLimitsB: View {
     @ObservedObject var usage: HubUsageModel
     let settings: UsageSettings
-    /// "Compare burn" on All accounts: one lane per account on one axis. View state only.
-    @State private var compare = false
+    /// "Compare burn" on All accounts: one lane per account on one axis. A Usage preference (Settings → Usage charts,
+    /// Limits table), so a return to Limits keeps it; as view state it always came back as Hide.
+    @ObservedObject private var preferences = UsagePreferences.shared
+    private var compare: Bool { preferences.settings.compareAllAccounts }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -266,7 +280,7 @@ struct UsageSettingsSketchLimitsB: View {
                     .foregroundColor(ReviewPalette.dim)
                 Spacer(minLength: 0)
                 GenSegmentedTabs(
-                    "Burn", items: [.init(false, "Hide"), .init(true, "Compare all")], selection: $compare,
+                    "Burn", items: [.init(false, "Hide"), .init(true, "Compare all")], selection: preferences.binding(\.compareAllAccounts),
                     minSegmentWidth: 84, identifier: "usageSketchB.compare")
             }
             if compare {
@@ -281,8 +295,8 @@ struct UsageSettingsSketchLimitsB: View {
             UsageTimeAxis(domain: usage.domain, now: usage.builtAt)
                 .padding(.leading, 150 + 6)
             ForEach(usage.lanes) { account in
-                if let lane = account.lanes.first(where: { $0.kind == "session" && !$0.absentNow })
-                    ?? account.lanes.first(where: { $0.kind == "weekly" })
+                if let lane = UsageSketchRoomB.decidingLane(
+                    account.lanes, room: usage.table.rows.first { $0.id == account.account.id }.flatMap(UsageSketchRoomB.of))
                 {
                     HStack(spacing: 6) {
                         HStack(spacing: 5) {

@@ -1916,14 +1916,23 @@ struct PRSubmitReviewButton: View {
     }
 }
 
-/// The PR detail owns its watcher across tab changes and stops that exact model on replacement or exit.
+/// The PR detail owns its watcher across tab changes and stops that exact model on replacement or exit. It also does
+/// what the replaced `ReviewRootView` did for its model: reads the threads again on a return to the app, and follows a
+/// change of the Diff layout setting while the pane keeps its width.
 struct PRVariantReviewLifetime: View {
     let model: ReviewModel
+    @AppStorage(HubDiffLayout.key, store: HubDefaults.store) private var diffLayout = HubDiffLayout.auto.rawValue
 
     var body: some View {
         Color.clear
             .onAppear { model.start() }
             .onDisappear { model.stop() }
+            // Back from the browser or another app: the PR threads may have moved (the store skips a load younger
+            // than the CLI's 30 s cache).
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                model.pr?.reloadIfStale()
+            }
+            .onChange(of: diffLayout) { _, raw in model.fitStyle(layout: HubDiffLayout(rawValue: raw) ?? .auto) }
     }
 }
 

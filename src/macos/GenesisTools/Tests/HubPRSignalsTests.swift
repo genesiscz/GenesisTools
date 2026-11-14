@@ -43,4 +43,28 @@ final class HubPRSignalsTests: XCTestCase {
         XCTAssertTrue(ref.isMergeRequest)
         XCTAssertEqual(status.daemonTask, false)
     }
+
+    /// A push under a resting pointer restarts the row's checks probe: the task's identity carries the head, so a row
+    /// whose liveness stays true still asks for the new head's failed checks (hub UX C9).
+    func testTheRowChecksProbeRestartsWhenTheHeadMovesWhileLive() {
+        let old = PRRowChecksProbe.Trigger(live: true, key: PRsModel.checksKey("gh:org/app#7", head: "aaa111"))
+        let moved = PRRowChecksProbe.Trigger(live: true, key: PRsModel.checksKey("gh:org/app#7", head: "bbb222"))
+        let same = PRRowChecksProbe.Trigger(live: true, key: PRsModel.checksKey("gh:org/app#7", head: "aaa111"))
+        XCTAssertNotEqual(old, moved)
+        XCTAssertEqual(old, same)
+    }
+
+    /// The redesign PR details open on the page the "Open a PR on" setting names; Auto keeps each layout's own first
+    /// page and the threads-list setting, and an unset value reads as Auto.
+    @MainActor
+    func testTheRedesignPRDetailsOpenOnTheChosenPage() {
+        XCTAssertEqual(HubPRDetailOpeningTab.stored(nil), .auto)
+        XCTAssertEqual(PRDetailSketchA.openingTabName(.auto, threadsOpen: false), "about")
+        XCTAssertEqual(PRDetailSketchA.openingTabName(.auto, threadsOpen: true), "threads")
+        XCTAssertEqual(PRDetailSketchA.openingTabName(.overview, threadsOpen: true), "about")
+        XCTAssertEqual(PRDetailSketchA.openingTabName(.changes, threadsOpen: false), "files")
+        XCTAssertEqual(PRDetailSketchB.openingTabName(.auto, threadsOpen: false), "changes")
+        XCTAssertEqual(PRDetailSketchB.openingTabName(.overview, threadsOpen: true), "overview")
+        XCTAssertEqual(PRDetailSketchB.openingTabName(.threads, threadsOpen: false), "threads")
+    }
 }

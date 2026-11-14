@@ -2805,13 +2805,22 @@ struct PRDetailView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .textSelection(.enabled)
-                    .instantTooltip(pr.title)
-                    .contextMenu {
-                        Button("Copy title") { Clipboard.copy(pr.title, what: "title") }
-                        Button("Copy \(pr.label) and title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") }
-                    }
+                    // Plain text in the title bar row: no selection, tooltip or menu takes the strip's pointer, so a
+                    // double-click on it zooms the window. The copies are the control beside it.
+                    .titlebarLabel()
                     .layoutPriority(1)
+                MenuButton(style: .genHoverIcon()) {
+                    [
+                        .action("Copy Title") { Clipboard.copy(pr.title, what: "title") },
+                        .action("Copy \(pr.label) and Title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") },
+                    ]
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                }
+                .instantTooltip("Copy the title")
+                .accessibilityLabel(Text("Copy the PR title"))
                 // One merge state: "Draft, not mergeable", or the state and the readiness verdict (C15).
                 PRHeaderState(pr: pr, mergeable: detail.flatMap { $0.headSha == nil || pr.headSha == nil || $0.headSha == pr.headSha ? $0.mergeable : nil })
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
@@ -3111,10 +3120,25 @@ struct PRDetailView: View {
         rows += PRChecksSection.sorted(detail?.checks ?? []).map { check in
             PanelFindRow(id: "check:\(check.id)", fields: [PanelFindField("link", check.name)], container: Self.checksID)
         }
-        rows += PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
-            PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: Self.sessionsID)
-        }
+        rows += Self.sessionFindRows(model: model, prs: prs, pr: pr)
         return rows
+    }
+
+    /// The id of the lazy container that holds the session rows, for a page that registers `sessionFindRows`.
+    static var sessionsFindContainer: String { sessionsID }
+
+    /// The agent sessions on the PR as find rows, under the ids their rows mark (`PRSessionsSection`).
+    static func sessionFindRows(model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
+        PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
+            PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: sessionsID)
+        }
+    }
+
+    /// The find rows of a page that shows the description and the agent sessions (the redesign layouts' About and
+    /// Overview pages). `markdown` is the description as the page draws it.
+    static func descriptionAndSessionFindRows(markdown: String?, model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
+        let description = markdown.map { [PanelFindRow(id: descriptionID, fields: [PanelFindField("desc", $0, markdown: true)])] } ?? []
+        return description + sessionFindRows(model: model, prs: prs, pr: pr)
     }
 
     /// A match in a folded section opens it first.
@@ -3161,6 +3185,8 @@ struct PRDescriptionView: View {
     let whole: Bool
     /// Where a long description folds: `foldHeight(column:)` of the overview's visible height.
     let foldHeight: CGFloat
+    /// False on a page that always shows the whole description: no Show less that could not fold it.
+    var foldable = true
     let choose: (Bool) -> Void
     @State private var overflows = false
     @GenReduceMotion private var reduceMotion
@@ -3193,7 +3219,7 @@ struct PRDescriptionView: View {
                             .frame(height: shownWhole ? 0 : 32)
                     }
                 }
-            if overflows {
+            if overflows, foldable {
                 Button {
                     GenMotion.perform(expanding: !shownWhole, reduceMotion: reduceMotion) { choose(!shownWhole) }
                 } label: {

@@ -35,6 +35,35 @@ public enum HubPRRowCI: String, CaseIterable, Identifiable, Sendable {
     public static func stored(_ raw: String) -> HubPRRowCI { HubPRRowCI(rawValue: raw) ?? .unusual }
 }
 
+/// The page a PR detail opens on in the redesign layouts (`--sketch prDetail=a|b`). `auto` keeps each layout's own
+/// first page: Threads while the review's threads list setting is on, else About (A) or the diff (B).
+public enum HubPRDetailOpeningTab: String, CaseIterable, Identifiable, Sendable {
+    case auto, overview, changes, threads
+    public static let key = "hub.prs.detail.openingTab"
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .auto: return "Auto"
+        case .overview: return "Overview"
+        case .changes: return "Changes"
+        case .threads: return "Threads"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .auto: return "Threads while the threads list is open in reviews, else the layout's first page."
+        case .overview: return "The description and the agent sessions on the PR."
+        case .changes: return "The diff and its changed files."
+        case .threads: return "The PR's review threads."
+        }
+    }
+
+    /// Unset or unknown reads as `auto`.
+    public static func stored(_ raw: String?) -> HubPRDetailOpeningTab { raw.flatMap(HubPRDetailOpeningTab.init(rawValue:)) ?? .auto }
+}
+
 /// Whether resting the pointer on a PR row whose CI failed loads that PR's checks, so the row's tooltip names the
 /// failed ones before its detail was ever opened (hub UX C9). One load per PR head: a push asks again.
 public enum HubPRRowHoverChecks: String, CaseIterable, Identifiable, Sendable {

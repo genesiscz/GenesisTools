@@ -128,6 +128,17 @@ struct TranscriptSketchBTitle: View {
     @Binding var showSidebar: Bool
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            rows
+            SessionDetailAlertRow(info: info, actions: actions)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+        }
+        .accessibilityIdentifier("session-details-header")
+    }
+
+    private var rows: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
                 AIProviderGlyph(meta: info.provider, size: 18)
@@ -178,10 +189,6 @@ struct TranscriptSketchBTitle: View {
         .padding(.trailing, 12)
         .padding(.top, 10)
         .padding(.bottom, 8)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
-        }
-        .accessibilityIdentifier("session-details-header")
     }
 
     /// The header's middle: the model and the counters, plus the account, folder, branch and last activity when `full`.
