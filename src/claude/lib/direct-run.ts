@@ -52,8 +52,18 @@ export function rewriteSteerLine(line: string): string {
     return line;
 }
 
+/** A usage-limit assistant frame: its message carries a list of content blocks. */
+interface LimitAssistantFrame extends Record<string, unknown> {
+    message: Record<string, unknown> & { content: unknown[] };
+}
+
+/** A usage-limit error result: its text is a string. */
+interface LimitResultFrame extends Record<string, unknown> {
+    result: string;
+}
+
 /** Claude Code's synthetic root assistant frame for a rate-limited request (`error: "rate_limit"`). */
-function isLimitAssistant(frame: Record<string, unknown>): boolean {
+function isLimitAssistant(frame: Record<string, unknown>): frame is LimitAssistantFrame {
     return (
         frame.type === "assistant" &&
         frame.parent_tool_use_id === null &&
@@ -64,7 +74,7 @@ function isLimitAssistant(frame: Record<string, unknown>): boolean {
 }
 
 /** Claude Code's error result for a request the API refused with 429. */
-function isLimitResult(frame: Record<string, unknown>): boolean {
+function isLimitResult(frame: Record<string, unknown>): frame is LimitResultFrame {
     return (
         frame.type === "result" &&
         frame.is_error === true &&
@@ -98,8 +108,8 @@ export function annotateLimitLine(line: string, note: string): string {
             return line;
         }
 
-        if (isLimitAssistant(frame) && isObject(frame.message) && Array.isArray(frame.message.content)) {
-            const content: unknown[] = frame.message.content;
+        if (isLimitAssistant(frame)) {
+            const content = frame.message.content;
             const lastText = content.findLastIndex((block) => isObject(block) && block.type === "text");
             const annotated =
                 lastText === -1
@@ -113,7 +123,7 @@ export function annotateLimitLine(line: string, note: string): string {
             return `${SafeJSON.stringify({ ...frame, message: { ...frame.message, content: annotated } }, { strict: true })}${newline}`;
         }
 
-        if (isLimitResult(frame) && typeof frame.result === "string") {
+        if (isLimitResult(frame)) {
             return `${SafeJSON.stringify({ ...frame, result: withNote(frame.result, note) }, { strict: true })}${newline}`;
         }
     } catch (error) {
