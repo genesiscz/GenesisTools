@@ -25,11 +25,9 @@ struct PRDetailSketchA: View {
     @AppStorage(HubPROverview.descriptionChoicesKey, store: HubDefaults.store) private var descriptionChoices = ""
     @State private var inspectorHeight: CGFloat = 0
     /// The sections' folds, under the keys the current overview saves them, so each fold control works.
-    @AppStorage("hub.prs.fold.sessions") private var foldSessions = false
-    @AppStorage(HubPROverview.commitsFoldedKey, store: HubDefaults.store) private var foldCommits = false
-    @AppStorage("hub.prs.fold.checks") private var foldChecks = false
+    private var folds = PROverviewFolds()
     /// ⌘F on the About page, in the current overview's scope.
-    @State private var find = PanelFindModel(scope: "pr.overview", title: "this PR")
+    @State private var find = PRDetailView.overviewFind()
 
     init(model: HubModel, prs: PRsModel, pr: HubPR) {
         self.model = model
@@ -304,7 +302,7 @@ struct PRDetailSketchA: View {
                     if let checks = detail?.checks, !checks.isEmpty {
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 0) {
-                                PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
+                                PRChecksSection(model: model, pr: pr, checks: checks, folded: folds.$checks)
                             }
                             .padding(14)
                         }
@@ -369,7 +367,7 @@ struct PRDetailSketchA: View {
                 if let commits = detail?.commits, !commits.isEmpty {
                     if let review {
                         PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, total: detail?.commitsTotal,
-                                         folded: $foldCommits) {}
+                                         folded: folds.$commits) {}
                     } else {
                         let authors = PRCommitRow.showsAuthors(commits)
                         ForEach(commits.reversed()) { commit in
@@ -394,7 +392,8 @@ struct PRDetailSketchA: View {
             PanelFindBar(find: find)
             aboutScroll
         }
-        .panelFind(find, revision: findRevision, onReveal: unfold) {
+        .panelFind(find, revision: PRDetailView.overviewFindRevision(markdown: findMarkdown, model: model, prs: prs, pr: pr),
+                   onReveal: unfold) {
             PRDetailView.descriptionAndSessionFindRows(markdown: findMarkdown, model: model, prs: prs, pr: pr)
         }
     }
@@ -405,14 +404,10 @@ struct PRDetailSketchA: View {
         return linkedDescription(body)
     }
 
-    private var findRevision: [String] {
-        PRDetailView.sessionFindRevision(model: model, prs: prs, pr: pr) + [findMarkdown ?? "", pr.id]
-    }
-
     /// A match in a folded part opens it first.
     private func unfold(_ match: PanelFindMatch) {
         if match.row.hasPrefix("session:") {
-            foldSessions = false
+            folds.sessions = false
         } else if match.row == PRDetailView.descriptionID, !descriptionShownWhole {
             descriptionChoices = PRDescriptionChoices.set(descriptionChoices, pr: pr.id, whole: true)
         }
@@ -440,7 +435,7 @@ struct PRDetailSketchA: View {
                     Text("No description").foregroundColor(ReviewPalette.dim)
                 }
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
+                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: folds.$sessions)
                 }
                 .id(PRDetailView.sessionsID)
             }

@@ -23,11 +23,9 @@ struct PRDetailSketchB: View {
     @State private var launching = false
     @State private var pickingFiles = false
     /// The sections' folds, under the keys the current overview saves them, so each fold control works.
-    @AppStorage("hub.prs.fold.sessions") private var foldSessions = false
-    @AppStorage(HubPROverview.commitsFoldedKey, store: HubDefaults.store) private var foldCommits = false
-    @AppStorage("hub.prs.fold.checks") private var foldChecks = false
+    private var folds = PROverviewFolds()
     /// ⌘F on the Overview page, in the current overview's scope.
-    @State private var find = PanelFindModel(scope: "pr.overview", title: "this PR")
+    @State private var find = PRDetailView.overviewFind()
 
     init(model: HubModel, prs: PRsModel, pr: HubPR) {
         self.model = model
@@ -312,7 +310,7 @@ struct PRDetailSketchB: View {
                     if let review = prs.review {
                         // A commit opens its diff: the Changes tab, scoped to that commit.
                         PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, total: detail?.commitsTotal,
-                                         folded: $foldCommits) { tab = .changes }
+                                         folded: folds.$commits) { tab = .changes }
                     } else {
                         let authors = PRCommitRow.showsAuthors(commits)
                         ForEach(commits.reversed()) { commit in
@@ -329,7 +327,7 @@ struct PRDetailSketchB: View {
         case .checks:
             if let checks = detail?.checks, !checks.isEmpty {
                 readable {
-                    PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
+                    PRChecksSection(model: model, pr: pr, checks: checks, folded: folds.$checks)
                 }
             } else {
                 EmptyState(symbol: "checkmark.seal", text: detail == nil ? "Reading the checks" : "No checks on this PR")
@@ -359,15 +357,12 @@ struct PRDetailSketchB: View {
             PanelFindBar(find: find)
             overviewScroll
         }
-        .panelFind(find, revision: findRevision, onReveal: { match in
-            if match.row.hasPrefix("session:") { foldSessions = false }
+        .panelFind(find, revision: PRDetailView.overviewFindRevision(markdown: findMarkdown, model: model, prs: prs, pr: pr),
+                   onReveal: { match in
+            if match.row.hasPrefix("session:") { folds.sessions = false }
         }) {
             PRDetailView.descriptionAndSessionFindRows(markdown: findMarkdown, model: model, prs: prs, pr: pr)
         }
-    }
-
-    private var findRevision: [String] {
-        PRDetailView.sessionFindRevision(model: model, prs: prs, pr: pr) + [findMarkdown ?? "", pr.id]
     }
 
     /// The description as the page draws it, for the find.
@@ -396,7 +391,7 @@ struct PRDetailSketchB: View {
                     Text("No description").foregroundColor(ReviewPalette.dim)
                 }
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
+                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: folds.$sessions)
                 }
                 .id(PRDetailView.sessionsID)
             }
