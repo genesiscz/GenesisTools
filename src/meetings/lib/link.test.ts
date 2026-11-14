@@ -17,7 +17,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { wisprAudioAccess } from "@app/wisprflow/lib/source-audio";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
@@ -576,6 +576,42 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
 
         expect(owned?.path).toBe(join(store.folder(into), SOURCE_AUDIO_FOLDER, name));
         expect(readFileSync(owned?.path ?? "", "utf8")).toBe("owned audio");
+    });
+
+    test("a source preserved on both records keeps the surviving link's version, `into`'s on a tie, and both files", async () => {
+        const merged = async (intoMeeting: string) => {
+            const { store, from, into, inbox, backupRoot } = await call();
+            const preserve = async (id: string, digit: string, sourceMeetingId: string) => {
+                const path = join(store.folder(id), SOURCE_AUDIO_FOLDER, `${digit.repeat(64)}.m4a`);
+                mkdirSync(dirname(path), { recursive: true });
+                writeFileSync(path, digit);
+                await store.update(id, { command: "test", change: "preserved" }, (next) => {
+                    next.audio = {
+                        sources: {
+                            wisprflow: {
+                                sourceMeetingId,
+                                path,
+                                sha256: digit.repeat(64),
+                                bytes: 1,
+                                savedAt: "2026-11-05T14:10:00.000Z",
+                            },
+                        },
+                    };
+                });
+            };
+            await preserve(into, "c", intoMeeting);
+            await preserve(from, "d", "call-1");
+            await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+            const folder = join(store.folder(into), SOURCE_AUDIO_FOLDER);
+            return {
+                kept: basename(store.read(into)?.audio?.sources.wisprflow?.path ?? ""),
+                files: readdirSync(folder).sort(),
+            };
+        };
+        const both = [`${"c".repeat(64)}.m4a`, `${"d".repeat(64)}.m4a`];
+
+        expect(await merged("call-1")).toEqual({ kept: both[0], files: both });
+        expect(await merged("call-0")).toEqual({ kept: both[1], files: both });
     });
 
     test("attendance on a record's own clock moves onto the merged clock, or is refused when it cannot be placed", async () => {
