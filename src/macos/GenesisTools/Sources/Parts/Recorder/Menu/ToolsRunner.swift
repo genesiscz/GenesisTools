@@ -41,7 +41,7 @@ enum ToolsRunner {
         process.arguments = plan.arguments
         process.currentDirectoryURL = plan.workingDirectory
         process.environment = ToolsBridge.scrubbedEnvironment()
-        let log = URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/logs/recorder-start.log")
+        let log = GenesisToolsHome.url("logs/recorder-start.log")
         try? FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: log.path) {
             FileManager.default.createFile(atPath: log.path, contents: nil)

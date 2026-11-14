@@ -11,8 +11,6 @@ import { ensureWatcher, watcherPidPath } from "../lib/watcher";
 
 const { log } = logger.scoped("meetings-watch-cmd");
 
-export { ensureWatcher, watcherPidPath };
-
 /**
  * "Ask each time" at the end of a meeting (the recorder's stop, a source link that ends it), then the watcher, so the
  * answer is read back even while autoRecord is off. Never throws; every failure is a warning naming the meeting.

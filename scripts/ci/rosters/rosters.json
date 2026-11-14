@@ -712,15 +712,10 @@
     "roster-swift-forge-kind-compare-outside-forge": {},
     "roster-swift-genesis-tools-home-name-outside-owner": {
         "src/browser-router/native/Router.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKit/Recording/Live/LiveRecording.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKit/Widgets/WidgetModel.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKitBase/Notifications/NotificationLedger.swift": 1,
-        "src/macos/GenesisKit/Sources/GenesisKitBase/Permissions/GateAudit.swift": 1,
         "src/macos/GenesisTools/Sources/Host/App/SettingsModel.swift": 1,
         "src/macos/GenesisTools/Sources/Host/LauncherFailures.swift": 1,
-        "src/macos/GenesisTools/Sources/Host/Notify.swift": 2,
+        "src/macos/GenesisTools/Sources/Host/Notify.swift": 1,
         "src/macos/GenesisTools/Sources/Host/Router.swift": 1,
-        "src/macos/GenesisTools/Sources/Host/WidgetLaunch.swift": 1,
         "src/macos/GenesisTools/Sources/Parts/Meetings/Data/MeetingsService.swift": 1
     },
     "roster-swift-hand-built-genesis-tools-path": {

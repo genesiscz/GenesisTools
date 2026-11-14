@@ -409,6 +409,11 @@ describe("the pin rule", () => {
             ["--target-key", key("4"), "--revalidate-scope", "element"],
         ],
         [
+            "prepared drag focuses and pins its source",
+            { action: "drag", index: 0, prepare: true },
+            ["--prepare", "--target-key", key("1")],
+        ],
+        [
             "drag takes --target-key",
             { action: "drag", index: 0, prepare: false },
             ["--target-key", key("0"), "--revalidate-scope", "element"],

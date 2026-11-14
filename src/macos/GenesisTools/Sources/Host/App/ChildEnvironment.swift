@@ -1,4 +1,5 @@
 import Foundation
+import GenesisKitBase
 
 /// The environment every child of an app face inherits. A face started by Launch Services (a Dock or
 /// Finder click, `open`, a notification, `tools hub` through `open`) gets launchd's bare environment:
@@ -102,7 +103,7 @@ enum ChildEnvironment {
     }
 
     private static var cacheURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/app/login-env.json")
+        GenesisToolsHome.url("app/login-env.json")
     }
 
     private static func readCache() -> [String: String]? {

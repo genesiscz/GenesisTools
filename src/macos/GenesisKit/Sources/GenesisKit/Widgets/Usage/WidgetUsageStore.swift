@@ -36,7 +36,7 @@ public final class WidgetUsageStore: ObservableObject {
     }
 
     nonisolated public static var defaultWatchFolder: String {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/ai-usage/cache").path
+        GenesisToolsHome.url("ai-usage/cache").path
     }
 
     /// Starts this app's own `--hub` face with the arguments; a running hub takes them over.

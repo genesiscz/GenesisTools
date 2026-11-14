@@ -65,16 +65,16 @@ public enum DecisionAnswering {
 
     /// A click on a decision option (or its number key) stages it ("stage", the default) or sends it at once ("send"),
     /// turned around by ⌘ while "⌘ does the other" is on (`decisionClick`, `decisionCommandSwaps`).
-    public static func clickStages(_ preferences: WidgetPreferences?, command: Bool) -> Bool {
-        stages((preferences?.decisionClick ?? "stage") == "stage", command: command,
-               swaps: preferences?.decisionCommandSwaps ?? true)
+    public static func clickStages(_ preferences: WidgetPreferences, command: Bool) -> Bool {
+        stages(preferences.decisionClick == "stage", command: command,
+               swaps: preferences.decisionCommandSwaps)
     }
 
     /// Return in a decision's own answer stages the text as its note ("stage", the default) or sends it, turned
     /// around by ⌘ the same way (`ownAnswerReturn`).
-    public static func returnStages(_ preferences: WidgetPreferences?, command: Bool) -> Bool {
-        stages((preferences?.ownAnswerReturn ?? "stage") == "stage", command: command,
-               swaps: preferences?.decisionCommandSwaps ?? true)
+    public static func returnStages(_ preferences: WidgetPreferences, command: Bool) -> Bool {
+        stages(preferences.ownAnswerReturn == "stage", command: command,
+               swaps: preferences.decisionCommandSwaps)
     }
 
     /// Whether ⌘ is down for the click being handled.

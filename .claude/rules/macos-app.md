@@ -25,43 +25,13 @@ markdown. Hub-only pieces (`ExternalLink`, `TitlebarHeader`, `GroupHeader`, …)
 
 ## Host and optional parts
 
-The app is a host plus optional parts (Martin, 2026-10-18). `Sources/Host/` (library `GenesisToolsHost`) is the
-launcher, `--rpc`, the permission faces, vault approval, notifications, the microphone, the link router, the
-permissions window, and the launchers that start another part's face (`FeatureSettingsLaunch`, `WidgetLaunch`). Each
-part is one library under `Sources/Parts/`: `Features/` (the feature settings window, `--features`), `Hub/` (hub and
-review), `Widget/`, `Clicky/`, `Markdown/`. `Sources/GenesisTools/` is the executable: it registers the parts its build
-links (`Parts.swift`) and calls `runHost()`.
+The app is a host (`Sources/Host/`) plus optional parts (`Sources/Parts/<part>/`). 🛑 A part never imports another
+part (Martin, 2026-10-18); the compiler refuses it. How parts, faces and settings plug-ins register, and what a new
+part touches: `.claude/rules/macos-app-parts.md` (it loads with `Package.swift`, `Sources/GenesisTools/`,
+`Sources/Host/` and the plug-in files).
 
-- 🛑 A part never imports another part (Martin, 2026-10-18: "GenesisToolsClicky doesn't need hub, and hub doens't need
-  clicky"). Package.swift gives each part target only the host and the kit, so the compiler refuses such an import.
-  A part reaches another part in two ways only: it starts that part's face in a new process through a host launcher,
-  or it adds pages to the feature settings window.
-- **Settings pages are plug-ins.** A part with pages implements GenesisKit's `FeatureSettingsPlugin`
-  (Settings/FeatureSettingsPlugin.swift): `install(in:)` registers its sections and, in `.live` mode, starts its
-  services in the window's process (Clicky's status item, the widget's dictation and Focus runtime). The executable adds
-  each linked part's plug-in (`registerSettingsPlugins` in Parts.swift). The window's own pages are General,
-  Background (the daemon) and About. `--clicky` is the face's old name and still works.
+## Components by need
 
-- `GENESIS_APP_PARTS` picks the parts (Package.swift); unset is every part, so a plain `swift build` and `swift test`
-  see the whole app. `src/macos/lib/permissions/parts.ts` is the TypeScript table; a build makes the installed parts
-  (the host alone on a fresh install), and `tools hub` adds the hub. Each parts set has its own `.build/opt-<ids>`.
-- The host starts a part's face only through `AppParts` (Host/AppParts.swift); a face whose part is not linked prints
-  the `tools macos permissions build --add-part <id>` command and exits 69. Never call a part's `run…` from the host.
-- A host symbol a part uses is `package`; a part's `run…` entry point and plug-in are `package` for the executable.
-  Everything else stays internal: mark `package` only what another module uses, which the build names when it is
-  missing. The tests use `@testable import`, so they need no mark.
-- A new part: one target in Package.swift, one block in `Sources/GenesisTools/Parts.swift`, one row in parts.ts. A part
-  with settings pages adds its plug-in in Parts.swift and `requires: ["features"]` in both tables (a build makes the
-  window with it; `requires` never adds a code link).
-- A new face is one entry in its part's `faces` in parts.ts (`AppFace`: `flag`, `aliases`, `window`, `reopen`, `quit`)
-  and its run closure in the part's `AppParts.register` line. The host never lists faces by hand: `AppParts.partOfFace`,
-  `FaceRecord.isWindowFace`, `PartQuit.faceNames` and `faceOrder` read `AppFaces.declared`, which
-  `bun scripts/native/app-faces.ts --write` (and every build) writes into `Sources/Host/AppFaces+Declared.swift`, and
-  the rebuild's `windowFaceKind` reads the same entry. permissions.test.ts fails when that file, the declarations and the
-  Parts.swift registrations drift apart. Staging (`NativeStaging`) and `LinkRelay.mayRunAgain` still name their few
-  faces in code: a new face touches them only to ship behind staging or to run itself again behind a fresh relay.
-- Moving a part to another repository: its folder, its plug-in line in Parts.swift and its row in both tables. What it
-  uses from the host and the kit must then be `public`, because `package` access stops at the package border.
 
 | Need | Use | Never |
 |---|---|---|
@@ -78,8 +48,10 @@ links (`Parts.swift`) and calls `runHost()`.
 | A background | `.hubSurface(.chrome / .content / .bar / .groupHeader / .drawer)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G), the settings window's look in the Native style (Hub/HubStyle.swift: `HubPreferences.style`, General → Theme, GenesisKit `NativePaneFill`) | `ReviewPalette.sidebar` / `.background` directly: it stays hub-dark in the Native style |
 | A sidebar group header | `GroupHeader` + `GroupPrefs` (collapse, pin, move up/down, persisted) | an uppercase static label |
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
+| A load or an action that failed | A load (a pane, a list, a card with no data): GenesisKit `FailureInline(report, form: .pane) { retry }` (`.compact` for a strip or a row) (Try again, Details, Report a bug). An action shown as a notice: `NoticeFix.details(report)` / `StackedNotice.Action.details(report)`. The report: `FailureReport.toolsCall(error, outcome:, action:, call: ledger.failed)` for a failed `tools` call (bind a `ToolsCallLedger` around the work), `FailureReport.unexpected` for anything else; `.deliver` adds the call's app-perf.log lines | a raw error string in red or grey, `error.localizedDescription` or `"\(error)"` in a `Text`, a failure only written to app-perf.log while the view keeps stale or empty data |
 | A feature that lacks a privacy grant (Input Monitoring, Accessibility, Microphone, Speech Recognition, Screen Recording, …) | `PermissionCenter.shared.require(PermissionNeed(kind, reason:onGranted:))`, or `await …ensure(…)` when the grant is used by a new process (GenesisKit Permissions/); status through `PermissionAccess.live`. Test it in the real app with `bun scripts/native/staging.ts deny <kinds>` | grey inline text only, a SwiftUI `.alert` inside a widget panel, a hand-built `x-apple.systempreferences:` URL, or a direct `AXIsProcessTrusted` / `CGPreflight…` call (it skips the denial simulation) |
 | A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` or `LiveTime(date:style:)` (GenesisKit): the label keeps its own clock, nothing above it re-renders per tick. In a list row `style: .brief` ("12m ago"); the default `.short` ("read 32 sec. ago") only in a header line | `HubFormat.ago` in a body (formats once and goes stale), a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick), or both styles in one list (hub inventory H11) |
+| A number the reader sets (hours, days, a count) | `KitNumberField` (GenesisKitBase Controls/KitNumberField.swift), in a settings row `NativeSettingsNumberPicker(…, prefix:, suffix:)`: the unit stands in the field (`.counted("day")`, `.text("min")`, `.text("±")` before it), the buttons step while held, and the host gets one write for each gesture | a `TextField` beside a system `Stepper`, a unit as a `Text` beside the control or only in the row's sentence, a menu of a few numbers for a value that is a count |
 | A count with its noun ("1 file", "3 commits") | `Plural.count(n, "file")` (GenesisKit Style/Plural.swift; an irregular noun names its plural) | `"\(n) files"`: it printed "1 files" in five places |
 | A file or memory size | `ByteFormat.file(_:)` / `ByteFormat.memory(_:)` (GenesisKit): one English locale | `ByteCountFormatter`: it follows the system region ("3,21 GB" on a Czech Mac) |
 | A count that is a page of a longer list | "200+" while more pages exist (`HubTimelineModel.pageCount`, `GroupHeader(more:)`) | the page size printed as a total ("200 events", "40" on every PR group) |
@@ -161,37 +133,27 @@ GenesisTools.app started it, and those are the ones to take down first.
 
 ## Measure every load
 
-Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)` then
-`span.end()`, or `HubPerf.measure(...)`. Spans, stalls and hang samples go to
-`~/.genesis-tools/logs/app-perf.log` (stolen `PerfLog`; `.main` suffix = ran on the main
-thread; `SLOW` marks at 100 ms). `HangWatch` samples the main thread into
-`~/.genesis-tools/logs/hangs/` after 1 s. Summary: `bun scripts/perf-report.ts --tail 5000` (run in
-this folder). Watch it while you click: `tail -f ~/.genesis-tools/logs/app-perf.log | rg 'SLOW|stall|main '`.
-A span times work, not the SwiftUI layout it causes: after a state change the renderer runs in the
-next run-loop passes. `HubMainBusy.measure("area.what")` (HubPerf.swift) logs the main thread's busy
-time over the next 600 ms, which is what an append or a reload really costs on screen.
+Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)` then `span.end()`, or
+`HubPerf.measure(...)`. A span times work, not the SwiftUI layout it causes: `HubMainBusy.measure("area.what")`
+logs what an append or a reload really costs on screen. Where spans go and how to read them: the swift skill,
+`.claude/skills/swift/references/genesistools.md` "Spans in every load".
 
-🛑 The live hub always has an accessibility client, and then SwiftUI walks every responder of the
-window once per accessibility node an update touches: a click's cost grows with rows × controls per
-row × rows (stall stacks: `AccessibilityNode.updateFocusResponder`). Rows of a dense list take values,
-not the hub's models, are `Equatable` with `.equatable()`, and set their liveness once:
+🛑 The live hub always has an accessibility client, and then SwiftUI walks every responder of the window once per
+accessibility node an update touches (stall stacks: `AccessibilityNode.updateFocusResponder`). Rows of a dense list
+take values, not the hub's models, are `Equatable` with `.equatable()`, and set their liveness once:
 `.liveRow(selected:)` on the row's outer view (GenesisKitBase `Style/LiveRow.swift`). The shared controls
 (`rowButton`, `IconButton`, `instantTooltip` and so every badge, `PathLabel`, `MenuButton`, `LiveButton`,
-`ExternalLink`, `CIBadge`, `PRStateIcon`, `PRReadinessBadge`) read `rowLive` and draw the same label with no
-responder in a resting row; a row never gates a control itself (`live ? x : nil`, `interactive:`,
-`if live { Button } else { Image }` are the defect), and a raw `Button` or `Toggle` in a row is a `LiveButton`.
-A new shared control reads `rowLive` before it ships (`PRRow` in Hub/HubPRs.swift is the reference). A list
-that inserts rows above the viewport holds it with `TranscriptScrollAnchor` (GenesisKit
-Sessions/Transcript/TranscriptScrollAnchor.swift).
+`ExternalLink`, `CIBadge`, `PRStateIcon`, `PRReadinessBadge`) read `rowLive`; a row never gates a control itself
+(`live ? x : nil`, `interactive:`, `if live { Button } else { Image }` are the defect), and a raw `Button` or
+`Toggle` in a row is a `LiveButton`. A new shared control reads `rowLive` before it ships (`PRRow` in
+Hub/HubPRs.swift is the reference). A list that inserts rows above the viewport holds it with `TranscriptScrollAnchor`
+(GenesisKit Sessions/Transcript/TranscriptScrollAnchor.swift).
 
-🛑 Moving a SwiftUI `List`'s viewport inside the resize of a row insert (a frame-change observer that
-scrolls at once, as `TranscriptScrollAnchor` does to stay still) stops AppKit re-measuring the rows on
-screen: their height listener is gone and `noteHeightOfRows` returns the cached height. A row that grows
-later (an opened tool call) keeps its old height and draws over the rows below; with the live tail every
-row of a running session did it (2026-09-28). An insert without that move is fine (measured). Such a list
-needs `TranscriptScrollAnchor.remeasureVisibleRows` after each such move, and that re-measure is expensive
-(about 230 ms per call, 2026-09-30). So move inside the resize only when the rows on screen would jump
-otherwise (a prepend under a hold); follow appends at the latest turn one turn later (`scheduleFollow`).
+🛑 Moving a SwiftUI `List`'s viewport inside the resize of a row insert (as `TranscriptScrollAnchor` does to stay
+still) stops AppKit re-measuring the rows on screen, so a row that grows later draws over the rows below (2026-09-28).
+Such a list needs `TranscriptScrollAnchor.remeasureVisibleRows` after each such move, which costs about 230 ms
+(2026-09-30). So move inside the resize only when the rows on screen would jump otherwise (a prepend under a hold);
+follow appends at the latest turn one turn later (`scheduleFollow`).
 
 🛑 A live transcript moves the reader ONLY while they are at the end (`TranscriptScrollAnchor.atEnd`), with one
 0.2 s ease-out glide per change (instant under Reduce Motion); scrolled up, it never moves them and shows
@@ -221,104 +183,14 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
 
 ## Verify without a screen
 
-- `GenesisTools --review --repo <path> [--scope branch] [--proposal <file>] --snapshot /tmp/x.png`
-- `GenesisTools --hub [--mode worktrees|prs] [--session <id>] [--pr <n>] [--tab …] [--panes transcript,changes,files] [--file <path>] [--style unified] [--glass on] [--width <pt>] --snapshot /tmp/x.png`
-  (`--file` renders that one file of the diff; a file only scrolled into view never paints in the invisible snapshot window)
-- From a worktree: `swift build`, then `.build/debug/GenesisTools --hub … --snapshot x.png` runs outside a bundle (the web
-  diff viewer does not load there: its pane shows "viewer did not load", so judge diffs in the real app). The app calls the
-  MAIN checkout's `tools` unless `GENESIS_TOOLS_BIN=<worktree>/tools GENESIS_HUB_SERVER=0` is set, so without them a
-  snapshot shows the main branch's CLI data. A defaults gate takes a launch argument: `-GenesisToolsStagingFaces YES`.
-- Resize performance: `GenesisTools --hub --session <id> --panes transcript,changes --bench /tmp/b.json`
-  (sidebar drag, file-list drag, window and pane-divider sweeps with jitter; main-thread busy ms per step from run-loop
-  observers, plus layout-flip probes; `GENESIS_HUB_BENCH_ONLY=sidebar` for one sweep, e.g. under `sample`). Scripted
-  runs use a scratch copy of the hub's settings (`HubDefaults`), never the live layout. `--mode timeline` adds
-  `activity` (the Activity rail's filters clicked) and `inbox` (the mode switch). `GENESIS_HUB_BENCH_ONLY=modes` switches
-  through every mode twice, 2 s apart, one scenario per mode (`mode.prs`, …): what a switch costs on the main thread,
-  and the way to profile one off screen (`sample` the bench process while it runs). 🛑 Measure clicks with
-  `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
-  one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
-- Logic tests: `bun run app:test [-- --filter <name>]` for this folder (Tests/; it runs `swift test` in the app build's
-  own tree, `.claude/rules/macos.md`), and `swift test` in `../GenesisKit` for the shared code (its SessionTranscriptScrollTests
-  and WindowTitlebarTests open windows the same way). Here only LiveTimeTests
-  open a window, alpha 0 below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
-- Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.
-- A `--snapshot` run uses the `.prohibited` activation policy and an alpha-0 window (`orderInForSnapshot`): it never
-  shows on screen and never takes the keyboard. Martin's typing once landed in the hub search field because a
-  snapshot run became the active app. It waits for a web diff only when the screen shows one
-  (`HubModel.snapshotShowsDiff`): Inbox, Activity and the Agents list take 4 to 12 s, not 35 to 44. Its stall
-  lines carry `run=snapshot pid=<n>` and it spawns no `sample`, so its title bar audit is never read as the
-  live hub stalling.
-- Open the hub with `tools hub` (builds the app when it is missing or stale; `--mode`, `--session`, `--pr`, `--tab`,
-  `--filter <text>` (the session list, which also searches every project's history), `--palette [text]`,
-  `--find [text]`). `GenesisTools --hub` also takes `--transcript-query <text>` (the transcript opens with a
-  whole-session search). The same flags work in a `--snapshot` run, which is how to verify these overlays.
-- Keys: ⌘K command palette (Hub/HubPalette.swift: `<project> <keyword> <id>`, "gt pr 424", Tab completes),
-  ⌘⇧F find in files (Hub/HubFind.swift, rg over the session's project and added folders), ⌘⇧G glass (previous
-  match instead while a panel's find bar is open), ⌘F find in the panel the keyboard is in (the transcript and the
-  diff keep their own; the file list focuses "Filter files…"). Snapshot a panel's find with `--panel-find <scope>:<text> [--panel-find-next <n>]` (scopes:
-  timeline, worktree.cleanup, pr.overview, pr.threads, decisions, inbox); `--set <key>=<true|false|text>` sets a
-  scratch setting first (`--set review.prThreads.open=true` shows the PR threads list, `--set hub.timeline.range=last30`
-  the 30-day Activity). `--timeline-open <event id> [--timeline-action <id>]` runs an Activity row's action once the
-  feed loads (`diff` on a review comment: the PR's diff at that thread, one click).
-- The Native style in a snapshot: `--set hub.style=native --set featureSettings.appearance.theme=glass|solid|gradient|graphite|midnight|dusk`
-  (scratch only; `HubDefaults.isolate()` copies General's `featureSettings.appearance.*` too). A `--snapshot` cannot show
-  the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--features`; from
-  a checkout use `../GenesisClickyPreview` (`swift build --disable-build-manifest-caching`, see `.claude/rules/macos.md`,
-  then `.build/debug/GenesisClickyPreview --page hub.appearance
-  --theme gradient --hub-style native --snapshot x.png`), which writes only its own preview suite and tells no hub.
-  It shows the Widgets pages with `--sessions <n>` (a made-up roster) or `--widget-snapshot <file.json>` (a saved
-  `tools hub widget snapshot --json`).
-- A Settings snapshot (`--features --page <id> --snapshot`, and GenesisClickyPreview) is the window server's own composite
-  (GenesisKit `WindowSnapshot`). `cacheDisplay` skips the backdrop and portal layers Liquid Glass is made of, and SwiftUI
-  draws everything a glass view covers through them, so a page holding glass came out transparent: Projects / Sessions
-  under Gradient, every page under Glass (2026-10-11; the live window was never affected). The capture needs the
-  Screen Recording grant, and the window turns opaque only once it sits under the desktop picture. Without either it
-  falls back to `cacheDisplay`, and the stderr line says `by cacheDisplay (<why>; …)`. The `--hub` and `--review`
-  snapshots still draw with `cacheDisplay`.
-- Files → "Add folder" (Hub/HubFolders.swift): more roots per session; Changes picks roots with "Changes in <folder>"
-  checkboxes. Stored per session in `HubDefaults` (`hub.extraFolders.<id>`). All ticked roots share ONE review
-  (Review/ReviewRoots.swift, `ReviewModel.setRoots`): one toolbar, one diff, one Files tree with one top-level folder
-  per root, every path under its root's folder name. Map a merged file back with `locate(fileID:)`,
-  `absolutePath(of:)`, `file(atPath:)`; never join `model.repo` with `file.path`.
-- The open transcript follows its session with ONE long-running `tools ai sessions tail <id> --live --offset <n>`
-  per open detail (GenesisKit `TranscriptLiveTail` on `ToolsLineStream`, shared with Genesis): each stdout line is a turn with its
-  `index` (a changed turn comes again and replaces its row), a totals line, or an `activity` line when what the agent
-  does changes (thinking, an open tool call, waiting for the user, idle). The activity is the transcript's last row
-  through a `TranscriptActivityFeed` that only that row observes (passed as a value, each change re-ran the list:
-  87 to 372 ms of main thread per second against 20 ms), the header's coarse status (`HeaderState`) and the session
-  list's dot (`HubLiveActivityStore`); never derive "working" from the last write's age again. It stops when the detail closes, the
-  session changes, the window hides or minimizes, and when the app quits (the child ends on stdin EOF); one restart
-  on an unexpected exit, stderr in `app-perf.log` (`hub.transcript.follow`). Never spawn a `tools` process per file
-  growth again. ⌘F searches the whole session (`tools ai sessions grep` + `tail --turns`).
-- To SEE the live window (not a snapshot), `tools control screenshot --app GenesisTools --path /tmp/x.png`: a window
-  capture with no accessibility walk, so it works while a transcript streams. Since 2026-09-27 (24a236c41) a
-  snapshot skips the web diff's own image under a modal panel (digest, rules, search, prompts, handoff, palette,
-  find) and draws a SwiftUI sheet, which an off-screen parent gets as an unattached `SheetPresentationWindow`.
-  A snapshot taken before a search or load finished shows its empty state: read `app-perf.log` for the span.
-  One hub runs at a time: a second `GenesisTools --hub …` hands its flags to the running hub and exits
-  (Hub/HubSingleInstance.swift: the hub holds a `flock` on `~/.genesis-tools/hub/hub.lock`, dropped by the kernel on exit).
-- A rebuild never deletes the replaced bundle: it moves to `~/.genesis-tools/app/retired.noindex/<ms>/`. After the
-  install window the newest two retired bundles and every one a running process executes stay folders; other idle
-  ones are packed into `<ms>.zst` (tar inside zstd, `tools compress unpack` restores one), at most 5 packed copies
-  and none older than 14 days (`packRetiredBundles` in `src/macos/lib/permissions/app.ts`). Claude sessions run
-  inside the launcher binary they started with, and
-  tccd denies every grant to a process whose binary is gone. The launcher also exports `GENESIS_TOOLS_APP_INODE`;
-  `tools` re-enters the current launcher when it differs (`genesisAppLauncher()`). A build that finds no signing
-  identity while the installed app is Developer ID signed refuses to install ad-hoc (a sandboxed shell cannot read
-  the keychain). Worktree builds install the same way and keep the grants.
-- A pinned retired bundle stays, so every open Claude session keeps one build alive (2026-11-01: 22 pinned folders,
-  3.5 GB, one per build since 10-19). A launcher maps only `Contents/MacOS/GenesisTools` (`lsof` shows `txt`), so
-  after each build a background `tools macos permissions retired --apply` makes the retired bundles'
-  `Contents/Resources` (Clicky sounds, web viewers, icon: about 65 MB of 154 MB) APFS clones of the installed copy;
-  the bytes do not change, so the seal and every grant stay. It never touches the executable, `Info.plist` or
-  `_CodeSignature`, and marks each folder it finished with `resources-shared`. `tools macos permissions retired`
-  alone is the dry run; measure with `tools du clonesize`, never `du`. Only the binary (about 93 MB per pinned
-  build) still piles up while its session lives.
-- After a rebuild, restart a running hub without stealing focus, by its pid only (a `pkill -f` pattern also
-  killed other agents' snapshot runs, 2026-09-24): `kill <pid of MacOS/GenesisTools --hub>` if the build did not
-  reap it, then `tools hub open --no-activate` with the flags it had.
+Snapshot runs (`--hub` / `--review` with `--snapshot`), the hub bench, logic tests (`bun run app:test`), the hub's
+verification flags and keys, and the rebuild's retired bundles: `.claude/rules/macos-app-verify.md` (it loads with
+`Tests/`). Read it before you verify a UI change. Its rules that bite in `Sources/`:
 
-## Tests that need a picture or a screen
-
-- **A SwiftUI view in a test has no accessibility tree.** `NSHostingView` walked with `accessibilityChildren()` returns nothing, in or out of a window. Assert what a view shows by rendering it: `ImageRenderer(content:)` with `scale = 2`, then `VNRecognizeTextRequest` (`.accurate`, language correction off) on `renderer.cgImage`. About 0.3 s, and no window.
-- **Five GenesisKit window-animation and transcript-scroll tests fail while the screen is locked** (`tools control window --app <pid> --json` prints `"screenLocked": true`). Run the same filter at a known green commit as a control before you blame a change.
+- Merged review roots: map a file back with `locate(fileID:)`, `absolutePath(of:)`, `file(atPath:)`; never join
+  `model.repo` with `file.path` (Review/ReviewRoots.swift).
+- The open transcript follows its session with ONE long-running `tools ai sessions tail <id> --live` per open detail
+  (GenesisKit `TranscriptLiveTail`). Never spawn a `tools` process per file growth, and never derive "working" from
+  the last write's age: the activity comes through a `TranscriptActivityFeed` that only the last row observes.
+- After a rebuild, restart a running hub by its pid only (`kill <pid>`, then `tools hub open --no-activate` with the
+  flags it had): a `pkill -f` pattern also killed other agents' snapshot runs (2026-09-24).

@@ -29,7 +29,7 @@ private let meetingsInstance = SingleInstance(
 /// login session sees, while the lock is per home: a window started on a sandbox (`GENESIS_TOOLS_HOME`) followed every
 /// `tools meetings window` request meant for the real window. A sandbox home carries its path in the name; the real
 /// home keeps the old name, so a window from an older build still takes the request.
-func meetingsNotificationPrefix(home: String = genesisHome(), realHome: String = NSHomeDirectory()) -> String {
+func meetingsNotificationPrefix(home: String = GenesisToolsHome.home(), realHome: String = NSHomeDirectory()) -> String {
     let base = NativePreview.namespace + ".meetings"
     let canonical = canonicalHome(home)
     return canonical == canonicalHome(realHome) ? base : base + ".home:" + canonical

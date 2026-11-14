@@ -132,14 +132,6 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         """.utf8))
     }
 
-    private func until(_ what: String, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(3)
-        while !condition() {
-            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     func testAnOlderSettingsReadThatLandsLastIsDropped() async throws {
         let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
         let held = HeldReads()

@@ -1,7 +1,7 @@
 /**
  * `doctor` — READ-ONLY diagnosis. It reports and prints fix commands; the
  * mutating counterpart is lib/cleanup.ts. (Repo rule: a diagnostic must never
- * mutate — see .claude/rules/code.md "Side Effects".)
+ * mutate — see .claude/rules/diagnostics.md.)
  */
 
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";

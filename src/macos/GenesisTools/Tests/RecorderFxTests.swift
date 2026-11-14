@@ -55,6 +55,46 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertTrue(TransitionLook.joins(in: cutProject(own)).isEmpty)
     }
 
+    /// The Style tab changes a copy of the edit; each transition, tilt and lens change must become ops, or the service
+    /// answers the old edit and the control flips back.
+    func testTheStyleTabsTransitionTiltAndLensChangesBecomeOps() throws {
+        let plain = cutProject(nil)
+        var fade = plain
+        fade.transitions = EditProject.Transitions(default: .init(kind: .crossfade, ms: 300))
+        XCTAssertEqual(EditOpDiff.ops(from: plain, to: fade), [.transition(EditOp.Transition(kind: .crossfade, ms: 300))])
+        var longer = fade
+        longer.transitions?.default.ms = 600
+        XCTAssertEqual(EditOpDiff.ops(from: fade, to: longer), [.transition(EditOp.Transition(kind: .crossfade, ms: 600))])
+        XCTAssertEqual(EditOpDiff.ops(from: fade, to: plain), [.transition(EditOp.Transition(kind: EditOp.TransitionChoice.none, ms: 300))])
+        var own = fade
+        own.transitions?.joins = ["c2": .init(kind: .blur, ms: 500)]
+        XCTAssertEqual(EditOpDiff.ops(from: fade, to: own), [.transition(EditOp.Transition(kind: .blur, ms: 500, clip: "c2"))])
+        XCTAssertEqual(EditOpDiff.ops(from: own, to: fade), [.transition(EditOp.Transition(kind: .default, clip: "c2"))])
+
+        var tilted = plain
+        tilted.tilt = EditProject.Tilt()
+        XCTAssertEqual(EditOpDiff.ops(from: plain, to: tilted),
+                       [.tilt(EditOp.Tilt(enabled: true, strength: 0.5, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200))])
+        var stronger = tilted
+        stronger.tilt?.strength = 0.8
+        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: stronger),
+                       [.tilt(EditOp.Tilt(enabled: true, strength: 0.8, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200))])
+        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: plain), [.tilt(EditOp.Tilt(enabled: false))])
+
+        let item = EditProject.LensItem(id: "l1", startUs: 1_000_000, endUs: 3_000_000, follow: false)
+        var lensed = plain
+        lensed.lens = EditProject.Lens(items: [item])
+        XCTAssertNil(EditOpDiff.ops(from: plain, to: lensed), "a new lens is its own op: the service names it")
+        var bigger = lensed
+        bigger.lens?.items[0].magnification = 3
+        bigger.lens?.items[0].radius = 0.2
+        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: bigger), [.setLens(EditOp.SetLens(id: "l1", radius: 0.2, magnification: 3))])
+        var following = lensed
+        following.lens?.items[0].follow = true
+        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: following), [.setLens(EditOp.SetLens(id: "l1", follow: true))])
+        XCTAssertNil(EditOpDiff.ops(from: lensed, to: plain), "a deleted lens is its own unlens op")
+    }
+
     /// A lens op may name the window's id for the new lens; without one the service makes the id, as for an old client.
     func testALensOpCarriesItsIdOnlyWhenItNamesOne() throws {
         let named = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(id: "l1", from: 1, to: 3))), encoding: .utf8))
@@ -327,6 +367,19 @@ final class RecorderFrameLayoutTests: XCTestCase {
 
 // R5 10 multi-line texts
 final class RecorderTextBlockTests: XCTestCase {
+    /// Karaoke makes one plate per word said and a typewriter one per letter: a long talk kept every one of them until
+    /// the export ended. Only the plates used last stay, and a plate in use is drawn again from the cache.
+    func testTextPlatesKeepOnlyThePlatesUsedLast() throws {
+        let plates = TextPlates()
+        let line = "one two three four five six seven eight nine ten eleven twelve"
+        for characters in 0...200 {
+            _ = plates.plate(line, fontSize: 40, maxWidth: 1500, highlight: (characters, .yellow))
+        }
+        XCTAssertLessThanOrEqual(plates.count, 64)
+        let first = try XCTUnwrap(plates.plate("Stays", fontSize: 40, maxWidth: 1500))
+        XCTAssertTrue(plates.plate("Stays", fontSize: 40, maxWidth: 1500) === first, "a plate used again comes from the cache")
+    }
+
     /// "\n" makes a second line, a long text wraps inside the block's width and is drawn whole, never cut.
     func testATextBreaksAtNewlinesAndWrapsInsideItsBlock() throws {
         let plates = TextPlates()

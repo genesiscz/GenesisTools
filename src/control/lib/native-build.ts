@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -105,6 +105,26 @@ export function recordNativeBuild({
     }
     const receipt: NativeBuildReceipt = { version: RECEIPT_VERSION, sources: after, binary: binarySignature(binary) };
     atomicWriteFileSync(receiptPath(binary), SafeJSON.stringify(receipt));
+    markBuildKept(binary);
+}
+
+/**
+ * The marker the disk-reclaim skill's build-purge honours (`.purge-keep`, GenesisClaude
+ * user/skills/disk-reclaim/scripts/build-purge.ts): a tool runs this build's product at any moment, so purging the
+ * build folder only forced a 30 s, ~1 GB rebuild at the next use. On 2026-11-11 the daemon's purge deleted
+ * native/ax-tool/.build about every 45 minutes, and the 17:35 purge stopped a meeting recording mid-call.
+ */
+function markBuildKept(binary: string): void {
+    const buildRoot = dirname(dirname(binary));
+
+    if (basename(buildRoot) !== ".build") {
+        return;
+    }
+
+    atomicWriteFileSync(
+        join(buildRoot, ".purge-keep"),
+        "A tool runs this build's product (GenesisTools native binary); build-purge keeps this folder.\n"
+    );
 }
 
 export function nativeNeedsBuild({ binary, sourceDir }: { binary: string; sourceDir: string }): boolean {
