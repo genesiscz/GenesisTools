@@ -190,18 +190,26 @@ final class DaemonSettingsStore: ObservableObject {
     @Published private(set) var savingTasks: Set<String> = []
     @Published private(set) var outputs: [String: DaemonRunOutput] = [:]
     @Published var message: String? {
-        didSet { if message != oldValue { messageReport = nil } }
+        didSet {
+            if message != oldValue {
+                messageReport = nil
+                messageOwner += 1
+            }
+        }
     }
     @Published var messageIsError = false
     /// The failed action behind `message`, for the notice's Details (class B).
     @Published private(set) var messageReport: FailureReport?
+    /// Which notice a failure's late enrichment may still replace: bumped when the notice changes, is dismissed, or a
+    /// failure takes it. Two failures with the same headline are two owners.
+    private var messageOwner = 0
     /// The tasks or their stats did not load: the page shows it with Try again (class A).
     @Published private(set) var loadFailure: FailureReport?
     /// Bumped by every write; a load that started before a write does not replace the tasks the write returned.
     private var writeGeneration = 0
     private var loadGeneration = 0
     private var pendingWrites: [String: (id: UUID, work: Task<Void, Never>)] = [:]
-    var saveTask: ([String]) async -> Result<Data, Error> = { await DaemonSettingsStore.cli($0) }
+    var saveTask: ([String], ToolsCallLedger) async -> Result<Data, Error> = { await DaemonSettingsStore.cli($0, ledger: $1) }
 
     /// A `tools` process per call: the hub's resident server has no door for `daemon`, so this is what the hub's
     /// runner did too, without needing the hub part.
@@ -310,7 +318,8 @@ final class DaemonSettingsStore: ObservableObject {
                     savingTasks.remove(task.name)
                 }
             }
-            switch await saveTask(["daemon", "config", "set", task.name] + flags + ["--json"]) {
+            let ledger = ToolsCallLedger()
+            switch await saveTask(["daemon", "config", "set", task.name] + flags + ["--json"], ledger) {
             case .success(let data):
                 if let updated = try? JSONDecoder().decode(DaemonTaskConfig.self, from: data),
                     let index = status?.tasks.firstIndex(where: { $0.name == updated.name })
@@ -324,7 +333,7 @@ final class DaemonSettingsStore: ObservableObject {
                 }
                 onFailure?()
                 showFailure(.toolsCall(error, outcome: "\(task.name) was not saved", action: "Change a daemon task's setting",
-                                       argv: ["daemon", "config", "set", task.name] + flags + ["--json"], area: "daemon"))
+                                       call: ledger.failed, argv: ["daemon", "config", "set", task.name] + flags + ["--json"], area: "daemon"))
             }
         }
         pendingWrites[task.name] = (id, work)
@@ -336,14 +345,15 @@ final class DaemonSettingsStore: ObservableObject {
         show("Running \(task.name) now…", error: false)
         let timeout = TimeInterval(task.timeoutMs) / 1000 + 30
         Task {
-            let result = await Self.cli(["daemon", "run", task.name, "--json"], timeout: timeout)
+            let ledger = ToolsCallLedger()
+            let result = await Self.cli(["daemon", "run", task.name, "--json"], timeout: timeout, ledger: ledger)
             runningNow.remove(task.name)
             switch result {
             case .success:
                 show("\(task.name) finished.", error: false)
             case .failure(let error):
                 showFailure(.toolsCall(error, outcome: "\(task.name) did not run", action: "Run a daemon task now",
-                                       argv: ["daemon", "run", task.name, "--json"], area: "daemon"))
+                                       call: ledger.failed, argv: ["daemon", "run", task.name, "--json"], area: "daemon"))
             }
             load()
         }
@@ -352,7 +362,8 @@ final class DaemonSettingsStore: ObservableObject {
     func loadOutput(_ run: DaemonRun) {
         guard outputs[run.runId] == nil else { return }
         Task {
-            switch await Self.cli(["daemon", "stats", "--view", "run", "--run", run.runId, "--task", run.task, "--json"]) {
+            let ledger = ToolsCallLedger()
+            switch await Self.cli(["daemon", "stats", "--view", "run", "--run", run.runId, "--task", run.task, "--json"], ledger: ledger) {
             case .success(let data):
                 do {
                     outputs[run.runId] = try JSONDecoder().decode(DaemonRunOutput.self, from: data)
@@ -361,7 +372,7 @@ final class DaemonSettingsStore: ObservableObject {
                 }
             case .failure(let error):
                 showFailure(.toolsCall(error, outcome: "The output of run \(run.runId) did not load", action: "Open a daemon run's output",
-                                       argv: ["daemon", "stats", "--view", "run", "--run", run.runId, "--task", run.task, "--json"],
+                                       call: ledger.failed, argv: ["daemon", "stats", "--view", "run", "--run", run.runId, "--task", run.task, "--json"],
                                        area: "daemon"))
             }
         }
@@ -375,8 +386,9 @@ final class DaemonSettingsStore: ObservableObject {
     /// A failed action: its headline in the notice, the report behind its Details.
     private func showFailure(_ report: FailureReport) {
         show(report.headline, error: true)
-        let shown = report.headline
-        report.deliver({ [weak self] in self?.messageReport = $0 }, isCurrent: { [weak self] _ in self?.message == shown })
+        messageOwner += 1
+        let owner = messageOwner
+        report.deliver({ [weak self] in self?.messageReport = $0 }, isCurrent: { [weak self] _ in self?.messageOwner == owner })
     }
 }
 

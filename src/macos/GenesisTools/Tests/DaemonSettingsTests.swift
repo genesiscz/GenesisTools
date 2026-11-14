@@ -150,7 +150,7 @@ final class DaemonSettingsTests: XCTestCase {
         let secondStarted = expectation(description: "second save starts after first")
         var release: CheckedContinuation<Result<Data, Error>, Never>?
         var calls: [[String]] = []
-        store.saveTask = { args in
+        store.saveTask = { args, _ in
             calls.append(args)
             if args.contains("first") {
                 return await withCheckedContinuation { continuation in
