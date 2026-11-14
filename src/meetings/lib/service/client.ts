@@ -260,6 +260,8 @@ export class SocketMeetingsClient implements MeetingsClient {
     /** Stops this process's event bus reaching the listeners; set while calls answer in this process. */
     private stopLocal?: () => void;
     private ended = false;
+    /** The connect in flight: every call that finds the connection closed waits on this one, never a second socket. */
+    private reconnecting?: Promise<boolean>;
 
     private constructor(
         private client: RpcSocketClient,
@@ -311,11 +313,12 @@ export class SocketMeetingsClient implements MeetingsClient {
         const entry = { filter: checkedFilter(filter), listener };
         this.listeners.add(entry);
 
-        // One subscription per connection on the service: the union of the listeners' events and meetings.
-        if (!this.client.closed) {
-            await this.resubscribe();
-        } else if (!(await this.reconnect())) {
+        // One subscription per connection on the service: the union of the listeners' events and meetings. A connect
+        // that another call started may have sent its filter before this listener joined, so it is sent again.
+        if (this.client.closed && !(await this.reconnect())) {
             this.listenInProcess();
+        } else {
+            await this.resubscribe();
         }
 
         return () => {
@@ -360,11 +363,25 @@ export class SocketMeetingsClient implements MeetingsClient {
     /**
      * A new connection after the last one closed, when the folder names a live service of this protocol and code (as
      * `openMeetingsClient` would take it); the listeners' subscription is restored on it. False when no such service
-     * runs or it refuses this caller.
+     * runs or it refuses this caller. Calls that find the connection closed together share one connect.
      */
-    private async reconnect(): Promise<boolean> {
+    private reconnect(): Promise<boolean> {
+        if (!this.reconnecting) {
+            this.reconnecting = this.connectAgain().finally(() => {
+                this.reconnecting = undefined;
+            });
+        }
+
+        return this.reconnecting;
+    }
+
+    private async connectAgain(): Promise<boolean> {
         if (this.ended) {
             return false;
+        }
+
+        if (!this.client.closed) {
+            return true;
         }
 
         const entry = readLiveServiceEntry(this.serviceDir());
@@ -374,7 +391,15 @@ export class SocketMeetingsClient implements MeetingsClient {
         }
 
         try {
-            this.attach(await greetedConnection(entry, this.hello));
+            const candidate = await greetedConnection(entry, this.hello);
+
+            // close() ran while the hello was out: the new socket belongs to no one.
+            if (this.ended) {
+                candidate.close();
+                return false;
+            }
+
+            this.attach(candidate);
             this.entry = entry;
 
             if (this.listeners.size > 0) {
@@ -430,6 +455,11 @@ export class SocketMeetingsClient implements MeetingsClient {
 
     /** The in-process adapter emits on this process's event bus, so the listeners hear its writes there. */
     private listenInProcess(): void {
+        // A closed client keeps no listener on this process's bus: close() already stopped the last one.
+        if (this.ended) {
+            return;
+        }
+
         this.stopLocal ??= localMeetingsEvents.listen({}, (event) => this.deliver(event));
     }
 

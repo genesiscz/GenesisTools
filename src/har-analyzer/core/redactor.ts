@@ -144,6 +144,10 @@ const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.([A-Za-z]{2,})/g;
 
+/** One multipart/form-data part: its headers (one names the field), a blank line, then its value up to the boundary. */
+const MULTIPART_PART =
+    /(content-disposition:[^\r\n]*\bname="([^"]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([\s\S]*?)(?=\r?\n--)/gi;
+
 // File-extension pseudo-TLDs that make `image@2x.png` look like an email.
 const EMAIL_TLD_BLOCKLIST = new Set([
     "png",
@@ -456,6 +460,36 @@ class Redactor {
             .join("&");
     }
 
+    /**
+     * A text/plain body. A text/plain form puts one `name=value` pair on each line, and `&` is a literal character of
+     * its value, so a line whose name is a known key is masked to its end. Any other line may still be a URL-encoded
+     * string (`fetch` sends a string body as text/plain), so a known key after `&` is masked to the next `&`. The rest
+     * keeps the raw-body treatment (JWTs only).
+     */
+    private redactPlainFormText(text: string, location: string): string {
+        const maskPair = (pair: string, head: string, name: string, value: string): string => {
+            const kind = kindForKey(name);
+
+            return kind ? `${head}${name}=${this.maskKeyed(value, kind, `${location}:${name}`)}` : pair;
+        };
+        const pairs = text
+            .replace(/(^|[\r\n])([^=\r\n]+)=([^\r\n]*)/g, maskPair)
+            .replace(/(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g, maskPair);
+
+        return this.redactValuePatterns(pairs, location, { emails: false });
+    }
+
+    /** A multipart/form-data body: the value of a part whose field name is a known key is masked whole. */
+    private redactMultipartText(text: string, location: string): string {
+        const parts = text.replace(MULTIPART_PART, (part, head: string, name: string, value: string) => {
+            const kind = kindForKey(name);
+
+            return kind ? `${head}${this.maskKeyed(value, kind, `${location}:${name}`)}` : part;
+        });
+
+        return this.redactValuePatterns(parts, location, { emails: false });
+    }
+
     /** Redact query values inside a URL string, preserving untouched params. */
     private redactUrl(url: string, location: string): string {
         const qIndex = url.indexOf("?");
@@ -559,6 +593,14 @@ class Redactor {
 
         if (normalizedMime === "application/x-www-form-urlencoded") {
             return this.redactFormText(text, location);
+        }
+
+        if (normalizedMime === "text/plain") {
+            return this.redactPlainFormText(text, location);
+        }
+
+        if (normalizedMime === "multipart/form-data") {
+            return this.redactMultipartText(text, location);
         }
 
         // Raw/unknown bodies: JWTs only; email matching in HTML would scrub

@@ -117,6 +117,21 @@ function eventQueue() {
     };
 }
 
+/** True once `check` holds; false when it still does not after 2 s. */
+async function eventually(check: () => boolean): Promise<boolean> {
+    const deadline = Date.now() + 2000;
+
+    while (!check()) {
+        if (Date.now() >= deadline) {
+            return false;
+        }
+
+        await Bun.sleep(20);
+    }
+
+    return true;
+}
+
 async function failure(promise: Promise<unknown>): Promise<Error> {
     try {
         await promise;
@@ -180,6 +195,41 @@ describe("meetings clients", () => {
 
         folder.raise(join(second.store.folder(RETRO.id), "comments.ndjson"));
         expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: RETRO.id } });
+    });
+
+    test("calls that find the connection closed together share one new connection", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+        const first = await startService(dir);
+        const client = await SocketMeetingsClient.connect(first.service.entry, hello);
+        closing.push(() => client.close());
+        first.service.stop("test: restarted");
+        await first.service.stopped;
+
+        const second = await startService(dir);
+        const answers = await Promise.all([
+            client.call("meetings.list", { limit: 1 }),
+            client.call("meetings.list", { limit: 1 }),
+            client.subscribe({ events: ["comment.changed"] }, () => {}),
+        ]);
+
+        expect(answers[0].map((row) => row.id)).toEqual([RETRO.id]);
+        expect(second.service.callers()).toHaveLength(1);
+    });
+
+    test("a close while the client connects again leaves no connection to the new service open", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "mtg-"));
+        const first = await startService(dir);
+        const client = await SocketMeetingsClient.connect(first.service.entry, hello);
+        first.service.stop("test: restarted");
+        await first.service.stopped;
+
+        const second = await startService(dir);
+        // The call finds the connection closed and waits for the new hello; close() runs in that wait.
+        const pending = client.call("meetings.list", { limit: 1 });
+        client.close();
+        await pending;
+
+        expect(await eventually(() => second.service.callers().length === 0)).toBe(true);
     });
 
     test("with no service, a write is refused while the process it spoke to still runs; a read answers in-process", async () => {

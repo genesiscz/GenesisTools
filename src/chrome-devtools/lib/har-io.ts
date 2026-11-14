@@ -276,25 +276,38 @@ function redactUrl(url: string): string {
         .replace(/#.+$/, "#[REDACTED]");
 }
 
-/**
- * One `name=value` pair of a form body. `&` ends a URL-encoded pair and a line break ends a text/plain one; a
- * URL-encoded body holds no raw line break, so one pattern reads both without knowing the MIME type.
- */
+/** One URL-encoded `name=value` pair: `&` or a line break ends it. */
 const FORM_PAIR = /(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g;
+
+/**
+ * One text/plain form pair: only a line break ends it, because `&` is a literal character of a text/plain value
+ * (`password=first&rest` is one password). A URL-encoded body holds no raw line break, so its pairs never get here.
+ */
+const LINE_PAIR = /(^|[\r\n])([^=\r\n]+)=([^\r\n]*)/g;
 
 /** One multipart/form-data part: its headers (one names the field), a blank line, then its value up to the boundary. */
 const MULTIPART_PART =
     /(content-disposition:[^\r\n]*\bname="([^"]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([\s\S]*?)(?=\r?\n--)/gi;
 
-/** The credentials in a non-JSON POST body: multipart parts, then URL-encoded and text/plain pairs. */
-function redactFormText(text: string): string {
-    return text
-        .replace(MULTIPART_PART, (part, head: string, name: string) =>
-            isSensitiveParam(name) ? `${head}[REDACTED]` : part
-        )
-        .replace(FORM_PAIR, (pair, separator: string, name: string) =>
-            isSensitiveParam(name) ? `${separator}${name}=[REDACTED]` : pair
-        );
+/**
+ * The credentials in a non-JSON POST body: multipart parts, then text/plain lines, then URL-encoded pairs. Only a
+ * body declared URL-encoded skips the line pass; any other body (text/plain, also `fetch` with a string body) may
+ * carry a value with `&` in it, so a sensitive line is redacted to its end and the `&` pass still runs after it.
+ */
+function redactFormText(text: string, mimeType: string | undefined): string {
+    const urlEncoded = /^\s*application\/x-www-form-urlencoded\b/i.test(mimeType ?? "");
+    const parts = text.replace(MULTIPART_PART, (part, head: string, name: string) =>
+        isSensitiveParam(name) ? `${head}[REDACTED]` : part
+    );
+    const lines = urlEncoded
+        ? parts
+        : parts.replace(LINE_PAIR, (pair, separator: string, name: string) =>
+              isSensitiveParam(name) ? `${separator}${name}=[REDACTED]` : pair
+          );
+
+    return lines.replace(FORM_PAIR, (pair, separator: string, name: string) =>
+        isSensitiveParam(name) ? `${separator}${name}=[REDACTED]` : pair
+    );
 }
 
 export function sanitizeHar(har: HarFile): HarFile {
@@ -347,7 +360,7 @@ export function sanitizeHar(har: HarFile): HarFile {
             }
 
             if (!handled) {
-                postData.text = redactFormText(postData.text);
+                postData.text = redactFormText(postData.text, postData.mimeType);
             }
         }
 

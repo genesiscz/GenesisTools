@@ -422,7 +422,10 @@ export async function spoolEvents({
         try {
             await append(path, record);
         } catch (error) {
-            await Promise.resolve(report({ path, line, metric, error })).catch(() => undefined);
+            // `.then` runs `report` inside the chain, so a synchronous throw is caught like a rejection.
+            await Promise.resolve()
+                .then(() => report({ path, line, metric, error }))
+                .catch(() => undefined);
         }
     };
 

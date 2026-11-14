@@ -13,8 +13,8 @@
  * landed branch as missing (2026-11-13). It needs a fresh merge base: merge master into the integration branch after
  * every landing.
  *
- * Only a file the merge would change fails the check: a change unified lacks. A file both sides changed in the same
- * place is printed and does not fail it. Unified is ahead of every PR branch on purpose (new commits after the cut),
+ * Only a file the merge would change fails the check: a change unified lacks. A place both sides changed is printed
+ * and does not fail it (the merge keeps unified's side there), but a clean change elsewhere in the same file does. Unified is ahead of every PR branch on purpose (new commits after the cut),
  * so most such files are unified's later work on the PR's lines (114 files for a branch that had landed whole,
  * 2026-11-13). A fix on lines that unified also changed can therefore pass unseen; the check catches the fix nobody
  * picked in a place unified left alone.
@@ -50,14 +50,25 @@ export function behindUnified(options: { cwd: string; branch: string; refs: stri
     const behind: BehindRef[] = [];
     const branchTree = must(["rev-parse", `${branch}^{tree}`]).out.trim();
 
-    for (const ref of refs) {
-        // Exit 1 is a merge with conflicts: the tree it prints first still holds every clean change.
-        const merged = must(["merge-tree", "--write-tree", "--name-only", "--no-messages", branch, ref], [0, 1]);
+    // Exit 1 is a merge with conflicts: the first line is the tree, the rest are the conflicted files.
+    const merge = (ref: string, options: string[]) => {
+        const merged = must(
+            ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...options, branch, ref],
+            [0, 1]
+        );
         const [tree, ...names] = merged.out.trim().split("\n");
-        const conflicted = merged.code === 1 ? [...new Set(names.filter(Boolean))] : [];
-        const lacking = must(["diff", "--name-only", branchTree, tree])
+        return { tree, conflicted: merged.code === 1 ? [...new Set(names.filter(Boolean))] : [] };
+    };
+
+    for (const ref of refs) {
+        const conflicted = merge(ref, []).conflicted;
+        // `-X ours` settles each conflicting hunk with the integration branch's side and keeps every clean change of
+        // the ref, also one in a file that has a conflict elsewhere. What is still in conflict (a file one side
+        // deleted, a rename on both sides) has no tree to compare, so it stays out of `lacking`.
+        const settled = merge(ref, ["-X", "ours"]);
+        const lacking = must(["diff", "--name-only", branchTree, settled.tree])
             .out.split("\n")
-            .filter((file) => file && !conflicted.includes(file));
+            .filter((file) => file && !settled.conflicted.includes(file));
 
         if (lacking.length === 0 && conflicted.length === 0) {
             continue;

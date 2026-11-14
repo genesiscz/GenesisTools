@@ -4,12 +4,15 @@ import { driverUsable, listDrivers, usableDriver } from "@/features/terminals/re
 import { useTierCapabilities } from "@/state/connection-store";
 import { useThemeColors } from "@/theme/colors";
 
+const UNAVAILABLE_REASON = "Not on this connection: it cannot load the Mac's pages by plain URL.";
+
 /**
  * In-app terminal driver switcher (D12). Renders one segment per registered driver (Driver A / B)
  * and writes the choice to the persisted `useDriverStore` (→ `dd.terminalDriver` pref). The active
  * driver is highlighted with the accent. Flipping it re-attaches the current session under the new
- * engine (the screen owns that effect). `accessibilityLabel` `setting-terminal-driver` on the group
- * + `driver-option-<id>` per segment for Appium.
+ * engine (the screen owns that effect). Appium finds the group by `setting-terminal-driver` and each segment by
+ * its `testID` `driver-option-<id>`; a segment's accessible name is the driver's label (plus the reason when the
+ * connection cannot run it), so a screen reader never reads the internal id.
  *
  * `listDrivers()` is non-empty because the Terminal screen imports `components/drivers.ts`, whose
  * module-load side-effects register both drivers (see that barrel's note).
@@ -43,12 +46,14 @@ export function DriverSwitcher() {
                 {drivers.map((d) => {
                     const isActive = d.id === driver;
                     const usable = driverUsable(d, plainUrls);
+                    const detail = usable ? d.blurb : UNAVAILABLE_REASON;
 
                     return (
                         <Pressable
                             key={d.id}
                             testID={`driver-option-${d.id}`}
-                            accessibilityLabel={`driver-option-${d.id}`}
+                            accessibilityLabel={usable ? d.label : `${d.label}. ${UNAVAILABLE_REASON}`}
+                            accessibilityHint={usable ? d.blurb : undefined}
                             accessibilityRole="button"
                             accessibilityState={{ selected: isActive, disabled: !usable }}
                             disabled={!usable}
@@ -75,7 +80,7 @@ export function DriverSwitcher() {
                                 {d.label}
                             </Text>
                             <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
-                                {usable ? d.blurb : "Not on this connection: it cannot load the Mac's pages by plain URL."}
+                                {detail}
                             </Text>
                         </Pressable>
                     );

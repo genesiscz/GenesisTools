@@ -727,10 +727,20 @@ export const WRITE_RULES: readonly WriteRule[] = [
 export function writeTargets(command: string): WriteTargets {
     const paths = new Set<string>();
     let output = false;
-    // Where a `cd` earlier in the command moved the shell, relative to the payload's cwd (`""`: not moved). A `cd` in a
-    // subshell is taken to last, which can only add rules for a later relative path, never drop them.
+    // Where a `cd` earlier in the command moved the shell, relative to the payload's cwd (`""`: not moved). The segments
+    // do not say where a subshell ends, so in a command with one a moved relative path also counts against the cwd:
+    // `(cd /tmp); touch src/x.ts` writes `src/x.ts`, and the extra path can only add a rule, never drop one.
     let dir = "";
-    const from = (path: string) => (dir && !isAbsolute(path) && !path.startsWith("~") ? join(dir, path) : path);
+    const scoped = hasSubshell(command);
+    const moved = (path: string) => Boolean(dir) && !isAbsolute(path) && !path.startsWith("~");
+    const from = (path: string) => (moved(path) ? join(dir, path) : path);
+    const add = (path: string) => {
+        paths.add(from(path));
+
+        if (scoped && moved(path)) {
+            paths.add(path);
+        }
+    };
     for (const segment of shellSegments(command)) {
         const words = segment.flatMap((token) => (token.kind === "word" ? [token.text] : []));
 
@@ -743,7 +753,7 @@ export function writeTargets(command: string): WriteTargets {
 
         for (const token of segment) {
             if (token.kind === "redirect" && token.target) {
-                paths.add(from(token.target));
+                add(token.target);
             }
         }
 
@@ -751,13 +761,23 @@ export function writeTargets(command: string): WriteTargets {
         const rule = call ? WRITE_RULES.find((candidate) => candidate.programs.includes(call.program)) : undefined;
         const found = call && rule ? rule.targets(call.args, command) : null;
         for (const path of found?.paths ?? []) {
-            paths.add(from(path));
+            add(path);
         }
 
         output ||= found?.output === true;
     }
 
     return { paths: [...paths].flatMap(literalPath), output };
+}
+
+/**
+ * Whether the command opens a subshell outside quotes: `( … )`, or a `$(…)`, `<(…)` or `>(…)` substitution, each of
+ * which runs in its own shell, so a `cd` inside ends with it. A function definition `f()` does not count.
+ */
+function hasSubshell(command: string): boolean {
+    const unquoted = command.slice(0, MAX_SCAN_CHARS).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''");
+
+    return /(^|\W)\(/.test(unquoted);
 }
 
 /**

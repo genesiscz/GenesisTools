@@ -195,11 +195,12 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
 
 /**
  * The queue with a stage the Mac took applied to its decision: the pick set (`""` clears it) and the note it staged.
- * Whatever the stage did not name stays as the queue had it.
+ * Whatever the stage did not name stays as the queue had it. The Mac took the stage at `expectedRevision` only, so a
+ * decision the agent re-posted while the stage was in flight keeps the queue's copy: the old pick never lands on it.
  */
 export function withStaged(
     queue: WaitingQueueDto | undefined,
-    stage: { session: string; number: number; option?: string; text?: string }
+    stage: { session: string; number: number; expectedRevision: number; option?: string; text?: string }
 ): WaitingQueueDto | undefined {
     if (!queue) {
         return queue;
@@ -218,7 +219,11 @@ export function withStaged(
                 ? {
                       ...session,
                       items: session.items.map((item) =>
-                          item.kind === "decision" && item.number === stage.number ? staged(item) : item
+                          item.kind === "decision" &&
+                          item.number === stage.number &&
+                          item.revision === stage.expectedRevision
+                              ? staged(item)
+                              : item
                       ),
                   }
                 : session

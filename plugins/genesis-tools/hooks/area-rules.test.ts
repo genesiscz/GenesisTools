@@ -270,6 +270,9 @@ describe("writeTargets", () => {
         ["cd src && cd utils && echo x > ai/b.ts", ["src/utils/ai/b.ts"]],
         ["cd /tmp/w && touch a.ts", ["/tmp/w/a.ts"]],
         ['cd "$D" && touch a.ts', ["a.ts"]],
+        // A `cd` in a subshell may end with it: the write also counts against the cwd, so its rule is never dropped.
+        ["(cd /tmp); touch src/utils/example.ts", ["/tmp/src/utils/example.ts", "src/utils/example.ts"]],
+        ["echo $(cd /tmp && pwd) > src/a.ts", ["/tmp/src/a.ts", "src/a.ts"]],
         ["sed -i.bak -e 's/a/b/' -e 's/c/d/' src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
         ["perl -pi -e 's/a/b/' src/a.ts", ["src/a.ts"]],
         ["mv -f old.ts src/du/", ["src/du/"]],

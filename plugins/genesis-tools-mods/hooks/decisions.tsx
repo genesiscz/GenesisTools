@@ -86,11 +86,21 @@ function setLocal(n: number, letters: string): string {
     return letters;
 }
 
-/** The set staged for decision `n` now: the log's draft when the log holds it, else the sidebar's own ticks. */
+/**
+ * The set staged for decision `n` now: the log's draft when the log holds one, else the sidebar's own ticks (of a
+ * decision the log does not have, or one whose move into the log failed).
+ */
 function stagedSetOf(n: number): string {
     const logged = answersOf()?.decisions.find((decision) => decision.n === n);
 
-    return logged ? (logged.draftOption ?? "") : (localPick.get(n) ?? "");
+    return logged?.draftOption ?? localPick.get(n) ?? "";
+}
+
+/** Whether the log holds a staged answer of its own for decision `n`, which then wins over the sidebar's ticks. */
+function logHasDraft(n: number): boolean {
+    const logged = answersOf()?.decisions.find((decision) => decision.n === n);
+
+    return Boolean(logged?.draftOption || logged?.draft);
 }
 
 /** Runs one option press of decision `n` after the press before it, whatever that one's outcome. */
@@ -108,18 +118,18 @@ function afterPress(n: number, press: () => Promise<void>): Promise<void> {
 }
 
 /**
- * The ticks still to send: those of a decision that waits and that the log does not hold. A tick of a decision
- * answered or replaced since, or one the log took over, is not sent again (`settleTicks` forgets or moves it).
+ * The ticks still to send: those of a decision that waits and for which the log holds no staged answer. A tick of a
+ * decision answered or replaced since, or one the log took over, is not sent again (`settleTicks` forgets or moves
+ * it); a tick whose move into the log failed is still the only copy, so it stays here.
  */
 function pendingTicks(): Map<number, string> {
-    const logged = new Set((answersOf()?.decisions ?? []).map((decision) => decision.n));
     const waiting = new Set(
         currentDecisions()
             .filter(isWaiting)
             .map((decision) => decision.n)
     );
 
-    return new Map([...localPick].filter(([n]) => waiting.has(n) && !logged.has(n)));
+    return new Map([...localPick].filter(([n]) => waiting.has(n) && !logHasDraft(n)));
 }
 
 /** One line per ticked decision (`D16: ac)`), in number order. */
@@ -138,7 +148,8 @@ function forgetTicks(sent: ReadonlyMap<number, string>): void {
 
 /**
  * Reconciles the ticks with the decisions after a read: a decision that no longer waits loses its ticks, and one the
- * log now holds gets them staged there, unless the log already has a staged set of its own.
+ * log now holds gets them staged there, unless the log already has a staged set of its own. The ticks are forgotten
+ * only once the log took them: a failed stage keeps them, so the next read tries again and a send still carries them.
  */
 async function settleTicks(host: Host): Promise<void> {
     const shown = new Map(currentDecisions().map((decision) => [decision.n, decision]));
@@ -151,11 +162,16 @@ async function settleTicks(host: Host): Promise<void> {
             continue;
         }
 
-        localPick.delete(n);
+        if (!decision || !isWaiting(decision) || decision.draftOption) {
+            localPick.delete(n);
+            continue;
+        }
 
-        if (decision && isWaiting(decision) && !decision.draftOption) {
-            const moved = await stageAnswer(host, n, { option: letters });
-            await logMod(host, "decisions", { event: "ticks-moved", n, letters, error: moved.error });
+        const moved = await stageAnswer(host, n, { option: letters });
+        await logMod(host, "decisions", { event: "ticks-moved", n, letters, error: moved.error });
+
+        if (!moved.error && localPick.get(n) === letters) {
+            localPick.delete(n);
         }
     }
 }

@@ -5,7 +5,7 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { ConversationRecord } from "./conversation";
-import { EvalConfigError, parseScenarios } from "./document";
+import { EvalConfigError, parseScenarios, sha256 } from "./document";
 import { planRun } from "./plan";
 import { createRun, listRuns, loadRun, makeEvalRunId, openRun, type RunManifest } from "./store";
 
@@ -154,7 +154,7 @@ it("lets one process play a run at a time, and takes over the lock of an ended o
     const again = await second.claim();
     await again.release();
 
-    const ended = spawnSync(process.execPath, ["-e", ""]).pid;
+    const ended = spawnSync(process.execPath, ["-e", ""], { env: process.env }).pid;
     await writeFile(
         join(store.dir, "run.lock"),
         `${JSON.stringify({ pid: ended, host: hostname(), at: new Date(0).toISOString() })}\n`
@@ -174,6 +174,43 @@ it("lets one process play a run at a time, and takes over the lock of an ended o
         (await readdir(store.dir)).filter((name) => name.startsWith("run.lock")),
         []
     );
+});
+
+it("gives a stale lock to exactly one of many claims that find it at the same time", async () => {
+    const base = await runsDir();
+    const store = await createRun(base, { now: new Date(), label: "lock-race" }, manifest);
+    const ended = spawnSync(process.execPath, ["-e", ""], { env: process.env }).pid;
+    const stale = `${JSON.stringify({ pid: ended, host: hostname(), at: new Date(0).toISOString() })}\n`;
+    for (let round = 0; round < 12; round++) {
+        await writeFile(join(store.dir, "run.lock"), stale);
+        const contenders = await Promise.all(Array.from({ length: 6 }, () => openRun(store.manifest.run, base)));
+        const results = await Promise.allSettled(contenders.map((contender) => contender.claim()));
+        const won = results.filter((result) => result.status === "fulfilled");
+        for (const result of results) {
+            if (result.status === "rejected") {
+                assert.ok(
+                    result.reason instanceof EvalConfigError && result.reason.code === "run-in-use",
+                    String(result.reason)
+                );
+            }
+        }
+        assert.equal(won.length, 1, `round ${round}: ${won.length} claims won`);
+        assert.deepEqual(
+            (await readdir(store.dir)).filter((name) => name.startsWith("run.lock")),
+            ["run.lock"]
+        );
+        await won[0].value.release();
+    }
+
+    // A process that died while it held the takeover guard leaves the guard behind; the next claim clears it.
+    await writeFile(join(store.dir, "run.lock"), stale);
+    await writeFile(join(store.dir, `run.lock.${sha256(stale, 16)}.takeover`), stale);
+    const cleared = await store.claim();
+    assert.deepEqual(
+        (await readdir(store.dir)).filter((name) => name.startsWith("run.lock")),
+        ["run.lock"]
+    );
+    await cleared.release();
 });
 
 it("reopens a run with a truncated diagnostic error tail", async () => {

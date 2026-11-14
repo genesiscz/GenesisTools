@@ -10,7 +10,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFile, link, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
@@ -336,14 +336,62 @@ async function readLockFile(path: string): Promise<string | null> {
     }
 }
 
+/** How many guards of a guard a claim may clear; each level needs a process that died while it held a guard. */
+const MaxGuardDepth = 3;
+
 /**
- * Takes `run.lock` with an exclusive create. A lock left by an ended process on this computer is moved aside and
- * removed only when the moved file still holds what was read, so two processes that both found it stale never both
- * win: the later one moves the earlier one's fresh lock, finds other text in it, and puts it back.
+ * Removes the lock at `path` only when it still holds `text`, the stale text this process read. Only the process that
+ * creates `<path>.<hash of text>.takeover` with an exclusive create may remove it, so two processes that read the same
+ * stale lock never both act, and no remover can take away a lock written after its read: the lock it read stays in
+ * place until a guard holder removes it. A guard whose process died is cleared the same way, one level deeper.
+ * Returns the live process that holds the guard (it takes the run over now), or null when the caller should look again.
+ */
+async function breakStaleLock(path: string, text: string, depth = 0): Promise<LockHolder | null> {
+    const guard = `${path}.${sha256(text, 16)}.takeover`;
+    try {
+        await writeFile(guard, lockText(), { flag: "wx" });
+    } catch (error) {
+        if (!isErrno(error, "EEXIST")) {
+            throw error;
+        }
+
+        const held = await readLockFile(guard);
+        const holder = held === null ? null : parseLockHolder(held);
+        if (held === null || !holder) {
+            return null;
+        }
+
+        if (holderIsAlive(holder)) {
+            return holder;
+        }
+
+        return depth < MaxGuardDepth ? breakStaleLock(guard, held, depth + 1) : null;
+    }
+
+    try {
+        if ((await readLockFile(path)) === text) {
+            await unlink(path);
+        }
+
+        return null;
+    } finally {
+        await unlink(guard);
+    }
+}
+
+/** The holder of a lock, with a random id so that no two claims ever write the same text. */
+function lockText(): string {
+    const id = randomBytes(6).toString("hex");
+    return `${JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString(), id })}\n`;
+}
+
+/**
+ * Takes `run.lock` with an exclusive create. A lock left by an ended process on this computer is removed through
+ * `breakStaleLock`, so of several processes that find it stale at the same time exactly one removes it.
  */
 async function claimRun(dir: string): Promise<RunClaim> {
     const path = join(dir, Files.lock);
-    const mine = `${JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString() })}\n`;
+    const mine = lockText();
     const inUse = (holder: LockHolder | null) =>
         new EvalConfigError(
             "run-in-use",
@@ -374,25 +422,10 @@ async function claimRun(dir: string): Promise<RunClaim> {
         if (!holder || holderIsAlive(holder)) {
             throw inUse(holder);
         }
-        const aside = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.stale`;
-        try {
-            await rename(path, aside);
-        } catch (error) {
-            if (isErrno(error, "ENOENT")) {
-                continue;
-            }
-            throw error;
+        const taker = await breakStaleLock(path, text);
+        if (taker) {
+            throw inUse(taker);
         }
-        if ((await readLockFile(aside)) === text) {
-            await unlink(aside);
-            continue;
-        }
-        try {
-            await link(aside, path);
-        } finally {
-            await unlink(aside);
-        }
-        throw inUse(parseLockHolder((await readLockFile(path)) ?? ""));
     }
     throw inUse(parseLockHolder((await readLockFile(path)) ?? ""));
 }

@@ -200,4 +200,31 @@ final class HubPanelFindTests: XCTestCase {
         XCTAssertEqual(PanelFindRouting.pick([older, used], click: CGPoint(x: 900, y: 900), responder: nil), 1)
         XCTAssertNil(PanelFindRouting.pick([], click: nil, responder: nil))
     }
+
+    // MARK: The PR pages' revision
+
+    /// The PR pages search each session's title, so their find revision changes with it: a session renamed while
+    /// the list keeps the same sessions refreshes the find (Overview, and the redesign layouts' About and Overview).
+    @MainActor
+    func testThePRSessionFindRevisionChangesWhenASessionIsRenamed() throws {
+        let json = """
+        {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feature","baseBranch":"develop",
+         "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":"abcdef0123","crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        let prs = PRsModel()
+        var session = HubSession(sessionId: "fixture-a")
+        session.gitBranch = "feature"
+        session.title = "Old title"
+        model.sessions = [session]
+        let before = PRDetailView.sessionFindRevision(model: model, prs: prs, pr: pr)
+        session.title = "New title"
+        model.sessions = [session]
+        XCTAssertEqual(PRDetailView.sessionFindRows(model: model, prs: prs, pr: pr).map(\.id), ["session:fixture-a"],
+                       "the same session stays in the list")
+        XCTAssertNotEqual(PRDetailView.sessionFindRevision(model: model, prs: prs, pr: pr), before,
+                          "the find searches the title, so the revision must change with it")
+    }
 }

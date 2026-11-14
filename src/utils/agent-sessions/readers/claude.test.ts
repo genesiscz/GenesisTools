@@ -970,3 +970,29 @@ test("readToolCalls: tool_use blocks with their row's cwd and time; a quoted too
     expect(read.supported && read.offset).toBe(readFileSync(file).length);
     expect(grokHistoryReader.readToolCalls(file, 0).supported).toBe(false);
 });
+
+test("readToolCalls: a transcript that shrank is read from its start, its first row's call included", () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-claude-tool-calls-shrunk-"));
+    const file = join(home, "session.jsonl");
+    const row = (id: string, path: string) =>
+        `${SafeJSON.stringify(
+            {
+                type: "assistant",
+                cwd: "/work/app",
+                timestamp: "2026-11-13T10:00:00.000Z",
+                message: { content: [{ type: "tool_use", id, name: "Read", input: { file_path: path } }] },
+            },
+            { strict: true }
+        )}\n`;
+    writeFileSync(file, row("t1", "src/a.ts") + row("t2", "src/b.ts") + row("t3", "src/c.ts"));
+    const before = claudeHistoryReader.readToolCalls(file, 0);
+    expect(before.supported).toBe(true);
+    if (!before.supported) {
+        return;
+    }
+
+    writeFileSync(file, row("t4", "src/d.ts"));
+    const after = claudeHistoryReader.readToolCalls(file, before.offset);
+    expect(after.supported && after.calls.map((call) => call.input)).toEqual([{ file_path: "src/d.ts" }]);
+    expect(after.supported && after.offset).toBe(readFileSync(file).length);
+});

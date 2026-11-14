@@ -665,6 +665,21 @@ describe("colour maths", () => {
         expect(readableTextOn("oklch(95% 0 0)")).toBe("#111318");
         expect(readableTextOn("oklch(0.25 0.05 260)")).toBe("#ffffff");
     });
+    test("a hue in grad, rad or turn converts to the same colour as its degrees", () => {
+        const same = (value: string, degrees: string) => {
+            const rgb = parseCssColor(value);
+            const expected = parseCssColor(degrees);
+            expect(rgb).not.toBeNull();
+            expect(expected).not.toBeNull();
+            expect(rgb?.r ?? -9).toBeCloseTo(expected?.r ?? 9, 6);
+            expect(rgb?.g ?? -9).toBeCloseTo(expected?.g ?? 9, 6);
+            expect(rgb?.b ?? -9).toBeCloseTo(expected?.b ?? 9, 6);
+        };
+        same("oklch(0.7 0.15 100grad)", "oklch(0.7 0.15 90deg)");
+        same("lch(60% 50 300grad)", "lch(60% 50 270)");
+        same(`oklch(0.7 0.15 ${Math.PI}rad)`, "oklch(0.7 0.15 180deg)");
+        same("oklch(0.7 0.15 0.25turn)", "oklch(0.7 0.15 90)");
+    });
     test("inline ink keeps the stylesheet's ink for a fill it cannot read", () => {
         expect(readableInlineInk("oklch(95% 0 0)")).toBe("#111318");
         expect(readableInlineInk("color(rec2020 0.9 0.9 0.9)")).toBe("");
