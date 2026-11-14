@@ -111,13 +111,10 @@ test("metrics: a dropped part counts its receipt as handed and only the rest as 
     expect(sum(blockEvents, false) + sum(blockEvents, true)).toBe(rules.length);
 });
 
-test("metrics: every batch carries its define line, so one lost write does not leave the metric undeclared", async () => {
+/** A spool `append` whose first `times` writes fail with "disk full"; `lines` holds the records written after. */
+function failingAppend(times: number) {
     const lines: Record<string, unknown>[] = [];
-    const failures: SpoolFailure[] = [];
-    const report = (failure: SpoolFailure) => {
-        failures.push(failure);
-    };
-    let fails = 1;
+    let fails = times;
     const append = async (_path: string, record: Record<string, unknown>) => {
         if (fails > 0) {
             fails--;
@@ -126,11 +123,26 @@ test("metrics: every batch carries its define line, so one lost write does not l
 
         lines.push(record);
     };
-    const events = injectionEvents(facts, {
+
+    return { append, lines };
+}
+
+/** One injection batch of a single new entry, as the spool tests write it. */
+function newEvents() {
+    return injectionEvents(facts, {
         entries: [{ text: "Something new", whole: false, droppedRules: [] }],
         block: "",
         at: 4_000,
     });
+}
+
+test("metrics: every batch carries its define line, so one lost write does not leave the metric undeclared", async () => {
+    const { append, lines } = failingAppend(1);
+    const failures: SpoolFailure[] = [];
+    const report = (failure: SpoolFailure) => {
+        failures.push(failure);
+    };
+    const events = newEvents();
     await spoolEvents({ append, report, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 4_000 });
     await spoolEvents({ append, report, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 5_000 });
     expect(lines.map((line) => ("define" in line ? "define" : "event"))).toEqual(["event", "define", "event"]);
@@ -141,24 +153,11 @@ test("metrics: every batch carries its define line, so one lost write does not l
 });
 
 test("metrics: a report that throws synchronously does not stop the batch", async () => {
-    const lines: Record<string, unknown>[] = [];
-    let fails = 1;
-    const append = async (_path: string, record: Record<string, unknown>) => {
-        if (fails > 0) {
-            fails--;
-            throw new Error("disk full");
-        }
-
-        lines.push(record);
-    };
+    const { append, lines } = failingAppend(1);
     const report = () => {
         throw new Error("log closed");
     };
-    const events = injectionEvents(facts, {
-        entries: [{ text: "Something new", whole: false, droppedRules: [] }],
-        block: "",
-        at: 4_000,
-    });
+    const events = newEvents();
     await spoolEvents({ append, report, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 4_000 });
     expect(lines.map((line) => ("define" in line ? "define" : "event"))).toEqual(["event"]);
 });
