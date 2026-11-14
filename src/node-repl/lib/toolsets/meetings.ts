@@ -298,7 +298,7 @@ export class MeetingsToolset extends ReplToolset {
                     ...options,
                     ids: picked ? rejectFilterIds(record.items, picked) : (options.ids ?? []),
                     // A filter that matches nothing decides nothing, and the journal checks it again under its lock.
-                    ...(picked ? { filtered: true, filter: picked } : {}),
+                    ...(picked ? { filter: picked } : {}),
                 });
                 log.info(
                     { meeting: id, status, decided: result.decided.length, skipped: result.skipped.length },
