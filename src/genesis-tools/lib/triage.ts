@@ -83,13 +83,24 @@ const HUB_SERVER_ASK_MS = 1_500;
 const SLOW_CALL = /via=(server|process)-timeout|TIMEOUT after|main-stall|wedge|hang |layout\.loop| failed/;
 const GB = 1024 ** 3;
 
+function unreadPart(name: string, error: unknown): TriagePart<never> {
+    logger.debug({ error, part: name }, "triage: a part could not be read");
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+}
+
 function part<T>(name: string, read: () => T): TriagePart<T> {
     try {
         return { ok: true, value: read() };
     } catch (error) {
-        logger.debug({ error, part: name }, "triage: a part could not be read");
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+        return unreadPart(name, error);
     }
+}
+
+function partAsync<T>(name: string, read: () => Promise<T>): Promise<TriagePart<T>> {
+    return read().then(
+        (value): TriagePart<T> => ({ ok: true, value }),
+        (error: unknown) => unreadPart(name, error)
+    );
 }
 
 /** `bun` or `node` with the script it runs ("bun hub/index.ts"); any other process by its executable's name. */
@@ -125,13 +136,7 @@ const FACE = /MacOS\/GenesisTools (--[a-z-]+)/;
 export async function gatherTriage(sources: TriageSources = realTriageSources()): Promise<TriageReport> {
     const started = performance.now();
     const now = sources.now();
-    const hubServer = sources.hubServer().then(
-        (value): TriageReport["hubServer"] => ({ ok: true, value }),
-        (error: unknown): TriageReport["hubServer"] => ({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-        })
-    );
+    const hubServer = partAsync("hubServer", sources.hubServer);
     const processes = part("processes", () => {
         const rows = sources.processes();
         const row = (entry: (typeof rows)[number]): TriageProcess => ({
