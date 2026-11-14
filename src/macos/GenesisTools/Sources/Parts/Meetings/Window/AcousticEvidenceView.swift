@@ -83,64 +83,41 @@ struct AcousticEvidenceView: View {
         }
         .onDisappear { sound?.stop() }
     }
-    private func prepare() {
+    /// One service call with the buttons busy meanwhile; a failure shows as its sentence.
+    private func run(_ work: @escaping @MainActor (MeetingsService) async throws -> Void) {
         guard let service else { return }
         busy = true
         Task { @MainActor in
             defer { busy = false }
-            do { tracks = try await service.call(MeetingsAPI.AcousticClip.self, params) }
-            catch { failure = asFailure(error).sentence }
+            do { try await work(service) } catch { failure = asFailure(error).sentence }
         }
+    }
+    private func prepare() {
+        run { tracks = try await $0.call(MeetingsAPI.AcousticClip.self, params) }
     }
     private func score() {
-        guard let service, let layout = inspection?.layout else { return }
-        busy = true
-        Task { @MainActor in
-            defer { busy = false }
-            do { voice = try await service.call(MeetingsAPI.VoiceScore.self, .init(meeting: meeting, fromSec: params.fromSec, toSec: params.toSec, channel: layout == "left-mic" ? 1 : 0)) }
-            catch { failure = asFailure(error).sentence }
-        }
+        guard let layout = inspection?.layout else { return }
+        run { voice = try await $0.call(MeetingsAPI.VoiceScore.self, .init(meeting: meeting, fromSec: params.fromSec, toSec: params.toSec, channel: layout == "left-mic" ? 1 : 0)) }
     }
     private func collect() {
-        guard let service else { return }
-        busy = true
-        Task { @MainActor in
-            defer { busy = false }
-            do {
-                _ = try await service.call(MeetingsAPI.AcousticCollect.self, .init(meeting: meeting), timeout: 300)
-                inspection = try await service.call(MeetingsAPI.AcousticInspect.self, params)
-            } catch { failure = asFailure(error).sentence }
+        run { service in
+            _ = try await service.call(MeetingsAPI.AcousticCollect.self, .init(meeting: meeting), timeout: 300)
+            inspection = try await service.call(MeetingsAPI.AcousticInspect.self, params)
         }
     }
     private func collectVoices() {
-        guard let service else { return }
-        busy = true
-        Task { @MainActor in
-            defer { busy = false }
-            do { _ = try await service.call(MeetingsAPI.VoiceCollect.self, .init(meeting: meeting), timeout: 3600) }
-            catch { failure = asFailure(error).sentence }
-        }
+        run { _ = try await $0.call(MeetingsAPI.VoiceCollect.self, .init(meeting: meeting), timeout: 3600) }
     }
     private func prepareModel() {
-        guard let service else { return }
-        busy = true
-        Task { @MainActor in
-            defer { busy = false }
-            do { _ = try await service.call(MeetingsAPI.VoicePrepare.self, .init(download: true), timeout: 300) }
-            catch { failure = asFailure(error).sentence }
-        }
+        run { _ = try await $0.call(MeetingsAPI.VoicePrepare.self, .init(download: true), timeout: 300) }
     }
     private func enrol() {
-        guard let service, let layout = inspection?.layout else { return }
-        busy = true
-        Task { @MainActor in
-            defer { busy = false }
-            do {
-                voice = try await service.call(MeetingsAPI.VoiceEnroll.self,
-                    .init(meeting: meeting, fromSec: params.fromSec, toSec: params.toSec,
-                          channel: layout == "left-mic" ? 1 : 0,
-                          person: enrolmentName.trimmingCharacters(in: .whitespacesAndNewlines), confirmed: true))
-            } catch { failure = asFailure(error).sentence }
+        guard let layout = inspection?.layout else { return }
+        run { service in
+            voice = try await service.call(MeetingsAPI.VoiceEnroll.self,
+                .init(meeting: meeting, fromSec: params.fromSec, toSec: params.toSec,
+                      channel: layout == "left-mic" ? 1 : 0,
+                      person: enrolmentName.trimmingCharacters(in: .whitespacesAndNewlines), confirmed: true))
         }
     }
     private func play(_ path: String) {
