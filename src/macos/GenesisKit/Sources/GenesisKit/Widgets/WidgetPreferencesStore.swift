@@ -203,6 +203,12 @@ public final class WidgetPreferencesStore {
         writeTask?.cancel()
         flush()
         readAfterWrites = false
+        // A throttled live note must not publish after the panels were hidden.
+        liveApplyTask?.cancel()
+        liveApplyTask = nil
+        liveExpiry?.cancel()
+        liveExpiry = nil
+        liveApplyPending = [:]
     }
 
     // MARK: - Live settings of another process
