@@ -354,10 +354,14 @@ function readAgentFresh(
 
 /**
  * One agent from the several files that carry its id, oldest first. Who it is comes from the oldest file that says
- * (the run folder's file has the meta; the revival file has none), where it stands comes from the newest.
+ * (the run folder's file has the meta; the revival file has none), where it stands comes from the file written last
+ * (`lastAt`, its mtime): a file that started first can still be the live one. Equal activity keeps the start order.
  */
 function mergeAgentFiles(parts: SessionSubagent[]): SessionSubagent {
-    const newest = parts.at(-1);
+    const newest = parts.reduce<SessionSubagent | undefined>(
+        (latest, part) => (latest && latest.lastAt > part.lastAt ? latest : part),
+        undefined
+    );
     const [oldest] = parts;
 
     if (!oldest || !newest || parts.length === 1) {

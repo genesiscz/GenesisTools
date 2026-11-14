@@ -2,7 +2,7 @@
 // (2026-11-10): a run record, a journal, transcripts with a response written as two rows, an agent only the journal
 // knows, and a run that left no record. Ported from the session-analyzer skill's `scripts/workflows.test.ts`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeHooks } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/harness-hooks";
@@ -562,6 +562,35 @@ describe("a session's agent listing", () => {
             filePath: revival,
             files: [first, revival],
             bytes: statSync(first).size + statSync(revival).size,
+        });
+    });
+
+    test("the live file of a revived agent is the one written last, not the one that started last", () => {
+        const local = buildSession();
+        const folder = join(local.replace(/\.jsonl$/, ""), "subagents");
+        const first = join(folder, "workflows", RUN_A, "agent-aaa1.jsonl");
+        const revival = join(folder, "agent-aaa1.jsonl");
+        writeFileSync(
+            revival,
+            jsonl([
+                {
+                    type: "user",
+                    timestamp: "2026-11-01T11:00:00.000Z",
+                    message: { role: "user", content: "one more thing" },
+                },
+                assistantRow("msg_9", "2026-11-01T11:00:05.000Z", { type: "text", text: "done" }),
+            ])
+        );
+        // The revival started later, but the workflow file was written after it.
+        utimesSync(revival, new Date("2026-11-01T11:00:10.000Z"), new Date("2026-11-01T11:00:10.000Z"));
+        utimesSync(first, new Date("2026-11-01T12:00:00.000Z"), new Date("2026-11-01T12:00:00.000Z"));
+
+        const revived = listSubagents({ ...resolved, filePath: local }).subagents.find((agent) => agent.id === "aaa1");
+        expect(revived).toMatchObject({
+            startedAt: "2026-11-01T10:00:05.000Z",
+            filePath: first,
+            lastAt: "2026-11-01T12:00:00.000Z",
+            files: [first, revival],
         });
     });
 });
