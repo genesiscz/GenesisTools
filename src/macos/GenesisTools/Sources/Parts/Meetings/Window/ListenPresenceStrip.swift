@@ -14,6 +14,7 @@ struct ListenPresenceStrip: View {
             ForEach(detail.record.value?.participants ?? [], id: \.name) { person in
                 let start = person.stays?.first?.fromSec ?? person.firstSeenSec ?? 0
                 let end = person.stays?.last?.toSec ?? duration
+                let spans = Self.spans(person, duration: duration)
                 HStack(spacing: 6) {
                     Button(person.name) {
                         selected = person.name
@@ -25,7 +26,7 @@ struct ListenPresenceStrip: View {
                         let scale = geometry.size.width / max(1, duration)
                         ZStack(alignment: .leading) {
                             // Each stay apart: a person who left and came back is not drawn as present in between.
-                            ForEach(Array(Self.spans(person, duration: duration).enumerated()), id: \.offset) { _, span in
+                            ForEach(Array(spans.enumerated()), id: \.offset) { _, span in
                                 Capsule().fill(Color.secondary.opacity(0.2))
                                     .frame(width: max(1, (span.upperBound - span.lowerBound) * scale), height: 4).offset(x: span.lowerBound * scale)
                             }
@@ -38,7 +39,7 @@ struct ListenPresenceStrip: View {
                                 }
                             }
                         }
-                        .accessibilityLabel("\(person.name): \(Self.spans(person, duration: duration).map { "\(Int($0.lowerBound)) to \(Int($0.upperBound))" }.joined(separator: ", ")) seconds. Green shows observed speaking; orange shows muted reads; gaps are unknown.")
+                        .accessibilityLabel("\(person.name): \(spans.map { "\(Int($0.lowerBound)) to \(Int($0.upperBound))" }.joined(separator: ", ")) seconds. Green shows observed speaking; orange shows muted reads; gaps are unknown.")
                         .contentShape(Rectangle())
                         .gesture(DragGesture(minimumDistance: 3).onEnded { drag in
                             selected = person.name
