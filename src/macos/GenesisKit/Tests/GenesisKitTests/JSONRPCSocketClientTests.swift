@@ -104,6 +104,35 @@ final class JSONRPCSocketClientTests: XCTestCase {
         wait(for: [answered], timeout: 2)
     }
 
+    /// Clients that resolve the same long path at once all get its link: a stale link (another destination) was removed
+    /// and created again by each, and every client but one failed with EEXIST and fell back as if the path were too long.
+    func testClientsThatMakeTheSameLinkAtOnceAllGetIt() throws {
+        let files = FileManager.default
+        let folder = files.temporaryDirectory.appendingPathComponent("gts-\(UUID().uuidString.prefix(8))")
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: folder) }
+        let long = "/Users/alice/" + String(repeating: "deep/", count: 24) + "service.sock"
+        XCTAssertGreaterThan(long.utf8.count, 103)
+
+        for round in 0..<20 {
+            let stale = try XCTUnwrap(JSONRPCSocketClient.connectablePath(long, limit: 104, linkFolder: folder))
+            try files.removeItem(atPath: stale)
+            try files.createSymbolicLink(atPath: stale, withDestinationPath: "/Users/alice/old-\(round).sock")
+
+            let lock = NSLock()
+            var links: [String?] = []
+            DispatchQueue.concurrentPerform(iterations: 16) { _ in
+                let link = JSONRPCSocketClient.connectablePath(long, limit: 104, linkFolder: folder)
+                lock.withLock { links.append(link) }
+            }
+            XCTAssertEqual(links.compactMap { $0 }.count, 16, "round \(round): every client got the link")
+            XCTAssertEqual(Set(links.compactMap { $0 }), [stale])
+            XCTAssertEqual(try files.destinationOfSymbolicLink(atPath: stale), long)
+        }
+        let left = try files.contentsOfDirectory(atPath: folder.path)
+        XCTAssertEqual(left.count, 1, "no half-made link is left behind: \(left)")
+    }
+
     func testTheRecordersOldNameIsTheSameType() {
         XCTAssertTrue(LiveRecordingRPCClient.self == JSONRPCSocketClient.self)
         let old: LiveRecordingRPCClient = client

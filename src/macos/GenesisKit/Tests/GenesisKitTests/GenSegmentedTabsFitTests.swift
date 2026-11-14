@@ -224,6 +224,34 @@ final class GenSegmentedTabsFitTests: XCTestCase {
         XCTAssertEqual(Tabs.Fit.filling(0, need: need), .scaled)
     }
 
+    /// A filling strip just wider than its titles: equal shares gave "Conversation" less than its width, and it drew
+    /// over its neighbour. A kept title gets its own width, and the short ones share the rest.
+    func testAKeptTitleGetsTheWidthItNeedsAndTheOthersShareTheRest() throws {
+        let items: [Tabs.Item] = [.init("conversation", "Conversation"), .init("q", "Q"), .init("r", "R")]
+        let inset = KitLook.classic.wellInset
+        for fit in [Tabs.Fit.roomy, .compact, .tight, .bare] {
+            let needs = items.map { Tabs.contentWidth($0, selection: "q", size: .regular, fit: fit) }
+            let offered = Tabs.idealWidth(items: items, selection: "q", minSegmentWidth: 72, size: .regular, inset: inset, fit: fit) + 6
+            let room = offered - 2 * inset - 4
+            XCTAssertLessThan(room / 3, needs[0], "\(fit): an equal share is narrower than the long title")
+
+            let widths = try XCTUnwrap(Tabs.segmentWidths(items: items, selection: "q", size: .regular, inset: inset, fit: fit,
+                                                          offered: offered))
+            for (index, item) in items.enumerated() {
+                XCTAssertGreaterThanOrEqual(try XCTUnwrap(widths[item.id]), needs[index] - 0.001, "\(fit) \(item.title)")
+            }
+            XCTAssertEqual(widths["conversation"], needs[0], "\(fit)")
+            XCTAssertEqual(widths["q"], widths["r"], "\(fit): the short titles share the rest equally")
+            XCTAssertEqual(widths.values.reduce(0, +), room, accuracy: 0.001, "\(fit): the segments fill the strip")
+        }
+
+        let wide = try XCTUnwrap(Tabs.segmentWidths(items: items, selection: "q", size: .regular, inset: inset, fit: .roomy,
+                                                    offered: 600))
+        XCTAssertEqual(Set(wide.values).count, 1, "with room for every title the segments stay equal")
+        XCTAssertNil(Tabs.segmentWidths(items: items, selection: "q", size: .regular, inset: inset, fit: .scaled, offered: 600))
+        XCTAssertNil(Tabs.segmentWidths(items: items, selection: "q", size: .regular, inset: inset, fit: .roomy, offered: nil))
+    }
+
     func testTheTextWidthCacheStaysBoundedWhileCountsChange() {
         let first = KitTextWidth.text("Items", size: 12, weight: .medium)
         for count in 0..<(KitTextWidth.capacity * 3) {

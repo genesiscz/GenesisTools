@@ -562,6 +562,7 @@ final class MeetingsWindowModel {
             try? await Task.sleep(for: Self.liveLostGrace)
             guard let self, !Task.isCancelled, !self.liveUpdates else { return }
             self.liveUpdatesOff = true
+            HubPerf.log("meetings.window: Live updates off (no subscription for \(Self.liveLostGrace)); changes made elsewhere show after a reload")
         }
     }
 

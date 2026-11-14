@@ -386,7 +386,8 @@ extension MeetingDetailModel {
     /// "the word at 00:12" as the start of a sentence.
     static func sentenceStart(_ text: String) -> String { text.prefix(1).uppercased() + text.dropFirst() }
 
-    /// Statuses from an entry's changes, at once: the row folds before the re-read brings its words (R16).
+    /// Statuses, answers and deciders from an entry's changes, at once: the row folds before the re-read brings its
+    /// words (R16), and a row held in place shows the answer it got and who gave it even when that read fails.
     func markRows(_ entry: JournalEntry) {
         let touched = !entry.labels.isEmpty || ["set", "assign", "rename"].contains(entry.action.kind)
             ? Set(rows.value?.rows.map(\.id) ?? []).union(entry.touched) : entry.touched
@@ -395,12 +396,18 @@ extension MeetingDetailModel {
         var changed = false
         for change in entry.changes {
             guard let index = value.rows.firstIndex(where: { $0.id == change.id }) else { continue }
-            let status = change.after?.status ?? value.rows[index].status
-            if value.rows[index].status != status {
-                value.rows[index].status = status
+            var row = value.rows[index]
+            if let after = change.after {
+                row.status = after.status
+                row.answer = ReviewRow.decidedAs(after)
+                // An Undo gives the item back its earlier decision, which the entry does not carry: the re-read brings it.
+                if entry.action.kind != "revert", entry.decided.contains(change.id) { row.decision = .init(entry) }
+            }
+            if row != value.rows[index] {
+                value.rows[index] = row
                 changed = true
             }
-            mark(change.id, status: status)
+            mark(change.id, status: row.status)
         }
         if changed { rows = .loaded(value) }
     }

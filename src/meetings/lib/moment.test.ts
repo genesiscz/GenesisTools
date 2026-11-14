@@ -175,6 +175,28 @@ describe("a Moment of an item", () => {
         // A stretch of a second or more is the asker's own span.
         expect(at("i4")).toMatchObject({ fromSec: 30, toSec: 40 });
     });
+
+    test("a voice asked at one instant stops where another speaker starts, inside the time span's minimum too", () => {
+        const turns: TranscriptEntry[] = [
+            { speaker: "Speaker 1", startSec: 10, text: "Začneme." },
+            { speaker: "Speaker 2", startSec: 30, text: "Jo." },
+            { speaker: "Speaker 1", startSec: 32, text: "Dobře, dál." },
+            { speaker: "Speaker 2", startSec: 50, text: "Ano." },
+            { speaker: "Speaker 2", startSec: 52, text: "Ještě něco." },
+            { speaker: "Speaker 1", startSec: 70, text: "Konec." },
+        ];
+        const instant = record([
+            { id: "i1", kind: "speaker-range", label: "Speaker 2", fromSec: 30, toSec: 30 },
+            { id: "i2", kind: "speaker-range", label: "Speaker 2", fromSec: 50, toSec: 50 },
+        ]);
+        const at = (id: string) =>
+            planMoment({ record: instant, transcript: turns, listen, target: { kind: "item", id } });
+
+        // Speaker 1 starts at 32: the four-second minimum would play two seconds of the other voice.
+        expect(at("i1")).toMatchObject({ fromSec: 30, toSec: 32 });
+        // The same voice goes on at 52: the minimum still reaches into it.
+        expect(at("i2")).toMatchObject({ fromSec: 50, toSec: 54 });
+    });
 });
 
 describe("a Moment of a time, a range, a selection or a stretch", () => {

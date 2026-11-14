@@ -151,29 +151,61 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     /// It follows `title(_:_:_:)` term by term.
     static func idealWidth(items: [Item], selection: ID, minSegmentWidth: CGFloat, size: KitControlSize,
                            inset: CGFloat, fit: Fit) -> CGFloat {
-        let step: CGFloat = fit == .compact || fit == .tight || fit == .bare ? 1 : 0
         let segments = items.reduce(CGFloat(0)) { sum, item in
-            var width = KitTextWidth.text(item.title, size: size.font - step,
-                                          weight: item.id == selection ? .semibold : .medium)
-            if let symbol = item.symbol, fit.showsExtras {
-                width += KitTextWidth.symbol(symbol, size: size.glyph - step, weight: .medium) + 5
-            }
-            if let count = item.count, fit.showsExtras {
-                let digits = KitTextWidth.text("\(count)", size: size.font - 1.5, weight: .semibold, monospacedDigits: true)
-                width += max(17, digits + 10) + 5
-            }
-            width += 2 * fit.padding(size)
-            return sum + max(fit.fills ? 0 : minSegmentWidth, width)
+            sum + max(fit.fills ? 0 : minSegmentWidth, contentWidth(item, selection: selection, size: size, fit: fit))
         }
         return segments + 2 * CGFloat(max(0, items.count - 1)) + 2 * inset
     }
 
+    /// One segment's content as `title(_:_:_:)` draws it: the glyph, the title and the count with the fit's padding.
+    static func contentWidth(_ item: Item, selection: ID, size: KitControlSize, fit: Fit) -> CGFloat {
+        let step: CGFloat = fit == .compact || fit == .tight || fit == .bare ? 1 : 0
+        var width = KitTextWidth.text(item.title, size: size.font - step, weight: item.id == selection ? .semibold : .medium)
+        if let symbol = item.symbol, fit.showsExtras {
+            width += KitTextWidth.symbol(symbol, size: size.glyph - step, weight: .medium) + 5
+        }
+        if let count = item.count, fit.showsExtras {
+            let digits = KitTextWidth.text("\(count)", size: size.font - 1.5, weight: .semibold, monospacedDigits: true)
+            width += max(17, digits + 10) + 5
+        }
+        return width + 2 * fit.padding(size)
+    }
+
+    /// Each segment's width in a filling strip whose titles keep their width: an equal share of the room, or the
+    /// segment's own width when that is wider, the room left split equally over the others. Equal shares gave a long
+    /// title less than it needs while the strip as a whole fitted, and the title drew over its neighbour. Nil when the
+    /// titles do not keep their width (`natural`, `scaled`) or the room is not known yet.
+    static func segmentWidths(items: [Item], selection: ID, size: KitControlSize, inset: CGFloat, fit: Fit,
+                              offered: CGFloat?) -> [ID: CGFloat]? {
+        guard fit.keepsTitles, let offered, !items.isEmpty else { return nil }
+        let needs = items.map { contentWidth($0, selection: selection, size: size, fit: fit) }
+        var room = offered - 2 * inset - 2 * CGFloat(items.count - 1)
+        var widths = needs
+        var open = Array(items.indices)
+        // The widest segment keeps its own width while it is wider than an equal share of the room still open.
+        while !open.isEmpty {
+            let share = room / CGFloat(open.count)
+            guard let widest = open.max(by: { needs[$0] < needs[$1] }), needs[widest] > share else {
+                for index in open { widths[index] = share }
+                break
+            }
+            room -= needs[widest]
+            open.removeAll { $0 == widest }
+        }
+        var byID: [ID: CGFloat] = [:]
+        for (index, item) in items.enumerated() { byID[item.id] = widths[index] }
+        return byID
+    }
+
     private func strip(_ fit: Fit) -> some View {
+        let widths = fit.fills
+            ? Self.segmentWidths(items: items, selection: selection, size: size, inset: inset, fit: fit, offered: offered)
+            : nil
         // The buttons: hit areas, hover fills and the frames the pill and the titles follow. Their own titles are
         // clear; the visible ones are the two layers above.
-        HStack(spacing: 2) {
+        return HStack(spacing: 2) {
             ForEach(items, id: \.id) { item in
-                segment(item, fit)
+                segment(item, fit, width: widths?[item.id])
             }
         }
         .padding(inset)
@@ -184,13 +216,13 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         }
         .overlayPreferenceValue(GenSegmentFrames.self) { frames in
             ZStack {
-                titles(.segment, fit)
+                titles(.segment, fit, widths)
                     .mask {
                         Rectangle()
                             .overlay { thumbShape(frames).blendMode(.destinationOut) }
                             .compositingGroup()
                     }
-                titles(.thumb, fit)
+                titles(.thumb, fit, widths)
                     .mask { thumbShape(frames) }
             }
             .allowsHitTesting(false)
@@ -204,12 +236,12 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .chartAccessibilityIdentifier(identifier)
     }
 
-    private func segment(_ item: Item, _ fit: Fit) -> some View {
+    private func segment(_ item: Item, _ fit: Fit, width: CGFloat?) -> some View {
         let selected = item.id == selection
         return Button {
             selection = item.id
         } label: {
-            title(item, .sizing, fit)
+            title(item, .sizing, fit, width: width)
                 .contentShape(RoundedRectangle(cornerRadius: thumbRadius, style: look.corners))
         }
         .buttonStyle(GenSegmentStyle(selected: selected, radius: thumbRadius))
@@ -243,16 +275,17 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     }
 
     /// Every title in one layer's colours, laid out exactly as the buttons are.
-    private func titles(_ layer: Layer, _ fit: Fit) -> some View {
+    private func titles(_ layer: Layer, _ fit: Fit, _ widths: [ID: CGFloat]?) -> some View {
         HStack(spacing: 2) {
             ForEach(items, id: \.id) { item in
-                title(item, layer, fit)
+                title(item, layer, fit, width: widths?[item.id])
             }
         }
         .padding(inset)
     }
 
-    private func title(_ item: Item, _ layer: Layer, _ fit: Fit) -> some View {
+    /// `width`: the segment's width from `segmentWidths`, nil for the fit's own frame.
+    private func title(_ item: Item, _ layer: Layer, _ fit: Fit, width: CGFloat?) -> some View {
         let surface = layer == .thumb
             ? look.surface(.thumb, hue: item.hue, scheme: scheme, selected: true)
             : look.surface(.segment, hue: item.hue, scheme: scheme)
@@ -275,7 +308,8 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         }
         .opacity(item.isEnabled ? 1 : 0.4)
         .padding(.horizontal, fit.padding(size))
-        .frame(minWidth: fit.fills ? 0 : minSegmentWidth, maxWidth: fit.fills ? .infinity : nil, minHeight: segmentHeight)
+        .frame(minWidth: width ?? (fit.fills ? 0 : minSegmentWidth), maxWidth: width ?? (fit.fills ? .infinity : nil),
+               minHeight: segmentHeight)
     }
 
     /// The count beside a title, in the item's hue.
