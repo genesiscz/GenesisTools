@@ -1386,9 +1386,6 @@ export async function widgetSnapshot({
             headCounts.set(session, (headCounts.get(session) ?? 0) + 1);
         }
     }
-    for (const [session, group] of formGroups) {
-        group.count = Math.max(group.count, headCounts.get(session) ?? 0);
-    }
     for (const [session, { newest, count }] of formGroups) {
         const title = widgetTitle(newest.items[0]?.promptMarkdown);
         putInbox(
@@ -1402,7 +1399,7 @@ export async function widgetSnapshot({
                 needsAnswer: true,
                 ...(title ? { title } : {}),
             },
-            count
+            Math.max(count, headCounts.get(session) ?? 0)
         );
     }
     // Unread answers are not waiting items: each SQL group carries its session's newest answer and how many of its
