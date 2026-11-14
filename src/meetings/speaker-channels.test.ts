@@ -1021,9 +1021,16 @@ test("streamed synthetic stereo voice features preserve pitch, level, silence an
     expect(() => clusterVoices({ lines, voices: 0, channel: 0 })).toThrow();
 });
 
+/** A line channel's voice features: only the loudness and the pitch differ between the clustering tests. */
+function voiceFeature({ pitchHz, rms = 0.05 }: { pitchHz: number; rms?: number }) {
+    return { rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 };
+}
+
 test("a voice cluster names an unanchored line only on a clear, near match", () => {
-    const voice = (pitchHz: number, rms = 0.05) => ({ rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 });
-    const line = (index: number, pitchHz: number) => ({ index, channels: [voice(pitchHz), voice(pitchHz, 0.001)] });
+    const line = (index: number, pitchHz: number) => ({
+        index,
+        channels: [voiceFeature({ pitchHz }), voiceFeature({ pitchHz, rms: 0.001 })],
+    });
     const named = (lines: Array<ReturnType<typeof line>>, anchors: Array<[number, string]>) =>
         clusterVoices({ lines, voices: 2, channel: 0, anchors: new Map(anchors) }).map((one) => one.cluster?.speaker);
 
@@ -1050,7 +1057,6 @@ test("a voice cluster names an unanchored line only on a clear, near match", () 
 });
 
 test("a confirmed line anchors only the channel that carries its voice", () => {
-    const voice = (rms: number, pitchHz: number) => ({ rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 });
     const anchoredRecord = meetingRecordSchema.parse({
         ...record,
         items: [
@@ -1068,8 +1074,11 @@ test("a confirmed line anchors only the channel that carries its voice", () => {
         ],
     });
     const features = [
-        { index: 0, channels: [voice(0.01, 150), voice(0.1, 150)] },
-        { index: 1, channels: [voice(0.05, 120), voice(0.001, 120)] },
+        { index: 0, channels: [voiceFeature({ rms: 0.01, pitchHz: 150 }), voiceFeature({ rms: 0.1, pitchHz: 150 })] },
+        {
+            index: 1,
+            channels: [voiceFeature({ rms: 0.05, pitchHz: 120 }), voiceFeature({ rms: 0.001, pitchHz: 120 })],
+        },
     ];
     const clustered = anchoredMeetingVoices({
         record: anchoredRecord,
