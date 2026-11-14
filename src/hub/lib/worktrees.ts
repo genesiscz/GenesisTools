@@ -18,7 +18,7 @@ import { createGit, type DetectedBase, detectBase, loadRepoConfig } from "@genes
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { listProcessRows, processBasename } from "@genesiscz/utils/process/processes";
+import { listProcesses, processBasename } from "@genesiscz/utils/process/processes";
 import { Storage } from "@genesiscz/utils/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
@@ -296,13 +296,17 @@ export function ownerOf(cwd: string, worktreePaths: string[]): string | null {
     return best;
 }
 
-/** One `ps`, then libproc for each cwd (microseconds each), plus the agent sessions of the last hour. */
+/**
+ * One read of the kernel's process table (no `ps`; one where the kernel reader does not work), then libproc for each
+ * cwd (microseconds each), plus the agent sessions of the last hour. Another user's process has no command line
+ * here, only its name, and no readable cwd either way.
+ */
 export async function readLiveUsers({ liveMinutes }: { liveMinutes: number }): Promise<LiveUsers> {
     // The hub's own `tools` call must not count as a user.
     const own = ownLineage(32);
     const processes: LiveUsers["processes"] = [];
 
-    for (const row of await listProcessRows({ timeoutMs: 10_000 })) {
+    for (const row of listProcesses()) {
         if (own.has(row.pid)) {
             continue;
         }
@@ -310,7 +314,7 @@ export async function readLiveUsers({ liveMinutes }: { liveMinutes: number }): P
         const cwd = readProcessCwd(row.pid);
 
         if (cwd && cwd !== "/") {
-            processes.push({ pid: row.pid, name: processBasename(row.command), cwd });
+            processes.push({ pid: row.pid, name: processBasename(row.command ?? row.name), cwd });
         }
     }
 

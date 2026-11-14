@@ -514,7 +514,9 @@ public struct ClickyPopoverView: View {
                     })
             ).font(.headline).toggleStyle(.switch)
             Text(model.status).font(.system(size: 11)).foregroundStyle(.secondary)
-            if let error = model.error { Text(error).font(.system(size: 11)).foregroundStyle(.orange) }
+            if let error = model.error {
+                FailureInline(message: error, outcome: "Clicky could not do that", action: "Change Clicky", area: "clicky", identifier: "clicky.failure")
+            }
             Divider()
             HStack {
                 Image(systemName: "speaker.wave.2.fill").foregroundStyle(.secondary)

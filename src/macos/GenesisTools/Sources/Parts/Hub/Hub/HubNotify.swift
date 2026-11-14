@@ -50,7 +50,7 @@ struct HubNotifyStatus: Decodable, Equatable {
         let at: String
         let posted: Bool
         var id: String { "\(at) \(key) \(type)" }
-        var ref: String { "\(project)\(provider == "gitlab" ? "!" : "#")\(number)" }
+        var ref: String { "\(project)\((Forge(kind: provider) ?? .github).label(number))" }
     }
 
     let config: Config
@@ -251,7 +251,7 @@ final class HubNotifyStore: ObservableObject {
         let generation = statusGeneration
         Task {
             let span = HubPerf.begin("prs.\(label)", awaits: true)
-            let result = await Task.detached(priority: .userInitiated) { Result { try ToolsCLIRunner.run(args) } }.value
+            let result = await Task.detached(priority: .userInitiated) { Result { try HubSource.bridge.output(args) } }.value
             inFlight -= 1
             switch result {
             case .success(let data):
@@ -457,7 +457,7 @@ struct HubNotifySettings: View {
         HStack(spacing: 12) {
             Button("Check now") { store.pollNow() }
                 .instantTooltip(HubNotifyWords.pollNowDetail)
-            Button("Send a test") { store.sendTest(pr: prs.selected.map { "\($0.project)\($0.isGitLab ? "!" : "#")\($0.number)" }) }
+            Button("Send a test") { store.sendTest(pr: prs.selected.map { "\($0.project)\($0.label)" }) }
                 .instantTooltip("Post one notification marked as a test; its click opens the hub at the selected PR")
             Spacer()
             Button("Config file") { PathOpener.cursor(status.configPath) }

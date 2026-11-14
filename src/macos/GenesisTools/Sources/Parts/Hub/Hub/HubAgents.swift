@@ -211,7 +211,7 @@ enum AgentsSource {
         }
 
         let args = ["hub", "agents", "--json"] + (session.map { ["--session", $0] } ?? [])
-        return try decode(run(args))
+        return try query(args)
     }
 
     /// `tools hub agents --session <p> --agent <c> --json`: one agent with its whole spawn prompt.
@@ -221,7 +221,7 @@ enum AgentsSource {
         }
 
         let args = ["hub", "agents", "--agent", child, "--json"] + (parent.map { ["--session", $0] } ?? [])
-        return try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(run(args))).agent
+        return try query(args, as: Envelope.self).agent
     }
 
     /// Whole spawn prompts by agent key: a prompt never changes once the agent started.
@@ -241,27 +241,21 @@ enum AgentsSource {
             let agents: [Count]
         }
 
-        let data = try run(["hub", "agents", "counts", "--session", parent, "--ids", ids.joined(separator: ","), "--json"])
-        return try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(data)).agents
+        return try query(["hub", "agents", "counts", "--session", parent, "--ids", ids.joined(separator: ","), "--json"],
+                         as: Envelope.self).agents
     }
 
     static func mail(parent: String, child: String) throws -> AgentMail {
-        let data = try run(["hub", "agents", "mail", "--session", parent, "--agent", child, "--json"])
-        return try JSONDecoder().decode(AgentMail.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try query(["hub", "agents", "mail", "--session", parent, "--agent", child, "--json"])
     }
 
     static func decode(_ data: Data) throws -> AgentsEnvelope {
-        try JSONDecoder().decode(AgentsEnvelope.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(AgentsEnvelope.self, from: data)
     }
 
-    private static func run(_ args: [String]) throws -> Data {
-        let result = try ToolsCLIRunner.capture(args, timeout: 90)
-        guard result.status == 0 else {
-            let message = String(decoding: result.stderr.isEmpty ? result.stdout : result.stderr, as: UTF8.self).trimmed
-            throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) exited \(result.status): \(message.suffix(300))")
-        }
-
-        return result.stdout
+    /// The JSON a `tools hub agents` verb printed, its preamble dropped by the client (`ToolsBridge.json`), decoded.
+    private static func query<T: Decodable>(_ args: [String], as type: T.Type = T.self) throws -> T {
+        try JSONDecoder().decode(type, from: HubSource.bridge.json(args, timeout: 90))
     }
 }
 
@@ -1935,6 +1929,10 @@ struct AgentChildDetails: View {
             }
             .buttonStyle(.genHoverPlain())
             .instantTooltip("Messages this teammate received and sent; waiting ones are in its inbox and not delivered yet")
+            if mailOpen, agents.mail == nil, !agents.loadingMail, let error = agents.mailError {
+                FailureInline(message: error, outcome: "The team mail did not load", action: "Read the team mail",
+                              area: "hub", identifier: "agents.mail.failure") { agents.loadMail() }
+            }
             if mailOpen, let mail = agents.mail, !mail.isEmpty {
                 let rows = mailRows(mail)
                 ScrollView {
@@ -2107,4 +2105,17 @@ extension HubModel {
         setMode(.sessions)
         select(match.id)
     }
+}
+
+/// The Agents mode's answers to the hub (Hub/HubModeModel.swift); `reload()` is the model's own.
+extension HubAgentsModel: HubModeModel {
+    /// The list is the content itself, so the mode alone is a place worth going back to.
+    var navSelection: String? { selectedID ?? HubModel.wholeList }
+
+    func navTitle(selection: String) -> String {
+        selection == HubModel.wholeList ? "Agents" : selectedMain.map { "main of " + $0.displayTitle }
+            ?? ("agent " + (selected?.node.title ?? String((AgentTree.split(selection)?.child ?? selection).prefix(12))))
+    }
+
+    var showsTitlebarHeader: Bool { selected != nil || selectedMain != nil }
 }

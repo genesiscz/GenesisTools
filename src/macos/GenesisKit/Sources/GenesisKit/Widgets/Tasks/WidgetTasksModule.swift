@@ -75,7 +75,7 @@ struct WidgetTasksModuleView: View {
             Text("\(store.tasks.count - 4) more in Tasks").font(.caption2).foregroundStyle(.secondary)
         }
         if let error = store.error {
-            Text(error).font(.caption2).foregroundStyle(KitPalette.removed).lineLimit(3)
+            FailureInline(message: error, outcome: "The tasks did not load", action: "Load the tasks", area: "widget", identifier: "widget.tasks.failure")
         }
     }
 
@@ -119,6 +119,10 @@ struct WidgetTasksModuleView: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(KitPalette.removed)
                 Text(error).font(.system(size: 11)).foregroundStyle(KitPalette.removed).textSelection(.enabled)
                 Spacer(minLength: 0)
+                IconButton(systemName: "doc.text.magnifyingglass", tooltip: "Details of this failure") {
+                    FailureReporter.shared.showDetails(FailureReport.unexpected(
+                        error, outcome: "A task action failed", action: "Change a task", area: "widget", app: .launch))
+                }
                 IconButton(systemName: "xmark", tooltip: "Dismiss this message", action: store.clearFeedback)
             }
         } else if let receipt = store.receipt {

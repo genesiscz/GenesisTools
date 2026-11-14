@@ -90,7 +90,7 @@ final class CheckLogStore: ObservableObject {
             let fetch = Task.detached(priority: .userInitiated) { () -> Result<CheckLogRender, Error> in
                 Result {
                     // A run URL can fetch three jobs' logs; the CLI's own host calls time out at 90 s each.
-                    let output = try ToolsCLIRunner.capture(args, timeout: 180)
+                    let output = try HubSource.bridge.capture(args, timeout: 180)
                     let log = try JSONDecoder().decode(HubCheckLog.self, from: output.stdout)
                     if log.final {
                         cache.writeData(output.stdout, key: url)
@@ -256,7 +256,9 @@ struct PRChecksSection: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Fetching the failing log")
             } else if let failure = store.failures[url] {
-                NoticePill(text: "The log could not be read", detail: failure, isError: true) { store.dismissFailure(url) }
+                NoticePill(text: "The log could not be read", detail: failure, isError: true,
+                           fixes: [.unexpectedDetails(failure, outcome: "The check's log could not be read",
+                                                      action: "Read the failing log")]) { store.dismissFailure(url) }
             } else if let render = store.logs[url] {
                 logBody(render)
                 toolbar(check, url: url, render: render)
@@ -276,7 +278,8 @@ struct PRChecksSection: View {
     private func logBody(_ render: CheckLogRender) -> some View {
         let log = render.log
         if let error = log.error {
-            Text(verbatim: error).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).textSelection(.enabled)
+            FailureInline(message: error, outcome: "Part of the check's log could not be read",
+                          action: "Read the failing log", area: "hub", identifier: "checks.log.failure")
         }
         if !log.errors.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
@@ -364,7 +367,7 @@ struct CheckSendForm: View {
         let ref = pr.url.isEmpty ? "\(repo)#\(pr.number)" : pr.url
         PRTaskForm(
             title: "Send the \(check.name) log",
-            subtitle: "The failing log goes into a task file; the agent gets one line that names it. Nothing is posted on the \(pr.isGitLab ? "MR" : "PR").",
+            subtitle: "The failing log goes into a task file; the agent gets one line that names it. Nothing is posted on the \(pr.forgeKind.noun).",
             what: "the \(check.name) log",
             cwd: repo,
             newAgentName: "Fix \(pr.repo) \(pr.label) CI",

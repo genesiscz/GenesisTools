@@ -260,8 +260,7 @@ struct ScreenFindInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         } else if let failure = model.screenSearchFailure {
-            Text(failure).font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
-                .fixedSize(horizontal: false, vertical: true)
+            FailureInline(message: failure, outcome: "The screen search failed", action: "Search the screen text", area: "recorder", identifier: "recorder.screen-find.failure")
         } else if let hits = model.screenHits {
             if hits.isEmpty {
                 Text(verbatim: "No frame shows “\(model.screenQuery.trimmingCharacters(in: .whitespaces))”.")

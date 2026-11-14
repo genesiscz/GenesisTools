@@ -59,8 +59,9 @@ struct HubPR: Decodable, Identifiable, Equatable {
     /// The project the PR belongs to (the same key `tools hub pr list` groups checkouts by); `repo` is
     /// only its display name.
     var project: String { origin?.web ?? repoRoot ?? repo }
-    var isGitLab: Bool { origin?.kind == "gitlab" }
-    var label: String { isGitLab ? "!\(number)" : "#\(number)" }
+    /// The forge whose words and marks apply; GitHub's when `tools` named no kind.
+    var forgeKind: Forge { Forge(kind: origin?.kind) ?? .github }
+    var label: String { forgeKind.label(number) }
     var updated: Date? { HubFormat.date(updatedAt) }
     /// Which stored proposal the embedded review shows. The path is fixed per PR, so a second "Review
     /// with agent" run on the same PR changes only the push stamp.
@@ -513,7 +514,7 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.list", "\(paths.count) projects state=\(state) mine=\(mineOnly) limit=\(limit) query=\(query.isEmpty ? "-" : "yes")", awaits: true)
             let result = await Task.detached(priority: .userInitiated) { () -> Result<(HubPRList, Data), Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(["hub", "pr", "list"] + paths + ["--state", state, "--limit", String(limit)] + mine + search)
+                    let data = try HubSource.bridge.output(["hub", "pr", "list"] + paths + ["--state", state, "--limit", String(limit)] + mine + search)
                     return (try JSONDecoder().decode(HubPRList.self, from: data), data)
                 }
             }.value
@@ -711,7 +712,7 @@ final class PRsModel: ObservableObject {
             }
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
                 Result {
-                    let capture = try ToolsCLIRunner.capture(["hub", "pr", "show", arg])
+                    let capture = try HubSource.bridge.capture(["hub", "pr", "show", arg])
                     guard capture.status == 0 else { throw PRShowFailure(capture) }
                     let data = capture.stdout
                     return (try JSONDecoder().decode(HubPR.self, from: data), try JSONDecoder().decode(HubPRDetail.self, from: data), data)
@@ -1173,7 +1174,7 @@ final class PRsModel: ObservableObject {
         pendingCommit = nil
         let sha = missing ?? pending.sha
         review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
-        let whole = shown.isGitLab ? "MR" : "PR"
+        let whole = shown.forgeKind.noun
         // A link to the commit that merged the PR (an agent naming "the commit of !6958") is the whole PR, not a miss.
         if let merged = details[shown.id]?.mergedSha, HubCommitSha.matches(sha, merged) {
             HubPerf.log("prs.commit \(shown.label) \(sha) is its merge commit")
@@ -1230,7 +1231,7 @@ final class PRsModel: ObservableObject {
     /// Every forge project cloned under the repo roots (`tools hub pr projects`); blocks, so off the main thread.
     nonisolated static func fetchProjects() throws -> [HubPRProject] {
         struct Answer: Decodable { let projects: [HubPRProject] }
-        return try JSONDecoder().decode(Answer.self, from: ToolsCLIRunner.run(["hub", "pr", "projects"])).projects
+        return try JSONDecoder().decode(Answer.self, from: HubSource.bridge.output(["hub", "pr", "projects"])).projects
     }
 
     /// The checkout of the project whose web path is `project` (`owner/repo`, `group/sub/app`, or its page URL),
@@ -1297,7 +1298,7 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.project", "\(project.repo) limit=\(limit)", awaits: true)
             let result = await Task.detached(priority: .userInitiated) { () -> Result<HubPRList, Error> in
                 Result {
-                    try JSONDecoder().decode(HubPRList.self, from: ToolsCLIRunner.run(["hub", "pr", "list", project.root, "--state", state, "--limit", String(limit)] + mine + search))
+                    try JSONDecoder().decode(HubPRList.self, from: HubSource.bridge.output(["hub", "pr", "list", project.root, "--state", state, "--limit", String(limit)] + mine + search))
                 }
             }.value
             projectLoading.remove(project.project)
@@ -1549,16 +1550,15 @@ final class PRsModel: ObservableObject {
     /// live threads and proposal. The hub keeps its own copy.
     func openInReviewWindow(_ pr: HubPR) {
         guard let review, let executable = Bundle.main.executableURL else { return }
-        var args = ["--review", "--repo", review.repo.path]
-        if case .ref(let ref) = Self.threadsTarget(pr, path: review.repo.path) {
-            args += ["--pr", ref]
+        var ref: String?
+        if case .ref(let threads) = Self.threadsTarget(pr, path: review.repo.path) {
+            ref = threads
         }
-        if let proposal = pr.proposal {
-            args += ["--proposal", proposal.path]
-        }
+        var target = ReviewLaunch.Target.folder
         if case .range(let base, let head, let label, _) = review.scope {
-            args += ["--range", "\(base)..\(head)", "--label", label]
+            target = .range(base: base, head: head, label: label)
         }
+        var args = ReviewLaunch.launchArguments(repo: review.repo.path, target: target, pr: ref, proposal: pr.proposal?.path)
         // No local worktree: the folder is on another branch, so the window opens the host's files and the PR's commits.
         if let remote = review.remoteHead {
             args += ReviewRemoteHead.launchArguments(branch: remote.branch, sha: remote.sha, base: remote.base, forge: pr.commitForge)
@@ -1777,7 +1777,7 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.hoverChecks", pr.id, awaits: true)
             let (id, project, number) = (pr.id, pr.project, pr.number)
             let fresh = await Task.detached(priority: .utility) { () -> (HubPRDetail, Data)? in
-                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(number)"]),
+                guard let data = try? HubSource.bridge.output(["hub", "pr", "show", "\(root)#\(number)"]),
                       let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
                 return (detail, data)
             }.value
@@ -1813,7 +1813,7 @@ final class PRsModel: ObservableObject {
         Task {
             let span = HubPerf.begin("prs.show", key, awaits: true)
             let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPRDetail, HubPR?, Data)? in
-                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(pr.number)"]),
+                guard let data = try? HubSource.bridge.output(["hub", "pr", "show", "\(root)#\(pr.number)"]),
                       let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
                 return (detail, try? JSONDecoder().decode(HubPR.self, from: data), data)
             }.value
@@ -2368,7 +2368,7 @@ struct PRRow: View, Equatable {
             parts.append("Failed: " + failedChecks.joined(separator: ", "))
         }
         if let usualCI, usualCI != pr.ci {
-            parts.append("Most \(pr.repo) \(pr.isGitLab ? "MRs" : "PRs"): \(CIBadge.sentence(usualCI).lowercased())")
+            parts.append("Most \(pr.repo) \(pr.forgeKind.noun)s: \(CIBadge.sentence(usualCI).lowercased())")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
@@ -2461,7 +2461,7 @@ struct PRRow: View, Equatable {
 
     @ViewBuilder
     private var linksMenu: some View {
-        let kind = pr.isGitLab ? "MR" : "PR"
+        let kind = pr.forgeKind.noun
         let pages: [(String, URL?)] = [
             ("Open the \(kind) \(pr.label)", URL(string: pr.url)),
             ("Open \(pr.author ?? "the author")'s profile", pr.authorURL),
@@ -2584,7 +2584,7 @@ struct PRLabelPill: View {
             font: .system(size: 10.5, weight: tone == nil ? .regular : .medium),
             color: tone?.color ?? ReviewPalette.dim,
             glyph: .onHover,
-            tooltip: "\(pr.isGitLab ? "MRs" : "PRs") labelled \(label)"
+            tooltip: "\(pr.forgeKind.noun)s labelled \(label)"
         )
         .padding(.horizontal, 6)
         .background(Capsule().fill((tone?.color ?? Color.white).opacity(tone == nil ? 0.08 : 0.16)))
@@ -2860,7 +2860,7 @@ struct PRDetailView: View {
                     Toggle("Diff", isOn: $showDiff)
                         .toggleStyle(.button)
                         .instantTooltip(pr.localWorktree == nil
-                            ? "Show the \(pr.isGitLab ? "MR" : "PR") diff beside it (its head, fetched into \(pr.repo) without a checkout)"
+                            ? "Show the \(pr.forgeKind.noun) diff beside it (its head, fetched into \(pr.repo) without a checkout)"
                             : "Show the branch diff beside the PR")
                 } else if let fetch = prs.fetchState(pr) {
                     PRFetchStatus(pr: pr, state: fetch) { prs.retryFetch(pr) }
@@ -2917,7 +2917,7 @@ struct PRDetailView: View {
                             url: filesURL,
                             font: .system(size: 11.5),
                             glyph: .onHover,
-                            tooltip: "The changed files on the \(pr.isGitLab ? "MR" : "PR")"
+                            tooltip: "The changed files on the \(pr.forgeKind.noun)"
                         )
                     }
                     if let add = detail.additions, let del = detail.deletions {
@@ -2956,12 +2956,12 @@ struct PRDetailView: View {
             Text(verbatim: "+\(added)").foregroundColor(ReviewPalette.added)
             Text(verbatim: "−\(removed)").foregroundColor(ReviewPalette.removed)
         }
-        let hostPage = pr.isGitLab ? "MR's changes" : "PR's files"
+        let hostPage = pr.forgeKind.filesPhrase
         if prs.review != nil {
             HStack(spacing: 2) {
                 Button { showWholeDiff() } label: { label }
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Lines added and removed: show the whole \(pr.isGitLab ? "MR" : "PR") in the diff here" + (url == nil ? "" : "\n↗ or right-click opens the \(hostPage) on the host"))
+                    .instantTooltip("Lines added and removed: show the whole \(pr.forgeKind.noun) in the diff here" + (url == nil ? "" : "\n↗ or right-click opens the \(hostPage) on the host"))
                     .accessibilityLabel(Text(verbatim: "+\(added) −\(removed) lines, show the diff"))
                 if let url {
                     IconButton(systemName: "arrow.up.right", tooltip: "Open the \(hostPage) on the host\n\(url.absoluteString)", size: 9.5) {
@@ -2980,7 +2980,7 @@ struct PRDetailView: View {
             Button { ExternalOpener.open(url) } label: { label }
                 .buttonStyle(.genHoverPlain())
                 .hoverCursor(.pointingHand)
-                .instantTooltip("Lines added and removed: open the \(pr.isGitLab ? "MR's changes" : "PR's files") on the host\n\(url.absoluteString)")
+                .instantTooltip("Lines added and removed: open the \(pr.forgeKind.filesPhrase) on the host\n\(url.absoluteString)")
                 .accessibilityRemoveTraits(.isButton)
                 .accessibilityAddTraits(.isLink)
                 .accessibilityLabel(Text(verbatim: "+\(added) −\(removed) lines"))
@@ -3021,15 +3021,15 @@ struct PRDetailView: View {
             branches.insert(other.headBranch)
             branches.insert(other.baseBranch)
         }
-        let kindMatches = pr.isGitLab
+        let kind = pr.forgeKind
         return PRLinkContext(forge: pr.forge, branches: branches) { number in
-            siblings.first { $0.number == number && $0.isGitLab == kindMatches }?.id
+            siblings.first { $0.number == number && $0.forgeKind == kind }?.id
         }
     }
 
     /// The description with its links, made once per body and link context (`PRDescriptionCache`).
     private func linkedDescription(_ body: String) -> String {
-        let siblings = prs.prs.filter { $0.project == pr.project }.map { "\($0.number)\($0.isGitLab ? "!" : "#")\($0.headBranch)>\($0.baseBranch)" }
+        let siblings = prs.prs.filter { $0.project == pr.project }.map { "\($0.number)\($0.forgeKind.mark)\($0.headBranch)>\($0.baseBranch)" }
         let key = [pr.id, body, (detail?.branchMentions ?? []).joined(separator: " "), siblings.sorted().joined(separator: " ")]
             .joined(separator: "\u{1}")
         return PRDescriptionCache.linked(key: key) { PRDescriptionLinker.linkify(body, context: linkContext) }
@@ -3417,7 +3417,7 @@ struct PRCommitsSection: View {
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11.5))
-                .instantTooltip("Show the whole \(pr.isGitLab ? "MR" : "PR") in the diff again")
+                .instantTooltip("Show the whole \(pr.forgeKind.noun) in the diff again")
         )) {
             let authors = PRCommitRow.showsAuthors(commits)
             ForEach(commits.reversed()) { commit in
@@ -3650,3 +3650,13 @@ struct PRSessionsSection: View {
     }
 }
 
+/// The PRs mode's answers to the hub (Hub/HubModeModel.swift); `reload()` is the model's own.
+extension PRsModel: HubModeModel {
+    var navSelection: String? { selectedID }
+
+    func navTitle(selection: String) -> String {
+        prs.first { $0.id == selection }.map { "\($0.label) \($0.title)" } ?? "a PR"
+    }
+
+    var showsTitlebarHeader: Bool { selected != nil }
+}

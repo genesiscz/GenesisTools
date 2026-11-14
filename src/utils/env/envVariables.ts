@@ -276,8 +276,8 @@ export const env = {
         getMailEnvelopePath: () => getTrimmed("MAIL_ENVELOPE_PATH"),
         /** Set by GenesisTools.app per `tools` call: the id its app-perf.log line, the day log and profiling lines share. */
         getTraceId: () => getTrimmed("GENESIS_TOOLS_TRACE_ID"),
-        /** The resident hub server (`tools hub serve`) drains and exits above this physical footprint, in MB. */
-        getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 512),
+        /** The resident hub server (`tools hub serve`) drains and exits above this physical footprint, in MB; 0 = its default. */
+        getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 0),
         /** `GENESIS_HUB_SERVER=0` keeps a CLI command from asking the resident hub server first (the app's switch too). */
         hubServerEnabled: () => getTrimmed("GENESIS_HUB_SERVER") !== "0",
         getQdrantPort: () => parseIntEnv("GENESIS_QDRANT_PORT", 16_335),
@@ -376,6 +376,8 @@ export const env = {
         shouldRunLiveSmoke: () => isFlag("SHOPS_LIVE_SMOKE") || isFlag("RUN_LIVE_SMOKE"),
         shouldRunShopsLiveItesco: () => isFlag("SHOPS_LIVE_ITESCO"),
         getTestAudioFile: () => getTrimmed("TEST_AUDIO_FILE"),
+        /** `GENESIS_TOOLS_WRITE_GOLDEN`: a golden-file test writes its files instead of comparing them. */
+        shouldWriteGolden: () => isOptIn("GENESIS_TOOLS_WRITE_GOLDEN"),
         /**
          * `GENESIS_TOOLS_TEST_NOW`: an ISO instant a byte golden runs a child at, so a report that reads "today"
          * prints the same bytes on every day. Unset or unparseable: undefined, and the caller reads the real clock.

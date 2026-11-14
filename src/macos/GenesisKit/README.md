@@ -80,6 +80,28 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Sessions/Detail/` | `SessionDetailScreen`, its header and sidebar, `SessionSidebarSplit`, `TranscriptPaging` (first page 12, pages of 150, refresh to the end), `TranscriptBuildQueue` (one document build at a time, newest pending wins) |
 | `Markdown/` | the Genesis Markdown viewer. `Window/`: `MarkdownViewerApp.run(_:)` (a process whose only window is the viewer, its menu and URL queue), `MarkdownDocumentWindowController.shared.show(paths:focus:range:)`, `MarkdownDocumentsModel` + `MarkdownDocumentsView` (tabs, split, sidebar). `Views/`: `MarkdownWebView` (markdown-it, highlight.js, mermaid, offline; `MarkdownWebPage` for a host's own pane), the source editor, `MarkdownPreviewView` / `MarkdownContentView` + `MarkdownStyle` (native), toolbar, status bar, find bar, outline, go to, file tree and its search, conflict view, media and image viewer. `Document/`: links and line ranges, file ops, drop, export, properties, completion, merge, default app, dashboard share, task boxes and their atomic write. `Resources/webview` is the renderer; an installed app copies it to `Contents/Resources/webview`, read first |
 
+## The catalog and the looks
+
+`KitLook` (`GenesisKitBase/Style/KitLook.swift`) says how the kit's controls draw their surfaces. A control names the
+surface it is (`KitSurfaceRole`: well, thumb, primary, tinted, soft, ghost, plain, badge, wash) and its state, and
+the look answers with a fill, a stroke, a shadow and the label colours. A window picks a look with `.kitLook(_:)` on
+its root; the default, `classic`, is what the kit drew before looks existed. A new look is one case and one table
+(`KitLookTables.swift`). `KitHue` names a colour by its meaning (play, ask, done, care, danger, neutral).
+
+The catalog (`Sources/GenesisKitCatalog`) is the kit's picture book: one entry per component with its variants
+(states, sizes, props, hues), drawn once per look. Draw it with
+
+```bash
+bun run kit:catalog -- --out <dir>          # one PNG per component and look, and manifest.json
+bun run kit:catalog -- --probe <png>        # today's controls in a fixed layout
+```
+
+The command shows no window. `\.kitForcedInteraction` in the environment makes a kit button draw as under the
+pointer or pressed, which is how a picture shows those states. Before you change a control's drawing, draw the probe,
+change the code, draw it again and compare the two files: `classic` must not change by a pixel unless the change is
+meant. A control added to `Controls/` gets an entry in `KitCatalogEntries.swift`, or a line with the reason in
+`KitCatalogTests`.
+
 ## Components
 
 Every public component a host uses, one section per folder. An entry says what the component is for, lists its
@@ -93,7 +115,7 @@ count of the section.
 - [Charts](#charts) (15)
 - [Clicky](#clicky) (13)
 - [Cmux](#cmux) (6)
-- [Controls](#controls) (42)
+- [Controls](#controls) (43)
 - [Diff](#diff) (11)
 - [Disk](#disk) (10)
 - [Files](#files) (11)
@@ -1127,6 +1149,27 @@ IconButton(
 ) { openSettings() }
 ```
 
+#### `AutocompleteField` and `AutocompleteFolderField`
+
+`GenesisKitBase/Controls/`: a field that completes from `items`, `lazyItems` (read once) or `search` (per typed text, debounced), with the keyboard (Down, Up, Return, Tab, Escape), loading, no match and a failed read with Retry, drawn through `KitLook`; the folder field completes paths (`~`, `/`, hidden folders after a dot) and says when macOS keeps a folder from the app. The list floats over the page by default (`presentation: .floating`, a never-key child window of the field's window that follows the field and closes when the window stops being key, so nothing in the page moves); `presentation: .inPage` draws it in the page and pushes the content below down.
+
+#### `KitNumberField`
+
+`GenesisKitBase/Controls/KitNumberField.swift`: a whole number with its unit in one control ("− 48 hours +", "± 15 min"), drawn through `KitLook`. The number is a text field: Return or a click elsewhere commits, Escape puts the value back, a typed value outside the range lands on the nearest limit. Minus and plus step at the press and keep stepping while held (ten steps with Shift); Up and Down do the same. The binding gets one write for each gesture, never one for each step, and the control keeps one width for every value of its range. In a settings row use `NativeSettingsNumberPicker`, which draws it.
+
+- `title: String`: the accessibility label (the first, unlabeled parameter).
+- `value: Binding<Int>`, `in: ClosedRange<Int>`, `step: Int = 1`.
+- `prefix: KitNumberAdornment? = nil`, `suffix: KitNumberAdornment? = nil`: `.text("min")` never changes, `.counted("day")` reads "1 day" and "14 days" (`.counted("person", plural: "people")` for an irregular noun), `.symbol("timer")` is an SF Symbol.
+- `style: KitNumberFieldStyle = .stepper`: `.stepper` (minus and plus beside the number), `.chevrons` (two chevrons at the trailing edge, for a dense row), `.bare` (no buttons).
+- `size: KitControlSize = .regular`, `minWidth: CGFloat? = nil` (fields under each other take one value, so their buttons stand in two columns).
+- `identifier: String? = nil`: of the text field; the buttons are `<identifier>.decrement` and `<identifier>.increment`.
+
+```swift
+KitNumberField("Calendar slack", value: $slack, in: 0...120, prefix: .text("±"), suffix: .text("min"))
+```
+
+A settings row's glyph: `.nativeSettingsIcon("clock.arrow.circlepath", tint: KitHue.play.ink)` on a `NativeSettingsRow` or any row built on it draws a tinted tile before the title. Give it to every row of a card or to none.
+
 #### `GhostButton`
 
 A text action with an icon in a hairline outline and no fill, such as "Open in last pane". With `fullWidth` it stretches across its column, one action per row, for a narrow sidebar where side-by-side buttons squeezed each other's titles.
@@ -1602,6 +1645,55 @@ func confirmed(_ item: Item, token: String) {
 // In the view:
 List(items) { row($0) }
     .noticeStack(model.notices)
+```
+
+#### `FailureInline`, `FailureReporter` and `FailureReport.toolsCall`
+
+A load or an action that failed, shown where its data should be (Controls/FailureNotice/FailureInline.swift): the
+headline a person reads, one quiet line of what ran and how it ended, and **Try again** (when a retry is given),
+**Details** (the failure window, `FailureNoticePanel`, on this report: its summary, its log, Copy context for agents,
+Copy log, Open log) and **Report a bug** (the issue draft window). Never a raw error string in red.
+
+- `FailureInline(_ report:, form: .pane | .compact, identifier:, reporter: .shared, retry:)`. `.pane` stands in for a
+  whole pane, centred (the transcript's placeholder); `.compact` is one paragraph and a row of small buttons for a
+  strip, a row or a card, and it wraps under the buttons in a narrow row. The headline is announced to VoiceOver when
+  the view appears; the buttons are `KitButton`s with tooltips and identifiers (`<identifier>.retry|details|report`).
+- `FailureReporter.shared`, `@MainActor`: the one failure window and issue target for failures shown in place, so a hub
+  pane, a widget card and a settings page reach the same window. `prepare(_:)` starts at the failure, and
+  `showDetails(_:retry:)` and `reportBug(_:)` reuse that failure's captured context. `issueTarget`, `options` and
+  `environment` are closures a host or a test replaces; `defaultIssueTarget(defaults:dryRunKey:)` posts to
+  `FailureReporter.issueRepo` (the recorder uses it with its own dry-run switch).
+- `FailureCapture.enable()` is installed once by the app host. Failed `ToolsBridge` calls, including older callers
+  without a task ledger, and failures delivered or shown through the shared notice controls are captured before any Details click. A visible notice pins its first report across parent redraws, so it cannot launch triage on every render. A small report
+  is saved first under `logs/failure-reports/`, then bounded triage and nearby call logs enrich it atomically. The
+  archive keeps the failure time and context collection time separately. Credentials hidden in argv are masked in
+  persisted error text too. Tests and library hosts do not start capture unless they explicitly install it.
+- `NoticeFix.details(_ report:retry:)` and `StackedNotice.Action.details(_:retry:)`: "Details" on a notice (class B, an
+  action that failed); the notice stays.
+- `FailureReport.toolsCall(_ error:, outcome:, action:, call:, argv:, title:, area:, expected:)`: the one report of a
+  failed `tools` call. From a `ToolsBridgeError` (timeout, binary not found, refused), a non-zero exit with its stderr,
+  or a runner's own error for a call it killed, it makes the headline ("The transcript did not load: the tools call did
+  not answer in 30 s."), the quiet line ("`ai sessions tail` did not answer in 30 s."), a next step, the command as a
+  person types it (credentials hidden), the exit status and the day log. `addingCallLog(perfLog:window:)` reads, off
+  the main thread and from the file's last 2 MB, the app-perf.log lines that carry the call's trace id and every call
+  that ended in the 60 s before it; "Open log" goes to the call's own line. `deliver(_:isCurrent:)` shows a report at
+  once and again with its log. `FailureReport.unexpected(_ message:, outcome:, action:)` is the same for a failure
+  that is not a `tools` call (git, a decode).
+- Which call failed: bind a `ToolsCallLedger` around the work (`ledger.record { try await … }`, or `recordSync` on a
+  background thread) and pass `ledger.failed`. `ToolsBridge.run`, the one Swift `tools` client (it also asks a resident `ToolsServerClient`), notes every call's start
+  and end in the task's ledger (`ToolsCallTrace.ledger`, a task local; a queue hop must carry it by hand).
+
+```swift
+let ledger = ToolsCallLedger()
+do {
+    rows = try await ledger.record { try await client.fetch() }
+} catch {
+    FailureReport.toolsCall(error, outcome: "The transcript did not load", action: "Open the session's transcript",
+                            call: ledger.failed, area: "hub")
+        .deliver({ failure = $0 }, isCurrent: { failure == $0 })
+}
+// in the view
+if let failure { FailureInline(failure, form: .pane) { reload() } }
 ```
 
 #### `NewItemsPill`
@@ -10427,7 +10519,9 @@ Methods:
 - `destination(_ mode: String)`: `"resume"` opens the session through `openDestination`. `"new"` writes a handoff file and passes its path to `openDestination`. Any other mode saves the handoff and opens the file.
 - `openCard(_ card: WidgetCard)`, `markAllRead()`, `openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil)`: open an inbox card, clear the badges, or jump to the newest waiting or unread item.
 - `inboxFor(_ key: String) -> WidgetInboxSession?`, `inboxPulseFor(_ key: String) -> Int`: the inbox entry and arrival count of one session.
-- `updatePreferences(_ patch: [String: WidgetJSON], saved: (() -> Void)? = nil, failed: (() -> Void)? = nil)`: shows the patch at once and writes it after a short pause, merged with later patches. `saved` or `failed` runs when the write that carries it ends.
+- `alertPopup: WidgetAlertPopup`: the alert popup, an observable object of its own: `item` (the alert shown), `queue` (the alerts waiting behind it), `outcome` (what a send from it did) and `many` (listed, one after another, or the newest replaces). Its events return the preview and the module the widget shows for it, and the model applies them at one hand-off. `dismissPeek(all:)` and `showWaitingPeek(_:)` are the actions a view calls.
+- `preferences: WidgetPreferences`: the stored settings on screen; the hub's defaults (`WidgetPreferences.hubDefaults`) until the first snapshot.
+- `writePreferences(_ change: (inout WidgetPreferences) -> Void, saved: (() -> Void)? = nil, failed: (() -> Void)? = nil)`: changes fields of the settings through `preferenceStore` (`WidgetPreferencesStore`). Only the keys whose value changed are sent; the change shows at once and is written after a short pause, merged with later changes. `saved` or `failed` runs when the write that carries it ends.
 - `action(_ value: WidgetJSON, failed: (() -> Void)? = nil, completed: (() -> Void)? = nil)`: sends one raw `hub widget call` action. Actions run in order.
 - `receiptContext(for card: WidgetCard) async throws -> WidgetReceiptContext`: the transcript window around a card's source. Results are cached for 15 seconds.
 
@@ -10575,12 +10669,11 @@ Helpers for the "show only these sessions" filter, which is the `sessions` list 
 
 - `adding(_ key: String, to keys: [String]) -> [String]`: the list with the key appended, unless it is already there.
 - `removing(_ key: String, from keys: [String]) -> [String]`: the list without the key.
-- `patch(_ keys: [String]) -> [String: WidgetJSON]`: the preferences patch that stores the list.
 - `candidates(_ sessions: [WidgetSession], excluding keys: [String], query: String, limit: Int = 8) -> [WidgetSession]`: sessions that can still be added, newest first. With no query only top-level sessions appear. A query also matches sub-agents by title, project or provider.
 
 ```swift
 let keys = WidgetSessionFilter.adding("example-session-key", to: [])
-model.updatePreferences(WidgetSessionFilter.patch(keys))
+model.writePreferences { $0.sessions = keys }
 let more = WidgetSessionFilter.candidates(model.sessions, excluding: keys, query: "api")
 ```
 
@@ -10864,24 +10957,23 @@ for card in unanswered {
 
 #### `WidgetPreferences`
 
-The user's stored widget settings. Change them with `WidgetModel.updatePreferences(_:)`.
+The user's stored widget settings. The hub resolves every default before a snapshot leaves it, so the fields are non-optional except `voiceAccount`, `voiceModel` and `usage`. `hubDefaults` is the value before the first snapshot (a test holds it to the hub's `preferences-defaults.json`). Change them with `WidgetModel.writePreferences(_:)`. A snapshot whose preferences do not decode keeps the last good ones (`WidgetState.preferencesUnreadable`).
 
 - `excludedKeys: [String]`, `projects: [String]`, `sessions: [String]`: session and project filters. A non-empty `sessions` list is an allowlist. The Swift views do not read `excludedKeys`.
 - `showChanges: Bool`: shows the Changes tab.
-- `showWidget: Bool?`: "Show the widget". Nil means off.
+- `showWidget: Bool`: "Show the widget".
 - `placement: String`: `"both"`, `"top"` or `"side"`. `side: String`: `"left"` or `"right"`.
-- `topModules: [String]?`, `sideGroups: [[String]]?`, `sideLayout: String?`, `sidePosition: Double?`, `hoverPreviews: Bool?`: the layout inputs. `layout` returns them as a `WidgetLayoutConfiguration` with defaults filled in. `sideLayout` is `"joined"` or `"separated"`.
-- `sideStyle: String?`, `joinedEdges: Bool?`, `glassEffect: Bool?`: look of the side strip (`"classic"` is a known style).
-- `display: String?`: the screen id (see `WidgetCoordinator.id(_:)`). Empty or nil means the main display.
-- `providers: [String]?`: which sources appear (`"claude"`, `"codex"`, `"grok"`, `"unknown"`). Nil or empty shows every source.
+- `topModules: [String]`, `sideGroups: [[String]]`, `sideLayout: String`, `sidePosition: Double`, `hoverPreviews: Bool`: the layout inputs. `layout` returns them as a `WidgetLayoutConfiguration`. `sideLayout` is `"joined"` or `"separated"`.
+- `sideStyle: String`, `joinedEdges: Bool`, `glassEffect: Bool`: look of the side strip (`"classic"` is a known style).
+- `display: String`: the screen id (see `WidgetCoordinator.id(_:)`). Empty means the main display.
+- `providers: [String]`: which sources appear (`"claude"`, `"codex"`, `"grok"`, `"unknown"`). Empty shows every source.
 - `quietSeconds: Int`: seconds an open Agents panel waits, with no activity and an empty draft, before it collapses. The model uses at least 5.
 - `voiceProvider: String`, `voiceAccount: String?`, `voiceModel: String?`, `voiceLanguage: String`: the speech settings for voice notes.
 
 ```swift
-let preferences = model.snapshot?.state.preferences
-let side = preferences?.side ?? "right"
-let layout = preferences?.layout ?? WidgetLayoutConfiguration()
-model.updatePreferences(["placement": "top"])
+let side = model.preferences.side
+let layout = model.preferences.layout
+model.writePreferences { $0.placement = "top" }
 ```
 
 #### `WidgetOutgoing`
@@ -10925,10 +11017,8 @@ A small JSON value type for the hub protocol. It is `Codable`, `Equatable`, and 
 - `static func value<T: Encodable>(_ value: T) throws -> WidgetJSON`: encodes any `Encodable` into a `WidgetJSON`.
 
 ```swift
-let patch: [String: WidgetJSON] = [
-    "hoverPreviews": false, "sidePosition": .number(0.4), "topModules": ["agents"],
-]
-model.updatePreferences(patch)
+let request: WidgetJSON = ["action": "selection", "key": "example-session-key"]
+model.action(request)
 ```
 
 #### `WidgetAsset`

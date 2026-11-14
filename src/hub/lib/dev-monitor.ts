@@ -18,7 +18,8 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { listProcessRows } from "@genesiscz/utils/process/processes";
+import { darwinKernel, processPlatform } from "@genesiscz/utils/process/os";
+import { listProcessRows, readProcess } from "@genesiscz/utils/process/processes";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -111,29 +112,44 @@ export interface NamedProcess {
     command: string;
 }
 
-/** One process snapshot for a polling pass, only when a qualifying timer names a PID. */
+/**
+ * The command of each pid from the kernel, one small read per pid and no `ps`; a pid that is gone is absent. Every
+ * polling pass with a slow timer started a `ps` of the whole table before (2026-11-10), in each session that ran the
+ * monitor. Where the kernel reader does not work on macOS, one `ps` with a 1 s limit, as before.
+ */
+async function readNamedProcesses(pids: number[]): Promise<NamedProcess[]> {
+    if (processPlatform() === "darwin" && !darwinKernel()) {
+        return listProcessRows({ timeoutMs: 1000 });
+    }
+
+    return pids.flatMap((pid) => {
+        const entry = readProcess(pid);
+        return entry ? [{ pid, command: entry.command ?? entry.name }] : [];
+    });
+}
+
+/** One read of the named processes for a polling pass, only when a qualifying timer names a PID. */
 export async function classifyProfileLines({
     lines,
     options = DEFAULT_CLASSIFY,
-    readProcesses = listProcessRows,
+    readProcesses = readNamedProcesses,
 }: {
     lines: string[];
     options?: ClassifyOptions;
-    readProcesses?: (options?: { timeoutMs?: number }) => Promise<NamedProcess[]>;
+    readProcesses?: (pids: number[]) => Promise<NamedProcess[]>;
 }): Promise<DevEvent[]> {
     const eligible = lines.filter((line) => classifyProfileLine(line, options) !== null);
 
-    if (!eligible.some((line) => profilePattern.exec(line)?.[6])) {
+    const pids = [...new Set(eligible.flatMap((line) => profilePattern.exec(line)?.[6] ?? []).map(Number))];
+
+    if (pids.length === 0) {
         return eligible
             .map((line) => classifyProfileLine(line, options))
             .filter((event): event is DevEvent => event !== null);
     }
 
     const processNames = new Map(
-        (await readProcesses({ timeoutMs: 1000 })).map((row) => [
-            row.pid,
-            `pid ${row.pid} ${shortCommand(row.command)}`,
-        ])
+        (await readProcesses(pids)).map((row) => [row.pid, `pid ${row.pid} ${shortCommand(row.command)}`])
     );
     return eligible
         .map((line) => classifyProfileLine(line, { ...options, processNames }))

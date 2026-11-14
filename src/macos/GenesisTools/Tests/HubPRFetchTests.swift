@@ -124,6 +124,30 @@ final class HubPRFetchTests: XCTestCase {
         XCTAssertNil(ReviewRemoteHead(launchArguments: ["--review", "--repo", "/work/app"]), "a worktree PR has no remote head")
     }
 
+    func testReviewLaunchReadsBackTheFlagsItWritesForEveryTarget() {
+        let targets: [ReviewLaunch.Target] = [
+            .folder,
+            .commit(sha: "aaaa1111bbbb", label: "fix the widget"),
+            .commit(sha: "aaaa1111bbbb", label: nil),
+            .range(base: "base0", head: "aaaa1111bbbb", label: "!12 Widgets"),
+            .range(base: "base0", head: "aaaa1111bbbb", label: nil),
+        ]
+        for target in targets {
+            let args = ReviewLaunch.launchArguments(repo: "/work/app", target: target)
+            XCTAssertEqual(args.first, "--review", "\(target)")
+            let launch = ReviewLaunch(args)
+            XCTAssertEqual(launch.target, target, "\(args)")
+            XCTAssertEqual(launch.repoPath, "/work/app", "\(args)")
+            XCTAssertNil(launch.prRef, "\(args)")
+            XCTAssertNil(launch.proposalPath, "\(args)")
+
+            let withPR = ReviewLaunch(ReviewLaunch.launchArguments(repo: "/work/app", target: target, pr: "group/app!12", proposal: "/drafts/p.json"))
+            XCTAssertEqual(withPR.target, target)
+            XCTAssertEqual(withPR.prRef, "group/app!12")
+            XCTAssertEqual(withPR.proposalPath, "/drafts/p.json")
+        }
+    }
+
     func testOnlyCommitAndRangeScopesWorkWithoutTheCheckout() {
         XCTAssertFalse(DiffScope.range(base: "a", head: "b", label: "l").readsTheCheckout)
         XCTAssertFalse(DiffScope.commit(sha: "a", title: "t").readsTheCheckout)

@@ -181,7 +181,7 @@ final class HubNavStore: NavigationHistoryStore, Sendable {
     }
 
     func load() throws -> [NavigationEntry<HubNavTarget>] {
-        try Self.decode(ToolsCLIRunner.run(["hub", "nav", "list", "--json", "--limit", String(limit)]))
+        try Self.decode(HubSource.bridge.output(["hub", "nav", "list", "--json", "--limit", String(limit)]))
     }
 
     /// `tools hub nav list --json`: `{ entries: [{ id, at (ms), actor, title, target, note?, from? }], keep, path }`.
@@ -193,11 +193,11 @@ final class HubNavStore: NavigationHistoryStore, Sendable {
     }
 
     func record(_ entry: NavigationEntry<HubNavTarget>, keep: Int) throws {
-        _ = try ToolsCLIRunner.run(try Self.recordArguments(entry, keep: keep))
+        _ = try HubSource.bridge.output(try Self.recordArguments(entry, keep: keep))
     }
 
     func setLimit(_ keep: Int) throws {
-        _ = try ToolsCLIRunner.run(Self.limitArguments(keep))
+        _ = try HubSource.bridge.output(Self.limitArguments(keep))
     }
 
     static func limitArguments(_ keep: Int) -> [String] {

@@ -136,3 +136,6 @@ Every number above has its method and commit in `references/` and in the ledger.
   multiply checker work (with before and after numbers), and what a smaller program misses.
 - `references/compression.md`: zstd levels and speeds, the Bun 1.3.13 first-frame trap, seekable frames, reading
   compressed data within the 30% budget (measured per real command), backpressure for a spawned reader, APFS clones.
+- `references/loaded-machine.md`: what a load average of 500 is made of (runnable processes by owner, not CPU), why
+  a `ps` or `lsof` read can hang for the whole machine and the rules that follow (no spawn on a timer, no retry
+  after a timeout, a load guard for periodic tasks), the measured cost of the Bash hooks, and traps met under load.

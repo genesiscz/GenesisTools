@@ -104,7 +104,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         // taskpolicy execs the command in place: the same pid, so stop() and the exit report are unchanged.
         priority.configure(process, plan: plan)
         var environment = ToolsBridge.scrubbedEnvironment()
-        for (key, value) in extraEnv where ToolsBridge.envAllowlist.contains(key) {
+        for (key, value) in extraEnv where ToolsBridge.allowsEnvironmentKey(key) {
             environment[key] = value
         }
         environment[ToolsCallTrace.environmentKey] = traceId

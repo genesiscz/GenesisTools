@@ -7,7 +7,12 @@ import { HUB_SERVER_DOORS } from "./doors";
 import { hubServerSocketPath } from "./paths";
 import { startHubServer } from "./server";
 
-const DEFAULT_MAX_MB = 512;
+/**
+ * The selected session's folds live in the server's door worker, so one very large session (749 MB with 151
+ * sub-agents: about 1 GB in one process, 2026-11-11) went over a 512 MB cap, which then dropped the folds and made
+ * every next ask cold. `GENESIS_HUB_SERVER_MAX_MB` sets another cap.
+ */
+const DEFAULT_MAX_MB = 1536;
 const IDLE_MS = 10 * 60_000;
 const CHECK_EVERY_MS = 60_000;
 const CALL_TIMEOUT_MS = 30_000;

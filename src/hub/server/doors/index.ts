@@ -1,3 +1,4 @@
+import { laneRunner, offEventLoop } from "../door-runner";
 import { agentsCountsDoor, agentsMailDoor, agentsTreeDoor, subagentsDoor } from "./agents";
 import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./changes";
 import {
@@ -22,16 +23,19 @@ import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./widget
  * writes durable state is allowed only when the write is idempotent (keyed or set, never appended): a
  * dropped connection sends the same argv to the process, which must then write the same thing again
  * (`hub nav record`, `hub nav configure`, the state actions of `hub widget call`).
+ *
+ * A door whose first ask of a large session holds the event loop goes through `offEventLoop`: its work then runs on
+ * the door worker, and the other doors keep answering (`bun scripts/benchmarks/hub/big-session.ts` measures each).
  */
 export const HUB_SERVER_DOORS: readonly Door[] = [
     transcriptFetchDoor,
     transcriptLiveDoor,
     agentsCountsDoor,
     agentsMailDoor,
-    agentsTreeDoor,
-    subagentsDoor,
-    agentsToolChangesDoor,
-    agentsTurnChangesDoor,
+    offEventLoop(agentsTreeDoor, () => laneRunner("agents")),
+    offEventLoop(subagentsDoor),
+    offEventLoop(agentsToolChangesDoor),
+    offEventLoop(agentsTurnChangesDoor),
     forecastDoor,
     procsDoor,
     stuckDoor,

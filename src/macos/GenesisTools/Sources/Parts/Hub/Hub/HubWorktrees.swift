@@ -144,18 +144,17 @@ enum WorktreeDiscovery {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", cwd] + args
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        process.standardInput = FileHandle.nullDevice
+        // A `git` that does not end is a failed `git`: it had no limit, and one that hung held its thread for good.
+        guard let capture = try? process.runCapturing(timeout: HubGitLimit.seconds), capture.status == 0 else { return nil }
+        return String(decoding: capture.stdout, as: UTF8.self)
     }
+}
+
+/// The limit of one small `git` read of the hub (`rev-parse`, `worktree list`, `merge-base`, `log -1`): they take
+/// 13 to 40 ms, so 10 s without an end is a `git` that hangs.
+enum HubGitLimit {
+    static let seconds: TimeInterval = 10
 }
 
 // MARK: - Launching sessions in cmux
@@ -186,14 +185,14 @@ enum HubMarkdownExport {
               let json = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         else { return "Could not build the JSON for json2md." }
 
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/hub/exports", isDirectory: true)
+        let dir = GenesisToolsHome.url("hub/exports", isDirectory: true)
         let input = dir.appendingPathComponent("\(fileStem).json")
         let output = dir.appendingPathComponent("\(fileStem).md")
         do {
             let markdown = try await Task.detached(priority: .userInitiated) { () throws -> Data in
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 try json.write(to: input, options: .atomic)
-                let markdown = try ToolsCLIRunner.run(["json2md", input.path, "--title", title])
+                let markdown = try HubSource.bridge.output(["json2md", input.path, "--title", title])
                 try markdown.write(to: output, options: .atomic)
                 return markdown
             }.value
@@ -206,180 +205,6 @@ enum HubMarkdownExport {
         } catch {
             return "json2md failed: \(error)"
         }
-    }
-}
-
-/// Synchronous `tools` runner (argv, no shell) for small one-shot calls from button actions.
-/// A child still running after `runCapturing`'s 60 s default is killed, and the call throws.
-enum ToolsCLIRunner {
-    static func run(_ args: [String]) throws -> Data {
-        try output(of: capture(args), args)
-    }
-
-    /// A capture's stdout, or the error `run` throws for a nonzero exit.
-    static func output(of result: ProcessCapture, _ args: [String]) throws -> Data {
-        if result.status != 0 {
-            let message = String(decoding: result.stderr, as: UTF8.self)
-            throw ReviewError.git("tools \(args.first ?? "") exited \(result.status): \(message.trimmed.suffix(300))")
-        }
-
-        return result.stdout
-    }
-
-    /// "tools question inbox send exited 1: <stderr>": the raw detail behind a failed call's Details.
-    static func exitDetail(_ capture: ProcessCapture, _ args: [String]) -> String {
-        "tools \(args.prefix(3).joined(separator: " ")) exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)"
-    }
-
-    /// The exit status and both streams, for verbs that print a JSON error on stdout when they
-    /// fail (`tools hub pr … --json` prints `{error, code}` and exits 1).
-    static func capture(_ args: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
-        // The resident hub server first (src/hub/server): no process when it has a door for this argv.
-        // Its span is `srv.…`, so app-perf.log shows which path answered.
-        let traceId = ToolsCallTrace.newId()
-        let started = Date()
-        ToolsCallTrace.began(traceId: traceId, argv: args, started: started)
-        if let server = HubSource.server {
-            let start = CFAbsoluteTimeGetCurrent()
-            if let result = server.callSync(argv: args, timeout: timeout, traceId: traceId) {
-                return serverCapture(result, args, traceId: traceId, started: started, since: start)
-            }
-        }
-
-        return try processCapture(args, timeout: timeout, traceId: traceId, started: started)
-    }
-
-    /// A server door's answer as a capture, with its perf span and its trace line.
-    private static func serverCapture(_ result: ToolsRunResult, _ args: [String], traceId: String, started: Date,
-                                      since start: CFAbsoluteTime) -> ProcessCapture {
-        PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
-        ToolsCallTrace.record(
-            traceId: traceId, via: "server", argv: args, started: started,
-            exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
-        )
-        return ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
-    }
-
-    /// `capture` that its task can stop: a server call is cancelled there, and a running process is terminated (the
-    /// `tools` wrapper passes the signal to the tool). A cancelled task throws `CancellationError`, never a capture.
-    static func captureCancellable(_ args: [String], timeout: TimeInterval = 60) async throws -> ProcessCapture {
-        let run = try await captureStoppable(args, timeout: timeout)
-        try Task.checkCancellation()
-        return run.capture
-    }
-
-    /// `capture` for work a stop may come too late for (F19's send). A cancel of the calling task before the child
-    /// starts throws `CancellationError`; a cancel while it runs terminates it, waits for its end and returns what it
-    /// printed, with `stopped` set. The tool decides what the stop undoes: a widget send honors it only before it
-    /// writes (`cancelPoint`, src/hub/lib/widget/staged.ts), so a send that already typed finishes and says so.
-    /// A server door is one idempotent write, so a cancel there only stops the wait for its answer.
-    static func captureStoppable(_ args: [String], timeout: TimeInterval = 60) async throws -> (capture: ProcessCapture, stopped: Bool) {
-        let traceId = ToolsCallTrace.newId()
-        let started = Date()
-        ToolsCallTrace.began(traceId: traceId, argv: args, started: started)
-        if let server = HubSource.server {
-            let start = CFAbsoluteTimeGetCurrent()
-            let result = await server.call(argv: args, timeoutSeconds: Int(timeout), traceId: traceId)
-            try Task.checkCancellation()
-            if let result {
-                return (serverCapture(result, args, traceId: traceId, started: started, since: start), false)
-            }
-        }
-
-        try Task.checkCancellation()
-        let run = try await runStoppable { handle in
-            try processCapture(args, timeout: timeout, traceId: traceId, started: started, handle: handle)
-        }
-        return (run.value, run.stopped)
-    }
-
-    /// Runs `work` off the main thread; a cancel of the calling task stops the process `work` hands its handle,
-    /// and the call throws `CancellationError` once `work` returned.
-    static func runCancellable<T: Sendable>(_ work: @escaping @Sendable (ProcessCancelHandle) throws -> T) async throws -> T {
-        let run = try await runStoppable(work)
-        try Task.checkCancellation()
-        return run.value
-    }
-
-    /// `runCancellable` that returns what `work` returned also after a cancel: `stopped` says a cancel came.
-    static func runStoppable<T: Sendable>(
-        _ work: @escaping @Sendable (ProcessCancelHandle) throws -> T
-    ) async throws -> (value: T, stopped: Bool) {
-        let handle = ProcessCancelHandle()
-        // The queue hop leaves the task: the caller's call ledger goes along by hand.
-        let ledger = ToolsCallTrace.ledger
-        let value = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(with: Result { try ToolsCallTrace.$ledger.withValue(ledger) { try work(handle) } })
-                }
-            }
-        } onCancel: {
-            handle.cancel()
-        }
-        return (value, handle.cancelled)
-    }
-
-    private static func processCapture(_ args: [String], timeout: TimeInterval, traceId: String, started: Date,
-                                       handle: ProcessCancelHandle? = nil) throws -> ProcessCapture {
-        let span = HubPerf.begin("tools.\(args.prefix(3).joined(separator: "."))")
-        defer { span.end() }
-        // Said plainly, as ToolsBridge.run says it: a missing path reached the hub as Cocoa's "The file tools doesn't exist".
-        let binary = HubSource.bridge.binaryPath
-        guard ToolsBridge.isExecutableFile(binary) else { throw ToolsBridgeError.binaryNotFound(binary) }
-        let process = Process()
-        let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: args)
-        process.executableURL = plan.executable
-        process.currentDirectoryURL = plan.workingDirectory
-        process.arguments = plan.arguments
-        process.standardInput = FileHandle.nullDevice
-        var environment = ProcessInfo.processInfo.environment
-        environment[ToolsCallTrace.environmentKey] = traceId
-        if args.prefix(2) == ["hub", "pr"] {
-            // Every `tools hub pr` phase, child process, forge request and cache lookup goes to
-            // <date>-profiling.log with this call's trace id (scopes: src/utils/profile/scopes.ts).
-            environment["PROFILE"] = "hub-pr,spawn,forge-http,cache"
-            environment["PROFILE_TO_STDERR"] = "0"
-        }
-        process.environment = environment
-        do {
-            let capture = try process.runCapturing(timeout: timeout, afterStart: handle.map { handle in { handle.adopt(process) } })
-            ToolsCallTrace.record(
-                traceId: traceId, via: handle?.cancelled == true ? "process-cancelled" : "process", argv: args, started: started,
-                exit: capture.status, outBytes: capture.stdout.count, stderr: String(decoding: capture.stderr.suffix(400), as: UTF8.self)
-            )
-            return capture
-        } catch let timeout as ProcessTimeout {
-            ToolsCallTrace.record(
-                traceId: traceId, via: "process-timeout", argv: args, started: started, exit: -1, outBytes: 0, stderr: ""
-            )
-            throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) did not exit within \(Int(timeout.seconds)) s and was killed")
-        }
-    }
-}
-
-/// The running child of a cancellable capture. A cancel before the child started terminates it as soon as it does.
-final class ProcessCancelHandle: @unchecked Sendable {
-    private let lock = NSLock()
-    private var process: Process?
-    private var _cancelled = false
-
-    var cancelled: Bool { lock.withLock { _cancelled } }
-
-    func adopt(_ process: Process) {
-        let stop = lock.withLock { () -> Bool in
-            self.process = process
-            return _cancelled
-        }
-        if stop { process.terminate() }
-    }
-
-    func cancel() {
-        let running = lock.withLock { () -> Process? in
-            _cancelled = true
-            return process
-        }
-        if let running, running.isRunning { running.terminate() }
     }
 }
 

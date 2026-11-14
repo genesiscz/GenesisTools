@@ -62,7 +62,7 @@ function directoryNow(path: string): boolean {
 interface Touch {
     path: string;
     via: ChangeVia;
-    order: number;
+    order: { at: number; seq: number };
     toolUseId: string;
     agentId: string | null;
     command?: string;
@@ -199,7 +199,7 @@ function workRoots(input: {
 function shellTouches(args: {
     call: SessionToolCall;
     rows: LoggedChange[];
-    order: (at: number | null) => number;
+    order: (at: number | null) => Touch["order"];
     rules: PathRuleContext;
     turn: TurnContext;
     logCovers: boolean;
@@ -300,7 +300,7 @@ function shellTouches(args: {
     return touches;
 }
 
-function fileTouch(call: SessionToolCall, via: "edit" | "write" | "notebook", order: number): Touch {
+function fileTouch(call: SessionToolCall, via: "edit" | "write" | "notebook", order: Touch["order"]): Touch {
     const path = call.filePath ?? "";
 
     return {
@@ -394,7 +394,7 @@ function mergeKept(path: string, touches: Touch[], blobs: Map<string, Buffer>): 
 function mergeTurn(turn: TurnChanges, touches: Touch[], blobs: Map<string, Buffer>): void {
     const byPath = new Map<string, Touch[]>();
 
-    for (const touch of [...touches].sort((a, b) => a.order - b.order)) {
+    for (const touch of [...touches].sort((a, b) => a.order.at - b.order.at || a.order.seq - b.order.seq)) {
         const list = byPath.get(touch.path) ?? [];
         list.push(touch);
         byPath.set(touch.path, list);
@@ -720,8 +720,8 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     const firstLog = rows.reduce((min, row) => Math.min(min, Date.parse(row.ts)), Number.POSITIVE_INFINITY);
     let counter = 0;
     // Touches sort by when their call started (subagent calls interleave with the main thread's),
-    // then by discovery order within one call.
-    const order = (at: number | null) => (at ?? 0) * 1000 + (counter++ % 1000);
+    // then by discovery order within one millisecond.
+    const order = (at: number | null): Touch["order"] => ({ at: at ?? 0, seq: counter++ });
     const touchesByTurn = new Map<string, Touch[]>();
     const push = (turnId: string, touches: Touch[]) => {
         const list = touchesByTurn.get(turnId) ?? [];

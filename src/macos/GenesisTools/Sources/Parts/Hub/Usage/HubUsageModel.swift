@@ -182,7 +182,7 @@ final class HubUsageModel: ObservableObject {
 
     /// The hub's runner: the resident server when it has the door, else a `tools` process.
     nonisolated static let hubClient = UsageClient { argv in
-        try await Task.detached(priority: .userInitiated) { try ToolsCLIRunner.run(argv) }.value
+        try await Task.detached(priority: .userInitiated) { try HubSource.bridge.output(argv) }.value
     }
 
     var settings: UsageSettings { preferences.settings }
@@ -524,4 +524,16 @@ final class HubUsageModel: ObservableObject {
         rebuildGeneration += 1
         Task { await rebuild() }
     }
+}
+
+/// The Usage mode's answers to the hub (Hub/HubModeModel.swift); `reload()` is the model's own.
+extension HubUsageModel: HubModeModel {
+    var navSelection: String? { place.selection }
+
+    func navTitle(selection: String) -> String {
+        let named = HubUsagePlace(selection: selection)
+        return "Usage: " + (named?.session.map { "session " + $0.id.prefix(8) } ?? named?.section.title ?? selection)
+    }
+
+    var showsTitlebarHeader: Bool { true }
 }

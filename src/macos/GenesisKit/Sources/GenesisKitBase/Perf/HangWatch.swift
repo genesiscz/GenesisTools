@@ -401,14 +401,21 @@ public enum HangWatch {
     /// The busiest processes on the Mac when a stall comes with a high load average. On 2026-11-02 the load went to
     /// 160-281 for 12 minutes with stalls of 0.5-1.2 s, and nothing in the logs named the process: `load=` says how
     /// busy the machine is, not who. One `ps` per minute at most, off the main thread, killed after 3 s.
+    /// It stays `ps`: the kernel gives this user no CPU figure for another user's process (WindowServer,
+    /// mediaanalysisd), and `ps` is setuid. After a `ps` that failed, the next one waits `failureCooldown`: a `ps`
+    /// killed at 3 s means the process table is slow for every reader, and on 2026-11-10 this probe was killed 41
+    /// times in two hours, up to once a minute, while that lasted.
     public enum LoadTop {
         /// Below this load the stall line's `load=` is enough; the probe adds no work.
         public static let threshold: Double = 100
         public static let cooldown: CFAbsoluteTime = 60
+        /// The wait after a `ps` that failed or was killed at `timeout`.
+        public static let failureCooldown: CFAbsoluteTime = 600
         public static let count = 5
         public static let timeout: TimeInterval = 3
         private static let lock = NSLock()
         private nonisolated(unsafe) static var lastAt: CFAbsoluteTime = 0
+        private nonisolated(unsafe) static var failedAt: CFAbsoluteTime?
         private static let queue = DispatchQueue(label: "HangWatch.LoadTop", qos: .utility)
 
         /// Logs `load-top` after a stall line when `load` is past the threshold and the last probe is a minute old.
@@ -416,14 +423,29 @@ public enum HangWatch {
         public static func noteStall(load: Double, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
             guard load >= threshold else { return }
             lock.lock()
-            let due = now - lastAt >= cooldown
+            let due = isDue(now: now, lastAt: lastAt, failedAt: failedAt)
             if due { lastAt = now }
             lock.unlock()
             guard due else { return }
-            queue.async { PerfLog.mark(line(load: load)) }
+            queue.async {
+                let result = probe(load: load)
+                lock.lock()
+                failedAt = result.failed ? now : nil
+                lock.unlock()
+                PerfLog.mark(result.failed ? result.text + String(format: "; next probe in %.0f s", failureCooldown)
+                                           : result.text)
+            }
         }
 
-        static func line(load: Double) -> String {
+        /// A minute after the last probe, and `failureCooldown` after the last one whose `ps` failed.
+        static func isDue(now: CFAbsoluteTime, lastAt: CFAbsoluteTime, failedAt: CFAbsoluteTime?) -> Bool {
+            if let failedAt, now - failedAt < failureCooldown { return false }
+            return now - lastAt >= cooldown
+        }
+
+        /// One `ps`, as the log line; `failed` when it gave no listing (it could not start, exited non-zero or was
+        /// killed at `timeout`).
+        static func probe(load: Double) -> (text: String, failed: Bool) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/ps")
             // `-r` sorts by %cpu, `comm` is the executable alone (no arguments, so no secrets on the line).
@@ -431,12 +453,12 @@ public enum HangWatch {
             do {
                 let capture = try process.runCapturing(timeout: timeout)
                 guard capture.status == 0 else {
-                    return String(format: "load-top load=%.1f: ps failed: exit %d", load, capture.status)
+                    return (String(format: "load-top load=%.1f: ps failed: exit %d", load, capture.status), true)
                 }
                 let top = summary(psOutput: String(decoding: capture.stdout, as: UTF8.self), limit: count)
-                return String(format: "load-top load=%.1f: ", load) + (top.isEmpty ? "ps listed nothing" : top)
+                return (String(format: "load-top load=%.1f: ", load) + (top.isEmpty ? "ps listed nothing" : top), false)
             } catch {
-                return String(format: "load-top load=%.1f: ps failed: ", load) + "\(error)"
+                return (String(format: "load-top load=%.1f: ps failed: ", load) + "\(error)", true)
             }
         }
 

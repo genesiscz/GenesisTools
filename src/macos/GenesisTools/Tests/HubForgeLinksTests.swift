@@ -6,15 +6,15 @@ import XCTest
 /// The web pages the hub links labels to (Hub/HubForgeLinks.swift), and the rule that keeps the
 /// instant tooltip off a control whose menu or popover a click just opened (Hub/HubTooltipGuard.swift).
 final class HubForgeLinksTests: XCTestCase {
-    private let github = ForgeWeb(kind: "github", web: "https://github.com/acme/web")!
-    private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.test:8443/group/sub/app")!
+    private let github = ForgeWeb(kind: .github, web: "https://github.com/acme/web")!
+    private let gitlab = ForgeWeb(kind: .gitlab, web: "https://gitlab.example.test:8443/group/sub/app")!
 
     func testOnlyGitHubAndGitLabProjectsGetPages() {
-        XCTAssertNil(ForgeWeb(kind: "bitbucket", web: "https://bitbucket.org/acme/web"))
+        XCTAssertNil(ForgeWeb(kind: Forge(kind: "bitbucket"), web: "https://bitbucket.org/acme/web"))
         XCTAssertNil(ForgeWeb(kind: nil, web: "https://github.com/acme/web"))
-        XCTAssertNil(ForgeWeb(kind: "github", web: nil))
-        XCTAssertNil(ForgeWeb(kind: "github", web: "https://github.com"), "a host without a project")
-        XCTAssertEqual(ForgeWeb(kind: "github", web: "https://github.com/acme/web/")?.project, "https://github.com/acme/web")
+        XCTAssertNil(ForgeWeb(kind: .github, web: nil))
+        XCTAssertNil(ForgeWeb(kind: .github, web: "https://github.com"), "a host without a project")
+        XCTAssertEqual(ForgeWeb(kind: .github, web: "https://github.com/acme/web/")?.project, "https://github.com/acme/web")
     }
 
     func testUsersLiveAtTheHostRoot() {

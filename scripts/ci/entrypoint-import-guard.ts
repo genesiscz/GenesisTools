@@ -35,6 +35,7 @@
  * `src/<tool>/lib/` and import it from there.
  */
 import { posix } from "node:path";
+import { spawnWithDeadline } from "./spawn-deadline";
 
 /** Top-level invocations that hand control to the CLI. */
 const RUNNER_CALL = /^\s*(?:await\s+)?(?:runTool\s*\(|main\s*\(\s*\)|program\s*\.\s*parse(?:Async)?\s*\()/;
@@ -46,7 +47,7 @@ const RUNNER_CALL = /^\s*(?:await\s+)?(?:runTool\s*\(|main\s*\(\s*\)|program\s*\
  * files the same way and never hung.
  */
 async function trackedFiles(pattern: string): Promise<string[]> {
-    const result = Bun.spawnSync(["git", "ls-files", pattern], { stdout: "pipe", stderr: "pipe" });
+    const result = spawnWithDeadline(["git", "ls-files", pattern]);
 
     if (result.exitCode !== 0) {
         console.error(`::error:: \`git ls-files\` failed (exit ${result.exitCode}) — refusing to report a clean scan.`);

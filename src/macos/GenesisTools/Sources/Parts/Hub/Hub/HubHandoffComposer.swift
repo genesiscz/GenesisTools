@@ -132,12 +132,12 @@ enum HubHandoff {
     }
 
     static func decode(_ data: Data) throws -> HandoffDraftPayload {
-        try JSONDecoder().decode(HandoffDraftPayload.self, from: MonitorJSON.dataByDroppingPreamble(data))
+        try JSONDecoder().decode(HandoffDraftPayload.self, from: data)
     }
 
     /// Blocking: a full transcript read, seconds for a large session. Off the main thread.
     static func run(_ request: HandoffComposerRequest, range: HandoffRangeChoice, extra: [String] = []) throws -> HandoffDraftPayload {
-        try decode(ToolsCLIRunner.run(arguments(session: request.session, branch: request.branch, range: range, extra: extra)))
+        try decode(HubSource.bridge.json(arguments(session: request.session, branch: request.branch, range: range, extra: extra)))
     }
 }
 
@@ -372,10 +372,8 @@ struct HandoffComposerSheet: View {
     @ViewBuilder
     private var preview: some View {
         if let error, draft == nil {
-            Text(verbatim: error)
-                .font(SessionPalette.mono(11.5))
-                .foregroundStyle(SessionPalette.red)
-                .textSelection(.enabled)
+            FailureInline(message: error, outcome: "The handoff could not be drafted", action: "Draft the handoff",
+                          area: "hub", identifier: "handoff.failure")
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if let draft {

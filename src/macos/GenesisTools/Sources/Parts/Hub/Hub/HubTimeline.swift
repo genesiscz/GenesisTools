@@ -419,7 +419,7 @@ final class HubTimelineModel: ObservableObject {
             }
             let ledger = ToolsCallLedger()
             let result = Result { () -> TimelineEnvelope in
-                let data = try ledger.recordSync { try ToolsCLIRunner.run(args) }
+                let data = try ledger.recordSync { try HubSource.bridge.output(args) }
                 let envelope = try JSONDecoder().decode(TimelineEnvelope.self, from: data)
                 cache.writeData(data, key: key)
                 return envelope
@@ -510,7 +510,7 @@ final class HubTimelineModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("timeline.older", "before \(cursor)")
             let ledger = ToolsCallLedger()
-            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ledger.recordSync { try ToolsCLIRunner.run(args) }) }
+            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ledger.recordSync { try HubSource.bridge.output(args) }) }
             span.end((try? result.get()).map { "\($0.events.count) events" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
@@ -1920,4 +1920,16 @@ struct TimelineReplyForm: View {
         .padding(12)
         .frame(width: 380)
     }
+}
+
+/// The Activity mode's answers to the hub (Hub/HubModeModel.swift).
+extension HubTimelineModel: HubModeModel {
+    /// The list is the content itself, so the mode alone is a place worth going back to.
+    var navSelection: String? { HubModel.wholeList }
+
+    func navTitle(selection: String) -> String { "Activity" }
+
+    var showsTitlebarHeader: Bool { true }
+
+    func reload() { load(fresh: true) }
 }

@@ -160,9 +160,7 @@ struct TranscriptSketchSubjectHeader<Trailing: View>: View {
                 Spacer(minLength: 16)
                 HubForecastChip(account: session.account, provider: Harness(rawValue: session.provider)?.plugin)
                     .layoutPriority(-1)
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 // The pane buttons keep their titles: the forecast gives way first, then the title (middle truncation).
                 trailing
                     .layoutPriority(2)

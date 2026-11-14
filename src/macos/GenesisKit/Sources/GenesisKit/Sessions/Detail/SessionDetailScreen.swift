@@ -209,6 +209,11 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
     public var loadingEarlier = false
     public var windowNote: String?
     public var banner: String?
+    /// The banner's failure, when it reports one: drawn as `FailureInline` with Try again (`onRetryBanner`).
+    public var bannerFailure: FailureReport?
+    public var onRetryBanner: (@MainActor () -> Void)?
+    /// The first page's Try again, under a failed transcript.
+    public var onRetry: (@MainActor () -> Void)?
     public var onLoadEarlier: () -> Void = {}
     public var onDismissBanner: () -> Void = {}
     /// See `SessionTranscriptList.onReaderAtEnd`.
@@ -244,6 +249,9 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         loadingEarlier: Bool = false,
         windowNote: String? = nil,
         banner: String? = nil,
+        bannerFailure: FailureReport? = nil,
+        onRetryBanner: (@MainActor () -> Void)? = nil,
+        onRetry: (@MainActor () -> Void)? = nil,
         onLoadEarlier: @escaping () -> Void = {},
         onDismissBanner: @escaping () -> Void = {},
         onReaderAtEnd: @escaping (Bool) -> Void = { _ in },
@@ -269,6 +277,9 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         self.loadingEarlier = loadingEarlier
         self.windowNote = windowNote
         self.banner = banner
+        self.bannerFailure = bannerFailure
+        self.onRetryBanner = onRetryBanner
+        self.onRetry = onRetry
         self.onLoadEarlier = onLoadEarlier
         self.onDismissBanner = onDismissBanner
         self.onReaderAtEnd = onReaderAtEnd
@@ -287,7 +298,9 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
             case "b": TranscriptSketchBTitle(info: info, actions: actions, leadingInset: leadingInset, showSidebar: $showSidebar)
             default: SessionDetailHeader(info: info, actions: actions, leadingInset: leadingInset, showSidebar: $showSidebar)
             }
-            if let banner, !banner.isEmpty {
+            if let bannerFailure {
+                SessionBanner(failure: bannerFailure, retry: onRetryBanner, onDismiss: onDismissBanner)
+            } else if let banner, !banner.isEmpty {
                 SessionBanner(text: banner, onDismiss: onDismissBanner)
             }
             // The hub hosts this screen in panes narrower than the transcript's
@@ -307,6 +320,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
                     preset: preset,
                     services: services,
                     activity: activity,
+                    onRetry: onRetry,
                     onReaderAtEnd: onReaderAtEnd
                 )
                 .frame(maxWidth: .infinity)
@@ -669,17 +683,38 @@ public struct SessionDetailHeader: View {
 
 /// The review window's info banner: 10 pt rounded, quiet fill, a dismiss cross.
 public struct SessionBanner: View {
-    public let text: String
+    /// What the banner says: words, or a failure drawn as `FailureInline` (Try again, Details, Report a bug).
+    public enum Content {
+        case text(String)
+        case failure(FailureReport, retry: (@MainActor () -> Void)?)
+    }
+
+    public let content: Content
     public let onDismiss: () -> Void
+
+    public init(text: String, onDismiss: @escaping () -> Void) {
+        content = .text(text)
+        self.onDismiss = onDismiss
+    }
+
+    public init(failure: FailureReport, retry: (@MainActor () -> Void)? = nil, onDismiss: @escaping () -> Void) {
+        content = .failure(failure, retry: retry)
+        self.onDismiss = onDismiss
+    }
 
     public var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle")
-                .foregroundStyle(SessionPalette.red)
-            Text(verbatim: text)
-                .font(.system(size: 12))
-                .foregroundStyle(SessionPalette.text)
-                .textSelection(.enabled)
+            switch content {
+            case .failure(let failure, let retry):
+                FailureInline(failure, form: .compact, identifier: "session-details-banner.failure", retry: retry)
+            case .text(let text):
+                Image(systemName: "exclamationmark.circle")
+                    .foregroundStyle(SessionPalette.red)
+                Text(verbatim: text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(SessionPalette.text)
+                    .textSelection(.enabled)
+            }
             Spacer(minLength: 8)
             Button(action: onDismiss) {
                 Image(systemName: "xmark")

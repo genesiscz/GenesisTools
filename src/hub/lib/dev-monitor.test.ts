@@ -252,14 +252,16 @@ test("profile classification never launches a per-PID subprocess", () => {
     }
 });
 
-test("a burst of profile PIDs uses one process snapshot and retains names and missing PIDs", async () => {
+test("a burst of profile PIDs uses one read of the named processes and retains names and missing PIDs", async () => {
     let snapshots = 0;
     const lines = Array.from({ length: 100 }, (_, index) => `[profile:a] walk 1.5s pid=${1000 + index}`);
     const events = await classifyProfileLines({
         lines,
-        readProcesses: async () => {
+        readProcesses: async (pids) => {
             snapshots += 1;
-            return [{ pid: 1000, cpu: 0, rssKb: 0, command: "/r/gt-hub /r/src/hub/index.ts serve" }];
+            // Only the pids the lines name are asked for, each once: never the whole process table.
+            expect(pids).toEqual(Array.from({ length: 100 }, (_, index) => 1000 + index));
+            return [{ pid: 1000, command: "/r/gt-hub /r/src/hub/index.ts serve" }];
         },
     });
     expect(snapshots).toBe(1);
@@ -274,15 +276,15 @@ test("a burst of profile PIDs uses one process snapshot and retains names and mi
     });
 });
 
-test("process snapshots have a deadline and an empty answer retains the slow event by PID", async () => {
+test("a repeated PID is asked for once, and an empty answer retains the slow event by PID", async () => {
     const events = await classifyProfileLines({
-        lines: ["[profile:a] walk 1.5s pid=1000"],
-        readProcesses: async (options) => {
-            expect(options?.timeoutMs).toBe(1000);
+        lines: ["[profile:a] walk 1.5s pid=1000", "[profile:a] fast 1ms pid=7", "[profile:a] walk 1.5s pid=1000"],
+        readProcesses: async (pids) => {
+            expect(pids).toEqual([1000]);
             return [];
         },
     });
-    expect(events.map((event) => event.text)).toEqual(["a walk 1.50s [pid 1000]"]);
+    expect(events.map((event) => event.text)).toEqual(["a walk 1.50s [pid 1000]", "a walk 1.50s [pid 1000]"]);
 });
 
 test("log tails read bounded chunks without losing lines or UTF-8 at chunk boundaries", () => {

@@ -34,10 +34,10 @@ open class HubKitAdapter: HostKitAdapter, GenesisKitHost {
     open var gtProvider: GenesisKitGTProvider? { HubGTProvider() }
 }
 
-/// GenesisKit's git and agent data through the hub's resident `tools` server (`ToolsCLIRunner`), which answers
+/// GenesisKit's git and agent data through the hub's resident `tools` server (`HubSource.bridge`), which answers
 /// an agents query without starting bun again.
 final class HubGTProvider: GenesisKitGTCLIProvider {
     override func tools(_ arguments: [String]) throws -> Data {
-        try ToolsCLIRunner.run(arguments)
+        try HubSource.bridge.output(arguments)
     }
 }
