@@ -3053,4 +3053,60 @@ describe("explicit word timing generation", () => {
         expect(fromSocket).toEqual(fromDirect);
         expect(fromSocket.entries[0].words?.[0].range).toEqual({ location: 0, length: 3 });
     });
+
+    test("generation reads the preserved audio after the source removed its file", async () => {
+        const f = setup();
+        const read: string[] = [];
+        const wordTimings = {
+            cache: f.cache,
+            modelFiles: f.deps.modelFiles,
+            infer: async (input: { audioPath: string }) => {
+                read.push(input.audioPath);
+                return {
+                    words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
+                    pcmSha256: "fake-pcm",
+                    modelFiles: f.modelFiles,
+                };
+            },
+        };
+        const { store } = await startService({ deps: { wordTimings } });
+        const owned = join(store.folder(REVIEW.id), "source-audio", `${"b".repeat(64)}.ogg`);
+        mkdirSync(dirname(owned), { recursive: true });
+        writeFileSync(owned, "owned");
+        await store.update(REVIEW.id, { command: "test", change: "preserved" }, (next) => {
+            next.audio = {
+                sources: {
+                    wisprflow: {
+                        sourceMeetingId: "wf-2041",
+                        path: owned,
+                        sha256: "b".repeat(64),
+                        bytes: 5,
+                        savedAt: "2026-11-05T14:10:00.000Z",
+                    },
+                },
+            };
+        });
+        const removed: TranscriptSource = {
+            ...fakeSource(),
+            evidence: async () => ({ segments: [], speaking: [], files: [] }),
+        };
+        const direct = new InProcessMeetingsClient({
+            hello,
+            deps: {
+                store: () => store,
+                linkedSource: () => ({ source: removed, sourceMeetingId: "wf-2041" }),
+                ...quietDeps,
+                wordTimings,
+            },
+        });
+        closing.push(() => direct.close());
+
+        await direct.call("meeting.wordTimings.generate", {
+            ref: REVIEW.id,
+            fromSec: 0,
+            toSec: 12,
+            model: "test/words",
+        });
+        expect(read).toEqual([owned]);
+    });
 });

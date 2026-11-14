@@ -9,6 +9,7 @@ import type {
     LocalAudioMeeting,
     LocalSourceAudio,
     MeetingSourceId,
+    SourceMeeting,
 } from "@genesiscz/utils/meetings/sources";
 import { MEETING_SOURCE_IDS } from "@genesiscz/utils/meetings/sources";
 import { z } from "zod";
@@ -18,8 +19,33 @@ const { log } = logger.scoped("meetings-audio-discovery");
 
 export type { LocalAudioFile, LocalAudioMeeting, LocalSourceAudio };
 
+/**
+ * The source meeting a provider records right now. A pass hashes and copies for minutes, so a caller asks it again
+ * right before each copy and once more before publication; tests inject it together with their isolated adapters.
+ */
+export type LiveSourceMeeting = (sourceId: MeetingSourceId) => Promise<string | undefined>;
+
 function linkedRecords(store: MeetingStore, sourceId: string, sourceMeetingId: string): MeetingRecord[] {
     return store.list().filter((record) => record.sources[sourceId]?.meetingId === sourceMeetingId);
+}
+
+/** One store snapshot per pass: the records linked to each of the source's meetings. */
+function linkedIndex(records: MeetingRecord[], sourceId: string): Map<string, MeetingRecord[]> {
+    const index = new Map<string, MeetingRecord[]>();
+    for (const record of records) {
+        const id = record.sources[sourceId]?.meetingId;
+        if (typeof id === "string") {
+            index.set(id, [...(index.get(id) ?? []), record]);
+        }
+    }
+
+    return index;
+}
+
+async function refuseLive(options: { live?: LiveSourceMeeting; sourceId: MeetingSourceId; sourceMeetingId: string }) {
+    if ((await options.live?.(options.sourceId)) === options.sourceMeetingId) {
+        throw new Error(`The source is recording again: ${options.sourceMeetingId}`);
+    }
 }
 
 export async function withSourceAudioRecordLock<T>(options: {
@@ -40,6 +66,8 @@ export async function sourceAudioRecords(options: {
     store: MeetingStore;
     source: LocalSourceAudio;
     sourceMeetingId: string;
+    /** The provider's metadata when the caller already read it; read under the lock otherwise. */
+    meeting?: SourceMeeting;
 }): Promise<MeetingRecord[]> {
     const { store, source, sourceMeetingId } = options;
     return withSourceAudioRecordLock({
@@ -51,7 +79,7 @@ export async function sourceAudioRecords(options: {
             if (existing.length) {
                 return existing;
             }
-            const meeting = await source.load(sourceMeetingId);
+            const meeting = options.meeting ?? (await source.load(sourceMeetingId));
             if (!meeting || meeting.sourceMeetingId !== sourceMeetingId) {
                 return [];
             }
@@ -72,23 +100,33 @@ export async function sourceAudioRecords(options: {
     });
 }
 
-/** Filesystem discovery is cheap enough for every watch tick. Already preserved records need no metadata load. */
+/**
+ * Filesystem discovery is cheap enough for every watch tick: one store snapshot per pass, no metadata load for a
+ * preserved record, and one provider row only for a file with no record yet. The locked reread stays for record
+ * creation. The live recording is asked again right before each copy and before its publication.
+ */
 export async function discoverSourceAudio(options: {
     store: MeetingStore;
     source: LocalSourceAudio;
-    liveSourceMeetingId?: string;
+    live?: LiveSourceMeeting;
 }): Promise<{ preserved: number; pending: number }> {
-    const { store, source, liveSourceMeetingId } = options;
+    const { store, source, live } = options;
     const files = await source.files();
     let preserved = 0;
     let pending = 0;
+    if (!files.length) {
+        return { preserved, pending };
+    }
+
+    const passLive = await live?.(source.id);
+    const linked = linkedIndex(store.list(), source.id);
     for (const file of files) {
-        if (file.sourceMeetingId === liveSourceMeetingId) {
+        if (file.sourceMeetingId === passLive) {
             pending += 1;
             continue;
         }
         const ref = { sourceId: source.id, sourceMeetingId: file.sourceMeetingId };
-        const existing = linkedRecords(store, source.id, file.sourceMeetingId);
+        const existing = linked.get(file.sourceMeetingId) ?? [];
         try {
             const currentFile = await lstat(file.path);
             const upToDate = (record: MeetingRecord) => {
@@ -98,21 +136,40 @@ export async function discoverSourceAudio(options: {
             if (existing.length && existing.every(upToDate)) {
                 continue;
             }
-            const records = existing.length ? existing : await sourceAudioRecords({ store, source, ...file });
+
+            if ((await live?.(source.id)) === file.sourceMeetingId) {
+                pending += 1;
+                continue;
+            }
+            // An orphan file (no local metadata) stays pending without the source lock or another store read.
+            const meeting = existing.length ? undefined : ((await source.load(file.sourceMeetingId)) ?? undefined);
+            if (!existing.length && meeting?.sourceMeetingId !== file.sourceMeetingId) {
+                pending += 1;
+                continue;
+            }
+            const records = existing.length
+                ? existing
+                : await sourceAudioRecords({ store, source, sourceMeetingId: file.sourceMeetingId, meeting });
             if (!records.length) {
                 pending += 1;
             }
+            const current: MeetingRecord[] = [];
             for (const record of records) {
-                if (!upToDate(record)) {
-                    const result = await preserveSourceAudio({
-                        store,
-                        meetingId: record.id,
-                        ref,
-                        sourcePath: file.path,
-                    });
-                    preserved += result.status === "preserved" ? 1 : 0;
+                if (upToDate(record)) {
+                    current.push(record);
+                    continue;
                 }
+                const result = await preserveSourceAudio({
+                    store,
+                    meetingId: record.id,
+                    ref,
+                    sourcePath: file.path,
+                    beforePublish: () => refuseLive({ live, ...ref }),
+                });
+                current.push(result.record);
+                preserved += result.status === "preserved" ? 1 : 0;
             }
+            linked.set(file.sourceMeetingId, current);
         } catch (error) {
             pending += 1;
             log.warn({ error, source: source.id, sourceMeetingId: file.sourceMeetingId }, "audio discovery will retry");
@@ -169,17 +226,18 @@ export const sourceAudioPlanSchema = z.object({
 export async function planSourceAudio(options: {
     store: MeetingStore;
     sources: LocalSourceAudio[];
-    live?: Partial<Record<MeetingSourceId, string>>;
+    live?: LiveSourceMeeting;
 }): Promise<SourceAudioPlan> {
     const entries: SourceAudioPlanEntry[] = [];
     const records = options.store.list();
     for (const source of options.sources) {
-        const catalog = new Map((await source.catalog()).map((meeting) => [meeting.sourceMeetingId, meeting]));
+        const live = await options.live?.(source.id);
+        const linked = linkedIndex(records, source.id);
         const grouped = new Map<string, PlannedAudioFile[]>();
         for (const origin of ["provider", "legacy"] as const) {
             const files = origin === "provider" ? await source.files() : await source.legacyFiles(options.store.root);
             for (const file of files) {
-                if (options.live?.[source.id] === file.sourceMeetingId) {
+                if (live === file.sourceMeetingId) {
                     grouped.set(file.sourceMeetingId, []);
                     continue;
                 }
@@ -197,16 +255,11 @@ export async function planSourceAudio(options: {
                 grouped.set(file.sourceMeetingId, group);
             }
         }
-        const ids = new Set([
-            ...catalog.keys(),
-            ...grouped.keys(),
-            ...records.flatMap((record) => {
-                const id = record.sources[source.id]?.meetingId;
-                return typeof id === "string" ? [id] : [];
-            }),
-        ]);
+        // A provider meeting with neither a local file nor a record has nothing to reconcile, so the plan reads no
+        // catalog: it asks the provider for one row only where a file has no record yet (create or unmatched).
+        const ids = new Set([...grouped.keys(), ...linked.keys()]);
         for (const sourceMeetingId of [...ids].sort()) {
-            const held = records.filter((record) => record.sources[source.id]?.meetingId === sourceMeetingId);
+            const held = linked.get(sourceMeetingId) ?? [];
             const files = grouped.get(sourceMeetingId) ?? [];
             const ref = { sourceId: source.id, sourceMeetingId };
             const owned = await Promise.all(
@@ -220,8 +273,8 @@ export async function planSourceAudio(options: {
                 ...files.map((file) => `${file.sha256}:${file.bytes}`),
                 ...owned.flatMap((audio) => (audio ? [`${audio.sha256}:${audio.bytes}`] : [])),
             ]);
-            const status =
-                options.live?.[source.id] === sourceMeetingId
+            const settled =
+                live === sourceMeetingId
                     ? "live"
                     : digests.size > 1
                       ? "conflict"
@@ -231,13 +284,13 @@ export async function planSourceAudio(options: {
                           ? "missing"
                           : held.length
                             ? "preserve"
-                            : catalog.has(sourceMeetingId)
-                              ? "create"
-                              : "unmatched";
+                            : undefined;
+            const meeting = settled ? undefined : await source.load(sourceMeetingId);
+            const status = settled ?? (meeting?.sourceMeetingId === sourceMeetingId ? "create" : "unmatched");
             entries.push({
                 sourceId: source.id,
                 sourceMeetingId,
-                title: catalog.get(sourceMeetingId)?.title,
+                title: meeting?.title ?? held[0]?.title,
                 recordIds: held.map((record) => record.id),
                 status,
                 files,
@@ -252,9 +305,9 @@ export async function applySourceAudioPlan(options: {
     store: MeetingStore;
     plan: SourceAudioPlan;
     sources: LocalSourceAudio[];
-    live?: Partial<Record<MeetingSourceId, string>>;
+    live?: LiveSourceMeeting;
 }): Promise<Array<{ sourceId: string; sourceMeetingId: string; recordId: string; status: string }>> {
-    const { store, plan } = options;
+    const { store, plan, live } = options;
     sourceAudioPlanSchema.parse(plan);
     if (plan.version !== 1 || plan.meetingsRoot !== store.root) {
         throw new Error("The audio plan belongs to a different meetings store.");
@@ -264,9 +317,7 @@ export async function applySourceAudioPlan(options: {
         if (!["preserve", "create", "preserved"].includes(entry.status)) {
             continue;
         }
-        if (options.live?.[entry.sourceId] === entry.sourceMeetingId) {
-            throw new Error(`The source is recording again: ${entry.sourceMeetingId}`);
-        }
+        await refuseLive({ live, sourceId: entry.sourceId, sourceMeetingId: entry.sourceMeetingId });
         const source = options.sources.find((candidate) => candidate.id === entry.sourceId);
         if (!source) {
             throw new Error(`Source unavailable: ${entry.sourceId}`);
@@ -290,9 +341,31 @@ export async function applySourceAudioPlan(options: {
             }
         }
         const ref = { sourceId: source.id, sourceMeetingId: entry.sourceMeetingId };
+        const approved = new Set(digests);
         for (const id of entry.recordIds) {
-            if (store.read(id)?.sources[source.id]?.meetingId !== entry.sourceMeetingId) {
+            const record = store.read(id);
+            if (record?.sources[source.id]?.meetingId !== entry.sourceMeetingId) {
                 throw new Error(`The planned record's linked source changed: ${id}`);
+            }
+            const owned = preservedSourceAudio(record, ref);
+            if (owned) {
+                approved.add(`${owned.sha256}:${owned.bytes}`);
+            }
+        }
+        // A candidate the plan never saw (a legacy copy that appeared since) must carry the approved bytes, or a
+        // fresh plan would call this source a conflict.
+        const planned = new Set(entry.files.map((file) => file.path));
+        for (const candidate of available) {
+            if (candidate.sourceMeetingId !== entry.sourceMeetingId || planned.has(candidate.path)) {
+                continue;
+            }
+            const stat = await lstat(candidate.path);
+            if (!stat.isFile() || stat.size === 0) {
+                continue;
+            }
+
+            if (!approved.has(`${await sha256FileAsync(candidate.path)}:${stat.size}`)) {
+                throw new Error(`A conflicting source file appeared since the plan: ${candidate.path}`);
             }
         }
         const records = await sourceAudioRecords({ store, source, sourceMeetingId: entry.sourceMeetingId });
@@ -309,7 +382,17 @@ export async function applySourceAudioPlan(options: {
             if (!file) {
                 throw new Error(`No planned source audio for ${entry.sourceMeetingId}`);
             }
-            const result = await preserveSourceAudio({ store, meetingId: record.id, ref, sourcePath: file.path });
+            // The plan's live answer and its hashes are minutes old by now: ask again before the copy, check the copy
+            // against the approved digest, and ask once more before the copy is published.
+            await refuseLive({ live, ...ref });
+            const result = await preserveSourceAudio({
+                store,
+                meetingId: record.id,
+                ref,
+                sourcePath: file.path,
+                expected: { sha256: file.sha256, bytes: file.bytes },
+                beforePublish: () => refuseLive({ live, ...ref }),
+            });
             results.push({ ...ref, recordId: record.id, status: result.status });
         }
     }

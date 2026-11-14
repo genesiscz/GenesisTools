@@ -18,7 +18,8 @@ import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
-import type { LocalSourceAudio } from "../source-audio-discovery";
+import { preservedSourceAudio } from "../source-audio";
+import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { type LinkedSource, linkedSource } from "../sources";
 import { assessIndicator } from "../speaker-indicator";
 import { correctTranscript } from "../transcript-corrections";
@@ -61,8 +62,8 @@ export interface MeetingsCallContext {
 }
 
 export interface MeetingsHandlerDeps {
-    /** Local audio adapters; tests supply isolated catalogs and never read this Mac's provider. */
-    localSourceAudio?: LocalSourceAudio[];
+    /** Local audio adapters with their live lookup; tests supply isolated ones and never read this Mac's provider. */
+    localSourceAudio?: LocalSourceAudioAccess;
     /** Optional isolated cache/inference dependencies for word-timing generation tests. */
     wordTimings?: Pick<WordTimingGenerateDeps, "cache" | "modelFiles" | "infer">;
     /** The meetings store (a test passes a scratch one). */
@@ -388,13 +389,16 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                             flags: { dictionary: true },
                             linked,
                         });
-                        const evidence = await linked.source.evidence(linked.sourceMeetingId);
-                        if (!evidence?.audioPath) {
+                        // The owned copy first, as playback reads it: the provider may have removed its file.
+                        const audioPath =
+                            preservedSourceAudio(current)?.path ??
+                            (await linked.source.evidence(linked.sourceMeetingId))?.audioPath;
+                        if (!audioPath) {
                             throw new Error("This meeting has no source audio for word timing generation");
                         }
                         return {
                             lines: timedTranscriptView(current, applied).entries,
-                            audioPath: evidence.audioPath,
+                            audioPath,
                             live: current.recording?.status === "recording" || current.recording?.status === "paused",
                         };
                     },
@@ -441,13 +445,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "sourceAudio.plan": async () =>
             (await import("../source-audio-backfill")).planLocalSourceAudio({
                 store: storeOf(),
-                sources: deps.localSourceAudio,
+                local: deps.localSourceAudio,
             }),
         "sourceAudio.apply": async ({ plan }) =>
             (await import("../source-audio-backfill")).applyLocalSourceAudio({
                 plan,
                 store: storeOf(),
-                sources: deps.localSourceAudio,
+                local: deps.localSourceAudio,
             }),
         "config.read": async (params) => (await reads()).readConfig(params),
         "config.set": async (params) => (await reads()).setConfig(params),

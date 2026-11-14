@@ -10,7 +10,7 @@ import {
     rmdirSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -22,6 +22,7 @@ import {
     nextId,
     type RecordingBlock,
 } from "@genesiscz/utils/meetings/record";
+import { SOURCE_AUDIO_FOLDER } from "@genesiscz/utils/meetings/source-audio-paths";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { DictionaryLevel } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
@@ -495,6 +496,20 @@ async function mergeLockedMeetings({
         }
     }
 
+    // Preserved source audio is named by its digest: a name in both folders is the same bytes; `into` keeps its own.
+    const fromAudio = join(fromFolder, SOURCE_AUDIO_FOLDER);
+    const intoAudio = join(intoFolder, SOURCE_AUDIO_FOLDER);
+
+    if (existsSync(fromAudio)) {
+        mkdirSync(intoAudio, { recursive: true, mode: 0o700 });
+
+        for (const file of readdirSync(fromAudio)) {
+            if (!file.startsWith(".pending-") && !existsSync(join(intoAudio, file))) {
+                renameSync(join(fromAudio, file), join(intoAudio, file));
+            }
+        }
+    }
+
     for (const name of ROW_FILES) {
         mergeRows(join(intoFolder, name), rows.get(name) ?? { into: [], from: [] });
         const moved = join(fromFolder, name);
@@ -535,6 +550,20 @@ async function mergeLockedMeetings({
 
             for (const [sourceId, block] of Object.entries(from.sources)) {
                 current.sources[sourceId] ??= block;
+            }
+
+            // Preserved audio follows its file; per source, the surviving link's version wins, `into`'s on a tie.
+            for (const [sourceId, audio] of Object.entries(from.audio?.sources ?? {})) {
+                const kept = current.audio?.sources[sourceId];
+                const linked = current.sources[sourceId]?.meetingId;
+
+                if (kept && (kept.sourceMeetingId === linked || audio.sourceMeetingId !== linked)) {
+                    continue;
+                }
+
+                const path = dirname(audio.path) === fromAudio ? join(intoAudio, basename(audio.path)) : audio.path;
+                current.audio ??= { sources: {} };
+                current.audio.sources[sourceId] = { ...audio, path };
             }
 
             for (const person of from.participants) {

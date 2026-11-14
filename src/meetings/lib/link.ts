@@ -233,19 +233,29 @@ async function linkSourceUnlocked(options: {
     });
     const change = `${source.label} ${meeting.sourceMeetingId}: ${meeting.transcript.length} lines, ${meeting.participants.length} people`;
     log.debug({ source: ref.source, id: meeting.sourceMeetingId, existing: existing?.id, project }, "link source");
+    // The source's "preserve audio" setting decides whether a link or a refresh keeps a copy of its recording; an
+    // explicit `audio apply` still copies it.
+    const preserveAudio = (await options.config.read()).sources[source.id].preserveAudio;
+    const linked = async (record: MeetingRecord, created: boolean): Promise<LinkResult> => {
+        if (!preserveAudio) {
+            return { record, created };
+        }
 
-    if (existing) {
-        const record = await options.store.update(existing.id, { command: options.command, change }, (current) => {
-            applySource({ record: current, sourceId: ref.source, block, meeting, refresh: options.refresh });
-            current.project ??= project;
-        });
         const audio = await syncSourceAudio({
             store: options.store,
             record,
             source,
             sourceMeetingId: meeting.sourceMeetingId,
         });
-        return { record: audio.record, created: false, audio: audio.status };
+        return { record: audio.record, created, audio: audio.status };
+    };
+
+    if (existing) {
+        const record = await options.store.update(existing.id, { command: options.command, change }, (current) => {
+            applySource({ record: current, sourceId: ref.source, block, meeting, refresh: options.refresh });
+            current.project ??= project;
+        });
+        return linked(record, false);
     }
 
     const record = await options.store.create(
@@ -262,13 +272,7 @@ async function linkSourceUnlocked(options: {
         },
         { command: options.command, change: `created from ${change}` }
     );
-    const audio = await syncSourceAudio({
-        store: options.store,
-        record,
-        source,
-        sourceMeetingId: meeting.sourceMeetingId,
-    });
-    return { record: audio.record, created: true, audio: audio.status };
+    return linked(record, true);
 }
 
 /** The `--play-links` of a transcript: a link per time that plays the meeting from there, and what to warn about. */

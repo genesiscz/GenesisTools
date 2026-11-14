@@ -17,7 +17,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { wisprAudioAccess } from "@app/wisprflow/lib/source-audio";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
@@ -25,7 +25,7 @@ import { env } from "@genesiscz/utils/env";
 import * as cloneFiles from "@genesiscz/utils/fs/clone";
 import * as hashFiles from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -39,7 +39,7 @@ import { meetingAudioPath } from "./audio";
 import { COMMENTS_FILE, MeetingComments } from "./comments";
 import { DecisionJournal, JOURNAL_FILE } from "./decision-journal";
 import { copyTitle, duplicateMeeting } from "./duplicate";
-import { applySource, assertSourceFree, playLinksFor, sourceHolders } from "./link";
+import { applySource, assertSourceFree, linkSource, playLinksFor, sourceHolders } from "./link";
 import { meetingListRow } from "./list-rows";
 import * as mergeFiles from "./merge";
 import { mergeMeetings } from "./merge";
@@ -52,12 +52,14 @@ import {
     syncSourceAudio,
     withPreservedSourceAudio,
 } from "./source-audio";
+import { applyLocalSourceAudio, planLocalSourceAudio } from "./source-audio-backfill";
 import {
     applySourceAudioPlan,
     discoverSourceAudio,
     type LocalSourceAudio,
     planSourceAudio,
 } from "./source-audio-discovery";
+import * as sources from "./sources";
 
 /**
  * A merge refusal awaited with every file move and clone made to throw: a move the merge undid later would leave the
@@ -546,6 +548,70 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         // Both records hold one source meeting, so the stays keep their seconds on its clock.
         expect(merged?.attendance).toEqual(attendance);
         expect(merged?.sections).toEqual([{ fromSec: 0, toSec: 60, present: ["Alice"] }]);
+    });
+
+    test("the preserved source audio of the record that goes away stays playable on the merged record", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const name = `${"a".repeat(64)}.m4a`;
+        const folder = join(store.folder(from), SOURCE_AUDIO_FOLDER);
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, name), "owned audio");
+        await store.update(from, { command: "test", change: "preserved" }, (next) => {
+            next.audio = {
+                sources: {
+                    wisprflow: {
+                        sourceMeetingId: "call-1",
+                        path: join(folder, name),
+                        sha256: "a".repeat(64),
+                        bytes: 11,
+                        savedAt: "2026-11-05T14:10:00.000Z",
+                    },
+                },
+            };
+        });
+
+        await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+        const merged = store.read(into);
+        const owned = merged ? preservedSourceAudio(merged) : undefined;
+
+        expect(owned?.path).toBe(join(store.folder(into), SOURCE_AUDIO_FOLDER, name));
+        expect(readFileSync(owned?.path ?? "", "utf8")).toBe("owned audio");
+    });
+
+    test("a source preserved on both records keeps the surviving link's version, `into`'s on a tie, and both files", async () => {
+        const merged = async (intoMeeting: string) => {
+            const { store, from, into, inbox, backupRoot } = await call();
+            const preserve = async (id: string, digit: string, sourceMeetingId: string) => {
+                const path = join(store.folder(id), SOURCE_AUDIO_FOLDER, `${digit.repeat(64)}.m4a`);
+                mkdirSync(dirname(path), { recursive: true });
+                writeFileSync(path, digit);
+                await store.update(id, { command: "test", change: "preserved" }, (next) => {
+                    next.audio = {
+                        sources: {
+                            wisprflow: {
+                                sourceMeetingId,
+                                path,
+                                sha256: digit.repeat(64),
+                                bytes: 1,
+                                savedAt: "2026-11-05T14:10:00.000Z",
+                            },
+                        },
+                    };
+                });
+            };
+            await preserve(into, "c", intoMeeting);
+            await preserve(from, "d", "call-1");
+            await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+            const folder = join(store.folder(into), SOURCE_AUDIO_FOLDER);
+            return {
+                kept: basename(store.read(into)?.audio?.sources.wisprflow?.path ?? ""),
+                files: readdirSync(folder).sort(),
+            };
+        };
+        const both = [`${"c".repeat(64)}.m4a`, `${"d".repeat(64)}.m4a`];
+
+        expect(await merged("call-1")).toEqual({ kept: both[0], files: both });
+        expect(await merged("call-0")).toEqual({ kept: both[1], files: both });
     });
 
     test("attendance on a record's own clock moves onto the merged clock, or is refused when it cannot be placed", async () => {
@@ -1359,6 +1425,49 @@ describe("permanent source audio", () => {
         expect(readFileSync(evidence!.audioPath!, "utf8")).toBe("source audio bytes");
     });
 
+    test("linking or refreshing a finished meeting copies its audio only while the source preserves audio", async () => {
+        const f = await fixture();
+        const config = new MeetingsConfigStore(new Storage(`source-audio-config-${process.pid}-${stores}`));
+        await config.update((raw) => {
+            raw.sources = { wisprflow: { preserveAudio: false } };
+        });
+        const meeting = (sourceMeetingId: string): SourceMeeting => ({
+            sourceMeetingId,
+            title: "Planning",
+            start: "2026-11-12T14:00:00.000Z",
+            participants: [],
+            speakers: [],
+            transcript: [],
+            folders: [],
+        });
+        const source = {
+            ...wisprflowSource,
+            load: async (sourceMeetingId: string) => meeting(sourceMeetingId),
+            liveRecording: async () => null,
+            evidence: async () => ({ audioPath: f.sourcePath, segments: [], speaking: [], files: [] }),
+        };
+        const pick = spyOn(sources, "meetingSource").mockResolvedValue(source);
+        const link = (sourceRef: string) =>
+            linkSource({ store: f.store, config, sourceRef, command: "test", createdBy: "link", quiet: true });
+
+        try {
+            // A new record, then a refresh of the fixture's record: neither keeps a copy.
+            for (const sourceRef of ["wisprflow:source-two", "wisprflow:source-one"]) {
+                const result = await link(sourceRef);
+                expect(result.audio).toBeUndefined();
+                expect(new MeetingStore(f.store.storage).read(result.record.id)?.audio).toBeUndefined();
+                expect(existsSync(join(f.store.folder(result.record.id), SOURCE_AUDIO_FOLDER))).toBe(false);
+            }
+
+            await config.update((raw) => {
+                raw.sources = { wisprflow: { preserveAudio: true } };
+            });
+            expect((await link("wisprflow:source-one")).audio).toBe("preserved");
+        } finally {
+            pick.mockRestore();
+        }
+    });
+
     test("a stopgap file is preserved without changing it when the provider has already deleted its copy", async () => {
         const f = await fixture();
         const sourceMeetingId = `legacy-${process.pid}-${stores}`;
@@ -1447,7 +1556,7 @@ describe("local source audio reconciliation", () => {
         mkdirSync(provider, { recursive: true });
         mkdirSync(legacy, { recursive: true });
         const ids = Array.from({ length: count }, (_, index) => `source-${index}`);
-        const catalog = ids.map((sourceMeetingId) => ({
+        const meetings = ids.map((sourceMeetingId) => ({
             sourceMeetingId,
             title: "Planning",
             start: "2026-11-01T10:00:00Z",
@@ -1463,9 +1572,8 @@ describe("local source audio reconciliation", () => {
                 ids.map((sourceMeetingId) => ({ sourceMeetingId, path: join(provider, `${sourceMeetingId}.ogg`) })),
             legacyFiles: async () =>
                 ids.map((sourceMeetingId) => ({ sourceMeetingId, path: join(legacy, `${sourceMeetingId}.ogg`) })),
-            catalog: async () => catalog,
             load: async (id) => {
-                const meeting = catalog.find((row) => row.sourceMeetingId === id);
+                const meeting = meetings.find((row) => row.sourceMeetingId === id);
                 return meeting ? { ...meeting, participants: [], speakers: [], transcript: [], folders: [] } : null;
             },
         };
@@ -1511,7 +1619,7 @@ describe("local source audio reconciliation", () => {
         await discoverSourceAudio({ store: f.store, source: f.source });
         const first = preservedSourceAudio(f.store.list()[0])!;
         appendFileSync(join(f.provider, "source-0.ogg"), " resumed audio");
-        await discoverSourceAudio({ store: f.store, source: f.source, liveSourceMeetingId: "source-0" });
+        await discoverSourceAudio({ store: f.store, source: f.source, live: async () => "source-0" });
         expect(preservedSourceAudio(f.store.list()[0])?.sha256).toBe(first.sha256);
         await discoverSourceAudio({ store: f.store, source: f.source });
         const second = preservedSourceAudio(new MeetingStore(f.store.storage).list()[0])!;
@@ -1553,29 +1661,41 @@ describe("local source audio reconciliation", () => {
             { sourceMeetingId: "source-1", path: join(f.legacy, "source-1.ogg") },
             { sourceMeetingId: "orphan", path: join(f.legacy, "source-2.ogg") },
         ];
-        const plan = await planSourceAudio({ store: f.store, sources: [f.source], live: { wisprflow: "source-0" } });
-        expect(Object.fromEntries(plan.entries.map((row) => [row.sourceMeetingId, row.status]))).toMatchObject({
+        const held = await f.store.create(
+            {
+                title: "Planning",
+                start: "2026-11-01T10:00:00Z",
+                createdBy: "link",
+                sources: { wisprflow: { meetingId: "source-3" } },
+                participants: [],
+            },
+            { command: "test", change: "holds source-3, whose provider file is gone" }
+        );
+        const loads = spyOn(f.source, "load");
+        const live = async () => "source-0";
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source], live });
+        expect(Object.fromEntries(plan.entries.map((row) => [row.sourceMeetingId, row.status]))).toEqual({
             "source-0": "live",
             "source-1": "conflict",
+            "source-2": "create",
             orphan: "unmatched",
             "source-3": "missing",
         });
-        const result = await applySourceAudioPlan({
-            store: f.store,
-            sources: [f.source],
-            plan,
-            live: { wisprflow: "source-0" },
-        });
+        // The planner asks the provider for one row per file without a record (source-2 and orphan), nothing more.
+        expect(loads.mock.calls.map(([id]) => id).sort()).toEqual(["orphan", "source-2"]);
+        const result = await applySourceAudioPlan({ store: f.store, sources: [f.source], plan, live });
         expect(result).toHaveLength(1);
-        expect(f.store.list()).toHaveLength(1);
+        expect(f.store.list().filter((record) => record.id !== held.id)).toHaveLength(1);
+        loads.mockRestore();
     });
 
     test("parallel discovery creates one record, skips live uploads and performs no metadata load after archiving", async () => {
         const f = await fixture(1);
         const load = spyOn(f.source, "load");
-        expect(
-            await discoverSourceAudio({ store: f.store, source: f.source, liveSourceMeetingId: "source-0" })
-        ).toEqual({ preserved: 0, pending: 1 });
+        expect(await discoverSourceAudio({ store: f.store, source: f.source, live: async () => "source-0" })).toEqual({
+            preserved: 0,
+            pending: 1,
+        });
         expect(load).not.toHaveBeenCalled();
         await Promise.all([
             discoverSourceAudio({ store: f.store, source: f.source }),
@@ -1587,6 +1707,114 @@ describe("local source audio reconciliation", () => {
         expect(load).toHaveBeenCalledTimes(reads);
         expect(meetingsConfigSchema.parse({}).sources.wisprflow.preserveAudio).toBe(true);
         load.mockRestore();
+    });
+
+    test("a discovery pass reads each record once and asks the provider only about a file with no record", async () => {
+        const f = await fixture(15);
+        await discoverSourceAudio({ store: f.store, source: f.source });
+        expect(f.store.list()).toHaveLength(15);
+        const read = spyOn(f.store, "read");
+        const load = spyOn(f.source, "load");
+        expect(await discoverSourceAudio({ store: f.store, source: f.source })).toEqual({ preserved: 0, pending: 0 });
+        // One store snapshot for 15 files, not one per file (225 record parses before the index).
+        expect(read).toHaveBeenCalledTimes(15);
+        expect(load).not.toHaveBeenCalled();
+        f.source.files = async () =>
+            Array.from({ length: 5 }, (_, index) => ({
+                sourceMeetingId: `orphan-${index}`,
+                path: join(f.provider, "source-0.ogg"),
+            }));
+        read.mockClear();
+        expect(await discoverSourceAudio({ store: f.store, source: f.source })).toEqual({ preserved: 0, pending: 5 });
+        // An orphan file costs one provider row, and neither the source lock nor another store read.
+        expect(read).toHaveBeenCalledTimes(15);
+        expect(load).toHaveBeenCalledTimes(5);
+        read.mockRestore();
+        load.mockRestore();
+    });
+
+    test("apply refuses bytes that replaced a planned file after its check, before publishing them", async () => {
+        const f = await fixture(1);
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source] });
+        const load = f.source.load;
+        f.source.load = async (id) => {
+            // Same size, other bytes: the provider rewrote the upload between the plan check and the copy.
+            writeFileSync(join(f.provider, "source-0.ogg"), "audio-source-X");
+            return load(id);
+        };
+        await expect(applySourceAudioPlan({ store: f.store, sources: [f.source], plan })).rejects.toThrow(
+            "since the plan approved it"
+        );
+        const [record] = f.store.list();
+        expect(record && preservedSourceAudio(record)).toBeUndefined();
+    });
+
+    test("apply refuses a differing copy that appeared after the plan, and accepts an identical one", async () => {
+        const f = await fixture(1);
+        const legacyFiles = f.source.legacyFiles;
+        f.source.legacyFiles = async () => [];
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source] });
+        expect(plan.entries[0]).toMatchObject({ status: "create", files: [{ origin: "provider" }] });
+        f.source.legacyFiles = legacyFiles;
+        writeFileSync(join(f.legacy, "source-0.ogg"), "another take");
+        await expect(applySourceAudioPlan({ store: f.store, sources: [f.source], plan })).rejects.toThrow(
+            "conflicting source file appeared"
+        );
+        expect(f.store.list()).toHaveLength(0);
+        writeFileSync(join(f.legacy, "source-0.ogg"), "audio-source-0");
+        expect(await applySourceAudioPlan({ store: f.store, sources: [f.source], plan })).toMatchObject([
+            { sourceMeetingId: "source-0", status: "preserved" },
+        ]);
+    });
+
+    test("apply and discovery ask for the live recording again before each copy and before publishing it", async () => {
+        const f = await fixture(2);
+        let recording: string | undefined;
+        const live = async () => recording;
+        const load = f.source.load;
+        // source-1 resumes recording while the pass works on it, after the pass (or the plan) last asked.
+        f.source.load = async (id) => {
+            if (id === "source-1") {
+                recording = "source-1";
+            }
+            return load(id);
+        };
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source], live });
+        await expect(applySourceAudioPlan({ store: f.store, sources: [f.source], plan, live })).rejects.toThrow(
+            "recording again: source-1"
+        );
+        const saved = () => f.store.list().filter((record) => preservedSourceAudio(record));
+        expect(saved().map((record) => record.sources.wisprflow?.meetingId)).toEqual(["source-0"]);
+
+        const g = await fixture(2);
+        recording = undefined;
+        g.source.load = f.source.load;
+        expect(await discoverSourceAudio({ store: g.store, source: g.source, live })).toEqual({
+            preserved: 1,
+            pending: 1,
+        });
+
+        // The third question comes after the copy: a source that went live during it is not published.
+        const h = await fixture(1);
+        let asked = 0;
+        const liveAfterCopy = async () => (++asked >= 3 ? "source-0" : undefined);
+        expect(await discoverSourceAudio({ store: h.store, source: h.source, live: liveAfterCopy })).toEqual({
+            preserved: 0,
+            pending: 1,
+        });
+        expect(h.store.list().map((record) => preservedSourceAudio(record))).toEqual([undefined]);
+    });
+
+    test("the public plan and apply take the live lookup together with isolated adapters", async () => {
+        const f = await fixture(2);
+        const local = { sources: [f.source], live: async () => "source-1" };
+        const plan = await planLocalSourceAudio({ store: f.store, local });
+        expect(Object.fromEntries(plan.entries.map((row) => [row.sourceMeetingId, row.status]))).toEqual({
+            "source-0": "create",
+            "source-1": "live",
+        });
+        expect(await applyLocalSourceAudio({ store: f.store, local, plan })).toHaveLength(1);
+        expect(f.store.list().map((record) => record.sources.wisprflow?.meetingId)).toEqual(["source-0"]);
     });
 
     test("Wispr adapter scans files, legacy files and only local metadata; missing databases never fall back remotely", async () => {
@@ -1607,9 +1835,9 @@ describe("local source audio reconciliation", () => {
         const adapter = wisprAudioAccess(dir);
         const before = statSync(join(dir, "flow.sqlite")).mtimeMs;
         expect(await adapter.files()).toHaveLength(1);
-        expect(await adapter.catalog()).toHaveLength(1);
         expect((await adapter.load("source-local"))?.transcript).toEqual([]);
         expect(statSync(join(dir, "flow.sqlite")).mtimeMs).toBe(before);
-        expect(await wisprAudioAccess(join(dir, "absent")).catalog()).toEqual([]);
+        // No Wispr database: the meeting is unknown, which plans as unmatched, never as a failed pass.
+        expect(await wisprAudioAccess(join(dir, "absent")).load("source-local")).toBeNull();
     });
 });

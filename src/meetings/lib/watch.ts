@@ -14,7 +14,7 @@ import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { preservedSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
-import { localSourceAudio, meetingSource, sourceRefOf } from "./sources";
+import { liveSourceMeetingId, localSourceAudio, meetingSource, sourceRefOf } from "./sources";
 import {
     type AutoRecording,
     clearAuto,
@@ -290,13 +290,56 @@ export async function archiveAvailableSourceAudio(store: MeetingStore): Promise<
     for (const id of enabled) {
         try {
             const source = await localSourceAudio(id);
-            const live = await (await meetingSource(id)).liveRecording();
-            await discoverSourceAudio({ store, source, liveSourceMeetingId: live?.sourceMeetingId });
+            await discoverSourceAudio({ store, source, live: liveSourceMeetingId });
         } catch (error) {
             log.debug({ error, source: id }, "local audio discovery unavailable; next tick retries");
         }
     }
     return enabled.length > 0;
+}
+
+/** How long one look waits for its source-audio pass before it goes on to the recorder; the pass itself runs on. */
+const ARCHIVE_BUDGET_MS = 2_000;
+
+/** The source-audio pass still running for a store: a look never starts a second one beside it. */
+const archiving = new WeakMap<MeetingStore, Promise<boolean>>();
+
+/**
+ * Runs one source-audio pass (or joins the one still running) and waits for it at most `budgetMs`. A first pass over
+ * a provider's whole archive, or a slow volume, copies and hashes for minutes; the recorder's start, stop and
+ * interrupted-recording recovery must not wait for it. A pass still running counts as pending audio.
+ */
+async function archiveWithinBudget(
+    store: MeetingStore,
+    archive: () => Promise<boolean>,
+    budgetMs: number
+): Promise<boolean> {
+    let pass = archiving.get(store);
+
+    if (!pass) {
+        const started = archive().finally(() => archiving.delete(store));
+        started.catch((error: unknown) => log.warn({ error }, "source-audio pass failed; the next look retries"));
+        archiving.set(store, started);
+        pass = started;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const later = new Promise<"later">((resolve) => {
+        timer = setTimeout(() => resolve("later"), budgetMs);
+    });
+
+    try {
+        const outcome = await Promise.race([pass, later]);
+
+        if (outcome === "later") {
+            log.debug({ budgetMs }, "source-audio pass runs on past this look's budget");
+            return true;
+        }
+
+        return outcome;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /**
@@ -307,12 +350,16 @@ export async function archiveAvailableSourceAudio(store: MeetingStore): Promise<
 
 export async function watchOnce(
     store: MeetingStore,
-    options: { deps?: Partial<WatchDeps>; now?: number } = {}
+    options: { deps?: Partial<WatchDeps>; now?: number; archiveBudgetMs?: number } = {}
 ): Promise<WatchResult> {
     const deps: WatchDeps = { ...defaultDeps(store), ...options.deps };
     const now = options.now ?? Date.now();
     const settings = await deps.settings();
-    const audioPending = await deps.archiveAudio();
+    const audioPending = await archiveWithinBudget(
+        store,
+        deps.archiveAudio,
+        options.archiveBudgetMs ?? ARCHIVE_BUDGET_MS
+    );
 
     if (!settings.enabled) {
         const recorder = deps.recorder();

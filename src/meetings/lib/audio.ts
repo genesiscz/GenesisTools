@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_TONE_SOUND, type LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingEvidence } from "@genesiscz/utils/meetings/sources";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
 import { PLAYERS, pickPlayer } from "./players";
@@ -24,26 +25,28 @@ export interface MeetingAudio {
 
 /** The recording of the first linked source that keeps one on this Mac. Throws a message ready to print. */
 export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
+    const owned = preservedSourceAudio(record);
+    if (owned) {
+        return owned.path;
+    }
+
     return (await meetingAudio(record)).audioPath;
 }
 
-/** `meetingAudioPath` with the end of the last speech, which `play` needs to refuse a time past the end. */
+/**
+ * `meetingAudioPath` with the end of the last speech, which `play` needs to refuse a time past the end. Preserved
+ * audio is played, but the end still comes from the source's segments while the source keeps them; only a source
+ * that cannot be read any more leaves the end unknown.
+ */
 export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio> {
-    const owned = preservedSourceAudio(record);
-    if (owned) {
-        return { audioPath: owned.path };
-    }
-
     const ref = sourceRefOf(record);
 
     if (!ref) {
         throw new MeetingsStateError("no-transcript-source", `${record.id} has no linked source with audio.`);
     }
 
-    const evidence = withPreservedSourceAudio(
-        record,
-        await (await meetingSource(ref.sourceId)).evidence(ref.sourceMeetingId)
-    );
+    const owned = preservedSourceAudio(record, ref) !== undefined;
+    const evidence = withPreservedSourceAudio(record, await sourceEvidence({ record, ref, owned }));
 
     if (!evidence?.audioPath) {
         throw new Error(`The source keeps no audio for ${record.id} on this Mac.`);
@@ -54,6 +57,26 @@ export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio>
         undefined
     );
     return { audioPath: evidence.audioPath, ...(lastSpeechSec === undefined ? {} : { lastSpeechSec }) };
+}
+
+/** The source's evidence; with preserved audio, a source that no longer reads is logged and gives no evidence. */
+async function sourceEvidence(input: {
+    record: MeetingRecord;
+    ref: { sourceId: string; sourceMeetingId: string };
+    owned: boolean;
+}): Promise<MeetingEvidence | null> {
+    const { record, ref, owned } = input;
+
+    try {
+        return await (await meetingSource(ref.sourceId)).evidence(ref.sourceMeetingId);
+    } catch (error) {
+        if (!owned) {
+            throw error;
+        }
+
+        log.debug({ meeting: record.id, source: ref.sourceId, error }, "source evidence unreadable; no speech end");
+        return null;
+    }
 }
 
 /** What one clip holds: the heard stretch, the audio around it, and where its tone sounds (a time in the recording). */
