@@ -160,7 +160,6 @@ export function spokenOnPurpose(words: string[], known: (word: string) => boolea
     );
 }
 
-/** The words the dictionary settles: kept, fixed as one word, or a term's spoken form; lower case. */
 /** A word (or an English root) the language knows: English, or what the word check does not call unknown. */
 export function knownWord(wordCheck: WordCheck | undefined): (word: string) => boolean {
     return (word) => isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
@@ -194,6 +193,7 @@ function strongMeetingCandidate(evidence: unknown): boolean {
     );
 }
 
+/** The words the dictionary settles: kept, fixed as one word, or a term's spoken form; lower case. */
 export function dictionaryKeeps(dictionary: Pick<ResolvedDictionary, "entries">): Set<string> {
     return new Set(
         dictionary.entries.flatMap((entry) => {
