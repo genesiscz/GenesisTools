@@ -295,10 +295,7 @@ const RAW_CLACK_MODULE = /["']@clack\/prompts["']/;
  * Files that still import @clack/prompts while another session owns their folder (a ratchet: an entry only ever
  * leaves). Exact paths, never a folder: a new meetings file starts on the facade.
  */
-const RAW_CLACK_RATCHET: ReadonlySet<string> = new Set([
-    // src/meetings belongs to the meetings session (2026-11-10); C10 left its raw clack import in place.
-    "src/meetings/commands/listen.ts",
-]);
+const RAW_CLACK_RATCHET: ReadonlySet<string> = new Set([]);
 
 export function importsRawClack(text: string, node: SgNode): boolean {
     if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
