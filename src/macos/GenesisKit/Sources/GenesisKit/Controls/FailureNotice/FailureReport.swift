@@ -119,7 +119,6 @@ public struct FailureReport: Codable, Equatable, Sendable {
         self.call = call
         self.stack = stack
         self.issue = issue
-        if call != nil { FailureCapture.record(self) }
     }
 
     public var hasLog: Bool {

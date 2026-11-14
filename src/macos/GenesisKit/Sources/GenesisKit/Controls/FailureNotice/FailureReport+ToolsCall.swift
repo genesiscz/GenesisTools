@@ -33,6 +33,9 @@ public extension FailureReport {
             expected: expected,
             area: area,
             call: call)
+        // The one place a failed call becomes a report, so the capture of its context starts here and not in every
+        // copy, decode or fixture of a report that carries a call.
+        if call != nil { FailureCapture.record(report) }
         return report
     }
 
