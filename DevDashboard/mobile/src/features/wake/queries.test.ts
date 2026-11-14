@@ -140,10 +140,11 @@ describe("Wake my Mac", () => {
     it("reports no wake for a 2xx answer that is not the relay's acknowledgment", async () => {
         const page = await sendWake(MOCK_WAKE, async () => new Response("<html>Welcome</html>", { status: 200 }));
         const refused = await sendWake(MOCK_WAKE, async () => new Response('{"ok":false}'));
-        const empty = await sendWake(MOCK_WAKE, async () => new Response("", { status: 204 }));
+        // A 204 carries no body by the Fetch spec: `new Response("", { status: 204 })` throws outside Bun.
+        const empty = await sendWake(MOCK_WAKE, async () => new Response(null, { status: 204 }));
 
         expect(page).toMatchObject({ sent: false, detail: expect.stringContaining("did not confirm") });
-        expect(refused.sent).toBe(false);
-        expect(empty.sent).toBe(false);
+        expect(refused).toMatchObject({ sent: false, detail: expect.stringContaining("did not confirm") });
+        expect(empty).toMatchObject({ sent: false, detail: expect.stringContaining("did not confirm") });
     });
 });
