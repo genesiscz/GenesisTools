@@ -115,6 +115,18 @@ function liveGrant(wire: string): { granted?: boolean; label: string } {
 }
 
 /**
+ * `GenesisTools --permission-status <kind>`: the app's own grant check, one wire value for a kind, or one
+ * `<kind> <wire value>` line per grant for `all`.
+ */
+export function runPermissionStatus(kind: PermissionKindId | "all", timeoutMs: number) {
+    return Bun.spawnSync([genesisAppLauncherPath(), "--permission-status", kind], {
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: timeoutMs,
+    });
+}
+
+/**
  * Every grant as GenesisTools.app itself reads it (`GenesisTools --permission-status all`, the check `tools macos
  * permissions request` makes): the macOS APIs, no TCC database. The per-user TCC.db is behind Full Disk Access, so
  * without that grant this is the only way to read Microphone, Camera, Calendars and the rest. Null when the app is
@@ -126,11 +138,7 @@ export function liveGrantStatuses(timeoutMs = 3_000): Map<PermissionKindId, stri
         return null;
     }
 
-    const run = Bun.spawnSync([launcher, "--permission-status", "all"], {
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: timeoutMs,
-    });
+    const run = runPermissionStatus("all", timeoutMs);
     const statuses = run.exitCode === 0 ? parsePermissionStatusLines(run.stdout.toString()) : new Map();
     logger.debug(
         { launcher, exitCode: run.exitCode, kinds: statuses.size, stderr: run.stderr.toString().slice(0, 300) },
