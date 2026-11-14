@@ -79,12 +79,16 @@ public enum ToolsCallTrace {
 
     private static let headerPattern = try? NSRegularExpression(
         pattern: #"(?i)\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)(\s*[:=]\s*)[^\r\n]+"#)
+    /// A quoted header name (`{"x-api-key":"…"}`, `'Authorization': '…'`) with its quoted or bare value.
+    private static let quotedHeaderPattern = try? NSRegularExpression(
+        pattern: #"(?i)(["'](?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie)["']\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}]+)"#)
     private static let schemePattern = try? NSRegularExpression(pattern: #"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"#)
 
     /// `Authorization: ...` lines and `Bearer <token>` words in text, whatever produced it.
     static func scrubbingHeaders(_ text: String) -> String {
         var out = text
-        for (regex, template) in [(headerPattern, "$1$2***"), (schemePattern, "$1 ***")] {
+        // The scheme pass runs first: the header pass would remove `Bearer` and leave a wrapped token behind it.
+        for (regex, template) in [(schemePattern, "$1 ***"), (quotedHeaderPattern, "$1\"***\""), (headerPattern, "$1$2***")] {
             guard let regex else { continue }
             out = regex.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: template)
         }

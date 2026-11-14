@@ -757,6 +757,18 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertEqual(FailureCaptureStore.key(raw), FailureCaptureStore.key(archived))
     }
 
+    func testAQuotedCredentialHeaderNameIsRedacted() {
+        for text in [#"{"x-api-key":"fixture-key-123"}"#, #"{'Authorization': 'fixture-key-123'}"#, #"{"cookie": fixture-key-123}"#] {
+            let safe = ToolsCallTrace.redactedText(text, argv: [])
+            XCTAssertFalse(safe.contains("fixture-key-123"), safe)
+        }
+    }
+
+    func testAWrappedSchemeCredentialIsRedactedWithItsHeader() {
+        let safe = ToolsCallTrace.redactedText("Authorization: Bearer\n fixture-token-123", argv: [])
+        XCTAssertFalse(safe.contains("fixture-token-123"), safe)
+    }
+
     func testAMergedCaptureKeepsTheLogLocationOfItsLog() async throws {
         let directory = temporaryURL("failure-capture")
         let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { report in
