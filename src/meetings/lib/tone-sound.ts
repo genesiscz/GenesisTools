@@ -102,6 +102,11 @@ async function readToneSound(
     }
 
     const stat = statSync(file);
+    // A FIFO or a device would block ffprobe on its read, so only a regular file reaches the probe.
+    if (!stat.isFile()) {
+        throw new Error(`The tone's sound file ${file} is not a regular file; pick another sound.`);
+    }
+
     const key = `${file}\n${stat.mtimeMs}\n${stat.size}`;
     let lengthSec = fileLengths.get(key);
 

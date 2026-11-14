@@ -281,6 +281,18 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(own[Self.volumePath]?.isDefault, true)
     }
 
+    /// An earlier write that lands, or its 5 s timer, never clears a newer draft: the release of a second drag still
+    /// finds the draft and writes it.
+    func testAnEarlierVolumeWriteKeepsANewerDraft() {
+        XCTAssertEqual(SidePanelSlider.draft(0.6, afterSaved: 0.4, editing: true), 0.6, "the knob moves again: the 0.4 write lands")
+        XCTAssertEqual(SidePanelSlider.draft(0.6, afterSaved: 0.4, editing: false), 0.6, "released at 0.6 before 0.4 landed")
+        XCTAssertNil(SidePanelSlider.draft(0.6, afterSaved: 0.6, editing: false), "the draft's own value is saved")
+        XCTAssertEqual(SidePanelSlider.draft(0.6, afterSaved: 0.6, editing: true), 0.6, "a drag keeps its draft")
+        XCTAssertEqual(SidePanelSlider.draft(0.6, afterTimeoutOf: 0.4, editing: false), 0.6, "the 0.4 write's timer")
+        XCTAssertEqual(SidePanelSlider.draft(0.4, afterTimeoutOf: 0.4, editing: true), 0.4, "a drag holds on")
+        XCTAssertNil(SidePanelSlider.draft(0.4, afterTimeoutOf: 0.4, editing: false), "a write that did not land gives up")
+    }
+
     /// F8: a window row writes the type its reader reads, so `integer(forKey:)` and the typed accessors see it.
     func testAWindowRowWritesTheTypeItsReaderReads() throws {
         let (defaults, suite) = try defaults()

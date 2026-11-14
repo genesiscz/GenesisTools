@@ -111,6 +111,7 @@ import {
     anchorScores,
     CandidateTallies,
     directoryMatcher,
+    lineTallies,
     rosterTallies,
     scoreCandidates,
     speakerScoresOf,
@@ -723,6 +724,9 @@ describe("own label (R17)", () => {
         const at = (sec: number) => items.find((item) => item.kind === "speaker-range" && item.fromSec === sec);
 
         expect(at(4)).toMatchObject({ speaker: "Rob Example", rules: ["E1", "E3", "R17"], confidence: 0.65 });
+        // The scores agree with the rule: E3 and E4 show Bob because his own label talks beside the line, so the
+        // timing speaks against him and he gets no score.
+        expect(speakerScoresOf(at(4)!).map((score) => score.speaker)).not.toContain("Bob Example");
         expect(at(60)).toMatchObject({ speaker: "Bob Example", rules: ["E1", "E3", "E4"] });
     });
 });
@@ -832,7 +836,8 @@ describe("speaker candidate scores (G31)", () => {
         expect(scores.some((score) => sameName(score.speaker, "Alice Example"))).toBe(false);
         expect(total(scores)).toBeLessThanOrEqual(0.6);
 
-        // Turn timing (R17): Dan talks under his own label within 10 s of each line, so the voice is likely his.
+        // Turn timing (R17): Dan talks under his own label within 10 s of each line, so he is the other side of the
+        // dialogue: the timing speaks against him, and his roster share is gone.
         const timed = evidenceRun({
             transcript: [
                 transcript[0]!,
@@ -850,12 +855,57 @@ describe("speaker candidate scores (G31)", () => {
                 { tSec: 12, speaking: ["Bob Example"] },
             ],
         });
-        const top = scoresAt(timed, "Alice Example")[0];
+        const timedScores = scoresAt(timed, "Alice Example");
 
-        expect(top).toMatchObject({
-            speaker: "Dan Example",
-            evidence: expect.arrayContaining([{ kind: "timing", rule: "R17", lines: 2 }]),
+        expect(timedScores[0]).toMatchObject({ speaker: "Bob Example" });
+        expect(timedScores.some((score) => score.speaker === "Dan Example")).toBe(false);
+    });
+
+    test("one line counts once per person, whichever of their names it uses", () => {
+        const samePerson = directoryMatcher([
+            { name: "Dan Example", email: "dan@example.com", aliases: ["Daniel Example"] },
+        ]);
+        const evidenceLine = (index: number, muted: string[]) => ({
+            index,
+            label: "Carol Example",
+            text: "Ano.",
+            startSec: index * 10,
+            endSec: index * 10 + 5,
+            speaking: { "Dan Example": 1, "Daniel Example": 1 },
+            present: ["Bob Example", "Dan Example", "Daniel Example"],
+            muted,
         });
+        const tallies = lineTallies({
+            lines: [evidenceLine(0, ["Dan Example", "Daniel Example"]), evidenceLine(1, [])],
+            selfName: "Alice Example",
+            nearby: [[], []],
+            micHolds: () => false,
+            samePerson,
+        });
+        const dan = tallies.find("Daniel Example");
+
+        expect(dan).toMatchObject({ name: "Dan Example", shown: 1, roster: 2, muted: 1 });
+        // Muted on one of two lines is not muted throughout: Dan keeps a score.
+        expect(
+            scoreCandidates({ tallies: tallies.tallies, lines: 2, label: "Carol Example", confidence: 0.9, rules: [] })
+                .map((score) => score.speaker)
+                .includes("Dan Example")
+        ).toBe(true);
+    });
+
+    test("rounded scores never add up to more than the confidence they share", () => {
+        const present = Array.from({ length: 17 }, (_, index) => `Person ${index + 1} Example`);
+        const scores = scoreCandidates({
+            tallies: rosterTallies({ fromSec: 0, toSec: 60, present }).tallies,
+            label: "Carol Example",
+            confidence: 0.95,
+            rules: ["RA"],
+        });
+        const raised = anchorScores(scores, "Person 1 Example", 0.335);
+
+        expect(scores).toHaveLength(17);
+        expect(total(scores)).toBeLessThanOrEqual(0.95 + 1e-9);
+        expect(total(raised)).toBeLessThanOrEqual(1 + 1e-9);
     });
 
     test("attendance alone: the people in the call share the rule's confidence evenly; the polish and the directory weigh in", () => {
@@ -1984,6 +2034,31 @@ describe("questions (R2.3)", () => {
         expect(questionFor(fillers, context())).toBeUndefined();
     });
 
+    test("a person only the range's typed scores weigh is offered too, once per person", () => {
+        const scored = withItems([
+            {
+                ...range,
+                speaker: "Bob Example",
+                candidates: undefined,
+                confidence: 0.45,
+                evidence: {
+                    listen: true,
+                    endSec: 146,
+                    candidateScores: [
+                        { speaker: "Bob Example", confidence: 0.45, evidence: [] },
+                        { speaker: "Dan Example", confidence: 0.2, evidence: [{ kind: "voice", rule: "E3" }] },
+                        { speaker: "bob example", confidence: 0.1, evidence: [] },
+                    ],
+                },
+            },
+        ]).items[0]!;
+
+        expect(questionFor(scored, context())).toMatchObject({
+            about: "speaker",
+            choices: ["Bob Example", "Dan Example"],
+        });
+    });
+
     test("a term is asked only when it matters: seen twice, an identifier, or a decision", () => {
         const term = (extra: object) =>
             withItems([
@@ -2658,6 +2733,14 @@ describe("arrival and muted (R16, RM), Martin's three lines of the example", () 
         expect(at(31)).toContainEqual(
             expect.objectContaining({ speaker: "Fil Example", rules: ["R16"], confidence: 0.65 })
         );
+        // The arrival range carries typed scores from its own line, as every speaker range does.
+        const arrival = at(31).find((item) => item.rules.join() === "R16");
+        expect(arrival ? speakerScoresOf(arrival)[0] : undefined).toMatchObject({
+            speaker: "Fil Example",
+            confidence: 0.65,
+            lines: 1,
+            evidence: expect.arrayContaining([{ kind: "timing", rule: "R16" }]),
+        });
         const rm = at(31).find((item) => item.rules.includes("RM"));
         expect(rm).toBeDefined();
         expect(rm?.speaker ?? "").not.toBe("Alice Example");

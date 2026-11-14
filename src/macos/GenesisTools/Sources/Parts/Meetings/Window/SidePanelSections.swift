@@ -825,7 +825,8 @@ struct SidePanelProblem: View {
 /// The volume slider: it follows the knob while it moves and writes once, when the drag ends, so a drag is one
 /// `config.set`; a step by the arrow keys or VoiceOver writes 0.4 s after the last step. The draft stays until the
 /// saved value arrives (no jump back on release), or 5 s after a write that did not land, when the slider shows the
-/// saved value again.
+/// saved value again. Only the value the draft holds clears it: an earlier write that lands, or its 5 s timer, while
+/// the reader drags again or holds a newer draft keeps that draft, so the release still writes it.
 struct SidePanelSlider: View {
     let title: String
     let saved: Double
@@ -834,6 +835,27 @@ struct SidePanelSlider: View {
     @State private var draft: Double?
     @State private var editing = false
     @State private var written = 0
+    /// The value of the last write, which its 5 s timer may give up on.
+    @State private var submitted: Double?
+
+    /// The draft after the saved value changed to `saved`: gone once the saved value is the draft, kept while the knob
+    /// moves or while it holds a value no write has saved yet.
+    static func draft(_ draft: Double?, afterSaved saved: Double, editing: Bool) -> Double? {
+        guard let draft, !editing, draft == saved else { return draft }
+        return nil
+    }
+
+    /// The draft when a write's 5 s are up: gone only when it still is that write's value and the knob is not moving.
+    static func draft(_ draft: Double?, afterTimeoutOf submitted: Double?, editing: Bool) -> Double? {
+        guard let draft, !editing, draft == submitted else { return draft }
+        return nil
+    }
+
+    private func write(_ value: Double) {
+        commit(value)
+        submitted = value
+        written += 1
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -844,8 +866,7 @@ struct SidePanelSlider: View {
             } onEditingChanged: { isEditing in
                 editing = isEditing
                 guard !isEditing, let draft else { return }
-                commit(draft)
-                written += 1
+                write(draft)
             }
             .labelsHidden()
             .controlSize(.mini)
@@ -857,18 +878,17 @@ struct SidePanelSlider: View {
                 .frame(width: 36, alignment: .trailing)
                 .accessibilityHidden(true)
         }
-        .onChange(of: saved) { draft = nil }
+        .onChange(of: saved) { _, now in draft = Self.draft(draft, afterSaved: now, editing: editing) }
         .task(id: draft) {
             guard let draft, !editing, draft != saved else { return }
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled, !editing else { return }
-            commit(draft)
-            written += 1
+            write(draft)
         }
         .task(id: written) {
             guard written > 0 else { return }
             try? await Task.sleep(for: .seconds(5))
-            if !Task.isCancelled { draft = nil }
+            if !Task.isCancelled { draft = Self.draft(draft, afterTimeoutOf: submitted, editing: editing) }
         }
     }
 }

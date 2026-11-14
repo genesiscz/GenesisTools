@@ -165,11 +165,13 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         const absent = (context.presence ?? [])
             .filter((stay) => !present.some((name) => sameName(name, stay.name)))
             .map((stay) => stay.name);
+        // The people the range's typed scores weigh come last, so the first two choices (the signature) stay as before.
         const choices = [
             ...(item.speaker ? [item.speaker] : []),
             ...(item.candidates ?? []),
             ...present,
             ...(context.candidates ?? []),
+            ...speakerScoresOf(item).map((score) => score.speaker),
         ].filter(
             (name, index, names) =>
                 !absent.some((other) => sameName(name, other)) &&

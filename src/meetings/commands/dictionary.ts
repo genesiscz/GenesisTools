@@ -216,11 +216,13 @@ async function suggest(opts: {
 
             const entries = picks.map((pick) => suggestions[pick - 1]!.entry);
 
-            if (opts.project && (await store.addProject(opts.project))) {
+            // One write: a new project joins the known ones only together with its entries.
+            const { projectAdded } = await store.editDictionary(scopeOf(opts.project), { put: entries });
+
+            if (projectAdded) {
                 ui.ok(`Added project ${opts.project} to the known projects.`);
             }
 
-            await store.putDictionaryEntries(scopeOf(opts.project), entries);
             ui.ok(
                 `Saved ${entries.length} entries to the ${opts.project ? `project ${opts.project}` : "global"} dictionary.`
             );

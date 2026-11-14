@@ -940,12 +940,49 @@ export class MeetingsConfigStore {
         added: DictionaryEntry[],
         options: { ifAbsent?: boolean } = {}
     ): Promise<MeetingsConfig> {
-        const values = new Set(added.map((entry) => entry.value));
+        return (await this.editDictionary(scope, { put: added, ifAbsent: options.ifAbsent })).config;
+    }
 
-        return this.update((raw) => {
+    /**
+     * Replaces the entry for `previous` with `entry` (a renamed entry is a new value) in one write, in its place. The
+     * whole config must still validate, so a refused entry leaves `previous` as it was.
+     */
+    async replaceDictionaryEntry(
+        scope: DictionaryScope,
+        previous: string,
+        entry: DictionaryEntry
+    ): Promise<MeetingsConfig> {
+        return (await this.editDictionary(scope, { rename: { previous, entry } })).config;
+    }
+
+    /**
+     * Puts entries into one dictionary level, or renames one entry, in ONE write. A project level the file does not
+     * know yet joins the known projects in that same write, so an entry the config refuses leaves both the dictionary
+     * and the project list as they were. `projectAdded` says whether the project was new.
+     */
+    async editDictionary(
+        scope: DictionaryScope,
+        edit: { put: DictionaryEntry[]; ifAbsent?: boolean } | { rename: { previous: string; entry: DictionaryEntry } }
+    ): Promise<{ config: MeetingsConfig; projectAdded: boolean }> {
+        let projectAdded = false;
+        const config = await this.update((raw) => {
+            projectAdded = scope.kind === "project" && !isObject(objectAt(raw, "projects")[scope.project]);
             const level = dictionaryAt(raw, scope);
             const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
-            const present = options.ifAbsent
+
+            if ("rename" in edit) {
+                const { previous, entry } = edit.rename;
+                const at = entries.findIndex((existing) => existing.value === previous);
+                const kept = entries.filter(
+                    (existing) => existing.value !== previous && existing.value !== entry.value
+                );
+                kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, entry);
+                level.entries = kept;
+                return;
+            }
+
+            const values = new Set(edit.put.map((entry) => entry.value));
+            const present = edit.ifAbsent
                 ? entries.find((existing) => typeof existing.value === "string" && values.has(existing.value))
                 : undefined;
 
@@ -958,28 +995,11 @@ export class MeetingsConfigStore {
 
             level.entries = [
                 ...entries.filter((existing) => typeof existing.value !== "string" || !values.has(existing.value)),
-                ...added,
+                ...edit.put,
             ];
         });
-    }
 
-    /**
-     * Replaces the entry for `previous` with `entry` (a renamed entry is a new value) in one write, in its place. The
-     * whole config must still validate, so a refused entry leaves `previous` as it was.
-     */
-    async replaceDictionaryEntry(
-        scope: DictionaryScope,
-        previous: string,
-        entry: DictionaryEntry
-    ): Promise<MeetingsConfig> {
-        return this.update((raw) => {
-            const level = dictionaryAt(raw, scope);
-            const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
-            const at = entries.findIndex((existing) => existing.value === previous);
-            const kept = entries.filter((existing) => existing.value !== previous && existing.value !== entry.value);
-            kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, entry);
-            level.entries = kept;
-        });
+        return { config, projectAdded };
     }
 
     /** Sets how abbreviations expand on one level. */

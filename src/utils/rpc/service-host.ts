@@ -206,7 +206,14 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         stopping = true;
         clearInterval(check);
         log.info({ reason, connections: server?.connections.length }, `${label} stopping`);
-        options.onStopping?.(reason);
+
+        // A hook that throws must not skip the cleanup below: `stopping` is set, so no later stop() would finish it.
+        try {
+            options.onStopping?.(reason);
+        } catch (error) {
+            log.warn({ error, reason }, `${label} onStopping failed; the stop goes on`);
+        }
+
         server?.endConnections();
 
         try {
@@ -217,7 +224,13 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         }
 
         clearPidFile(servicePidPath(dir));
-        options.onStopped?.(reason);
+
+        try {
+            options.onStopped?.(reason);
+        } catch (error) {
+            log.warn({ error, reason }, `${label} onStopped failed; the stop goes on`);
+        }
+
         stopped.resolve(reason);
     };
 
