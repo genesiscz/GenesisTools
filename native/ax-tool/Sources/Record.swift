@@ -1730,20 +1730,22 @@ private final class ScreenStreamHost {
                 let failsHere = owner.end(token)
                 // Undo what this switch changed, unless a newer switch began: that one sets its own size and filter.
                 if failsHere || owner.isLatest(token) {
-                    if filterChanged, let restoreFilter {
+                    /// One undo step, bounded like every stream call; a step that fails or stalls is only warned about.
+                    func restore(_ what: String, _ step: @escaping () async throws -> Void) async {
                         do {
-                            try await answer(within: 5) { try await stream.updateContentFilter(restoreFilter) }
+                            try await answer(within: 5, step)
                         } catch {
-                            recorder.warn("could not put the recording back on display \(previousDisplay.id): \(error.localizedDescription)")
+                            recorder.warn("could not \(what): \(error.localizedDescription)")
+                        }
+                    }
+                    if filterChanged, let restoreFilter {
+                        await restore("put the recording back on display \(previousDisplay.id)") {
+                            try await stream.updateContentFilter(restoreFilter)
                         }
                     }
                     if sizeChanged, let previousSize {
-                        do {
-                            let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
-                            try await answer(within: 5) { try await stream.updateConfiguration(configuration) }
-                        } catch {
-                            recorder.warn("could not restore the recording size: \(error.localizedDescription)")
-                        }
+                        let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
+                        await restore("restore the recording size") { try await stream.updateConfiguration(configuration) }
                     }
                     recorder.cancelPendingDisplay()
                 }
