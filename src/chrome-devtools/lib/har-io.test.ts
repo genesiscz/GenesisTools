@@ -217,6 +217,16 @@ describe("sanitizeHar encoded POST credentials", () => {
         expect(plain).not.toContain("plain-secret");
         expect(plain).toContain("user=alice");
 
+        // In a text/plain value `&` is a literal character, so the whole line after `password=` is the password.
+        raw.log.entries[0].request.postData = {
+            mimeType: "text/plain",
+            text: "password=first&remaining-secret\r\nuser=alice\r\nnote=a&code=amp-secret\r\n",
+        };
+        const ampersand = sanitizeHar(raw).log.entries[0].request.postData?.text ?? "";
+        expect(ampersand).not.toContain("remaining-secret");
+        expect(ampersand).not.toContain("amp-secret");
+        expect(ampersand).toContain("password=[REDACTED]\r\nuser=alice\r\n");
+
         const multipart = [
             "--fixture-boundary",
             'Content-Disposition: form-data; name="user"',
