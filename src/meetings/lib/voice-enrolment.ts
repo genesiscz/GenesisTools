@@ -188,35 +188,29 @@ export function enrolRemoteVoices(options: {
     labels?: ReadonlyMap<number, string>;
 }): VoiceSample[] {
     const samples: VoiceSample[] = [];
+    const mixedRanges = options.record.items.flatMap((item) =>
+        item.kind === "speaker-range" && item.status === "confirmed" && (item.voices?.length ?? 0) > 1 ? [item] : []
+    );
     for (const line of options.embeddings) {
         for (const channel of line.channels) {
             if (channel.quality !== "ready" || channel.track !== "isolated-call") {
                 continue;
             }
-            const mixed = options.record.items.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "confirmed" &&
-                    (item.voices?.length ?? 0) > 1 &&
-                    item.fromSec <= channel.toSec &&
-                    item.toSec >= channel.fromSec
-            );
-            if (mixed) {
+            if (mixedRanges.some((item) => item.fromSec <= channel.toSec && item.toSec >= channel.fromSec)) {
                 continue;
             }
 
-            const present = [
-                ...new Set(
-                    options.remote
-                        .filter((stay) => stay.fromSec <= channel.fromSec && stay.toSec >= channel.toSec)
-                        .map((stay) => stay.name)
-                ),
-            ];
-            const touching = new Set(
-                options.remote
-                    .filter((stay) => stay.fromSec < channel.toSec && stay.toSec > channel.fromSec)
-                    .map((stay) => stay.name)
-            );
+            const covering = new Set<string>();
+            const touching = new Set<string>();
+            for (const stay of options.remote) {
+                if (stay.fromSec <= channel.fromSec && stay.toSec >= channel.toSec) {
+                    covering.add(stay.name);
+                }
+                if (stay.fromSec < channel.toSec && stay.toSec > channel.fromSec) {
+                    touching.add(stay.name);
+                }
+            }
+            const present = [...covering];
             const confirmed = options.record.items
                 .filter(
                     (item) =>
