@@ -52,15 +52,21 @@ export function behindUnified(options: { cwd: string; branch: string; refs: stri
             [0, 1]
         );
         const [tree, ...names] = merged.out.trim().split("\n");
-        return { tree, conflicted: merged.code === 1 ? [...new Set(names.filter(Boolean))] : [] };
+        return {
+            tree,
+            clean: merged.code === 0,
+            conflicted: merged.code === 1 ? [...new Set(names.filter(Boolean))] : [],
+        };
     };
 
     for (const ref of refs) {
-        const conflicted = merge(ref, []).conflicted;
+        const plain = merge(ref, []);
+        const conflicted = plain.conflicted;
         // `-X ours` settles each conflicting hunk with the integration branch's side and keeps every clean change of
         // the ref, also one in a file that has a conflict elsewhere. What is still in conflict (a file one side
-        // deleted, a rename on both sides) has no tree to compare, so it stays out of `lacking`.
-        const settled = merge(ref, ["-X", "ours"]);
+        // deleted, a rename on both sides) has no tree to compare, so it stays out of `lacking`. A clean merge has no
+        // hunk to settle, so its tree already is the settled one.
+        const settled = plain.clean ? plain : merge(ref, ["-X", "ours"]);
         const lacking = must(["diff", "--name-only", branchTree, settled.tree])
             .out.split("\n")
             .filter((file) => file && !settled.conflicted.includes(file));
