@@ -123,6 +123,9 @@ const REGEX_AFTER_WORD = new Set([
     "instanceof",
 ]);
 
+/** The keywords whose parenthesized head is followed by a statement, so a `/` after the `)` opens a regex. */
+const CONTROL_HEAD_WORDS = new Set(["if", "while", "for", "with"]);
+
 /** The end (exclusive, flags included) of the regular expression literal at `start`, or -1 when it is none. */
 function regexLiteralEnd(body: string, start: number): number {
     let i = start + 1;
@@ -172,6 +175,10 @@ export function fingerprint(body: string, parameters: readonly string[]): string
     let i = 0;
     /** The word `out` ends with, else undefined: it decides whether a `/` divides or opens a regular expression. */
     let lastWord: string | undefined;
+    /** For each open `(`, whether it heads an `if`, `while`, `for` or `with`. */
+    const heads: boolean[] = [];
+    /** True right after the `)` that closes such a head: the next `/` starts a statement, so it opens a regex. */
+    let afterControlHead = false;
 
     while (i < body.length) {
         const char = body[i] ?? "";
@@ -195,6 +202,7 @@ export function fingerprint(body: string, parameters: readonly string[]): string
             i += 1;
             out += body.slice(start, i);
             lastWord = undefined;
+            afterControlHead = false;
         } else if (WORD_START.test(char)) {
             const start = i;
 
@@ -207,14 +215,23 @@ export function fingerprint(body: string, parameters: readonly string[]): string
             // A space only where two words would otherwise run together (`return value`).
             out += `${WORD.test(out[out.length - 1] ?? "") ? " " : ""}${index === undefined ? word : `$${index}`}`;
             lastWord = index === undefined ? word : `$${index}`;
+            afterControlHead = false;
         } else if (/\s/.test(char)) {
             i += 1;
         } else {
             const opensRegex =
                 char === "/" &&
-                (lastWord !== undefined ? REGEX_AFTER_WORD.has(lastWord) : REGEX_AFTER_CHAR.test(out.at(-1) ?? "("));
+                (afterControlHead ||
+                    (lastWord !== undefined
+                        ? REGEX_AFTER_WORD.has(lastWord)
+                        : REGEX_AFTER_CHAR.test(out.at(-1) ?? "(")));
             const end = opensRegex ? regexLiteralEnd(body, i) : -1;
 
+            if (char === "(") {
+                heads.push(lastWord !== undefined && CONTROL_HEAD_WORDS.has(lastWord));
+            }
+
+            afterControlHead = char === ")" && heads.pop() === true;
             out += end === -1 ? char : body.slice(i, end);
             i = end === -1 ? i + 1 : end;
             lastWord = undefined;

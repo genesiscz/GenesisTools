@@ -247,6 +247,24 @@ describe("sanitizeHar encoded POST credentials", () => {
         const parts = sanitizeHar(raw).log.entries[0].request.postData?.text ?? "";
         expect(parts).not.toContain("part-secret");
         expect(parts).toContain("alice");
+
+        const dashed = [
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="password"',
+            "",
+            "first",
+            "--ordinary-value-line",
+            "remaining-secret",
+            "--fixture-boundary--",
+            "",
+        ].join("\r\n");
+        raw.log.entries[0].request.postData = {
+            mimeType: "multipart/form-data; boundary=fixture-boundary",
+            text: dashed,
+        };
+        const whole = sanitizeHar(raw).log.entries[0].request.postData?.text ?? "";
+        expect(whole).not.toContain("first");
+        expect(whole).not.toContain("remaining-secret");
     });
 });
 

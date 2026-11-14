@@ -96,6 +96,8 @@ private struct MeetingSeatsEditor: View {
                         Text("ID self denotes your microphone. Device owner identifies whose device carries the group. Members must all be room people or all remote people.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                // Edits made while the write is in flight would be dismissed with the sheet unsaved.
+                .disabled(saving)
             }
             if let failure {
                 NoticePill(text: "Not saved: \(failure.sentence)", more: failure.detail, tone: .error)
@@ -116,12 +118,14 @@ private struct MeetingSeatsEditor: View {
         guard !saving else { return }
         saving = true
         failure = nil
-        let seats = draft.parsed
+        let submitted = draft
+        let seats = submitted.parsed
         Task {
             do {
                 try await save(seats)
                 saving = false
-                saved()
+                // Keep the sheet open when the draft changed after the snapshot: closing would drop those edits.
+                if draft == submitted { saved() }
             } catch {
                 saving = false
                 failure = asFailure(error)

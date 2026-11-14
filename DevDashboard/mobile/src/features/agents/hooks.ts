@@ -187,11 +187,19 @@ export async function drainOutbox(input: {
 const boardHash = hashKey(agentsKeys.board);
 
 /**
+ * How often the drain looks at the outbox on its own. A board screen that unmounts stops the board poll and releases
+ * the live channel, so a Mac that wakes while the phone stays online would otherwise go unnoticed until the user
+ * opens an agents screen. A pass with nothing waiting is one read.
+ */
+export const OUTBOX_RETRY_MS = 30_000;
+
+/**
  * The connection's outbox drain: it sends waiting drafts when the phone comes online and whenever the board loads,
- * which is how a Mac that recovers while the phone stays online is noticed. Mounted once per connection session
+ * and on a timer (`OUTBOX_RETRY_MS`) for when no board screen is mounted, which is how a Mac that recovers while the
+ * phone stays online is noticed. Mounted once per connection session
  * (the tabs layout), so a draft saved in a session screen is still sent after the user leaves that screen.
  */
-export function useOutboxDrain(store: DraftStore = kvDraftStore): void {
+export function useOutboxDrain(store: DraftStore = kvDraftStore, retryMs: number = OUTBOX_RETRY_MS): void {
     const client = useDashboardClient();
     const connectionId = useDashboardConnectionId() ?? "fixture";
     const queryClient = useQueryClient();
@@ -215,11 +223,14 @@ export function useOutboxDrain(store: DraftStore = kvDraftStore): void {
             }
         });
 
+        const retryTimer = setInterval(drain, retryMs);
+
         return () => {
+            clearInterval(retryTimer);
             unsubscribeOnline();
             unsubscribeRecovery();
         };
-    }, [client, connectionId, queryClient, store]);
+    }, [client, connectionId, queryClient, store, retryMs]);
 }
 
 /**

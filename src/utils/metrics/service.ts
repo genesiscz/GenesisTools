@@ -85,7 +85,7 @@ interface Handler<R> {
     run(params: unknown): R;
 }
 
-type Handlers = { [M in MetricsMethod]: Handler<MetricsResult<M>> };
+type Handlers = { [M in MetricsMethod]: Handler<MetricsResult<M> | Promise<MetricsResult<M>>> };
 
 function invalid(message: string): RpcError {
     return new RpcError(JSON_RPC_ERRORS.invalidParams, message);
@@ -232,10 +232,14 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
             return result;
         });
 
-    /** Reads the whole spool, step after step; only `prune` waits for that, since it must see every old event. */
-    const drainAll = (): void => {
+    /**
+     * Reads the whole spool, step after step; only `prune` waits for that, since it must see every old event. Each
+     * step after the first yields to the event loop first, so other clients and timers run during a long backlog.
+     */
+    const drainAll = async (): Promise<void> => {
         for (let step = drain(); step.more; step = drain()) {
             log.debug({ lines: step.lines }, "a metrics spool backlog drains before prune");
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
 
         // The loop read the backlog to its end, so the follow-up drain a step scheduled has nothing left to read.
@@ -353,8 +357,8 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
         })),
         // The spool first: an old event still in it would come back at the next drain, after a prune that said it
         // was gone. A line written after this drain is the next drain's, and stays even when it is older.
-        prune: handler("prune", METRICS_METHODS.prune, (params) => {
-            drainAll();
+        prune: handler("prune", METRICS_METHODS.prune, async (params) => {
+            await drainAll();
             return { removed: storeNow().prune(params.before) };
         }),
         "checkpoint.add": handler("checkpoint.add", METRICS_METHODS["checkpoint.add"], (params) =>

@@ -9,7 +9,7 @@ extension AVAssetWriterInput {
         let deadline = Date().addingTimeInterval(seconds)
         while !isReadyForMoreMediaData {
             guard Date() < deadline else { throw NotReady() }
-            try await Task.sleep(for: .milliseconds(5))
+            try await Task.sleep(for: .milliseconds(100))
         }
     }
 }

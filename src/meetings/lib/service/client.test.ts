@@ -133,7 +133,7 @@ async function eventually(check: () => boolean): Promise<boolean> {
             return false;
         }
 
-        await Bun.sleep(20);
+        await Bun.sleep(100);
     }
 
     return true;

@@ -1,4 +1,4 @@
-import { fileSessionStore } from "@app/clarity/lib/auth/file-session-store";
+import { clarityOrigin, fileSessionStore } from "@app/clarity/lib/auth/file-session-store";
 import type { ClaritySession, ClaritySessionStore } from "@app/clarity/lib/auth/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -17,14 +17,7 @@ interface StoredSession extends ClaritySession {
     origin?: string;
 }
 
-/** The scheme, host and port of a base URL, or null for one that does not parse. */
-export function clarityOrigin(baseUrl: string): string | null {
-    try {
-        return new URL(baseUrl).origin;
-    } catch {
-        return null;
-    }
-}
+export { clarityOrigin };
 
 function parse(raw: string | null, baseUrl: string): ClaritySession | null {
     if (!raw) {

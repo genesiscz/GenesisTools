@@ -24,6 +24,19 @@ describe("ResponseHead", () => {
         expect(head.headers).toEqual({ location: "https://example.com/next", "set-cookie": "a=1, b=2" });
     });
 
+    test("only the blank line that ends a followed redirect head asks to stop the transfer", () => {
+        const head = new ResponseHead(true);
+        const stops = ["HTTP/2 302", "Location: /next", "Set-Cookie: a=1", ""].map((line) => head.line(`${line}\r\n`));
+        expect(stops).toEqual([false, false, false, true]);
+
+        const page = new ResponseHead(true);
+        expect(["HTTP/2 200", "Location: /ignored", ""].map((line) => page.line(`${line}\r\n`))).toEqual([
+            false,
+            false,
+            false,
+        ]);
+    });
+
     test("a redirect curl follows, a redirect without a Location and a page all keep their body", () => {
         expect(read(false, ["HTTP/1.1 301 Moved", "Location: /next", ""]).redirect).toBe(false);
         expect(read(true, ["HTTP/1.1 303 See Other", ""]).redirect).toBe(false);

@@ -64,14 +64,14 @@ final class GitHunksTests: XCTestCase {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("flaky-gutter-\(UUID())/note.md")
         model.follow(file, text: "new\n")
         var end = Date().addingTimeInterval(3)
-        while flaky.readCount == 0, Date() < end { try await Task.sleep(for: .milliseconds(20)) }
+        while flaky.readCount == 0, Date() < end { try await Task.sleep(for: .milliseconds(100)) }
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(model.hunks.isEmpty, "a failed read has no hunks")
 
         flaky.recover()
         model.repositoryChanged()
         end = Date().addingTimeInterval(3)
-        while model.hunks.isEmpty, Date() < end { try await Task.sleep(for: .milliseconds(50)) }
+        while model.hunks.isEmpty, Date() < end { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertEqual(flaky.readCount, 2, "the change read HEAD's copy again")
         XCTAssertEqual(model.hunks.first?.kind, .modified)
         model.follow(nil, text: "")

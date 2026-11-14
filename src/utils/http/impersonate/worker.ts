@@ -102,7 +102,13 @@ function start(request: WorkerRequest): void {
         return true;
     });
     const onHeader = chunkCallback((bytes) => {
-        transfer.head.line(decoder.decode(bytes));
+        // A redirect the caller follows is complete at its blank line: refusing that chunk ends the transfer now, so a
+        // server that stalls before its first body byte cannot hold the request until the timeout.
+        if (transfer.head.line(decoder.decode(bytes))) {
+            transfer.redirectCut = true;
+            return false;
+        }
+
         return true;
     });
     transfer.callbacks.push(onBody, onHeader);
@@ -199,7 +205,8 @@ function finish(easy: Pointer, result: number): void {
     }
 
     if (transfer.redirectCut) {
-        // The refused body chunk ended the transfer with a write error; the head is the whole answer.
+        // The refused chunk (the head's last line, or a body chunk) ended the transfer with a write error; the head is
+        // the whole answer.
         reply(transfer, transfer.head.status, null);
     } else if (transfer.overLimit) {
         reply(transfer, 0, `the response body is larger than ${transfer.maxBodyBytes} bytes; the transfer was stopped`);

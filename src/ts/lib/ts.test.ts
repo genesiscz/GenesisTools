@@ -2258,6 +2258,22 @@ describe("the import index, areas and depth", () => {
     });
 });
 
+describe("fingerprint: a regular expression after a control-flow head", () => {
+    it("keeps the spacing of a regex literal that follows `if (...)`, `while (...)` and `for (...)`", () => {
+        for (const head of ["if (ready)", "while (ready)", "for (const x of xs)", "with (ready)"]) {
+            expect(fingerprint(`{ ${head} /a +b/.test(text); }`, ["text"])).not.toBe(
+                fingerprint(`{ ${head} /a+b/.test(text); }`, ["text"])
+            );
+        }
+    });
+
+    it("still reads a slash after a call or a group as division", () => {
+        expect(fingerprint("{ return (a + b) / 2 / c; }", ["a", "b", "c"])).toBe(
+            fingerprint("{ return (a+b)/2/c; }", ["a", "b", "c"])
+        );
+    });
+});
+
 describe("sharedCopies: a shared helper written again", () => {
     const fact = (over: Partial<FunctionFact>): FunctionFact => ({
         file: "src/port/lib/a.ts",
