@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { hermeticGitEnv, TEST_REPO_EPOCH, TestRepo } from "@genesiscz/utils/git/test-repo";
+import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { auditCommits, buildCommits } from "./recommit";
 import { treeEntries } from "./recommit-plan-check";
 
@@ -32,31 +32,6 @@ async function run(repo: TestRepo, args: string[]): Promise<RunResult> {
         proc.exited,
     ]);
     return { exitCode, stdout, stderr };
-}
-
-/** git with stdin and extra env (a scratch GIT_INDEX_FILE), which `TestRepo.git` does not take. */
-async function gitInput(
-    cwd: string,
-    args: string[],
-    { input = "", env = {} }: { input?: string; env?: Record<string, string> } = {}
-): Promise<string> {
-    const proc = Bun.spawn(["git", "-C", cwd, ...args], {
-        env: { ...hermeticGitEnv(TEST_REPO_EPOCH), ...env },
-        stdin: new Blob([input]),
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-
-    if (code !== 0) {
-        throw new Error(`git ${args.join(" ")} failed (${code}): ${stderr}`);
-    }
-
-    return stdout.trim();
 }
 
 let repo: TestRepo;
@@ -363,40 +338,38 @@ describe("buildCommits", () => {
 
 /**
  * `git ls-tree -r` of this head is over 1 MiB, the default output limit of `spawnSync`. The bulk
- * is 6000 entries that share one blob, written with plumbing in a scratch index, so the fixture
- * costs a dozen git processes and no checkout.
+ * is 6000 entries that share one blob, written by one `git fast-import` (`TestRepo.importCommits`),
+ * so the fixture costs no checkout.
  */
 describe("recommit on a tree listing over 1 MiB", () => {
     test("group and apply --dry-run keep the paths that sort past the first MiB", async () => {
         const big = await TestRepo.create();
 
         try {
-            const index = { GIT_INDEX_FILE: join(big.root, "big.index") };
-            const blob = (input: string) => gitInput(big.dir, ["hash-object", "-w", "--stdin"], { input });
-            const stage = (lines: string[]) =>
-                gitInput(big.dir, ["update-index", "--index-info"], { env: index, input: `${lines.join("\n")}\n` });
-            const commitIndex = async (parent: string, message: string) => {
-                const tree = await gitInput(big.dir, ["write-tree"], { env: index });
-                return gitInput(big.dir, ["commit-tree", tree, "-p", parent, "-m", message]);
-            };
-            const bulk = await blob("bulk\n");
             const dir = `bulk/${"a-long-directory-name-".repeat(8)}`;
-            await gitInput(big.dir, ["read-tree", "HEAD"], { env: index });
-            await stage([
-                ...Array.from(
-                    { length: 6000 },
-                    (_, i) => `100644 ${bulk}\t${dir}/file-${String(i).padStart(5, "0")}.ts`
-                ),
-                `100644 ${await blob("start 1\n")}\taaa/start.ts`,
-                `100644 ${await blob("end 1\n")}\tzzz/end.ts`,
-                `100644 ${await blob("gone\n")}\tzzz/gone.ts`,
-            ]);
-            const bigBase = await commitIndex(await big.sha(), "bulk");
-            await stage([`100644 ${await blob("start 2\n")}\taaa/start.ts`]);
-            const startCommit = await commitIndex(bigBase, "start");
-            await stage([`100644 ${await blob("end 2\n")}\tzzz/end.ts`, `0 ${"0".repeat(40)}\tzzz/gone.ts`]);
-            const endCommit = await commitIndex(startCommit, "end and gone");
-            await big.git(["update-ref", "refs/heads/feat/big", endCommit]);
+            const bulk = Object.fromEntries(
+                Array.from({ length: 6000 }, (_, i) => [`${dir}/file-${String(i).padStart(5, "0")}.ts`, "bulk\n"])
+            );
+            await big.importCommits({
+                branch: "feat/big",
+                from: await big.sha(),
+                commits: [
+                    {
+                        message: "bulk",
+                        files: {
+                            ...bulk,
+                            "aaa/start.ts": "start 1\n",
+                            "zzz/end.ts": "end 1\n",
+                            "zzz/gone.ts": "gone\n",
+                        },
+                    },
+                    { message: "start", files: { "aaa/start.ts": "start 2\n" } },
+                    { message: "end and gone", files: { "zzz/end.ts": "end 2\n" }, deletes: ["zzz/gone.ts"] },
+                ],
+            });
+            const [bigBase = "", startCommit = "", endCommit = ""] = (
+                await big.git(["rev-parse", "feat/big~2", "feat/big~1", "feat/big"])
+            ).split("\n");
             expect(Buffer.byteLength(await big.git(["ls-tree", "-r", "-z", "feat/big"]))).toBeGreaterThan(1024 * 1024);
 
             const groupsPath = join(big.root, "groups.json");
