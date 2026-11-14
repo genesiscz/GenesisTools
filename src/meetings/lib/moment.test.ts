@@ -414,6 +414,24 @@ describe("the playback settings a Moment carries", () => {
         expect(repaired).toEqual({ hz: 0, sec: 0.7, volume: 0.4, file });
     });
 
+    test("a tone path that is not a regular file is refused before ffprobe starts", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "mtg-tone-not-file-"));
+        let probed = false;
+        await expect(
+            resolveToneSound(
+                { file: folder, volume: 0.5 },
+                {
+                    probe: async () => {
+                        probed = true;
+                        return { durationSec: 1 };
+                    },
+                    onMissing: "error",
+                }
+            )
+        ).rejects.toThrow("is not a regular file");
+        expect(probed).toBe(false);
+    });
+
     test("a preset or a sound file is the tone's sound; a file's length is read once and cut to 2 s (decision 8)", async () => {
         const soft = meetingsConfigSchema.parse({
             version: 5,
