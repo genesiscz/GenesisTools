@@ -53,16 +53,18 @@ function httpStatus(error: object): number | undefined {
  * failed command, while retrying a permanent error only costs the delay.
  */
 export function isTransientAiError(error: unknown): boolean {
-    if (error instanceof Error) {
-        if (PERMANENT_CLASSES.some((type) => error instanceof type) || PERMANENT_NAMES.has(error.name)) {
-            return false;
-        }
+    if (
+        error instanceof Error &&
+        (PERMANENT_CLASSES.some((type) => error instanceof type) || PERMANENT_NAMES.has(error.name))
+    ) {
+        return false;
+    }
 
-        const status = httpStatus(error);
+    // A fetch-shaped failure is often a plain object (`{ status: 401 }`), whose message reads `[object Object]`.
+    const status = typeof error === "object" && error !== null ? httpStatus(error) : undefined;
 
-        if (status !== undefined && PERMANENT_STATUSES.has(status)) {
-            return false;
-        }
+    if (status !== undefined && PERMANENT_STATUSES.has(status)) {
+        return false;
     }
 
     const msg = error instanceof Error ? error.message : String(error);

@@ -79,13 +79,8 @@ async function defaultRenameAiAccount(oldName: string, newName: string): Promise
         throw new Error(`Account "${oldName}" not found`);
     }
 
-    // A name is a handle people type, so two that differ only in case would be one too many.
-    const lower = newName.toLowerCase();
-    if (store.accounts().some((entry) => entry.id !== account.id && entry.name.toLowerCase() === lower)) {
-        throw new Error(`Account "${newName}" already exists`);
-    }
-
-    // Defaults point at the immutable id, so the rename is one field and nothing else moves.
+    // Defaults point at the immutable id, so the rename is one field and nothing else moves. `editAccount` refuses a
+    // name that differs from another account's only in case, inside the config lock.
     await editAccount(account.id, { rename: newName });
 }
 

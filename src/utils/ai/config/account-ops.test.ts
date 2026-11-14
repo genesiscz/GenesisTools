@@ -161,6 +161,16 @@ describe("editAccount", () => {
         expect(account?.useEnvApiKey).toEqual(["FAKE_API_KEY"]);
     });
 
+    test("a rename to a name that differs from another account's only in case is refused under the lock", async () => {
+        await addAccount({ provider: "fake", name: "Work" });
+        const other = await addAccount({ provider: "fake", name: "side" });
+
+        await expect(editAccount(other.id, { rename: "work" })).rejects.toThrow("already exists");
+        // NEGATIVE CONTROL: an account may change the case of its own name.
+        await editAccount("Work", { rename: "WORK" });
+        expect((await AiConfigStore.load()).account("WORK")).toBeDefined();
+    });
+
     test("disable and re-enable round-trip", async () => {
         await addAccount({ provider: "fake", name: "toggle" });
 
@@ -267,6 +277,19 @@ describe("removeAccount", () => {
         expect(readRawConfig().accounts).toHaveLength(0);
         expect(readRawConfig().defaults.account?.chat).toBeUndefined();
         expect(await (await secrets()).get("ai/acc_used/apiKey")).toBeUndefined();
+    });
+
+    test("--force clears a ref under a record key that holds a dot", async () => {
+        const created = await addAccount({ provider: "fake", name: "dotted" });
+        const store = await AiConfigStore.load();
+        await store.mutate((data) => {
+            data.models = { ...data.models, aliases: { "work.fast": `@account/${created.id}:opus`, keep: "opus" } };
+        });
+
+        const result = await removeAccount("dotted", { force: true });
+
+        expect(result.refsCleared).toEqual(["models.aliases.work.fast"]);
+        expect(readRawConfig().models?.aliases).toEqual({ keep: "opus" });
     });
 
     test("an unreferenced account needs no force", async () => {
