@@ -417,33 +417,46 @@ public final class FocusController: ObservableObject {
             pendingPrune = now
             return
         }
-        guard let store, let transition = pruneTransition(now: now) else { return }
-        transition(store)()
+        guard let store, let cutoff = pruneCutoff(now: now) else { return }
+        let days = settings.retentionDays
+        applyPrune(Result { try store.prune(before: cutoff) }, days: days, now: now)
     }
 
-    private func pruneTransition(now: Date) -> ((ActivityStore) -> (@MainActor () -> Void))? {
+    /// The ledger time a prune at `now` deletes before, or nil when this host does not prune or the retention
+    /// reaches past the epoch (then the next try is a day away).
+    private func pruneCutoff(now: Date) -> Int64? {
         guard ownsRuntime, remoteCommand == nil else { return nil }
-        let days = settings.retentionDays
-        let (span, overflow) = Int64(days).multipliedReportingOverflow(by: 86_400_000)
+        let (span, overflow) = Int64(settings.retentionDays).multipliedReportingOverflow(by: 86_400_000)
         let cutoff = Int64(now.timeIntervalSince1970 * 1000) - span
         guard !overflow, cutoff > 0 else {
             nextPrune = now.addingTimeInterval(Self.pruneInterval)
             return nil
         }
-        return { store in
-            do {
-                let removed = try store.prune(before: cutoff)
-                return { [self] in
-                    nextPrune = now.addingTimeInterval(Self.pruneInterval)
-                    FlowFocusLog.focus.info("retention \(days)d removed segments=\(removed.segments) sessions=\(removed.sessions)")
-                }
-            } catch {
-                let message = error.localizedDescription
-                return { [self] in
-                    nextPrune = now.addingTimeInterval(Self.pruneRetryInterval)
-                    FlowFocusLog.focus.error("retention prune failed, retrying in \(Int(Self.pruneRetryInterval)) s: \(message)")
-                }
-            }
+        return cutoff
+    }
+
+    /// Runs a prune at `now` off the main thread (`ActivityStore.perform`) and applies its outcome.
+    private func pruneSuspending(store: ActivityStore, now: Date) async {
+        guard let cutoff = pruneCutoff(now: now) else { return }
+        let days = settings.retentionDays
+        do {
+            let removed = try await store.perform { try $0.prune(before: cutoff) }
+            applyPrune(.success(removed), days: days, now: now)
+        } catch {
+            applyPrune(.failure(error), days: days, now: now)
+        }
+    }
+
+    /// Schedules the next prune from how this one ended: a day after one that succeeded, a few minutes after one
+    /// that failed.
+    private func applyPrune(_ outcome: Result<(segments: Int, sessions: Int), Error>, days: Int, now: Date) {
+        switch outcome {
+        case .success(let removed):
+            nextPrune = now.addingTimeInterval(Self.pruneInterval)
+            FlowFocusLog.focus.info("retention \(days)d removed segments=\(removed.segments) sessions=\(removed.sessions)")
+        case .failure(let error):
+            nextPrune = now.addingTimeInterval(Self.pruneRetryInterval)
+            FlowFocusLog.focus.error("retention prune failed, retrying in \(Int(Self.pruneRetryInterval)) s: \(error.localizedDescription)")
         }
     }
 
@@ -452,8 +465,8 @@ public final class FocusController: ObservableObject {
     }
 
     func pruneIfDueSuspending(store: ActivityStore, now: Date = Date()) async {
-        guard let nextPrune, now >= nextPrune, let transition = pruneTransition(now: now) else { return }
-        if let finish = try? await store.perform(transition) { finish() }
+        guard let nextPrune, now >= nextPrune else { return }
+        await pruneSuspending(store: store, now: now)
     }
 
     // MARK: - Forgetting activity
@@ -606,7 +619,7 @@ public final class FocusController: ObservableObject {
                 await engine.tickSuspendingInBatch()
                 if let pending = pendingPrune {
                     pendingPrune = nil
-                    if let transition = pruneTransition(now: pending), let finish = try? await store.perform(transition) { finish() }
+                    await pruneSuspending(store: store, now: pending)
                 }
                 await engine.endIntentBatch()
             }
