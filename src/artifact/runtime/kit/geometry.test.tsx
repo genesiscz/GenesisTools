@@ -3,10 +3,12 @@ import { contrastRatio } from "./color";
 import { type DiagramLayer, LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ModelBrowser } from "./model-browser";
 import { PropertyGrid } from "./property-grid";
-import { mountDom } from "./test-dom";
+import { type DomHarness, mountDom } from "./test-dom";
 import {
     borderPoint,
+    connectorPoints,
     elementHeight,
+    headBase,
     orthogonal,
     type UmlConnectorKind,
     UmlDiagram,
@@ -70,6 +72,27 @@ const MODEL: UmlDiagramModel = {
     ],
 };
 
+/** Two-tab strip, second tab selected: one tab stop, and Left/Right/Home/End select and focus with wrapping. */
+async function expectTabKeyboard(dom: DomHarness, contents: [string, string]): Promise<void> {
+    const tabs = () => [...dom.container.querySelectorAll('[role="tab"]')];
+    const selected = () => tabs().findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    const stops = () => tabs().filter((tab) => tab.getAttribute("tabindex") === "0");
+    expect(stops()).toEqual([tabs()[1]]);
+    await dom.press(tabs()[1], "ArrowRight");
+    expect(selected()).toBe(0);
+    expect(dom.window.document.activeElement).toBe(tabs()[0]);
+    expect(stops()).toEqual([tabs()[0]]);
+    expect(dom.container.textContent).toContain(contents[0]);
+    await dom.press(tabs()[0], "ArrowLeft");
+    expect(selected()).toBe(1);
+    expect(dom.container.textContent).toContain(contents[1]);
+    await dom.press(tabs()[1], "Home");
+    expect(selected()).toBe(0);
+    await dom.press(tabs()[0], "End");
+    expect(selected()).toBe(1);
+    expect(dom.window.document.activeElement).toBe(tabs()[1]);
+}
+
 describe("diagram geometry", () => {
     test("four-band direct edges cross boxes before routing and clear them afterward", () => {
         const before = layoutLayerDiagram({ layers: BANDS, edges: EDGES, routing: "direct" });
@@ -88,6 +111,49 @@ describe("diagram geometry", () => {
                     (edge.lane ?? 0) < (gateway?.x ?? 0) || (edge.lane ?? 0) > (gateway?.x ?? 0) + (gateway?.w ?? 0)
             )
         ).toBe(true);
+    });
+    test("other rows of the endpoint bands are obstacles, and the route leaves and enters through a row gap", () => {
+        const layers: DiagramLayer[] = [
+            {
+                id: "top",
+                label: "Top",
+                columns: [1, 1, 1],
+                rows: 2,
+                nodes: [
+                    { id: "source", title: "Source", col: 2 },
+                    { id: "below-source", title: "Below source", col: 2 },
+                ],
+            },
+            {
+                id: "bottom",
+                label: "Bottom",
+                columns: [1, 1, 1],
+                rows: 2,
+                nodes: [
+                    { id: "above-target", title: "Above target", col: 2 },
+                    { id: "target", title: "Target", col: 2 },
+                ],
+            },
+        ];
+        const edges = [{ from: "source", to: "target" }];
+        const direct = layoutLayerDiagram({ layers, edges, routing: "direct" });
+        expect(direct.edges[0].crosses).toEqual(["below-source", "above-target"]);
+        const routed = layoutLayerDiagram({ layers, edges });
+        expect(routed.edges[0].crosses).toEqual([]);
+        const boxes = routed.nodes.filter((node) => node.node.id.includes("-"));
+        const corners = [...routed.edges[0].d.matchAll(/(-?[\d.]+) (-?[\d.]+)/g)].map((m) => ({
+            x: Number(m[1]),
+            y: Number(m[2]),
+        }));
+        for (let i = 1; i < corners.length; i += 1) {
+            for (let t = 0; t <= 1; t += 0.05) {
+                const x = corners[i - 1].x + (corners[i].x - corners[i - 1].x) * t;
+                const y = corners[i - 1].y + (corners[i].y - corners[i - 1].y) * t;
+                expect(boxes.filter((box) => x > box.x && x < box.x + box.w && y > box.y && y < box.y + box.h)).toEqual(
+                    []
+                );
+            }
+        }
     });
     test("automatic nodes leave a later pinned node its requested column", () => {
         const layout = layoutLayerDiagram({
@@ -152,6 +218,26 @@ describe("diagram geometry", () => {
         expect(borderPoint(ELEMENT, { x: 110, y: 1000 })).toEqual({ x: 110, y: 50 + h });
         expect(borderPoint(ELEMENT, { x: 110, y: -1000 })).toEqual({ x: 110, y: 50 });
         expect(borderPoint(ELEMENT, { x: 110, y: 50 + h / 2 })).toEqual({ x: 200, y: 50 + h / 2 });
+    });
+    test("a self-reference loops outside its element with two distinct border attachments", () => {
+        const h = elementHeight(ELEMENT);
+        const points = connectorPoints({}, ELEMENT, ELEMENT);
+        const inside = (p: { x: number; y: number }) => p.x > 20 && p.x < 200 && p.y > 50 && p.y < 50 + h;
+        expect(points.some(inside)).toBe(false);
+        expect(points[0]).not.toEqual(points[points.length - 1]);
+        expect(points[0].y).toBe(50);
+        expect(points[points.length - 1].x).toBe(200);
+        const base = headBase(points);
+        expect(base.x).toBeGreaterThan(200);
+    });
+    test("a via point on the target border does not turn the head sideways", () => {
+        const target: UmlElement = { ...ELEMENT, id: "b", y: 400 };
+        const onTop = { x: 110, y: 400 };
+        const points = connectorPoints({ via: [{ x: 110, y: 300 }, onTop] }, ELEMENT, target);
+        const tip = points[points.length - 1];
+        const base = headBase(points);
+        expect(tip).toEqual(onTop);
+        expect(Math.atan2(tip.y - base.y, tip.x - base.x)).toBeCloseTo(Math.PI / 2);
     });
     test("close vertically separated UML boxes use their facing borders in either direction", () => {
         const source: UmlElement = { id: "source", name: "Source", kind: "class", x: 20, y: 50, w: 180 };
@@ -262,11 +348,37 @@ describe("diagram geometry", () => {
             />
         );
         try {
+            const branch = () => dom.container.querySelector("li ul");
             expect(dom.container.textContent).toContain("Keynew");
             await dom.click(dom.container.querySelector('button[aria-label="Collapse Models"]'));
-            expect(dom.container.textContent).not.toContain("Key");
+            expect(branch()?.hasAttribute("hidden")).toBe(true);
             await dom.click(dom.container.querySelector('button[aria-label="Expand Models"]'));
+            expect(branch()?.hasAttribute("hidden")).toBe(false);
             expect(dom.container.textContent).toContain("Keynew");
+        } finally {
+            await dom.unmount();
+        }
+    });
+    test("collapsing a branch keeps what its descendants had open or closed", async () => {
+        const dom = await mountDom(
+            <ModelBrowser
+                root={[
+                    {
+                        name: "Models",
+                        icon: "package",
+                        children: [
+                            { name: "Inner", icon: "package", children: [{ name: "Leaf", icon: "primitiveType" }] },
+                        ],
+                    },
+                ]}
+            />
+        );
+        try {
+            await dom.click(dom.container.querySelector('button[aria-label="Collapse Inner"]'));
+            await dom.click(dom.container.querySelector('button[aria-label="Collapse Models"]'));
+            await dom.click(dom.container.querySelector('button[aria-label="Expand Models"]'));
+            // Inner comes back closed, as the user left it, not reset to its model default (open).
+            expect(dom.container.querySelector('button[aria-label="Expand Inner"]')).not.toBeNull();
         } finally {
             await dom.unmount();
         }
@@ -294,6 +406,7 @@ describe("diagram geometry", () => {
             await dom.click(dom.container.querySelectorAll('[role="tab"]')[1]);
             expect(dom.container.textContent).toContain("Overview");
             expect(dom.container.textContent).not.toContain("Models");
+            await expectTabKeyboard(dom, ["Models", "Overview"]);
         } finally {
             await dom.unmount();
         }
@@ -318,6 +431,22 @@ describe("diagram geometry", () => {
             expect(dom.container.textContent).toContain("version");
             expect(dom.container.textContent).not.toContain("Typed manually");
             expect(dom.container.textContent).toContain("Review complete");
+            await expectTabKeyboard(dom, ["Typed manually", "version"]);
+        } finally {
+            await dom.unmount();
+        }
+    });
+    test("a read-only UML diagram describes its elements and connectors in words", async () => {
+        const dom = await mountDom(<UmlDiagram model={MODEL} />);
+        try {
+            const svg = dom.container.querySelector("svg");
+            expect(svg?.getAttribute("role")).toBe("img");
+            const desc = dom.window.document.getElementById(svg?.getAttribute("aria-describedby") ?? "");
+            expect(desc?.tagName.toLowerCase()).toBe("desc");
+            expect(desc?.textContent).toBe(
+                "Class A; attributes id: string (ok); tags version = 2. Interface B. " +
+                    "Composition from A to B; at A: role owner, multiplicity 1; at B: role parts, multiplicity *."
+            );
         } finally {
             await dom.unmount();
         }
@@ -385,6 +514,9 @@ describe("filled visualization contrast", () => {
                 "color(srgb 0.17 0.533 0.7)",
                 "rgb(245, 243, 238)",
                 "rgb(15, 18, 24)",
+                "oklch(95% 0 0)",
+                "oklch(0.3 0.06 250)",
+                "color(display-p3 0.95 0.92 0.6)",
             ]) {
                 fill = background;
                 await dom.render(view());
@@ -392,6 +524,12 @@ describe("filled visualization contrast", () => {
                 expect(cells).toHaveLength(3);
                 expect(cells.every((cell) => contrastRatio(cell.style.color, fill) >= 4.5)).toBe(true);
             }
+
+            // A fill the colour maths cannot read keeps the stylesheet's ink instead of a guessed white.
+            fill = "color(rec2020 0.9 0.9 0.9)";
+            await dom.render(view());
+            const unread = [...dom.container.querySelectorAll<HTMLElement>("[data-readable-fill]")];
+            expect(unread.map((cell) => cell.style.color)).toEqual(["", "", ""]);
 
             expect(dom.container.querySelector('[data-status="over"]')?.getAttribute("style")).toContain("outline");
             expect(dom.container.querySelector("small")?.className).not.toContain("opacity");

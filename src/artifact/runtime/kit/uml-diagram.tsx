@@ -212,6 +212,52 @@ export function orthogonal(source: UmlElement, target: UmlElement): UmlPoint[] {
         { x: tx, y: t.y },
     ];
 }
+/**
+ * A connector from an element to itself: a loop outside the box, from the top border near the right corner, over and
+ * down to the right border, so the line and its head are not hidden under the opaque element.
+ */
+export function selfLoop(element: UmlElement): UmlPoint[] {
+    const right = element.x + element.w;
+    const top = element.y;
+    const reach = 24;
+    const across = right - Math.min(24, element.w / 4);
+    const down = top + Math.min(24, elementHeight(element) / 4);
+    return [
+        { x: across, y: top },
+        { x: across, y: top - reach },
+        { x: right + reach, y: top - reach },
+        { x: right + reach, y: down },
+        { x: right, y: down },
+    ];
+}
+
+/** The points of a connector: its `via` points between border points, a loop for a self-reference, else the route. */
+export function connectorPoints(
+    connector: Pick<UmlConnector, "via">,
+    source: UmlElement,
+    target: UmlElement
+): UmlPoint[] {
+    const via = connector.via;
+    if (via?.length) {
+        const path = [borderPoint(source, via[0]), ...via, borderPoint(target, via[via.length - 1])];
+        return path.filter((p, i) => i === 0 || p.x !== path[i - 1].x || p.y !== path[i - 1].y);
+    }
+
+    return source.id === target.id ? selfLoop(source) : orthogonal(source, target);
+}
+
+/** The point the head is aimed from: the last point before the tip that is not the tip itself. */
+export function headBase(points: UmlPoint[]): UmlPoint {
+    const tip = points[points.length - 1];
+    for (let i = points.length - 2; i >= 0; i--) {
+        if (points[i].x !== tip.x || points[i].y !== tip.y) {
+            return points[i];
+        }
+    }
+
+    return { x: tip.x - 1, y: tip.y };
+}
+
 export interface UmlConnectorHead {
     shape: "none" | "arrow" | "diamond" | "triangle";
     filled: boolean;
@@ -274,13 +320,10 @@ function UmlLine({
     theme: UmlThemeName;
     palette: UmlPalette;
 }) {
-    const via = connector.via;
-    const points = via?.length
-        ? [borderPoint(source, via[0]), ...via, borderPoint(target, via[via.length - 1])]
-        : orthogonal(source, target);
+    const points = connectorPoints(connector, source, target);
     const start = points[0];
     const end = points[points.length - 1];
-    const before = points[points.length - 2];
+    const before = headBase(points);
     const color = markColor(connector.mark, theme, palette.line);
     const head = umlConnectorHead(connector);
     const middle = Math.floor((points.length - 1) / 2);
@@ -500,6 +543,93 @@ function UmlBox({
         </g>
     );
 }
+const KIND_WORDS: Record<UmlElementKind, string> = {
+    class: "Class",
+    primitiveType: "Primitive type",
+    dataType: "Data type",
+    enumeration: "Enumeration",
+    interface: "Interface",
+    note: "Note",
+};
+const CONNECTOR_WORDS: Record<UmlConnectorKind, string> = {
+    association: "Association",
+    aggregation: "Aggregation",
+    composition: "Composition",
+    generalization: "Generalization",
+    realization: "Realization",
+    dependency: "Dependency",
+    usage: "Usage",
+    noteLink: "Note link",
+};
+
+/** One connector end in words: "role owner, multiplicity 1". */
+function endWords(role: string | undefined, card: string | undefined): string {
+    return [role ? `role ${role}` : "", card ? `multiplicity ${card}` : ""].filter(Boolean).join(", ");
+}
+
+/**
+ * Words for a screen reader, from the model: every element with its keyword, attributes or literals, tags and
+ * mark, then every connector with its kind, name, roles and multiplicities. An image flattens the drawn text, so
+ * this is what a screen reader can say. A connector to a missing element is not drawn, so not said.
+ */
+function describeUmlModel(model: UmlDiagramModel): string {
+    const names = new Map(model.elements.map((element) => [element.id, element.name]));
+    const elements = model.elements.map((element) => {
+        if (element.kind === "note") {
+            return `Note: ${(element.text ?? "").replace(/\s*\n\s*/g, " ")}.`;
+        }
+
+        const head = [
+            `${KIND_WORDS[element.kind]} ${element.name}`,
+            element.stereotype ? `stereotype ${element.stereotype}` : "",
+            element.from ? `from ${element.from}` : "",
+            element.mark ? `marked ${element.mark}` : "",
+        ];
+        const rows =
+            element.kind === "enumeration"
+                ? element.literals?.length
+                    ? `literals ${element.literals.join(", ")}`
+                    : ""
+                : element.attributes?.length
+                  ? `attributes ${element.attributes
+                        .map(
+                            (attribute) => `${attributeText(attribute)}${attribute.mark ? ` (${attribute.mark})` : ""}`
+                        )
+                        .join(", ")}`
+                  : "";
+        const tags = element.tags?.length
+            ? `tags ${element.tags.map((tag) => `${tag.name} = ${tag.value}`).join(", ")}`
+            : "";
+
+        return `${[...head, rows, tags].filter(Boolean).join("; ")}.`;
+    });
+    const connectors = model.connectors.flatMap((connector) => {
+        const source = names.get(connector.source);
+        const target = names.get(connector.target);
+
+        if (source === undefined || target === undefined) {
+            return [];
+        }
+
+        const ends = [
+            endWords(connector.sourceRole, connector.sourceCard),
+            endWords(connector.targetRole, connector.targetCard),
+        ];
+        const words = [
+            `${CONNECTOR_WORDS[connector.kind]} from ${source} to ${target}`,
+            connector.name ? `named ${connector.name}` : "",
+            connector.stereotype ? `stereotype ${connector.stereotype}` : "",
+            ends[0] ? `at ${source}: ${ends[0]}` : "",
+            ends[1] ? `at ${target}: ${ends[1]}` : "",
+            connector.mark ? `marked ${connector.mark}` : "",
+        ];
+
+        return [`${words.filter(Boolean).join("; ")}.`];
+    });
+
+    return [...elements, ...connectors].join(" ");
+}
+
 export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }: UmlDiagramProps) {
     const appearance = look ?? theme;
     const palette = PALETTES[appearance];
@@ -512,6 +642,7 @@ export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }
             width="100%"
             role={onSelect ? "group" : "img"}
             aria-label={`UML diagram ${model.name}`}
+            aria-describedby={`${prefix}-desc`}
             className="block rounded border border-line"
             style={{
                 fontFamily:
@@ -522,6 +653,7 @@ export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }
             }}
         >
             <title>{tab}</title>
+            <desc id={`${prefix}-desc`}>{describeUmlModel(model)}</desc>
             <defs>
                 {(Object.keys(KEYWORDS) as UmlElementKind[]).map((kind) => {
                     const fill =

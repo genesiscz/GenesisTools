@@ -169,6 +169,34 @@ function routeCrosses(points: RoutePoint[], obstacles: PlacedNode[]): string[] {
         .map((box) => box.node.id);
 }
 
+/** Drop repeated points and the middle point of three on one line, so every kept point is a real corner. */
+function simplifyRoute(points: RoutePoint[]): RoutePoint[] {
+    const kept: RoutePoint[] = [];
+
+    for (const point of points) {
+        const last = kept[kept.length - 1];
+
+        if (last && last.x === point.x && last.y === point.y) {
+            continue;
+        }
+
+        const before = kept[kept.length - 2];
+
+        if (
+            before &&
+            last &&
+            ((before.x === last.x && last.x === point.x) || (before.y === last.y && last.y === point.y))
+        ) {
+            kept[kept.length - 1] = point;
+            continue;
+        }
+
+        kept.push(point);
+    }
+
+    return kept;
+}
+
 function roundedRoute(points: RoutePoint[]): string {
     let d = `M${points[0].x} ${points[0].y}`;
 
@@ -338,7 +366,11 @@ export function layoutLayerDiagram({
         let d = inside ? `M${x0} ${y0} V ${y1}` : `M${x0} ${y0} C ${x0} ${mid}, ${x1} ${mid}, ${x1} ${y1}`;
         const lowLayer = Math.min(source?.layer ?? target.layer - 1, target.layer);
         const highLayer = Math.max(source?.layer ?? target.layer - 1, target.layer);
-        const obstacles = nodes.filter((node) => node.layer > lowLayer && node.layer < highLayer);
+        // The endpoint bands count too: with `rows`, a box in another row of the source or target band sits on the
+        // way out of the source or on the way into the target. Only the two endpoint boxes themselves are free.
+        const obstacles = nodes.filter(
+            (node) => node.layer >= lowLayer && node.layer <= highLayer && node !== source && node !== target
+        );
         // Sample the legacy cubic only for collision detection; unobstructed paths retain their exact shape.
         const direct = Array.from({ length: 33 }, (_, i) => {
             const t = i / 32;
@@ -356,14 +388,51 @@ export function layoutLayerDiagram({
         if (routing === "auto" && (crosses.length || edge.lane !== undefined)) {
             const a = source ? bands[source.layer].y + bands[source.layer].h + gap / 3 : y0 + gap / 3;
             const b = bands[target.layer].y - gap / 3;
-            const detour = (x: number): RoutePoint[] => [
-                { x: x0, y: y0 },
-                { x: x0, y: a },
-                { x, y: a },
-                { x, y: b },
-                { x: x1, y: b },
-                { x: x1, y: y1 },
-            ];
+            const byDistance = (from: number, xs: number[]) =>
+                [...new Set(xs)].filter((x) => x !== from).sort((p, q) => Math.abs(p - from) - Math.abs(q - from));
+            // Leaving the source straight down can hit a box in a later row of its band, and arriving straight down
+            // can hit a box in an earlier row of the target band. Then the route steps sideways in the row gap and
+            // runs along a column lane of that band.
+            const sourceGap = source ? (layers[source.layer].rowGap ?? 10) / 2 : 0;
+            const targetGap = (layers[target.layer].rowGap ?? 10) / 2;
+            const exits = source ? [x0, ...byDistance(x0, [left - COLUMN_GAP / 2, ...layerLanes[source.layer]])] : [x0];
+            const entries = [x1, ...byDistance(x1, [left - COLUMN_GAP / 2, ...layerLanes[target.layer]])];
+            const route = (x: number, exit: number, entry: number): RoutePoint[] =>
+                simplifyRoute([
+                    { x: x0, y: y0 },
+                    ...(exit === x0
+                        ? []
+                        : [
+                              { x: x0, y: y0 + sourceGap },
+                              { x: exit, y: y0 + sourceGap },
+                          ]),
+                    { x: exit, y: a },
+                    { x, y: a },
+                    { x, y: b },
+                    { x: entry, y: b },
+                    ...(entry === x1
+                        ? []
+                        : [
+                              { x: entry, y: target.y - targetGap },
+                              { x: x1, y: target.y - targetGap },
+                          ]),
+                    { x: x1, y: y1 },
+                ]);
+            /** The first clear route through lane x, trying the straight exit and entry first. */
+            const clearThrough = (x: number): RoutePoint[] | undefined => {
+                for (const exit of exits) {
+                    for (const entry of entries) {
+                        const points = route(x, exit, entry);
+
+                        if (routeCrosses(points, obstacles).length === 0) {
+                            return points;
+                        }
+                    }
+                }
+
+                return undefined;
+            };
+            const detour = (x: number): RoutePoint[] => route(x, x0, x1);
             const explicit =
                 edge.lane === "left"
                     ? left - COLUMN_GAP / 2
@@ -386,10 +455,15 @@ export function layoutLayerDiagram({
                           ]),
                       ].sort((a, b) => Math.abs(a - x0) - Math.abs(b - x0))
                     : [explicit];
-            lane = candidates.find((x) => routeCrosses(detour(x), obstacles).length === 0);
+            let clear: RoutePoint[] | undefined;
+            lane = candidates.find((x) => {
+                clear = clearThrough(x);
 
-            if (lane !== undefined) {
-                d = roundedRoute(detour(lane));
+                return clear !== undefined;
+            });
+
+            if (lane !== undefined && clear) {
+                d = roundedRoute(clear);
                 crosses = [];
             } else if (explicit !== undefined) {
                 lane = explicit;

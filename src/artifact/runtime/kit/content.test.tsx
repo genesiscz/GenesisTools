@@ -107,6 +107,10 @@ describe("content contracts", () => {
             expect(options[1].disabled).toBe(true);
             expect(options[1].getAttribute("aria-disabled")).toBe("true");
             expect(options[1].getAttribute("title")).toBe("Publishing is off");
+            // Keyboard and screen-reader users get the reason from the group, without a pointer hover.
+            const group = dom.container.querySelector('[role="radiogroup"]');
+            const reasons = dom.container.querySelector(`[id="${group?.getAttribute("aria-describedby")}"]`);
+            expect(reasons?.textContent).toBe("Preview is unavailable: Publishing is off.");
             expect(options[1].className).toContain("line-through");
             await dom.click(options[1]);
             expect(changes).toEqual([]);

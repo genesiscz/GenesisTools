@@ -1,4 +1,5 @@
-import { type ReactNode, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
+import { tabKeyTarget } from "./data";
 import { UML_MARK, type UmlMark } from "./uml-diagram";
 
 export type ModelBrowserIcon =
@@ -142,8 +143,9 @@ function BrowserRow({
                     <span className="flex items-center gap-1.5">{label}</span>
                 )}
             </div>
-            {nested && open ? (
-                <ul className="m-0 border-l border-line p-0 pl-5">
+            {/* Hidden, not unmounted: a collapsed ancestor keeps each descendant's own open or closed state. */}
+            {nested ? (
+                <ul hidden={!open} className="m-0 border-l border-line p-0 pl-5">
                     {node.children?.map((child, i) => (
                         <BrowserRow
                             key={child.id ?? `${i}-${child.name}`}
@@ -170,6 +172,18 @@ export function ModelBrowser({
     const uid = useId();
     const [active, setActive] = useState(initialTab ?? tabs[0]);
     const current = (active !== undefined ? tabRoots?.[active] : undefined) ?? root;
+    const activeIndex = Math.max(0, active === undefined ? 0 : tabs.indexOf(active));
+    const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+        const target = tabKeyTarget(event.key, activeIndex, tabs.length);
+
+        if (target === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        setActive(tabs[target]);
+        document.getElementById(`${uid}-tab-${target}`)?.focus();
+    };
     return (
         <div className="overflow-auto border border-line bg-panel font-sans text-xs text-ink">
             <div className="flex items-center justify-between bg-panel-2 px-2 py-1 text-[15px]">
@@ -190,7 +204,10 @@ export function ModelBrowser({
                                 type="button"
                                 aria-selected={active === tab}
                                 aria-controls={`${uid}-tree`}
+                                // Roving tabIndex: the strip is one tab stop and the arrow keys move within it.
+                                tabIndex={i === activeIndex ? 0 : -1}
                                 onClick={() => setActive(tab)}
+                                onKeyDown={onTabKeyDown}
                                 className={active === tab ? "border-b-2 border-info text-ink" : "text-dim"}
                             >
                                 {tab}

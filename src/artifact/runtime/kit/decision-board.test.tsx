@@ -3,6 +3,7 @@ import { act } from "react";
 import { contrastRatio, readableTextOn } from "./color";
 import { tabHash, tabIdFromHash } from "./data";
 import { DecisionBoard, type DecisionPoint, decisionChoicesFromHash, decisionChoicesHash } from "./decision-board";
+import { sectionAnchor } from "./hash";
 import { Page } from "./primitives";
 import { StickyControls } from "./sticky-controls";
 import { mountDom } from "./test-dom";
@@ -107,6 +108,35 @@ describe("DecisionBoard", () => {
         await dom.unmount();
     });
 
+    test("a section deep link that carries choices still scrolls to its section on load and on navigation", async () => {
+        expect(sectionAnchor("#layers")).toBe("");
+        expect(sectionAnchor("#d=source:live")).toBe("");
+        expect(sectionAnchor("#my%20layers&ts.cost=l%3Dsplit")).toBe("my layers");
+        const dom = await mountDom(<div />, "http://localhost/#layers&d=source:live,format:object");
+        const scrolled: string[] = [];
+        dom.window.HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+            scrolled.push(this.id);
+        };
+        await dom.render(
+            <>
+                <section id="layers">Layers</section>
+                <section id="costs">Costs</section>
+                <DecisionBoard points={POINTS} initial={INITIAL}>
+                    {(choices) => <output>{choices.source}</output>}
+                </DecisionBoard>
+            </>
+        );
+        expect(dom.container.querySelector("output")?.textContent).toBe("live");
+        expect(scrolled).toEqual(["layers"]);
+        await act(async () => {
+            dom.window.history.replaceState(null, "", "#costs&d=source:cache,format:object");
+            dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
+        });
+        expect(dom.container.querySelector("output")?.textContent).toBe("cache");
+        expect(scrolled).toEqual(["layers", "costs"]);
+        await dom.unmount();
+    });
+
     test("partial presets retain default choices without false changed tags and respect locks", async () => {
         const dom = await mountDom(
             <DecisionBoard
@@ -158,6 +188,26 @@ describe("DecisionBoard", () => {
             );
             await dom.click(preset());
             expect(dom.container.querySelector("output")?.textContent).toBe("live/text");
+        } finally {
+            await dom.unmount();
+        }
+    });
+    test("normalize cannot change a choice that is still locked", async () => {
+        const dom = await mountDom(
+            <DecisionBoard
+                points={POINTS}
+                initial={INITIAL}
+                hash={false}
+                normalize={(choices) => (choices.source === "live" ? { ...choices, format: "text" } : choices)}
+            >
+                {(choices) => <output>{`${choices.source}/${choices.format}`}</output>}
+            </DecisionBoard>
+        );
+        try {
+            await dom.click(
+                [...dom.container.querySelectorAll('[role="radio"]')].find((node) => node.textContent === "Live")
+            );
+            expect(dom.container.querySelector("output")?.textContent).toBe("live/object");
         } finally {
             await dom.unmount();
         }

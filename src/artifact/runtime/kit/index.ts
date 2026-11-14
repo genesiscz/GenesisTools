@@ -196,7 +196,7 @@ export {
 // Kept as one block after the older exports, so later additions merge without touching the lists above.
 
 export { SERIES_COLOR } from "./charts";
-export { contrastRatio, parseCssColor, type Rgb, readableTextOn, relativeLuminance } from "./color";
+export { contrastRatio, parseCssColor, type Rgb, readableInlineInk, readableTextOn, relativeLuminance } from "./color";
 export {
     DecisionBoard,
     type DecisionBoardApi,
