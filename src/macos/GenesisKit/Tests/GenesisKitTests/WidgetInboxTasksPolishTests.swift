@@ -1574,12 +1574,8 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(model.draft.text, "", "the words leave only after the journal is written")
     }
 
-    /// A decision that takes any set, with letters ticked and words typed in its own answer field: its Send stages the
-    /// words as the note with the set, then sends both. It sent the set alone, and the words left with the closed field
-    /// (2026-11-10, a 957-character note).
-    func testSendOnATickedSetCarriesTheWordsTypedInItsOwnAnswer() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
+    /// Sends the fixture decision's ticked set ("ab") after `typing` ran on its card, and returns every action sent.
+    private func sendTickedSet(_ model: WidgetModel, typing: (WidgetCard) -> Void) async throws -> [WidgetJSON] {
         var actions: [WidgetJSON] = []
         model.actionRunner = { value in
             actions.append(value)
@@ -1588,11 +1584,23 @@ final class WidgetStagingTests: XCTestCase {
         model.receive([try StagingFixture.snapshot(draftOption: "ab", multiple: true)])
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
-        XCTAssertTrue(card.takesSeveral, "the fixture decision takes a set")
-        model.openOwnAnswer(card)
-        model.setText("  both, and here is why  ")
+        typing(card)
         model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
         try await Task.sleep(for: .milliseconds(300))
+        return actions
+    }
+
+    /// A decision that takes any set, with letters ticked and words typed in its own answer field: its Send stages the
+    /// words as the note with the set, then sends both. It sent the set alone, and the words left with the closed field
+    /// (2026-11-10, a 957-character note).
+    func testSendOnATickedSetCarriesTheWordsTypedInItsOwnAnswer() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let actions = try await sendTickedSet(model) { card in
+            XCTAssertTrue(card.takesSeveral, "the fixture decision takes a set")
+            model.openOwnAnswer(card)
+            model.setText("  both, and here is why  ")
+        }
         let answering = actions.filter { names([$0]) != ["selection"] && names([$0]) != ["draft-text"] }
         XCTAssertEqual(names(answering), ["ledger", "send-staged"], "the words are staged with the set, then both go")
         guard case .object(let stage) = try XCTUnwrap(answering.first) else { return XCTFail("not an object") }
@@ -1606,17 +1614,7 @@ final class WidgetStagingTests: XCTestCase {
     func testSendOnATickedSetLeavesAReplyInTheComposer() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }
-        var actions: [WidgetJSON] = []
-        model.actionRunner = { value in
-            actions.append(value)
-            return ["sent": 1, "failed": 0, "ok": true]
-        }
-        model.receive([try StagingFixture.snapshot(draftOption: "ab", multiple: true)])
-        model.select(key)
-        let card = try XCTUnwrap(model.cards.first)
-        model.setText("a follow-up, not an answer")
-        model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
-        try await Task.sleep(for: .milliseconds(300))
+        let actions = try await sendTickedSet(model) { _ in model.setText("a follow-up, not an answer") }
         XCTAssertFalse(names(actions).contains("ledger"), "nothing is staged from a reply")
         XCTAssertTrue(names(actions).contains("send-staged"), "the ticked set goes")
         XCTAssertEqual(model.draft.text, "a follow-up, not an answer", "the reply stays where it was typed")
