@@ -2827,6 +2827,32 @@ describe("the unpushed reminder", () => {
         expect(unpushedState(work)).toBeNull();
     });
 
+    it("a branch tracking a local branch counts only what is past that branch", () => {
+        const { work, run } = pushedClone();
+        // master holds a commit no remote has; the local-tracking branch starts in sync with it.
+        commit(run, 1, new Date(Date.now() - 2 * hour));
+        run(["checkout", "-q", "-b", "local-tracking"]);
+        run(["branch", "--set-upstream-to=master"]);
+
+        expect(unpushedState(work)?.count).toBe(0);
+
+        commit(run, 2);
+        expect(unpushedState(work)?.count).toBe(2);
+    });
+
+    it("a new upstream set without moving a ref drops the cache, so the next turn recovers", () => {
+        const { work, run } = pushedClone();
+        commit(run, 2);
+        expect(unpushedState(work)?.count).toBe(2);
+
+        run(["push", "-q", "origin", "HEAD:refs/heads/other"]);
+        run(["branch", "--set-upstream-to=origin/other"]);
+
+        // The turn that sees the new upstream refuses to guess from the old ancestry; the next one walks it again.
+        expect(unpushedState(work)).toBeNull();
+        expect(unpushedState(work)?.count).toBe(0);
+    });
+
     it("recomputes old cache records and persists the new count on disk", async () => {
         const { work, run } = pushedClone();
         mergeRemote(run);

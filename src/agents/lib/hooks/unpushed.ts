@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { assertPrivateFile, makePrivateDir } from "./diff/private-dir";
@@ -149,6 +149,20 @@ function writeCache(root: string, cached: Cached): void {
     }
 }
 
+/**
+ * Forget the cached ancestry. A ref the preflight cannot see changed (a new upstream branch set with
+ * `--set-upstream-to`, while HEAD and the old upstream ref stay put), so only the full walk is right next turn.
+ */
+function dropCache(root: string): void {
+    try {
+        unlinkSync(join(unpushedRoot(), `${keyOf(root)}.json`));
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            hookDiag("Could not drop the unpushed cache", { err, root });
+        }
+    }
+}
+
 /** The last `update by push` line of a reflog file, as ms. */
 function lastPush(reflog: string): number | null {
     let text: string;
@@ -241,7 +255,9 @@ export function unpushedState(root: string): UnpushedState | null {
     const revisionKeys = ["commonDir", "gitDir", "branch", "upstreamRef", "headOid", "upstreamOid"] as const;
 
     if (reuseAncestry && revisionKeys.some((key) => cached?.revisions?.[key] !== revisions[key])) {
-        // A ref changed during preflight. Try again next turn rather than guess or spawn a third Git.
+        // A ref changed during preflight. Try again next turn rather than guess or spawn a third Git, and drop the
+        // cache: a changed upstream branch leaves the cached refs untouched, so the preflight would pass every turn.
+        dropCache(root);
         return null;
     }
 
@@ -263,6 +279,8 @@ export function unpushedState(root: string): UnpushedState | null {
             "HEAD",
             "--not",
             "--remotes",
+            // The upstream may be a local branch (`branch.<name>.remote = .`), which `--remotes` does not hold.
+            upstreamOid,
         ]);
 
         if (log === null) {
