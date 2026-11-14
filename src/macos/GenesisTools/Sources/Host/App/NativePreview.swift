@@ -12,7 +12,7 @@ package enum NativePreview {
     }
     package static func hubFile(_ name: String) -> URL {
         if enabled { return root.appendingPathComponent("hub", isDirectory: true).appendingPathComponent(name) }
-        // Under genesisHome() (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
+        // Under GenesisToolsHome.home() (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
         return GenesisToolsHome.url("hub")
             .appendingPathComponent(name)
     }

@@ -362,7 +362,7 @@ struct MeetingListRow: Decodable, Equatable {
 final class MeetingsService {
     /// The window's service: nil in Preview unless explicitly enabled with an isolated home, under XCTest, and when turned off with
     /// `GENESIS_MEETINGS_SERVICE=0` or `defaults write com.genesiscz.genesistools meetings.service -bool NO`. Every
-    /// read then runs as a command, as before. The service folder is under `genesisHome()`, so a sandbox home
+    /// read then runs as a command, as before. The service folder is under `GenesisToolsHome.home()`, so a sandbox home
     /// (`GENESIS_TOOLS_HOME`) has its own service; a service answers only when its `sourceRoot` is the checkout of the
     /// `tools` the window runs (`GENESIS_TOOLS_BIN` for a worktree's), so a worktree's window never reads through the
     /// main checkout's service, and a service that names no checkout (an older one) is used only with neither variable

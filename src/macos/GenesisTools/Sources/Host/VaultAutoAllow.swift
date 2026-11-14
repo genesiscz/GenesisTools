@@ -120,7 +120,7 @@ enum VaultAutoAllow {
     /// can pass it without running it. The subcommand must be the first argument after the script: with an option
     /// before it, the first bare word may be that option's value (`say --model voices`), so the command is unknown.
     static func match(caller: VaultCaller, settings: VaultAutoAllowSettings, trustedRoot: String?,
-                      home: String = genesisHome()) -> VaultAutoAllowMatch? {
+                      home: String = GenesisToolsHome.home()) -> VaultAutoAllowMatch? {
         guard settings.enabled, let trustedRoot, let executable = caller.executable,
               VaultGrants.runtime(of: executable, home: home) == "bun",
               let script = caller.script, caller.args != nil,
@@ -177,7 +177,7 @@ enum VaultAutoAllow {
 
     /// The checkout this app was built from (the build manifest's `sourceRoot`), as its main checkout: a worktree's
     /// `.git` file names `<main>/.git/worktrees/<name>`.
-    static func trustedRoot(home: String = genesisHome()) -> String? {
+    static func trustedRoot(home: String = GenesisToolsHome.home()) -> String? {
         let manifest = GenesisToolsHome.path("app/manifest.json", in: home)
         guard let data = FileManager.default.contents(atPath: manifest),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

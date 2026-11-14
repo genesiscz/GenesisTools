@@ -9,7 +9,7 @@ import GenesisKitBase
 /// It goes at a normal exit; one left by a SIGTERM is pruned by the next rebuild.
 package enum FaceRecord {
     static var directory: URL {
-        // `genesisHome()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
+        // `GenesisToolsHome.home()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
         GenesisToolsHome.url("app/faces", isDirectory: true)
     }
 

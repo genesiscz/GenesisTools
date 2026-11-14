@@ -430,7 +430,7 @@ enum VaultGrants {
     /// a running hard link by the path that was looked up last, so the usage daemon of the real home was named as the
     /// `gt-hub` of a test home that had just started, and asked again after "Always" (2026-11-10: 30 remembered
     /// approvals of one script, each for a launcher in another scratch home). A copy of bun is another file and asks.
-    static func runtime(of executable: String, home: String = genesisHome(),
+    static func runtime(of executable: String, home: String = GenesisToolsHome.home(),
                         fileIdentity: (String) -> VaultFileIdentity? = VaultFileIdentity.of) -> String {
         let bun = ["\(home)/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun"]
         let launchers = "\(home)/.genesis-tools/bin/"
@@ -441,12 +441,12 @@ enum VaultGrants {
         return bun.contains { fileIdentity($0) == own } ? "bun" : executable
     }
 
-    static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = genesisHome()) -> Bool {
+    static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = GenesisToolsHome.home()) -> Bool {
         grant.script == script && runtime(of: grant.executable, home: home) == runtime(of: executable, home: home)
     }
 
     static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile,
-                     home: String = genesisHome()) -> VaultGrant? {
+                     home: String = GenesisToolsHome.home()) -> VaultGrant? {
         file.grants.last {
             sameProgram($0, executable: executable, script: script, home: home) && !$0.isTooBroad && $0.isLive(at: now)
         }
@@ -454,7 +454,7 @@ enum VaultGrants {
 
     /// Replaces any grant for the same program and drops expired and too-broad ones.
     static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile,
-                         home: String = genesisHome()) -> VaultGrantsFile {
+                         home: String = GenesisToolsHome.home()) -> VaultGrantsFile {
         var next = file
         next.grants = file.grants.filter {
             !sameProgram($0, executable: grant.executable, script: grant.script, home: home) && !$0.isTooBroad

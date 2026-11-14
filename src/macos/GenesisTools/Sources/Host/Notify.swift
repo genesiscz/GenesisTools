@@ -307,13 +307,6 @@ func isSafeNotificationId(_ id: String) -> Bool {
     return true
 }
 
-/// Fallback when a click arrives without a stamped home in `userInfo` (an old notification,
-/// or a raw `--rpc` that omitted `genesisHome`). Prefers `GENESIS_TOOLS_HOME` when this
-/// process inherited it — the `--rpc` poster does; a Launch Services relaunch does not.
-package func genesisHome() -> String {
-    GenesisToolsHome.home()
-}
-
 private func resolvedReplyDir(_ params: NotifyPostParams) -> String {
     if let replyDir = params.replyDir, !replyDir.isEmpty {
         return replyDir
@@ -327,7 +320,9 @@ private func resolvedGenesisHome(_ params: NotifyPostParams) -> String {
         return home
     }
 
-    return genesisHome()
+    // A raw `--rpc` that omitted `genesisHome`: prefer `GENESIS_TOOLS_HOME` when this process inherited it (the
+    // `--rpc` poster does; a Launch Services relaunch does not).
+    return GenesisToolsHome.home()
 }
 
 private func writeReply(notificationId: String, actionId: String, text: String?, userInfo: [AnyHashable: Any]) {

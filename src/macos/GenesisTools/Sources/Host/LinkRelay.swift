@@ -70,7 +70,7 @@ enum LinkRelay {
         configuration.createsNewApplicationInstance = true
         configuration.activates = false
         // Launch Services does not pass this face's environment on. The relay must find its lock under the
-        // same `genesisHome()` (GENESIS_TOOLS_HOME), or this face waits for a lock the relay never takes.
+        // same `GenesisToolsHome.home()` (GENESIS_TOOLS_HOME), or this face waits for a lock the relay never takes.
         configuration.environment = ProcessInfo.processInfo.environment
         let opened = DispatchSemaphore(value: 0)
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
