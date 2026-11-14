@@ -41,6 +41,7 @@ import {
     type RmCaller,
     type RmConfig,
     type RmRequest,
+    type RmRequestTarget,
     readRmLedger,
     recoverAsideJournals,
     requestBatchIds,
@@ -1623,6 +1624,72 @@ describe("an aside copy deleted outside tools rm (macOS tmp_cleaner)", () => {
                     .map((entry) => entry.path)
             ).toEqual([first.path, second.path]);
         } finally {
+            process.exitCode = exitCode;
+        }
+    });
+
+    /** An agent's own deny while the path of the first copy was taken again: that copy waits for a put-back. */
+    function deniedWhileTaken(folder: string): { request: RmRequest; taken: RmRequestTarget & { stored: string } } {
+        const request = asideRequest(folder);
+        const [taken] = request.targets;
+
+        if (!taken?.stored) {
+            throw new Error("expected an aside copy");
+        }
+
+        file(taken.path);
+        expect(denyRequest(request, { caller: AGENT, via: "cli" }).waiting.map((target) => target.path)).toEqual([
+            taken.path,
+        ]);
+        return { request, taken: { ...taken, stored: taken.stored } };
+    }
+
+    test("approve closes a denied request whose waiting copy was lost, instead of asking for a put-back", async () => {
+        // bd7ccy and c55v5s (2026-11-14): the path is back, the copy is gone, and every approve said "unfinished
+        // recovery" while a deny could put nothing back.
+        const { request, taken } = deniedWhileTaken("lost-after-deny");
+        clean(taken.stored, "lost-after-deny");
+        const exitCode = process.exitCode;
+
+        try {
+            const approve = await run(["approve", request.id]);
+            expect(approve).not.toContain("recovery");
+            expect(approve).toContain(`gone ${taken.path}: its set-aside copy was ${CAUSE}`);
+            expect(loadRmRequest(request.id)?.status).toBe("gone");
+            expect(process.exitCode ?? 0).toBe(0);
+        } finally {
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("a batch approval closes such a request too, and still leaves out one whose copy waits to go home", async () => {
+        const lost = deniedWhileTaken("lost-after-deny-batch");
+        clean(lost.taken.stored, "lost-after-deny-batch");
+        const waits = deniedWhileTaken("waits-after-deny-batch");
+        // The path is free again: a deny would put the copy back now, so approving it is still not the way.
+        renameSync(waits.taken.path, join(base, "waits-after-deny-batch-moved"));
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            printed.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([lost.request.id, waits.request.id], context(), {
+                ask: async () => {
+                    throw new Error("no window opens: nothing is left to approve");
+                },
+                kickDrainer: () => undefined,
+            });
+            const text = printed.join("\n");
+            expect(text).not.toContain(`left out ${lost.request.id}`);
+            expect(text).toContain(
+                `left out ${waits.request.id}: 1 denied path waits aside to go home: ${toolCommand("rm")} deny ${waits.request.id} puts it back`
+            );
+            expect(loadRmRequest(lost.request.id)?.status).toBe("gone");
+            expect(loadRmRequest(waits.request.id)?.status).toBe("pending");
+        } finally {
+            println.mockRestore();
             process.exitCode = exitCode;
         }
     });

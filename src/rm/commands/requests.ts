@@ -50,6 +50,8 @@ import {
     printDenyOutcome,
     reportLostCopies,
     savedSizes,
+    waitingPutBack,
+    waitingPutBackLine,
 } from "../lib/approve";
 import {
     buildRequestViews,
@@ -249,13 +251,8 @@ function leftOutReason(request: RmRequest | null, id: string): string | null {
         return `nothing is left to decide: ${rm} prune`;
     }
 
-    const deniedBefore = new Set(request.decided?.denied ?? []);
-
-    if (request.targets.some((target) => deniedBefore.has(target.path) && !cameBack(target))) {
-        return `it has unfinished recovery: ${rm} deny ${id}`;
-    }
-
-    return null;
+    const waiting = waitingPutBack(request);
+    return waiting.length > 0 ? waitingPutBackLine(request, waiting) : null;
 }
 
 /** One stream of row updates for a window that shows the rows of several requests. */
@@ -822,13 +819,12 @@ async function decideOne(
 
     // A path the person already denied whose aside copy could not go home waits for a deny, not a second
     // approval; a path that was blocked or changed while they decided can be approved again. A path that came back
-    // beside its copy can never go home, so approving (which deletes only the copy) is the one way forward.
-    const deniedBefore = new Set(request.decided?.denied ?? []);
+    // beside its copy can never go home, so approving (which deletes only the copy) is the one way forward, and a
+    // lost copy is reported and closed below like any other.
+    const waiting = waitingPutBack(request);
 
-    if (request.targets.some((target) => deniedBefore.has(target.path) && !cameBack(target))) {
-        out.println(
-            pc.red(`Request ${id} has unfinished recovery. Use ${toolCommand("rm")} deny ${id} to retry the put-back.`)
-        );
+    if (waiting.length > 0) {
+        out.println(pc.red(`Request ${id}: ${waitingPutBackLine(request, waiting)}.`));
         process.exitCode = 1;
         return;
     }

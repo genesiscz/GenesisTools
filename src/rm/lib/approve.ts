@@ -95,6 +95,24 @@ export function nothingLeft(target: RmRequestTarget): boolean {
 }
 
 /**
+ * The paths of `request` a deny already decided whose aside copy still waits to go home (the path was taken, or the
+ * put-back failed, at the deny, and the path is free now): a deny puts them back, never an approval. A copy that is
+ * gone (bd7ccy, 2026-11-14: /tmp was cleaned) or a path that came back beside its copy has nothing to put back.
+ */
+export function waitingPutBack(request: RmRequest): RmRequestTarget[] {
+    const denied = new Set(request.decided?.denied ?? []);
+    return request.targets.filter((target) => denied.has(target.path) && targetLiveState(target) === "aside");
+}
+
+/** Why `request` waits for a deny and not an approval: its put-back is not finished. */
+export function waitingPutBackLine(request: RmRequest, waiting: readonly RmRequestTarget[]): string {
+    const count = formatCount(waiting.length, "denied path");
+    const verb = waiting.length === 1 ? "waits" : "wait";
+    const them = waiting.length === 1 ? "it" : "them";
+    return `${count} ${verb} aside to go home: ${toolCommand("rm")} deny ${request.id} puts ${them} back`;
+}
+
+/**
  * Each path an earlier approval of `requestId` moved to the trash, with its batch. Such a run stopped before it saved
  * the decision (m888au, 2026-11-04 01:31: an EACCES after three moves), so the request still names those copies.
  */

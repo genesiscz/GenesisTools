@@ -331,8 +331,8 @@ approval window by itself.
 
 `tools rm approve <id> <id> ...` (or `--session <id prefix>`, `--older 1d`) opens ONE window with the rows of all of
 them and asks the person once. The set is fixed before the window opens, so a request an agent makes meanwhile never
-rides along. A request open in another window, a root request, a request with nothing left and one with unfinished
-recovery are left out with a line each. An in-place path two requests name is one row. A request that acts on
+rides along. A request open in another window, a root request, a request with nothing left and one whose denied
+paths still wait aside to go home are left out with a line each. An in-place path two requests name is one row. A request that acts on
 another copy of a path already in the window (an aside copy beside the live path) waits for a second window, oldest
 request first, and is read again after the person answers the first. One whose path holds another object by then, or
 that still waits after a window nobody answered, is left out with the `tools rm approve <ids>` command that decides
@@ -567,8 +567,9 @@ tools rm preset bun-cache --in ~/.bun/install/cache
 - **`the dialog shows 15 lines and this needs N`.** Approve in the GenesisTools.app window, or type the code on a
   terminal with `approval` set to `code`.
 - **`Request <id> is open in an approval window (pid N)`.** Another window holds the request. Answer that window.
-- **`Request <id> has unfinished recovery`.** A denied path's aside copy could not go home. Run
-  `tools rm deny <id>` to retry the put-back.
+- **`Request <id>: 1 denied path waits aside to go home`.** A deny found the path taken (or could not write its
+  folder), and the path is free now. Run `tools rm deny <id>` to put the copy back. A denied path whose copy is gone
+  since then has nothing to put back: `approve` reports it as `lost` and closes the request.
 - **`Not changing trash-root: the trash at ... still holds N batches`.** Restore what you want back, run
   `tools rm drain --now`, then set `trash-root` again.
 - **A batch stays in `tools rm trash` after its grace.** The drain could not delete an item (a `fail` line in
