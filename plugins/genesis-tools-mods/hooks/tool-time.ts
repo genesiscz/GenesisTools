@@ -7,8 +7,15 @@ import type { EngineInterface } from "claude-code";
 import { liveWallAgo } from "./live";
 import { type Host, settingsOf } from "./shared";
 
+/** The clock of the noted starts and of the `ago` part; a test holds it, since the test host's `Date.now` is read-only. */
+export const toolTimeClock = { now: (): number => Date.now() };
+
 /** The call `id` started at `at`; the first note wins, so a call keeps its start time. */
-export async function noteCallTime($: EngineInterface, id: string | undefined, at = Date.now()): Promise<void> {
+export async function noteCallTime(
+    $: EngineInterface,
+    id: string | undefined,
+    at = toolTimeClock.now()
+): Promise<void> {
     if (id === undefined) {
         return;
     }
@@ -55,5 +62,5 @@ export async function callTimeOf(
     );
     const at = held.map((entry) => entry?.value).find((value) => typeof value === "number");
 
-    return typeof at === "number" ? callTimeText(at, { ago: settings.ago }) : undefined;
+    return typeof at === "number" ? callTimeText(at, { ago: settings.ago, now: toolTimeClock.now() }) : undefined;
 }

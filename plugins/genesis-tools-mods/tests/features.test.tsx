@@ -143,7 +143,7 @@ import {
     worktreeMaxAgeS,
     worktreeSize,
 } from "../hooks/tmp-usage";
-import { callTimeText, clockOf } from "../hooks/tool-time";
+import { callTimeText, clockOf, toolTimeClock } from "../hooks/tool-time";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -1617,9 +1617,8 @@ for (const askRow of [false, true]) {
         });
 
         // A minute boundary between the call and the render would read "1m ago": hold the clock across both.
-        const realNow = Date.now;
-        const frozen = realNow();
-        Date.now = () => frozen;
+        const frozen = Date.now();
+        toolTimeClock.now = () => frozen;
 
         try {
             await $.tool.call({ tool: "Bash", command: "ls" });
@@ -1647,7 +1646,7 @@ for (const askRow of [false, true]) {
             expect((await ui.find({ key: `ask-${id}` })) !== undefined).toBe(askRow);
             await ui.unmount();
         } finally {
-            Date.now = realNow;
+            toolTimeClock.now = () => Date.now();
         }
 
         forgetSettings();
