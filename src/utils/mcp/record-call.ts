@@ -1,5 +1,6 @@
 import { recordHandledFailure } from "@genesiscz/utils/cli/failures/handled";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
 interface PendingCall {
@@ -7,20 +8,16 @@ interface PendingCall {
     started: number;
 }
 
-function object(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
 function failureText(response: unknown): string | null {
-    if (!object(response)) {
+    if (!isObject(response)) {
         return null;
     }
 
-    if (object(response.error)) {
+    if (isObject(response.error)) {
         return typeof response.error.message === "string" ? response.error.message : "MCP protocol error";
     }
 
-    const result = object(response.result) ? response.result : response;
+    const result = isObject(response.result) ? response.result : response;
     if (result.isError !== true) {
         return null;
     }
@@ -28,7 +25,7 @@ function failureText(response: unknown): string | null {
     return Array.isArray(result.content)
         ? result.content
               .flatMap((item: unknown) =>
-                  object(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []
+                  isObject(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []
               )
               .join("\n")
         : "MCP tool call failed";
@@ -96,7 +93,7 @@ export function recordMcpTransport<T>(options: {
             if (key === "send" && typeof value === "function") {
                 return async (...args: unknown[]) => {
                     const message = args[0];
-                    if (object(message) && (typeof message.id === "string" || typeof message.id === "number")) {
+                    if (isObject(message) && (typeof message.id === "string" || typeof message.id === "number")) {
                         const call = pending.get(message.id);
                         if (call) {
                             pending.delete(message.id);
@@ -122,12 +119,12 @@ export function recordMcpTransport<T>(options: {
                 return Reflect.set(target, key, (...args: unknown[]) => {
                     const message = args[0];
                     if (
-                        object(message) &&
+                        isObject(message) &&
                         message.method === "tools/call" &&
                         (typeof message.id === "string" || typeof message.id === "number")
                     ) {
                         const name =
-                            object(message.params) && typeof message.params.name === "string"
+                            isObject(message.params) && typeof message.params.name === "string"
                                 ? message.params.name
                                 : "tools/call";
                         pending.set(message.id, { name, started: performance.now() });
