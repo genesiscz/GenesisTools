@@ -169,6 +169,49 @@ test("a handler failure sends its cause stack and issue, and the peer answers th
     }
 });
 
+test("an outgoing error reply carries stack and issue only with errorEvidence, whatever the jsonrpc field says", async () => {
+    const cause = new Error("capture failed");
+    cause.stack = "Error: capture failed\n    at origin (/fixture/source.ts:12:3)";
+
+    for (const errorEvidence of [true, false]) {
+        for (const jsonrpcField of [true, false]) {
+            const sent: string[] = [];
+            const peer = new RpcPeer({
+                write: (bytes) => {
+                    sent.push(bytes.toString("utf8"));
+                    return bytes.length;
+                },
+                handle: async () => {
+                    throw new RpcError(
+                        1042,
+                        "refused",
+                        { reason: "fixture" },
+                        { cause, issue: { title: "Original refusal" } }
+                    );
+                },
+                invalid: "answer",
+                log: logger.scoped("rpc-test").log,
+                label: "fixture",
+                tool: "fixture",
+                dialect: { errorEvidence, jsonrpcField },
+            });
+
+            try {
+                const call = { id: 5, method: "fail", ...(jsonrpcField ? { jsonrpc: "2.0" } : {}) };
+                peer.receive(Buffer.from(`${SafeJSON.stringify(call)}\n`));
+                await peer.queue;
+                const error = Reflect.get(SafeJSON.parse(sent[0] ?? "", { strict: true }), "error");
+
+                expect(error).toMatchObject({ code: 1042, message: "refused", data: { reason: "fixture" } });
+                expect("stack" in error).toBe(errorEvidence);
+                expect("issue" in error).toBe(errorEvidence);
+            } finally {
+                peer.close("done");
+            }
+        }
+    }
+});
+
 describe("the supersede lane of a peer", () => {
     function lanePeer(handle: RpcPeerOptions["handle"]) {
         const replies = new Map<unknown, unknown>();
