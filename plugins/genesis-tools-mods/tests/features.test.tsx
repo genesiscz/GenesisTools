@@ -601,6 +601,80 @@ test("decisions sidebar: ticks on an unlogged several-letter ask reach the promp
     forgetAnswers();
 });
 
+test("decisions sidebar: ticks the log takes over stay local until the stage succeeds", async () => {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    forgetDecisions();
+    const base = checkoutHost();
+    let logged = false;
+    let refuses = true;
+    let draftOption = "";
+    const result = (stdout: string, stderr = "", exitCode = 0) => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const snapshot = () => ({
+        sessionId: "sess-1",
+        full: true,
+        decisions: logged
+            ? [{ id: "d_16_sess-1", number: 16, title: "D16", prompt: "", status: "waiting", choices: [], draftOption }]
+            : [],
+        todos: [],
+        entries: [],
+        forms: [],
+    });
+    const host: Host = {
+        ...base,
+        async messages() {
+            return [ASK_16];
+        },
+        async run(argv, init) {
+            if (argv[1] === "genesis-tools") {
+                return result(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv.includes("draft")) {
+                if (refuses) {
+                    return result("", "the decision store is locked", 1);
+                }
+
+                draftOption = argv[argv.indexOf("--option") + 1] ?? "";
+                return result(JSON.stringify({ state: "drafted", draftOption }));
+            }
+
+            if (argv[1] === "question" && argv[2] === "inbox") {
+                return result(JSON.stringify(snapshot()));
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    await readChat(host);
+    expect(tickLocal(ASK_16_OPTIONS, "a")).toBe("a");
+    expect(tickLocal(ASK_16_OPTIONS, "c")).toBe("ac");
+
+    // The log now has DECISION 16, but the stage that moves the ticks there fails: the ticks are still the only copy.
+    logged = true;
+    await refreshAnswers(host, "logged", true);
+    await readChat(host);
+    expect(stagedPreview("")).toBe("D16: ac)");
+
+    // The next read moves them; the log's draft is the copy from then on, so nothing is sent twice.
+    refuses = false;
+    await readChat(host);
+    expect(draftOption).toBe("ac");
+    expect(stagedPreview("")).toBe("");
+    await refreshAnswers(host, "after", true);
+    forgetDecisions();
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+});
+
 test("decisions sidebar: local ticks alone offer send, quick presses build on each other, and the last untick clears", async () => {
     forgetSettings();
     forgetGenesisProbe();
