@@ -401,7 +401,16 @@ export function realSources(): EnvironmentSources {
             };
         },
         bunVersion: Bun.version,
-        macos: () => ({ version: run(["sw_vers", "-productVersion"]), build: run(["sw_vers", "-buildVersion"]) }),
+        macos: () => {
+            // One sw_vers for both; it prints "ProductVersion:\t27.2" and "BuildVersion:\t26B123" lines.
+            const fields = new Map(
+                (run(["sw_vers"]) ?? "").split("\n").map((line) => {
+                    const [key = "", value = ""] = line.split(":");
+                    return [key.trim(), value.trim() || null];
+                })
+            );
+            return { version: fields.get("ProductVersion") ?? null, build: fields.get("BuildVersion") ?? null };
+        },
         machine: () => {
             // One sysctl for the three; a name the kernel does not have prints nothing for it.
             const [chip, model, memsize] = (
