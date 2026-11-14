@@ -6,8 +6,8 @@ export const TOOL_CALLS_BACKFILL_BYTES = 16 * 1024 * 1024;
 
 /**
  * The complete lines a transcript gained since `from` that hold one of `markers`, each handed to `parse` in file
- * order, and the offset after the last complete line: a line still being written is left for the next call. A file
- * that shrank was replaced and is read from its start. The harnesses' `readToolCalls` share it; only `parse` knows a
+ * order with the offset where the line starts, and the offset after the last complete line: a line still being written
+ * is left for the next call. A file that shrank was replaced and is read from its start, its first row included. The harnesses' `readToolCalls` share it; only `parse` knows a
  * format. Measured on a 128 MB Claude transcript: the bytes appended between two Bash calls are 11.9 KB at p50 and
  * 271 KB at p99, and scanning them costs well under a millisecond.
  */
@@ -20,7 +20,7 @@ export function readToolCallLines({
     path: string;
     from: number;
     markers: readonly string[];
-    parse: (line: string, into: NativeToolCall[], issues: NativeSourceIssue[]) => void;
+    parse: (line: string, into: NativeToolCall[], issues: NativeSourceIssue[], lineOffset: number) => void;
 }): ToolCallsRead {
     const calls: NativeToolCall[] = [];
     const issues: NativeSourceIssue[] = [];
@@ -58,8 +58,8 @@ export function readToolCallLines({
             return { supported: true, calls, offset: start, issues };
         }
 
-        // A read that began mid-line skips that fragment.
-        const first = start === from ? 0 : data.indexOf(0x0a) + 1;
+        // Only a backfill cut begins mid-line and skips that fragment: `from` and the start of a shrunk file begin a row.
+        const first = start === from || start === 0 ? 0 : data.indexOf(0x0a) + 1;
         const lineStarts = new Set<number>();
 
         for (const marker of markers.map((m) => Buffer.from(m))) {
@@ -79,7 +79,8 @@ export function readToolCallLines({
         }
 
         for (const lineStart of [...lineStarts].sort((a, b) => a - b)) {
-            parse(data.subarray(lineStart, data.indexOf(0x0a, lineStart)).toString("utf8"), calls, issues);
+            const line = data.subarray(lineStart, data.indexOf(0x0a, lineStart)).toString("utf8");
+            parse(line, calls, issues, start + lineStart);
         }
 
         return { supported: true, calls, offset: start + lastNewline + 1, issues };
