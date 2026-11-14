@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import { sessionOpenDialog } from "@genesiscz/utils/agents/dialogs/session";
 import type { OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
@@ -11,6 +10,7 @@ import { cmuxDidNotAnswer, type ReadCmuxTreeOptions, readCmuxTree } from "@genes
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
 import { type ProcessEntry, processesOnTty } from "@genesiscz/utils/process/processes";
+import { isShellProgram } from "@genesiscz/utils/shell/programs";
 import { listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import { EMPTY_TREE, type LocateOptions, liveSessionReads, locateLiveSurfaces } from "./locate";
 
@@ -127,8 +127,6 @@ export function agentsOnTtyNow(tty: string): AccountProviderAlias[] {
     return agentSessionsOf(own);
 }
 
-const SHELL = /^-?(?:ba|z|k|da|fi|tc|c)?sh$/;
-
 /**
  * One entry per agent session among the processes of one tty. An agent process counts once with the processes that
  * start it: a wrapper (`tools claude resume`) or a launcher of the same agent (Codex's npm script and its native
@@ -157,7 +155,7 @@ export function agentSessionsOf(processes: readonly ProcessEntry[]): AccountProv
                 return true;
             }
 
-            if (SHELL.test(basename(argvZero(parent)))) {
+            if (isShellProgram(parent.command ?? parent.name)) {
                 return false;
             }
 
@@ -173,10 +171,6 @@ export function agentSessionsOf(processes: readonly ProcessEntry[]): AccountProv
 
         return entry && !startedBySameAgent(entry, agent) ? [agent] : [];
     });
-}
-
-function argvZero(entry: ProcessEntry): string {
-    return entry.command?.trim().split(/\s+/)[0] || entry.name;
 }
 
 /**
