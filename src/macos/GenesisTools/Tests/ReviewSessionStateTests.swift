@@ -68,6 +68,33 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(model.navigationRequests, 3, "automatic proposal positioning must preserve the active tab")
     }
 
+    /// A stored review found in the background moves an unpinned scope to its range without asking a redesign layout
+    /// to show Changes; a review the reader picks does ask.
+    @MainActor
+    func testAnAutomaticallyAttachedReviewMovesTheScopeWithoutANavigationRequest() throws {
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/fixture"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.setScope(.branch, requestingNavigation: false)
+        let start = model.navigationRequests
+        let object: [String: Any] = [
+            "version": 1, "provider": "github", "host": "github.com", "project": "org/app", "number": 7,
+            "baseSha": "aaa", "headSha": "bbb", "author": ["agent": "claude"],
+            "verdict": ["decision": "comment", "summary": "One point."], "drafts": [], "threads": [],
+        ]
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("review-proposal-\(UUID().uuidString).json")
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try ProposalDocument(url: url)
+
+        model.showStoredProposal(document, chosen: false)
+        XCTAssertNotEqual(model.scope, DiffScope.branch, "the automatic attach still shows the review's range")
+        XCTAssertEqual(model.navigationRequests, start, "a background attach must not switch the tab")
+
+        model.proposal = nil
+        model.setScope(.branch, requestingNavigation: false)
+        model.showStoredProposal(document, chosen: true)
+        XCTAssertEqual(model.navigationRequests, start + 1, "a picked review opens Changes")
+    }
+
     func testEveryScopeSurvivesTheDiskForm() throws {
         let scopes: [DiffScope] = [
             .lastTurns(3), .uncommitted, .unstaged, .staged, .branch,
