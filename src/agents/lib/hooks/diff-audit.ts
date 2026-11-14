@@ -12,7 +12,7 @@ import {
 } from "./diff/attribution";
 import { commandDirs, namedArguments } from "./diff/command-paths";
 import { canonical, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./diff/mentions";
-import type { DiffLogEntry } from "./diff-log";
+import { type DiffLogEntry, readDiffLog } from "./diff-log";
 
 /**
  * `tools agents hooks diff audit`: every file the diff hook printed or declined, decided again by
@@ -64,7 +64,13 @@ export function fileToolWrites(rows: Iterable<ChangeLogRow>): Map<string, Write[
         }
 
         const path = canonical(row.path);
-        byFile.set(path, [...(byFile.get(path) ?? []), { session: row.session, at }]);
+        const writes = byFile.get(path);
+
+        if (writes) {
+            writes.push({ session: row.session, at });
+        } else {
+            byFile.set(path, [{ session: row.session, at }]);
+        }
     }
 
     for (const writes of byFile.values()) {
@@ -72,6 +78,34 @@ export function fileToolWrites(rows: Iterable<ChangeLogRow>): Map<string, Write[
     }
 
     return byFile;
+}
+
+/**
+ * The audit of the calls at or after `since`. Live attribution weighs another session's calls and writes up to
+ * `FOREIGN_WINDOW_MS` before a call, so the evidence is read from that much earlier; only the rows are cut to the
+ * horizon. `extend` fills what the log lacks (the command text) for the calls that are audited.
+ */
+export function auditHorizon({
+    logPath,
+    since,
+    changeLogs,
+    extend,
+}: {
+    logPath: string;
+    since: number;
+    changeLogs?: string;
+    extend?: (entries: DiffLogEntry[]) => void;
+}): AuditRow[] {
+    const evidenceSince = since - FOREIGN_WINDOW_MS;
+    // Every session's calls: another session's pre rows are what makes a root shared.
+    const entries = readDiffLog({ logPath, since: evidenceSince });
+    const audited = (entry: { at: string }) => Date.parse(entry.at) >= since;
+
+    extend?.(entries.filter((entry) => audited(entry) && (entry.files.length > 0 || entry.others.length > 0)));
+
+    return auditDiffLog({ entries, writes: fileToolWrites(changeRowsSince(evidenceSince, changeLogs)) }).filter(
+        audited
+    );
 }
 
 /** The change-log rows of every session whose log was written since `since`. */
@@ -184,7 +218,7 @@ export function auditDiffLog({
             busyRoots: () => new Set(),
             siblings: () => new Set(),
             writes: () => proof,
-            scripts: () => scriptTexts(named.paths),
+            scripts: () => scriptTexts({ paths: named.paths, command: entry.command }),
             ownRoot: (root) => {
                 const known = ownRoots.get(root);
 

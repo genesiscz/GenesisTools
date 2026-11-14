@@ -1,7 +1,7 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
-import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
+import { readLinesBackwardSync, readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
@@ -238,8 +238,73 @@ export interface WalkChangeLogsOptions {
      * about other files, and parsing every row of 400 logs is what a reader that wants a few paths cannot afford.
      */
     keepLine?: (line: string) => boolean;
+    /**
+     * Only rows written at or after this time (epoch ms, the row's `ts`). A log is appended in time order, so it is read
+     * from its end and the read stops at the first row well before it: an old log's history is never read or parsed.
+     * The rows of each log still come oldest first.
+     */
+    rowsSince?: number;
     /** The folder of session folders; `changeLogsDir()` by default. */
     dir?: string;
+}
+
+/**
+ * How far before `rowsSince` the backward read still goes. A log is appended in time order only roughly: a row stamped
+ * with its own event time can land after a newer one, so the read stops at the first row older than the window by
+ * more than this, and skips the ones in between.
+ */
+const ROW_ORDER_SLACK_MS = 10 * 60_000;
+
+/**
+ * The rows of one log written at or after `since`, oldest first, read from the end and stopped at the first row older
+ * than the window by more than `ROW_ORDER_SLACK_MS`. At most `max`, the newest kept.
+ */
+function recentRows({
+    path,
+    since,
+    keepLine,
+    max,
+}: {
+    path: string;
+    since: number;
+    keepLine?: (line: string) => boolean;
+    max: number;
+}): ChangeLogRow[] {
+    const newestFirst: ChangeLogRow[] = [];
+
+    for (const line of readLinesBackwardSync(path, { chunkBytes: WALK_CHUNK_BYTES })) {
+        const row = parseLine(line);
+
+        if (!row) {
+            if (line.trim().length > 0) {
+                log.debug({ path }, "change log: a line that is not a row");
+            }
+
+            continue;
+        }
+
+        const at = Date.parse(row.ts);
+
+        if (at < since - ROW_ORDER_SLACK_MS) {
+            break;
+        }
+
+        if (at < since) {
+            continue;
+        }
+
+        if (keepLine && !keepLine(line)) {
+            continue;
+        }
+
+        newestFirst.push(row);
+
+        if (newestFirst.length >= max) {
+            break;
+        }
+    }
+
+    return newestFirst.reverse();
 }
 
 /** How much of a change log `walkChangeLogs` reads at a time; the next chunk is read only while rows are still due. */
@@ -292,6 +357,13 @@ export function* walkChangeLogs(
         const rows: ChangeLogRow[] = [];
 
         try {
+            if (options.rowsSince !== undefined) {
+                rows.push(...recentRows({ path, since: options.rowsSince, keepLine: options.keepLine, max: left }));
+                left -= rows.length;
+                yield { sessionId, rows };
+                continue;
+            }
+
             // Leaving the loop early closes the file: no chunk after the one that held the last row due is read.
             for (const line of readLinesSync(path, { chunkBytes: WALK_CHUNK_BYTES })) {
                 if (options.keepLine && !options.keepLine(line)) {

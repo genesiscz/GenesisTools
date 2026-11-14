@@ -170,10 +170,13 @@ export function readDiffLog(options: { logPath: string; since: number; session?:
         });
     }
 
-    // A failed Bash call gets no PostToolUse, so its pre record is all there is.
+    // A failed Bash call gets no PostToolUse, so its pre record is all there is. It still says when the call began
+    // and in which roots, which the audit needs: another session's failed or running call there makes a root shared.
     for (const [id, record] of pre) {
         if (!posted.has(id)) {
             entries.push({
+                began: text(record.at),
+                roots: strings(record.roots),
                 at: text(record.at),
                 session: text(record.session),
                 toolUseId: id,

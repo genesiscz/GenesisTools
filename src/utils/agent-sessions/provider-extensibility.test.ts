@@ -24,6 +24,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noToolCalls,
     noWorkflows,
 } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
@@ -75,6 +76,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             scanInsights: () => ({ native: null, defaultModel: null }),
             classifyPath: classifiesNoPath,
             readChanges: noSessionChanges,
+            readToolCalls: noToolCalls,
             rowAnchors: noRowAnchors,
             analysis: noAnalysis,
             workflows: noWorkflows,

@@ -29,6 +29,7 @@ import type {
 } from "../types";
 import { grokCurrentModel } from "./grok-model";
 import { grokSessionTitleOf, grokSummaryOf } from "./grok-title";
+import { grokToolCalls } from "./grok-tool-calls";
 import { anchorRecord, anchorStrings, historyEntryBuilder, type ToolContext } from "./history-entry";
 
 const USER_QUERY_RE = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/i;
@@ -786,6 +787,7 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         continuedIn: async () => undefined,
         // Grok's chat history rows name no model: the session's model is `summary.json` `current_model_id`.
         currentModel: grokCurrentModel,
+        readToolCalls: grokToolCalls,
         scanInsights: null,
         rowAnchors: grokRowAnchors,
     };

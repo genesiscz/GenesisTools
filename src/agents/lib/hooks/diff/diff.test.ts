@@ -32,7 +32,7 @@ import { underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
-import { auditDiffLog, fileToolWrites, summarizeAudit } from "../diff-audit";
+import { auditDiffLog, auditHorizon, fileToolWrites, summarizeAudit } from "../diff-audit";
 import {
     commandSlices,
     type DiffLogEntry,
@@ -47,10 +47,12 @@ import { type HookPayload, parseHookPayload } from "../payload";
 import {
     type AttributionContext,
     attribute,
+    executedScripts,
     readOnlyCommand,
     recordTouches,
     rootIsOwn,
     scriptNames,
+    scriptTexts,
     sessionWrites,
 } from "./attribution";
 import { beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
@@ -6723,6 +6725,45 @@ describe("the rule that decides whose a changed file is", () => {
         expect(scriptNames({ scripts: [{ path: file, text: file }], file, root })).toBe(false);
     });
 
+    it("a script spells the file only as a whole path or name, never inside a longer one", () => {
+        const scripts = (text: string) => [{ path: "/checkout/scripts/gen.ts", text }];
+
+        expect(scriptNames({ scripts: scripts('write("src/dev-monitor.ts.bak", out)'), file, root })).toBe(false);
+        expect(scriptNames({ scripts: scripts('write("my-dev-monitor.ts", out)'), file, root })).toBe(false);
+        // NEGATIVE CONTROL: the name at the end of another path still names the file.
+        expect(scriptNames({ scripts: scripts('write("../src/dev-monitor.ts", out)'), file, root })).toBe(true);
+    });
+
+    it("only a script the command executes is read for proof, never one it copies or prints", () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "gt-scripted-")));
+        const script = join(dir, "scripts", "catalog.ts");
+        // A path below a cloud storage folder: reading it could download it, so it is never read for proof.
+        const cloud = join(dir, "Library", "CloudStorage", "Drive", "scripts", "catalog.ts");
+
+        try {
+            for (const path of [script, cloud]) {
+                mkdirSync(dirname(path), { recursive: true });
+                writeFileSync(path, 'write("src/dev-monitor.ts", out)');
+            }
+
+            expect(executedScripts("cp scripts/catalog.ts /tmp/catalog-copy.ts && cat scripts/catalog.ts")).toEqual([]);
+            expect(scriptTexts({ paths: [script], command: "cp scripts/catalog.ts /tmp/catalog-copy.ts" })).toEqual([]);
+            expect(executedScripts("cd x && bun run scripts/catalog.ts --check | tee out")).toEqual([
+                "scripts/catalog.ts",
+            ]);
+            expect(scriptTexts({ paths: [script], command: "bun scripts/catalog.ts" }).map((s) => s.path)).toEqual([
+                script,
+            ]);
+            expect(scriptTexts({ paths: [cloud], command: "bun scripts/catalog.ts" })).toEqual([]);
+            expect(executedScripts("./scripts/gen.sh a && python3 -u tools/make.py")).toEqual([
+                "./scripts/gen.sh",
+                "tools/make.py",
+            ]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("a runner's unnamed change is shown in a root that is this session's alone, never a file another actor took", () => {
         expect(rule({ ownRoot: () => true })).toEqual({ kind: "runner", rule: "own-root" });
         expect(
@@ -6959,5 +7000,86 @@ describe("the rule that decides whose a changed file is", () => {
         ]);
         expect(rows[2]?.foreign).toEqual({ session: "theirs", at: at(10_000) });
         expect(summarizeAudit(rows)).toMatchObject({ printed: 4, dropped: 2, declined: 0, recovered: 0 });
+    });
+
+    it("another session's failed call in the root, read back from the log, makes the root shared in the audit", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-audit-log-"));
+        const log = join(dir, "hooks.jsonl");
+        const at = (offset: number) => new Date(since + offset).toISOString();
+        const records = [
+            // Their call began in the same root and never got a post record (it failed, or still runs).
+            {
+                at: at(-minutes(20)),
+                phase: "pre",
+                harness: "claude",
+                session: "theirs",
+                toolUseId: "t0",
+                roots: [root],
+            },
+            { at: at(0), phase: "pre", harness: "claude", session: "mine", toolUseId: "t1", roots: [root] },
+            {
+                at: at(40_000),
+                phase: "post",
+                harness: "claude",
+                session: "mine",
+                toolUseId: "t1",
+                decision: "emitted",
+                reason: "rendered",
+                files: [file],
+                attributed: { [file]: "runner" },
+            },
+        ];
+
+        writeFileSync(log, `${records.map((record) => SafeJSON.stringify(record)).join("\n")}\n`);
+
+        try {
+            const rows = auditDiffLog({
+                entries: readDiffLog({ logPath: log, since: since - minutes(30) }),
+                writes: new Map(),
+                mentionsFor: () => mentionsFrom([]),
+            });
+
+            expect(rows.map((row) => [row.file, row.replayed])).toEqual([[file, "unproven"]]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("the audit horizon cuts the rows, never the evidence: a call just before it still makes a root shared", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-audit-horizon-"));
+        const log = join(dir, "hooks.jsonl");
+        const at = (offset: number) => new Date(since + offset).toISOString();
+        const call = (session: string, id: string, offset: number, files: string[]) => [
+            { at: at(offset), phase: "pre", harness: "claude", session, toolUseId: id, roots: [root] },
+            {
+                at: at(offset + 5_000),
+                phase: "post",
+                harness: "claude",
+                session,
+                toolUseId: id,
+                decision: "emitted",
+                reason: "rendered",
+                files,
+                attributed: Object.fromEntries(files.map((path) => [path, "runner"])),
+            },
+        ];
+        const records = [...call("theirs", "t0", -minutes(10), []), ...call("mine", "t1", 1_000, [file])];
+
+        writeFileSync(log, `${records.map((record) => SafeJSON.stringify(record)).join("\n")}\n`);
+
+        try {
+            // Read from the horizon alone, their call is gone and the root looks like this session's.
+            const blind = auditDiffLog({
+                entries: readDiffLog({ logPath: log, since }),
+                writes: new Map(),
+                mentionsFor: () => mentionsFrom([]),
+            });
+            expect(blind.map((row) => row.replayed)).toEqual(["own-root"]);
+
+            const rows = auditHorizon({ logPath: log, since, changeLogs: dir });
+            expect(rows.map((row) => [row.session, row.file, row.replayed])).toEqual([["mine", file, "unproven"]]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

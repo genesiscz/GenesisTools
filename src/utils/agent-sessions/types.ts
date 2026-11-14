@@ -140,6 +140,28 @@ export interface NativeHistoryEntry {
     timestamp?: string;
 }
 
+/** One tool call a transcript names, in the shape the shared readers of tool inputs use (the diff mention index). */
+export interface NativeToolCall {
+    tool: string;
+    input: unknown;
+    /** The folder the call ran in, so a relative path in its input resolves. */
+    cwd: string;
+    /** When the call was made (epoch ms); absent where the harness writes no time for it. */
+    at?: number;
+}
+
+/** What `readToolCalls` answers: the calls since an offset, or why the provider keeps none this way. */
+export type ToolCallsRead =
+    | {
+          supported: true;
+          calls: NativeToolCall[];
+          /** Where the next read starts: after the last complete row (a row still being written is left for it). */
+          offset: number;
+          /** Rows skipped and caps hit, with what they hid, for the caller's log. */
+          issues: NativeSourceIssue[];
+      }
+    | { supported: false; reason: string };
+
 export interface NativeSourceIssue {
     path: string;
     message: string;
@@ -496,6 +518,14 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      */
     currentModel(transcriptPath: string): string | null;
     /**
+     * The tool calls a transcript gained since `fromOffset`, each with its tool, input, folder and time, and the
+     * offset the next read starts at. Synchronous and bounded (a read that starts far behind takes only the newest
+     * 16 MiB and says so in `issues`), so a hook can run it on every call: the Bash pre phase feeds the diff mention
+     * index from it. The same function is each harness's `HookFacts.readToolCalls`, so a hook reads it without
+     * loading a reader. `{ supported: false, reason }` where the harness keeps no tool calls a hook can read this way.
+     */
+    readToolCalls(transcriptPath: string, fromOffset: number): ToolCallsRead;
+    /**
      * Whether the agent was still working when its transcript was last written, from the parsed records of the
      * transcript's tail (oldest first). An empty list counts as working: the file holds only a spawn with no answer
      * yet. Claude reads its last conversation record (`readers/claude-mid-work.ts`; a teammate that approved its
@@ -605,6 +635,7 @@ export type HistoryOperations<Kind extends AgentKind> = Pick<
     | "readForward"
     | "continuedIn"
     | "currentModel"
+    | "readToolCalls"
     | "scanInsights"
     | "rowAnchors"
 >;

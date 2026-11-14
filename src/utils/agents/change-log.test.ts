@@ -104,6 +104,31 @@ describe("the change log read side", () => {
         });
     });
 
+    test("rowsSince reads a log back from its end only to the window's start, its rows still oldest first", async () => {
+        await inTempRoot(() => {
+            // A long history of old rows, several read chunks of it, then the two rows inside the window.
+            const history = Math.ceil((3 * WALK_CHUNK_BYTES) / 200);
+
+            for (let index = 0; index < history; index++) {
+                append("long", `/w/old-${index}.ts`, "edit", "2026-10-01T10:00:00.000Z");
+            }
+
+            append("long", "/w/recent-1.ts", "edit", "2026-11-02T10:00:00.000Z");
+            append("long", "/w/recent-2.ts", "bash", "2026-11-02T10:05:00.000Z");
+
+            const walked = [...walkChangeLogs({ rowsSince: Date.parse("2026-11-02T00:00:00.000Z") })];
+
+            expect(walked.map((entry) => [entry.sessionId, entry.rows.map((row) => row.path)])).toEqual([
+                ["long", ["/w/recent-1.ts", "/w/recent-2.ts"]],
+            ]);
+            expect(
+                [...walkChangeLogs({ rowsSince: Date.parse("2026-11-02T00:00:00.000Z"), maxRows: 1 })][0]?.rows.map(
+                    (row) => row.path
+                )
+            ).toEqual(["/w/recent-2.ts"]);
+        });
+    });
+
     test("reads a log in chunks: a row across a chunk edge comes back whole, and the rest is read only while rows are due", async () => {
         await inTempRoot(() => {
             const rows = Math.ceil((3 * WALK_CHUNK_BYTES) / 200);

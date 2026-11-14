@@ -1,5 +1,6 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
+import type { ToolCallsRead } from "@genesiscz/utils/agent-sessions/types";
 import type { ApprovalKeyMap } from "@genesiscz/utils/agents/approvals/keys";
 import type { DialogKeyMap } from "@genesiscz/utils/agents/dialogs/keys";
 import type {
@@ -250,8 +251,12 @@ export interface ProcessSignature {
 export interface HookFacts {
     /** Its diff-log entries are filled from its transcript (`extendFromTranscripts` reads the tool calls there). */
     readonly diffLogFromTranscript: boolean;
-    /** Its transcript's earlier tool inputs name the paths a Bash diff attributes (`refreshMentions`). */
-    readonly transcriptMentions: boolean;
+    /**
+     * Its transcript's tool calls since an offset, whose inputs name the paths a Bash diff attributes
+     * (`refreshMentions`): the very function its reader carries as `NativeSessionReader.readToolCalls`
+     * (`readers/<harness>-tool-calls.ts`), here so a hook reads it without loading a reader.
+     */
+    readToolCalls(transcriptPath: string, fromOffset: number): ToolCallsRead;
     /** The GenesisTools mods plugin runs inside it and draws the full diffs itself. */
     readonly modsDrawDiffs: boolean;
     /** Its model may come from `~/.claude/settings.json` when the transcript names none. */

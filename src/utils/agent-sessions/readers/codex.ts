@@ -42,6 +42,7 @@ import {
     projectionFileState,
     sqliteColumns,
 } from "./codex-projection";
+import { codexToolCalls } from "./codex-tool-calls";
 import { anchorRecord, anchorStrings, historyEntryBuilder, type ToolContext } from "./history-entry";
 
 export { type CodexProjectionIndex, codexProjectionCachePath, readCodexProjectionIndex } from "./codex-projection";
@@ -1502,6 +1503,7 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         // carries no pointer to another session.
         continuedIn: async () => undefined,
         currentModel: codexCurrentModel,
+        readToolCalls: codexToolCalls,
         scanInsights: (text) => {
             let defaultModel: string | null = null;
             eachLine(text, (row) => {

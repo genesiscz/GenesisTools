@@ -20,6 +20,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noToolCalls,
     noWorkflows,
 } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource } from "./types";
@@ -88,6 +89,7 @@ function createFixture(): {
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
+        readToolCalls: noToolCalls,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
         scan: noRecordScan,
@@ -461,6 +463,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
+        readToolCalls: noToolCalls,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
         scan: noRecordScan,

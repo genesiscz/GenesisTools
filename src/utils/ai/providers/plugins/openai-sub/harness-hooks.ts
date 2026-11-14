@@ -1,11 +1,12 @@
 import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
+import { codexToolCalls } from "@genesiscz/utils/agent-sessions/readers/codex-tool-calls";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 
-/** The Codex driver's `hooks` part. Codex's hooks reach shell calls only, and its transcript is not read for diffs. */
+/** The Codex driver's `hooks` part. Codex's hooks reach shell calls only; its rollout's tool calls (apply_patch included) feed the diff mention index. */
 export const codexHooks: HookFacts = {
     diffLogFromTranscript: false,
-    transcriptMentions: false,
+    readToolCalls: codexToolCalls,
     modsDrawDiffs: false,
     settingsModel: false,
     currentModel: codexCurrentModel,

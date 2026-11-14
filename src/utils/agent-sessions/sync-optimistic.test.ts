@@ -19,6 +19,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noToolCalls,
     noWorkflows,
 } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource, NativeSourceIssue } from "./types";
@@ -66,6 +67,7 @@ function fixture() {
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
+        readToolCalls: noToolCalls,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
         scan: noRecordScan,
