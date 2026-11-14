@@ -31,17 +31,41 @@ function triviaShape(trivia: string): string {
 }
 
 /**
+ * The script parsed once, or null on a syntax error. A program of this one file (no lib, no imports, no emit) reports
+ * the errors of that parse, the ones transpileModule reported after a second parse and a full emit.
+ */
+function parseScript(file: string, text: string, kind: ts.ScriptKind): ts.SourceFile | null {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+    const program = ts.createProgram({
+        rootNames: [file],
+        options: { allowJs: true, noLib: true, noResolve: true, types: [] },
+        host: {
+            getSourceFile: () => source,
+            getDefaultLibFileName: () => "lib.d.ts",
+            writeFile: () => {},
+            getCurrentDirectory: () => "",
+            getCanonicalFileName: (name) => name,
+            useCaseSensitiveFileNames: () => true,
+            getNewLine: () => "\n",
+            fileExists: (name) => name === file,
+            readFile: () => undefined,
+        },
+    });
+    return program.getSyntacticDiagnostics(source).length ? null : source;
+}
+
+/**
  * The script as TypeScript reads it: each token's kind and exact text, after the comments and line breaks before it.
  * Only spaces between tokens on one line drop out, and JavaScript ignores those. A line break stays (automatic
  * semicolon insertion reads it), and a string, template, regular expression or JSX text keeps every space. null on a
  * syntax error: a parser that recovered can have split a literal into tokens.
  */
 function scriptTokens(file: string, text: string, kind: ts.ScriptKind): string[] | null {
-    if (ts.transpileModule(text, { fileName: file, reportDiagnostics: true }).diagnostics?.length) {
+    const source = parseScript(file, text, kind);
+    if (!source) {
         return null;
     }
 
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
     const tokens: string[] = [];
     let end = 0;
     const visit = (node: ts.Node): void => {
