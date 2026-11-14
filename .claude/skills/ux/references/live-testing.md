@@ -85,10 +85,10 @@ For a window that talks to a service of its own (Meetings), a live check on copi
 - Off-screen pictures: `<build>/GenesisTools --meetings --width 1400 --height 900 --snapshot <png> --meeting <id>
   --tab items`, with `--play '{"kind":"item","id":"i12"}'` for the playing dock. Keep one script that also appends
   each command to a `capture.txt` beside the pictures.
-- Before trusting a picture, read the sandbox's `logs/app-perf.log` for the fallback line "the command answers it",
-  and read the window's detail text for "Live updates off" (in the picture, or with `tools control see`): the app
-  logs no line for the lost live updates. On its fallback path the window draws less and proves nothing about the
-  service path.
+- Before trusting a picture, read the sandbox's `logs/app-perf.log` for the fallback line "the command answers it"
+  and for "meetings.window: Live updates off", which the window writes when it shows that detail text after the
+  grace period (also visible in the picture, or with `tools control see`). On its fallback path the window draws
+  less and proves nothing about the service path.
 - Take the "before" pictures before the first build of the change, or keep a copy of the old executable. On
   2026-11-10 the old executable was unusable once the change's first test build had run (a new modification time,
   and the system killed it at start), so the "before" pictures had to come from an older run with other row states.
