@@ -163,6 +163,12 @@ let stores = 0;
  * A scratch store with the two meetings, written as files (fixed times, so every answer is the same each run), and a
  * scratch meetings config for the library methods.
  */
+/** REVIEW with one suggested speaker: line l2 (9 s) as Dana Example, at the fixture item's confidence (0.82). */
+function seedSuggestedSpeaker(store: MeetingStore): void {
+    const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
+    writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
+}
+
 function scratchStore(): {
     store: MeetingStore;
     config: MeetingsConfigStore;
@@ -373,9 +379,8 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
     test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
         const { client, store, source } = await ADAPTERS[kind]();
-        // A suggested speaker for line l2 (9 s) at 0.82: the 0.5 and 0.7 previews apply it, the 1 preview only shows it.
-        const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
-        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
+        // The 0.5 and 0.7 previews apply the suggested speaker at 0.82; the 1 preview only shows it.
+        seedSuggestedSpeaker(store);
         const before = readFileSync(store.path(REVIEW.id));
         const configBefore = SafeJSON.stringify(await new MeetingsConfigStore().read());
         const load = spyOn(source, "load");
@@ -398,9 +403,8 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         const quality = await import("../listen-quality");
         const features = spyOn(quality, "qualityVoiceFeatures").mockResolvedValue([]);
         closing.push(() => features.mockRestore());
-        // Line l2 (9 s) has a suggested speaker at 0.82: unsure below 0.9, sure below 0.8 (and the default 0.7).
-        const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
-        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
+        // The suggested speaker at 0.82 is unsure below 0.9, sure below 0.8 (and the default 0.7).
+        seedSuggestedSpeaker(store);
         const prepare = (below: number) =>
             client.call("meeting.listen.prepare", { meeting: REVIEW.id, group: "long-stretch", words: 1, below });
         expect((await prepare(0.8)).questions).toEqual([]);
