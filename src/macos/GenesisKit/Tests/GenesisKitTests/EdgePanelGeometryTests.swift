@@ -1515,6 +1515,73 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertEqual(saved, [["showWidget": .bool(true)]])
     }
 
+    /// The redraw measurement of the alert popup (swift skill: count bodies with `RenderProbe`). One popup cycle (an
+    /// alert pops up, the pointer enters and leaves, the popup is closed) on a hosted side panel that is never ordered
+    /// front, counting the `WidgetHostView` bodies (`widget.host`) and the model's publishes. Off unless
+    /// `WIDGET_POPUP_REDRAW=1`; it prints one `widget.popup.redraw` line per run, so the same steps compare a change
+    /// of the popup's owner against the count before it.
+    @MainActor
+    func testOneAlertPopupCycleRedrawCount() async throws {
+        guard ProcessInfo.processInfo.environment["WIDGET_POPUP_REDRAW"] == "1" else {
+            throw XCTSkip("a measurement; run with WIDGET_POPUP_REDRAW=1")
+        }
+        _ = NSApplication.shared
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        coordinator.settingsPresenter = { _ in }
+        coordinator.orderFront = { _ in }
+        coordinator.playChime = { _, _ in }
+        coordinator.start(showSettings: true)
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil }
+        let model = coordinator.model
+        model.writePreferences { $0.showWidget = true; $0.placement = "side" }
+        let registry = WidgetModuleRegistry()
+        for id in ["agents", "capture"] {
+            try registry.register(WidgetModuleDescriptor(
+                id: id, title: id, symbol: "tray", tint: .blue, summary: { "Fixture" }
+            ) { _ in EmptyView() })
+        }
+        let surface = WidgetSurfaceID(edge: .right)
+        let host = NSHostingView(rootView: WidgetHostView(
+            model: model, registry: registry, surface: surface, moduleIDs: ["agents", "capture"], cutout: 0,
+            headerHeight: 36, visibleHeight: 900))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 900), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.alphaValue = 0
+        window.contentView = host
+        func settle() async throws {
+            try await Task.sleep(for: .milliseconds(80))
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+        }
+        try await settle()
+        let decision = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "local:claude:s:",
+            at: 2_000, needsAnswer: true, title: "Ship it?", number: 4)
+        let wasOn = RenderProbe.enabled
+        RenderProbe.enabled = true
+        defer { RenderProbe.enabled = wasOn }
+        let watch = RenderProbe.watch(model, "widgetModel")
+        defer { watch?.cancel() }
+        let start = RenderProbe.snapshot()
+        var steps: [String] = []
+        func step(_ name: String, _ action: () -> Void) async throws {
+            let before = RenderProbe.snapshot()
+            action()
+            try await settle()
+            steps.append(name + ":" + RenderProbe.summary(since: before))
+        }
+        try await step("alert") { coordinator.alert([decision]) }
+        XCTAssertEqual(model.peekItem, decision, "the cycle measures a popup that showed")
+        try await step("enter") { model.hover(surface, inside: true) }
+        try await step("leave") { model.hover(surface, inside: false) }
+        try await step("close") { model.dismissPeek() }
+        XCTAssertNil(model.peekItem)
+        let hosts = RenderProbe.snapshot()["widget.host", default: 0] - start["widget.host", default: 0]
+        print("widget.popup.redraw host=\(hosts) total=\(RenderProbe.summary(since: start)) steps=\(steps.joined(separator: " | "))")
+    }
+
     @MainActor
     func testARefusedSwitchIsNeverReportedAsSaved() async throws {
         let fixture = try fixture(actionExit: 1)
