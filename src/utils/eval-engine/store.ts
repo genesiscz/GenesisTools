@@ -8,11 +8,12 @@
  *   <runsDir>/<run>/summary.json           an export of the last `run` output; no command reads it
  *   <runsDir>/<run>/run.lock               the process that plays the run now; removed when it ends
  */
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFile, link, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import type { CellRef, ConversationRecord } from "./conversation";
 import { EvalConfigError, type ScenarioOrigin, sha256 } from "./document";
@@ -287,28 +288,33 @@ function parseLockHolder(text: string): LockHolder | null {
 /** `ps -o etime=` resolves to whole seconds, so allow two of them either way. */
 const StartTolerance = 2_000;
 
+const execFileAsync = promisify(execFile);
+
 /**
  * A holder on another computer counts as alive. On this one, the lock pid must still run the process that wrote the
  * lock: a program that started after the lock time holds a recycled pid, so the lock is stale. The engine imports only
  * node built-ins, so it asks `ps` how long the pid has run (elapsed time has no time zone, unlike a start date); when
- * `ps` cannot answer, the holder counts as alive.
+ * `ps` cannot answer, the holder counts as alive. The read is asynchronous, so a slow `ps` never stalls the other
+ * claims of this process.
  */
-function holderIsAlive(holder: LockHolder): boolean {
+async function holderIsAlive(holder: LockHolder): Promise<boolean> {
     if (holder.host !== hostname()) {
         return true;
     }
 
-    // lint-rules-ignore: the engine imports only node built-ins (boundary.test.ts), and this runs once per claim that finds a held lock
-    const ps = spawnSync("ps", ["-o", "etime=", "-p", String(holder.pid)], { encoding: "utf8", timeout: 5_000 });
-    if (ps.error) {
-        return true;
+    let stdout: string;
+    try {
+        // lint-rules-ignore: the engine imports only node built-ins (boundary.test.ts), and this runs once per claim that finds a held lock
+        ({ stdout } = await execFileAsync("ps", ["-o", "etime=", "-p", String(holder.pid)], {
+            encoding: "utf8",
+            timeout: 5_000,
+        }));
+    } catch (error) {
+        // A numeric code is the exit status of a `ps` that ran: no such process. A spawn error or a timeout is no answer.
+        return !(error instanceof Error && "code" in error && typeof error.code === "number");
     }
 
-    if (ps.status !== 0) {
-        return false;
-    }
-
-    const elapsed = elapsedMs(ps.stdout.trim());
+    const elapsed = elapsedMs(stdout.trim());
     const startedAt = elapsed === null ? Number.NaN : Date.now() - elapsed;
     const lockedAt = Date.parse(holder.at);
     return !Number.isFinite(startedAt) || !Number.isFinite(lockedAt) || startedAt <= lockedAt + StartTolerance;
@@ -361,7 +367,7 @@ async function breakStaleLock(path: string, text: string, depth = 0): Promise<Lo
             return null;
         }
 
-        if (holderIsAlive(holder)) {
+        if (await holderIsAlive(holder)) {
             return holder;
         }
 
@@ -419,7 +425,7 @@ async function claimRun(dir: string): Promise<RunClaim> {
             continue;
         }
         const holder = parseLockHolder(text);
-        if (!holder || holderIsAlive(holder)) {
+        if (!holder || (await holderIsAlive(holder))) {
             throw inUse(holder);
         }
         const taker = await breakStaleLock(path, text);
