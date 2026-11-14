@@ -1,4 +1,5 @@
 import { createMetricsRecorder, type MetricsRecorder } from "@genesiscz/utils/metrics";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 import type { HooksConfig } from "./config";
 import type { GuardVerdict } from "./guard";
 import { guardLoop } from "./guard";
@@ -71,7 +72,7 @@ export function recordGuardVerdict(options: {
     const shownRules = [...new Set(verdict.violations.map((violation) => violation.ruleId))].filter((rule) =>
         delivered.includes(rule)
     );
-    const shares = tokenShares(shownRules.length > 0 ? Math.ceil(verdict.message.length / 4) : 0, shownRules);
+    const shares = tokenShares(shownRules.length > 0 ? estimateTokens(verdict.message) : 0, shownRules);
     const seen = new Set<string>();
 
     for (const violation of verdict.violations) {
