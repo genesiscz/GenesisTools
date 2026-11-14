@@ -165,6 +165,8 @@ function probePercentile(db: Database): PercentileMode {
 export class MetricsStore {
     readonly percentiles: PercentileMode;
     private readonly ids = new Map<string, number>();
+    /** The dim indexes this process made or saw, by index name: a later define skips the migration path for them. */
+    private readonly dimIndexes = new Set<string>();
     private readonly insertEvent: Statement;
     private readonly writeCursor: Statement;
 
@@ -387,14 +389,14 @@ export class MetricsStore {
 
     /** Declares a metric: its unit, description and the dims that get an index. A later call adds dims. */
     define(definition: MetricDefinition): MetricCatalogEntry {
-        const id = this.write(() => this.writeDefinition(definition));
-        this.ensureDimIndexes(id);
+        const { id, dims } = this.write(() => this.writeDefinition(definition));
+        this.ensureDimIndexes(id, dims);
         log.debug({ project: definition.project, metric: definition.metric, dims: definition.dims }, "metric defined");
         return this.catalogEntry(id);
     }
 
-    /** The metadata write of {@link define}, inside the caller's transaction; answers the metric id. */
-    private writeDefinition(definition: MetricDefinition): number {
+    /** The metadata write of {@link define}, inside the caller's transaction; answers the metric id and all its dims. */
+    private writeDefinition(definition: MetricDefinition): { id: number; dims: string[] } {
         const project = assertMetricsName("project", definition.project);
         const metric = assertMetricsName("metric", definition.metric);
         const dims = (definition.dims ?? []).map(assertDimName);
@@ -407,18 +409,22 @@ export class MetricsStore {
             "UPDATE metrics SET unit = COALESCE(?, unit), description = COALESCE(?, description), dims_json = ? WHERE id = ?",
             [definition.unit ?? null, definition.description ?? null, SafeJSON.stringify(merged, { strict: true }), id]
         );
-        return id;
+        return { id, dims: merged };
     }
 
     /**
      * Creates the index of each declared dim of a metric through the serialized migration path (BEGIN IMMEDIATE and a
-     * recheck under the lock), so two processes cannot race on the DDL. An index already there costs one lookup.
+     * recheck under the lock), so two processes cannot race on the DDL. An index already there costs one lookup, once
+     * per process: an index this process made or saw is not looked up again.
      */
-    private ensureDimIndexes(id: number): void {
-        const row = this.db
-            .query<{ dims_json: string }, [number]>("SELECT dims_json FROM metrics WHERE id = ?")
-            .get(id);
-        const migrations = declaredDims(row?.dims_json ?? "[]").map(
+    private ensureDimIndexes(id: number, dims: readonly string[]): void {
+        const missing = dims.filter((dim) => !this.dimIndexes.has(dimIndexName(id, dim)));
+
+        if (missing.length === 0) {
+            return;
+        }
+
+        const migrations = missing.map(
             (dim): Migration => ({
                 id: `dim-index-${dimIndexName(id, dim)}`,
                 description: `the index of dim ${dim} of metric ${id}`,
@@ -434,6 +440,10 @@ export class MetricsStore {
             })
         );
         runMigrations(this.db, migrations, { tableName: METRICS_MIGRATION_SCOPE });
+
+        for (const dim of missing) {
+            this.dimIndexes.add(dimIndexName(id, dim));
+        }
     }
 
     /** One metric's catalog entry, its counts read from its own events only. */
@@ -472,18 +482,24 @@ export class MetricsStore {
      */
     ingest(chunk: IngestChunk): number {
         const defined = this.write(() => {
-            const ids = chunk.definitions.map((definition) => this.writeDefinition(definition));
+            // A later definition of the same metric reads the dims the earlier one wrote, so the last one holds them all.
+            const dimsById = new Map<number, string[]>();
+
+            for (const definition of chunk.definitions) {
+                const { id, dims } = this.writeDefinition(definition);
+                dimsById.set(id, dims);
+            }
 
             for (const checkpoint of chunk.checkpoints) {
                 this.upsertCheckpoint(checkpoint, chunk.now);
             }
 
             this.writeEvents(chunk.events, chunk.cursor);
-            return ids;
+            return dimsById;
         });
 
-        for (const id of new Set(defined)) {
-            this.ensureDimIndexes(id);
+        for (const [id, dims] of defined) {
+            this.ensureDimIndexes(id, dims);
         }
 
         return chunk.events.length;
