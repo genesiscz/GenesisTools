@@ -169,31 +169,44 @@ function sleep(ms: number): Promise<void> {
  *
  * @param lockPath - Absolute path for the lock file
  * @param fn - Async function to execute while holding the lock
- * @param timeout - Maximum time in ms to wait for lock acquisition (default: 5000)
+ * @param wait - Maximum time in ms to wait for lock acquisition (default: 5000), or `{ timeoutMs, signal }`: an
+ *   aborted signal stops the wait with its reason, and a lock taken after the abort is released before `fn` runs
  * @returns The result of fn()
  */
 export async function withFileLock<T>(
     lockPath: string,
     fn: () => Promise<T>,
-    timeout: number = DEFAULT_TIMEOUT_MS
+    wait: number | FileLockWait = DEFAULT_TIMEOUT_MS
 ): Promise<T> {
+    const { timeoutMs = DEFAULT_TIMEOUT_MS, signal } = typeof wait === "number" ? { timeoutMs: wait } : wait;
     const startTime = Date.now();
+
+    signal?.throwIfAborted();
 
     while (!(await tryAcquireLock(lockPath))) {
         const elapsed = Date.now() - startTime;
 
-        if (elapsed >= timeout) {
-            throw new LockTimeoutError(lockPath, timeout);
+        if (elapsed >= timeoutMs) {
+            throw new LockTimeoutError(lockPath, timeoutMs);
         }
 
         await sleep(POLL_INTERVAL_MS);
+        signal?.throwIfAborted();
     }
 
     try {
+        // A caller that gave up while the lock was being taken never starts its locked work.
+        signal?.throwIfAborted();
         return await fn();
     } finally {
         await releaseLock(lockPath);
     }
+}
+
+/** How `withFileLock` waits: its deadline, and a signal that cancels the wait. */
+export interface FileLockWait {
+    timeoutMs?: number;
+    signal?: AbortSignal;
 }
 
 /** How often a queued caller looks whether its turn came; the work it waits behind takes far longer. */

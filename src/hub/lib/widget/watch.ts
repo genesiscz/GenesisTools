@@ -514,9 +514,17 @@ export async function watchWidget({
         // The previous watch of a widget that an app build just reopened is often still shutting down: it waits for
         // a refresh in flight (up to 14 s at load 600) and for its outbox. A short wait failed the new watch with
         // "Failed to acquire file lock", and the widget then showed "Lost the connection" with no watch at all
-        // (2026-11-12 05:57). A second watch of a live widget still gives up, only later.
-        WORKER_LOCK_WAIT_MS
-    );
+        // (2026-11-12 05:57). A second watch of a live widget still gives up, only later. The wait ends at once when
+        // the watch is stopped (stdin closed, SIGTERM, a code change), and a lock it takes after that runs nothing.
+        { timeoutMs: WORKER_LOCK_WAIT_MS, signal }
+    ).catch((error: unknown) => {
+        // A watch stopped while it waited for the lock ends like a watch stopped while it ran.
+        if (signal.aborted && error === signal.reason) {
+            return;
+        }
+
+        throw error;
+    });
 }
 
 /** How long a new watch waits for the previous one to release `worker.lock`. */
