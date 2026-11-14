@@ -723,6 +723,14 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertFalse(ready.log.contains("fixture-token-123"))
     }
 
+    func testAHeadlineWithACredentialKeepsOneArchiveKeyBeforeAndAfterRedaction() {
+        let raw = FailureReport(headline: "sent Authorization: Bearer fixture-token-123", log: "")
+        var archived = raw
+        archived.headline = ToolsCallTrace.redactedText(raw.headline, argv: [])
+        XCTAssertNotEqual(archived.headline, raw.headline)
+        XCTAssertEqual(FailureCaptureStore.key(raw), FailureCaptureStore.key(archived))
+    }
+
     func testAMergedCaptureKeepsTheLogLocationOfItsLog() async throws {
         let directory = temporaryURL("failure-capture")
         let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { report in

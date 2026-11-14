@@ -78,9 +78,11 @@ public actor FailureCaptureStore {
         self.enrich = enrich
     }
 
+    /// The archive key. A report without a call is keyed by its headline as the archive stores it (redacted), so the
+    /// raw report and the archived one share a key when the headline held a credential.
     public nonisolated static func key(_ report: FailureReport) -> String {
         let identity = report.call.map { "call:\($0.traceId):\(Int64(($0.started.timeIntervalSince1970 * 1000).rounded()))" }
-            ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(report.title):\(report.headline)"
+            ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(report.title):\(ToolsCallTrace.redactedText(report.headline, argv: []))"
         return digest(identity)
     }
 
