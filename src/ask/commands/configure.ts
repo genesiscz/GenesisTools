@@ -674,6 +674,7 @@ async function configureProviderSettings(_config: AskConfig): Promise<void> {
 
     if (masterToggle) {
         const enabled = await p.multiselect({
+            required: true,
             message: "Which providers should use env tokens?",
             options: allProviders.map((name) => ({
                 value: name,

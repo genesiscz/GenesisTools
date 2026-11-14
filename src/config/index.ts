@@ -63,6 +63,7 @@ export function buildConfigProgram(): Command {
 
             if (action === "re-enable") {
                 const toEnable = await p.multiselect({
+                    required: true,
                     message: "Select packages to re-enable",
                     options: rejected.map((pkg) => ({ value: pkg, label: pkg })),
                     cancel: "back",

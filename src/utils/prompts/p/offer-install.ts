@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { isInteractive } from "@genesiscz/utils/cli/is-interactive";
 import pc from "picocolors";
 import { getBackend } from "./backend";
+import { settle } from "./settle";
 
 export interface OfferInstallOpts {
     tool: string;
@@ -19,9 +20,10 @@ export async function offerInstall(opts: OfferInstallOpts): Promise<boolean> {
     }
 
     const backend = getBackend();
-    const ok = await backend.confirm({ message: buildInstallPrompt(opts) });
+    // A backend answers a cancel with a (truthy) symbol: settle applies the facade's cancel policy before the test.
+    const ok = settle(await backend.confirm({ message: buildInstallPrompt(opts) }), undefined);
 
-    if (!ok) {
+    if (ok !== true) {
         return false;
     }
 
