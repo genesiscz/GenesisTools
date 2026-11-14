@@ -52,7 +52,13 @@ import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
 import { parseRosters, ROSTER_DEFINITIONS, readRosters, rosterCounts, rosterGrowth } from "./rosters";
 import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./rosters/swift";
 import { spawnWithDeadline } from "./spawn-deadline";
-import { checkSwiftProcessToolRule, checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
+import {
+    checkSwiftRowRules,
+    checkSwiftStructRules,
+    SWIFT_PROCESS_TOOL,
+    SWIFT_PROCESS_TOOL_RATCHET,
+    SWIFT_PROCESS_TOOL_RULE,
+} from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -1548,6 +1554,8 @@ interface SwiftLineRule {
     codeOnly?: boolean;
     /** Files the rule never applies to. */
     skipFile?: RegExp;
+    /** Old call sites the rule lets through while the ratchets are on; this list only shrinks. */
+    ratchet?: ReadonlyMap<string, string>;
 }
 
 const SWIFT_LINE_RULES: SwiftLineRule[] = [
@@ -1555,6 +1563,12 @@ const SWIFT_LINE_RULES: SwiftLineRule[] = [
     { rule: SWIFT_HAND_JOINED_HOME_RULE, pattern: SWIFT_HAND_JOINED_HOME, skipFile: SWIFT_HAND_JOINED_HOME_ALLOWED },
     { rule: SWIFT_CLICK_COUNT_RULE, pattern: SWIFT_CURRENT_EVENT_CLICK_COUNT },
     { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO, codeOnly: true },
+    {
+        rule: SWIFT_PROCESS_TOOL_RULE,
+        pattern: SWIFT_PROCESS_TOOL,
+        skipFile: /(^|\/)Tests\//,
+        ratchet: SWIFT_PROCESS_TOOL_RATCHET,
+    },
 ];
 
 /**
@@ -1983,19 +1997,17 @@ export function checkSwiftSource(
     const findings: Finding[] = [
         ...checkSwiftStructRules(file, lines, codeLines, isSuppressed),
         ...checkSwiftRowRules(file, lines, codeLines, isSuppressed, ratchets),
-        ...checkSwiftProcessToolRule(file, lines, isSuppressed, ratchets),
     ];
+    const lineRules = SWIFT_LINE_RULES.filter(
+        ({ skipFile, ratchet }) => !skipFile?.test(file) && !(ratchets && ratchet?.has(file))
+    );
 
     for (const [index, text] of lines.entries()) {
         if (/^\s*\/\//.test(text) || isSuppressed(lines, index + 1)) {
             continue;
         }
 
-        for (const { rule, pattern, codeOnly, skipFile } of SWIFT_LINE_RULES) {
-            if (skipFile?.test(file)) {
-                continue;
-            }
-
+        for (const { rule, pattern, codeOnly } of lineRules) {
             const column = (codeOnly ? codeLines[index] : text).search(pattern);
 
             if (column === -1) {

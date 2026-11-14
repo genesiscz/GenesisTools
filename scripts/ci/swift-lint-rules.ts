@@ -948,7 +948,7 @@ export function swiftRowAudit(codeLines: string[]): string[] {
  * `no-process-tool-spawn`; this is the same gate for the app. Read one process through libproc
  * (`proc_pidinfo`, `proc_listpids`) or ask the hub server.
  */
-const SWIFT_PROCESS_TOOL_RULE: SwiftStructRule = {
+export const SWIFT_PROCESS_TOOL_RULE: SwiftStructRule = {
     name: "swift-no-process-tool-spawn",
     severity: "error",
     message:
@@ -956,7 +956,7 @@ const SWIFT_PROCESS_TOOL_RULE: SwiftStructRule = {
         "stalls every other reader. Use libproc (`proc_listpids`, `proc_pidinfo`) for the processes you need, or " +
         "`// lint-rules-ignore: <how often it runs, its timeout, and why libproc does not fit>`.",
 };
-const SWIFT_PROCESS_TOOL = /"(?:\/usr)?\/s?bin\/(?:ps|lsof|pgrep)"/;
+export const SWIFT_PROCESS_TOOL = /"(?:\/usr)?\/s?bin\/(?:ps|lsof|pgrep)"/;
 /**
  * The call sites that existed when the rule came, with what bounds each. A new site needs its own reason in an
  * ignore comment; this list only shrinks.
@@ -971,37 +971,3 @@ export const SWIFT_PROCESS_TOOL_RATCHET = new Map<string, string>([
         "one fseventsd health read, off the main thread, 5 s timeout; no caller in the app on 2026-11-10; the kernel refuses this root daemon's usage to libproc",
     ],
 ]);
-
-/** A Swift source line that launches a process tool by its absolute path. Tests and comment lines are left out. */
-export function checkSwiftProcessToolRule(
-    file: string,
-    lines: string[],
-    isSuppressed: (lines: string[], lineNumber: number) => boolean,
-    ratchets = true
-): Finding[] {
-    if (/(^|\/)Tests\//.test(file) || (ratchets && SWIFT_PROCESS_TOOL_RATCHET.has(file))) {
-        return [];
-    }
-
-    const findings: Finding[] = [];
-
-    for (const [index, text] of lines.entries()) {
-        const match = SWIFT_PROCESS_TOOL.exec(text);
-
-        if (!match || text.trimStart().startsWith("//") || isSuppressed(lines, index + 1)) {
-            continue;
-        }
-
-        findings.push({
-            file,
-            line: index + 1,
-            column: match.index + 1,
-            rule: SWIFT_PROCESS_TOOL_RULE.name,
-            severity: SWIFT_PROCESS_TOOL_RULE.severity,
-            message: SWIFT_PROCESS_TOOL_RULE.message,
-            text: text.trim().slice(0, 120),
-        });
-    }
-
-    return findings;
-}
