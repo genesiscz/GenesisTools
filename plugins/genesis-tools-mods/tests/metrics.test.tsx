@@ -140,6 +140,29 @@ test("metrics: every batch carries its define line, so one lost write does not l
     ]);
 });
 
+test("metrics: a report that throws synchronously does not stop the batch", async () => {
+    const lines: Record<string, unknown>[] = [];
+    let fails = 1;
+    const append = async (_path: string, record: Record<string, unknown>) => {
+        if (fails > 0) {
+            fails--;
+            throw new Error("disk full");
+        }
+
+        lines.push(record);
+    };
+    const report = () => {
+        throw new Error("log closed");
+    };
+    const events = injectionEvents(facts, {
+        entries: [{ text: "Something new", whole: false, droppedRules: [] }],
+        block: "",
+        at: 4_000,
+    });
+    await spoolEvents({ append, report, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 4_000 });
+    expect(lines.map((line) => ("define" in line ? "define" : "event"))).toEqual(["event"]);
+});
+
 test("metrics: sources by first line, a receipt names what it replaced, and the spool path", () => {
     expect(injectionSource("<persisted-output>\nOutput too large")).toBe("persisted-output");
     expect(injectionSource('[genesis-tools-mods: "INBOX: the user\'s widget" repeated, 900 characters')).toBe("inbox");
