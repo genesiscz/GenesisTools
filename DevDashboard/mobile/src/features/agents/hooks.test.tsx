@@ -83,6 +83,25 @@ it("retries a sleeping Mac on board recovery with the original key, after the se
     queryClient.clear();
 });
 
+it("retries a sleeping Mac on its own timer when no board screen is mounted to report the recovery", async () => {
+    const store = memoryDraftStore();
+    const { queryClient, wrapper } = setup();
+    onlineManager.setOnline(true);
+    keys.length = 0;
+    unavailable = true;
+    const drain = await renderHook(() => useOutboxDrain(store, 150), { wrapper });
+    const composer = await renderHook(() => useSteerComposer("session", store), { wrapper });
+    await act(async () => { expect(await composer.result.current.submit("hello", "now")).toBe(true); });
+    const [draft] = await store.read();
+    await composer.unmount();
+    unavailable = false;
+    outcome = "delivered";
+    await waitFor(async () => expect(await store.read()).toEqual([]), { timeout: 3000 });
+    expect(keys.at(-1)).toBe(draft!.id);
+    await drain.unmount();
+    queryClient.clear();
+});
+
 it("reads the outbox but never rewrites it on a transcript poll or a board update with nothing waiting", async () => {
     const store = countingStore();
     const { queryClient, wrapper } = setup();
