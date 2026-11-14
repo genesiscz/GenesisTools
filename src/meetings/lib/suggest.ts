@@ -2208,9 +2208,8 @@ export function suggestItems(options: {
             }
         }
 
-        const linesOf = new Map<string, Array<{ index: number; startSec: number }>>();
-
         if (clusterOf.size > 0) {
+            const linesOf = new Map<string, Array<{ index: number; startSec: number }>>();
             meeting.transcript.forEach((entry, index) => {
                 if (entry.startSec !== undefined) {
                     const group = linesOf.get(entry.speaker) ?? [];
@@ -2218,42 +2217,42 @@ export function suggestItems(options: {
                     linesOf.set(entry.speaker, group);
                 }
             });
-        }
 
-        for (const item of clusterOf.size > 0 ? channel.items : []) {
-            if (
-                item.kind !== "speaker-range" ||
-                !item.candidates?.length ||
-                item.evidence?.channelConflict === true ||
-                (typeof item.evidence?.echoLines === "number" && item.evidence.echoLines > 0)
-            ) {
-                continue;
-            }
-            const labelLines = [...linesOf].flatMap(([label, group]) => (sameName(label, item.label) ? group : []));
-            const indices = labelLines.flatMap((entry) =>
-                entry.startSec >= item.fromSec && entry.startSec <= item.toSec ? [entry.index] : []
-            );
-            const clusters = indices.map((index) => clusterOf.get(index));
-            const first = clusters[0];
-            const cluster =
-                first?.speaker &&
-                clusters.every(
-                    (value) => value !== undefined && value.speaker === first.speaker && value.confidence >= 0.8
-                )
-                    ? first
-                    : undefined;
-            if (
-                cluster?.speaker &&
-                cluster.confidence >= 0.8 &&
-                item.candidates.some((name) => sameName(name, cluster.speaker!))
-            ) {
-                item.speaker = cluster.speaker;
-                item.confidence = 0.7;
-                item.evidence = {
-                    ...item.evidence,
-                    listen: true,
-                    note: "anchored voice feature cluster; confidence is a separation heuristic",
-                };
+            for (const item of channel.items) {
+                if (
+                    item.kind !== "speaker-range" ||
+                    !item.candidates?.length ||
+                    item.evidence?.channelConflict === true ||
+                    (typeof item.evidence?.echoLines === "number" && item.evidence.echoLines > 0)
+                ) {
+                    continue;
+                }
+                const labelLines = [...linesOf].flatMap(([label, group]) => (sameName(label, item.label) ? group : []));
+                const indices = labelLines.flatMap((entry) =>
+                    entry.startSec >= item.fromSec && entry.startSec <= item.toSec ? [entry.index] : []
+                );
+                const clusters = indices.map((index) => clusterOf.get(index));
+                const first = clusters[0];
+                const cluster =
+                    first?.speaker &&
+                    clusters.every(
+                        (value) => value !== undefined && value.speaker === first.speaker && value.confidence >= 0.8
+                    )
+                        ? first
+                        : undefined;
+                if (
+                    cluster?.speaker &&
+                    cluster.confidence >= 0.8 &&
+                    item.candidates.some((name) => sameName(name, cluster.speaker!))
+                ) {
+                    item.speaker = cluster.speaker;
+                    item.confidence = 0.7;
+                    item.evidence = {
+                        ...item.evidence,
+                        listen: true,
+                        note: "anchored voice feature cluster; confidence is a separation heuristic",
+                    };
+                }
             }
         }
         const arrivals = arrivalItems({
