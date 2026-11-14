@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/schedule.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -74,9 +73,17 @@ async function setup(
     models = [
         { id: "m1", label: "M1", limitKey: "p" },
         { id: "m2", label: "M2", limitKey: "q" },
-    ]
+    ],
+    openError?: (context: { key: string; opened: number }) => Error | undefined
 ) {
-    const system = fakeSystem({ tools: ["t"], signals: Signals, defaultSignals: { ok: true }, models, reply });
+    const system = fakeSystem({
+        tools: ["t"],
+        signals: Signals,
+        defaultSignals: { ok: true },
+        models,
+        reply,
+        ...(openError ? { openError } : {}),
+    });
     const parsed = parseScenarios(
         [
             { id: "s1", steps: [{ user: "hi", expect: [{ check: { signal: "ok", is: true } }] }] },
@@ -178,6 +185,37 @@ describe("runPlan", () => {
         assert.ok(view.records.filter((r) => r.cell.model === "m1").every((r) => r.attempt === 2));
     });
 
+    it("waits for Retry-After when open itself is rate limited, and pauses only that model's key", async () => {
+        const progress: string[] = [];
+        const { system, input, options, store, base } = await setup(
+            () => ({ reply: "ok" }),
+            undefined,
+            ({ key, opened }) =>
+                key === "s1~m1~current~r1" && opened === 1
+                    ? new EvalSystemError("rate-limit", "429 on open", { retryAfterMs: 3000 })
+                    : undefined
+        );
+        const clock = fakeClock({ auto: true });
+        await runPlan(
+            input,
+            options({
+                clock,
+                concurrency: 1,
+                onProgress: (e) => progress.push(e.type === "limit" ? `limit ${e.limitKey}=${e.limit}` : e.type),
+            })
+        );
+
+        assert.ok(clock.sleeps.includes(3000), "the retry waited for Retry-After");
+        assert.ok(progress.includes("limit p=1"));
+        assert.ok(!progress.some((p) => p.startsWith("limit q")));
+        assert.equal(
+            system.log.opened.filter((o) => o.key === "s1~m1~current~r1").length,
+            1,
+            "the second open succeeded"
+        );
+        assert.equal((await loadRun(store.dir, base)).records.length, 8);
+    });
+
     it("a blocked cell stops its other repeats; other cells run", async () => {
         const { system, input, options, store, base } = await setup((c) =>
             c.model === "m2" && c.key.startsWith("s1")
@@ -236,6 +274,31 @@ describe("hardening regressions", () => {
         const saved = await loadRun(store.dir, base);
         assert.equal(saved.records.length, 1);
         assert.equal(saved.records[0].attempt, 1);
+    });
+
+    it("refuses a second runPlan on a run that another one is playing, so no conversation is played twice", async () => {
+        const { system, plan, input, options } = await setup(() => ({ reply: "ok" }));
+        const results = await Promise.allSettled([runPlan(input, options()), runPlan(input, options())]);
+
+        // Either call may win the lock; exactly one plays the run.
+        assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+        const refused = results.find((r) => r.status === "rejected");
+        assert.ok(refused?.status === "rejected");
+        assert.match(String(refused.reason), /being played by pid/);
+        assert.equal(system.log.opened.length, plan.conversations.length);
+    });
+
+    it("stops every other conversation before a record write failure ends the run", async () => {
+        const { system, input, options, store } = await setup(() => ({ reply: "ok" }));
+        store.writeFinal = async () => {
+            throw new Error("ENOSPC on the first record");
+        };
+        await assert.rejects(runPlan(input, options({ concurrency: 2 })), /ENOSPC/);
+        const openedAtFailure = system.log.opened.length;
+        await new Promise((done) => setTimeout(done, 20));
+
+        assert.equal(openedAtFailure, 2, "only the two conversations of the two workers were opened");
+        assert.equal(system.log.opened.length, openedAtFailure, "nothing opened after runPlan failed");
     });
 
     it("cancels backoff without advancing the controlled clock", async () => {

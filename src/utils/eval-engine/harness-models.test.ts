@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/harness-models.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -52,6 +51,37 @@ describe("the judge", () => {
         assert.equal(request.model, "judge-model");
         assert.match(request.messages[0].content, /\[tool call\] find_free_slots \{"day":1\} -> \[\]/);
         assert.match(request.messages[0].content, /LAST reply \(turn 1\)/);
+        assert.doesNotMatch(request.system, /observability is unavailable/);
+    });
+
+    it("tells the judge when an earlier turn's tool calls were not observable, though this turn's were", () => {
+        const request = buildJudgeRequest(
+            {
+                key: "k",
+                question: "Did the booking follow a lookup?",
+                scope: {
+                    kind: "turn",
+                    turn: 2,
+                    toolCalls: [],
+                    toolEvidence: "observed",
+                    replies: ["Booked."],
+                    signals: {},
+                    transcript: [
+                        { role: "user", text: "Find a slot.", toolCalls: [] },
+                        { role: "assistant", text: "Monday at 9.", toolCalls: [], toolEvidence: "unavailable" },
+                        { role: "user", text: "Book it.", toolCalls: [] },
+                        { role: "assistant", text: "Booked.", toolCalls: [] },
+                    ],
+                },
+            },
+            "judge-model"
+        );
+        assert.match(request.system, /Tool observability is unavailable/);
+        assert.match(
+            request.messages[0].content,
+            /Monday at 9\.\n {2}\[tool calls of this reply were not observable\]/
+        );
+        assert.doesNotMatch(request.messages[0].content, /Booked\.\n {2}\[tool calls/);
     });
 });
 

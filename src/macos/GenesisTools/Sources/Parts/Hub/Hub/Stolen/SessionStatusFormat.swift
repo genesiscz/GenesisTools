@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/lib/GenesisAIMonitorKit/Sources/GenesisAIMonitorKit/SessionStatusFormat.swift at 2026-09-24T03:59:28+02:00 at commit hash 0d268a43e86e6e5e0ce16132aed8c862e201923e
 import Foundation
 
 /// Second line of a collapsed session row in the usage popup.

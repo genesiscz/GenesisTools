@@ -82,15 +82,16 @@ export function encodeMidi(input: Score): Buffer {
             { tick: 0, order: -1, bytes: [0xb0 | channel, 10, part.pan] },
         ];
 
-        const nextStartByPitch = new Map<number, number>();
+        // Each pitch's latest start seen (the notes go from last to first) and the later start that caps a note
+        // there: notes of one pitch on one tick share the cap, so none is cut to end on its own Note On's tick.
+        const nextStartByPitch = new Map<number, { start: number; cap: number }>();
         const notes = [...part.notes].sort((a, b) => b.at - a.at);
         for (const note of notes) {
             const start = ticks(note.at);
-            const end = Math.min(
-                Math.max(start + 1, ticks(note.at + note.duration)),
-                nextStartByPitch.get(note.midi) ?? Infinity
-            );
-            nextStartByPitch.set(note.midi, start);
+            const seen = nextStartByPitch.get(note.midi);
+            const cap = seen === undefined ? Infinity : seen.start > start ? seen.start : seen.cap;
+            const end = Math.min(Math.max(start + 1, ticks(note.at + note.duration)), cap);
+            nextStartByPitch.set(note.midi, { start, cap });
             events.push(
                 { tick: start, order: 1, bytes: [0x90 | channel, note.midi, note.velocity] },
                 {

@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/cli.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * The command line every project gets: `run`, `say`, `check`, `list`, `runs`, `show`, `compare`, `cleanup`.
  * Every command prints exactly one JSON document on stdout (`show --text` prints text) and sets the exit code;
@@ -179,8 +178,15 @@ function progressLine(event: ProgressEvent): string {
     return `${JSON.stringify(event)}\n`;
 }
 
+/** `run` and `check` read their scenarios from stdin or from ids, never both: named ids would be silently ignored. */
+function refuseIdsWithStdin(scenarioIds: readonly string[]): void {
+    if (scenarioIds.length) {
+        throw new EvalConfigError("bad-option", "--stdin takes its scenarios from stdin; do not name ids too");
+    }
+}
+
 /**
- * The command a project mounts (`kalendora eval …`). Commander, with every subcommand printing one JSON document.
+ * The command a project mounts (`<project> eval …`). Commander, with every subcommand printing one JSON document.
  * `io` replaces the process (stdout, stdin, exit code, clock) in tests.
  */
 export function createEvalCommand<TSetup, TSignals, TTool extends string, THandle, TResolved>(
@@ -323,12 +329,7 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                 const matrix: MatrixDoc | undefined = opts.matrix ? findMatrix(project, opts.matrix) : undefined;
                 let scenarios: Scenario[];
                 if (opts.stdin) {
-                    if (scenarioIds.length) {
-                        throw new EvalConfigError(
-                            "bad-option",
-                            "--stdin takes its scenarios from stdin; do not name ids too"
-                        );
-                    }
+                    refuseIdsWithStdin(scenarioIds);
                     scenarios = parseAdHocScenarios(
                         project,
                         parseEvalOptionJson(await io.readStdin(), "stdin"),
@@ -409,6 +410,9 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                 const opts = options(CheckOptions, raw);
                 const scenarioIds = StringList.parse(ids);
                 const matrix = opts.matrix ? findMatrix(project, opts.matrix) : undefined;
+                if (opts.stdin) {
+                    refuseIdsWithStdin(scenarioIds);
+                }
                 const scenarios = opts.stdin
                     ? parseAdHocScenarios(project, parseEvalOptionJson(await io.readStdin(), "stdin"), "stdin")
                     : scenarioIds.length || matrix

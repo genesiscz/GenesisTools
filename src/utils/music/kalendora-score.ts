@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/video/scripts/music.ts at 2026-11-12T06:17:16+01:00 at commit hash 481f90467dafdc609cfc834993855299b7410f94
+// Copied from the Kalendora repository, video/scripts/music.ts, at commit 481f90467dafdc609cfc834993855299b7410f94
 const Length = 95;
 export const SCORE_SECONDS = Length;
 export const SCORE_END = 91.5;
@@ -323,7 +323,7 @@ function pulse(drums: Drums): Instrument[] {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Shelved tracks. Martin heard them on 2026-11-10 and did not want them ("Calm" reads as lift music, "Piano" is harsh).
+// Shelved tracks. They were heard on 2026-11-10 and rejected ("Calm" reads as lift music, "Piano" is harsh).
 // The scores stay so the work is not lost; `bun scripts/music.ts Calm` renders one into out/music-shelved/ (not
 // committed, not in tracks.json).
 

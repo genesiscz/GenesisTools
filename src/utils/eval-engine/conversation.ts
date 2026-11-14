@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/conversation.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * How one conversation is played: open, bind and choose, send each turn exactly once, evaluate, simulated blocks,
  * final checks, close. Owns the transcript types `ConversationRecord` and `TurnRecord`.
@@ -144,7 +143,12 @@ export interface ConversationInput<TResolved> {
 function evaluationTranscript(turns: readonly TurnRecord[]): TranscriptLine[] {
     return turns.flatMap((turn): TranscriptLine[] => [
         { role: "user", text: turn.user.text, toolCalls: [] },
-        { role: "assistant", text: turn.reply, toolCalls: turn.toolCalls },
+        {
+            role: "assistant",
+            text: turn.reply,
+            toolCalls: turn.toolCalls,
+            ...(turn.toolEvidence === "unavailable" ? { toolEvidence: "unavailable" as const } : {}),
+        },
     ]);
 }
 
@@ -430,7 +434,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
         } else if (!(error instanceof StopConversation)) {
             const systemError = asSystemError(error);
             if (!conversationOutcome(verdicts, false)) {
-                await closeQuietly(connection, handle, "discarded", deps.signal);
+                await closeQuietly({ connection, handle, outcome: "discarded", signal: deps.signal });
                 throw systemError;
             }
             brokenBy = systemError;
@@ -440,7 +444,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
     const fold = conversationOutcome([...verdicts, ...final], completed);
     // A stop without a proven failure cannot happen: every stop follows a gating failure.
     const outcome = fold ?? { outcome: "inconclusive", safetyMiss: false, safetyUnverified: false };
-    const closeError = await closeQuietly(connection, handle, outcome.outcome, deps.signal);
+    const closeError = await closeQuietly({ connection, handle, outcome: outcome.outcome, signal: deps.signal });
     return {
         schema: "eval-conversation/1",
         run: deps.runId,
@@ -466,12 +470,17 @@ export async function runConversation<TResolved, TSignals, THandle>(
     };
 }
 
-async function closeQuietly<THandle>(
-    connection: { close(handle: THandle, outcome: CloseOutcome): Promise<void> },
-    handle: THandle,
-    outcome: CloseOutcome,
-    signal: AbortSignal
-): Promise<string | null> {
+async function closeQuietly<THandle>({
+    connection,
+    handle,
+    outcome,
+    signal,
+}: {
+    connection: { close(handle: THandle, outcome: CloseOutcome): Promise<void> };
+    handle: THandle;
+    outcome: CloseOutcome;
+    signal: AbortSignal;
+}): Promise<string | null> {
     try {
         await new Promise<void>((resolve, reject) => {
             const finish = (error?: unknown) => {

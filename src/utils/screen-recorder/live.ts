@@ -10,6 +10,7 @@ import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { fileNameSlug } from "@genesiscz/utils/string";
 import { z } from "zod";
 import {
     type AudioDevices,
@@ -87,7 +88,7 @@ export function liveRecordingsDir(): string {
 
 /** A file-name-safe id: `meeting-2026-11-03_15-30-planning`. */
 export function liveRecordingId(kind: string, key: string): string {
-    return `${kind}-${key}`.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 120);
+    return fileNameSlug(`${kind}-${key}`).slice(0, 120);
 }
 
 /** `<id>.sock`, or a hash of the id when that path would be too long for a Unix socket. */

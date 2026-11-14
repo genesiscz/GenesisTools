@@ -30,4 +30,4 @@ The host uses GenesisTools `out`, `withInterrupt` and `runTool`. It passes the a
 bun scripts/test.ts src/utils/eval-engine src/eval
 ```
 
-The core retains its zod, commander and Node-only import boundary and a narrowly scoped strict-JSON policy exception. Its provenance headers identify the original Kalendora snapshot. Subsequent canonical versions are vendored back from a selected committed GenesisTools version with fresh provenance, without reformatting the copied bytes.
+The core retains its zod, commander and Node-only import boundary and a narrowly scoped strict-JSON policy exception. The files carry no provenance header, since one held a home path and a private project name; `git log -- src/utils/eval-engine` records where each version came from. Subsequent canonical versions are vendored back from a selected committed GenesisTools version without reformatting the copied bytes.

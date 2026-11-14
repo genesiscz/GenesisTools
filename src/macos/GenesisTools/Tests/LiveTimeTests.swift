@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/UI/LiveTimeTests.swift at 2026-09-25T22:24:28+02:00 at commit hash 09d2ee1252400c65d735e279aecd931735f57e5f
 import AppKit
 import SwiftUI
 import XCTest

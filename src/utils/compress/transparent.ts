@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisClaude/user/skills/disk-reclaim/scripts/lib/cold.ts at 2026-11-12T06:03:03+01:00 at commit hash 582381578ceacde82fac48a58594d9d5374df663
 /**
  * Verified APFS transparent compression. tools compress owns the writing command;
  * tools du supplies native listings and reads the shared plan and sample functions.

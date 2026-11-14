@@ -1,5 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Companion/Shared/ConstraintSafeWindow.swift at 2026-10-08T05:07:50+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
-// Copied from /Users/Martin/Tresors/Projects/Rewind/apps/timetravel-app/TimeTravel/TimeTravel/Shared/ConstraintSafeWindow.swift at 2026-07-20T00:25:25+02:00 at commit hash 39b6b2f1865aed017e1ea1a0f6a4c0434df36311
 //
 //  ConstraintSafeWindow.swift
 //  TimeTravel

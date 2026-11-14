@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/scripts/perf-report.ts at 2026-09-24T04:59:16+02:00 at commit hash 0d268a43e86e6e5e0ce16132aed8c862e201923e
 /**
  * perf-report.ts — summarise `~/.genesis/logs/perf.log` (PerfLog + MonitorPerf).
  *

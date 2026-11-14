@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/report.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ConversationRecord } from "./conversation";
@@ -405,4 +404,34 @@ it("does not pass comparison when a previously passed cell loses its verdict", (
     const a = view([book], [{ key: key("book"), outcome: "passed" }]);
     const b = view([book], [], { run: "b" });
     assert.equal(compareEvalRuns(a, b).exitCode, ExitCode.NoVerdict);
+});
+
+it("gives no verdict when a compared cell has none in either run, even though nothing changed", () => {
+    const a = view([book], []);
+    const b = view([book], [], { run: "b" });
+    const comparison = compareEvalRuns(a, b);
+    assert.equal(comparison.verdict, "same");
+    assert.equal(comparison.exitCode, ExitCode.NoVerdict);
+});
+
+it("counts an expectation or a branch named like an Object member as its own entry", () => {
+    const v = view(
+        [book],
+        [
+            {
+                key: key("book", 1),
+                outcome: "passed",
+                verdicts: [pass("constructor", "toString"), pass("__proto__")],
+            },
+        ]
+    );
+    const stats = cellStats(v.manifest.plan.cells[0], v);
+    assert.deepEqual(Object.keys(stats.expectations).sort(), ["__proto__", "constructor"]);
+    assert.deepEqual(stats.expectations.constructor, {
+        severity: "gate",
+        passed: 1,
+        of: 1,
+        branches: { toString: 1 },
+    });
+    assert.deepEqual(Object.keys(summarizeRun(v).cells[0].branches ?? {}), ["constructor"]);
 });

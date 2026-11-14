@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/plan.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * Which conversations a run consists of: cells (scenario × model × variant), conversation keys, their order, and the
  * plan hash that `--resume` requires to be equal. Pure.
@@ -40,7 +39,10 @@ export interface RunPlan {
 export const DefaultPassRate = 1;
 export const DefaultMaxErrorRate = 0.1;
 
-/** A name as it may stand in a file name. */
+/**
+ * A name as it may stand in a file name. The engine imports only zod, commander and node built-ins (boundary.test.ts),
+ * so it keeps this rule itself; `fileNameSlug` in `@genesiscz/utils/string` is the same rule for the rest of the repo.
+ */
 export function slug(name: string): string {
     return name.replace(/[^A-Za-z0-9._-]+/g, "-");
 }

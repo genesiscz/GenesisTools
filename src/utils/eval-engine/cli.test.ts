@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/cli.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -289,6 +288,13 @@ describe("createEvalCommand, end to end on the fake system", () => {
         const checked = await cli(project, ["check", "--print"]);
         assert.equal(checked.exitCode, 0);
         assert.equal(checked.json.schema, "eval-check/1");
+        const both = await cli(
+            project,
+            ["check", "toothache", "--stdin"],
+            JSON.stringify({ id: "x", steps: [{ user: "a" }] })
+        );
+        assert.equal(both.exitCode, 2);
+        assert.equal(both.json.error, "bad-option");
         const said = await cli(project, ["say", "Bolí mě zub.", "--model", "alarmist"]);
         assert.equal(said.json.schema, "eval-say/1");
         assert.equal(said.exitCode, 0);

@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/video/scripts/taps.ts at 2026-11-12T06:22:57+01:00 at commit hash 481f90467dafdc609cfc834993855299b7410f94
+// Copied from the Kalendora repository, video/scripts/taps.ts, at commit 481f90467dafdc609cfc834993855299b7410f94
 const Rate = 48000;
 export const CHOSEN_TAP = "09-down-up";
 let seed = 7;

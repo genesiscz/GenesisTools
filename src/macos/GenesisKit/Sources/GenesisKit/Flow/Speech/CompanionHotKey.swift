@@ -1,5 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Companion/CompanionHotKey.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
-// Copied from /Users/Martin/Tresors/Projects/Rewind/apps/timetravel-app/TimeTravel/TimeTravel/App/HotKeyManager.swift at 2026-07-20T00:25:25+02:00 at commit hash 39b6b2f1865aed017e1ea1a0f6a4c0434df36311
 // Adapted for Genesis Companion (spec §6.1): Rewind's three fixed Cmd-combos +
 // scroll event tap became ONE configurable press-AND-release hotkey (default F6).
 // The Carbon RegisterEventHotKey wiring is the stolen nugget; Rewind only

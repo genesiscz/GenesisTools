@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/harness-models.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * The judge and the simulated user: their prompts, the stop word and the answer parser. Builds requests; the
  * conversation sends them through the project's `complete`.
@@ -25,7 +24,9 @@ function renderJudgeTranscript(lines: readonly TranscriptLine[]): string {
                 (call) =>
                     `  [tool call] ${call.name} ${JSON.stringify(call.input)}${call.output !== undefined ? ` -> ${JSON.stringify(call.output)}` : ""}${call.error ? ` (error: ${call.error})` : ""}`
             );
-            return [head, ...calls].join("\n");
+            const blind =
+                line.toolEvidence === "unavailable" ? ["  [tool calls of this reply were not observable]"] : [];
+            return [head, ...calls, ...blind].join("\n");
         })
         .join("\n\n");
 }
@@ -45,13 +46,17 @@ export function buildJudgeRequest(request: JudgeRequest, model: string): Omit<Co
         request.scope.kind === "turn"
             ? `The statement is about the assistant's LAST reply (turn ${request.scope.turn}).`
             : "The statement is about the whole conversation.";
+    // A turn's own flag decides its deterministic checks; the judge reads the whole prefix, so an earlier turn whose
+    // tool calls were not observable makes the transcript it sees incomplete too.
+    const blind =
+        request.scope.toolEvidence === "unavailable" ||
+        request.scope.transcript.some((line) => line.toolEvidence === "unavailable");
     return {
         purpose: "judge",
         model,
-        system:
-            request.scope.toolEvidence === "unavailable"
-                ? `${JudgeSystem}\nTool observability is unavailable. The transcript may omit tool calls. Missing tool calls do not prove that no call occurred; answer cannot-tell when the statement requires that evidence.`
-                : JudgeSystem,
+        system: blind
+            ? `${JudgeSystem}\nTool observability is unavailable. The transcript may omit tool calls. Missing tool calls do not prove that no call occurred; answer cannot-tell when the statement requires that evidence.`
+            : JudgeSystem,
         messages: [
             {
                 role: "user",

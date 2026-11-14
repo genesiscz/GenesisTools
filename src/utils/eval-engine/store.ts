@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/store.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * The run folder, reading and writing. No other file knows a file name inside a run folder.
  *
@@ -7,9 +6,12 @@
  *   <runsDir>/<run>/errors/<key>.jsonl     one line per attempt that ended without a record (diagnostic)
  *   <runsDir>/<run>/prompts/<hash>.txt     each distinct system prompt once
  *   <runsDir>/<run>/summary.json           an export of the last `run` output; no command reads it
+ *   <runsDir>/<run>/run.lock               the process that plays the run now; removed when it ends
  */
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFile, link, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import type { CellRef, ConversationRecord } from "./conversation";
@@ -64,6 +66,16 @@ export interface RunStore {
     finalRecords(): Promise<ConversationRecord[]>;
     /** `summary.json`: an export for a person. Replaced on every run or resume. */
     writeSummary(summary: unknown): Promise<void>;
+    /**
+     * Claims the run for this process (`run.lock`) before it reads which conversations are missing, so two
+     * `run --resume` of one run never open the same conversation twice. Throws `run-in-use` while another live
+     * process holds it; a lock whose process on this computer has ended is taken over.
+     */
+    claim(): Promise<RunClaim>;
+}
+
+export interface RunClaim {
+    release(): Promise<void>;
 }
 
 /** A run as readers see it: the manifest, every final record, and the planned keys without one. */
@@ -220,6 +232,7 @@ const Files = {
     conversations: "conversations",
     errors: "errors",
     prompts: "prompts",
+    lock: "run.lock",
 } as const;
 
 const recordPath = (dir: string, key: string) => join(dir, Files.conversations, `${key}.json`);
@@ -240,6 +253,148 @@ async function exists(path: string): Promise<boolean> {
         }
         throw error;
     }
+}
+
+interface LockHolder {
+    pid: number;
+    host: string;
+    at: string;
+}
+
+function parseLockHolder(text: string): LockHolder | null {
+    let value: unknown;
+    try {
+        value = JSON.parse(text);
+    } catch {
+        // A half-written or foreign lock file names no holder to ask; the caller treats it as held.
+        return null;
+    }
+    if (
+        typeof value === "object" &&
+        value !== null &&
+        "pid" in value &&
+        typeof value.pid === "number" &&
+        "host" in value &&
+        typeof value.host === "string" &&
+        "at" in value &&
+        typeof value.at === "string"
+    ) {
+        return { pid: value.pid, host: value.host, at: value.at };
+    }
+    return null;
+}
+
+/** `ps -o etime=` resolves to whole seconds, so allow two of them either way. */
+const StartTolerance = 2_000;
+
+/**
+ * A holder on another computer counts as alive. On this one, the lock pid must still run the process that wrote the
+ * lock: a program that started after the lock time holds a recycled pid, so the lock is stale. The engine imports only
+ * node built-ins, so it asks `ps` how long the pid has run (elapsed time has no time zone, unlike a start date); when
+ * `ps` cannot answer, the holder counts as alive.
+ */
+function holderIsAlive(holder: LockHolder): boolean {
+    if (holder.host !== hostname()) {
+        return true;
+    }
+
+    // lint-rules-ignore: the engine imports only node built-ins (boundary.test.ts), and this runs once per claim that finds a held lock
+    const ps = spawnSync("ps", ["-o", "etime=", "-p", String(holder.pid)], { encoding: "utf8", timeout: 5_000 });
+    if (ps.error) {
+        return true;
+    }
+
+    if (ps.status !== 0) {
+        return false;
+    }
+
+    const elapsed = elapsedMs(ps.stdout.trim());
+    const startedAt = elapsed === null ? Number.NaN : Date.now() - elapsed;
+    const lockedAt = Date.parse(holder.at);
+    return !Number.isFinite(startedAt) || !Number.isFinite(lockedAt) || startedAt <= lockedAt + StartTolerance;
+}
+
+/** `[[dd-]hh:]mm:ss` from `ps -o etime=` in milliseconds, or null for any other text. */
+function elapsedMs(text: string): number | null {
+    const match = text.match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/);
+    if (!match) {
+        return null;
+    }
+
+    const [, days = "0", hours = "0", minutes, seconds] = match;
+    return (((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+}
+
+async function readLockFile(path: string): Promise<string | null> {
+    try {
+        return await readFile(path, "utf8");
+    } catch (error) {
+        if (isErrno(error, "ENOENT")) {
+            return null;
+        }
+        throw error;
+    }
+}
+
+/**
+ * Takes `run.lock` with an exclusive create. A lock left by an ended process on this computer is moved aside and
+ * removed only when the moved file still holds what was read, so two processes that both found it stale never both
+ * win: the later one moves the earlier one's fresh lock, finds other text in it, and puts it back.
+ */
+async function claimRun(dir: string): Promise<RunClaim> {
+    const path = join(dir, Files.lock);
+    const mine = `${JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString() })}\n`;
+    const inUse = (holder: LockHolder | null) =>
+        new EvalConfigError(
+            "run-in-use",
+            holder
+                ? `the run in ${dir} is being played by pid ${holder.pid} on ${holder.host} since ${holder.at}; remove ${path} only when that process is gone`
+                : `the run in ${dir} is being played by another process (${path} names none); remove it only when no process plays the run`
+        );
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            await writeFile(path, mine, { flag: "wx" });
+            return {
+                async release() {
+                    if ((await readLockFile(path)) === mine) {
+                        await unlink(path);
+                    }
+                },
+            };
+        } catch (error) {
+            if (!isErrno(error, "EEXIST")) {
+                throw error;
+            }
+        }
+        const text = await readLockFile(path);
+        if (text === null) {
+            continue;
+        }
+        const holder = parseLockHolder(text);
+        if (!holder || holderIsAlive(holder)) {
+            throw inUse(holder);
+        }
+        const aside = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.stale`;
+        try {
+            await rename(path, aside);
+        } catch (error) {
+            if (isErrno(error, "ENOENT")) {
+                continue;
+            }
+            throw error;
+        }
+        if ((await readLockFile(aside)) === text) {
+            await unlink(aside);
+            continue;
+        }
+        try {
+            await link(aside, path);
+        } finally {
+            await unlink(aside);
+        }
+        throw inUse(parseLockHolder((await readLockFile(path)) ?? ""));
+    }
+    throw inUse(parseLockHolder((await readLockFile(path)) ?? ""));
 }
 
 /** "2026-11-10T19-42-07-<label>" in the local time of this computer. */
@@ -396,6 +551,7 @@ function storeFor(dir: string, manifest: RunManifest): RunStore {
         async writeSummary(summary) {
             await writeFile(join(dir, Files.summary), `${JSON.stringify(summary, null, 2)}\n`);
         },
+        claim: () => claimRun(dir),
     };
 }
 

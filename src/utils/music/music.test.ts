@@ -4,13 +4,16 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Executor } from "@genesiscz/utils/cli/executor";
+import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
+import { optIn } from "@genesiscz/utils/test/skip";
 import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
 import { publishAudio, runAudio, withMusicSignal } from "./process";
 import { fluidSynthArgs, renderScore } from "./render";
 import { builtinScore, TRACK_KEYS } from "./scores";
+import { PINNED_SOUNDFONT } from "./soundfont";
 import { TAPS, tapAudio, tapAudition } from "./taps";
 import { type Score, scoreSchema } from "./types";
 
@@ -83,6 +86,77 @@ describe("music score and MIDI", () => {
             ],
         });
         expect(midi.includes(Buffer.from([0x87, 0x40, 0x80, 60, 0, 0, 0x90, 60, 90]))).toBe(true);
+    });
+
+    /** The note events of every track, in order: [tick, "on" | "off", pitch]. The encoder writes no running status. */
+    function noteEvents(midi: Buffer): Array<[number, "on" | "off", number]> {
+        const events: Array<[number, "on" | "off", number]> = [];
+        let at = 14;
+
+        const varlen = (): number => {
+            let value = 0;
+            for (;;) {
+                const byte = midi[at++] ?? 0;
+                value = (value << 7) | (byte & 0x7f);
+                if ((byte & 0x80) === 0) {
+                    return value;
+                }
+            }
+        };
+
+        while (at < midi.length) {
+            const end = at + 8 + midi.readUInt32BE(at + 4);
+            at += 8;
+            let tick = 0;
+            while (at < end) {
+                tick += varlen();
+                const status = midi[at++] ?? 0;
+                if (status === 0xff) {
+                    at++;
+                    const length = varlen();
+                    at += length;
+                } else if ((status & 0xf0) === 0xc0) {
+                    at += 1;
+                } else {
+                    const pitch = midi[at] ?? 0;
+                    if ((status & 0xf0) === 0x90 || (status & 0xf0) === 0x80) {
+                        events.push([tick, (status & 0xf0) === 0x90 ? "on" : "off", pitch]);
+                    }
+                    at += 2;
+                }
+            }
+        }
+
+        return events;
+    }
+
+    test("same-pitch notes on one tick each get a Note Off after their Note On, never on its tick before it", () => {
+        for (const starts of [
+            [0.5, 0.5],
+            [0.5, 0.5001],
+        ]) {
+            const events = noteEvents(
+                encodeMidi({
+                    ...minimal,
+                    parts: [
+                        {
+                            ...minimal.parts[0],
+                            notes: starts.map((at) => ({ at, duration: 1, midi: 60, velocity: 90 })),
+                        },
+                    ],
+                })
+            );
+            let held = 0;
+
+            for (const [, kind] of events) {
+                held += kind === "on" ? 1 : -1;
+                expect(held).toBeGreaterThanOrEqual(0);
+            }
+
+            expect(held).toBe(0);
+            expect(events.map(([, kind]) => kind)).toEqual(["on", "on", "off", "off"]);
+            expect(events.filter(([, kind]) => kind === "off").every(([tick]) => tick > events[0]![0])).toBe(true);
+        }
     });
 
     test("keeps drums on channel 10 and skips it for pitched voices", () => {
@@ -357,4 +431,36 @@ describe("measurement, effects and publishing", () => {
             await rm(folder, { recursive: true, force: true });
         }
     });
+});
+
+/**
+ * The whole render on the real tools: FluidSynth with the pinned GeneralUser GS, then the ffmpeg mastering and the
+ * measurement. It needs native tools and a 32 MB asset, so it runs only where they are: RUN_INTEGRATION=1 and
+ * MUSIC_TEST_SOUNDFONT naming the pinned .sf2 (`tools music soundfont install` puts it under ~/.genesis-tools/music).
+ */
+const renderSoundfont = env.get("MUSIC_TEST_SOUNDFONT");
+const canRender =
+    optIn.integration &&
+    renderSoundfont !== undefined &&
+    ["fluidsynth", "ffmpeg", "ffprobe"].every((tool) => Bun.which(tool) !== null);
+
+describe.skipIf(!canRender)("a real FluidSynth render", () => {
+    test("renders the minimal score to its length and loudness, and the same bytes again", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "music-render-"));
+        const render = (name: string) =>
+            renderScore({ score: minimal, output: join(dir, name), soundfont: renderSoundfont });
+
+        try {
+            const first = await render("first.wav");
+            const second = await render("second.wav");
+
+            expect(first.soundfontSha256).toBe(PINNED_SOUNDFONT.sha256);
+            expect(first.measurement.seconds).toBeCloseTo(minimal.seconds, 1);
+            expect(Math.abs(first.measurement.lufs - first.targetLufs)).toBeLessThan(1.5);
+            expect(first.measurement.truePeakDb).toBeLessThanOrEqual(-2);
+            expect(second.measurement.sha256).toBe(first.measurement.sha256);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    }, 120_000);
 });

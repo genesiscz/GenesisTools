@@ -1,4 +1,3 @@
-<!-- Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/README.md at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165 -->
 # eval-engine
 
 A project-agnostic engine that plays scenario conversations against a system, checks every answer, and writes a
@@ -148,7 +147,7 @@ once, when the file is loaded. So a scenario can be printed, hashed, compared an
 
 | Check (JSON) | Builder | Passes when |
 |---|---|---|
-| `{ "tool": "x", "args": {...}, "times": { "min": 1, "max": 2 } }` | `s.tool("x", args?, times?)` | `x` was called with matching arguments between `min` (default 1) and `max` times |
+| `{ "tool": "x", "args": {...}, "times": { "min": 1, "max": 2 } }` | `s.tool("x", args?, times?)` | `x` was called with matching arguments between `min` (default 1, or 0 with `max: 0`) and `max` times |
 | `{ "onlyTools": ["a", "b"] }` / `{ "onlyTools": [] }` | `s.onlyTools("a", "b")` / `s.noTools()` | no other tool (no tool at all) was called |
 | `{ "text": { "contains": "x" \| ["x", "y"], "caseSensitive": false } }` or `{ "text": { "matches": "re", "flags": "i" } }` | `s.text(...)` | some reply in scope matches (case-insensitive by default) |
 | `{ "signal": "path", <matcher> }` | `s.signal("path", matcher)` | the signal at the path matches |
@@ -241,7 +240,7 @@ Progress goes to stderr as JSON lines, only with `--progress`.
 | Command | Flags | Prints |
 |---|---|---|
 | `run [scenarios...]` | `--matrix <id>`, `--tag <tag...>`, `--model <id...>`, `--variant <name...>`, `--repeats <n>`, `--stdin`, `--resume <run>`, `--concurrency <n>`, `--max-cost-usd <usd>`, `--target <t>`, `--label <label>`, `--all-cells`, `--keep-going`, `--failures <n>`, `--progress` | `eval-run/1` |
-| `say <text...>` | `--model <id>` (required), `--variant <name>`, `--repeats <n>`, `--setup <json>`, `--target <t>`, `--concurrency <n>` | `eval-say/1`: each reply, its tool names and signals; no expectations, no run folder |
+| `say <text...>` | `--model <id>` (required), `--variant <name>`, `--repeats <n>`, `--setup <json>`, `--target <t>`, `--concurrency <n>` | `eval-say/1`: each reply, its tool names and signals, and each conversation's `error` and `closeError`; exit 4 when any conversation broke or did not close; no expectations, no run folder |
 | `check [scenarios...]` | `--print`, `--stdin`, `--matrix <id>`, `--tag <tag...>` | `eval-check/1`: ids, hashes, resolved setups (and documents with `--print`); contacts nothing |
 | `list` | `--live`, `--target <t>` | `eval-list/1`: scenarios, matrices (and the system's models and variants with `--live`) |
 | `runs` | `--limit <n>` | `eval-runs/1`: run folders, newest first, with their verdicts |

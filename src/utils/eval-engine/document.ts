@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/document.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * What a scenario and a matrix are: the check algebra, expectations, steps, their JSON form, validation against a
  * system's vocabulary, the typed builder, the canonical JSON and the hash, signal paths, bindings and templates.
@@ -43,7 +42,7 @@ export type ArgsMatch = { [argument: string]: Json | ValueMatch };
 
 export type TextMatch = { contains: string | string[]; caseSensitive?: boolean } | { matches: string; flags?: string };
 
-/** The tool was called, with matching arguments, between `times.min` (default 1) and `times.max` times. */
+/** The tool was called, with matching arguments, between `times.min` (default 1, or 0 with `max: 0`) and `times.max` times. */
 export interface ToolCheck {
     tool: string;
     args?: ArgsMatch;
@@ -194,6 +193,7 @@ export type EvalConfigErrorCode =
     | "unknown-matrix"
     | "plan-changed"
     | "unknown-run"
+    | "run-in-use"
     | "bad-option"
     | "unsupported";
 
@@ -238,6 +238,14 @@ export function canonicalJson(value: unknown): string {
     return JSON.stringify(sortKeys(value));
 }
 
+/**
+ * Sets `key` as an own property, `__proto__` included: a plain assignment of `__proto__` calls the prototype setter
+ * and drops the key, so two different documents would read and hash the same.
+ */
+function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
+    Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 function sortKeys(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(sortKeys);
@@ -248,7 +256,7 @@ function sortKeys(value: unknown): unknown {
     const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
         if (value[key] !== undefined) {
-            sorted[key] = sortKeys(value[key]);
+            setOwn(sorted, key, sortKeys(value[key]));
         }
     }
     return sorted;
@@ -310,7 +318,7 @@ export function readPath(
             if (!isJsonObject(value)) {
                 return { found: false, reason: `${where} is ${describeJson(value)}, not an object` };
             }
-            if (!(segment in value)) {
+            if (!Object.hasOwn(value, segment)) {
                 return { found: false, reason: `${where} has no "${segment}"` };
             }
             value = value[segment];
@@ -359,7 +367,7 @@ function checkPathAgainstShape(
     segments: readonly PathSegment[]
 ): string | null {
     const [first, ...rest] = segments;
-    if (typeof first !== "string" || !(first in shape)) {
+    if (typeof first !== "string" || !Object.hasOwn(shape, first)) {
         return `unknown signal "${String(first)}"; known: ${Object.keys(shape).join(", ")}`;
     }
     let schema = unwrapSchema(shape[first]);
@@ -371,7 +379,7 @@ function checkPathAgainstShape(
             if (typeof segment === "number") {
                 return `${where} is an object, not a list`;
             }
-            if (!(segment in fields)) {
+            if (!Object.hasOwn(fields, segment)) {
                 return `${where} has no field "${segment}"; known: ${Object.keys(fields).join(", ")}`;
             }
             schema = unwrapSchema(fields[segment]);
@@ -416,7 +424,7 @@ export function resolveBindings(
         if (!read.found) {
             return { ok: false, name, path, reason: `needed ${path}; ${read.reason}` };
         }
-        values[name] = read.value;
+        setOwn(values, name, read.value);
     }
     return { ok: true, values };
 }
@@ -427,7 +435,7 @@ function lookupTemplate(path: string, bindings: Bindings): Json | undefined {
         return undefined;
     }
     const [name, ...rest] = segments;
-    if (typeof name !== "string" || !(name in bindings)) {
+    if (typeof name !== "string" || !Object.hasOwn(bindings, name)) {
         return undefined;
     }
     const read = readPath(bindings[name], rest);
@@ -463,7 +471,7 @@ function fillJson(value: Json, bindings: Bindings): Json {
     if (isJsonObject(value)) {
         const out: JsonObject = {};
         for (const [key, item] of Object.entries(value)) {
-            out[key] = fillJson(item, bindings);
+            setOwn(out, key, fillJson(item, bindings));
         }
         return out;
     }
@@ -491,7 +499,7 @@ export function fillCheck(check: Check, bindings: Bindings): Check {
     if ("anyOf" in check) {
         const branches: Record<string, Check> = {};
         for (const [name, branch] of Object.entries(check.anyOf)) {
-            branches[name] = fillCheck(branch, bindings);
+            setOwn(branches, name, fillCheck(branch, bindings));
         }
         return { anyOf: branches };
     }
@@ -521,7 +529,7 @@ export function fillCheck(check: Check, bindings: Bindings): Check {
     if ("tool" in check && check.args) {
         const args: ArgsMatch = {};
         for (const [name, leaf] of Object.entries(check.args)) {
-            args[name] = isMatchLeaf(leaf) ? fillMatch(leaf, bindings) : fillJson(leaf, bindings);
+            setOwn(args, name, isMatchLeaf(leaf) ? fillMatch(leaf, bindings) : fillJson(leaf, bindings));
         }
         return { ...check, args };
     }
@@ -786,14 +794,14 @@ function parseCheck(
                     ) {
                         const match = parseValueMatch(leaf, ctx, leafPath);
                         if (match) {
-                            args[name] = match;
+                            setOwn(args, name, match);
                         }
                     } else {
                         const json = JsonSchema.safeParse(leaf);
                         if (!json.success) {
                             issue(ctx, leafPath, "expected a JSON value or a matcher");
                         } else {
-                            args[name] = toJson(leaf);
+                            setOwn(args, name, toJson(leaf));
                         }
                     }
                 }
@@ -881,7 +889,7 @@ function parseCheck(
                 }
                 const parsed = parseCheck(branch, ctx, [...path, "anyOf", name], codeOnly);
                 if (parsed) {
-                    branches[name] = parsed;
+                    setOwn(branches, name, parsed);
                 } else {
                     ok = false;
                 }
@@ -915,7 +923,7 @@ function asCodeCheck(check: Check): CodeCheck | null {
             if (!code) {
                 return null;
             }
-            branches[name] = code;
+            setOwn(branches, name, code);
         }
         return { anyOf: branches };
     }
@@ -1412,7 +1420,7 @@ function nameBranches<C>(branches: Readonly<Record<string, C>> | readonly C[]): 
         });
     } else {
         for (const [name, branch] of Object.entries(branches)) {
-            named[name] = branch;
+            setOwn(named, name, branch);
         }
     }
     return named;

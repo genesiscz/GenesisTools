@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/schedule.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * How many conversations run at once and what is retried. One adaptive limiter per `limitKey` (halve on a rate
  * limit, grow by one after five successes in a row, honour `retryAfterMs`), a global bound on open conversations,
@@ -46,6 +45,8 @@ export interface Limiter {
     /** Runs `task` when the key has a free slot and no pause. A rate-limit `EvalSystemError` from it penalizes the key. */
     run<T>(limitKey: string, task: () => Promise<T>): Promise<T>;
     penalize(limitKey: string, retryAfterMs?: number): void;
+    /** Whether `error` is a rate limit this limiter already penalized its key for (one thrown by a `run` task). */
+    penalized(error: unknown): boolean;
     limits(): Record<string, number>;
 }
 
@@ -76,6 +77,7 @@ export function createLimiter(options: {
 }): Limiter {
     const max = Math.max(1, Math.floor(options.max));
     const states = new Map<string, KeyState>();
+    const penalizedErrors = new WeakSet<object>();
     const state = (key: string): KeyState => {
         let s = states.get(key);
         if (!s) {
@@ -91,7 +93,7 @@ export function createLimiter(options: {
             if (wait > 0) {
                 if (!s.waking) {
                     s.waking = true;
-                    void waitOnEvalClock(options.clock, wait, options.signal).then(() => {
+                    void waitOnEvalClock({ clock: options.clock, ms: wait, signal: options.signal }).then(() => {
                         s.waking = false;
                         pump(key);
                     });
@@ -113,6 +115,7 @@ export function createLimiter(options: {
     };
     return {
         penalize,
+        penalized: (error) => typeof error === "object" && error !== null && penalizedErrors.has(error),
         limits: () => Object.fromEntries([...states].map(([key, s]) => [key, s.limit])),
         async run(key, task) {
             const s = state(key);
@@ -152,6 +155,7 @@ export function createLimiter(options: {
             } catch (error) {
                 if (error instanceof EvalSystemError && error.kind === "rate-limit") {
                     penalize(key, error.detail.retryAfterMs);
+                    penalizedErrors.add(error);
                 } else {
                     s.streak = 0;
                 }
@@ -164,7 +168,15 @@ export function createLimiter(options: {
     };
 }
 
-async function waitOnEvalClock(clock: Clock, ms: number, signal?: AbortSignal): Promise<void> {
+async function waitOnEvalClock({
+    clock,
+    ms,
+    signal,
+}: {
+    clock: Clock;
+    ms: number;
+    signal?: AbortSignal;
+}): Promise<void> {
     if (signal?.aborted) {
         return;
     }
@@ -276,14 +288,32 @@ export async function runPlan<TResolved, TSignals, THandle>(
     input: RunPlanInput<TResolved, TSignals, THandle>,
     options: RunOptions
 ): Promise<RunPlanResult> {
+    // Claimed before the missing keys are read: a second invocation on the same run stops here instead of playing
+    // the same conversations again.
+    const claim = await input.store.claim();
+    try {
+        return await playMissing(input, options);
+    } finally {
+        await claim.release();
+    }
+}
+
+async function playMissing<TResolved, TSignals, THandle>(
+    input: RunPlanInput<TResolved, TSignals, THandle>,
+    options: RunOptions
+): Promise<RunPlanResult> {
     const { store, plan } = input;
     const done = await store.finalKeys();
     const pending = plan.conversations.filter((c) => !done.has(c.key));
     let spentUsd = (await store.finalRecords()).reduce((sum, record) => sum + recordCost(record), 0);
+    // A failure that ends the run (a record that could not be written) stops the other conversations too, so nothing
+    // opens or sends after runPlan has failed.
+    const failed = new AbortController();
+    const signal = AbortSignal.any([options.signal, failed.signal]);
     const limiter = createLimiter({
         max: options.concurrency,
         clock: options.clock,
-        signal: options.signal,
+        signal,
         onChange: (limitKey, limit) => options.onProgress?.({ type: "limit", limitKey, limit }),
     });
     const open = semaphore(Math.max(1, Math.floor(options.concurrency)));
@@ -298,14 +328,14 @@ export async function runPlan<TResolved, TSignals, THandle>(
         if (!scenario || !model || setup === undefined) {
             throw new Error(`the plan names ${conversation.key}, which the run does not hold`);
         }
-        if (!(await open.acquire(options.signal))) {
+        if (!(await open.acquire(signal))) {
             stopped = { reason: "aborted" };
             return;
         }
         let held = true;
         try {
             for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
-                if (options.signal.aborted) {
+                if (signal.aborted) {
                     stopped = { reason: "aborted" };
                     return;
                 }
@@ -347,13 +377,13 @@ export async function runPlan<TResolved, TSignals, THandle>(
                             harness: input.harness,
                             putPrompt: (text) => store.putPrompt(text),
                             keepGoing: options.keepGoing,
-                            signal: options.signal,
+                            signal,
                             now: () => new Date(options.clock.now()),
                         }
                     );
                 } catch (thrown) {
                     const error = asSystemError(thrown);
-                    if (options.signal.aborted) {
+                    if (signal.aborted) {
                         stopped = { reason: "aborted" };
                         return;
                     }
@@ -379,16 +409,22 @@ export async function runPlan<TResolved, TSignals, THandle>(
                         kind: error.kind,
                         message: error.message,
                     });
-                    // A rate limit already paused the model's key in the limiter; other errors wait here, without a slot.
-                    if (error.kind !== "rate-limit") {
+                    // A rate limit from a send or a completion already paused its key in the limiter. Every other error
+                    // waits here, without a slot; a rate limit from `open`, which runs outside the limiter, also pauses
+                    // the model's key.
+                    if (!limiter.penalized(thrown)) {
+                        if (error.kind === "rate-limit") {
+                            limiter.penalize(model.limitKey, error.detail.retryAfterMs);
+                        }
+
                         open.release();
                         held = false;
-                        await waitOnEvalClock(
-                            options.clock,
-                            error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
-                            options.signal
-                        );
-                        if (options.signal.aborted || !(await open.acquire(options.signal))) {
+                        await waitOnEvalClock({
+                            clock: options.clock,
+                            ms: error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
+                            signal,
+                        });
+                        if (signal.aborted || !(await open.acquire(signal))) {
                             stopped = { reason: "aborted" };
                             return;
                         }
@@ -408,6 +444,27 @@ export async function runPlan<TResolved, TSignals, THandle>(
         }
     };
 
-    await Promise.all(pending.map(play));
+    // A bounded pool: `concurrency` workers each take the next conversation, so a large plan holds no waiter per
+    // conversation. The first failure stops the pool, and every worker has ended before it is thrown.
+    const failures: unknown[] = [];
+    let next = 0;
+    const worker = async () => {
+        while (failures.length === 0 && next < pending.length) {
+            const conversation = pending[next++];
+            try {
+                await play(conversation);
+            } catch (error) {
+                failures.push(error);
+                failed.abort();
+            }
+        }
+    };
+    const workers = Math.max(1, Math.min(pending.length, Math.floor(options.concurrency)));
+    await Promise.all(Array.from({ length: workers }, worker));
+
+    if (failures.length > 0) {
+        throw failures[0];
+    }
+
     return { stopped, spentUsd };
 }

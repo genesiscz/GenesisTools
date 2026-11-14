@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/system.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * The contract a project implements: its vocabulary (tools, setup, signals) and a live connection to one deployment.
  * Types and one error class. No transport types: the engine never sees HTTP, NDJSON or a provider SDK.

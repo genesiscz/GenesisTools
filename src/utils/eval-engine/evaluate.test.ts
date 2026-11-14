@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/evaluate.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Check } from "./document";
@@ -52,6 +51,10 @@ describe("evaluateCheck", () => {
         );
         assert.equal(result({ tool: "find_free_slots", times: { max: 0 } }), "fail");
         assert.equal(result({ tool: "request_human", times: { min: 0, max: 0 } }), "pass");
+        // `max: 0` alone forbids the tool, so a tool never called passes it.
+        assert.equal(result({ tool: "request_human", times: { max: 0 } }), "pass");
+        // An argument named like an Object member must be in the input itself.
+        assert.equal(result({ tool: "find_free_slots", args: { constructor: { exists: true } } }), "fail");
         assert.equal(result({ tool: "find_free_slots", args: { day: "2026-11-16" } }), "pass");
     });
 

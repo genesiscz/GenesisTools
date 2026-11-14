@@ -18,6 +18,14 @@ export function slugify(title: string): string {
 }
 
 /**
+ * A name as it may stand in a file name: every run of characters other than letters, digits, `.`, `_` and `-` becomes
+ * one `-`. Unlike `slugify` it keeps case, dots and underscores and does not shorten, so a name stays recognisable.
+ */
+export function fileNameSlug(name: string): string {
+    return name.replace(/[^A-Za-z0-9._-]+/g, "-");
+}
+
+/**
  * Strip ANSI escape sequences from a string.
  */
 export function stripAnsi(input: string): string {
