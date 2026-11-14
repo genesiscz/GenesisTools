@@ -263,6 +263,28 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         XCTAssertFalse(engine.isWriting(other.id))
     }
 
+    func testARetryStartedByAJointCallbackKeepsItsSlotAheadOfAQueuedStage() async {
+        let log = FakeDecisionLog()
+        let engine = engine(log)
+        let other = DecisionAddress(id: "d_5_s1", sessionId: "s1", number: 5)
+        var retried = false
+        log.holdNext = true
+        log.answers = [.refused("refused", detail: nil)]
+        engine.unstage([ref, other]) { _ in
+            guard !retried else { return }
+            retried = true
+            engine.unstage([ref, other])
+        }
+        await settle(engine, log)
+        _ = engine.stage(ref, option: "a", note: nil)
+        log.release()
+        await settle(engine, log)
+        XCTAssertEqual(log.actions, [.unstage([ref, other]), .unstage([ref, other]), .stage(ref, option: "a", note: nil)],
+                       "the retry runs in the slot it took, and the queued stage runs after it")
+        XCTAssertFalse(engine.isWriting(ref.id))
+        XCTAssertFalse(engine.isWriting(other.id))
+    }
+
     func testADismissHeldForItsUndoWritesNothingUntilItsTimeAndUndoDropsIt() async {
         let log = FakeDecisionLog()
         let clock = ManualClock()

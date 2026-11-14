@@ -341,9 +341,13 @@ extension DecisionAnswering {
                 let answer = await log.run(write.action)
                 guard let self else { return }
                 if let joint = write.joint {
-                    for jointId in joint.ids {
-                        if let own = self.running[jointId] { self.finish(jointId, own, answer) }
+                    // Every participant is settled before any callback runs: a callback can start a retry in one of
+                    // them, and that retry's entry belongs to the retry, never to this joint.
+                    let owned = joint.ids.compactMap { jointId in
+                        self.running[jointId].flatMap { $0.joint === joint ? (jointId, $0) : nil }
                     }
+                    for (jointId, own) in owned { self.settle(jointId, own, answer) }
+                    for (jointId, own) in owned { self.advance(jointId, own, answer) }
                 } else {
                     self.finish(id, write, answer)
                 }
@@ -351,6 +355,13 @@ extension DecisionAnswering {
         }
 
         private func finish(_ id: String, _ write: Write, _ answer: DecisionLogAnswer) {
+            settle(id, write, answer)
+            advance(id, write, answer)
+        }
+
+        /// The state a finished write changes, with no callback: a joint settles every participant before any of them
+        /// advances.
+        private func settle(_ id: String, _ write: Write, _ answer: DecisionLogAnswer) {
             running[id] = nil
             writing.remove(id)
             // The entries this write still owns: a newer change to a decision is its own write's.
@@ -368,10 +379,16 @@ extension DecisionAnswering {
                 for owned in current { pending[owned]?.unsaved = true }
                 afterWrites[id] = nil
             }
+        }
+
+        /// The callbacks of a settled write, then the next write of its decision. A callback that started a new write
+        /// of the decision (a retry) keeps the slot: the queued writes wait behind it.
+        private func advance(_ id: String, _ write: Write, _ answer: DecisionLogAnswer) {
             if write.reports {
                 write.ended?(answer)
                 written?(id, write.action, answer)
             }
+            guard running[id] == nil else { return }
             if var waiting = queued.removeValue(forKey: id), !waiting.isEmpty {
                 let next = waiting.removeFirst()
                 if !waiting.isEmpty { queued[id] = waiting }
