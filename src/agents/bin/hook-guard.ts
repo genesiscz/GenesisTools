@@ -3,11 +3,10 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
-import { evaluateGuard, guardLoop } from "../lib/hooks/guard";
-import { recordGuardVerdict } from "../lib/hooks/guard-metrics";
+import { evaluateGuard } from "../lib/hooks/guard";
+import { settleGuardVerdict } from "../lib/hooks/guard-metrics";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, parseHookPayload } from "../lib/hooks/payload";
-import { recordGuardShown, safeSessionId } from "../lib/hooks/state";
 
 if (env.agents.areHooksDisabled()) {
     process.exit(0);
@@ -50,38 +49,19 @@ logDecision(
     config.logPath
 );
 
-recordGuardVerdict({ payload, verdict, config });
+const shown = await settleGuardVerdict({ payload, verdict, config });
 
-if (!verdict || verdict.outcome === "allow") {
+if (!shown) {
     process.exit(0);
 }
 
-if (config.shadow) {
-    // Shadowed: it decided, it logged, and it says nothing. That pair is the point.
-    // The context counters stay untouched, because a note nobody saw must not count
-    // towards the per-session cap the moment shadow is switched off.
-    process.exit(0);
-}
-
-const sessionId = safeSessionId(payload.sessionId);
-
-if (sessionId && verdict.seenRules.length > 0) {
-    await recordGuardShown(sessionId, {
-        contextRules: verdict.shownContextRules,
-        loop: guardLoop(payload),
-        explainedRules: verdict.explainedRules,
-        seenRules: verdict.seenRules,
-        at: Date.now(),
-    });
-}
-
-if (verdict.outcome === "block") {
+if (shown.outcome === "block") {
     process.stdout.write(
         SafeJSON.stringify({
             hookSpecificOutput: {
                 hookEventName: "PreToolUse",
                 permissionDecision: "deny",
-                permissionDecisionReason: verdict.message,
+                permissionDecisionReason: shown.message,
             },
         })
     );
@@ -91,7 +71,7 @@ if (verdict.outcome === "block") {
 // `systemMessage` is the only field the USER sees; `additionalContext` is model-only.
 process.stdout.write(
     SafeJSON.stringify({
-        ...(verdict.outcome === "warn" ? { systemMessage: verdict.userMessage } : {}),
-        hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: verdict.message },
+        ...(shown.outcome === "warn" ? { systemMessage: shown.userMessage } : {}),
+        hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: shown.message },
     })
 );

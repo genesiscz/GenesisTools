@@ -4,6 +4,7 @@ import type { HooksConfig } from "./config";
 import type { GuardVerdict } from "./guard";
 import { guardLoop } from "./guard";
 import type { HookPayload } from "./payload";
+import { recordGuardShown, safeSessionId } from "./state";
 
 /** The tools metrics project and metric of one shell guard firing. */
 export const GUARD_METRIC = { project: "agent-context", metric: "guard.verdict" } as const;
@@ -100,4 +101,38 @@ export function recordGuardVerdict(options: {
             { chars: shown ? verdict.message.length : 0, rules: verdict.violations.length }
         );
     }
+}
+
+/**
+ * The bookkeeping both PreToolUse entry points do once a verdict stands: its metric, then, for a verdict the model will
+ * see, the session's shown rules. Returns that verdict, or null when nothing is shown (no rule fired, the verdict
+ * allows, or the guard is shadowed). Shadowed: it decided, it logged, and it says nothing. The context counters stay
+ * untouched, because a note nobody saw must not count towards the per-session cap the moment shadow is switched off.
+ */
+export async function settleGuardVerdict(options: {
+    payload: HookPayload;
+    verdict: GuardVerdict | null;
+    config: HooksConfig;
+}): Promise<GuardVerdict | null> {
+    const { payload, verdict, config } = options;
+
+    recordGuardVerdict({ payload, verdict, config });
+
+    if (!verdict || config.shadow || verdict.outcome === "allow") {
+        return null;
+    }
+
+    const sessionId = safeSessionId(payload.sessionId);
+
+    if (sessionId && verdict.seenRules.length > 0) {
+        await recordGuardShown(sessionId, {
+            contextRules: verdict.shownContextRules,
+            loop: guardLoop(payload),
+            explainedRules: verdict.explainedRules,
+            seenRules: verdict.seenRules,
+            at: Date.now(),
+        });
+    }
+
+    return verdict;
 }
