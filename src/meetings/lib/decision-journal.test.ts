@@ -52,6 +52,26 @@ function term(id: string, atSec: number, extra: Record<string, unknown> = {}): R
     return { id, kind: "term", status: "suggested", atSec, heard: "Ada", rules: [], suggestedAt: now, ...extra };
 }
 
+/** A suggested speaker range of the label `Voice` on the one line at `fromSec`; `extra` adds what a test is about. */
+function speakerRange(id: string, fromSec: number, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id,
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Voice",
+        fromSec,
+        toSec: fromSec,
+        rules: [],
+        suggestedAt: now,
+        ...extra,
+    };
+}
+
+/** A record with the fields every test fills the same way; `extra` adds the ones a test is about. */
+function meetingRecord(id: string, extra: Record<string, unknown> = {}) {
+    return meetingRecordSchema.parse({ id, title: "", start: now, createdAt: now, createdBy: "new", ...extra });
+}
+
 function question(id: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
     return {
         id,
@@ -1580,17 +1600,7 @@ describe("workshop listen contracts", () => {
     });
 
     test("a look-alike takes the matched person's stored name, and an ordered pair of people settles none", async () => {
-        const range = (id: string, fromSec: number) => ({
-            id,
-            kind: "speaker-range",
-            status: "suggested",
-            label: "Voice",
-            fromSec,
-            toSec: fromSec,
-            confidence: 0.5,
-            rules: [],
-            suggestedAt: now,
-        });
+        const range = (id: string, fromSec: number) => speakerRange(id, fromSec, { confidence: 0.5 });
         const voiceQuestion = (id: string, fromSec: number, decides: string) =>
             question(id, {
                 about: "speaker",
@@ -1766,12 +1776,7 @@ describe("workshop listen contracts", () => {
     });
 
     test("quality probe conserves lines, sample has no replacement, alternating features split four parts", () => {
-        const record = meetingRecordSchema.parse({
-            id: "quality",
-            title: "",
-            start: now,
-            createdAt: now,
-            createdBy: "new",
+        const record = meetingRecord("quality", {
             items: [0.55, 0.75, 0.95].map((confidence, index) => ({
                 id: `i${index + 1}`,
                 kind: "speaker-range",
@@ -1814,13 +1819,7 @@ describe("workshop listen contracts", () => {
     });
 
     test("remote enrolment excludes mixed windows and held-out scoring uses canonical model gate", () => {
-        const record = meetingRecordSchema.parse({
-            id: "voice",
-            title: "",
-            start: now,
-            createdAt: now,
-            createdBy: "new",
-        });
+        const record = meetingRecord("voice", {});
         const channel = (fromSec: number, embedding: number[]) => ({
             quality: "ready" as const,
             track: "isolated-call" as const,
@@ -1865,8 +1864,7 @@ describe("workshop listen contracts", () => {
             { index: 0, channels: [channel(10)] },
             { index: 1, channels: [channel(40)] },
         ];
-        const record = (items: unknown[]) =>
-            meetingRecordSchema.parse({ id: "voice", title: "", start: now, createdAt: now, createdBy: "new", items });
+        const record = (items: unknown[]) => meetingRecord("voice", { items });
         const alice = { name: "Alice Example", fromSec: 0, toSec: 100 };
         const enrolled = (items: unknown[], remote: Array<{ name: string; fromSec: number; toSec: number }>) =>
             enrolRemoteVoices({ record: record(items), embeddings, remote }).map((sample) => sample.fromSec);
@@ -1895,12 +1893,7 @@ describe("workshop listen contracts", () => {
     });
 
     test("a remote seat is cut to its person's stays, so a departure and a rejoin stay apart", () => {
-        const record = meetingRecordSchema.parse({
-            id: "voice",
-            title: "",
-            start: now,
-            createdAt: now,
-            createdBy: "new",
+        const record = meetingRecord("voice", {
             seats: { remote: ["Alice Example", { name: "Bob Example", fromSec: 50 }] },
         });
         const presence = [
@@ -1921,19 +1914,12 @@ describe("workshop listen contracts", () => {
 });
 
 test("speaker evidence propagation improves unasked compatible ranges and the journal can undo it", async () => {
-    const range = (id: string, fromSec: number, signature = "group-a") => ({
-        id,
-        kind: "speaker-range",
-        status: "suggested",
-        label: "Voice",
-        fromSec,
-        toSec: fromSec,
-        speaker: "Bob Example",
-        confidence: 0.55,
-        rules: [],
-        suggestedAt: now,
-        evidence: { signature, choices: ["Alice Example", "Bob Example"] },
-    });
+    const range = (id: string, fromSec: number, signature = "group-a") =>
+        speakerRange(id, fromSec, {
+            speaker: "Bob Example",
+            confidence: 0.55,
+            evidence: { signature, choices: ["Alice Example", "Bob Example"] },
+        });
     const fx = await fixture([
         range("i1", 10),
         range("i2", 20),
@@ -1968,12 +1954,7 @@ test("speaker evidence propagation improves unasked compatible ranges and the jo
 });
 
 test("a resolved departure is vetoed by later valid speech, and silence needs observed quiet call coverage", () => {
-    const record = meetingRecordSchema.parse({
-        id: "stays",
-        title: "",
-        start: now,
-        createdAt: now,
-        createdBy: "new",
+    const record = meetingRecord("stays", {
         participants: [{ name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] }],
     });
     const lines = lineEvidence(
@@ -2034,12 +2015,7 @@ test("a later matched voice vetoes a silence departure, as it vetoes an explicit
             { tSec: 1000, speaking: [], validUntilSec: 1010 },
         ],
     });
-    const record = meetingRecordSchema.parse({
-        id: "stays-voice",
-        title: "",
-        start: now,
-        createdAt: now,
-        createdBy: "new",
+    const record = meetingRecord("stays-voice", {
         participants: [{ name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] }],
     });
     const quiet = () =>
@@ -2072,12 +2048,7 @@ test("an identified goodbye ends an attendance stay whose leave the platform did
     });
     const stays = (leftAtExact?: boolean) =>
         personStays({
-            record: meetingRecordSchema.parse({
-                id: "stays-inexact",
-                title: "",
-                start: now,
-                createdAt: now,
-                createdBy: "new",
+            record: meetingRecord("stays-inexact", {
                 participants: [
                     { name: "Bob Example", stays: [{ fromSec: 0, toSec: 300, source: "goodbye" }], from: [] },
                 ],
@@ -2099,12 +2070,7 @@ test("an identified goodbye ends an attendance stay whose leave the platform did
         })[0]!.stays;
 
     // A roster stay with no end runs to the transcript's end, a bound a departure resolver must not read as a leave.
-    const roster = meetingRecordSchema.parse({
-        id: "roster-bound",
-        title: "",
-        start: now,
-        createdAt: now,
-        createdBy: "new",
+    const roster = meetingRecord("roster-bound", {
         participants: [{ name: "Bob Example", firstSeenSec: 60, from: ["platform-roster"] }],
     });
     expect(rosterPresence(roster, 900)).toEqual([
@@ -2117,12 +2083,7 @@ test("an identified goodbye ends an attendance stay whose leave the platform did
 
 test("presence keeps an attendance leave the platform did not record exactly as a bound, and a recorded one exact", () => {
     const presence = (leftAtExact: boolean, departureSec?: number) => {
-        const record = meetingRecordSchema.parse({
-            id: "presence-inexact",
-            title: "",
-            start: now,
-            createdAt: now,
-            createdBy: "new",
+        const record = meetingRecord("presence-inexact", {
             participants: [{ name: "Bob Example", from: [] }],
             attendance: { from: "teams", people: [{ name: "Bob Example", fromSec: 0, toSec: 600, leftAtExact }] },
         });
@@ -2176,25 +2137,9 @@ test("a name in prose that does not identify the speaker stays a comment", () =>
 });
 
 test("the threshold probe never counts a range an open speaker question decides as applied", () => {
-    const record = meetingRecordSchema.parse({
-        id: "probe-owned",
-        title: "",
-        start: now,
-        createdAt: now,
-        createdBy: "new",
+    const record = meetingRecord("probe-owned", {
         items: [
-            {
-                id: "i1",
-                kind: "speaker-range",
-                label: "Voice",
-                fromSec: 0,
-                toSec: 0,
-                confidence: 0.95,
-                speaker: "Alice Example",
-                rules: [],
-                status: "suggested",
-                suggestedAt: now,
-            },
+            speakerRange("i1", 0, { confidence: 0.95, speaker: "Alice Example" }),
             {
                 id: "i2",
                 kind: "question",
@@ -2333,12 +2278,7 @@ test("items-add accepts a shared evidence group and its answer improves an unask
 });
 
 test("shared-call unknown ranges retain remote candidates only inside their stays and never name a person", () => {
-    const record = meetingRecordSchema.parse({
-        id: "shared",
-        title: "",
-        start: now,
-        createdAt: now,
-        createdBy: "new",
+    const record = meetingRecord("shared", {
         participants: [
             { name: "Bob Example", from: ["user"] },
             {
@@ -2381,28 +2321,16 @@ test("the terminal clip bar keeps the asked forty-to-sixty percent span as its p
 });
 
 test("voice source indices survive an earlier multi-voice transcript expansion", () => {
-    const record = meetingRecordSchema.parse({
-        id: "voice-indices",
-        title: "",
-        start: now,
-        createdAt: now,
-        createdBy: "new",
+    const record = meetingRecord("voice-indices", {
         items: [
-            {
-                id: "i1",
-                kind: "speaker-range",
-                label: "Voice",
-                fromSec: 10,
-                toSec: 10,
+            speakerRange("i1", 10, {
                 status: "confirmed",
                 voices: ["Alice Example", "Bob Example"],
                 segments: [
                     { fromWord: 0, speaker: "Alice Example" },
                     { fromWord: 2, speaker: "Bob Example" },
                 ],
-                rules: [],
-                suggestedAt: now,
-            },
+            }),
         ],
         evidence: {
             voice: {
