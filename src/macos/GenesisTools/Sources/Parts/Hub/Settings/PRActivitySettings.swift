@@ -281,9 +281,8 @@ private struct PRActivityProjectRow: View, Equatable {
         if let state, let error = state.lastError {
             // One sentence; the host's own error behind Details, whole (it was cut at two lines, H21).
             NoticePill(text: state.problemText, more: error, tone: .warning,
-                       fixes: [.details(FailureReport.unexpected(error, outcome: state.problemText,
-                                                                 action: "Poll the PR activity", area: "settings",
-                                                                 app: .launch))])
+                       fixes: [.unexpectedDetails(error, outcome: state.problemText, action: "Poll the PR activity",
+                                                  area: "settings")])
         } else if let state, let ok = HubFormat.date(state.lastOkAt) {
             LiveAgo(date: ok, style: .ago) { "Polled \($0)" }
                 .font(.system(size: 11)).foregroundStyle(.secondary)

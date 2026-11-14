@@ -854,3 +854,13 @@ func projectRoot(of cwd: String) -> String {
     }
     return cwd
 }
+
+extension NoticeFix {
+    /// "Details" on a hub notice for a failure that is not a `tools` call: one place sets the hub area and the
+    /// launch facts, so no call site repeats them.
+    @MainActor
+    static func unexpectedDetails(_ message: String, outcome: String, action: String, area: String = "hub",
+                                  retry: (@MainActor () -> Void)? = nil) -> NoticeFix {
+        .details(FailureReport.unexpected(message, outcome: outcome, action: action, area: area, app: .launch), retry: retry)
+    }
+}

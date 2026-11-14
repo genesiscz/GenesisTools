@@ -143,15 +143,13 @@ struct UsageMain: View {
                     ForEach(usage.sectionErrors, id: \.self) { error in
                         NoticePill(text: "A usage door failed.", more: error, tone: .error,
                                    fixes: [.button("Retry", symbol: "arrow.clockwise") { usage.reload() },
-                                           .details(FailureReport.unexpected(error, outcome: "A usage section did not load",
-                                                                             action: "Load the usage", area: "hub",
-                                                                             app: .launch), retry: { usage.reload() })])
+                                           .unexpectedDetails(error, outcome: "A usage section did not load",
+                                                              action: "Load the usage", retry: { usage.reload() })])
                     }
                     if let error = usage.sectionAckError {
                         NoticePill(text: "The alert was not acknowledged.", more: error, tone: .error,
-                                   fixes: [.details(FailureReport.unexpected(error, outcome: "The alert was not acknowledged",
-                                                                             action: "Acknowledge the alert", area: "hub",
-                                                                             app: .launch))])
+                                   fixes: [.unexpectedDetails(error, outcome: "The alert was not acknowledged",
+                                                              action: "Acknowledge the alert")])
                     }
                     content
                     // How the numbers were counted is a footnote under the section, not a banner above it: the banner

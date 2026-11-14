@@ -257,9 +257,8 @@ struct PRChecksSection: View {
                     .accessibilityLabel("Fetching the failing log")
             } else if let failure = store.failures[url] {
                 NoticePill(text: "The log could not be read", detail: failure, isError: true,
-                           fixes: [.details(FailureReport.unexpected(failure, outcome: "The check's log could not be read",
-                                                                     action: "Read the failing log", area: "hub",
-                                                                     app: .launch))]) { store.dismissFailure(url) }
+                           fixes: [.unexpectedDetails(failure, outcome: "The check's log could not be read",
+                                                      action: "Read the failing log")]) { store.dismissFailure(url) }
             } else if let render = store.logs[url] {
                 logBody(render)
                 toolbar(check, url: url, render: render)
