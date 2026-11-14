@@ -62,18 +62,34 @@ function participantsOf(meeting: Meeting): SourceMeeting["participants"] {
         ...(person.isSelf || person.name === self ? { self: true } : {}),
         from: ["wisprflow"],
     }));
+    const merged = mergeRoster(people, roster);
+    return self && !merged.some((person) => person.name === self)
+        ? [...merged, { name: self, self: true, from: ["wisprflow"] }]
+        : merged;
+}
+
+/**
+ * The platform roster folded into the speaker list by name. A roster row fills in what it knows, but never takes a
+ * self marker away: the speaker map or the local self name set it, and a partial roster row may not carry the field.
+ */
+export function mergeRoster(
+    people: SourceMeeting["participants"],
+    roster: SourceMeeting["participants"]
+): SourceMeeting["participants"] {
+    const merged = people.map((person) => ({ ...person }));
 
     for (const person of roster) {
-        const known = people.find((one) => one.name === person.name);
+        const known = merged.find((one) => one.name === person.name);
         if (known) {
-            Object.assign(known, person, { from: [...new Set([...known.from, ...person.from])] });
+            Object.assign(known, person, {
+                from: [...new Set([...known.from, ...person.from])],
+                ...(known.self || person.self ? { self: true } : {}),
+            });
         } else {
-            people.push(person);
+            merged.push(person);
         }
     }
-    return self && !people.some((person) => person.name === self)
-        ? [...people, { name: self, self: true, from: ["wisprflow"] }]
-        : people;
+    return merged;
 }
 
 function toSourceMeeting(meeting: Meeting): SourceMeeting {

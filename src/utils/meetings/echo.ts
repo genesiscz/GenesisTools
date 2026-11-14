@@ -2,10 +2,17 @@ import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
+import { CONTAINER_CLOCK_FILTER } from "../audio/converter";
 import type { ChannelLayout } from "./energy";
 import type { VoiceMatch } from "./voice";
+
+const { log } = logger.scoped("meetings-echo");
+
+/** The longest recording echo collection reads: eight hours, one block per second. */
+const ECHO_MAX_SEC = 8 * 60 * 60;
 
 export const echoMetricSchema = z.object({
     correlation: z.number().min(-1).max(1),
@@ -26,6 +33,38 @@ export interface AcousticShare {
     acoustic?: (fromSec: number, toSec: number) => EchoMetric | undefined;
     voice?: (fromSec: number, toSec: number) => VoiceMatch | undefined;
 }
+/** How many samples one lag of the coarse echo search averages. */
+const COARSE_STEP = 4;
+
+/** The signal averaged over runs of `step` samples: a box low-pass, then every `step`th value. */
+function boxAverage(signal: Float32Array, step: number): Float32Array {
+    const out = new Float32Array(Math.floor(signal.length / step));
+    for (let i = 0; i < out.length; i++) {
+        let sum = 0;
+        for (let j = 0; j < step; j++) {
+            sum += signal[i * step + j]!;
+        }
+        out[i] = sum / step;
+    }
+    return out;
+}
+
+/** The correlation coefficient of `a` against `b` delayed by `lag`, over the samples `margin` away from both ends. */
+function normalizedCorrelation(options: { a: Float32Array; b: Float32Array; lag: number; margin: number }): number {
+    const { a, b, lag, margin } = options;
+    let aa = 0,
+        bb = 0,
+        ab = 0;
+    for (let i = margin; i < Math.min(a.length, b.length) - margin; i++) {
+        const x = a[i]!,
+            y = b[i - lag]!;
+        aa += x * x;
+        bb += y * y;
+        ab += x * y;
+    }
+    return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+}
+
 /** Positive lag means playback precedes microphone arrival. This linear residual is an estimate, not separated speech. */
 export function correlateEcho(options: {
     mic: Float32Array;
@@ -50,18 +89,24 @@ export function correlateEcho(options: {
         }
         return { correlation: mm > 0 && cc > 0 ? mc / Math.sqrt(mm * cc) : 0, mm, cc, mc, count };
     };
-    let bestLag = 0,
-        best = evaluate(0, 4);
-    for (let lag = -limit; lag <= limit; lag += 4) {
-        const v = evaluate(lag, 4);
-        if (Math.abs(v.correlation) > Math.abs(best.correlation)) {
-            best = v;
-            bestLag = lag;
+    // The coarse pass tries every lag of a copy averaged over COARSE_STEP samples. The average low-passes both
+    // signals, so a delay between two coarse lags still peaks at the nearer one, and the fine pass around it finds
+    // the exact sample. Trying every fourth lag of the raw signals missed a broadband delay off that grid.
+    const micLow = boxAverage(mic, COARSE_STEP),
+        callLow = boxAverage(call, COARSE_STEP),
+        coarseLimit = Math.floor(limit / COARSE_STEP);
+    let coarse = 0,
+        coarseBest = 0;
+    for (let lag = -coarseLimit; lag <= coarseLimit; lag++) {
+        const value = Math.abs(normalizedCorrelation({ a: micLow, b: callLow, lag, margin: coarseLimit }));
+        if (value > coarseBest) {
+            coarseBest = value;
+            coarse = lag * COARSE_STEP;
         }
     }
-    const coarse = bestLag;
-    best = evaluate(bestLag, 1);
-    for (let lag = Math.max(-limit, coarse - 3); lag <= Math.min(limit, coarse + 3); lag++) {
+    let bestLag = coarse,
+        best = evaluate(coarse, 1);
+    for (let lag = Math.max(-limit, coarse - COARSE_STEP); lag <= Math.min(limit, coarse + COARSE_STEP); lag++) {
         const v = evaluate(lag, 1);
         if (Math.abs(v.correlation) > Math.abs(best.correlation)) {
             best = v;
@@ -106,7 +151,15 @@ export async function readEchoCache(options: {
     if (!existsSync(options.cachePath)) {
         return undefined;
     }
-    const parsed = cacheSchema.safeParse(await Bun.file(options.cachePath).json());
+    let stored: unknown;
+    try {
+        stored = await Bun.file(options.cachePath).json();
+    } catch (error) {
+        // A torn or hand-damaged cache is a miss: readers fall back to raw energy and collection writes it again.
+        log.debug({ error, cachePath: options.cachePath }, "echo cache does not read; treated as missing");
+        return undefined;
+    }
+    const parsed = cacheSchema.safeParse(stored);
     return parsed.success &&
         parsed.data.source === sourceKey(options.audioPath) &&
         parsed.data.layout === options.layout
@@ -118,7 +171,11 @@ export async function collectEcho(options: {
     audioPath: string;
     cachePath: string;
     layout: ChannelLayout;
+    /** The longest recording read, in seconds; eight hours unless a caller narrows it. */
+    maxSec?: number;
 }): Promise<EchoCache | undefined> {
+    const maxSec = options.maxSec ?? ECHO_MAX_SEC;
+    const bound = `Echo collection exceeds the audio bound of ${maxSec} seconds (eight hours unless narrowed)`;
     if (options.layout === "unknown") {
         return undefined;
     }
@@ -135,7 +192,7 @@ export async function collectEcho(options: {
             "-select_streams",
             "a:0",
             "-show_entries",
-            "stream=channels",
+            "stream=channels:format=duration",
             "-of",
             "json",
             options.audioPath,
@@ -151,10 +208,17 @@ export async function collectEcho(options: {
         throw new Error(`Echo channel probe failed (${probeCode}): ${probeError.slice(-500)}`);
     }
     const parsedProbe = z
-        .object({ streams: z.array(z.object({ channels: z.number() })) })
+        .object({
+            streams: z.array(z.object({ channels: z.number() })),
+            format: z.object({ duration: z.union([z.string(), z.number()]).optional() }).optional(),
+        })
         .parse(SafeJSON.parse(metadata));
     if (parsedProbe.streams[0]?.channels !== 2) {
         return undefined;
+    }
+    // The bound is checked before anything is decoded, so an oversized recording never fills the temporary folder.
+    if (Number(parsedProbe.format?.duration ?? 0) > maxSec) {
+        throw new Error(bound);
     }
     mkdirSync(dirname(options.cachePath), { recursive: true });
     const pcm = join(dirname(options.cachePath), `echo-${randomUUID()}.s16`);
@@ -169,10 +233,17 @@ export async function collectEcho(options: {
                 options.audioPath,
                 "-map",
                 "0:a:0",
+                // The same clock as the energy and the transcript: a delayed start or a gap is padded, not closed.
+                "-af",
+                CONTAINER_CLOCK_FILTER,
                 "-ac",
                 "2",
                 "-ar",
                 "2000",
+                // A duration the probe could not read is still bounded: one second past the bound is decoded at
+                // most, and the block count below refuses it.
+                "-t",
+                String(maxSec + 1),
                 "-f",
                 "s16le",
                 pcm,
@@ -192,8 +263,8 @@ export async function collectEcho(options: {
                 if (read === 0) {
                     break;
                 }
-                if (blocks.length >= 8 * 60 * 60) {
-                    throw new Error("Echo collection exceeds the eight-hour audio bound");
+                if (blocks.length >= maxSec) {
+                    throw new Error(bound);
                 }
                 const n = Math.floor(read / 4),
                     mic = new Float32Array(n),

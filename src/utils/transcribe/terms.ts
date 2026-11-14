@@ -512,24 +512,42 @@ export function scopedVocabulary(options: {
     ]);
 }
 
+const ACRONYM_PATTERN = /^(\p{Lu}[\p{Lu}\p{N}]+)(\p{Ll}*)$/u;
+
+/** What one meeting offers every proposal: its vocabulary terms that were spoken, and how often each acronym stem was. */
+export interface MeetingTerms {
+    scoped: VocabTerm[];
+    acronyms: Map<string, number>;
+}
+
+/** Reads the meeting's words once, so the proposals for many unknown words do not tokenize it again each. */
+export function meetingTermsOf(entries: TranscriptEntry[], vocab: VocabTerm[]): MeetingTerms {
+    const tokens = entries.flatMap((entry) => words(entry.text));
+    const spoken = new Set(tokens.map((word) => word.toLowerCase()));
+    const acronyms = new Map<string, number>();
+    for (const token of tokens) {
+        const stem = ACRONYM_PATTERN.exec(token)?.[1];
+        if (stem) {
+            acronyms.set(stem, (acronyms.get(stem) ?? 0) + 1);
+        }
+    }
+    return { scoped: vocab.filter((term) => spoken.has(term.term.toLowerCase())), acronyms };
+}
+
 /** A one-edit proposal uses scoped vocabulary or a stronger acronym spelling observed in this meeting. */
 export function meetingTermCandidates(options: {
     heard: string;
     entries: TranscriptEntry[];
     vocab: VocabTerm[];
 }): TermCandidate[] {
-    const tokens = options.entries.flatMap((entry) => words(entry.text));
-    const spoken = new Set(tokens.map((word) => word.toLowerCase()));
-    const acronymPattern = /^(\p{Lu}[\p{Lu}\p{N}]+)(\p{Ll}*)$/u;
-    const acronym = acronymPattern.exec(options.heard);
-    const base = acronym?.[1] ?? options.heard;
-    const counts = new Map<string, number>();
-    for (const token of tokens) {
-        const stem = acronymPattern.exec(token)?.[1];
-        if (stem) {
-            counts.set(stem, (counts.get(stem) ?? 0) + 1);
-        }
-    }
+    return candidatesInMeeting(meetingTermsOf(options.entries, options.vocab), options.heard);
+}
+
+/** {@link meetingTermCandidates} on a meeting read once by {@link meetingTermsOf}. */
+export function candidatesInMeeting(meeting: MeetingTerms, heard: string): TermCandidate[] {
+    const acronym = ACRONYM_PATTERN.exec(heard);
+    const base = acronym?.[1] ?? heard;
+    const counts = meeting.acronyms;
     const observed = acronym
         ? [...counts]
               .filter(([term, count]) => term !== base && count > (counts.get(base) ?? 0) && count >= 2)
@@ -550,11 +568,11 @@ export function meetingTermCandidates(options: {
             base[differences[1]!] === term[differences[0]!]
         );
     };
-    return buildVocabulary([options.vocab.filter((term) => spoken.has(term.term.toLowerCase())), observed])
+    return buildVocabulary([meeting.scoped, observed])
         .filter((term) => oneEdit(term.term))
         .map((term) => ({
             ...term,
-            term: acronym ? term.term + (acronym[2] ?? "") : inflectedCandidate(options.heard, term.term),
+            term: acronym ? term.term + (acronym[2] ?? "") : inflectedCandidate(heard, term.term),
             confidence: 80,
         }));
 }
@@ -785,7 +803,11 @@ export function findUnknownWords(options: {
     const context = new Set((options.context ?? []).map((t) => compact(t.term)));
     const index = new TermIndex(options.vocab);
     const found = new Map<string, UnknownWord>();
-    const near = (heard: string) => meetingTermCandidates({ heard, entries: options.entries, vocab: options.vocab });
+    let meeting: MeetingTerms | undefined;
+    const near = (heard: string) => {
+        meeting ??= meetingTermsOf(options.entries, options.vocab);
+        return candidatesInMeeting(meeting, heard);
+    };
     const passed = new Set<string>();
 
     for (const [entryIndex, entry] of options.entries.entries()) {
@@ -826,13 +848,14 @@ export function findUnknownWords(options: {
                 continue;
             }
 
+            const nearby = near(word);
             found.set(key, {
                 heard: word,
                 occurrences: 1,
                 examples: [exampleAt(options.entries, entryIndex, word)],
                 verdict,
-                candidates: near(word).length
-                    ? near(word)
+                candidates: nearby.length
+                    ? nearby
                     : /^\p{Lu}{2,}\p{Ll}*$/u.test(word)
                       ? []
                       : (index.score(keys, context, WEAK_MIN)?.candidates ?? []),

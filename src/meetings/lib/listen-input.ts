@@ -1,4 +1,5 @@
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { prepareFindings } from "./add-findings";
 import { type Finding, findingsFileSchema } from "./findings";
 import { openQuestions, questionIdOf } from "./questions";
 
@@ -25,4 +26,14 @@ export function selectedQuestionIds(record: MeetingRecord, refs: readonly string
             })
         ),
     ];
+}
+
+/**
+ * The open questions an ad-hoc round asks: the item each submitted finding became, or the open one it repeats. Read
+ * from the record after the add, the ids are the stored ones, not the ids a preparation hands out before it.
+ */
+export function roundQuestionIds(record: MeetingRecord, findings: Finding[]): string[] {
+    const { added, duplicates } = prepareFindings({ findings, items: record.items });
+    const open = new Set(openQuestions(record).map((question) => question.id));
+    return [...new Set([...duplicates, ...added].map((item) => item.id).filter((id) => open.has(id)))];
 }

@@ -36,7 +36,7 @@ import {
     refineSplitClip,
     writeQuestionClips,
 } from "../lib/listen-clips";
-import { listenQuestionFindings, selectedQuestionIds } from "../lib/listen-input";
+import { listenQuestionFindings, roundQuestionIds, selectedQuestionIds } from "../lib/listen-input";
 import { addQualityQuestions, clipProgress, qualityVoiceFeatures } from "../lib/listen-quality";
 import {
     type AskedQuestion,
@@ -835,6 +835,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                 pendingFindings = listenQuestionFindings(SafeJSON.parse(text));
                 const prepared = prepareFindings({ findings: pendingFindings, items: meeting.items });
                 meeting = { ...meeting, items: [...meeting.items, ...prepared.added] };
+                selected = roundQuestionIds(meeting, pendingFindings);
             }
         }
     } catch (error) {
@@ -899,6 +900,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     action: { kind: "add", findings: pendingFindings },
                 });
                 meeting = store.read(meeting.id) ?? meeting;
+                selected = roundQuestionIds(meeting, pendingFindings);
             } finally {
                 adding.close();
             }

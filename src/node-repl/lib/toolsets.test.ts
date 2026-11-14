@@ -7,6 +7,7 @@ import { SessionRecorderControl } from "@app/control/lib/recording-session-contr
 import type { AppStatus } from "@app/macos/lib/permissions/app";
 import * as appModule from "@app/macos/lib/permissions/app";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
+import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -58,6 +59,7 @@ import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
@@ -1949,6 +1951,46 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             allowDuplicates: true,
         });
         expect(new MeetingStore().read(record.id)?.items).toHaveLength(2);
+    });
+
+    // #805: the items.add schema took force, but the adapter did not pass it on, so force: true still refused the term.
+    test("meetings: items.add refuses a dead line term anchor and adds it with force", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Forced anchor", start: "2026-11-02T16:30:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const source: SourceMeeting = {
+            sourceMeetingId: "forced-anchor",
+            title: "Forced anchor",
+            start: "2026-11-02T16:30:00.000Z",
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript: [
+                { startSec: 0, speaker: "Speaker 1", text: "Hello there" },
+                { startSec: 5, speaker: "Speaker 2", text: "Other voice" },
+            ],
+        };
+        const loaded = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(source);
+        try {
+            const meetings = await loadMeetings();
+            const meeting = meetings.open(record.id);
+            const finding = {
+                kind: "term",
+                at: 0,
+                heard: "Other",
+                proposed: "Another",
+                scope: "line",
+                confidence: 0.8,
+                reason: "a fixture",
+            };
+            await expect(meeting.items.add({ findings: [finding] })).rejects.toThrow("pass --force");
+            expect(new MeetingStore().read(record.id)?.items).toHaveLength(0);
+            await meeting.items.add({ findings: [finding], force: true });
+            expect(new MeetingStore().read(record.id)?.items).toMatchObject([{ kind: "term", status: "suggested" }]);
+        } finally {
+            loaded.mockRestore();
+        }
     });
 
     test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {

@@ -28,6 +28,28 @@ export function microphoneCandidates(record: MeetingRecord, atSec: number, owner
         });
 }
 
+type AttendanceStay = NonNullable<MeetingRecord["attendance"]>["people"][number];
+
+/** The meeting's length in seconds, when its end is known. */
+function meetingEndSec(record: MeetingRecord): number | undefined {
+    return record.end ? (Date.parse(record.end) - Date.parse(record.start)) / 1000 : undefined;
+}
+
+/**
+ * The presence a record without attendance shows, as `rosterPresence` reads it: each participant's own stays, else
+ * one stay from the first time they were seen; an open stay runs to `endSec`.
+ */
+function rosterStays(record: MeetingRecord, endSec: number): AttendanceStay[] {
+    return record.participants.flatMap((person) => {
+        const stays: Array<{ fromSec: number; toSec?: number }> =
+            person.stays ?? (person.firstSeenSec === undefined ? [] : [{ fromSec: person.firstSeenSec }]);
+        return stays.flatMap((stay): AttendanceStay[] => {
+            const toSec = stay.toSec ?? endSec;
+            return toSec > stay.fromSec ? [{ name: person.name, fromSec: stay.fromSec, toSec }] : [];
+        });
+    });
+}
+
 export async function editMeetingPerson(options: {
     store: MeetingStore;
     meeting: string;
@@ -41,7 +63,7 @@ export async function editMeetingPerson(options: {
         throw new Error("A stored meeting and a nonempty person name are required.");
     }
     const fromSec = edit.fromSec ?? 0;
-    const toSec = edit.toSec ?? (record.end ? (Date.parse(record.end) - Date.parse(record.start)) / 1000 : undefined);
+    const toSec = edit.toSec ?? meetingEndSec(record);
     if (
         edit.action === "add" &&
         (!Number.isFinite(fromSec) || fromSec < 0 || toSec === undefined || !Number.isFinite(toSec) || toSec <= fromSec)
@@ -51,23 +73,30 @@ export async function editMeetingPerson(options: {
     if (edit.atMic && edit.via) {
         throw new Error("Choose --at-mic or --via, not both.");
     }
-    const atMic = edit.atMic ?? (!edit.via && record.seats?.room.some((person) => sameName(person, name)));
-    const via =
-        edit.via ??
-        (edit.atMic === undefined && !atMic
-            ? record.seats?.microphones?.find((group) => group.people.some((person) => sameName(person, name)))
-                  ?.deviceId
-            : undefined);
     return store.update(
         record.id,
         { command: "attendance", change: `${edit.action} meeting person ${name}` },
         (next) => {
             const same = (value: string) => sameName(value, name);
+            // An omitted placement is read from the record as it is under the lock: an edit that moved the person
+            // while this one waited is kept.
+            const atMic = edit.atMic ?? (!edit.via && next.seats?.room.some((person) => same(person)));
+            const via =
+                edit.via ??
+                (edit.atMic === undefined && !atMic
+                    ? next.seats?.microphones?.find((group) => group.people.some((person) => same(person)))?.deviceId
+                    : undefined);
+            const prior = next.participants.find((person) => same(person.name));
+            const priorSeat = next.seats?.remote.find((person) => same(person.name));
             if (options.selfName && !same(options.selfName) && !next.participants.some((person) => person.self)) {
                 next.participants.push({ name: options.selfName, self: true, from: ["source"] });
             }
+            const endSec = meetingEndSec(next) ?? toSec;
+            // A record without attendance shows its roster's stays; the first manual table starts from them, so one
+            // edited person never hides everyone else.
+            const table = next.attendance?.people ?? (endSec === undefined ? [] : rosterStays(next, endSec));
             next.participants = next.participants.filter((person) => !same(person.name));
-            const stays = (next.attendance?.people ?? []).filter((person) => !same(person.name));
+            const stays = table.filter((person) => !same(person.name));
             const seats = next.seats ?? { room: [], remote: [] };
             seats.room = seats.room.filter((person) => !same(person));
             seats.remote = seats.remote.filter((person) => !same(person.name));
@@ -75,7 +104,6 @@ export async function editMeetingPerson(options: {
                 .map((group) => ({ ...group, people: group.people.filter((person) => !same(person)) }))
                 .filter((group) => group.people.length);
             if (edit.action === "add") {
-                const prior = record.participants.find((person) => same(person.name));
                 next.participants.push({
                     ...prior,
                     name,
@@ -95,7 +123,6 @@ export async function editMeetingPerson(options: {
                         seats.microphones.push({ id: "self", people: [...new Set([...(self ? [self] : []), name])] });
                     }
                 } else {
-                    const priorSeat = record.seats?.remote.find((person) => same(person.name));
                     seats.remote.push({ ...priorSeat, name, fromSec, toSec: toSec! });
                     if (via) {
                         const owner = via.trim();
@@ -119,8 +146,12 @@ export async function editMeetingPerson(options: {
                 }
             }
             next.seats = seats;
-            next.attendance = { from: next.attendance?.from ?? "user", people: stays };
-            next.sections = presenceSections(stays);
+            // A removal from a record with no attendance and no known end has no table to write: an empty one would
+            // hide everyone, while the roster without the person already leaves them out.
+            if (next.attendance || endSec !== undefined || stays.length > 0) {
+                next.attendance = { from: next.attendance?.from ?? "user", people: stays };
+                next.sections = presenceSections(stays);
+            }
         }
     );
 }

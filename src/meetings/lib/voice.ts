@@ -49,7 +49,14 @@ export function anchoredMeetingVoices(options: {
             : record.seats.remote.map((person) => person.name)
         : undefined;
     const anchors = new Map<number, string>();
+    const levels = new Map(options.features.map((feature) => [feature.index, feature.channels]));
     for (const line of lines) {
+        // A confirmed speaker owns the line, not this channel's audio of it: a line louder on the other channel is
+        // that channel's voice leaking in (or room speech under the call), so it anchors nothing here.
+        const level = levels.get(line.index);
+        if ((level?.[channel]?.rms ?? 0) < (level?.[1 - channel]?.rms ?? 0)) {
+            continue;
+        }
         const assignments =
             record.speakers.assignments?.filter(
                 (item) =>

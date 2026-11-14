@@ -94,7 +94,8 @@ export function parseRoster(raw: string, selfName?: string): NonNullable<Meeting
         return [
             {
                 name: person.self && selfName ? selfName : participantName(person.name),
-                self: person.self,
+                // A roster row without the field says nothing about self: no key, so a merge keeps a known marker.
+                ...(person.self !== undefined ? { self: person.self } : {}),
                 firstSeenSec: (person.firstSeenMs ?? 0) / 1000,
                 from: ["platform-roster"],
             },
