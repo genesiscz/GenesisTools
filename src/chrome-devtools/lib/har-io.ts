@@ -3,6 +3,7 @@
  * The conversion itself is the chrome-har port in ./har/build.ts.
  */
 import { localNetworkBlockOf } from "@genesiscz/utils/chrome-devtools/permissions";
+import { redactMultipartParts } from "@genesiscz/utils/http/multipart-parts";
 import { sensitiveHeaderKind } from "@genesiscz/utils/http/sensitive-headers";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -285,10 +286,6 @@ const FORM_PAIR = /(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g;
  */
 const LINE_PAIR = /(^|[\r\n])([^=\r\n]+)=([^\r\n]*)/g;
 
-/** One multipart/form-data part: its headers (one names the field), a blank line, then its value up to the boundary. */
-const MULTIPART_PART =
-    /(content-disposition:[^\r\n]*\bname="([^"]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([\s\S]*?)(?=\r?\n--)/gi;
-
 /**
  * The credentials in a non-JSON POST body: multipart parts, then text/plain lines, then URL-encoded pairs. Only a
  * body declared URL-encoded skips the line pass; any other body (text/plain, also `fetch` with a string body) may
@@ -296,9 +293,7 @@ const MULTIPART_PART =
  */
 function redactFormText(text: string, mimeType: string | undefined): string {
     const urlEncoded = /^\s*application\/x-www-form-urlencoded\b/i.test(mimeType ?? "");
-    const parts = text.replace(MULTIPART_PART, (part, head: string, name: string) =>
-        isSensitiveParam(name) ? `${head}[REDACTED]` : part
-    );
+    const parts = redactMultipartParts(text, mimeType, (name) => (isSensitiveParam(name) ? "[REDACTED]" : null));
     const lines = urlEncoded
         ? parts
         : parts.replace(LINE_PAIR, (pair, separator: string, name: string) =>

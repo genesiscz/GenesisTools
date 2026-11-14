@@ -18,6 +18,7 @@
  * - "keep": leave the value untouched
  */
 import type { HarEntry, HarFile, HarHeader } from "@app/har-analyzer/types";
+import { redactMultipartParts } from "@genesiscz/utils/http/multipart-parts";
 import { sensitiveHeaderKind } from "@genesiscz/utils/http/sensitive-headers";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -143,10 +144,6 @@ const KEY_KINDS: Record<string, RedactionKind> = {
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.([A-Za-z]{2,})/g;
-
-/** One multipart/form-data part: its headers (one names the field), a blank line, then its value up to the boundary. */
-const MULTIPART_PART =
-    /(content-disposition:[^\r\n]*\bname="([^"]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([\s\S]*?)(?=\r?\n--)/gi;
 
 // File-extension pseudo-TLDs that make `image@2x.png` look like an email.
 const EMAIL_TLD_BLOCKLIST = new Set([
@@ -478,20 +475,30 @@ class Redactor {
 
             return masked === null ? pair : `${head}${name}=${masked}`;
         };
+        // A name after `&` is URL-encoded, so it is decoded before it is matched (`pass%77ord` is `password`).
+        const maskEncodedPair = (pair: string, head: string, name: string, value: string): string => {
+            let decoded = name;
+
+            try {
+                decoded = decodeURIComponent(name.replace(/\+/g, " "));
+            } catch {
+                // Malformed percent-encoding; match against the raw name.
+            }
+
+            const masked = this.maskNamed(decoded, value, location);
+
+            return masked === null ? pair : `${head}${name}=${masked}`;
+        };
         const pairs = text
             .replace(/(^|[\r\n])([^=\r\n]+)=([^\r\n]*)/g, maskPair)
-            .replace(/(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g, maskPair);
+            .replace(/(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g, maskEncodedPair);
 
         return this.redactValuePatterns(pairs, location, { emails: false });
     }
 
     /** A multipart/form-data body: the value of a part whose field name is a known key is masked whole. */
-    private redactMultipartText(text: string, location: string): string {
-        const parts = text.replace(MULTIPART_PART, (part, head: string, name: string, value: string) => {
-            const masked = this.maskNamed(name, value, location);
-
-            return masked === null ? part : `${head}${masked}`;
-        });
+    private redactMultipartText(text: string, mimeType: string, location: string): string {
+        const parts = redactMultipartParts(text, mimeType, (name, value) => this.maskNamed(name, value, location));
 
         return this.redactValuePatterns(parts, location, { emails: false });
     }
@@ -606,7 +613,7 @@ class Redactor {
         }
 
         if (normalizedMime === "multipart/form-data") {
-            return this.redactMultipartText(text, location);
+            return this.redactMultipartText(text, mimeType, location);
         }
 
         // Raw/unknown bodies: JWTs only; email matching in HTML would scrub

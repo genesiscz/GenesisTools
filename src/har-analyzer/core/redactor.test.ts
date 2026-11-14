@@ -141,6 +141,50 @@ describe("redactHar", () => {
         expect(redacted).toContain("hello");
     });
 
+    test("masks a multipart secret whole when it holds a line that starts with dashes", () => {
+        const text = [
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="password"',
+            "",
+            "first",
+            "--ordinary-value-line",
+            "remaining-secret",
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="note"',
+            "",
+            "hello",
+            "--fixture-boundary--",
+            "",
+        ].join("\r\n");
+        const har = makeHar([
+            makeEntry({
+                request: { postData: { mimeType: "multipart/form-data; boundary=fixture-boundary", text } },
+            }),
+        ]);
+
+        const redacted = redactedText(redactHar(har).har);
+
+        expect(redacted).not.toContain("first");
+        expect(redacted).not.toContain("ordinary-value-line");
+        expect(redacted).not.toContain("remaining-secret");
+        expect(redacted).toContain("hello");
+    });
+
+    test("masks a URL-encoded pair with an encoded name sent as text/plain", () => {
+        const har = makeHar([
+            makeEntry({
+                request: {
+                    postData: { mimeType: "text/plain;charset=UTF-8", text: "note=hello&pass%77ord=plain-secret" },
+                },
+            }),
+        ]);
+
+        const redacted = redactedText(redactHar(har).har);
+
+        expect(redacted).not.toContain("plain-secret");
+        expect(redacted).toContain("note=hello");
+    });
+
     test("redacts postData params array", () => {
         const har = makeHar([
             makeEntry({
