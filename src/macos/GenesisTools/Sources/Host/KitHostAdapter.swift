@@ -1,6 +1,5 @@
 @_exported import GenesisKitBase
 import Foundation
-import GenesisKitBase
 
 // GenesisKitBase (../../GenesisKit, its small base library) is visible in every file of the host, and in every part
 // that imports the host, through the import above. A part imports the full GenesisKit itself. Never declare a copy of
