@@ -79,7 +79,7 @@ struct AcousticEvidenceView: View {
         .task {
             guard let service else { failure = "Meetings service unavailable"; return }
             do { inspection = try await service.call(MeetingsAPI.AcousticInspect.self, params) }
-            catch { failure = error.localizedDescription }
+            catch { failure = asFailure(error).sentence }
         }
         .onDisappear { sound?.stop() }
     }
@@ -89,7 +89,7 @@ struct AcousticEvidenceView: View {
         Task { @MainActor in
             defer { busy = false }
             do { tracks = try await service.call(MeetingsAPI.AcousticClip.self, params) }
-            catch { failure = error.localizedDescription }
+            catch { failure = asFailure(error).sentence }
         }
     }
     private func score() {
@@ -98,7 +98,7 @@ struct AcousticEvidenceView: View {
         Task { @MainActor in
             defer { busy = false }
             do { voice = try await service.call(MeetingsAPI.VoiceScore.self, .init(meeting: meeting, fromSec: params.fromSec, toSec: params.toSec, channel: layout == "left-mic" ? 1 : 0)) }
-            catch { failure = error.localizedDescription }
+            catch { failure = asFailure(error).sentence }
         }
     }
     private func collect() {
@@ -109,7 +109,7 @@ struct AcousticEvidenceView: View {
             do {
                 _ = try await service.call(MeetingsAPI.AcousticCollect.self, .init(meeting: meeting), timeout: 300)
                 inspection = try await service.call(MeetingsAPI.AcousticInspect.self, params)
-            } catch { failure = error.localizedDescription }
+            } catch { failure = asFailure(error).sentence }
         }
     }
     private func collectVoices() {
@@ -118,7 +118,7 @@ struct AcousticEvidenceView: View {
         Task { @MainActor in
             defer { busy = false }
             do { _ = try await service.call(MeetingsAPI.VoiceCollect.self, .init(meeting: meeting), timeout: 3600) }
-            catch { failure = error.localizedDescription }
+            catch { failure = asFailure(error).sentence }
         }
     }
     private func prepareModel() {
@@ -127,7 +127,7 @@ struct AcousticEvidenceView: View {
         Task { @MainActor in
             defer { busy = false }
             do { _ = try await service.call(MeetingsAPI.VoicePrepare.self, .init(download: true), timeout: 300) }
-            catch { failure = error.localizedDescription }
+            catch { failure = asFailure(error).sentence }
         }
     }
     private func enrol() {
@@ -140,12 +140,14 @@ struct AcousticEvidenceView: View {
                     .init(meeting: meeting, fromSec: params.fromSec, toSec: params.toSec,
                           channel: layout == "left-mic" ? 1 : 0,
                           person: enrolmentName.trimmingCharacters(in: .whitespacesAndNewlines), confirmed: true))
-            } catch { failure = error.localizedDescription }
+            } catch { failure = asFailure(error).sentence }
         }
     }
     private func play(_ path: String) {
         sound?.stop()
+        // The meeting's own playback pauses first: the channels are compared one at a time.
+        NotificationCenter.default.post(name: MomentPlayer.previewWillPlay, object: nil)
         do { sound = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path)); sound?.play() }
-        catch { failure = error.localizedDescription }
+        catch { failure = asFailure(error).sentence }
     }
 }

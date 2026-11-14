@@ -300,6 +300,19 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertNil(TimelineDock.heldSpan(nil, for: sameMeeting))
     }
 
+    /// "Channel and voice evidence…" in whole-meeting mode analyses where the reader is, not the meeting's first minute.
+    func testAcousticEvidenceStartsWhereTheReaderIs() {
+        var whole = MomentLayer(meeting: "a", target: .time(0), source: .row, kind: .file, label: "a")
+        whole.startSec = 0
+        whole.endSec = 3600
+        XCTAssertEqual(TimelineDock.acousticRange(of: whole, at: 1800), 1800...1860)
+        XCTAssertEqual(TimelineDock.acousticRange(of: whole, at: 3590), 3540...3600, "near the end it stays inside the recording")
+        XCTAssertEqual(TimelineDock.acousticRange(of: whole, at: nil), 0...60, "no position yet: the start")
+        var clip = MomentLayer(meeting: "a", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        clip.startSec = 100
+        clip.endSec = 125
+        XCTAssertEqual(TimelineDock.acousticRange(of: clip, at: 110), 100...125, "a clip is analysed whole")
+    }
 
 
     /// G-CARD-1: the card opens after the hover delay, stays while the pointer travels into it, closes 300 ms after

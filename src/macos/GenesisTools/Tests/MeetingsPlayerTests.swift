@@ -690,4 +690,13 @@ extension MeetingsPlayerTests {
         try await until("the first Moment plays") { player.phase == .playing }
         XCTAssertEqual(player.top?.target, .item("i1"))
     }
+
+    func testAnEvidencePreviewPausesTheMeetingsPlayback() async throws {
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        NotificationCenter.default.post(name: MomentPlayer.previewWillPlay, object: nil)
+        XCTAssertEqual(player.phase, .paused, "the evidence's own recording never plays over the meeting")
+        XCTAssertEqual(playingCount, 0)
+    }
 }

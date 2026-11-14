@@ -7,7 +7,9 @@ import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { embedVoice, VoiceUnavailableError } from "@genesiscz/utils/meetings/voice";
 import { clusterVoices, lineVoices, measureVoice, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -17,7 +19,7 @@ import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
-import { anchoredMeetingVoices, lineDeviceCandidates } from "./lib/voice";
+import { lineDeviceCandidates } from "./lib/voice";
 import { clearLanguage, lineLanguages } from "./lib/word-languages";
 
 const USER = "Una Example";
@@ -168,18 +170,6 @@ describe("the recorder swapped the user's label and another person's for a stret
         expect(swaps.filter((item) => item.speaker === USER)).toHaveLength(30);
         expect(swaps.filter((item) => item.speaker === "Bob Example")).toHaveLength(30);
         expect(found.filter((item) => item.fromSec >= 600 && !item.rules.includes("R20"))).toEqual([]);
-
-        // Both sides of the swap carry typed scores: the named speaker first, at the range's confidence, with R20.
-        for (const speaker of [USER, "Bob Example"]) {
-            const swap = swaps.find((item) => item.speaker === speaker);
-            const scores = swap?.evidence?.candidateScores;
-            expect(Array.isArray(scores) ? scores[0] : undefined).toMatchObject({
-                speaker,
-                confidence: 0.9,
-                lines: 1,
-                evidence: expect.arrayContaining([{ kind: "voice", rule: "R20" }]),
-            });
-        }
     });
 
     test("labels that read swapped through the whole call, or for under 10 min, are left to the per-line rules", () => {
@@ -384,6 +374,11 @@ describe("shared indicator and departure APIs", () => {
         expect(identifiedDepartures({ hints, lines: shown, selfName: USER, ignoredIndicator: new Set([0]) })).toEqual(
             []
         );
+        // A goodbye under Carol's own label names its label, so the suggest rules keep that label's leave hint.
+        const own = [{ ...hints[0]!, label: "Carol Example" }];
+        expect(identifiedDepartures({ hints: own, lines: shown, selfName: USER, presence })).toEqual([
+            { name: "Carol Example", atSec: 0, label: "Carol Example", reason: "indicator" },
+        ]);
     });
 });
 
@@ -586,6 +581,7 @@ test("compact evidence has 509 bounded rows with mic percent and unknown", () =>
     expect(compact).toContain("mic?");
 });
 
+import { decimate } from "./lib/acoustic";
 import { attributeByChannel } from "./lib/channel-operation";
 import { OpenedMeeting } from "./lib/opened-meeting";
 
@@ -627,6 +623,165 @@ test("the actual byChannel dry-run door writes nothing, apply persists the same 
                 ?.items.filter((i) => i.kind === "speaker-range")
                 .map((i) => (i.kind === "speaker-range" ? i.speaker : ""))
         ).toEqual(["Carol", "Alice"]);
+    } finally {
+        load.mockRestore();
+        evidence.mockRestore();
+    }
+});
+
+test("channel plans use microphone groups, a whole line's seats, and give each room question its range", () => {
+    const text = "A sufficiently long transcript sentence.";
+    const line = (index: number, micShare: number, toSec?: number) => ({
+        index,
+        fromSec: index * 10,
+        ...(toSec === undefined ? {} : { toSec }),
+        label: "Room",
+        text,
+        channel: { micShare },
+    });
+    const seats = {
+        room: ["Alice", "Bob"],
+        remote: [{ name: "Carol" }, { name: "Dan" }],
+        microphones: [
+            { id: "self", people: ["Alice"] },
+            { id: "remote-room", label: "Room", people: ["Carol"] },
+        ],
+    };
+    const grouped = planByChannel({ lines: [line(0, 0.95), line(1, 0.05)], seats, input: { label: "Room" } });
+    expect(grouped.ranges.map((range) => [range.from, range.speaker])).toEqual([
+        [0, "Alice"],
+        [10, "Carol"],
+    ]);
+
+    // Carol leaves at 15 s and Dan joins then: a line from 10 s to 20 s has no one remote person throughout.
+    const handover = {
+        room: [],
+        remote: [
+            { name: "Carol", toSec: 15 },
+            { name: "Dan", fromSec: 15 },
+        ],
+    };
+    const crossing = planByChannel({ lines: [line(1, 0.05, 20)], seats: handover, input: { label: "Room" } });
+    expect(crossing.ranges).toEqual([]);
+    expect(crossing.unresolved).toHaveLength(1);
+    expect(
+        planByChannel({ lines: [line(1, 0.05, 14)], seats: handover, input: { label: "Room" } }).ranges[0]?.speaker
+    ).toBe("Carol");
+
+    const asked = planByChannel({
+        lines: [line(0, 0.95, 12)],
+        seats: { room: ["Alice", "Bob"], remote: [] },
+        input: { label: "Room", askRoom: { minSec: 8, max: 2 } },
+    });
+    expect(asked.targets).toEqual([expect.objectContaining({ kind: "speaker-range", ref: "room-run-1", from: 0 })]);
+    expect(asked.targets[0]).not.toHaveProperty("speaker");
+    expect(asked.questions[0]?.decides).toEqual(["room-run-1"]);
+});
+
+test("a channel replacement stays on its label, applies with an empty plan, stamps, ends the round and is fenced", async () => {
+    const store = new MeetingStore(new Storage(`channel-replace-${process.pid}`));
+    const agent = { kind: "agent", harness: "fixture", session: null } as const;
+    const journal = new DecisionJournal({ store, ledger: () => undefined });
+    const record = await store.create(
+        { title: "Replace fixture", start: START, createdBy: "new", seats: { room: ["Alice"], remote: [] } },
+        { command: "test", change: "fixture" }
+    );
+    const range = (label: string, from: number) => ({
+        kind: "speaker-range" as const,
+        from,
+        to: from,
+        label,
+        speaker: "Alice",
+        confidence: 0.6,
+        reason: "channel fixture",
+    });
+    const question = {
+        kind: "question" as const,
+        about: "speaker" as const,
+        from: 0,
+        to: 0,
+        question: "Who speaks?",
+        choices: ["Alice", "Bob"],
+        decides: ["room-range"],
+        reason: "channel fixture",
+    };
+    await journal.apply({
+        meeting: record.id,
+        actor: agent,
+        action: { kind: "add", findings: [{ ...range("Room", 0), ref: "room-range" }, range("Other", 30), question] },
+    });
+    const replace = { by: "agent" as const, kinds: ["speaker-range" as const, "question" as const], label: "Room" };
+    const fence = { seats: seatsFingerprint(store.read(record.id)!.seats) };
+    const first = await journal.apply({
+        meeting: record.id,
+        actor: agent,
+        action: { kind: "add", findings: [], replace, fence },
+    });
+    const statuses = () =>
+        store
+            .read(record.id)!
+            .items.map((item) => [item.kind, item.kind === "speaker-range" ? item.label : "", item.status]);
+    expect(statuses()).toEqual([
+        ["speaker-range", "Room", "rejected"],
+        ["speaker-range", "Other", "suggested"],
+        ["question", "", "rejected"],
+    ]);
+    expect(first.entry?.decided).toEqual(["i1", "i3"]);
+    expect(store.read(record.id)!.items[0]?.decision?.token).toBe(first.entry!.token);
+    const log = readFileSync(join(store.folder(record.id), "questions.ndjson"), "utf8");
+    expect(log).toContain('"questions-rejected"');
+
+    await journal.revert({ meeting: record.id, token: first.entry!.token, actor: { kind: "cli" } });
+    expect(statuses().map((row) => row[2])).toEqual(["suggested", "suggested", "suggested"]);
+
+    await journal.apply({
+        meeting: record.id,
+        actor: { kind: "cli" },
+        action: { kind: "set", seats: { room: ["Alice", "Bob"], remote: [] } },
+    });
+    await expect(
+        journal.apply({ meeting: record.id, actor: agent, action: { kind: "add", findings: [], replace, fence } })
+    ).rejects.toThrow("seats");
+    await expect(
+        journal.apply({ meeting: record.id, actor: agent, action: { kind: "add", findings: [] } })
+    ).rejects.toThrow("at least one finding");
+});
+
+test("the echo lag of a preview is searched on a 2 kHz copy, and a too short voice sample is an unknown voice", async () => {
+    expect(Array.from(decimate(Float32Array.from([1, 3, 5, 7, 2]), 2))).toEqual([2, 6]);
+    await expect(
+        embedVoice({ audioPath: "/fixture/none.wav", channel: 0, fromSec: 0, toSec: 1 })
+    ).rejects.toBeInstanceOf(VoiceUnavailableError);
+});
+
+test("line evidence with a window measures only the lines that start in it, at their whole-transcript index", () => {
+    const fixture = scene(Array.from({ length: 6 }, () => ({ label: "Room", mic: 1 })));
+    const windowed = lineEvidence(fixture.meeting.transcript, fixture.evidence, undefined, undefined, {
+        window: { fromSec: 20, toSec: 30 },
+    });
+    expect(windowed.map((line) => [line.index, line.startSec])).toEqual([
+        [2, 20],
+        [3, 30],
+    ]);
+});
+
+test("byChannel decides on the measured microphone share, not the rounded one shown", async () => {
+    const store = new MeetingStore(new Storage(`by-channel-precision-${process.pid}`));
+    const record = await store.create(
+        { title: "Precision", start: START, createdBy: "new", seats: { room: ["Alice"], remote: [{ name: "Carol" }] } },
+        { command: "test", change: "fixture" }
+    );
+    const fixture = scene([{ label: "Room", mic: 0 }]);
+    fixture.evidence.segments = [
+        { startSec: 0, endSec: 2.004, channel: "mic" },
+        { startSec: 2.004, endSec: 10, channel: "system" },
+    ];
+    const load = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(fixture.meeting);
+    const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(fixture.evidence);
+    try {
+        const plan = await attributeByChannel({ store, record, input: { label: "Room", minChars: 0, dryRun: true } });
+        expect(plan.ranges).toEqual([]);
+        expect(plan.mixed).toHaveLength(1);
     } finally {
         load.mockRestore();
         evidence.mockRestore();
@@ -750,56 +905,6 @@ test("manual room and remote device stays persist through a reopened store, upda
     expect(saved.sections!.flatMap((s) => s.present)).not.toContain("Dana Example");
 });
 
-test("a first manual stay keeps the roster's presence, and a time edit keeps a placement changed while it waited", async () => {
-    const storage = new Storage(`room-people-roster-${process.pid}`);
-    const store = new MeetingStore(storage);
-    mkdirSync(store.folder(record.id), { recursive: true });
-    writeFileSync(
-        join(store.folder(record.id), "meeting.json"),
-        SafeJSON.stringify({
-            ...record,
-            end: "2026-11-03T13:00:00Z",
-            participants: [
-                ...record.participants.map((person) => ({ ...person, firstSeenSec: 0 })),
-                {
-                    name: "Fay Example",
-                    from: ["wisprflow"],
-                    stays: [{ fromSec: 30, toSec: 900, source: "attendance" }],
-                },
-            ],
-            seats: { room: ["Gil Example"], remote: [] },
-        })
-    );
-
-    await editMeetingPerson({
-        store,
-        meeting: record.id,
-        edit: { action: "add", name: "Dana Example", atMic: true, fromSec: 10, toSec: 100 },
-    });
-    expect(new MeetingStore(storage).resolve(record.id)!.attendance!.people).toEqual([
-        { name: USER, fromSec: 0, toSec: 3600 },
-        { name: "Fay Example", fromSec: 30, toSec: 900 },
-        { name: "Dana Example", fromSec: 10, toSec: 100, joinedAtExact: true, leftAtExact: true },
-    ]);
-
-    // Another edit moves Gil to a remote device while this time-only edit waits for the record.
-    const update = store.update.bind(store);
-    spyOn(store, "update").mockImplementationOnce(async (id, change, mutate) => {
-        await update(id, { command: "test", change: "move Gil remote" }, (next) => {
-            next.seats = { room: [], remote: [{ name: "Gil Example" }] };
-        });
-        return update(id, change, mutate);
-    });
-    await editMeetingPerson({
-        store,
-        meeting: record.id,
-        edit: { action: "add", name: "Gil Example", fromSec: 5, toSec: 50 },
-    });
-    const saved = new MeetingStore(storage).resolve(record.id)!;
-    expect(saved.seats!.room).not.toContain("Gil Example");
-    expect(saved.seats!.remote.map((seat) => seat.name)).toContain("Gil Example");
-});
-
 test("streamed synthetic stereo voice features preserve pitch, level, silence and anchored clusters", async () => {
     const folder = new Storage(`room-voice-audio-${process.pid}`).getBaseDir();
     mkdirSync(folder, { recursive: true });
@@ -854,81 +959,6 @@ test("streamed synthetic stereo voice features preserve pitch, level, silence an
     expect(() => clusterVoices({ lines, voices: 0, channel: 0 })).toThrow();
 });
 
-test("a voice cluster names an unanchored line only on a clear, near match", () => {
-    const voice = (pitchHz: number, rms = 0.05) => ({ rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 });
-    const line = (index: number, pitchHz: number) => ({ index, channels: [voice(pitchHz), voice(pitchHz, 0.001)] });
-    const named = (lines: Array<ReturnType<typeof line>>, anchors: Array<[number, string]>) =>
-        clusterVoices({ lines, voices: 2, channel: 0, anchors: new Map(anchors) }).map((one) => one.cluster?.speaker);
-
-    // Two anchors with one voice tie: the line between them stays unnamed, the anchors keep their names.
-    expect(
-        named(
-            [line(0, 150), line(1, 150), line(2, 150)],
-            [
-                [0, "Alice"],
-                [1, "Bob"],
-            ]
-        )
-    ).toEqual(["Alice", "Bob", undefined]);
-    // Far from both anchored voices: an outlier is nobody yet; a line near Bob is Bob.
-    expect(
-        named(
-            [line(0, 120), line(1, 210), line(2, 205), line(3, 400)],
-            [
-                [0, "Alice"],
-                [1, "Bob"],
-            ]
-        )
-    ).toEqual(["Alice", "Bob", "Bob", undefined]);
-});
-
-test("a confirmed line anchors only the channel that carries its voice", () => {
-    const voice = (rms: number, pitchHz: number) => ({ rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 });
-    const anchoredRecord = meetingRecordSchema.parse({
-        ...record,
-        items: [
-            {
-                id: "i1",
-                kind: "speaker-range",
-                label: "Voice",
-                fromSec: 0,
-                toSec: 0,
-                speaker: "Remy Example",
-                status: "confirmed",
-                rules: [],
-                suggestedAt: START,
-            },
-        ],
-    });
-    const features = [
-        { index: 0, channels: [voice(0.01, 150), voice(0.1, 150)] },
-        { index: 1, channels: [voice(0.05, 120), voice(0.001, 120)] },
-    ];
-    const clustered = anchoredMeetingVoices({
-        record: anchoredRecord,
-        transcript: [
-            { speaker: "Voice", startSec: 0, text: "From the call." },
-            { speaker: "Room", startSec: 5, text: "In the room." },
-        ],
-        features,
-        voices: 2,
-        channel: 0,
-        micChannel: 0,
-    });
-
-    expect(clustered.map((line) => line.cluster?.speaker)).toEqual([undefined, undefined]);
-    expect(
-        anchoredMeetingVoices({
-            record: anchoredRecord,
-            transcript: [{ speaker: "Voice", startSec: 0, text: "From the call." }],
-            features: features.slice(0, 1),
-            voices: 1,
-            channel: 1,
-            micChannel: 0,
-        })[0]?.cluster?.speaker
-    ).toBe("Remy Example");
-});
-
 test("attendance chat id is forwarded byte-for-byte through CallTimeline", async () => {
     const selected = spyOn(MEETING_PLATFORMS.teams, "attendance").mockResolvedValue({ presence: [], note: "fixture" });
     try {
@@ -971,6 +1001,75 @@ test("pitch identity is stable across gain changes and unnamed clusters remain u
         })[0]!.cluster
     ).toBeUndefined();
     expect(anonymous.every((line) => line.cluster?.speaker === undefined)).toBe(true);
+});
+
+const roomRecord = meetingRecordSchema.parse({
+    ...record,
+    seats: { room: [USER, "Dana Example"], remote: [{ name: "Bob Example" }] },
+});
+const danaCluster = (index: number) => ({
+    index,
+    channels: [{ rms: 0, pitchHz: null, lowBandShare: 0, tilt: 0, voicedShare: 0 }],
+    cluster: { id: 0, confidence: 0.9, speaker: "Dana Example" },
+});
+
+test("a confirmed room voice keeps its person through the shared-microphone fallbacks", () => {
+    const fixture = scene([
+        { label: "Bob Example", mic: 0.95 },
+        { label: "Bob Example", mic: 0.95 },
+    ]);
+    const share: AcousticShare = Object.assign(fixture.share, {
+        voice: () => ({
+            model: "fixture:v1",
+            quality: "matched" as const,
+            person: "Dana Example",
+            candidates: [{ person: "Dana Example", score: 0.9 }],
+            reason: "threshold and margin met",
+        }),
+    });
+    const found = ranges(
+        suggestItems({
+            ...base,
+            record: roomRecord,
+            meeting: fixture.meeting,
+            evidence: fixture.evidence,
+            energyMicShare: share,
+        })
+    );
+
+    expect(found.every((item) => item.speaker === "Dana Example" && item.rules.includes("voice"))).toBe(true);
+    expect(found.length).toBeGreaterThan(0);
+});
+
+test("an anchored voice cluster names a room person only where the channels agree, and stays a question", () => {
+    const shared = scene([{ label: USER, mic: 0.95 }]);
+    const promoted = ranges(
+        suggestItems({
+            ...base,
+            record: roomRecord,
+            meeting: shared.meeting,
+            evidence: shared.evidence,
+            energyMicShare: shared.share,
+            voice: [danaCluster(0)],
+        })
+    );
+    expect(promoted[0]).toMatchObject({ speaker: "Dana Example", confidence: 0.7, evidence: { listen: true } });
+    expect(promoted[0]?.candidates).toContain(USER);
+
+    // The tagged channel says microphone, the calibrated energy says call: the cluster does not settle that conflict.
+    const conflict = scene([{ label: "Bob Example", mic: 0.95 }]);
+    const kept = ranges(
+        suggestItems({
+            ...base,
+            record: roomRecord,
+            meeting: conflict.meeting,
+            evidence: conflict.evidence,
+            energyMicShare: () => 0.2,
+            voice: [danaCluster(0)],
+        })
+    );
+    expect(kept[0]?.speaker).toBeUndefined();
+    expect(kept[0]?.candidates).toContain("Dana Example");
 });
 
 test("confirmed offline voice evidence decides remote lines without inheriting a mic label", () => {

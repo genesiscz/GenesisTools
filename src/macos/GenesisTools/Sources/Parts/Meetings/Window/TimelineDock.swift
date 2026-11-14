@@ -27,6 +27,8 @@ struct TimelineDock: View {
     /// The last span that had a Moment, with its meeting: the view holds it while the next clip of that meeting is cut,
     /// so the timeline does not jump to the whole meeting and back.
     @State private var lastSpan: HeldSpan?
+    /// The stretch "Channel and voice evidence…" analyses, taken when the menu item is picked; nil while it is closed.
+    @State private var acousticRange: ClosedRange<Double>?
     @State private var width: CGFloat = 0
 
     /// The dock's horizontal padding (TimelineDockBody) and the screen pane beside the timeline.
@@ -66,11 +68,16 @@ struct TimelineDock: View {
                 toneEnabled: window?.settingsRaw?.at(["global", "playback", "listen", "tone", "enabled"]) != .bool(false))
             dockBody(state: state, screen: screen, meeting: meeting, top: top)
                 .contextMenu {
-                    Button("Channel and voice evidence…") { showsAcousticEvidence = true }
+                    Button("Channel and voice evidence…") {
+                        // Where the reader is now: the position is read at the click, never in the body (it ticks).
+                        acousticRange = Self.acousticRange(of: top, at: player.position)
+                        showsAcousticEvidence = true
+                    }
                 }
                 .sheet(isPresented: $showsAcousticEvidence) {
+                    let range = acousticRange ?? Self.acousticRange(of: top, at: nil)
                     AcousticEvidenceView(service: window?.service, meeting: meeting,
-                                         fromSec: top.startSec, toSec: min(top.endSec, top.startSec + 60))
+                                         fromSec: range.lowerBound, toSec: range.upperBound)
                 }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
                 .modifier(PinCardPresenter(hovered: dock.hoveredPin, openDelayMs: hoverDelayMs,
@@ -133,6 +140,16 @@ struct TimelineDock: View {
     static func heldSpan(_ held: HeldSpan?, for layer: MomentLayer) -> ZoomSpan? {
         guard layer.kind == .moment, let held, held.meeting == layer.meeting else { return nil }
         return held.span
+    }
+
+    /// The stretch "Channel and voice evidence…" analyses, at most `length` seconds: a cut clip's own sound, and in
+    /// whole-meeting mode (where the layer spans the whole recording) the stretch from where the reader is, kept
+    /// inside the recording. From the layer's start it always read the meeting's first minute.
+    static func acousticRange(of layer: MomentLayer, at position: Double?, length: Double = 60) -> ClosedRange<Double> {
+        let end = max(layer.startSec, layer.endSec)
+        guard layer.kind != .moment, let position else { return layer.startSec...min(end, layer.startSec + length) }
+        let to = min(end, max(position, layer.startSec) + length)
+        return max(layer.startSec, to - length)...to
     }
 
     /// The row a layer plays, when it plays a row of `meeting` that is not a question. The engine labels such a
