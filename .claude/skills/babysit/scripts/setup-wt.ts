@@ -13,7 +13,6 @@
  */
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { linkNativeFiles } from "./link-native";
 import { flag, launch, loadRun, worktreeFor } from "./run";
@@ -70,12 +69,9 @@ if (existsSync(wt)) {
         process.exit(1);
     }
 
-    const published = Bun.spawnSync(["git", "merge-base", "--is-ancestor", "HEAD", `origin/${branch}`], {
+    const published = launch(["git", "merge-base", "--is-ancestor", "HEAD", `origin/${branch}`], {
         cwd: wt,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: env.getProcessEnv(),
-        timeout: 30_000,
+        timeoutMs: QUICK_DEADLINE_MS,
     });
     // A restack (rebase plus force-push) leaves the old HEAD off the new head's ancestry while every one of its
     // commits is there by patch, byte for byte; one commit origin lacks means real unpublished work. A git failure
@@ -87,16 +83,16 @@ if (existsSync(wt)) {
             return 1;
         }
     };
-    const restacked = published.exitCode === 1 && unpublished() === 0;
+    const restacked = published.code === 1 && unpublished() === 0;
 
-    if (published.exitCode !== 0 && !restacked) {
+    if (published.code !== 0 && !restacked) {
         const reason =
-            published.exitCode === 1
+            published.code === 1
                 ? "has unpublished or divergent commits relative to origin/" + branch
                 : "cannot verify HEAD is published in origin/" + branch;
         console.error("✖ " + wt + " " + reason + "; preserve or recover that HEAD before running setup again");
-        if (published.stderr.length > 0) {
-            console.error(published.stderr.toString().trim());
+        if (published.out.trim() !== "") {
+            console.error(published.out.trim());
         }
         process.exit(1);
     }
