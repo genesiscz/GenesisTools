@@ -399,7 +399,7 @@ enum HubCommitLookup {
     /// the main thread. The hub's PR list shows one page per project, so an older branch's PR is not in it.
     static func branchPR(root: String, branch: String) -> String? {
         do {
-            return branchPRLabel(try HubSource.bridge.output(["hub", "pr", "find", "--repo", root, "--branch", branch, "--json"]))
+            return branchPRLabel(try HubSource.bridge.json(["hub", "pr", "find", "--repo", root, "--branch", branch, "--json"]))
         } catch {
             HubPerf.log("hub.commitLink no PR lookup for \(branch): \(error)")
             return nil

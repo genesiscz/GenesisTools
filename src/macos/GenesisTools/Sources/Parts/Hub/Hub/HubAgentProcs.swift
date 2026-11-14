@@ -194,7 +194,7 @@ final class AgentProcsStore: ObservableObject {
         let args = ["hub", "procs", "--json"] + (energy ? ["--energy"] : [])
         let span = HubPerf.begin("procs.refresh", energy ? "energy" : "", awaits: true)
         let result = await Task.detached(priority: .utility) { () -> Result<ProcsReport, Error> in
-            Result { try JSONDecoder().decode(ProcsReport.self, from: HubSource.bridge.output(args)) }
+            Result { try JSONDecoder().decode(ProcsReport.self, from: HubSource.bridge.json(args)) }
         }.value
         loading = false
         switch result {
