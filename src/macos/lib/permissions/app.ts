@@ -716,6 +716,9 @@ function appSwiftEnvironment(
     };
 }
 
+/** A cold build of every part plus the whole suite took about 6 minutes on 2026-11-05; an hour means it hangs. */
+const APP_TEST_TIMEOUT_MS = 60 * 60_000;
+
 /**
  * `swift test` for the app package, in the scratch tree of the full app build (every part, the app's flags), so a
  * checkout that builds and tests the app keeps one tree. Plain `swift test` builds a second full tree in `.build`
@@ -723,9 +726,6 @@ function appSwiftEnvironment(
  * the tree to 1463 MiB, and the next app build took 2.6 s (nothing rebuilt). `args` go to `swift test` as they are
  * (`--filter HubUsageTests`). Returns its exit code.
  */
-/** A cold build of every part plus the whole suite took about 6 minutes on 2026-11-05; an hour means it hangs. */
-export const APP_TEST_TIMEOUT_MS = 60 * 60_000;
-
 export async function testApp(args: readonly string[], timeoutMs = APP_TEST_TIMEOUT_MS): Promise<number> {
     if (!Bun.which("swift")) {
         throw new Error("swift not found. Install Xcode or the Command Line Tools, then re-run.");
