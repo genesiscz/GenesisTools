@@ -58,6 +58,13 @@ function numberFlag(argv: string[], flag: string, fallback: number, minimum: num
     return value;
 }
 
+/** The value after `flag` (`--session <id>`), or undefined when the flag is not given: a bench's own string flags. */
+export function stringFlag(argv: string[], flag: string): string | undefined {
+    const index = argv.indexOf(flag);
+
+    return index < 0 ? undefined : argv[index + 1];
+}
+
 export function parseBenchArgs(argv: string[]): BenchArgs {
     return {
         baseline: argv.includes("--baseline"),

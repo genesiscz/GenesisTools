@@ -26,17 +26,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
-import { finishBench, parseBenchArgs } from "../fs/shared";
+import { finishBench, parseBenchArgs, stringFlag } from "../fs/shared";
 
 const BASELINE_NAME = "hub-big-session";
 const REPO = join(import.meta.dir, "..", "..", "..");
 const CHILD = join(import.meta.dir, "big-session-child.ts");
-const args = parseBenchArgs(process.argv.slice(2));
-
-function flagValue(flag: string): string | undefined {
-    const at = process.argv.indexOf(flag);
-    return at > 0 ? process.argv[at + 1] : undefined;
-}
+const argv = process.argv.slice(2);
+const args = parseBenchArgs(argv);
 
 /** The largest main transcript under the Claude session roots: `<root>/<project>/<session id>.jsonl`. */
 function largestClaudeSession(): { id: string; bytes: number } | null {
@@ -72,7 +68,7 @@ function largestClaudeSession(): { id: string; bytes: number } | null {
     return best;
 }
 
-const named = flagValue("--session");
+const named = stringFlag(argv, "--session");
 const largest = named ? null : largestClaudeSession();
 const session = named ?? largest?.id;
 
@@ -80,7 +76,7 @@ if (!session) {
     throw new Error("no Claude transcript found; pass --session <id>");
 }
 
-const before = flagValue("--before");
+const before = stringFlag(argv, "--before");
 const arms: Array<{ name: string; checkout: string }> = [
     { name: "current", checkout: REPO },
     ...(before ? [{ name: "before", checkout: before }] : []),
