@@ -164,6 +164,28 @@ describe("handled call failures", () => {
         expect(sent[1]).toBe(protocolError);
         expect(failures).toHaveLength(2);
     });
+
+    it("a server-to-client request with the id of a running call does not end that call", async () => {
+        const failures: unknown[] = [];
+        const underlying = {
+            onmessage: (_message: unknown) => undefined,
+            async send(_message: unknown) {},
+            async close() {},
+        };
+        const transport = recordMcpTransport({
+            transport: underlying,
+            server: "fixture",
+            record: (failure) => {
+                failures.push(failure);
+                return undefined as never;
+            },
+        });
+        transport.onmessage = () => undefined;
+        underlying.onmessage({ id: 7, method: "tools/call", params: { name: "read" } });
+        await transport.send({ id: 7, method: "ping" });
+        await transport.send({ id: 7, result: { isError: true, content: [{ type: "text", text: "fixture error" }] } });
+        expect(failures).toHaveLength(1);
+    });
 });
 
 describe("redactArgv", () => {
