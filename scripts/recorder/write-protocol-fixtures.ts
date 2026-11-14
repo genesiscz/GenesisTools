@@ -14,12 +14,6 @@
  * computes every case again and fails when a rule changed and this was not run; Tests/RecorderFrameRulesTests.swift
  * replays the file against the Swift twins.
  *
- * It also writes `src/utils/recording-editor/__fixtures__/frame-rules.json` (frameRules below): cases of the four frame
- * rules that the TypeScript side and the Swift renderer both compute (output and source time, join detection, the zoom
- * clamp, the hidden-part snap), each an input with the value the TypeScript function returns. `recording-editor.test.ts`
- * computes every case again and fails when a rule changed and this was not run; Tests/RecorderFrameRulesTests.swift
- * replays the file against the Swift twins.
- *
  * Run: bun scripts/recorder/write-protocol-fixtures.ts
  */
 import { writeFileSync } from "node:fs";
