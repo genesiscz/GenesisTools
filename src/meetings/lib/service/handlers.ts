@@ -20,6 +20,7 @@ import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
+import { preservedSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { type LinkedSource, linkedSource } from "../sources";
 import { assessIndicator } from "../speaker-indicator";
@@ -407,13 +408,16 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                             flags: { dictionary: true },
                             linked,
                         });
-                        const evidence = await linked.source.evidence(linked.sourceMeetingId);
-                        if (!evidence?.audioPath) {
+                        // The owned copy first, as playback reads it: the provider may have removed its file.
+                        const audioPath =
+                            preservedSourceAudio(current)?.path ??
+                            (await linked.source.evidence(linked.sourceMeetingId))?.audioPath;
+                        if (!audioPath) {
                             throw new Error("This meeting has no source audio for word timing generation");
                         }
                         return {
                             lines: timedTranscriptView(current, applied).entries,
-                            audioPath: evidence.audioPath,
+                            audioPath,
                             live: current.recording?.status === "recording" || current.recording?.status === "paused",
                         };
                     },
