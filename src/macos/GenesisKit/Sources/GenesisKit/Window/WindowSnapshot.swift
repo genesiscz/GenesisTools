@@ -155,6 +155,10 @@ public enum WindowSnapshot {
         return NSBitmapImageRep(cgImage: try answer.get())
     }
 
+    /// One window on its own (`desktopIndependentWindow`), not the display path below: the picture is the window's
+    /// content at its own size and scale, with no shadow, and it does not depend on which display holds the window's
+    /// centre or on what the display composes around it. The display path is for several windows, where a child's
+    /// shadow over its parent belongs in the picture.
     private static func serverImage(_ number: CGWindowID) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let target = content.windows.first(where: { $0.windowID == number }) else { throw Failure.notListed }
