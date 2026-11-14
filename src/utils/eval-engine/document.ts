@@ -238,13 +238,11 @@ export function canonicalJson(value: unknown): string {
     return JSON.stringify(sortKeys(value));
 }
 
-/**
- * Sets `key` as an own property, `__proto__` included: a plain assignment of `__proto__` calls the prototype setter
- * and drops the key, so two different documents would read and hash the same.
+/*
+ * Every record keyed by document text (a JSON object, args, bindings, named branches) is built with
+ * `Object.fromEntries`: it makes each key an own property, `__proto__` included. A plain assignment of `__proto__`
+ * calls the prototype setter and drops the key, so two different documents would read and hash the same.
  */
-function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
-    Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
-}
 
 function sortKeys(value: unknown): unknown {
     if (Array.isArray(value)) {
@@ -253,13 +251,11 @@ function sortKeys(value: unknown): unknown {
     if (!isRecord(value)) {
         return value;
     }
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) {
-        if (value[key] !== undefined) {
-            setOwn(sorted, key, sortKeys(value[key]));
-        }
-    }
-    return sorted;
+    const entries: [string, unknown][] = Object.keys(value)
+        .sort()
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, sortKeys(value[key])]);
+    return Object.fromEntries(entries);
 }
 
 export function sha256(text: string, length: number): string {
@@ -414,7 +410,7 @@ export function resolveBindings(
     bind: Readonly<Record<string, string>>,
     previousSignals: Json
 ): { ok: true; values: Record<string, Json> } | { ok: false; name: string; path: string; reason: string } {
-    const values: Record<string, Json> = {};
+    const values: [string, Json][] = [];
     for (const [name, path] of Object.entries(bind)) {
         const segments = parsePath(path);
         if (!segments) {
@@ -424,9 +420,9 @@ export function resolveBindings(
         if (!read.found) {
             return { ok: false, name, path, reason: `needed ${path}; ${read.reason}` };
         }
-        setOwn(values, name, read.value);
+        values.push([name, read.value]);
     }
-    return { ok: true, values };
+    return { ok: true, values: Object.fromEntries(values) };
 }
 
 function lookupTemplate(path: string, bindings: Bindings): Json | undefined {
@@ -469,11 +465,8 @@ function fillJson(value: Json, bindings: Bindings): Json {
         return value.map((item) => fillJson(item, bindings));
     }
     if (isJsonObject(value)) {
-        const out: JsonObject = {};
-        for (const [key, item] of Object.entries(value)) {
-            setOwn(out, key, fillJson(item, bindings));
-        }
-        return out;
+        const entries: [string, Json][] = Object.entries(value).map(([key, item]) => [key, fillJson(item, bindings)]);
+        return Object.fromEntries(entries);
     }
     return value;
 }
@@ -497,11 +490,11 @@ function fillMatch(match: ValueMatch, bindings: Bindings): ValueMatch {
 /** Fills `{{name.path}}` in a check's strings. Pure. Validation made a miss impossible. */
 export function fillCheck(check: Check, bindings: Bindings): Check {
     if ("anyOf" in check) {
-        const branches: Record<string, Check> = {};
-        for (const [name, branch] of Object.entries(check.anyOf)) {
-            setOwn(branches, name, fillCheck(branch, bindings));
-        }
-        return { anyOf: branches };
+        const branches: [string, Check][] = Object.entries(check.anyOf).map(([name, branch]) => [
+            name,
+            fillCheck(branch, bindings),
+        ]);
+        return { anyOf: Object.fromEntries(branches) };
     }
     if ("allOf" in check) {
         return { allOf: check.allOf.map((child) => fillCheck(child, bindings)) };
@@ -527,11 +520,11 @@ export function fillCheck(check: Check, bindings: Bindings): Check {
         return { text: { matches: fillScenarioText(text.matches, bindings), flags: text.flags } };
     }
     if ("tool" in check && check.args) {
-        const args: ArgsMatch = {};
-        for (const [name, leaf] of Object.entries(check.args)) {
-            setOwn(args, name, isMatchLeaf(leaf) ? fillMatch(leaf, bindings) : fillJson(leaf, bindings));
-        }
-        return { ...check, args };
+        const args: [string, ArgsMatch[string]][] = Object.entries(check.args).map(([name, leaf]) => [
+            name,
+            isMatchLeaf(leaf) ? fillMatch(leaf, bindings) : fillJson(leaf, bindings),
+        ]);
+        return { ...check, args: Object.fromEntries(args) };
     }
     return check;
 }
@@ -784,7 +777,7 @@ function parseCheck(
                 if (!isRecord(input.args)) {
                     return issue(ctx, [...path, "args"], "expected an object");
                 }
-                const args: ArgsMatch = {};
+                const args: [string, ArgsMatch[string]][] = [];
                 for (const [name, leaf] of Object.entries(input.args)) {
                     const leafPath = [...path, "args", name];
                     if (
@@ -794,18 +787,18 @@ function parseCheck(
                     ) {
                         const match = parseValueMatch(leaf, ctx, leafPath);
                         if (match) {
-                            setOwn(args, name, match);
+                            args.push([name, match]);
                         }
                     } else {
                         const json = JsonSchema.safeParse(leaf);
                         if (!json.success) {
                             issue(ctx, leafPath, "expected a JSON value or a matcher");
                         } else {
-                            setOwn(args, name, toJson(leaf));
+                            args.push([name, toJson(leaf)]);
                         }
                     }
                 }
-                check.args = args;
+                check.args = Object.fromEntries(args);
             }
             if (input.times !== undefined) {
                 const times = RangeSchema.safeParse(input.times);
@@ -881,7 +874,7 @@ function parseCheck(
             if (entries.length < 1) {
                 return issue(ctx, [...path, "anyOf"], "expected a non-empty list or an object of named branches");
             }
-            const branches: Record<string, Check> = {};
+            const branches: [string, Check][] = [];
             let ok = true;
             for (const [name, branch] of entries) {
                 if (!IdPattern.test(name)) {
@@ -889,12 +882,12 @@ function parseCheck(
                 }
                 const parsed = parseCheck(branch, ctx, [...path, "anyOf", name], codeOnly);
                 if (parsed) {
-                    setOwn(branches, name, parsed);
+                    branches.push([name, parsed]);
                 } else {
                     ok = false;
                 }
             }
-            return ok ? { anyOf: branches } : null;
+            return ok ? { anyOf: Object.fromEntries(branches) } : null;
         }
         case "allOf": {
             if (!Array.isArray(input.allOf) || !input.allOf.length) {
@@ -917,15 +910,15 @@ function asCodeCheck(check: Check): CodeCheck | null {
         return null;
     }
     if ("anyOf" in check) {
-        const branches: Record<string, CodeCheck> = {};
+        const branches: [string, CodeCheck][] = [];
         for (const [name, branch] of Object.entries(check.anyOf)) {
             const code = asCodeCheck(branch);
             if (!code) {
                 return null;
             }
-            setOwn(branches, name, code);
+            branches.push([name, code]);
         }
-        return { anyOf: branches };
+        return { anyOf: Object.fromEntries(branches) };
     }
     if ("allOf" in check) {
         const children: CodeCheck[] = [];
@@ -1413,17 +1406,10 @@ function isReadonlyArray<C>(value: Readonly<Record<string, C>> | readonly C[]): 
 
 /** Branches given as a list are named "1", "2", … */
 function nameBranches<C>(branches: Readonly<Record<string, C>> | readonly C[]): Record<string, C> {
-    const named: Record<string, C> = {};
-    if (isReadonlyArray(branches)) {
-        branches.forEach((branch, i) => {
-            named[String(i + 1)] = branch;
-        });
-    } else {
-        for (const [name, branch] of Object.entries(branches)) {
-            setOwn(named, name, branch);
-        }
-    }
-    return named;
+    const named: [string, C][] = isReadonlyArray(branches)
+        ? branches.map((branch, i) => [String(i + 1), branch])
+        : Object.entries(branches);
+    return Object.fromEntries(named);
 }
 
 /** The definition functions of one system, typed by its tool names, its signal names and its setup. */
