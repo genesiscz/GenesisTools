@@ -48,14 +48,14 @@ export async function pumpLines(input: {
                 newline = buffer.indexOf("\n");
             }
 
-            sink.flush();
+            await sink.flush();
         }
 
         buffer += decoder.decode();
 
         if (buffer && !signal?.aborted) {
             sink.write(rewrite(buffer));
-            sink.flush();
+            await sink.flush();
         }
     } finally {
         signal?.removeEventListener("abort", stop);
