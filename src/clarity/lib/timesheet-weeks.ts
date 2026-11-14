@@ -364,7 +364,8 @@ async function getTimesheetWeeks(
         }
     }
 
-    const records = new Map<number, TimesheetRecord>();
+    // Starts with the timesheets an earlier walk already read, so they are not read again.
+    const records = new Map<number, TimesheetRecord>(scope.known ?? []);
 
     if (!carousel?.length) {
         return { weeks: [], userId, records };
@@ -393,7 +394,7 @@ async function getTimesheetWeeks(
     if (needsCount.length > 0) {
         const results = await Promise.allSettled(
             needsCount.map(async (w) => {
-                const known = scope.known?.get(w.timesheetId);
+                const known = records.get(w.timesheetId);
                 if (known) {
                     return { timesheetId: w.timesheetId, record: known };
                 }
@@ -608,11 +609,6 @@ export async function loadTimesheetPeriods(
     scope: { month?: number; year?: number; known?: ReadonlyMap<number, TimesheetRecord> } = {}
 ): Promise<TimesheetPeriods> {
     const { weeks, userId, records } = await getTimesheetWeeks(api, scope);
-    for (const [timesheetId, record] of scope.known ?? []) {
-        if (!records.has(timesheetId)) {
-            records.set(timesheetId, record);
-        }
-    }
 
     return new TimesheetPeriods({ weeks, records, userId, month: scope.month, year: scope.year, api });
 }
