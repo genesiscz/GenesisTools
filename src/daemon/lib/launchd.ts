@@ -19,7 +19,8 @@ const LABEL = "com.genesis-tools.daemon";
  * Restarts a running daemon through launchd, so it runs the GenesisTools.app just installed. A build swaps the bundle
  * and moves the old one to `retired.noindex/`; a daemon left on it starts every task from the retired copy, and macOS
  * asks again for each privacy grant those tasks use (2026-11-11 18:45: six stacked "gt-ai is requesting to bypass the
- * system private window picker" prompts). Does nothing when the daemon is not installed or not running.
+ * system private window picker" prompts). Does nothing when the daemon is not installed or not running, and throws when
+ * launchd refuses the restart.
  */
 export async function restartDaemonOnNewApp(): Promise<"restarted" | "not-running"> {
     const status = await getDaemonStatus();
@@ -28,7 +29,10 @@ export async function restartDaemonOnNewApp(): Promise<"restarted" | "not-runnin
         return "not-running";
     }
 
-    await kickstartLaunchd(LABEL);
+    if (!(await kickstartLaunchd(LABEL))) {
+        throw new Error(`launchctl did not restart ${LABEL}; it may still run the retired bundle`);
+    }
+
     return "restarted";
 }
 

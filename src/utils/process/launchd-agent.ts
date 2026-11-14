@@ -350,15 +350,16 @@ export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
     writePlistFile(plistPath(opts.label), renderLaunchdPlist(opts), 0o600);
 }
 
-export async function kickstartLaunchd(label: string): Promise<void> {
+/** True when launchctl accepted the kickstart; a refusal is logged and false, so a caller can report it. */
+export async function kickstartLaunchd(label: string): Promise<boolean> {
     if (process.platform !== "darwin") {
-        return;
+        return false;
     }
 
     const uid = process.getuid?.();
 
     if (uid === undefined) {
-        return;
+        return false;
     }
 
     try {
@@ -371,9 +372,14 @@ export async function kickstartLaunchd(label: string): Promise<void> {
                 { exitCode, stderr: stderr.trim(), label },
                 "[launchd] kickstart -k failed; service may not have restarted"
             );
+
+            return false;
         }
+
+        return true;
     } catch (err) {
         logger.warn({ err, label }, "[launchd] kickstart -k failed; service may not have restarted");
+        return false;
     }
 }
 
