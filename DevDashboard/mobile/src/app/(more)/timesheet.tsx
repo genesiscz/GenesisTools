@@ -11,6 +11,17 @@ import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
 
+/** A review belongs to the day it was made on: acceptance never carries over to the week a new date loads. */
+interface DayReview extends ReviewAcceptance {
+    date: string;
+}
+
+const NO_REVIEW: ReviewAcceptance = { revision: undefined, codes: new Set() };
+
+function reviewOn(review: DayReview, date: string): ReviewAcceptance {
+    return review.date === date ? review : NO_REVIEW;
+}
+
 const RowCard = memo(function RowCard({ row, accepted, onToggle }: { row: TimesheetRowDto; accepted: boolean; onToggle: () => void }) {
     const c = useThemeColors();
 
@@ -53,15 +64,7 @@ export default function TimesheetScreen() {
     const c = useThemeColors();
     const date = useLocalDay();
     const week = useTimesheetWeek(date);
-    const [reviewed, setReviewed] = useState<ReviewAcceptance>({ revision: undefined, codes: new Set() });
-    const [reviewedDate, setReviewedDate] = useState(date);
-
-    // A new day starts a new review: acceptance never carries over to the week the new date loads.
-    if (reviewedDate !== date) {
-        setReviewedDate(date);
-        setReviewed({ revision: undefined, codes: new Set() });
-    }
-
+    const [reviewed, setReviewed] = useState<DayReview>({ date, revision: undefined, codes: new Set() });
     const [receipt, setReceipt] = useState<TimesheetFillReceiptDto | null>(null);
     const [gate, setGate] = useState<string | null>(null);
     const [reminder, setReminderOn] = useState<boolean | null>(null);
@@ -72,17 +75,17 @@ export default function TimesheetScreen() {
     }, []);
 
     const data = week.data;
-    const accepted = acceptedForRevision(data, reviewed);
+    const accepted = acceptedForRevision(data, reviewOn(reviewed, date));
     const ready = allAccepted(data, accepted) && !fill.isPending;
     const toggle = (code: string) =>
         setReviewed((current) => {
-            const next = new Set(acceptedForRevision(data, current));
+            const next = new Set(acceptedForRevision(data, reviewOn(current, date)));
 
             if (!next.delete(code)) {
                 next.add(code);
             }
 
-            return { revision: data?.revision, codes: next };
+            return { date, revision: data?.revision, codes: next };
         });
     const submit = async () => {
         if (!data) {
