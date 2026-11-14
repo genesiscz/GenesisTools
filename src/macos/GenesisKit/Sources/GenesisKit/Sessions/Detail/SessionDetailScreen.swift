@@ -299,7 +299,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
             default: SessionDetailHeader(info: info, actions: actions, leadingInset: leadingInset, showSidebar: $showSidebar)
             }
             if let bannerFailure {
-                SessionBanner(text: bannerFailure.headline, failure: bannerFailure, retry: onRetryBanner, onDismiss: onDismissBanner)
+                SessionBanner(failure: bannerFailure, retry: onRetryBanner, onDismiss: onDismissBanner)
             } else if let banner, !banner.isEmpty {
                 SessionBanner(text: banner, onDismiss: onDismissBanner)
             }
@@ -683,25 +683,31 @@ public struct SessionDetailHeader: View {
 
 /// The review window's info banner: 10 pt rounded, quiet fill, a dismiss cross.
 public struct SessionBanner: View {
-    public let text: String
-    /// A failure: drawn as `FailureInline` (Try again, Details, Report a bug) instead of the bare words.
-    public var failure: FailureReport?
-    public var retry: (@MainActor () -> Void)?
+    /// What the banner says: words, or a failure drawn as `FailureInline` (Try again, Details, Report a bug).
+    public enum Content {
+        case text(String)
+        case failure(FailureReport, retry: (@MainActor () -> Void)?)
+    }
+
+    public let content: Content
     public let onDismiss: () -> Void
 
-    public init(text: String, failure: FailureReport? = nil, retry: (@MainActor () -> Void)? = nil,
-                onDismiss: @escaping () -> Void) {
-        self.text = text
-        self.failure = failure
-        self.retry = retry
+    public init(text: String, onDismiss: @escaping () -> Void) {
+        content = .text(text)
+        self.onDismiss = onDismiss
+    }
+
+    public init(failure: FailureReport, retry: (@MainActor () -> Void)? = nil, onDismiss: @escaping () -> Void) {
+        content = .failure(failure, retry: retry)
         self.onDismiss = onDismiss
     }
 
     public var body: some View {
         HStack(spacing: 10) {
-            if let failure {
+            switch content {
+            case .failure(let failure, let retry):
                 FailureInline(failure, form: .compact, identifier: "session-details-banner.failure", retry: retry)
-            } else {
+            case .text(let text):
                 Image(systemName: "exclamationmark.circle")
                     .foregroundStyle(SessionPalette.red)
                 Text(verbatim: text)
