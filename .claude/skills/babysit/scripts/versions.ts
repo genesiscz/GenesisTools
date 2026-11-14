@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { resolutionProblems } from "./conflicts";
+import { type DeadlineSpawn, spawnWithDeadline } from "./run";
 
 export const VERSION_FILES = new Set([
     ".claude-plugin/marketplace.json",
@@ -119,28 +120,16 @@ export function prepGit(cwd: string): GitRun {
  * forever, and one stuck child would hold resolve-same.ts past its round limit. */
 export const GIT_DEADLINE_MS = 300_000;
 
-interface GitSpawn {
-    cwd?: string;
-    stdin?: Uint8Array;
-    env?: Record<string, string | undefined>;
-    timeoutMs?: number;
-}
+type GitSpawn = Omit<DeadlineSpawn, "timeoutMs"> & { timeoutMs?: number };
 
 /** `git <args>` with a deadline. On expiry it throws, so the script stops with that reason instead of reading the
  * killed run as an ordinary exit code (a timed-out `rev-parse --verify` would read as "no such ref"). */
 export function spawnGit(args: string[], options: GitSpawn = {}) {
-    const timeout = options.timeoutMs ?? GIT_DEADLINE_MS;
-    const result = Bun.spawnSync(["git", ...args], {
-        cwd: options.cwd,
-        stdin: options.stdin ?? "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: options.env ?? env.getProcessEnv(),
-        timeout,
-    });
+    const timeoutMs = options.timeoutMs ?? GIT_DEADLINE_MS;
+    const result = spawnWithDeadline(["git", ...args], { ...options, timeoutMs });
     if (result.exitedDueToTimeout) {
         const shown = args.filter((arg, i) => arg !== "-c" && args[i - 1] !== "-c").join(" ");
-        throw new Error(`git ${shown} did not finish within ${timeout / 1000} s and was stopped`);
+        throw new Error(`git ${shown} did not finish within ${timeoutMs / 1000} s and was stopped`);
     }
 
     return result;

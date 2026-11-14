@@ -25,13 +25,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { isDeferredReply } from "./policy";
 import { probeAddedLines } from "./probe";
 import { flag, has, launch, loadRun, worktreeFor } from "./run";
-import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
+import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall, spawnGit } from "./versions";
 
 /** The guards `.githooks/pre-push` runs, label first. Keep this list in step with the hook. */
 export const PRE_PUSH_GUARDS: string[][] = [
@@ -111,13 +110,7 @@ function gateSnapshot(options: { wt: string; sha: string; runDir: string }): str
         ["clone", "--shared", "--no-checkout", "--quiet", options.wt, snapshot],
         ["-C", snapshot, "checkout", "--quiet", "--detach", options.sha],
     ]) {
-        const result = Bun.spawnSync(["git", ...HOOKS_OFF, ...args], {
-            cwd: options.wt,
-            stdout: "pipe",
-            stderr: "pipe",
-            env: env.getProcessEnv(),
-            timeout: 60_000,
-        });
+        const result = spawnGit([...HOOKS_OFF, ...args], { cwd: options.wt, timeoutMs: 60_000 });
         if (result.exitCode !== 0) {
             throw new Error(`gate snapshot failed: ${result.stderr.toString()}`);
         }
