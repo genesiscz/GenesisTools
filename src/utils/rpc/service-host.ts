@@ -198,6 +198,15 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         }
     };
 
+    // A hook that throws must not skip the cleanup of a stop: `stopping` is set, so no later stop() would finish it.
+    const runStopHook = (name: "onStopping" | "onStopped", reason: string): void => {
+        try {
+            options[name]?.(reason);
+        } catch (error) {
+            log.warn({ error, reason }, `${label} ${name} failed; the stop goes on`);
+        }
+    };
+
     const stop = (reason: string): void => {
         if (stopping) {
             return;
@@ -207,13 +216,7 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         clearInterval(check);
         log.info({ reason, connections: server?.connections.length }, `${label} stopping`);
 
-        // A hook that throws must not skip the cleanup below: `stopping` is set, so no later stop() would finish it.
-        try {
-            options.onStopping?.(reason);
-        } catch (error) {
-            log.warn({ error, reason }, `${label} onStopping failed; the stop goes on`);
-        }
-
+        runStopHook("onStopping", reason);
         server?.endConnections();
 
         try {
@@ -224,13 +227,7 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         }
 
         clearPidFile(servicePidPath(dir));
-
-        try {
-            options.onStopped?.(reason);
-        } catch (error) {
-            log.warn({ error, reason }, `${label} onStopped failed; the stop goes on`);
-        }
-
+        runStopHook("onStopped", reason);
         stopped.resolve(reason);
     };
 
