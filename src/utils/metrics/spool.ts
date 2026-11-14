@@ -99,7 +99,8 @@ export interface DrainOptions {
     staleTailMs?: number;
     /**
      * The most bytes one call reads, over all files; the next call goes on where it stopped (`more`). Without it a
-     * call reads every file to its end, which a large backlog turns into one long block of synchronous work.
+     * call reads every file to its end, which a large backlog turns into one long block of synchronous work. It also
+     * caps the chunk, so a line longer than it counts as a bad line, as one longer than a chunk does.
      */
     maxBytes?: number;
     /** Hears each batch once it is in the store (the service's `event` subscribers). */
@@ -258,7 +259,7 @@ function drainFile(
         now: number;
         chunkBytes: number;
         staleTail: boolean;
-        /** The bytes this drain may still read; each chunk taken counts against it. */
+        /** The bytes this drain may still read; each chunk read counts against it. */
         budget: { left: number };
         onEvents?: (events: readonly StoredEvent[]) => void;
     }
@@ -276,13 +277,15 @@ function drainFile(
     }
 
     while (offset < size && options.budget.left > 0) {
-        const chunk = readChunk(path, offset, Math.min(options.chunkBytes, size - offset));
+        const chunk = readChunk(path, offset, Math.min(options.chunkBytes, size - offset, options.budget.left));
+        // Every byte read counts, also a line end the next chunk reads again.
+        options.budget.left -= chunk.length;
         const last = chunk.lastIndexOf(NEWLINE);
         let take: number;
 
         if (last >= 0) {
             take = last + 1;
-        } else if (chunk.length >= options.chunkBytes || options.staleTail) {
+        } else if (chunk.length >= options.chunkBytes || (options.staleTail && offset + chunk.length >= size)) {
             // A line longer than a chunk, or an earlier day's tail its writer never finished: one bad line.
             take = chunk.length;
         } else {
@@ -300,7 +303,6 @@ function drainFile(
         }
 
         offset += take;
-        options.budget.left -= take;
         lineNo += parsed.lines;
         // The chunk's definitions, checkpoints, events and new offset commit together: a crash before the offset
         // leaves none of them, so the chunk read again is applied once, in its own order.
@@ -338,6 +340,8 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
     const today = formatLocalDate(new Date(now));
     const result: DrainResult = { files: 0, lines: 0, events: 0, checkpoints: 0, bad: 0, removed: [], more: false };
     const budget = { left: options.maxBytes ?? Number.POSITIVE_INFINITY };
+    // A chunk never outgrows the budget, so a fresh call can always take a whole chunk and the drain cannot stall.
+    const chunkBytes = Math.max(1, Math.min(options.chunkBytes ?? DRAIN_CHUNK_BYTES, budget.left));
     let names: string[];
 
     try {
@@ -367,7 +371,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
             const stale = earlier && now - before.mtimeMs > (options.staleTailMs ?? STALE_TAIL_MS);
             const read = drainFile(store, path, {
                 now,
-                chunkBytes: options.chunkBytes ?? DRAIN_CHUNK_BYTES,
+                chunkBytes,
                 staleTail: stale,
                 budget,
                 ...(options.onEvents ? { onEvents: options.onEvents } : {}),

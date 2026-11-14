@@ -154,6 +154,18 @@ describe("metrics spool", () => {
         expect(total(store)).toEqual({ count: 3, sum: 6 });
     });
 
+    test("the byte budget bounds the bytes a drain reads, not only the lines it takes", () => {
+        const { dir, store } = setup();
+        writeFileSync(join(dir, `writer-${formatLocalDate(new Date(NOW))}.jsonl`), `${line(1)}${line(2)}${line(3)}`);
+        // The default chunk holds all three lines; a budget of one line and a few bytes reads that much and no more.
+        const budget = { dir, now: NOW, maxBytes: line(1).length + 5 };
+
+        expect(drainSpool(store, budget)).toMatchObject({ events: 1, bad: 0, more: true });
+        expect(drainSpool(store, budget)).toMatchObject({ events: 1, bad: 0, more: true });
+        expect(drainSpool(store, budget)).toMatchObject({ events: 1, bad: 0, more: false });
+        expect(total(store)).toEqual({ count: 3, sum: 6 });
+    });
+
     test("record() buffers lines and writes them on flush; the drain takes them in", () => {
         const { dir, store } = setup();
         const recorder = createMetricsRecorder({ writer: "unit", dir, flushMs: 60_000 });
