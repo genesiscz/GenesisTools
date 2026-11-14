@@ -21,6 +21,16 @@ function errorCode(run: SpawnSyncReturns<string>): string | undefined {
     return (run.error as NodeJS.ErrnoException | undefined)?.code;
 }
 
+/** What a failed git run left behind, for its diagnostic. */
+function gitFailureFields(run: SpawnSyncReturns<string>) {
+    return {
+        status: run.status,
+        signal: run.signal,
+        error: errorCode(run),
+        stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
+    };
+}
+
 /**
  * One git runner for the whole hook, so a failure is reported in one place.
  *
@@ -47,14 +57,7 @@ export function gitOut(root: string, args: string[], options: { quiet?: boolean 
             timedOut
                 ? `git did not finish within ${GIT_TIMEOUT_MS} ms, so this root reads as unchanged`
                 : "git failed, so this root reads as unchanged",
-            {
-                root,
-                args,
-                status: run.status,
-                signal: run.signal,
-                error: errorCode(run),
-                stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
-            }
+            { root, args, ...gitFailureFields(run) }
         );
 
         return "";
@@ -184,11 +187,39 @@ const BYTES_PER_LISTED_NAME = 4096;
  * huge untracked tree cost a full enumeration per hook, and overflowing the shared 8 MB buffer
  * returned "" — an empty directory — so the capture recorded it as neither taken nor left out.
  *
- * Time is bounded too: a listing that runs past `GIT_TIMEOUT_MS` (a slow or unreachable
- * filesystem) is stopped and counts as one git could not make.
+ * Time is bounded too: a listing that runs past `timeoutMs` (default `GIT_TIMEOUT_MS`; a slow or
+ * unreachable filesystem) is stopped and counts as one git could not make.
  */
-export function untrackedFilesIn(root: string, dir: string, limit: number): string[] | null {
-    return untrackedWithin({ root, dir, limit, timeoutMs: GIT_TIMEOUT_MS });
+export function untrackedFilesIn(
+    root: string,
+    dir: string,
+    limit: number,
+    options: { timeoutMs?: number } = {}
+): string[] | null {
+    const timeoutMs = options.timeoutMs ?? GIT_TIMEOUT_MS;
+    const cap = Math.max(0, limit);
+    const run = listOthers({ root, dirs: [dir], cap, timeoutMs });
+    const overflowed = errorCode(run) === "ENOBUFS";
+
+    if (!overflowed && run.status !== 0) {
+        hookDiag(
+            errorCode(run) === "ETIMEDOUT"
+                ? `git did not list an untracked directory within ${timeoutMs} ms`
+                : "git could not list an untracked directory",
+            { root, dir, ...gitFailureFields(run) }
+        );
+
+        return null;
+    }
+
+    const names = (typeof run.stdout === "string" ? run.stdout : "").split("\0");
+
+    if (overflowed) {
+        // The last name was cut mid-write; only NUL-terminated ones are whole.
+        names.pop();
+    }
+
+    return names.filter((name) => name.length > 0).slice(0, cap);
 }
 
 /** One `git ls-files --others` over `dirs`, with a buffer of `cap` names' worth and a deadline. */
@@ -208,49 +239,6 @@ function listOthers({
         maxBuffer: Math.min(MAX_BUFFER, Math.max(65_536, (cap + 1) * BYTES_PER_LISTED_NAME)),
         timeout: timeoutMs,
     });
-}
-
-function untrackedWithin({
-    root,
-    dir,
-    limit,
-    timeoutMs,
-}: {
-    root: string;
-    dir: string;
-    limit: number;
-    timeoutMs: number;
-}): string[] | null {
-    const cap = Math.max(0, limit);
-    const run = listOthers({ root, dirs: [dir], cap, timeoutMs });
-    const overflowed = errorCode(run) === "ENOBUFS";
-
-    if (!overflowed && run.status !== 0) {
-        hookDiag(
-            errorCode(run) === "ETIMEDOUT"
-                ? `git did not list an untracked directory within ${timeoutMs} ms`
-                : "git could not list an untracked directory",
-            {
-                root,
-                dir,
-                status: run.status,
-                signal: run.signal,
-                error: errorCode(run),
-                stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
-            }
-        );
-
-        return null;
-    }
-
-    const names = (typeof run.stdout === "string" ? run.stdout : "").split("\0");
-
-    if (overflowed) {
-        // The last name was cut mid-write; only NUL-terminated ones are whole.
-        names.pop();
-    }
-
-    return names.filter((name) => name.length > 0).slice(0, cap);
 }
 
 /** A directory git would read as a pattern or as pathspec magic, not as a plain prefix: listed by itself. */
@@ -346,7 +334,7 @@ export function untrackedFilesInEach(
             continue;
         }
 
-        listed.set(dir, untrackedWithin({ root, dir, limit, timeoutMs }));
+        listed.set(dir, untrackedFilesIn(root, dir, limit, { timeoutMs }));
     }
 
     if (unlisted.length > 0) {
