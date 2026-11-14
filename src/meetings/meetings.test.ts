@@ -2056,6 +2056,31 @@ describe("questions (R2.3)", () => {
         expect(questionFor(fillers, context())).toBeUndefined();
     });
 
+    test("a person only the range's typed scores weigh is offered too, once per person", () => {
+        const scored = withItems([
+            {
+                ...range,
+                speaker: "Bob Example",
+                candidates: undefined,
+                confidence: 0.45,
+                evidence: {
+                    listen: true,
+                    endSec: 146,
+                    candidateScores: [
+                        { speaker: "Bob Example", confidence: 0.45, evidence: [] },
+                        { speaker: "Dan Example", confidence: 0.2, evidence: [{ kind: "voice", rule: "E3" }] },
+                        { speaker: "bob example", confidence: 0.1, evidence: [] },
+                    ],
+                },
+            },
+        ]).items[0]!;
+
+        expect(questionFor(scored, context())).toMatchObject({
+            about: "speaker",
+            choices: ["Bob Example", "Dan Example"],
+        });
+    });
+
     test("a term is asked only when it matters: seen twice, an identifier, or a decision", () => {
         const term = (extra: object) =>
             withItems([
