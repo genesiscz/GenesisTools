@@ -11,7 +11,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { recordMcpCall, recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import { Command } from "commander";
 import { claudeProjectFolder, failureCaller, failureCallerOf, transcriptOf } from "./caller";
-import { enrichFailureContext, readFailureContext } from "./context";
+import { captureFailureContext, enrichFailureContext, readFailureContext } from "./context";
 import { deadlineCaller, deadlineWrite } from "./deadline";
 import { recordHandledFailure } from "./handled";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
@@ -185,6 +185,54 @@ describe("handled call failures", () => {
         await transport.send({ id: 7, method: "ping" });
         await transport.send({ id: 7, result: { isError: true, content: [{ type: "text", text: "fixture error" }] } });
         expect(failures).toHaveLength(1);
+    });
+});
+
+describe("full triage workers", () => {
+    it("starts one worker per minute however many failures arrive, and each failure keeps its own snapshot", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-triage-window-"));
+        const spawned: string[][] = [];
+        const failure = (id: string): ToolFailure => ({
+            v: 1,
+            id,
+            at: new Date().toISOString(),
+            kind: "error",
+            tool: "fixture",
+            command: "read",
+            argv: [],
+            exitCode: 1,
+            message: "fixture failed",
+            errorName: null,
+            stack: null,
+            stderrTail: null,
+            fatal: false,
+            durationMs: 1,
+            pid: 1,
+            ppid: 1,
+            cwd: dir,
+            traceId: null,
+            toolsRoot: dir,
+            caller: null,
+        });
+        const capture = (id: string, now: number) =>
+            captureFailureContext({
+                failure: failure(id),
+                dir,
+                fullTriage: true,
+                now,
+                spawn: (argv) => {
+                    spawned.push(argv);
+                    return undefined as never;
+                },
+            });
+
+        capture("one", 1_000_000);
+        capture("two", 1_000_500);
+        capture("three", 1_059_000);
+        expect(spawned.map((argv) => argv[3])).toEqual(["one"]);
+        capture("four", 1_061_000);
+        expect(spawned.map((argv) => argv[3])).toEqual(["one", "four"]);
+        expect(readFailureContext({ failure: failure("two"), dir }).failureId).toBe("two");
     });
 });
 
