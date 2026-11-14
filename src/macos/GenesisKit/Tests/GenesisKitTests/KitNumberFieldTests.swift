@@ -35,6 +35,16 @@ final class KitNumberFieldTests: XCTestCase {
         XCTAssertEqual(KitNumberFieldMath.stepped(-7, by: -1, step: 5, in: -100...100), -10)
     }
 
+    // The distance of the whole steps passes Int.max, but the start sits on the other side of zero, so the sum fits.
+    func testAStepWhoseDistancePassesIntLandsWhereTheSumFits() {
+        XCTAssertEqual(KitNumberFieldMath.stepped(Int.min, by: 2, step: Int.max, in: Int.min...Int.max), Int.max - 1,
+                       "two steps of Int.max from Int.min")
+        // Two steps of 2^62 + 1 are more than Int.max; the grid from Int.min holds Int.min + step and 2^62 + 3.
+        let step = Int.max / 2 + 2
+        XCTAssertEqual(KitNumberFieldMath.stepped(Int.max / 2 + 4, by: -2, step: step, in: Int.min...Int.max), Int.min + step)
+        XCTAssertEqual(KitNumberFieldMath.stepped(Int.min + step, by: 2, step: step, in: Int.min...Int.max), Int.max / 2 + 4)
+    }
+
     // Each of these trapped on an intermediate sum before the last one was checked.
     func testAStepNearTheEndsOfIntLandsOnTheLimitInsteadOfTrapping() {
         XCTAssertEqual(KitNumberFieldMath.stepped(10, by: 10, step: Int.max, in: 0...Int.max), Int.max,

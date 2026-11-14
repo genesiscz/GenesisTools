@@ -58,8 +58,10 @@ public enum KitNumberFieldMath {
     /// up to 10 and down to 5), then moves whole steps.
     ///
     /// Every step of the sum is checked: a range or a step near the ends of `Int` trapped before the last addition
-    /// (Shift with a step of `Int.max` multiplied it by ten). A sum past the end of `Int` is past the range's end in
-    /// the same direction, so it lands on that limit.
+    /// (Shift with a step of `Int.max` multiplied it by ten). The whole steps are one distance in `UInt`, added to the
+    /// value in an order-keeping `UInt` form, so a distance longer than `Int.max` from a start on the other side of
+    /// zero still lands where it should (`Int.min` up two steps of `Int.max` is `Int.max - 1`). Only a sum past the
+    /// end of `Int` is past the range's end in the same direction, so it lands on that limit.
     public static func stepped(_ value: Int, by count: Int, step: Int, in range: ClosedRange<Int>) -> Int {
         guard count != 0, step > 0 else { return clamped(value, in: range) }
         let limit = count > 0 ? range.upperBound : range.lowerBound
@@ -74,11 +76,19 @@ public enum KitNumberFieldMath {
             next = onGrid
             left += count > 0 ? -1 : 1
         }
-        let (distance, tooFar) = left.multipliedReportingOverflow(by: step)
+        // A distance past `UInt.max` is longer than all of `Int`, so the sum is past its end.
+        let (distance, tooFar) = left.magnitude.multipliedReportingOverflow(by: step.magnitude)
         guard !tooFar else { return limit }
-        let (moved, overflow) = next.addingReportingOverflow(distance)
-        return clamped(overflow ? limit : moved, in: range)
+        let start = UInt(bitPattern: next) ^ signBit
+        let (moved, overflow) = left < 0
+            ? start.subtractingReportingOverflow(distance)
+            : start.addingReportingOverflow(distance)
+        return clamped(overflow ? limit : Int(bitPattern: moved ^ signBit), in: range)
     }
+
+    /// The sign bit of `Int` as a `UInt`. Flipping it maps `Int` onto `UInt` in order (`Int.min` is 0, `Int.max` is
+    /// `UInt.max`), so a sum in that form overflows exactly when the same sum leaves `Int`.
+    private static let signBit = UInt(bitPattern: Int.min)
 
     /// How far `value` sits past the step grid that starts at `lowerBound`, in `0..<step`. Each side is reduced by the
     /// step first, so `value - lowerBound` (which overflows for a range across all of `Int`) is never computed.
