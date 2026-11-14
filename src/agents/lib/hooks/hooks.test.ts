@@ -2088,7 +2088,13 @@ describe("installHooks on a machine with no settings file", () => {
 });
 
 describe("hook state across processes", () => {
-    it("concurrent hooks of one session lose no counter bump", async () => {
+    /**
+     * A bump that waits longer than the state's lock budget (2 s) is skipped by design and logged as "Could not persist
+     * the hook state" with the LockTimeoutError. A loaded machine reaches that budget here: a worker that releases the
+     * lock takes it again at once while the others sleep between looks, so the last worker waits behind up to 30
+     * bumps. A lost update leaves no record, so the count plus the recorded skips is exactly 45 unless one was lost.
+     */
+    it("concurrent hooks of one session lose no counter bump: each is counted, or skipped on record", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-hook-state-"));
         const worker = join(import.meta.dir, "state.test-worker.ts");
         const startAt = String(Date.now() + 1000);
@@ -2106,7 +2112,26 @@ describe("hook state across processes", () => {
         }
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
-            expect(readContextCounts("sess-parallel")).toEqual({ "rule-x": 45 });
+            const log = defaultLogPath();
+            const diag = existsSync(log)
+                ? readFileSync(log, "utf8")
+                      .split("\n")
+                      .filter(Boolean)
+                      .map((line) => SafeJSON.parse(line, { strict: true }))
+                      .filter((record) => isJsonObject(record) && record.phase === "diag")
+                : [];
+            const skipped = diag.filter(
+                (record) =>
+                    record.reason === "Could not persist the hook state" &&
+                    typeof record.err === "string" &&
+                    record.err.startsWith("LockTimeoutError:")
+            );
+            const counted = readContextCounts("sess-parallel")["rule-x"] ?? 0;
+
+            expect({ bumps: counted + skipped.length, otherDiag: diag.length - skipped.length }).toEqual({
+                bumps: 45,
+                otherDiag: 0,
+            });
         });
     }, 30_000);
 
