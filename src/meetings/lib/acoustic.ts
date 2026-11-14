@@ -125,6 +125,11 @@ function recordingFingerprint(audioPath: string): string {
     return SafeJSON.stringify([audioPath, stat.size, stat.mtimeMs]);
 }
 
+/** The rate the clip's windows decode at and its tracks are written at. */
+const CLIP_RATE = 16_000;
+/** The rate of the lag search, the one the cache collector measures at. */
+const LAG_SEARCH_RATE = 2_000;
+
 /** All three tracks are returned, even for a cleaned preview. Originals are never rewritten. */
 export async function acousticClip(options: AcousticTarget & { fromSec: number; toSec: number }) {
     const { audioPath, folder, layout } = await acousticMeeting(options);
@@ -139,8 +144,9 @@ export async function acousticClip(options: AcousticTarget & { fromSec: number; 
     ]);
     // The lag and gain come from a 2 kHz copy, as the cache collector measures them: the exhaustive search at 16 kHz
     // took about 476 million sample steps for a minute, on the service's one thread.
-    const metric = correlateEcho({ mic: decimate(mic, 8), call: decimate(call, 8), rate: 2000 });
-    const lag = Math.round(metric.lagMs * 16);
+    const factor = CLIP_RATE / LAG_SEARCH_RATE;
+    const metric = correlateEcho({ mic: decimate(mic, factor), call: decimate(call, factor), rate: LAG_SEARCH_RATE });
+    const lag = Math.round((metric.lagMs * CLIP_RATE) / 1000);
     const clean = Float32Array.from(mic, (sample, i) => sample - metric.gain * (call[i - lag] ?? 0));
     const dir = join(folder, "acoustic-clips");
     mkdirSync(dir, { recursive: true });
@@ -159,8 +165,8 @@ export async function acousticClip(options: AcousticTarget & { fromSec: number; 
         bytes.writeUInt32LE(16, 16);
         bytes.writeUInt16LE(1, 20);
         bytes.writeUInt16LE(1, 22);
-        bytes.writeUInt32LE(16000, 24);
-        bytes.writeUInt32LE(32000, 28);
+        bytes.writeUInt32LE(CLIP_RATE, 24);
+        bytes.writeUInt32LE(CLIP_RATE * 2, 28);
         bytes.writeUInt16LE(2, 32);
         bytes.writeUInt16LE(16, 34);
         bytes.write("data", 36);
