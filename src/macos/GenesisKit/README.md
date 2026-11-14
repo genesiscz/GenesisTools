@@ -1680,7 +1680,7 @@ Copy log, Open log) and **Report a bug** (the issue draft window). Never a raw e
   once and again with its log. `FailureReport.unexpected(_ message:, outcome:, action:)` is the same for a failure
   that is not a `tools` call (git, a decode).
 - Which call failed: bind a `ToolsCallLedger` around the work (`ledger.record { try await … }`, or `recordSync` on a
-  background thread) and pass `ledger.failed`. `ToolsBridge.run` and the hub's `ToolsCLIRunner` note every call's start
+  background thread) and pass `ledger.failed`. `ToolsBridge.run`, the one Swift `tools` client (it also asks a resident `ToolsServerClient`), notes every call's start
   and end in the task's ledger (`ToolsCallTrace.ledger`, a task local; a queue hop must carry it by hand).
 
 ```swift
