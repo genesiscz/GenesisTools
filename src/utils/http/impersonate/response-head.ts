@@ -17,14 +17,15 @@ export class ResponseHead {
 
     constructor(private readonly callerFollowsRedirects: boolean) {}
 
-    line(raw: string): void {
+    /** Returns true when this line ends a redirect head the caller follows: nothing after it is needed. */
+    line(raw: string): boolean {
         const line = raw.trimEnd();
         if (line.startsWith("HTTP/")) {
             const code = Number(line.split(" ")[1]);
             this.status = Number.isInteger(code) ? code : 0;
             this.headers = {};
             this.redirect = false;
-            return;
+            return false;
         }
 
         if (line === "") {
@@ -32,7 +33,7 @@ export class ResponseHead {
                 this.callerFollowsRedirects &&
                 REDIRECT_STATUSES.has(this.status) &&
                 this.headers.location !== undefined;
-            return;
+            return this.redirect;
         }
 
         const colon = line.indexOf(":");
@@ -43,5 +44,7 @@ export class ResponseHead {
             const earlier = this.headers[name];
             this.headers[name] = earlier === undefined ? value : `${earlier}, ${value}`;
         }
+
+        return false;
     }
 }
