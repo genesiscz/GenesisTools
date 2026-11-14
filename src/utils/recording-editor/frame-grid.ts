@@ -15,8 +15,11 @@ import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("recording-editor-frames");
 const timesOf = new Map<string, { identity: string; times: number[] }>();
-/** How long ffprobe may list a movie's frames; it blocks the process meanwhile, so a hung probe must end. */
-const FRAME_TIMES_TIMEOUT_MS = 60_000;
+/**
+ * Listing the packets of a long recording takes a few seconds; a probe still running after this is stuck. ffprobe
+ * blocks the process meanwhile, so a hung probe must end.
+ */
+export const FRAME_PROBE_TIMEOUT_MS = 60_000;
 
 /**
  * Each video frame's own presentation time (microseconds), in decode order, from the container. Kept per path and
@@ -35,8 +38,12 @@ export function framePresentationUs(video: string): number[] {
     const probe = spawnSync(
         "ffprobe",
         ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", video],
-        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: FRAME_TIMES_TIMEOUT_MS }
+        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: FRAME_PROBE_TIMEOUT_MS, killSignal: "SIGKILL" }
     );
+
+    if (probe.error && "code" in probe.error && probe.error.code === "ETIMEDOUT") {
+        throw new Error(`ffprobe did not list the frames of ${video} within ${FRAME_PROBE_TIMEOUT_MS / 1000} s`);
+    }
 
     if (probe.status !== 0) {
         const why = probe.error ? `${probe.error.message}; ` : "";

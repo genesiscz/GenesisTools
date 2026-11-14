@@ -67,7 +67,7 @@ public final class DuIndexReader: @unchecked Sendable {
     public static let supportedSchemaVersion = 1
 
     public static var defaultPath: String {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/du/index.db").path
+        GenesisToolsHome.url("du/index.db").path
     }
 
     public let path: String

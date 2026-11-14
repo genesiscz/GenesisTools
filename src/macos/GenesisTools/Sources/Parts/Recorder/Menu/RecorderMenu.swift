@@ -43,12 +43,12 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     private var reading = false
 
     static var libraryFolder: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/recordings/library", isDirectory: true)
+        GenesisToolsHome.url("recordings/library", isDirectory: true)
     }
 
     /// The meetings, each a folder; one with a screen recording holds the `recording.json` its recorder writes.
     nonisolated static var meetingsFolder: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/meetings", isDirectory: true)
+        GenesisToolsHome.url("meetings", isDirectory: true)
     }
 
     /// Every folder whose recordings the menu and the library list.

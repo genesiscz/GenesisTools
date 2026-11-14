@@ -632,7 +632,7 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let marker = root.appendingPathComponent("voice-invoked")
-        let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
+        let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":\#(WidgetTestPreferences.json(#"{"voiceProvider":"fixture","voiceLanguage":"en"}"#)),"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
         let complete = #"{"kind":"complete","text":"Fixture words"}"#
         let clip = root.appendingPathComponent("incoming.pcm").path
         // The real listener prints "complete" before it closes the audio file; the fixture flushes it a moment later.
@@ -1284,8 +1284,8 @@ final class WidgetInboxNotificationTests: XCTestCase {
         let encoded = try JSONEncoder().encode(summary(notification))
         let notifications = try JSONSerialization.jsonObject(with: encoded)
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
-            "selectedKey": selected, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
-                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"],
+            "selectedKey": selected, "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"]),
             "assets": [:], "drafts": [:], "outgoing": []], "sessions": sessions, "cards": cards,
             "manifests": [:], "errors": [], "selectedKey": selected, "notifications": notifications])
         return String(decoding: data, as: UTF8.self)

@@ -52,7 +52,13 @@ import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
 import { parseRosters, ROSTER_DEFINITIONS, readRosters, rosterCounts, rosterGrowth } from "./rosters";
 import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./rosters/swift";
 import { spawnWithDeadline } from "./spawn-deadline";
-import { checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
+import {
+    checkSwiftRowRules,
+    checkSwiftStructRules,
+    SWIFT_PROCESS_TOOL,
+    SWIFT_PROCESS_TOOL_RATCHET,
+    SWIFT_PROCESS_TOOL_RULE,
+} from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -289,10 +295,7 @@ const RAW_CLACK_MODULE = /["']@clack\/prompts["']/;
  * Files that still import @clack/prompts while another session owns their folder (a ratchet: an entry only ever
  * leaves). Exact paths, never a folder: a new meetings file starts on the facade.
  */
-const RAW_CLACK_RATCHET: ReadonlySet<string> = new Set([
-    // src/meetings belongs to the meetings session (2026-11-10); C10 left its raw clack import in place.
-    "src/meetings/commands/listen.ts",
-]);
+const RAW_CLACK_RATCHET: ReadonlySet<string> = new Set([]);
 
 export function importsRawClack(text: string, node: SgNode): boolean {
     if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
@@ -1529,10 +1532,40 @@ const SWIFT_ENTRY_MACRO_RULE = {
 };
 const SWIFT_ENTRY_MACRO = /@Entry\b/;
 
-const SWIFT_LINE_RULES = [
+const SWIFT_HAND_JOINED_HOME_RULE = {
+    name: "swift-hand-joined-genesis-tools",
+    severity: "error" as const,
+    message:
+        "A `.genesis-tools` path joined by hand ignores `GENESIS_TOOLS_HOME`: a sandboxed hub asked the real hub " +
+        "server's socket and drew the real sessions into a picture (2026-11-10). Use `GenesisToolsHome.url(_:)` or " +
+        "`GenesisToolsHome.path(_:)` (GenesisKitBase/Paths/GenesisToolsHome.swift).",
+};
+const SWIFT_HAND_JOINED_HOME = /appendingPathComponent\(\s*"\.genesis-tools\b/;
+/** The helper itself and the tests, which build expected paths on purpose. */
+const SWIFT_HAND_JOINED_HOME_ALLOWED = /(?:^|\/)Tests\/|GenesisToolsHome\.swift$/;
+
+interface SwiftLineRule {
+    rule: { name: string; severity: Severity; message: string };
+    pattern: RegExp;
+    /** Match the line with comments and strings masked (`maskSwiftNonCode`), not its raw text. */
+    codeOnly?: boolean;
+    /** Files the rule never applies to. */
+    skipFile?: RegExp;
+    /** Old call sites the rule lets through while the ratchets are on; this list only shrinks. */
+    ratchet?: ReadonlyMap<string, string>;
+}
+
+const SWIFT_LINE_RULES: SwiftLineRule[] = [
     { rule: SWIFT_WAIT_RULE, pattern: SWIFT_BARE_WAIT },
+    { rule: SWIFT_HAND_JOINED_HOME_RULE, pattern: SWIFT_HAND_JOINED_HOME, skipFile: SWIFT_HAND_JOINED_HOME_ALLOWED },
     { rule: SWIFT_CLICK_COUNT_RULE, pattern: SWIFT_CURRENT_EVENT_CLICK_COUNT },
-    { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO },
+    { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO, codeOnly: true },
+    {
+        rule: SWIFT_PROCESS_TOOL_RULE,
+        pattern: SWIFT_PROCESS_TOOL,
+        skipFile: /(^|\/)Tests\//,
+        ratchet: SWIFT_PROCESS_TOOL_RATCHET,
+    },
 ];
 
 /**
@@ -1962,14 +1995,17 @@ export function checkSwiftSource(
         ...checkSwiftStructRules(file, lines, codeLines, isSuppressed),
         ...checkSwiftRowRules(file, lines, codeLines, isSuppressed, ratchets),
     ];
+    const lineRules = SWIFT_LINE_RULES.filter(
+        ({ skipFile, ratchet }) => !skipFile?.test(file) && !(ratchets && ratchet?.has(file))
+    );
 
     for (const [index, text] of lines.entries()) {
         if (/^\s*\/\//.test(text) || isSuppressed(lines, index + 1)) {
             continue;
         }
 
-        for (const { rule, pattern } of SWIFT_LINE_RULES) {
-            const column = (rule === SWIFT_ENTRY_MACRO_RULE ? codeLines[index] : text).search(pattern);
+        for (const { rule, pattern, codeOnly } of lineRules) {
+            const column = (codeOnly ? codeLines[index] : text).search(pattern);
 
             if (column === -1) {
                 continue;

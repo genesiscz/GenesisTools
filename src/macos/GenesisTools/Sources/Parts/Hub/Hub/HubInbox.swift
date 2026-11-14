@@ -104,6 +104,10 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     var multiple: Bool? = nil
     /// The asking session, when another agent's thread started it (`InboxDecision.askedIn`, DECISION 46 b).
     var askedIn: String? = nil
+    /// Milliseconds since 1970 of the stored row's last change (`InboxDecision.updatedAt`); nil for a decision only the
+    /// transcript shows, and from an older `tools`. The staging engine reads it: a row written after a pick made here
+    /// landed is another client's answer, and it shows on the next load (DECISION 51 b).
+    var updatedAt: Double? = nil
 
     var isForm: Bool { kind == "form" }
     var isDialog: Bool { kind == "dialog" || source == "dialog" }
@@ -745,7 +749,8 @@ final class HubInboxModel: ObservableObject {
     nonisolated static func stagingRows(_ sessions: [InboxSession]) -> [String: DecisionAnswering.Engine.Row] {
         var rows: [String: DecisionAnswering.Engine.Row] = [:]
         for item in sessions.flatMap(\.items) where item.isDecision {
-            rows[item.id] = DecisionAnswering.Engine.Row(option: item.draftOption, note: item.draft)
+            rows[item.id] = DecisionAnswering.Engine.Row(option: item.draftOption, note: item.draft,
+                                                         updatedAt: item.updatedAt)
         }
         return rows
     }

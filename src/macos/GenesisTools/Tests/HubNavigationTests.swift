@@ -526,6 +526,117 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertEqual(model.history.forwardEntry?.target, place(.prs, "github.com/acme/app#123"))
     }
 
+    // MARK: Mode seam (Hub/HubModeModel.swift)
+
+    /// Each of the five modes with a model of its own answers its place, its title and its header alone, with no hub.
+    @MainActor
+    func testEachModeModelAnswersItsPlaceTitleAndHeaderAlone() throws {
+        let json = #"{"prs":[{"repo":"app","number":9,"title":"fixture","state":"OPEN","draft":false,"headBranch":"feature","baseBranch":"main","url":"https://github.com/acme/app/pull/9","labels":[],"reviewers":[]}],"repos":[]}"#
+        let list = try JSONDecoder().decode(HubPRList.self, from: Data(json.utf8))
+        let pr = try XCTUnwrap(list.prs.first)
+        let prs = PRsModel()
+        XCTAssertNil(prs.navSelection, "nothing picked: a provisional place")
+        XCTAssertFalse(prs.showsTitlebarHeader, "the empty state has no header")
+        prs.apply(list, key: "fixture", flash: false)
+        prs.selectedID = pr.id
+        XCTAssertEqual(prs.navSelection, pr.id)
+        XCTAssertTrue(prs.showsTitlebarHeader)
+        XCTAssertEqual(prs.navTitle(selection: pr.id), "\(pr.label) fixture")
+        XCTAssertEqual(prs.navTitle(selection: "gone"), "a PR")
+
+        let inbox = HubInboxModel()
+        XCTAssertEqual(inbox.navSelection, HubModel.wholeList, "the list is the content")
+        XCTAssertEqual(inbox.navTitle(selection: HubModel.wholeList), "Inbox")
+        XCTAssertEqual(inbox.navTitle(selection: "gone"), "Inbox: a session")
+        inbox.selectedID = "item"
+        XCTAssertEqual(inbox.navSelection, "item")
+        XCTAssertTrue(inbox.showsTitlebarHeader)
+
+        let timeline = HubTimelineModel()
+        XCTAssertEqual(timeline.navSelection, HubModel.wholeList)
+        XCTAssertEqual(timeline.navTitle(selection: HubModel.wholeList), "Activity")
+        XCTAssertTrue(timeline.showsTitlebarHeader)
+
+        let agents = HubAgentsModel()
+        XCTAssertEqual(agents.navSelection, HubModel.wholeList)
+        XCTAssertEqual(agents.navTitle(selection: HubModel.wholeList), "Agents")
+        XCTAssertFalse(agents.showsTitlebarHeader, "the list alone has no header")
+        agents.select(parent: "parent", child: "a-child-with-a-long-id")
+        XCTAssertEqual(agents.navSelection, AgentTree.key(parent: "parent", child: "a-child-with-a-long-id"))
+        XCTAssertEqual(agents.navTitle(selection: try XCTUnwrap(agents.navSelection)), "agent a-child-with")
+
+        let usage = HubUsageModel(
+            preferences: UsagePreferences(defaults: HubDefaults.store, broadcasts: false, observeExternalChanges: false),
+            client: UsageClient { _ in Data("{}".utf8) })
+        XCTAssertEqual(usage.navSelection, usage.place.selection)
+        XCTAssertEqual(usage.navTitle(selection: HubUsageSection.spend.rawValue), "Usage: \(HubUsageSection.spend.title)")
+        XCTAssertEqual(usage.navTitle(selection: "session:s-123456789 codex"), "Usage: session s-123456")
+        XCTAssertTrue(usage.showsTitlebarHeader)
+    }
+
+    /// The diff commands act on the review on screen: the PR's in PRs mode, the shared slot in Sessions, Worktrees and
+    /// Agents, and none in Inbox, Activity and Usage, where the slot stays filled out of sight and the menu disables
+    /// every diff command instead of changing that hidden review.
+    @MainActor
+    func testTheDiffCommandsActOnlyOnAReviewOnScreen() {
+        let model = isolatedModel()
+        let session = ReviewModel(repo: URL(fileURLWithPath: "/fixture/session"), options: DiffViewOptions(), renderer: NullRenderer())
+        let pr = ReviewModel(repo: URL(fileURLWithPath: "/fixture/pr"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.review = session
+        model.prs.review = pr
+        let diffCommands = HubMenuCommands.view.filter { $0.id?.hasPrefix("hub.view.diff.") == true }
+        XCTAssertEqual(diffCommands.count, 6)
+        for mode in HubMode.allCases {
+            model.mode = mode
+            switch mode {
+            case .prs: XCTAssertTrue(model.mainReview === pr)
+            case .sessions, .worktrees, .agents: XCTAssertTrue(model.mainReview === session, "\(mode)")
+            case .inbox, .timeline, .usage: XCTAssertNil(model.mainReview, "\(mode)")
+            }
+            for command in diffCommands {
+                XCTAssertEqual(command.enabled?(model), model.mainReview != nil, "\(mode) \(command.title)")
+            }
+        }
+    }
+
+    /// Every mode has one owner in the table, the hub asks the model of the mode on screen, and every mode's place
+    /// opens that same mode again through its `--hub` flags.
+    @MainActor
+    func testEveryModeHasOneOwnerAndItsPlaceOpensTheSameMode() throws {
+        let model = isolatedModel()
+        for mode in HubMode.allCases {
+            switch (mode, model.owner(of: mode)) {
+            case (.sessions, .sessions), (.worktrees, .worktrees): break
+            case (.prs, .model(let owner)): XCTAssertTrue(owner === model.prs)
+            case (.inbox, .model(let owner)): XCTAssertTrue(owner === model.inbox)
+            case (.timeline, .model(let owner)): XCTAssertTrue(owner === model.timeline)
+            case (.agents, .model(let owner)): XCTAssertTrue(owner === model.agents)
+            case (.usage, .model(let owner)): XCTAssertTrue(owner === model.usage)
+            default: XCTFail("\(mode) has the wrong owner")
+            }
+        }
+
+        model.mode = .inbox
+        model.inbox.selectedID = "item"
+        XCTAssertEqual(model.navEntry, HubNavEntry(mode: .inbox, selection: "item"))
+        XCTAssertEqual(model.navTitle(model.navEntry), "Inbox: a session")
+        XCTAssertTrue(model.showsTitlebarHeader)
+        model.mode = .agents
+        XCTAssertEqual(model.navEntry, HubNavEntry(mode: .agents, selection: HubModel.wholeList))
+        XCTAssertFalse(model.showsTitlebarHeader)
+
+        let picked: [HubMode: String] = [
+            .sessions: "claude:one", .worktrees: "/work/app", .prs: "github.com/acme/app#7", .inbox: "item",
+            .timeline: HubModel.wholeList, .agents: AgentTree.key(parent: "parent", child: "child"),
+            .usage: HubUsageSection.spend.rawValue,
+        ]
+        for mode in HubMode.allCases {
+            let selection = try XCTUnwrap(picked[mode], "\(mode) needs a sample place")
+            let flags = HubPlace(entry: HubNavEntry(mode: mode, selection: selection), tab: .transcript).arguments
+            XCTAssertEqual(HubRequest(flags).launchMode, mode, "\(mode): \(flags)")
+        }
+    }
+
     private func drainMainQueue() {
         let done = expectation(description: "main queue")
         DispatchQueue.main.async { DispatchQueue.main.async { done.fulfill() } }

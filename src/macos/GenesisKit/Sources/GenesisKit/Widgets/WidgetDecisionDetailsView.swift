@@ -8,20 +8,20 @@ import SwiftUI
 struct WidgetDecisionDetailsView: View {
     let card: WidgetCard
     let details: WidgetDecisionDetails
-    let preferences: WidgetPreferences?
+    let preferences: WidgetPreferences
     /// The agent's pick goes here, above the options; nil when it sits under its option (`WidgetProposal.underOption`).
     let proposal: String?
 
     /// The cited files with lines to show or a file that is gone, unless Code is set to Hide.
     private var codeRefs: [DecisionRef] {
-        preferences?.decisionCode == "hide" ? [] : (details.refs ?? []).filter(\.hasContent)
+        preferences.decisionCode == "hide" ? [] : (details.refs ?? []).filter(\.hasContent)
     }
 
     var body: some View {
         let _ = RenderProbe.hit("widget.decision.details.body")
         VStack(alignment: .leading, spacing: 10) {
             if let context = details.context, !context.isEmpty {
-                DecisionContextSection(markdown: context, startsOpen: preferences?.decisionContext == "open")
+                DecisionContextSection(markdown: context, startsOpen: preferences.decisionContext == "open")
             }
             if !codeRefs.isEmpty {
                 DecisionCodeSection(refs: codeRefs, root: card.sourceContext?.repoRoot ?? card.sourceContext?.cwd)
@@ -87,8 +87,8 @@ enum WidgetProposal {
 
     /// The option the pick sits under and its text there, when the card shows its options, recommends one and is set
     /// to put the pick under it (`decisionProposal`, default "option").
-    static func placement(_ card: WidgetCard, preferences: WidgetPreferences?) -> (letter: String, text: String)? {
-        guard card.kind == "decision", card.needsAnswer, preferences?.decisionProposal != "above",
+    static func placement(_ card: WidgetCard, preferences: WidgetPreferences) -> (letter: String, text: String)? {
+        guard card.kind == "decision", card.needsAnswer, preferences.decisionProposal != "above",
               let proposal = card.decision?.proposal,
               let letter = card.decision?.recommended ?? card.choices.first(where: \.recommended)?.id,
               card.choices.contains(where: { $0.id == letter }),

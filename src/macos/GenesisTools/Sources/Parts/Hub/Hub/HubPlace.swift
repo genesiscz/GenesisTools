@@ -18,7 +18,7 @@ struct HubPlace: Codable, Equatable {
     /// to 10-27 01:58: an Inbox resume landed on a worktree commit).
     static let windowFlags: Set<String> = ["--width", "--height", "--style", "--glass", "--panes", "--set"]
 
-    /// Under `genesisHome()` (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
+    /// Under `GenesisToolsHome.home()` (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
     static var url: URL {
         NativePreview.hubFile("place.json")
     }

@@ -1,5 +1,5 @@
 import { COUNTDOWN_HOLD_MS } from "@app/control/lib/peekaboo";
-import { ensureBinaryAsync } from "@app/control/lib/runner";
+import { ensureBinaryAsync, ensurePinnedBinaryAsync } from "@app/control/lib/runner";
 import { parseFlags } from "@genesiscz/utils/cli/flag-issues";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { formatCount } from "@genesiscz/utils/format";
@@ -190,7 +190,8 @@ export interface FramesRecordingOptions {
     onStart?: (recording: LibraryRecording) => void;
 }
 
-const nativeRecorder = () => FRAME_RECORDERS.native({ axTool: async (options) => [await ensureBinaryAsync(options)] });
+const nativeRecorder = () =>
+    FRAME_RECORDERS.native({ axTool: async (options) => [await ensurePinnedBinaryAsync(options)] });
 
 /** How often a held countdown looks for a frames recording's first frame. */
 const FIRST_FRAME_POLL_MS = 200;

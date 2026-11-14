@@ -118,7 +118,7 @@ public final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
     /// `toolsBinary`: the `tools` executable; nil looks on PATH and in the usual install places.
     public init(
         toolsBinary: String? = nil,
-        objectsDir: String = (NSHomeDirectory() as NSString).appendingPathComponent(".genesis-tools/agents/_objects"),
+        objectsDir: String = GenesisToolsHome.path("agents/_objects"),
         timeout: TimeInterval = 10
     ) {
         self.binary = toolsBinary ?? Self.findTools()

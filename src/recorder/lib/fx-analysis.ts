@@ -232,6 +232,7 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
 
         try {
             mkdirSync(dirname(path), { recursive: true });
+            // A whole file or the one before: two editors that verify one export at once never tear it.
             atomicWriteFileSync(path, SafeJSON.stringify(lines));
             unsaved = 0;
         } catch (error) {

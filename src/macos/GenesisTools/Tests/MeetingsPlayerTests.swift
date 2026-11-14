@@ -135,14 +135,6 @@ final class MeetingsPlayerTests: XCTestCase {
         }, defaults: defaults)
     }
 
-    private func until(_ what: String, timeout: TimeInterval = 3, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() {
-            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     private var playingCount: Int { sounds.filter(\.isPlaying).count }
 
     // MARK: The table and the rules

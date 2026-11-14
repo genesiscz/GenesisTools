@@ -40,17 +40,6 @@ final class RecorderHuntPreviewRebuildInputsTests: XCTestCase {
         await writer.finishWriting()
     }
 
-    private func until(_ what: String, timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() {
-            guard Date() < deadline else {
-                XCTFail("timed out after \(timeout) s waiting until \(what)")
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-    }
-
     /// A window on the movie with no recorder service; its `tools recorder apply` never answers, so a change stays drawn.
     private func openModel(_ project: EditProject) async throws -> EditorModel {
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("screen.edit.json")),

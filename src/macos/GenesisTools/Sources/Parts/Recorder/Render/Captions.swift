@@ -68,7 +68,7 @@ final class TextPlates: @unchecked Sendable {
     private let lock = NSLock()
     private var images: RecentCache<String, CIImage>
 
-    init(limit: Int = 256) {
+    init(limit: Int = 64) {
         images = RecentCache(limit: limit)
     }
 

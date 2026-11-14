@@ -1,0 +1,727 @@
+{
+    "version": 1,
+    "state": {
+        "selectedKey": "local:claude:fixture-work:",
+        "version": 1,
+        "revision": 1,
+        "preferences": {
+            "excludedKeys": [],
+            "projects": [],
+            "sessions": [],
+            "showChanges": false,
+            "showWidget": false,
+            "placement": "both",
+            "side": "right",
+            "topModules": [
+                "agents"
+            ],
+            "sideGroups": [
+                [
+                    "agents"
+                ],
+                [
+                    "capture",
+                    "shelf"
+                ],
+                [
+                    "focus",
+                    "voice",
+                    "tasks"
+                ]
+            ],
+            "sideLayout": "joined",
+            "sideStyle": "modular",
+            "joinedEdges": true,
+            "sidePosition": 0.5,
+            "topPosition": 0.5,
+            "hoverPreviews": true,
+            "glassEffect": true,
+            "panelBackground": "dark",
+            "previewQuestion": true,
+            "display": "",
+            "providers": [],
+            "quietSeconds": 15,
+            "voiceProvider": "xai",
+            "voiceLanguage": "",
+            "alertDecisions": true,
+            "alertAnswers": true,
+            "alertSound": "Glass",
+            "alertPopup": true,
+            "alertSummary": true,
+            "alertCompactAnswer": true,
+            "previewFilter": "needs-you",
+            "previewSort": "attention",
+            "alertAnswerSound": "same",
+            "alertFlashSeconds": 5,
+            "replyNames": "selected-or-newest",
+            "inboxComposer": "top",
+            "bubbleTooltip": "auto",
+            "railOrder": "list",
+            "decisionClick": "stage",
+            "decisionCommandSwaps": true,
+            "ownAnswerReturn": "stage",
+            "ownAnswerEmptyReturn": "send",
+            "dialogAnswer": "press",
+            "previewWidth": 324,
+            "stagedReminder": true,
+            "stagedOnLeave": "ask",
+            "sendCloseSeconds": 2.5,
+            "inboxGrouping": "session",
+            "inboxFilter": "all",
+            "overviewFilter": "all",
+            "overviewSummary": true,
+            "composerVoice": "ask",
+            "alertPopupSeconds": 7,
+            "alertPopupClickAway": false,
+            "alertPopupMany": "list",
+            "popupSendOpens": "stay",
+            "alertVolume": 100,
+            "autoDecisionPopup": true,
+            "autoDecisionSeconds": 5,
+            "autoDecisionSound": "Tink",
+            "noteSeconds": 6,
+            "openShortcutEnabled": true,
+            "openShortcut": {
+                "keyCode": 13,
+                "modifiers": 6400
+            },
+            "fileLinkClick": "genesis-markdown",
+            "decisionContext": "folded",
+            "decisionCode": "show",
+            "decisionProposal": "option"
+        },
+        "assets": {},
+        "drafts": {},
+        "outgoing": [],
+        "inboxRead": {}
+    },
+    "notifications": {
+        "unread": 2,
+        "needsAnswer": 4,
+        "complete": true,
+        "truncated": false,
+        "sessions": [
+            {
+                "key": "local:claude:fixture-work:",
+                "unread": 1,
+                "needsAnswer": 4,
+                "latest": {
+                    "id": "dialog:claude:fixture-work:toolu_fixture",
+                    "sourceId": "claude:fixture-work:toolu_fixture",
+                    "kind": "dialog",
+                    "key": "local:claude:fixture-work:",
+                    "at": 1767268620000,
+                    "needsAnswer": true,
+                    "title": "Run the migration now?",
+                    "options": [
+                        "Run it",
+                        "Wait"
+                    ]
+                },
+                "pendingItem": {
+                    "id": "dialog:claude:fixture-work:toolu_fixture",
+                    "sourceId": "claude:fixture-work:toolu_fixture",
+                    "kind": "dialog",
+                    "key": "local:claude:fixture-work:",
+                    "at": 1767268620000,
+                    "needsAnswer": true,
+                    "title": "Run the migration now?",
+                    "options": [
+                        "Run it",
+                        "Wait"
+                    ]
+                },
+                "items": [
+                    {
+                        "id": "dialog:claude:fixture-work:toolu_fixture",
+                        "sourceId": "claude:fixture-work:toolu_fixture",
+                        "kind": "dialog",
+                        "key": "local:claude:fixture-work:",
+                        "at": 1767268620000,
+                        "needsAnswer": true,
+                        "title": "Run the migration now?",
+                        "options": [
+                            "Run it",
+                            "Wait"
+                        ]
+                    },
+                    {
+                        "id": "form:form_pending_fixture",
+                        "sourceId": "form_pending_fixture",
+                        "kind": "form",
+                        "key": "local:claude:fixture-work:",
+                        "at": 1767268560000,
+                        "needsAnswer": true,
+                        "title": "Which account runs the nightly job?"
+                    },
+                    {
+                        "id": "decision:d_2_fixture",
+                        "sourceId": "d_2_fixture",
+                        "kind": "decision",
+                        "key": "local:claude:fixture-work:",
+                        "at": 1767267600000,
+                        "needsAnswer": true,
+                        "number": 2,
+                        "title": "Which accounts get the new badge?",
+                        "options": [
+                            "work",
+                            "personal",
+                            "both"
+                        ],
+                        "multiple": true,
+                        "revision": 1,
+                        "updatedAt": 1767268200000,
+                        "draftOption": "ab",
+                        "draft": "Start with these two."
+                    },
+                    {
+                        "id": "decision:d_1_fixture",
+                        "sourceId": "d_1_fixture",
+                        "kind": "decision",
+                        "key": "local:claude:fixture-work:",
+                        "at": 1767267000000,
+                        "needsAnswer": true,
+                        "number": 1,
+                        "title": "Keep the compact layout?",
+                        "summary": "Keep the compact layout?",
+                        "options": [
+                            "Keep it",
+                            "Go back to the wide layout"
+                        ],
+                        "recommended": "a",
+                        "revision": 1,
+                        "updatedAt": 1767267000000
+                    },
+                    {
+                        "id": "answer:qa_answer_fixture",
+                        "sourceId": "qa_answer_fixture",
+                        "kind": "answer",
+                        "key": "local:claude:fixture-work:",
+                        "at": 1767268320000,
+                        "needsAnswer": false,
+                        "title": "Why the compact layout?"
+                    }
+                ],
+                "unreadItem": {
+                    "id": "answer:qa_answer_fixture",
+                    "sourceId": "qa_answer_fixture",
+                    "kind": "answer",
+                    "key": "local:claude:fixture-work:",
+                    "at": 1767268320000,
+                    "needsAnswer": false,
+                    "title": "Why the compact layout?"
+                }
+            },
+            {
+                "key": "local:claude:a1fixture:",
+                "unread": 1,
+                "needsAnswer": 0,
+                "latest": {
+                    "id": "result:claude:a1fixture",
+                    "sourceId": "a1fixture",
+                    "kind": "result",
+                    "key": "local:claude:a1fixture:",
+                    "at": 1767268260000,
+                    "needsAnswer": false,
+                    "title": "reviewer"
+                },
+                "unreadItem": {
+                    "id": "result:claude:a1fixture",
+                    "sourceId": "a1fixture",
+                    "kind": "result",
+                    "key": "local:claude:a1fixture:",
+                    "at": 1767268260000,
+                    "needsAnswer": false,
+                    "title": "reviewer"
+                },
+                "items": [
+                    {
+                        "id": "result:claude:a1fixture",
+                        "sourceId": "a1fixture",
+                        "kind": "result",
+                        "key": "local:claude:a1fixture:",
+                        "at": 1767268260000,
+                        "needsAnswer": false,
+                        "title": "reviewer"
+                    }
+                ]
+            }
+        ],
+        "staged": [
+            {
+                "id": "decision:d_2_fixture",
+                "sourceId": "d_2_fixture",
+                "kind": "decision",
+                "key": "local:claude:fixture-work:",
+                "at": 1767267600000,
+                "needsAnswer": true,
+                "number": 2,
+                "title": "Which accounts get the new badge?",
+                "options": [
+                    "work",
+                    "personal",
+                    "both"
+                ],
+                "multiple": true,
+                "revision": 1,
+                "updatedAt": 1767268200000,
+                "draftOption": "ab",
+                "draft": "Start with these two."
+            }
+        ],
+        "pendingDecisionIDs": [
+            "d_1_fixture",
+            "d_2_fixture"
+        ],
+        "answeredElsewhere": [
+            {
+                "id": "decision:d_3_fixture",
+                "sourceId": "d_3_fixture",
+                "kind": "decision",
+                "key": "local:claude:fixture-work:",
+                "at": 1767267900000,
+                "needsAnswer": false,
+                "number": 3,
+                "title": "Ship on Friday?",
+                "options": [
+                    "yes",
+                    "no"
+                ],
+                "option": "a",
+                "answer": "Yes, ship it.",
+                "answeredVia": "agent"
+            }
+        ]
+    },
+    "activity": [
+        {
+            "id": "ev_fixture",
+            "sourceId": "d_1_fixture",
+            "at": 1767267000000,
+            "title": "DECISION 1 asked",
+            "body": ""
+        }
+    ],
+    "sessions": [
+        {
+            "key": "local:claude:fixture-work:",
+            "target": {
+                "hostId": "local",
+                "provider": "claude",
+                "sessionId": "fixture-work",
+                "sourceHome": "",
+                "cwd": "/fixture/work"
+            },
+            "title": "Work session",
+            "project": "work",
+            "activityAt": 1767268680000,
+            "status": "waiting",
+            "pinned": true,
+            "visible": true,
+            "hiddenByFilter": false,
+            "transcriptPath": "/fixture/work/transcripts/fixture-work.jsonl",
+            "model": "fixture-model",
+            "account": "work",
+            "role": "lead",
+            "agentStatus": "running",
+            "startedAt": 1767263400000
+        },
+        {
+            "key": "local:claude:a1fixture:",
+            "target": {
+                "hostId": "local",
+                "provider": "claude",
+                "sessionId": "a1fixture",
+                "sourceHome": "",
+                "cwd": "/fixture/work"
+            },
+            "title": "reviewer",
+            "project": "work",
+            "activityAt": 1767268260000,
+            "status": "finished",
+            "pinned": true,
+            "visible": true,
+            "hiddenByFilter": false,
+            "agentId": "a1fixture",
+            "parentSessionId": "fixture-work",
+            "parentKey": "local:claude:fixture-work:",
+            "transcriptPath": "/fixture/work/transcripts/agent-a1fixture.jsonl",
+            "role": "background",
+            "model": "fixture-model",
+            "account": "work",
+            "toolCalls": 4,
+            "agentStatus": "completed",
+            "startedAt": 1767267000000
+        },
+        {
+            "key": "local:codex:fixture-personal:",
+            "target": {
+                "hostId": "local",
+                "provider": "codex",
+                "sessionId": "fixture-personal",
+                "sourceHome": "",
+                "cwd": "/fixture/personal"
+            },
+            "title": "Personal session",
+            "project": "personal",
+            "activityAt": 1767266100000,
+            "status": "recent",
+            "pinned": true,
+            "visible": true,
+            "hiddenByFilter": false,
+            "transcriptPath": "/fixture/personal/transcripts/fixture-personal.jsonl",
+            "account": "work"
+        }
+    ],
+    "cards": [
+        {
+            "id": "form:form_answered_fixture",
+            "kind": "form",
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "form_answered_fixture",
+            "at": 1767265500000,
+            "title": "Who reviews the change?",
+            "body": "alice@example.com",
+            "status": "answered",
+            "choices": [],
+            "formItems": [
+                {
+                    "id": "q1",
+                    "promptMarkdown": "Who reviews the change?",
+                    "allowFreeText": true
+                }
+            ],
+            "formAnswers": {
+                "q1": {
+                    "itemId": "q1",
+                    "freeText": "alice@example.com"
+                }
+            },
+            "attachments": [],
+            "refs": [],
+            "read": true,
+            "entryId": "qa_form_fixture"
+        },
+        {
+            "id": "decision:d_4_fixture",
+            "kind": "decision",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude",
+                "project": "work",
+                "cwd": "/fixture/work"
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "d_4_fixture",
+            "at": 1767265800000,
+            "title": "Keep the wide layout?",
+            "body": "",
+            "status": "superseded",
+            "number": 4,
+            "revision": 1,
+            "choices": [
+                {
+                    "id": "a",
+                    "title": "yes",
+                    "recommended": false
+                },
+                {
+                    "id": "b",
+                    "title": "no",
+                    "recommended": false
+                }
+            ],
+            "attachments": [],
+            "refs": [],
+            "read": true,
+            "supersededBy": {
+                "id": "d_1_fixture",
+                "number": 1,
+                "sessionKey": "local:claude:fixture-work:",
+                "title": "Keep the compact layout?"
+            }
+        },
+        {
+            "id": "decision:d_3_fixture",
+            "kind": "decision",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude",
+                "project": "work",
+                "cwd": "/fixture/work"
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "d_3_fixture",
+            "at": 1767266400000,
+            "title": "Ship on Friday?",
+            "body": "",
+            "status": "acknowledged",
+            "number": 3,
+            "revision": 1,
+            "choices": [
+                {
+                    "id": "a",
+                    "title": "yes",
+                    "recommended": false
+                },
+                {
+                    "id": "b",
+                    "title": "no",
+                    "recommended": false
+                }
+            ],
+            "attachments": [],
+            "refs": [],
+            "read": true,
+            "option": "a",
+            "answer": "Yes, ship it.",
+            "comments": [
+                "Shipped."
+            ],
+            "answeredVia": "agent"
+        },
+        {
+            "id": "decision:d_1_fixture",
+            "kind": "decision",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude",
+                "project": "work",
+                "cwd": "/fixture/work"
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "d_1_fixture",
+            "at": 1767267000000,
+            "title": "Keep the compact layout?",
+            "body": "Keep the compact layout?",
+            "status": "open",
+            "number": 1,
+            "revision": 1,
+            "choices": [
+                {
+                    "id": "a",
+                    "title": "Keep it",
+                    "recommended": true,
+                    "rationale": "It fits the side panel"
+                },
+                {
+                    "id": "b",
+                    "title": "Go back to the wide layout",
+                    "recommended": false
+                }
+            ],
+            "decision": {
+                "context": "The compact layout landed last week.",
+                "notes": "Either way the setting stays.",
+                "proposal": "Keep it and watch the feedback.",
+                "confidence": "high",
+                "recommended": "a",
+                "blocking": true,
+                "refs": [
+                    {
+                        "path": "/fixture/work/src/layout.ts",
+                        "line": 3,
+                        "endLine": null,
+                        "from": "posted",
+                        "absolute": null,
+                        "excerpt": null,
+                        "startLine": null,
+                        "language": null,
+                        "missing": false
+                    }
+                ]
+            },
+            "attachments": [],
+            "refs": [
+                {
+                    "type": "file",
+                    "value": "/fixture/work/src/layout.ts"
+                }
+            ],
+            "read": true
+        },
+        {
+            "id": "decision:t_5_fixture",
+            "kind": "todo",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude",
+                "project": "work",
+                "cwd": "/fixture/work"
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "t_5_fixture",
+            "at": 1767267300000,
+            "title": "Rename the fixture folder once the review lands.",
+            "body": "",
+            "status": "open",
+            "number": 5,
+            "revision": 1,
+            "choices": [],
+            "attachments": [],
+            "refs": [],
+            "read": true
+        },
+        {
+            "id": "decision:d_2_fixture",
+            "kind": "decision",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude",
+                "project": "work",
+                "cwd": "/fixture/work"
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "d_2_fixture",
+            "at": 1767267600000,
+            "title": "Which accounts get the new badge?",
+            "body": "",
+            "status": "drafted",
+            "number": 2,
+            "revision": 1,
+            "choices": [
+                {
+                    "id": "a",
+                    "title": "work",
+                    "recommended": false
+                },
+                {
+                    "id": "b",
+                    "title": "personal",
+                    "recommended": false
+                },
+                {
+                    "id": "c",
+                    "title": "both",
+                    "recommended": false
+                }
+            ],
+            "multiple": true,
+            "attachments": [],
+            "refs": [],
+            "read": true,
+            "draftOption": "ab",
+            "draft": "Start with these two."
+        },
+        {
+            "id": "answer:qa_answer_fixture",
+            "kind": "answer",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude-code",
+                "agentLabel": null,
+                "aiAgent": null,
+                "project": "work",
+                "cwd": "/fixture/work",
+                "repoRoot": "/fixture/work",
+                "branch": "main",
+                "commitSha": null,
+                "isWorktree": false,
+                "worktreePath": null
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "qa_answer_fixture",
+            "at": 1767268320000,
+            "title": "Why the compact layout?",
+            "body": "It fits the side panel without a scroll bar.",
+            "status": "answered",
+            "choices": [],
+            "attachments": [],
+            "refs": [
+                {
+                    "type": "file",
+                    "value": "/fixture/work/src/layout.ts"
+                }
+            ],
+            "read": false
+        },
+        {
+            "id": "answer:qa_message_fixture",
+            "kind": "answer",
+            "sourceContext": {
+                "sessionId": "fixture-work",
+                "agent": "claude-code",
+                "agentLabel": null,
+                "aiAgent": null,
+                "project": "work",
+                "cwd": "/fixture/work",
+                "repoRoot": "/fixture/work",
+                "branch": "main",
+                "commitSha": null,
+                "isWorktree": false,
+                "worktreePath": null
+            },
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "qa_message_fixture",
+            "at": 1767268440000,
+            "title": "The nightly job finished",
+            "body": "All 12 steps passed.",
+            "status": "message",
+            "choices": [],
+            "attachments": [],
+            "refs": [],
+            "read": true
+        },
+        {
+            "id": "form:form_pending_fixture",
+            "kind": "form",
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "form_pending_fixture",
+            "at": 1767268560000,
+            "title": "Which account runs the nightly job?",
+            "body": "",
+            "status": "pending",
+            "choices": [],
+            "formItems": [
+                {
+                    "id": "q1",
+                    "promptMarkdown": "Which account runs the nightly job?",
+                    "choices": [
+                        {
+                            "id": "work",
+                            "label": "work"
+                        },
+                        {
+                            "id": "personal",
+                            "label": "personal"
+                        }
+                    ],
+                    "allowFreeText": true,
+                    "required": true
+                }
+            ],
+            "attachments": [],
+            "refs": [],
+            "read": false
+        },
+        {
+            "id": "dialog:claude:fixture-work:toolu_fixture",
+            "kind": "dialog",
+            "sessionKey": "local:claude:fixture-work:",
+            "sourceId": "claude:fixture-work:toolu_fixture",
+            "at": 1767268620000,
+            "title": "Run the migration now?",
+            "body": "",
+            "status": "waiting",
+            "choices": [
+                {
+                    "id": "a",
+                    "title": "Run it",
+                    "recommended": false
+                },
+                {
+                    "id": "b",
+                    "title": "Wait",
+                    "recommended": false
+                }
+            ],
+            "attachments": [],
+            "refs": [],
+            "read": false
+        }
+    ],
+    "manifests": {},
+    "changes": null,
+    "errors": [],
+    "selectedKey": "local:claude:fixture-work:"
+}

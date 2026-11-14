@@ -184,9 +184,7 @@ public enum GateCredentialRedactor {
 
 public enum GateAudit {
     public static var path: String {
-        let override = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
-        let home = override?.isEmpty == false ? override! : NSHomeDirectory()
-        return (home as NSString).appendingPathComponent(".genesis-tools/audit/gates.jsonl")
+        GenesisToolsHome.path("audit/gates.jsonl")
     }
 
     /// O_APPEND makes the single write atomic with other Swift and TypeScript writers, including file creation.

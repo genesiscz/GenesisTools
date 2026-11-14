@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitBase
 
 /// The folder of the widget face's single-instance lock: this bundle's Application Support folder. In the host, so a
 /// window face can tell whether the widget runs without starting a process (`WidgetLaunch.isRunning`).
@@ -90,8 +91,7 @@ package enum WidgetLaunch {
         if let root = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String {
             return URL(fileURLWithPath: root).standardizedFileURL.appendingPathComponent("state.json").path
         }
-        let home = environment["GENESIS_TOOLS_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/hub/widget/state.json").path
+        return GenesisToolsHome.path("hub/widget/state.json", environment: environment)
     }
     package static func start(_ arguments: [String] = ["--widget", "--settings"]) {
         guard AppParts.canLaunch(face: arguments.first ?? ""), let executable = Bundle.main.executableURL else { return }

@@ -546,6 +546,14 @@ describe("frame reads refuse a rate that never advances", () => {
             );
         }
     });
+
+    // Review CLI-F1: `--every 0` made the frame step 0 and the grid loop never ended. ocrVideo is refused before it
+    // reads anything, through its gridRead.
+    test.each([0, -2, Number.NaN, Number.POSITIVE_INFINITY])("ocrVideo fps %p is refused", async (fps) => {
+        await expect(ocrVideo({ video: "/nonexistent/movie.mp4", toUs: 1_000_000, fps })).rejects.toThrow(
+            "a positive number of times a second"
+        );
+    });
 });
 
 describe("verifyHidden checks the names it is given", () => {

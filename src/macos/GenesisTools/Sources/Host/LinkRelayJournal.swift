@@ -1,11 +1,12 @@
 import Foundation
+import GenesisKitBase
 
 /// What the link relay did, one line per event in `~/.genesis-tools/app/link-relay.log`, so a link that went
 /// to the wrong process, a relay that died or hung, and a window face that started its own relay can be read
 /// back later. Window faces write here too when a delivery reaches them instead of the relay.
 enum RelayJournal {
     static var directory: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app")
+        GenesisToolsHome.url("app")
     }
 
     static var logFile: URL { directory.appendingPathComponent("link-relay.log") }

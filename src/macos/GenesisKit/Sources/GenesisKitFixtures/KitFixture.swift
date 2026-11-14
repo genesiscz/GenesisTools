@@ -2,7 +2,8 @@ import Foundation
 
 /// The one copy of the `tools` fixtures: the frozen CLI contracts (`contract-*`) and real captured outputs
 /// (`doctor.json`, `du-*.json`, `clones-*.json`, `hub-worktrees-*.json`, `macos-swap.json`) in `Disk/`, and the git
-/// rules both languages implement (`contract-worktree-renames.json`) in `Git/`.
+/// rules both languages implement (`contract-worktree-renames.json`) in `Git/`, and the golden widget snapshots
+/// (`snapshot-*.json`, written by src/hub/lib/widget/snapshot-golden.test.ts from the real builder) in `Widget/`.
 /// The kit's tests and Genesis's tests read them through this product; the GenesisTools bun tests read the same
 /// files by path and check every contract against the real output of the command code. Test targets only: an app
 /// target never links this product.
@@ -20,6 +21,14 @@ public enum KitFixture {
             throw Missing(name: name, folder: folder)
         }
         return url
+    }
+
+    /// The file names in `folder`, sorted, so a test reads every fixture a TypeScript writer added.
+    public static func names(in folder: String) throws -> [String] {
+        guard let url = Bundle.module.resourceURL?.appendingPathComponent(folder, isDirectory: true) else {
+            throw Missing(name: "", folder: folder)
+        }
+        return try FileManager.default.contentsOfDirectory(atPath: url.path).filter { !$0.hasPrefix(".") }.sorted()
     }
 
     public static func data(_ name: String, in folder: String = "Disk") throws -> Data {

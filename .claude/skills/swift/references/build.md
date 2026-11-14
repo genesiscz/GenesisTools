@@ -6,7 +6,7 @@
 | Compile the app as installed | `bun run app` (its `swift build` flags are `appSwiftArgs` in `src/macos/lib/permissions/app.ts`) |
 | Install (build, sign, swap, reap) | `bun run app`; `bun run app:status` names the installed commit |
 | Tests | `bun run app:test` in GenesisTools (the app build's tree, no second `.build`), `swift test` in GenesisKit |
-| Off-screen picture | `GenesisTools --hub … --snapshot /tmp/cc/<…>/x.png` (`.claude/rules/macos-app.md`, "Verify without a screen") |
+| Off-screen picture | `GenesisTools --hub … --snapshot /tmp/cc/<…>/x.png` (`.claude/rules/macos-app-verify.md`) |
 | Bench | `GenesisTools --hub --bench <out.json> …` (measuring.md §4) |
 | Widget preview | `bun scripts/build-widget-preview.ts` in its worktree, then restart the app |
 

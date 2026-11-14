@@ -45,7 +45,7 @@ Each of these contradicts a measurement in this skill or a fact of this codebase
 - "Prefer SwiftUI over AppKit bridging": the measured fixes here are AppKit (layer animations, `NSPanel`).
 - "A per-row `@Observable` model for list rows": rows take values and are `Equatable`; their controls exist only
   while the row is live (`.liveRow`, performance.md "Dense lists and accessibility clients").
-- "`ImageRenderer` for view images": see the snapshot rules in `.claude/rules/macos-app.md`.
+- "`ImageRenderer` for view images": see the snapshot rules in `.claude/rules/macos-app-verify.md`.
 - A flat "use a lazy stack from 50 items": measure; the `LazyVStack` cost per scroll event is in
   [performance.md](performance.md).
 - `drawingGroup` as a general fix: the skills disagree and nobody measured it here.

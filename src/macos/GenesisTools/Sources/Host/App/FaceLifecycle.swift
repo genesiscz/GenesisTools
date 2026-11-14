@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitBase
 
 /// How each long-lived face starts and ends, one JSON line per event in `~/.genesis-tools/app/lifecycle.jsonl`:
 /// `{"detail":…,"event":…,"face":…,"pid":…,"t":<epoch seconds>}`.
@@ -12,7 +13,7 @@ import Foundation
 /// in `app/lifecycle-alive/`). `start`, `window-close` and `quit-request` (PartQuit, "Quit All") show what led to it.
 package enum FaceLifecycle {
     static var directory: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app", isDirectory: true)
+        GenesisToolsHome.url("app", isDirectory: true)
     }
 
     static var logURL: URL { directory.appendingPathComponent("lifecycle.jsonl") }

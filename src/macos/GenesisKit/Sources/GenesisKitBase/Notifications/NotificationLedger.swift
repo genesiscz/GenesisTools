@@ -21,9 +21,7 @@ public enum NotificationLedger {
     }
 
     public static var path: String {
-        let override = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
-        let home = override?.isEmpty == false ? override! : NSHomeDirectory()
-        return (home as NSString).appendingPathComponent(".genesis-tools/notifications/ledger.jsonl")
+        GenesisToolsHome.path("notifications/ledger.jsonl")
     }
 
     /// Past this size the file moves to `ledger.jsonl.1` (replacing the older one) and a new file starts.

@@ -42,8 +42,9 @@ import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { ensureWatcher } from "../lib/watcher";
 import { captureCostRead, windowJson } from "../lib/window-reads";
-import { askProjectAtEnd, ensureWatcher } from "./watch";
+import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
 
