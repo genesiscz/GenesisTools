@@ -41,7 +41,7 @@ def run(argv, ok=(0,), stdout=subprocess.DEVNULL, timeout=TIMEOUT_S):
                cpu_ms=(after.ru_utime+after.ru_stime-before.ru_utime-before.ru_stime)*1000,
                exit=code, stderr=stderr)
     commands.append(row)
-    if result.returncode not in ok:
+    if code not in ok:
         raise RuntimeError(row)
     return row
 
