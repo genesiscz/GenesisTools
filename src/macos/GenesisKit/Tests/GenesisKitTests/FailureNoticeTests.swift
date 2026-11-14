@@ -696,6 +696,15 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertEqual(probe.count, 1)
     }
 
+    func testARunWhoseBinaryIsMissingReachesTheFailureObserver() async {
+        let probe = FailureCaptureProbe()
+        ToolsCallTrace.observeFailures { _ in _ = probe.next() }
+        defer { ToolsCallTrace.observeFailures(nil) }
+        let bridge = ToolsBridge(binaryPath: "/nonexistent/tools", server: nil)
+        _ = try? await bridge.run(subcommand: "fixture", args: ["read"])
+        XCTAssertEqual(probe.count, 1, "a call that never started a child is a failure the capture must hear of")
+    }
+
     func testPersistedFailureDoesNotRepeatACredentialFromItsCall() async throws {
         let directory = temporaryURL("failure-capture")
         let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })

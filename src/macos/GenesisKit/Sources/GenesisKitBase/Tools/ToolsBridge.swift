@@ -376,6 +376,7 @@ public struct ToolsBridge: Sendable {
         }
 
         guard Self.isExecutableFile(resolvedBinaryPath) else {
+            Self.recordLaunchFailure(ToolsBridgeError.binaryNotFound(resolvedBinaryPath), traceId: traceId, argv: argv, started: started)
             throw ToolsBridgeError.binaryNotFound(resolvedBinaryPath)
         }
 
@@ -402,8 +403,15 @@ public struct ToolsBridge: Sendable {
             "tool_call exec turn=\(turnId, privacy: .public) sub=\(subcommand, privacy: .public) args=\(args.joined(separator: " "), privacy: .private)"
         )
 
-        let stdout = try ToolsPipeCollector(outPipe)
-        let stderr = try ToolsPipeCollector(errPipe)
+        let stdout: ToolsPipeCollector
+        let stderr: ToolsPipeCollector
+        do {
+            stdout = try ToolsPipeCollector(outPipe)
+            stderr = try ToolsPipeCollector(errPipe)
+        } catch {
+            Self.recordLaunchFailure(error, traceId: traceId, argv: argv, started: started)
+            throw error
+        }
         let exit = ToolsProcessExit()
         let ended = SpawnMeter.started(executable: process.executableURL, arguments: process.arguments ?? [])
         process.terminationHandler = { _ in
@@ -416,6 +424,7 @@ public struct ToolsBridge: Sendable {
             ended()
             stdout.stop(error)
             stderr.stop(error)
+            Self.recordLaunchFailure(error, traceId: traceId, argv: argv, started: started)
             throw error
         }
 
@@ -507,6 +516,10 @@ public struct ToolsBridge: Sendable {
                 throw ToolsBridgeError.timeout(seconds: timeoutSeconds, command: ToolsBridgeError.command(argv))
             }
             MonitorPerf.mark("tools.\(subcommand) incomplete output: \(error.localizedDescription)")
+            // A cancel is the caller's choice, not a failure; broken output is one, and the observer hears of it.
+            if !(error is CancellationError) {
+                Self.recordLaunchFailure(error, traceId: traceId, argv: argv, started: started)
+            }
             throw error
         }
         let stdout = String(decoding: captured.0, as: UTF8.self)

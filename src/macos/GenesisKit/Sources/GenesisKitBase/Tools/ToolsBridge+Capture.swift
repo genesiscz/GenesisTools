@@ -173,8 +173,9 @@ extension ToolsBridge {
     }
 
     /// A call that failed before a child returned (a missing executable, a launch error): recorded with exit -1 and the
-    /// error's words as its stderr, so the failure observer and the ledger see it as they see a nonzero exit.
-    private static func recordLaunchFailure(_ error: Error, traceId: String, argv: [String], started: Date) {
+    /// error's words as its stderr, so the failure observer and the ledger see it as they see a nonzero exit. `run` uses
+    /// it too.
+    static func recordLaunchFailure(_ error: Error, traceId: String, argv: [String], started: Date) {
         ToolsCallTrace.record(
             traceId: traceId, via: "process-launch", argv: argv, started: started, exit: -1, outBytes: 0,
             stderr: String(describing: error)
