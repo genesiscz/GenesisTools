@@ -84,14 +84,11 @@ function jsonTokens(text: string): string[] | null {
 }
 
 /**
- * Whether two versions of a file mean the same. Scripts and JSON compare token by token; every other file (Python,
- * YAML, Markdown, a Makefile, shell) only when byte-identical, since its spaces or line breaks can carry meaning.
+ * Whether two versions of a file mean the same. Scripts and JSON compare token by token, so a side that does not parse
+ * matches nothing, itself included; every other file (Python, YAML, Markdown, a Makefile, shell) only when
+ * byte-identical, since its spaces or line breaks can carry meaning.
  */
 function sameMeaning(file: string, ours: string, theirs: string): boolean {
-    if (ours === theirs) {
-        return true;
-    }
-
     const extension = extname(file);
     const kind = SCRIPT_KINDS.get(extension);
     const tokenize =
@@ -101,7 +98,7 @@ function sameMeaning(file: string, ours: string, theirs: string): boolean {
               ? jsonTokens
               : undefined;
     if (!tokenize) {
-        return false;
+        return ours === theirs;
     }
 
     const a = tokenize(ours);
@@ -213,14 +210,12 @@ function run(cwd: string): number {
                 if (result.unresolved || result.text === original) {
                     return stop(`${commit}: ${file}: real or unsupported conflict`);
                 }
+                // A script result is its ours side, which sameMeaning parsed already. The JSON tokenizer checks tokens
+                // only, not how they nest, so JSON still gets a full parse.
                 if (file.endsWith(".json")) {
                     SafeJSON.parse(result.text, { strict: true });
-                } else {
-                    const ext = file.split(".").pop();
-                    if (ext === "ts" || ext === "tsx" || ext === "js") {
-                        new Bun.Transpiler({ loader: ext }).transformSync(result.text);
-                    }
                 }
+
                 writeFileSync(target, result.text);
                 const add = git(["--literal-pathspecs", "add", "--", file]);
                 if (add.exitCode !== 0) {
