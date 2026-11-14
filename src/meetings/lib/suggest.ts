@@ -1983,7 +1983,7 @@ export function suggestItems(options: {
 }): MeetingItem[] {
     const { record } = options;
     // A label item says the label tracks no one person in its stretch: the speaker rules see those lines unlabeled.
-    const prehistory: NewItem[] = options.rules.some((rule) => rule === "speakers" || rule === "evidence")
+    const indicated: NewItem[] = options.rules.some((rule) => rule === "speakers" || rule === "evidence")
         ? indicatorFacts({
               meeting: options.meeting,
               evidence: options.evidence ?? null,
@@ -2011,7 +2011,7 @@ export function suggestItems(options: {
         : [];
     // A stretch a person rejected (or any decision already made on it) is never manufactured again for this run.
     const decidedKeys = new Set(record.items.map(itemKey));
-    prehistory.splice(0, prehistory.length, ...prehistory.filter((item) => !decidedKeys.has(itemKey(item))));
+    const prehistory = indicated.filter((item) => !decidedKeys.has(itemKey(item)));
     const unlabeled = unlabeledView(
         options.meeting,
         unlabeledStretches([
