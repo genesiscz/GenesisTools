@@ -30,7 +30,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { planFindings } from "../lib/add-findings";
-import { decideResult, decisionOf, reopenResult } from "../lib/decide";
+import { decideResult, decisionOf, filteredNothing, reopenResult } from "../lib/decide";
 import { decisionActionSchema } from "../lib/decision-actions";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
@@ -524,12 +524,17 @@ async function decide(
         return;
     }
 
-    if (status === "rejected" && (opts.kind || opts.where)) {
+    // The filter goes with the reject, so the journal checks it again under its lock: an item confirmed or changed
+    // between this pick and the save keeps its newer state.
+    const filter: RejectFilter | undefined =
+        status === "rejected" && (opts.kind || opts.where) ? { kind: opts.kind, where: opts.where } : undefined;
+
+    if (filter) {
         if (ids.length > 0 || opts.minConfidence !== undefined) {
             fail("Use filter flags alone, without ids or --min-confidence");
             return;
         }
-        ids = rejectFilterIds(record.items, { kind: opts.kind, where: opts.where });
+        ids = rejectFilterIds(record.items, filter);
     }
     const minConfidence = opts.minConfidence === undefined ? undefined : Number(opts.minConfidence);
 
@@ -548,13 +553,22 @@ async function decide(
     const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
-        const decided = await withMeetingsClient((client) =>
-            client.call("decision.apply", {
-                meeting: record.id,
-                action: decisionOf({ status, ids, minConfidence, speaker: opts.speaker, proposed: opts.proposed }),
-                ...(opts.reason ? { reason: opts.reason } : {}),
-            })
-        );
+        const decided =
+            filteredNothing({ filtered: filter !== undefined, ids }) ??
+            (await withMeetingsClient((client) =>
+                client.call("decision.apply", {
+                    meeting: record.id,
+                    action: decisionOf({
+                        status,
+                        ids,
+                        minConfidence,
+                        speaker: opts.speaker,
+                        proposed: opts.proposed,
+                        ...(filter ? { filter } : {}),
+                    }),
+                    ...(opts.reason ? { reason: opts.reason } : {}),
+                })
+            ));
         const result = decideResult(decided);
 
         if (opts.json) {
@@ -876,8 +890,22 @@ export function registerItemCommands(program: Command): void {
         .option("--kind <kind>", "suggested item kind")
         .option("--where <comparison>", "confidence<0.6 or priority>=1")
         .option("--json", "print decision JSON")
-        .action((ref: string, ids: string[], opts: { kind?: RejectFilter["kind"]; where?: string; json?: boolean }) =>
-            decide("rejected", ref, ids, opts)
+        .action(
+            (
+                ref: string,
+                ids: string[],
+                opts: { kind?: RejectFilter["kind"]; where?: string; json?: boolean },
+                command: Command
+            ) => {
+                // The parent `items` has `--kind` and `--json` of its own, and Commander gives a shared flag to the
+                // parent: read them from there when this command did not get them.
+                const shared = command.parent?.opts<{ kind?: RejectFilter["kind"]; json?: boolean }>() ?? {};
+                return decide("rejected", ref, ids, {
+                    ...opts,
+                    kind: opts.kind ?? shared.kind,
+                    json: opts.json ?? shared.json,
+                });
+            }
         );
     itemsCommand
         .command("by-channel")

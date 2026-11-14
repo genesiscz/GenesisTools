@@ -9,6 +9,7 @@ import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
 import { findingSchema } from "./findings";
 import { linePointSchema } from "./moment-schema";
+import { rejectFilterSchema } from "./reject-filter";
 
 /**
  * The decision journal's saved shapes: one action per decision, and one entry per line of `decisions.ndjson`. Kept
@@ -36,7 +37,16 @@ export const DECISION_ACTION_OPTIONS = [
         proposed: z.string().optional(),
         reach: spellingReachSchema.optional(),
     }),
-    z.object({ kind: z.literal("reject"), items: z.array(itemRef), minConfidence: z.number().optional() }),
+    z.object({
+        kind: z.literal("reject"),
+        items: z.array(itemRef),
+        minConfidence: z.number().optional(),
+        /**
+         * The filter that picked `items` (`reject --kind/--where`): the journal checks it again under its lock, so an
+         * item confirmed or changed between the pick and the save is skipped, not overwritten.
+         */
+        filter: rejectFilterSchema.optional(),
+    }),
     /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
     z.object({ kind: z.literal("respell"), item: itemRef, text: z.string(), reach: spellingReachSchema.optional() }),
     /** Changes a question's wording without answering it or changing its targets. */
@@ -104,15 +114,20 @@ export const DECISION_ACTION_OPTIONS = [
     /** Findings added as suggested items (`items add`): an agent's or a person's suggestions, kept with who made them. */
     z.object({
         kind: z.literal("add"),
-        findings: z.array(findingSchema).min(1),
+        /** Empty only with `replace`: a new plan that found nothing still takes the old suggestions back. */
+        findings: z.array(findingSchema),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
         replace: z
             .object({
                 kinds: z.array(z.enum(["speaker-range", "question", "label", "join", "term"])),
                 by: z.literal("agent"),
+                /** Only the suggestions of this transcript label (a channel plan replans one label). */
+                label: z.string().trim().min(1).optional(),
             })
             .optional(),
+        /** What the findings were planned from; refused when the record changed since (`seatsFingerprint`). */
+        fence: z.object({ seats: z.string() }).optional(),
     }),
     /**
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels

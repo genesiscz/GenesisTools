@@ -212,6 +212,56 @@ test("items reject by a filter that matches nothing succeeds and writes no journ
     }
 });
 
+test("items reject takes --kind and --json although its parent items command has them too", async () => {
+    const store = new MeetingStore();
+    const suggested = { status: "suggested" as const, suggestedAt: "2026-11-09T10:00:00Z", rules: [] };
+    const record = await store.create(
+        {
+            title: "Kinds",
+            start: "2026-11-09T10:00:00Z",
+            createdBy: "new",
+            items: [
+                { id: "i1", kind: "term", heard: "category data", ...suggested },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 2",
+                    fromSec: 0,
+                    toSec: 5,
+                    speaker: "Dana Example",
+                    candidates: ["Dana Example"],
+                    confidence: 0.8,
+                    ...suggested,
+                },
+            ],
+        },
+        { command: "test", change: "fixture" }
+    );
+    const results: unknown[] = [];
+    const result = spyOn(out, "result").mockImplementation((data: unknown) => {
+        results.push(data);
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "items" });
+        await program.parseAsync(["items", "reject", record.id, "--kind", "term", "--json"], { from: "user" });
+        expect(process.exitCode ?? 0).toBe(0);
+        // The filter travels with the reject, so the journal checks it again under its lock like the service path.
+        expect(results.map((data) => SafeJSON.parse(String(data)))).toEqual([
+            expect.objectContaining({
+                decided: ["i1"],
+                entry: expect.objectContaining({
+                    action: { kind: "reject", items: ["i1"], filter: { kind: "term" } },
+                }),
+            }),
+        ]);
+        expect(store.read(record.id)?.items.map((item) => item.status)).toEqual(["rejected", "suggested"]);
+    } finally {
+        result.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("the items column keeps a long quote's source inside its width", async () => {
     const store = new MeetingStore();
     const record = await store.create(

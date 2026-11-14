@@ -23,6 +23,7 @@ import {
     type SpellingReach,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -56,6 +57,7 @@ import {
     skipQuestion,
     splitQuestion,
 } from "./questions";
+import { type RejectFilter, rejectFilterIds } from "./reject-filter";
 import type { ReviewRow } from "./review-row-schema";
 import { TOOL } from "./shared";
 import {
@@ -344,7 +346,14 @@ function openQuestion(record: MeetingRecord, ref: string): { question?: Question
 function decideItems(
     record: MeetingRecord,
     status: "confirmed" | "rejected",
-    action: { items: string[]; minConfidence?: number; speaker?: string; proposed?: string; reach?: SpellingReach },
+    action: {
+        items: string[];
+        minConfidence?: number;
+        speaker?: string;
+        proposed?: string;
+        reach?: SpellingReach;
+        filter?: RejectFilter;
+    },
     now: string
 ): ActionOutcome {
     const { minConfidence, speaker, proposed, reach } = action;
@@ -378,6 +387,17 @@ function decideItems(
 
         if (item.status === status && !changes) {
             skipped.push({ id: item.id, reason: `it is ${status} already`, needs: "nothing" });
+        }
+    }
+
+    if (action.filter) {
+        // The ids were picked by a filter before the lock: an item that no longer matches it (confirmed, or its
+        // confidence changed, in between) keeps its newer state.
+        const matching = new Set(rejectFilterIds(record.items, action.filter));
+        for (const item of picked.filter((one) => !skipped.some((skip) => skip.id === one.id))) {
+            if (!matching.has(item.id)) {
+                skipped.push({ id: item.id, reason: "it no longer matches the filter", needs: "nothing" });
+            }
         }
     }
 
@@ -432,6 +452,40 @@ function decideItems(
         corrections,
         stamps: true,
     };
+}
+
+/** An agent's open suggestion that a replacement takes back: its kind, and its label when the replacement names one. */
+function replaces(
+    record: MeetingRecord,
+    item: MeetingItem,
+    replace: { kinds: readonly MeetingItem["kind"][]; label?: string }
+): boolean {
+    if (!replace.kinds.includes(item.kind) || item.status !== "suggested" || !item.rules.includes(MeetingRule.Agent)) {
+        return false;
+    }
+
+    return replace.label === undefined || itemLabels(record, item).includes(replace.label);
+}
+
+/** The transcript labels an item is about: its own, or for a question the labels of what it decides. */
+function itemLabels(record: MeetingRecord, item: MeetingItem): string[] {
+    if (item.kind === "speaker-range" || item.kind === "label") {
+        return [item.label];
+    }
+
+    if (item.kind !== "question") {
+        return [];
+    }
+
+    const decided = record.items.flatMap((target) =>
+        item.decides.includes(target.id) && (target.kind === "speaker-range" || target.kind === "label")
+            ? [target.label]
+            : []
+    );
+    const evidence = Array.isArray(item.evidence?.labels)
+        ? item.evidence.labels.filter((label): label is string => typeof label === "string")
+        : [];
+    return [...decided, ...evidence];
 }
 
 /** A term's new spelling; a stem term's replacement stem follows it, or the transcript would keep the old one. */
@@ -961,28 +1015,41 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             return transcript ? { transcript } : {};
         },
         mutate: (record, action, { prepared, now }) => {
+            if (action.findings.length === 0 && !action.replace) {
+                throw new Error("An add needs at least one finding, or a replace that takes old suggestions back");
+            }
+
+            if (action.fence && seatsFingerprint(record.seats) !== action.fence.seats) {
+                throw new MeetingsConflictError(
+                    "item-changed",
+                    `The seats of ${record.id} changed while these findings were planned; plan them again.`
+                );
+            }
+
+            const { replace } = action;
             for (const item of record.items) {
-                if (
-                    action.replace?.kinds.some((kind) => kind === item.kind) &&
-                    item.status === "suggested" &&
-                    item.rules.includes(MeetingRule.Agent)
-                ) {
+                if (replace && replaces(record, item, replace)) {
                     item.status = "rejected";
                     item.decidedAt = now;
                 }
             }
-            const { added, warnings } = prepareFindings({
-                findings: action.findings,
-                items: record.items,
-                allowDuplicates: action.allowDuplicates,
-                force: action.force,
-                ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
-            });
+            const { added, warnings } =
+                action.findings.length === 0
+                    ? { added: [], warnings: [] }
+                    : prepareFindings({
+                          findings: action.findings,
+                          items: record.items,
+                          allowDuplicates: action.allowDuplicates,
+                          force: action.force,
+                          ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
+                      });
             record.items.push(...added);
             return {
                 history: { command: "items add", change: `${added.length} finding${added.length === 1 ? "" : "s"}` },
                 warnings,
-                stamps: false,
+                // The suggestions a replacement rejected carry its token, so a later decision on them fences its Undo;
+                // the added items have no earlier state and take no stamp.
+                stamps: replace !== undefined,
             };
         },
     },
@@ -1151,7 +1218,8 @@ function labelChanges(before: Record<string, string>, after: Record<string, stri
  */
 function answerEventOf(entry: JournalEntry, reverted: JournalEntry | undefined): AnswerEvent | undefined {
     const { action, at } = entry;
-    if (action.kind === "reject") {
+    // A replacing add rejects open questions as a rejection does: a listener hears the round end the same way.
+    if (action.kind === "reject" || action.kind === "add") {
         const items = entry.changes
             .filter(
                 (change) =>

@@ -16,6 +16,21 @@ export interface MeetingFieldsChange {
 }
 
 /**
+ * The fields a `set` action or another caller's object changes, every one `setMeetingFields` takes and none it does
+ * not. The service's set adapter copied project, title and labels by hand and dropped `seats`, so every native seating
+ * save failed with "Nothing to set" while the service answered.
+ */
+export function meetingFieldsChange(source: MeetingFieldsChange): MeetingFieldsChange {
+    return {
+        ...(source.project ? { project: source.project } : {}),
+        ...(source.title ? { title: source.title } : {}),
+        ...(source.seats ? { seats: source.seats } : {}),
+        ...(source.labels ? { labels: source.labels } : {}),
+        ...(source.unlabel ? { unlabel: source.unlabel } : {}),
+    };
+}
+
+/**
  * `set` for every door (the CLI and the node-repl toolset): the meeting's title, project and labels. A change that would
  * change nothing is refused before anything is written (no field, or a label to remove that the meeting does not carry,
  * MC13), so no history line and no project label says it did. The two doors had their own copies, and the refusal

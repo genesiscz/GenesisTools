@@ -67,12 +67,21 @@ export function readAnswerEvents(path: string): AnswerEvent[] {
         .filter(isAnswerEvent);
 }
 
-/** The events of the round still running (a round-start with no round-end after it), or none. */
+/** The event ends the running round: its round-end, or a rejection that left no question open. */
+function endsRound(event: AnswerEvent): boolean {
+    return event.event === "round-end" || rejectionEndsRound(event);
+}
+
+function rejectionEndsRound(event: AnswerEvent): boolean {
+    return event.event === "questions-rejected" && event.open === 0;
+}
+
+/** The events of the round still running (a round-start with nothing that ended it after it), or none. */
 export function runningRound(events: AnswerEvent[]): AnswerEvent[] {
     for (let n = events.length - 1; n >= 0; n -= 1) {
         const event = events[n]!;
 
-        if (event.event === "round-end") {
+        if (endsRound(event)) {
             return [];
         }
 
@@ -145,8 +154,25 @@ export async function subscribeAnswers(options: {
         }
     };
 
-    for (const event of options.fromStart ? backlog : running) {
+    // Replayed and live lines end a round the same way; a rejection that left nothing open also prints round-ended.
+    const deliver = (event: AnswerEvent): boolean => {
         track(event);
+
+        if (!endsRound(event)) {
+            return false;
+        }
+
+        roundPid = undefined;
+
+        if (rejectionEndsRound(event)) {
+            track({ event: "round-ended", at: event.at, reason: "questions rejected", open: 0 });
+        }
+
+        return true;
+    };
+
+    for (const event of options.fromStart ? backlog : running) {
+        deliver(event);
     }
 
     // Counted again from the replayed round only, so a replay of older rounds does not inflate it.
@@ -173,22 +199,7 @@ export async function subscribeAnswers(options: {
                         return;
                     }
 
-                    track(entry);
-
-                    const rejectedEnd = entry.event === "questions-rejected" && entry.open === 0;
-                    if (entry.event !== "round-end" && !rejectedEnd) {
-                        return;
-                    }
-                    roundPid = undefined;
-                    if (rejectedEnd) {
-                        track({
-                            event: "round-ended",
-                            at: entry.at,
-                            reason: rejectedEnd ? "questions rejected" : "done",
-                            open: 0,
-                        });
-                    }
-                    if (!options.follow) {
+                    if (deliver(entry) && !options.follow) {
                         finish(0);
                     }
                 },

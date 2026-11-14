@@ -392,6 +392,21 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(SafeJSON.stringify(await new MeetingsConfigStore().read())).toBe(configBefore);
     });
 
+    test("a long-stretch preparation asks about lines below the threshold the caller gives", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        // The fixture's upload is no real audio: the voice features are not what this test is about.
+        const quality = await import("../listen-quality");
+        const features = spyOn(quality, "qualityVoiceFeatures").mockResolvedValue([]);
+        closing.push(() => features.mockRestore());
+        // Line l2 (9 s) has a suggested speaker at 0.82: unsure below 0.9, sure below 0.8 (and the default 0.7).
+        const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
+        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
+        const prepare = (below: number) =>
+            client.call("meeting.listen.prepare", { meeting: REVIEW.id, group: "long-stretch", words: 1, below });
+        expect((await prepare(0.8)).questions).toEqual([]);
+        expect((await prepare(0.9)).questions.length).toBeGreaterThan(0);
+    });
+
     test("meeting-local people persist device and half-open stays and remove through either adapter", async () => {
         const { client, store } = await ADAPTERS[kind]();
         await client.call("meeting.people.edit", {
@@ -580,6 +595,21 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         expect(mixed.entry?.changes).toHaveLength(1);
         expect(new MeetingStore(store.storage).read(REVIEW.id)!.history.at(-1)?.change).toBe("1 finding");
+    });
+
+    test("a seating save goes through decision.apply's set action, alone and beside another field", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const seats = { room: ["Dana Example"], remote: [{ name: "Alex Example", fromSec: 60, toSec: 600 }] };
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats } });
+        expect(store.read(REVIEW.id)?.seats).toEqual(seats);
+        const moved = { room: ["Dana Example", "Alex Example"], remote: [] };
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "set", seats: moved, title: "Seated review" },
+        });
+        expect(store.read(REVIEW.id)).toMatchObject({ seats: moved, title: "Seated review" });
+        const rows = await client.call("journal.read", { meeting: REVIEW.id });
+        expect(rows.entries).toHaveLength(2);
     });
 
     test("service journal reads retain the copied meeting's provenance", async () => {
@@ -1243,7 +1273,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 
     test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
-        const { client } = await ADAPTERS[kind]();
+        const { client, source } = await ADAPTERS[kind]();
         const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
         const speakers = await client.call("meeting.speakers", { meeting: REVIEW.id });
         const screen = await client.call("meeting.screen", { meeting: REVIEW.id });
@@ -1260,7 +1290,11 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             [9, expect.any(Number)],
         ]);
         expect(speakers).toMatchObject({ meeting: REVIEW.id, timed: true });
+        const load = spyOn(source, "load");
         const facts = await client.call("meeting.speakers", { meeting: REVIEW.id, evidence: true });
+        // The statistics and the evidence share one opened meeting: one source load.
+        expect(load).toHaveBeenCalledTimes(1);
+        load.mockRestore();
         expect(facts.evidence?.lines).toContain("|mic?|e?");
         expect(facts.evidence?.lines.split("\n")).toHaveLength(transcript.entries.length + 1);
         expect(facts.evidence?.summary).toEqual(expect.any(Array));
@@ -1397,6 +1431,17 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         expect(store.resolve(REVIEW.id)?.project).toBeUndefined();
         expect(Object.keys((await config.read()).projects)).toEqual([]);
+
+        // The notice's Undo: the block and the meeting it left without a project come back, once.
+        expect(await client.call("projects.restore", { backup: removal.backup })).toMatchObject({
+            name: "Harbor",
+            meetings: [REVIEW.id],
+        });
+        expect(store.resolve(REVIEW.id)?.project).toBe("Harbor");
+        expect((await config.read()).projects.Harbor?.labels).toEqual(["Checkout"]);
+        expect((await failure(client.call("projects.restore", { backup: removal.backup }))).message).toContain(
+            "exists again"
+        );
     });
 
     test("the dictionary: add, show, test, a refused Undo's add, a rename and remove", async () => {
@@ -1945,6 +1990,7 @@ async function captureExamples(): Promise<Example[]> {
     const modelFiles = [wordTimingFile(model)];
     const { service, store, config } = await startService({
         deps: {
+            voiceFrames: async () => FIXTURE_VOICE_FRAMES,
             wordTimings: {
                 cache: new WordTimingCache(join(timingRoot, "cache")),
                 modelFiles: async () => modelFiles,
@@ -2462,8 +2508,60 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 }, quote: "Saved words" },
         "Keep audio outside the temporary clip cache and publish its Context entry."
     );
+    // Successes last, so the record they change is read by no example before them.
+    await ask(
+        window,
+        "meeting.voice",
+        { meeting: REVIEW.id },
+        "Each line's features per channel; a silent channel has no pitch."
+    );
+    await ask(
+        window,
+        "meeting.voice",
+        { meeting: REVIEW.id, voices: 2 },
+        "Voices asked: each line also carries its cluster, with a speaker only when a confirmed line anchors it."
+    );
+    await ask(
+        window,
+        "acoustic.inspect",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 5 },
+        "No calibrated channels: unknown, with the reason and no metric."
+    );
+    await ask(
+        window,
+        "voice.score",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 1, channel: 0 },
+        "A sample under 1.5 seconds is an unknown voice, not a refusal."
+    );
+    await ask(
+        window,
+        "meeting.people.edit",
+        { meeting: REVIEW.id, action: "add", name: "Robin Example", fromSec: 0, toSec: 30 },
+        "The record with the person and the stay."
+    );
+    await ask(
+        window,
+        "meeting.people.edit",
+        { meeting: REVIEW.id, action: "remove", name: "Robin Example" },
+        "The record without the person."
+    );
+    const removal = examples.findLast((example) => example.method === "projects.remove" && example.reply?.result);
+    await ask(
+        window,
+        "projects.restore",
+        { backup: (removal?.reply?.result as { backup?: string } | undefined)?.backup },
+        "The Undo of the removal: the block, its pairings and the meeting it left without a project come back."
+    );
     return examples;
 }
+
+/** Voice frames of the fixture's recording, as ffmpeg would decode them: the left channel speaks low for the first
+ * 20 seconds, the right one high after that, and the quiet side has no pitch. One frame is 50 ms. */
+const FIXTURE_VOICE_FRAMES = Array.from({ length: 900 }, (_, index) => {
+    const voiced = (pitchHz: number) => ({ rms: 0.2, lowBandShare: 0.6, tilt: -4, pitchHz, voicedShare: 1 });
+    const quiet = { rms: 0.002, lowBandShare: 0.1, tilt: 0, pitchHz: null, voicedShare: 0 };
+    return { channels: index * 0.05 < 20 ? [voiced(120), quiet] : [quiet, voiced(210)] };
+});
 
 /**
  * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
@@ -2485,6 +2583,9 @@ function normalized(examples: Example[]): unknown {
             )
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
+            // A record's history line carries the wall clock of its write, and a saved clip's line names its key.
+            .replace(/"at":"[^"]*","command":/g, '"at":"<now>","command":')
+            .replace(/"change":"([^"]*?)-[0-9a-z]+\.wav"/g, '"change":"$1-<key>.wav"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
             .replace(
                 /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,
@@ -2951,5 +3052,61 @@ describe("explicit word timing generation", () => {
         const fromDirect = await direct.call("meeting.transcript", { ref: REVIEW.id });
         expect(fromSocket).toEqual(fromDirect);
         expect(fromSocket.entries[0].words?.[0].range).toEqual({ location: 0, length: 3 });
+    });
+
+    test("generation reads the preserved audio after the source removed its file", async () => {
+        const f = setup();
+        const read: string[] = [];
+        const wordTimings = {
+            cache: f.cache,
+            modelFiles: f.deps.modelFiles,
+            infer: async (input: { audioPath: string }) => {
+                read.push(input.audioPath);
+                return {
+                    words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
+                    pcmSha256: "fake-pcm",
+                    modelFiles: f.modelFiles,
+                };
+            },
+        };
+        const { store } = await startService({ deps: { wordTimings } });
+        const owned = join(store.folder(REVIEW.id), "source-audio", `${"b".repeat(64)}.ogg`);
+        mkdirSync(dirname(owned), { recursive: true });
+        writeFileSync(owned, "owned");
+        await store.update(REVIEW.id, { command: "test", change: "preserved" }, (next) => {
+            next.audio = {
+                sources: {
+                    wisprflow: {
+                        sourceMeetingId: "wf-2041",
+                        path: owned,
+                        sha256: "b".repeat(64),
+                        bytes: 5,
+                        savedAt: "2026-11-05T14:10:00.000Z",
+                    },
+                },
+            };
+        });
+        const removed: TranscriptSource = {
+            ...fakeSource(),
+            evidence: async () => ({ segments: [], speaking: [], files: [] }),
+        };
+        const direct = new InProcessMeetingsClient({
+            hello,
+            deps: {
+                store: () => store,
+                linkedSource: () => ({ source: removed, sourceMeetingId: "wf-2041" }),
+                ...quietDeps,
+                wordTimings,
+            },
+        });
+        closing.push(() => direct.close());
+
+        await direct.call("meeting.wordTimings.generate", {
+            ref: REVIEW.id,
+            fromSec: 0,
+            toSec: 12,
+            model: "test/words",
+        });
+        expect(read).toEqual([owned]);
     });
 });

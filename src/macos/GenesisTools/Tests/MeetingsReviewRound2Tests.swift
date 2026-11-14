@@ -115,4 +115,94 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         }
         XCTAssertEqual(planned, reach)
     }
+
+    // MARK: An older settings read cannot put the raw config back (PR 759)
+
+    private final class HeldReads {
+        var waiting: [CheckedContinuation<ConfigShow, Error>] = []
+    }
+
+    private func config(language: String) throws -> ConfigShow {
+        try JSONDecoder().decode(ConfigShow.self, from: Data("""
+        {"path":"/x/config.json","value":{"version":3,"global":{"dictionary":{"entries":[]},"language":"\(language)",
+         "capture":{"backend":"native","displays":2,"activeFps":1,"idleFps":0.1,"threshold":0.02,"jpegQuality":0.75,
+         "resolutionCap":2880,"retentionDays":30,"recorders":{}},"assign":{"ask":true,"lookbackHours":48,"maxProposals":5,
+         "calendarSlackMin":15,"calendarLookbehindHours":6,"folderWaitDays":30,"retryFailedMin":20},"suggest":{"applyAbove":0.5,"listenBelow":0.6}},
+         "projects":{},"sources":{},"languages":{}}}
+        """.utf8))
+    }
+
+    private func until(_ what: String, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(3)
+        while !condition() {
+            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func testAnOlderSettingsReadThatLandsLastIsDropped() async throws {
+        let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let held = HeldReads()
+        window.readSettings = { _ in try await withCheckedThrowingContinuation { held.waiting.append($0) } }
+        window.loadSettings(quiet: true)
+        try await until("the first read waits") { held.waiting.count == 1 }
+        window.loadSettings(quiet: true)
+        try await until("the second read waits") { held.waiting.count == 2 }
+        let newer = try config(language: "en"), older = try config(language: "cs")
+        held.waiting[1].resume(returning: newer)
+        try await until("the newer read lands") { window.settingsRaw == newer.raw }
+        held.waiting[0].resume(returning: older)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(window.settingsRaw, newer.raw, "the next write names the value the config holds, not an older read")
+        XCTAssertEqual(window.settings.value, newer.value)
+    }
+
+    // MARK: A project person is found by name and address (PR 809)
+
+    func testTheEditedProjectPersonIsTheOneWithItsAddress() {
+        let saved: [[String: Any]] = [["name": "Alex Example", "email": "alex@example.com"],
+                                      ["name": "Alex Example", "email": "alex.other@example.com"],
+                                      ["name": "Robin Example"]]
+        let second = PairedPerson(name: "Alex Example", email: "alex.other@example.com", pairedBy: [])
+        XCTAssertEqual(MeetingsSettingsModel.personIndex(of: second, in: saved), 1, "the second Alex keeps the first one's role")
+        XCTAssertEqual(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Robin Example", email: nil, pairedBy: []), in: saved), 2)
+        XCTAssertNil(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Alex Example", email: nil, pairedBy: []), in: saved))
+    }
+
+    // MARK: The seats editor keeps typed lists until Save (PR 809)
+
+    func testTheSeatsDraftKeepsATypedCommaAndParsesOnSave() {
+        var seats = MeetingSeats()
+        seats.room = ["Alice Example"]
+        var draft = MeetingSeatsDraft(seats)
+        draft.room = "Alice Example, "
+        XCTAssertEqual(draft.room, "Alice Example, ", "the comma stays while the next name is typed")
+        draft.room = "Alice Example, Bob Example"
+        draft.addMicrophone()
+        draft.members[0] = "Carol Example,  Dana Example,"
+        XCTAssertEqual(draft.parsed.room, ["Alice Example", "Bob Example"])
+        XCTAssertEqual(draft.parsed.microphones?.first?.people, ["Carol Example", "Dana Example"])
+        draft.removeMicrophone(at: 0)
+        XCTAssertEqual(draft.members, [])
+        XCTAssertEqual(draft.parsed.microphones, [])
+    }
+
+    // MARK: The presence strip draws each stay apart (PR 807)
+
+    func testThePresenceStripDrawsEachStayAndNotTheGapBetween() {
+        let back = MeetingRecordView.Person(name: "Alex Example", from: ["roster"], stays: [
+            .init(fromSec: 0, toSec: 60, source: "roster", confidence: 1), .init(fromSec: 300, toSec: 360, source: "roster", confidence: 1),
+        ])
+        XCTAssertEqual(ListenPresenceStrip.spans(back, duration: 600), [0...60, 300...360], "the 240 s absence is not drawn as present")
+        let open = MeetingRecordView.Person(name: "Robin Example", from: nil, firstSeenSec: 120)
+        XCTAssertEqual(ListenPresenceStrip.spans(open, duration: 600), [120...600])
+    }
+
+    // MARK: The voice split slider says where the second voice starts (PR 807)
+
+    func testTheVoiceSplitNamesItsBoundaryWord() {
+        let words = ["we", "moved", "the", "button"]
+        XCTAssertEqual(ListenVoicesEditor.boundary(words, cut: 2), "Word 3 of 4, “the”: after “we moved”, before “the button”")
+        XCTAssertEqual(ListenVoicesEditor.boundary(words, cut: 1), "Word 2 of 4, “moved”: after “we”, before “moved the”")
+    }
 }

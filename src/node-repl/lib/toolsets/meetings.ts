@@ -290,14 +290,15 @@ export class MeetingsToolset extends ReplToolset {
                 if (filtered && (options.ids?.length || options.minConfidence !== undefined)) {
                     throw new Error("Use filters alone, without ids or minConfidence");
                 }
+                const picked = filtered ? { kind: filter.kind, where: filter.where } : undefined;
                 const result = await decideItems({
                     store,
                     record,
                     status,
                     ...options,
-                    ids: filtered
-                        ? rejectFilterIds(record.items, { kind: filter?.kind, where: filter?.where })
-                        : (options.ids ?? []),
+                    ids: picked ? rejectFilterIds(record.items, picked) : (options.ids ?? []),
+                    // A filter that matches nothing decides nothing, and the journal checks it again under its lock.
+                    ...(picked ? { filtered: true, filter: picked } : {}),
                 });
                 log.info(
                     { meeting: id, status, decided: result.decided.length, skipped: result.skipped.length },
@@ -347,16 +348,15 @@ export class MeetingsToolset extends ReplToolset {
             evidence: async (input: z.input<typeof evidenceMethod.params> = {}) => {
                 const options = evidenceMethod.params.parse(input);
                 if (options.raw || options.table) {
-                    const raw = await channelEvidence(opened());
+                    // The window reaches the measurement, as `evidence --table --from/--to` does, not a filter after it.
+                    const windowed = options.from !== undefined || options.to !== undefined;
+                    const raw = await channelEvidence(
+                        opened(),
+                        windowed ? { fromSec: options.from ?? 0, toSec: options.to ?? Infinity } : undefined
+                    );
                     if (options.table) {
                         const { compactEvidence } = await import("@app/meetings/lib/raw");
-                        return compactEvidence({
-                            ...raw,
-                            lines: raw.lines.filter(
-                                (line) =>
-                                    line.fromSec >= (options.from ?? 0) && line.fromSec <= (options.to ?? Infinity)
-                            ),
-                        });
+                        return compactEvidence(raw);
                     }
                     return raw;
                 }

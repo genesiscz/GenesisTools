@@ -117,6 +117,33 @@ describe("answer log", () => {
         expect(new MeetingStore(storage).read(record.id)?.items[0]?.status).toBe("rejected");
     });
 
+    test("a round its rejections ended is not running, for the check and for a subscriber that comes later", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "answers-")), "questions.ndjson");
+        const lines = [
+            { event: "round-start", at, pid: 4242, open: 1 },
+            { event: "questions-rejected", at, items: ["i1"], open: 0 },
+        ];
+        writeFileSync(path, lines.map((line) => `${SafeJSON.stringify(line, { jsonl: true })}\n`).join(""));
+        expect(runningRound(readAnswerEvents(path))).toEqual([]);
+
+        const written: string[] = [];
+        const code = await subscribeAnswers({
+            path,
+            fromStart: true,
+            timeoutMs: 200,
+            write: (line) => written.push(line),
+            diagnostic: () => {},
+            alive: () => true,
+            livenessMs: 50,
+        });
+        expect(code).toBe(2);
+        expect(written.map((line) => SafeJSON.parse(line).event)).toEqual([
+            "round-start",
+            "questions-rejected",
+            "round-ended",
+        ]);
+    });
+
     test("the running round is the events from the last round-start without a round-end after it", () => {
         const events: AnswerEvent[] = [
             { event: "round-start", at, pid: 1, open: 2 },
