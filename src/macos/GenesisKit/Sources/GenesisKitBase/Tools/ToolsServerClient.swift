@@ -56,16 +56,22 @@ public final class ToolsServerClient: @unchecked Sendable {
     /// was answered with the real home's data. The preview build and `GENESIS_HUB_SERVER=0` keep processes too.
     public static func allowsResidentServer(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        preview: Bool = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true
+        preview: Bool = isPreviewBuild
     ) -> Bool {
         !preview && environment["GENESIS_HUB_SERVER"] != "0"
             && environment[GenesisToolsHome.variable] == nil && environment["GENESIS_TOOLS_BIN"] == nil
     }
 
+    /// Whether this app is the preview build (`GenesisToolsPreview` in its Info.plist): the one default of `preview`
+    /// for `allowsResidentServer` and `resident`.
+    @usableFromInline static var isPreviewBuild: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true
+    }
+
     /// A client of the resident server when `allowsResidentServer` says this face may use one, else nil.
     public static func resident(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        preview: Bool = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true,
+        preview: Bool = isPreviewBuild,
         startServer: @escaping @Sendable () -> Void
     ) -> ToolsServerClient? {
         guard allowsResidentServer(environment: environment, preview: preview) else { return nil }
