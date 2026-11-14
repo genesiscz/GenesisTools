@@ -76,17 +76,24 @@ export function callsOf(node: SgNode): SgNode[] {
             : node.kind() === "variable_declarator"
               ? node.field("name")
               : node.field("value");
-    const name = bound?.text();
-    if (!name || !/^[\w$]+$/.test(name)) {
+    const regex = exactName(bound?.text());
+    if (!regex) {
         return [];
     }
 
     return node
         .getRoot()
         .root()
-        .findAll({
-            rule: { kind: "call_expression", has: { field: "function", regex: `^${name.replace(/\$/g, "\\$")}$` } },
-        });
+        .findAll({ rule: { kind: "call_expression", has: { field: "function", regex } } });
+}
+
+/** An ast-grep regex that matches exactly `name`, or null when `name` is not one plain identifier. */
+function exactName(name: string | undefined): string | null {
+    if (!name || !/^[\w$]+$/.test(name)) {
+        return null;
+    }
+
+    return `^${name.replace(/\$/g, "\\$")}$`;
 }
 
 /**
@@ -179,21 +186,16 @@ function consumingCall(node: SgNode): SgNode | null {
 
 /** The calls that take the array kept under `holder`'s name, found by that name in the holder's file. */
 function keptArgvCalls(holder: SgNode): SgNode[] {
-    const name = holder.field(HOLDER_NAME[String(holder.kind())] ?? "name")?.text() ?? "";
+    const regex = exactName(holder.field(HOLDER_NAME[String(holder.kind())] ?? "name")?.text());
 
-    if (!/^[\w$]+$/.test(name)) {
+    if (!regex) {
         return [];
     }
 
     const uses = holder
         .getRoot()
         .root()
-        .findAll({
-            rule: {
-                any: [{ kind: "identifier" }, { kind: "property_identifier" }],
-                regex: `^${name.replace(/\$/g, "\\$")}$`,
-            },
-        });
+        .findAll({ rule: { any: [{ kind: "identifier" }, { kind: "property_identifier" }], regex } });
 
     return uses.flatMap((use) => {
         const call = consumingCall(use);
