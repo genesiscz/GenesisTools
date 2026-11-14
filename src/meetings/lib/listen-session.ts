@@ -294,14 +294,19 @@ export class ListenSession {
         return (question.priority ?? minPriority) >= minPriority;
     }
 
-    /** The question asked again (after Esc), else a part of a split, else the most valuable open one in scope. */
+    /**
+     * The question asked again (after Esc), else a part of a split, else the most valuable open one in scope. A
+     * question this round already decided on and left open (a comment) is not asked again; Undo takes its step back.
+     */
     private next(record: MeetingRecord, reask?: string): QuestionItem | undefined {
         const open = openQuestions(record);
         const again = reask ? open.find((question) => question.id === reask) : undefined;
+        const visited = new Set(this.steps.map((step) => step.question.id));
+        const fresh = open.filter((question) => !visited.has(question.id));
         return (
             again ??
-            open.find((question) => this.parentOf.has(question.id)) ??
-            open.find((question) => this.inScope(question))
+            fresh.find((question) => this.parentOf.has(question.id)) ??
+            fresh.find((question) => this.inScope(question))
         );
     }
 

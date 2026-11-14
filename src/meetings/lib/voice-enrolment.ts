@@ -13,6 +13,8 @@ import {
 } from "@genesiscz/utils/meetings/voice";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import type { Presence } from "@genesiscz/utils/transcribe/speakers";
+import { personKey } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
 
 export async function enrolMeetingVoices(options: {
@@ -36,11 +38,7 @@ export async function enrolMeetingVoices(options: {
         channels: [{ channel: callChannel, track: "isolated-call" }],
     });
     const end = Math.max(0, ...lines.map((line) => line.endSec));
-    const remote = record.seats.remote.map((seat) => ({
-        name: seat.name,
-        fromSec: seat.fromSec ?? record.participants.find((person) => person.name === seat.name)?.firstSeenSec ?? 0,
-        toSec: seat.toSec ?? end,
-    }));
+    const remote = remoteStays({ record, presence: await options.opened.presence(), endSec: end });
     const samples = enrolRemoteVoices({
         record,
         embeddings,
@@ -148,7 +146,41 @@ export interface RemoteStay {
     toSec: number;
 }
 
-/** Enrol isolated call audio only when one remote person is possible, or a human confirmed the line. */
+/**
+ * The windows each remote seat's person can speak in: the seat's bounds (its start defaults to the first time the
+ * person was seen), cut to that person's stays in the call, so a departure and a rejoin stay separate windows. A
+ * person the presence does not name keeps the seat's bounds.
+ */
+export function remoteStays(options: {
+    record: MeetingRecord;
+    presence: readonly Presence[] | undefined;
+    endSec: number;
+}): RemoteStay[] {
+    const { record } = options;
+
+    return (record.seats?.remote ?? []).flatMap((seat): RemoteStay[] => {
+        const fromSec =
+            seat.fromSec ?? record.participants.find((person) => person.name === seat.name)?.firstSeenSec ?? 0;
+        const toSec = seat.toSec ?? options.endSec;
+        const stays = options.presence?.filter((stay) => personKey(stay.name) === personKey(seat.name)) ?? [];
+
+        if (stays.length === 0) {
+            return [{ name: seat.name, fromSec, toSec }];
+        }
+
+        return stays.flatMap((stay) => {
+            const from = Math.max(fromSec, stay.fromSec);
+            const to = Math.min(toSec, stay.toSec);
+            return to > from ? [{ name: seat.name, fromSec: from, toSec: to }] : [];
+        });
+    });
+}
+
+/**
+ * Enrol isolated call audio only when one remote person is possible, or a human confirmed the line. A window that a
+ * confirmed multi-voice range overlaps is never enrolled, and the one-person fallback needs that nobody else's stay
+ * touches the window at all: a join or a departure inside it can put a second voice there.
+ */
 export function enrolRemoteVoices(options: {
     record: MeetingRecord;
     embeddings: readonly LineEmbedding[];
@@ -161,6 +193,18 @@ export function enrolRemoteVoices(options: {
             if (channel.quality !== "ready" || channel.track !== "isolated-call") {
                 continue;
             }
+            const mixed = options.record.items.some(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.status === "confirmed" &&
+                    (item.voices?.length ?? 0) > 1 &&
+                    item.fromSec <= channel.toSec &&
+                    item.toSec >= channel.fromSec
+            );
+            if (mixed) {
+                continue;
+            }
+
             const present = [
                 ...new Set(
                     options.remote
@@ -168,6 +212,11 @@ export function enrolRemoteVoices(options: {
                         .map((stay) => stay.name)
                 ),
             ];
+            const touching = new Set(
+                options.remote
+                    .filter((stay) => stay.fromSec < channel.toSec && stay.toSec > channel.fromSec)
+                    .map((stay) => stay.name)
+            );
             const confirmed = options.record.items
                 .filter(
                     (item) =>
@@ -181,8 +230,8 @@ export function enrolRemoteVoices(options: {
                     item.kind === "speaker-range" && item.speaker && !item.voices ? [item.speaker] : []
                 );
             const names = [...new Set(confirmed)].filter((name) => present.includes(name));
-            const person =
-                names.length === 1 ? names[0] : names.length === 0 && present.length === 1 ? present[0] : undefined;
+            const alone = present.length === 1 && touching.size === 1;
+            const person = names.length === 1 ? names[0] : names.length === 0 && alone ? present[0] : undefined;
             if (person) {
                 samples.push({
                     person,

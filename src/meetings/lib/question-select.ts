@@ -1,7 +1,7 @@
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
-import type { NewQuestion } from "./questions";
+import { type NewQuestion, questionRank } from "./questions";
 
 /** Questions with the same choices closer than this become one cluster question. */
 const CLUSTER_GAP_SEC = 30;
@@ -83,7 +83,9 @@ function merge(into: NewQuestion, next: NewQuestion): NewQuestion {
     const labels = [...new Set([...labelsOf(into), ...labelsOf(next)])];
     const ranges = into.decides.length + next.decides.length;
     const toSec = Math.max(into.toSec, next.toSec);
-    const words = numberOf(into, "words") + numberOf(next, "words");
+    // The cluster key holds one label, range and clip: the questions are about one spoken passage, whose words count
+    // once however many targets it decides (the rank multiplies by the targets).
+    const words = Math.max(numberOf(into, "words"), numberOf(next, "words"));
     return {
         ...into,
         toSec,
@@ -133,10 +135,12 @@ export function selectQuestions(candidates: NewQuestion[], items: MeetingItem[])
         const unsure = 1 - (question.confidence ?? 0);
         const impact = Math.max(1, numberOf(question, "impact") / 3);
         const shared = Math.max(1, new Set(question.decides).size);
+        const priority = Math.round(Math.max(1, Math.min(3, unsure * impact)) * shared * 100) / 100;
+        // The rank as asked (`askedRank`): the review rows keep it when a later answer changes the live rank.
         return {
             ...question,
-            priority: Math.round(Math.max(1, Math.min(3, unsure * impact)) * shared * 100) / 100,
-            evidence: { ...question.evidence, reach: shared },
+            priority,
+            evidence: { ...question.evidence, reach: shared, rank: questionRank({ ...question, priority }) },
         };
     });
 }

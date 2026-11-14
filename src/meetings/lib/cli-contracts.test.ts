@@ -57,6 +57,28 @@ test("service comment refusals keep their code in human and JSON errors", () => 
     });
 });
 
+test("listen --spot-check prepares through the Meetings service, which caps the sample count", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Quality round", start: "2026-11-09T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(["listen", record.id, "--spot-check", "600", "--prepare-only"], { from: "user" });
+        expect(process.exitCode).toBe(1);
+        expect(String(human.mock.calls.at(-1)?.[0])).toContain("500");
+        expect(store.read(record.id)?.items).toEqual([]);
+    } finally {
+        human.mockRestore();
+        raw.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("standalone subscription flags fail before resolving or reading a meeting", async () => {
     const raw = spyOn(ui, "raw").mockImplementation(() => {});
     const human = spyOn(ui, "err").mockImplementation(() => {});
@@ -868,6 +890,24 @@ describe("rows --json: the review rows (F3)", () => {
         ]);
     });
 
+    test("a candidate score outside 0 to 1 is left out in both forms, so a row choice never carries it", async () => {
+        const { candidateScores, reviewRow } = await import("./review-rows");
+        const typed = structuredClone(record.items[0]!);
+        typed.evidence = {
+            candidateScores: [
+                { term: "Example", confidence: 1.2 },
+                { term: "Below", confidence: -0.1 },
+                { term: "AMP", confidence: 0.82 },
+            ],
+        };
+        const legacy = structuredClone(record.items[0]!);
+        legacy.evidence = { candidates: ["Example 120 %", "AMP 82 %"] };
+
+        expect(candidateScores(typed)).toEqual([{ term: "AMP", confidence: 0.82 }]);
+        expect(candidateScores(legacy)).toEqual([{ term: "AMP", confidence: 0.82 }]);
+        expect(reviewRow(record, legacy).choices.every((choice) => (choice.confidence ?? 0) <= 1)).toBe(true);
+    });
+
     test("Wave E: a better-scoring speaker candidate precedes the suggestion without changing its action", async () => {
         const { reviewRow } = await import("./review-rows");
         const item = meetingRecordSchema.parse({
@@ -996,6 +1036,159 @@ describe("rows --json: the review rows (F3)", () => {
             ["Bob Example", 0.25],
             ["Dan Example", 0.1],
         ]);
+    });
+
+    test("a cluster question's suggested speaker shows the lowest score over its ranges, in either record order", async () => {
+        const { reviewRow, speakerAnswerScores } = await import("./review-rows");
+        const range = (id: string, fromSec: number, alice: number) => ({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Speaker 2",
+            fromSec,
+            toSec: fromSec + 20,
+            speaker: "Alice Example",
+            candidates: ["Alice Example", "Bob Example"],
+            confidence: alice,
+            suggestedAt: at,
+            rules: ["E3"],
+            evidence: {
+                candidateScores: [
+                    { speaker: "Alice Example", confidence: alice, evidence: [{ kind: "voice" }] },
+                    { speaker: "Bob Example", confidence: 1 - alice, evidence: [{ kind: "voice" }] },
+                ],
+            },
+        });
+        const asking = question("i9", {
+            about: "speaker",
+            fromSec: 120,
+            toSec: 170,
+            question: 'Who speaks under "Speaker 2" from 02:00 to 02:50?',
+            choices: ["Alice Example", "Bob Example"],
+            decides: ["i7", "i8"],
+            priority: 0.9,
+        });
+
+        for (const ranges of [
+            [range("i7", 120, 0.9), range("i8", 150, 0.4)],
+            [range("i8", 150, 0.4), range("i7", 120, 0.9)],
+        ]) {
+            const withRanges = meetingRecordSchema.parse({ ...record, items: [...ranges, asking] });
+            const asked = withRanges.items[2]!;
+
+            if (asked.kind !== "question") {
+                throw new Error("the fixture has no question i9");
+            }
+
+            const suggested = reviewRow(withRanges, asked).choices.find((choice) => choice.role === "suggested");
+            expect([suggested?.value, suggested?.confidence]).toEqual(["Alice Example", 0.4]);
+            expect(speakerAnswerScores(withRanges, asked).get("Alice Example")).toBe(0.4);
+        }
+    });
+
+    test("a range row offers every person its typed scores weigh, not only its candidates", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const item = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i90",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    suggestedAt: at,
+                    fromSec: 10,
+                    toSec: 20,
+                    label: "Speaker 1",
+                    speaker: "Bob Example",
+                    confidence: 0.7,
+                    evidence: {
+                        candidateScores: [
+                            { speaker: "Bob Example", confidence: 0.7, evidence: [{ kind: "voice" }] },
+                            { speaker: "Dan Example", confidence: 0.3, evidence: [{ kind: "roster" }] },
+                        ],
+                    },
+                },
+            ],
+        }).items[0]!;
+
+        expect(reviewRow(record, item).choices.map((choice) => choice.value)).toEqual([
+            "Bob Example",
+            "Dan Example",
+            "none of these",
+        ]);
+    });
+
+    test("a removal row quotes the words it removes, and a range of one instant quotes its own line", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const transcript = [
+            { startSec: 29.7, speaker: "Speaker 1", text: "The line before." },
+            { startSec: 30, speaker: "Speaker 2", text: "Okay, I will dial in now." },
+            { startSec: 34, speaker: "Speaker 1", text: "The line after." },
+        ];
+        const withRemoval = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i91",
+                    kind: "removal",
+                    status: "suggested",
+                    suggestedAt: at,
+                    fromSec: 30,
+                    toSec: 30,
+                    heard: "Okay, I will dial in now.",
+                    confidence: 0.9,
+                    rules: ["local-speech"],
+                },
+                {
+                    id: "i92",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    suggestedAt: at,
+                    fromSec: 30,
+                    toSec: 30,
+                    label: "Speaker 2",
+                    rules: [],
+                    evidence: { endSec: 34 },
+                },
+            ],
+        });
+        const said = (index: number) =>
+            reviewRow(withRemoval, withRemoval.items[index]!, transcript).parts.find((part) => part.kind === "said");
+
+        expect(said(0)).toEqual({ kind: "said", text: "Okay, I will dial in now." });
+        expect(said(1)).toEqual({ kind: "said", text: "Okay, I will dial in now." });
+    });
+
+    test("an answer that raises another question's confidence does not move that question's row (R16)", async () => {
+        const { reviewRows } = await import("./review-rows");
+        const speakerQuestion = (id: string, fromSec: number, confidence: number) =>
+            question(id, {
+                about: "speaker",
+                fromSec,
+                toSec: fromSec + 10,
+                question: `Who speaks under "Speaker 2" at ${fromSec}?`,
+                choices: ["Alice Example"],
+                decides: [],
+                confidence,
+                evidence: { words: 100, rank: (1 - confidence) * 100 },
+            });
+        const asked = meetingRecordSchema.parse({
+            ...record,
+            items: [speakerQuestion("i93", 300, 0.5), speakerQuestion("i94", 200, 0.7)],
+        });
+        const order = (from: typeof asked) => reviewRows(from, { minPriority: 0 }).rows.map((row) => row.id);
+        const answered = structuredClone(asked);
+        const raised = answered.items[0]!;
+
+        if (raised.kind !== "question") {
+            throw new Error("the fixture has no question i93");
+        }
+
+        // What propagateAnswer does to a compatible question: its confidence rises, so its live rank falls (50 to 20).
+        raised.confidence = 0.8;
+
+        expect(order(asked)).toEqual(["i93", "i94"]);
+        expect(order(answered)).toEqual(["i93", "i94"]);
     });
 
     test("an item row: its choices act on it, its reason is pieces and sources, and a decision names who made it", async () => {

@@ -1,4 +1,5 @@
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { storedPresentAt } from "./person-stays";
 
 export function personKey(text: string): string {
     return text
@@ -36,24 +37,52 @@ export function parsePersonAnswer(options: { text: string; people: string[]; sel
         .toLowerCase()
         .replace(/[^\p{L}\p{N}]+/gu, " ")} `;
     const matches = known.flatMap((name) => {
-        const tokens =
-            name
-                .replace(/\([^)]*\)/g, "")
-                .normalize("NFD")
-                .replace(/\p{M}/gu, "")
-                .toLowerCase()
-                .match(/[\p{L}\p{N}]+/gu) ?? [];
+        const tokens = nameTokens(name);
         const positions = tokens.filter((token) => token.length > 2).map((token) => folded.indexOf(` ${token} `));
-        return positions.length > 0 && positions.every((at) => at >= 0) ? [{ name, at: Math.min(...positions) }] : [];
+        return positions.length > 0 && positions.every((at) => at >= 0)
+            ? [{ name, at: Math.min(...positions), tokens }]
+            : [];
     });
     if (options.self && /\b(me|myself|ja)\b/.test(folded)) {
-        matches.push({ name: options.self, at: Math.max(0, folded.search(/\b(me|myself|ja)\b/)) });
+        matches.push({
+            name: options.self,
+            at: Math.max(0, folded.search(/\b(me|myself|ja)\b/)),
+            tokens: [...SELF_WORDS],
+        });
     }
     const people = [...new Set(matches.sort((a, b) => a.at - b.at).map((match) => match.name))];
     if (people.length === 1 && /\b(then|potom|pak|second|druha|druhy|druhe)\b/.test(folded)) {
         return { kind: "comment", text };
     }
-    return people.length > 0 ? { kind: "people", people } : { kind: "comment", text };
+    // Only names joined into a list identify: any other word ("not", "whether", "cannot tell") keeps the prose a
+    // comment, so a mention of a name never confirms a speaker.
+    const named = new Set(matches.flatMap((match) => match.tokens));
+    const rest = folded
+        .trim()
+        .split(" ")
+        .filter((word) => word && !named.has(word) && !ANSWER_GLUE.has(word));
+    return people.length > 0 && rest.length === 0 ? { kind: "people", people } : { kind: "comment", text };
+}
+
+/** The user's own words for themselves, which name `self` in a person answer. */
+const SELF_WORDS = new Set(["me", "myself", "ja"]);
+
+/** The words a person answer may hold besides the names: list joins, order words and an affirming lead-in. */
+const ANSWER_GLUE = new Set([
+    ...["and", "a", "i", "plus", "with", "s", "se", "then", "potom", "pak", "first", "second", "nejdriv", "druha"],
+    ...["druhy", "druhe", "it", "is", "was", "that", "this", "to", "je", "byl", "byla"],
+]);
+
+/** A name's words, folded for matching, without a parenthesised note. */
+function nameTokens(name: string): string[] {
+    return (
+        name
+            .replace(/\([^)]*\)/g, "")
+            .normalize("NFD")
+            .replace(/\p{M}/gu, "")
+            .toLowerCase()
+            .match(/[\p{L}\p{N}]+/gu) ?? []
+    );
 }
 
 export function recordPeople(record: MeetingRecord): string[] {
@@ -86,14 +115,10 @@ export function sentenceSegments(text: string, people: string[]): VoiceSegment[]
     return people.map((speaker, index) => ({ fromWord: starts[index]!, speaker }));
 }
 
+/**
+ * Whether a person was in the call at a time, by the same stays every other reader starts from (`storedPresentAt`):
+ * hand-corrected stays win over imported attendance, so the choices and the parsed answers agree with the presence.
+ */
 export function personPresent(record: MeetingRecord, name: string, sec: number): boolean {
-    const attendance = record.attendance?.people.filter((stay) => personKey(stay.name) === personKey(name));
-    if (attendance?.length) {
-        return attendance.some((stay) => sec >= stay.fromSec && sec < stay.toSec);
-    }
-    const person = record.participants.find((one) => personKey(one.name) === personKey(name));
-    if (person?.stays?.length) {
-        return person.stays.some((stay) => sec >= stay.fromSec && (stay.toSec === undefined || sec < stay.toSec));
-    }
-    return person?.firstSeenSec === undefined || sec >= person.firstSeenSec;
+    return storedPresentAt(record, name, sec);
 }

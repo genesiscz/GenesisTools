@@ -1,15 +1,23 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import * as echoModule from "@genesiscz/utils/meetings/echo";
+import type { ChannelCalibration } from "@genesiscz/utils/meetings/energy";
+import * as utilsEnergy from "@genesiscz/utils/meetings/energy";
+import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
+import type { MicEnergy } from "./energy";
+import * as energyModule from "./energy";
 import { OpenedMeeting } from "./opened-meeting";
+import { faceTimePlatform } from "./platforms/facetime";
 import { preserveSourceAudio } from "./source-audio";
 
 let stores = 0;
@@ -152,6 +160,48 @@ describe("OpenedMeeting", () => {
         expect(await opened.silentCallSpans()).toEqual([]);
         expect(await opened.calibrate()).toBeUndefined();
         expect(store.read(record.id)?.history).toHaveLength(1);
+    });
+
+    test("calibrate stores the silent call spans of the energy read after the echo cache was collected", async () => {
+        const { store, record } = await newRecord();
+        const audioPath = join(mkdtempSync(join(tmpdir(), "meetings-calibrate-")), "call.wav");
+        writeFileSync(audioPath, "");
+        const calibration: ChannelCalibration = { layout: "left-mic", segments: { mic: 3, system: 3 } };
+        // Before the echo cache there is no residual share; after it, the share reads the call as silent.
+        const reads: MicEnergy[] = [{ calibration }, { calibration, share: () => 1 }];
+        const energy = spyOn(energyModule, "energyMicShareFor").mockImplementation(async () => reads.shift() ?? {});
+        const channels = spyOn(utilsEnergy, "channelEnergy").mockImplementation(async () => undefined);
+        const echo = spyOn(echoModule, "collectEcho").mockImplementation(async () => undefined);
+        // `callSilentSpans` asks for the spans only when the energy has a share.
+        const silent = spyOn(utilsEnergy, "silentCallSpans").mockImplementation(() => [{ fromSec: 0, toSec: 60 }]);
+
+        try {
+            const opened = OpenedMeeting.of(store, record, {
+                source: fakeSource({ evidence: { segments: [], speaking: [], files: [], audioPath } }),
+                sourceMeetingId: "abc",
+            });
+
+            expect(await opened.calibrate()).toEqual(calibration);
+            expect(store.read(record.id)?.evidence?.channels?.callSilent).toEqual([{ fromSec: 0, toSec: 60 }]);
+        } finally {
+            energy.mockRestore();
+            channels.mockRestore();
+            echo.mockRestore();
+            silent.mockRestore();
+        }
+    });
+
+    test("a FaceTime call history that is missing or unreadable is an unavailable platform", async () => {
+        const home = mkdtempSync(join(tmpdir(), "meetings-facetime-"));
+        const target = { title: "Planning", start: "2026-11-02T15:00:00.000Z" };
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            await expect(faceTimePlatform.attendance(target)).rejects.toBeInstanceOf(AttendanceUnavailableError);
+            const folder = join(home, "Library", "Application Support", "CallHistoryDB");
+            mkdirSync(folder, { recursive: true });
+            writeFileSync(join(folder, "CallHistory.storedata"), "not a database");
+            await expect(faceTimePlatform.attendance(target)).rejects.toBeInstanceOf(AttendanceUnavailableError);
+        });
     });
 
     test("the evidence drops the speaking readings on a platform without a speaking indicator", async () => {

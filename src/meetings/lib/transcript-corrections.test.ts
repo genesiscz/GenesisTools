@@ -15,7 +15,7 @@ import { prepareFindings } from "./add-findings";
 import { findingSchema } from "./findings";
 import { answerQuestion } from "./questions";
 import { composedMeeting } from "./sources";
-import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
+import { checkAnchors, correctionsOf, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
 
 function line(speaker: string, startSec: number, text: string): TranscriptEntry {
     return { speaker, startSec, text };
@@ -659,4 +659,140 @@ test("a line-scoped stem fixes the addressed inflected form and leaves its neigh
             (entry) => entry.text
         )
     ).toEqual(["in-app browserem", "i na browseru"]);
+});
+
+test("an assignment reaches a join's voice within the line tolerance once, never twice", () => {
+    const joinsAt = (atSec: number) =>
+        correctionsOf(
+            meetingRecordSchema.parse({
+                ...base,
+                speakers: {
+                    ...base.speakers,
+                    assignments: [
+                        {
+                            id: "a1",
+                            label: "Speaker 5",
+                            fromSec: 10,
+                            toSec: 10,
+                            person: "Alice Example",
+                            at: "2026-11-03T10:00:00.000Z",
+                        },
+                    ],
+                },
+                items: [item({ id: "i1", kind: "join", atSec, speaker: "Speaker 5" })],
+            }),
+            config,
+            { format: "txt", dictionary: false }
+        ).joins?.[0]?.speaker;
+
+    expect(joinsAt(9.6)).toBe("Alice Example");
+    expect(joinsAt(9.25)).toBe("Speaker 5");
+});
+
+test("a marked term anchors on its literal heard word, as its mark applies", () => {
+    const marked = findingSchema.parse({
+        kind: "term",
+        at: 5,
+        heard: "browser",
+        heardStem: "browser",
+        proposedStem: "viewer",
+        meaning: "the in-app viewer",
+        confidence: 0.9,
+        reason: "a marked stem",
+    });
+    const inflected = [line("Alice", 5, "otevři to v browserem")];
+    expect(() => prepareFindings({ items: [], transcript: inflected, findings: [marked] })).toThrow(/browser/);
+    const prepared = prepareFindings({ items: [], transcript: inflected, findings: [marked], force: true });
+    expect(checkAnchors(prepared.added, inflected).warnings).toEqual([
+        `${prepared.added[0]!.id}: no line with "browser" starts at 00:05`,
+    ]);
+
+    const literal = [line("Alice", 5, "otevři to v browser")];
+    const record = meetingRecordSchema.parse({
+        ...base,
+        items: prepareFindings({ items: [], transcript: literal, findings: [marked] }).added.map((one) => ({
+            ...one,
+            status: "confirmed",
+        })),
+    });
+    expect(
+        correctTranscript({ record, transcript: literal, config, format: "txt", dictionary: false }).outcomes
+    ).toMatchObject([{ status: "applied" }]);
+});
+
+test("only an open speaker question marks its lines questioned", () => {
+    const questioned = (fields: Record<string, unknown>) =>
+        correctTranscript({
+            record: meetingRecordSchema.parse({
+                ...base,
+                items: [item({ id: "i1", kind: "question", fromSec: 0, toSec: 0, question: "Who?", ...fields })],
+            }),
+            transcript: transcript.slice(0, 1),
+            config,
+            format: "txt",
+            dictionary: false,
+        }).entries[0]?.questioned;
+
+    expect(questioned({ about: "speaker", status: "suggested" })).toBe(true);
+    expect(questioned({ about: "speaker", status: "confirmed", answer: "Alice Example" })).toBeUndefined();
+    expect(questioned({ about: "speaker", status: "rejected" })).toBeUndefined();
+    expect(questioned({ about: "term", heard: "Jak", status: "suggested" })).toBeUndefined();
+});
+
+test("a multi-voice split cuts only its own source line, with distinct ids, words and times", () => {
+    const timed = (location: number, length: number, startSec: number) => ({
+        range: { location, length },
+        startSec,
+        endSec: startSec + 0.4,
+        sourceId: "l1",
+    });
+    const source: TranscriptEntry[] = [
+        {
+            id: "l1",
+            speaker: "Voice",
+            startSec: 10,
+            text: "First sentence. Second sentence.",
+            words: [timed(0, 5, 10), timed(6, 9, 10.4), timed(16, 6, 11.5), timed(23, 9, 12)],
+        },
+        { id: "l2", speaker: "Voice", startSec: 15, text: "Another sentence here." },
+    ];
+    const record = meetingRecordSchema.parse({
+        ...base,
+        items: [
+            item({
+                id: "i1",
+                kind: "speaker-range",
+                label: "Voice",
+                fromSec: 10,
+                toSec: 15,
+                speaker: "Alice Example + Bob Example",
+                voices: ["Alice Example", "Bob Example"],
+                segments: [
+                    { fromWord: 0, speaker: "Alice Example" },
+                    { fromWord: 2, speaker: "Bob Example" },
+                ],
+            }),
+        ],
+    });
+    const entries = correctTranscript({
+        record,
+        transcript: source,
+        config: meetingsConfigSchema.parse({ languages: { cs: { render: { unclearLabel: "unclear" } } } }),
+        format: "json",
+        dictionary: false,
+    }).entries;
+
+    expect(entries.map((entry) => [entry.id, entry.speaker, entry.text, entry.startSec])).toEqual([
+        ["l1", "Alice Example", "First sentence.", 10],
+        ["l1#1", "Bob Example", "Second sentence.", 11.5],
+        ["l2", "[unclear: Alice Example + Bob Example]", "Another sentence here.", 15],
+    ]);
+    expect(entries[0]?.words?.map((word) => word.range)).toEqual([
+        { location: 0, length: 5 },
+        { location: 6, length: 9 },
+    ]);
+    expect(entries[1]?.words?.map((word) => word.range)).toEqual([
+        { location: 0, length: 6 },
+        { location: 7, length: 9 },
+    ]);
 });

@@ -8,6 +8,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { personKey, personPresent } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
+import { openQuestions } from "./questions";
 
 export async function qualityVoiceFeatures(opened: OpenedMeeting): Promise<LineVoice[]> {
     const entries = (await opened.meeting()).transcript;
@@ -131,10 +132,17 @@ export interface QualityLine {
     item?: string;
     confirmed: boolean;
     asked?: boolean;
+    /** An open speaker question decides its range: the transcript shows it as a guess at any confidence. */
+    questionOwned?: boolean;
 }
 
 export function qualityLines(record: MeetingRecord, entries: readonly TranscriptEntry[]): QualityLine[] {
     const lines = new TranscriptLines(entries);
+    const questionOwned = new Set(
+        openQuestions(record)
+            .filter((question) => question.about === "speaker")
+            .flatMap((question) => question.decides)
+    );
     return entries.map((entry, index) => {
         const matches = record.items.filter(
             (one) =>
@@ -154,6 +162,7 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
             speaker: item?.kind === "speaker-range" ? item.speaker : undefined,
             item: item?.id,
             confirmed: item?.status === "confirmed",
+            ...(item && item.status !== "confirmed" && questionOwned.has(item.id) ? { questionOwned: true } : {}),
             asked: record.items.some(
                 (question) =>
                     question.kind === "question" &&
@@ -172,11 +181,16 @@ export function thresholdProbe(
         if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
             throw new RangeError("Thresholds must be percentages between 0 and 100");
         }
+        // The corrections engine's gates: a range an open speaker question decides is never applied by its score.
         const applied = lines.filter(
-            (line) => line.confirmed || (line.speaker && line.confidence * 100 >= threshold)
+            (line) => line.confirmed || (line.speaker && !line.questionOwned && line.confidence * 100 >= threshold)
         ).length;
         const guesses = lines.filter(
-            (line) => !line.confirmed && line.speaker && line.confidence >= 0.5 && line.confidence * 100 < threshold
+            (line) =>
+                !line.confirmed &&
+                line.speaker &&
+                line.confidence >= 0.5 &&
+                (line.questionOwned || line.confidence * 100 < threshold)
         ).length;
         return {
             threshold,

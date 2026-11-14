@@ -18,7 +18,7 @@ import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import { identifiedDepartures } from "./departure";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
-import { personStays, rosterPresence } from "./person-stays";
+import { personStays, presenceOf, rosterPresence } from "./person-stays";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { missingProjectWarning } from "./project";
 import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
@@ -136,7 +136,7 @@ export class OpenedMeeting {
             const timeline = await this.timeline();
             const loaded = await this.loadAttendance(spec, selectedId);
             ui.dim(loaded.note);
-            return timeline.named(loaded.presence);
+            return this.departurePresence(timeline.named(loaded.presence));
         }
 
         const attendance = this.current.attendance;
@@ -180,14 +180,7 @@ export class OpenedMeeting {
             departures,
             silenceMinutes: (await this.config()).global.suggest.leaveSilenceMinutes,
             callSilent: this.current.evidence?.channels?.callSilent,
-        }).flatMap((person) =>
-            person.stays.map((stay) => ({
-                name: person.name,
-                self: person.self,
-                fromSec: stay.fromSec,
-                toSec: stay.toSec ?? duration,
-            }))
-        );
+        }).flatMap((person) => person.stays.map((stay) => presenceOf(person, stay, duration)));
     }
 
     /** Every reader sees the same independently identified goodbye boundary, without changing stored evidence. */
@@ -214,7 +207,8 @@ export class OpenedMeeting {
             ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
         });
         return presence.map((stay) => {
-            if (stay.leftAtExact === true) {
+            // A missing flag is legacy exact attendance (`Presence`): only a bound the platform did not record moves.
+            if (stay.leftAtExact !== false) {
                 return stay;
             }
             const departure = departures.find(
@@ -345,9 +339,10 @@ export class OpenedMeeting {
             this.energyOnce = undefined;
         }
 
-        const energy = await this.energy();
+        let energy = await this.energy();
+        const calibration = energy.calibration;
 
-        if (!energy.calibration) {
+        if (!calibration) {
             return undefined;
         }
 
@@ -356,17 +351,19 @@ export class OpenedMeeting {
             await collectEcho({
                 audioPath: source.audioPath,
                 cachePath: join(this.store.folder(this.current.id), "evidence", "echo.json"),
-                layout: energy.calibration.layout,
+                layout: calibration.layout,
             });
+            // The residual share needs the echo cache just written: the silent spans read the energy as it is now.
             this.energyOnce = undefined;
+            energy = await this.energy();
         }
         this.current = await storeCalibration({
             store: this.store,
             record: this.current,
-            calibration: energy.calibration,
+            calibration,
             callSilent: callSilentSpans(energy, await this.transcriptEndSec()),
         });
-        return energy.calibration;
+        return calibration;
     }
 
     /**

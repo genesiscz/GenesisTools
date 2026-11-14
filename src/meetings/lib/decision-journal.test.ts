@@ -37,11 +37,11 @@ import {
     thresholdProbe,
     uncertainSharedCallRanges,
 } from "./listen-quality";
-import { personStays } from "./person-stays";
+import { personStays, rosterPresence } from "./person-stays";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
-import { enrolRemoteVoices, scoreRemoteLines } from "./voice-enrolment";
+import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -1500,6 +1500,54 @@ describe("workshop listen contracts", () => {
         });
     });
 
+    test("a look-alike takes the matched person's stored name, and an ordered pair of people settles none", async () => {
+        const range = (id: string, fromSec: number) => ({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Voice",
+            fromSec,
+            toSec: fromSec,
+            confidence: 0.5,
+            rules: [],
+            suggestedAt: now,
+        });
+        const voiceQuestion = (id: string, fromSec: number, decides: string) =>
+            question(id, {
+                about: "speaker",
+                heard: undefined,
+                fromSec,
+                toSec: fromSec,
+                signature: "voice-1",
+                evidence: { labels: ["Voice"] },
+                choices: ["Alice Example", "Bob Example"],
+                decides: [decides],
+            });
+        const items = () => [
+            range("i1", 10),
+            voiceQuestion("i2", 10, "i1"),
+            range("i3", 40),
+            voiceQuestion("i4", 40, "i3"),
+        ];
+        const fx = await fixture(items());
+        const { entry } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            actor: person,
+            action: { kind: "answer", question: "i2", answer: "example alice" },
+        });
+        expect(entry?.settled).toEqual(["i4"]);
+        expect(fx.item("i3")).toMatchObject({ speaker: "Alice Example" });
+
+        const pair = await fixture(items());
+        const ordered = await pair.journal.apply({
+            meeting: pair.meeting.id,
+            actor: person,
+            action: { kind: "answer", question: "i2", answer: "Alice Example, then Bob Example" },
+        });
+        expect(ordered.entry?.settled).toEqual([]);
+        expect(pair.item("i4")).toMatchObject({ status: "suggested" });
+    });
+
     test("ordered people persist word segments and render separate turns", async () => {
         const fx = await fixture([
             {
@@ -1722,6 +1770,75 @@ describe("workshop listen contracts", () => {
             "Bob Example"
         );
     });
+
+    test("remote enrolment skips confirmed multi-voice windows and windows a second stay touches", () => {
+        const channel = (fromSec: number) => ({
+            quality: "ready" as const,
+            track: "isolated-call" as const,
+            source: { audioPath: "/fixture.wav", size: 42, mtimeMs: 1 },
+            channel: 1 as const,
+            model: "fixture-model",
+            fromSec,
+            toSec: fromSec + 10,
+            embedding: [1, 0],
+        });
+        const embeddings = [
+            { index: 0, channels: [channel(10)] },
+            { index: 1, channels: [channel(40)] },
+        ];
+        const record = (items: unknown[]) =>
+            meetingRecordSchema.parse({ id: "voice", title: "", start: now, createdAt: now, createdBy: "new", items });
+        const alice = { name: "Alice Example", fromSec: 0, toSec: 100 };
+        const enrolled = (items: unknown[], remote: Array<{ name: string; fromSec: number; toSec: number }>) =>
+            enrolRemoteVoices({ record: record(items), embeddings, remote }).map((sample) => sample.fromSec);
+
+        expect(enrolled([], [alice])).toEqual([10, 40]);
+        expect(enrolled([], [alice, { name: "Bob Example", fromSec: 15, toSec: 30 }])).toEqual([40]);
+        expect(
+            enrolled(
+                [
+                    {
+                        id: "i1",
+                        kind: "speaker-range",
+                        label: "Voice",
+                        fromSec: 40,
+                        toSec: 40,
+                        status: "confirmed",
+                        speaker: "Alice Example + Bob Example",
+                        voices: ["Alice Example", "Bob Example"],
+                        rules: [],
+                        suggestedAt: now,
+                    },
+                ],
+                [alice]
+            )
+        ).toEqual([10]);
+    });
+
+    test("a remote seat is cut to its person's stays, so a departure and a rejoin stay apart", () => {
+        const record = meetingRecordSchema.parse({
+            id: "voice",
+            title: "",
+            start: now,
+            createdAt: now,
+            createdBy: "new",
+            seats: { remote: ["Alice Example", { name: "Bob Example", fromSec: 50 }] },
+        });
+        const presence = [
+            { name: "Alice Example", fromSec: 0, toSec: 100 },
+            { name: "Alice Example", fromSec: 200, toSec: 300 },
+        ];
+
+        expect(remoteStays({ record, presence, endSec: 400 })).toEqual([
+            { name: "Alice Example", fromSec: 0, toSec: 100 },
+            { name: "Alice Example", fromSec: 200, toSec: 300 },
+            { name: "Bob Example", fromSec: 50, toSec: 400 },
+        ]);
+        expect(remoteStays({ record, presence: undefined, endSec: 400 })).toEqual([
+            { name: "Alice Example", fromSec: 0, toSec: 400 },
+            { name: "Bob Example", fromSec: 50, toSec: 400 },
+        ]);
+    });
 });
 
 test("speaker evidence propagation improves unasked compatible ranges and the journal can undo it", async () => {
@@ -1813,6 +1930,176 @@ test("a resolved departure is vetoed by later valid speech, and silence needs ob
     record.participants[0]!.stays = [{ fromSec: 0, toSec: 40, source: "hand", confidence: 1 }];
     expect(personPresent(record, "Bob Example", 39.9)).toBe(true);
     expect(personPresent(record, "Bob Example", 40)).toBe(false);
+    // Imported attendance does not override a hand-corrected stay, as it does not in personStays.
+    record.attendance = { from: "teams", people: [{ name: "Bob Example", fromSec: 0, toSec: 900 }] };
+    expect(personPresent(record, "Bob Example", 100)).toBe(false);
+    expect(personStays({ record, durationSec: 900 })[0]!.stays).toEqual([
+        { fromSec: 0, toSec: 40, source: "hand", confidence: 1 },
+    ]);
+});
+
+test("a later matched voice vetoes a silence departure, as it vetoes an explicit one", () => {
+    const transcript = [
+        { speaker: "Voice", startSec: 5, text: "Hello" },
+        { speaker: "Voice", startSec: 90, text: "I am still here" },
+        { speaker: "Voice", startSec: 800, text: "Someone else" },
+        { speaker: "Voice", startSec: 1000, text: "One more thing" },
+    ];
+    // Bob's last indicator line runs to the next line (800); his voice is matched again at 1000.
+    const lines = lineEvidence(transcript, {
+        segments: [],
+        speaking: [
+            { tSec: 5, speaking: ["Bob Example"], validUntilSec: 15 },
+            { tSec: 90, speaking: ["Bob Example"], validUntilSec: 100 },
+            { tSec: 800, speaking: [], validUntilSec: 810 },
+            { tSec: 1000, speaking: [], validUntilSec: 1010 },
+        ],
+    });
+    const record = meetingRecordSchema.parse({
+        id: "stays-voice",
+        title: "",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        participants: [{ name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] }],
+    });
+    const quiet = () =>
+        personStays({
+            record,
+            durationSec: 2000,
+            lines,
+            silenceMinutes: 10,
+            callSilent: [{ fromSec: 94, toSec: 2000 }],
+        })[0]!.stays[0]!.toSec;
+
+    expect(quiet()).toBeDefined();
+    record.evidence = {
+        voice: {
+            version: 1,
+            source: "fixture",
+            enrolment: "fixture",
+            lines: {
+                "3": { candidates: [], person: "Bob Example", quality: "matched", reason: "fixture", model: "m" },
+            },
+        },
+    };
+    expect(quiet()).toBeUndefined();
+});
+
+test("an identified goodbye ends an attendance stay whose leave the platform did not record exactly", () => {
+    const lines = lineEvidence([{ speaker: "Voice", startSec: 5, text: "Hello" }], {
+        segments: [],
+        speaking: [{ tSec: 5, speaking: ["Bob Example"], validUntilSec: 15 }],
+    });
+    const stays = (leftAtExact?: boolean) =>
+        personStays({
+            record: meetingRecordSchema.parse({
+                id: "stays-inexact",
+                title: "",
+                start: now,
+                createdAt: now,
+                createdBy: "new",
+                participants: [
+                    { name: "Bob Example", stays: [{ fromSec: 0, toSec: 300, source: "goodbye" }], from: [] },
+                ],
+                attendance: {
+                    from: "teams",
+                    people: [
+                        {
+                            name: "Bob Example",
+                            fromSec: 0,
+                            toSec: 600,
+                            ...(leftAtExact === undefined ? {} : { leftAtExact }),
+                        },
+                    ],
+                },
+            }),
+            durationSec: 900,
+            lines,
+            departures: [{ name: "Bob Example", atSec: 300, reason: "indicator" }],
+        })[0]!.stays;
+
+    // A roster stay with no end runs to the transcript's end, a bound a departure resolver must not read as a leave.
+    const roster = meetingRecordSchema.parse({
+        id: "roster-bound",
+        title: "",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        participants: [{ name: "Bob Example", firstSeenSec: 60, from: ["platform-roster"] }],
+    });
+    expect(rosterPresence(roster, 900)).toEqual([
+        { name: "Bob Example", self: undefined, fromSec: 60, toSec: 900, leftAtExact: false },
+    ]);
+    expect(stays(false)).toEqual([{ fromSec: 0, toSec: 300, source: "goodbye", confidence: 0.8 }]);
+    expect(stays(undefined)).toEqual([{ fromSec: 0, toSec: 600, source: "attendance", confidence: 1 }]);
+    expect(stays(true)).toEqual([{ fromSec: 0, toSec: 600, source: "attendance", confidence: 1 }]);
+});
+
+test("a name in prose that does not identify the speaker stays a comment", () => {
+    const people = ["Alice Example", "Bob Example"];
+
+    for (const text of [
+        "not Alice Example",
+        "I cannot tell whether this is Alice Example",
+        "Alice Example or Bob Example",
+    ]) {
+        expect(parsePersonAnswer({ text, people })).toEqual({ kind: "comment", text });
+    }
+
+    expect(parsePersonAnswer({ text: "it's Alice Example", people })).toEqual({
+        kind: "people",
+        people: ["Alice Example"],
+    });
+    expect(parsePersonAnswer({ text: "Alice Example and Bob Example", people })).toEqual({
+        kind: "people",
+        people: ["Alice Example", "Bob Example"],
+    });
+    expect(parsePersonAnswer({ text: "me and Bob Example", people, self: "Alice Example" })).toEqual({
+        kind: "people",
+        people: ["Alice Example", "Bob Example"],
+    });
+    expect(parsePersonAnswer({ text: "me and Bob Example", people }).kind).toBe("comment");
+});
+
+test("the threshold probe never counts a range an open speaker question decides as applied", () => {
+    const record = meetingRecordSchema.parse({
+        id: "probe-owned",
+        title: "",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        items: [
+            {
+                id: "i1",
+                kind: "speaker-range",
+                label: "Voice",
+                fromSec: 0,
+                toSec: 0,
+                confidence: 0.95,
+                speaker: "Alice Example",
+                rules: [],
+                status: "suggested",
+                suggestedAt: now,
+            },
+            {
+                id: "i2",
+                kind: "question",
+                status: "suggested",
+                about: "speaker",
+                fromSec: 30,
+                toSec: 40,
+                question: "Who?",
+                choices: ["Alice Example"],
+                decides: ["i1"],
+                rules: [],
+                suggestedAt: now,
+            },
+        ],
+    });
+    const lines = qualityLines(record, [{ startSec: 0, speaker: "Voice", text: "one two three" }]);
+
+    expect(thresholdProbe(lines, [70]).map((row) => [row.applied, row.guesses, row.open])).toEqual([[0, 1, 1]]);
 });
 
 test("remote held-out fixture attributes at least ninety percent and unavailable extraction stays explicit", () => {

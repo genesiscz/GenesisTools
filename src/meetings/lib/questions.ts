@@ -287,6 +287,16 @@ export function questionRank(question: NewQuestion): number {
     return (1 - (question.confidence ?? 0.5)) * words * Math.max(1, new Set(question.decides).size);
 }
 
+/**
+ * The rank a question had when it was asked (`evidence.rank`, written by `selectQuestions` and `splitQuestion`), for
+ * the review rows: an answer that raises another question's confidence or detaches its targets changes its live
+ * `questionRank`, and the rows must not move (R16). A question saved without one uses its live rank.
+ */
+export function askedRank(question: NewQuestion): number {
+    const rank = question.evidence?.rank;
+    return typeof rank === "number" && Number.isFinite(rank) ? rank : questionRank(question);
+}
+
 /** The open questions, the most valuable first, then in transcript order. */
 export function openQuestions(record: MeetingRecord): QuestionItem[] {
     return record.items
@@ -524,14 +534,24 @@ export function splitQuestion(
             record.items.push(decided);
         }
 
-        const asked = meetingItemSchema.parse({
+        // A part counts its own words, not the whole question's, and ranks by them from the moment it is asked. A
+        // legacy question without a word count keeps its priority for its parts.
+        const part = {
             ...question,
+            decides: decided ? [decided.id] : [],
+            evidence:
+                typeof question.evidence?.words === "number"
+                    ? { ...question.evidence, words: importanceOf(words).words }
+                    : question.evidence,
+        };
+        const asked = meetingItemSchema.parse({
+            ...part,
             id: nextId("i", record.items),
             status: "suggested",
             fromSec: run.fromSec,
             toSec: run.toSec,
             question: `Who says "${words.length > 120 ? `${words.slice(0, 120)}…` : words}" (${formatClock(run.fromSec)} to ${formatClock(run.toSec)}${SIDE_HINT[run.side]})?`,
-            decides: decided ? [decided.id] : [],
+            evidence: { ...part.evidence, rank: questionRank(part) },
             answer: undefined,
             comment: undefined,
             clip: undefined,
@@ -686,6 +706,13 @@ export function answerQuestion(
 
         if (item.kind === "speaker-range" || item.kind === "join") {
             item.speaker = answer;
+
+            // A new answer replaces the whole split of an earlier one: a one-person answer leaves no voices behind.
+            if (item.kind === "speaker-range") {
+                delete item.voices;
+                delete item.segments;
+            }
+
             if (item.kind === "speaker-range" && voices && voices.length > 1) {
                 const source = options.transcript?.find(
                     (line) => line.speaker === item.label && line.startSec === item.fromSec

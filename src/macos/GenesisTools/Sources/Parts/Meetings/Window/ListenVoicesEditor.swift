@@ -22,8 +22,12 @@ struct ListenVoicesEditor: View {
             Picker("First", selection: $first) { Text("Choose").tag(""); ForEach(people, id: \.self) { Text($0).tag($0) } }
             Picker("Then", selection: $second) { Text("Choose").tag(""); ForEach(people, id: \.self) { Text($0).tag($0) } }
             if words.count > 1 {
-                Slider(value: Binding(get: { Double(cut) }, set: { cut = Int($0.rounded()) }), in: 1...Double(words.count - 1), step: 1)
+                Slider(value: Binding(get: { Double(cut) }, set: { cut = Int($0.rounded()) }), in: 1...Double(words.count - 1), step: 1) {
+                    Text("Second voice starts at")
+                }
+                .accessibilityValue(Self.boundary(words, cut: cut))
                 Text(words.prefix(cut).joined(separator: " ") + " | " + words.dropFirst(cut).joined(separator: " ")).font(.caption)
+                    .accessibilityHidden(true)
             } else {
                 Text("No word boundary is available. The ordered voices will remain an unclear two-person mark.").font(.caption)
             }
@@ -34,6 +38,14 @@ struct ListenVoicesEditor: View {
             }.disabled(first.isEmpty || second.isEmpty || first == second)
         }.padding().frame(width: 430)
         .onAppear { detail.window?.player.pause() }
+    }
+
+    /// What VoiceOver reads for the split: "Word 4 of 9, “the”: after “we moved”, before “the button”".
+    static func boundary(_ words: [String], cut: Int) -> String {
+        guard words.indices.contains(cut) else { return "No word boundary" }
+        let before = words[max(0, cut - 2)..<cut].joined(separator: " ")
+        let after = words[cut..<min(words.count, cut + 2)].joined(separator: " ")
+        return "Word \(cut + 1) of \(words.count), “\(words[cut])”: after “\(before)”, before “\(after)”"
     }
 }
 
