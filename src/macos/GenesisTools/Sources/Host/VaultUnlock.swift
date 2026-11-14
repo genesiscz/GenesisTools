@@ -189,8 +189,10 @@ struct VaultCaller {
         // Bun also runs the `preload` list of a bunfig.toml before the script: the working folder's, the user's
         // `~/.bunfig.toml` and `$XDG_CONFIG_HOME/.bunfig.toml`. Neither an argument nor a variable names it.
         if let executable, VaultGrants.runtime(of: executable) == "bun" {
+            let startedAt = identity.map { Date(timeIntervalSince1970: TimeInterval($0.startSeconds) + TimeInterval($0.startMicroseconds) / 1_000_000) }
             found += Self.untrustedBunfigPreloads(cwd: cwd, home: NSHomeDirectory(),
-                                                  xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own)
+                                                  xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own,
+                                                  startedAt: startedAt)
         }
 
         return found
@@ -199,8 +201,12 @@ struct VaultCaller {
     /// The `preload` entries of the bunfig.toml files Bun reads that are not a checkout's own preloads, each as
     /// `bunfig.toml preload <entry>`. A file that exists and cannot be read counts as one, and so does an unknown
     /// working folder: both fail closed, because the approval has no window.
+    ///
+    /// The files are read now, not at the start: a preload of an untrusted bunfig.toml can delete its own file before
+    /// the key is asked for. So the working folder counts as changed, and fails closed, when its bunfig.toml (or, with
+    /// none, the folder itself) changed after the process started: the state that was read then can no longer be shown.
     static func untrustedBunfigPreloads(cwd: String?, home: String, xdgConfigHome: String?, own: Set<String>,
-                                        fileManager: FileManager = .default) -> [String] {
+                                        startedAt: Date?, fileManager: FileManager = .default) -> [String] {
         var files: [(path: String, base: String)] = []
         if let cwd, !cwd.isEmpty { files.append(((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd)) }
         files.append(((home as NSString).appendingPathComponent(".bunfig.toml"), home))
@@ -209,6 +215,19 @@ struct VaultCaller {
         }
 
         var found: [String] = cwd == nil ? ["bunfig.toml preload (the working folder is not known)"] : []
+        if let cwd, !cwd.isEmpty {
+            let file = (cwd as NSString).appendingPathComponent("bunfig.toml")
+            let watched = fileManager.fileExists(atPath: file) ? file : cwd
+            if let startedAt {
+                if let changed = Self.changeTime(of: watched), changed >= startedAt {
+                    found.append("bunfig.toml preload (\(watched) changed after the process started)")
+                } else if Self.changeTime(of: watched) == nil {
+                    found.append("bunfig.toml preload (\(watched) cannot be inspected)")
+                }
+            } else {
+                found.append("bunfig.toml preload (the process start time is not known)")
+            }
+        }
         for file in files where fileManager.fileExists(atPath: file.path) {
             guard let text = try? String(contentsOfFile: file.path, encoding: .utf8) else {
                 found.append("bunfig.toml preload (\(file.path) is not readable)")
@@ -222,6 +241,13 @@ struct VaultCaller {
         }
 
         return found
+    }
+
+    /// The inode change time of a path (a rename, a delete inside a folder and a write all move it), or nil.
+    private static func changeTime(of path: String) -> Date? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.st_ctimespec.tv_sec) + TimeInterval(info.st_ctimespec.tv_nsec) / 1_000_000_000)
     }
 
     /// What `bunfigPreloads` returns for a `preload` value it cannot read as a list of TOML strings. It is no real

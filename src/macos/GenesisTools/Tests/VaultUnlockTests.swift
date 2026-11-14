@@ -455,12 +455,28 @@ final class VaultUnlockTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: root) }
         try "preload = [\"./evil.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
 
-        let found = VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [])
+        let started = Date().addingTimeInterval(60)
+        let found = VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: started)
         XCTAssertEqual(found, ["bunfig.toml preload ./evil.ts"])
         let own: Set<String> = [((work + "/evil.ts") as NSString).standardizingPath]
-        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: own), [])
-        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: nil, home: home, xdgConfigHome: nil, own: own).isEmpty,
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: own, startedAt: started), [])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: nil, home: home, xdgConfigHome: nil, own: own, startedAt: started).isEmpty,
                        "an unknown working folder fails closed")
+    }
+
+    func testAWorkingFolderChangedAfterTheProcessStartedFailsClosed() throws {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
+        let home = root + "/home", work = root + "/work"
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        // A preload deleted its bunfig.toml: no file is left to read, but the folder changed after the start.
+        let before = Date().addingTimeInterval(-60)
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: before).isEmpty)
+        let after = Date().addingTimeInterval(60)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after), [])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: nil).isEmpty,
+                       "an unknown start time fails closed")
     }
 
     func testGenesisToolsOwnPreloadsAreNotExtraCodeAndDoNotHideTheScript() {
