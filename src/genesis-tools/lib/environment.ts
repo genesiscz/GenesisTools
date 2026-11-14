@@ -435,13 +435,13 @@ export function realSources(): EnvironmentSources {
                 return null;
             }
 
-            const others = ids
-                .filter((entry) => entry.id !== caller.sessionId)
-                .map((entry) => `${entry.agent} ${entry.id}`);
+            // The caller's own session first, then every other session id the env carries.
+            const own = caller.sessionId ? [{ agent: caller.agent, id: caller.sessionId }] : [];
+            const [primary, ...rest] = [...own, ...ids.filter((entry) => entry.id !== caller.sessionId)];
             return {
-                agent: caller.isInAgent ? caller.agent : (ids[0]?.agent ?? "unknown"),
-                sessionId: caller.sessionId ?? ids[0]?.id ?? null,
-                others: caller.sessionId ? others : others.slice(1),
+                agent: caller.isInAgent ? caller.agent : (primary?.agent ?? "unknown"),
+                sessionId: primary?.id ?? null,
+                others: rest.map((entry) => `${entry.agent} ${entry.id}`),
             };
         },
         recorder: () => {
