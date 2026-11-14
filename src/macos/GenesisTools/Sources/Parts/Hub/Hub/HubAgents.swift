@@ -2106,3 +2106,16 @@ extension HubModel {
         select(match.id)
     }
 }
+
+/// The Agents mode's answers to the hub (Hub/HubModeModel.swift); `reload()` is the model's own.
+extension HubAgentsModel: HubModeModel {
+    /// The list is the content itself, so the mode alone is a place worth going back to.
+    var navSelection: String? { selectedID ?? HubModel.wholeList }
+
+    func navTitle(selection: String) -> String {
+        selection == HubModel.wholeList ? "Agents" : selectedMain.map { "main of " + $0.displayTitle }
+            ?? ("agent " + (selected?.node.title ?? String((AgentTree.split(selection)?.child ?? selection).prefix(12))))
+    }
+
+    var showsTitlebarHeader: Bool { selected != nil || selectedMain != nil }
+}

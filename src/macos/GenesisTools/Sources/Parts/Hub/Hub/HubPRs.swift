@@ -3650,3 +3650,13 @@ struct PRSessionsSection: View {
     }
 }
 
+/// The PRs mode's answers to the hub (Hub/HubModeModel.swift); `reload()` is the model's own.
+extension PRsModel: HubModeModel {
+    var navSelection: String? { selectedID }
+
+    func navTitle(selection: String) -> String {
+        prs.first { $0.id == selection }.map { "\($0.label) \($0.title)" } ?? "a PR"
+    }
+
+    var showsTitlebarHeader: Bool { selected != nil }
+}

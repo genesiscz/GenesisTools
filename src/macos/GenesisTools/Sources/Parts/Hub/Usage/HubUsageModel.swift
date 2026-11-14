@@ -525,3 +525,15 @@ final class HubUsageModel: ObservableObject {
         Task { await rebuild() }
     }
 }
+
+/// The Usage mode's answers to the hub (Hub/HubModeModel.swift); `reload()` is the model's own.
+extension HubUsageModel: HubModeModel {
+    var navSelection: String? { place.selection }
+
+    func navTitle(selection: String) -> String {
+        let named = HubUsagePlace(selection: selection)
+        return "Usage: " + (named?.session.map { "session " + $0.id.prefix(8) } ?? named?.section.title ?? selection)
+    }
+
+    var showsTitlebarHeader: Bool { true }
+}

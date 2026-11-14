@@ -3437,3 +3437,17 @@ func inlineMarkdown(_ text: String) -> AttributedString {
     (try? AttributedString(markdown: text, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
         ?? AttributedString(text)
 }
+
+/// The Inbox mode's answers to the hub (Hub/HubModeModel.swift).
+extension HubInboxModel: HubModeModel {
+    /// The list is the content itself, so the mode alone is a place worth going back to.
+    var navSelection: String? { selectedID ?? HubModel.wholeList }
+
+    func navTitle(selection: String) -> String {
+        selection == HubModel.wholeList ? "Inbox" : "Inbox: " + (sessions.first { $0.id == selection }?.displayTitle ?? "a session")
+    }
+
+    var showsTitlebarHeader: Bool { true }
+
+    func reload() { load() }
+}

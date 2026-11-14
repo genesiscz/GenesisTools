@@ -335,14 +335,10 @@ enum HubMenuCommands {
     }
 
     private static func reload(_ hub: HubModel) {
-        switch hub.mode {
+        switch hub.owner(of: hub.mode) {
         case .sessions: hub.loadSessions()
-        case .prs: hub.prs.reload()
-        case .inbox: hub.inbox.load()
-        case .timeline: hub.timeline.load(fresh: true)
-        case .agents: hub.agents.reload()
-        case .usage: hub.usage.reload()
         case .worktrees: break
+        case .model(let model): model.reload()
         }
     }
 

@@ -1921,3 +1921,15 @@ struct TimelineReplyForm: View {
         .frame(width: 380)
     }
 }
+
+/// The Activity mode's answers to the hub (Hub/HubModeModel.swift).
+extension HubTimelineModel: HubModeModel {
+    /// The list is the content itself, so the mode alone is a place worth going back to.
+    var navSelection: String? { HubModel.wholeList }
+
+    func navTitle(selection: String) -> String { "Activity" }
+
+    var showsTitlebarHeader: Bool { true }
+
+    func reload() { load(fresh: true) }
+}

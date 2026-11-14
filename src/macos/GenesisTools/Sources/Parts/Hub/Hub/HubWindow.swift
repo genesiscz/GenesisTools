@@ -1141,15 +1141,10 @@ final class HubModel {
 
     @MainActor
     var navEntry: HubNavEntry {
-        switch mode {
+        switch owner(of: mode) {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
-        case .prs: return HubNavEntry(mode: .prs, selection: prs.selectedID)
-        // Both lists are the content itself, so the mode alone is a place worth going back to.
-        case .inbox: return HubNavEntry(mode: .inbox, selection: inbox.selectedID ?? Self.wholeList)
-        case .timeline: return HubNavEntry(mode: .timeline, selection: Self.wholeList)
-        case .agents: return HubNavEntry(mode: .agents, selection: agents.selectedID ?? Self.wholeList)
-        case .usage: return HubNavEntry(mode: .usage, selection: usage.place.selection)
+        case .model(let model): return HubNavEntry(mode: mode, selection: model.navSelection)
         }
     }
 
@@ -1297,24 +1292,15 @@ final class HubModel {
     func navTitle(_ entry: HubNavEntry) -> String {
         guard let id = entry.selection else { return entry.mode.title }
         let name: String
-        switch entry.mode {
+        switch owner(of: entry.mode) {
         case .sessions:
             name = id == AgentProcs.selectionID ? "agent processes"
                 : "session " + (sessions.first { $0.id == id }?.displayTitle ?? String(id.suffix(8)))
         case .worktrees:
             name = id == WorktreeCleanup.selectionID ? "worktree cleanup"
                 : "worktree " + (worktrees.first { $0.path == id }.map { "\($0.repo) \($0.branch)" } ?? (id as NSString).lastPathComponent)
-        case .prs:
-            name = prs.prs.first { $0.id == id }.map { "\($0.label) \($0.title)" } ?? "a PR"
-        case .inbox:
-            name = id == Self.wholeList ? "Inbox" : "Inbox: " + (inbox.sessions.first { $0.id == id }?.displayTitle ?? "a session")
-        case .timeline:
-            name = "Activity"
-        case .usage:
-            let place = HubUsagePlace(selection: id)
-            name = "Usage: " + (place?.session.map { "session " + $0.id.prefix(8) } ?? place?.section.title ?? id)
-        case .agents:
-            name = id == Self.wholeList ? "Agents" : agents.selectedMain.map { "main of " + $0.displayTitle } ?? ("agent " + (agents.selected?.node.title ?? String((AgentTree.split(id)?.child ?? id).prefix(12))))
+        case .model(let model):
+            name = model.navTitle(selection: id)
         }
         return name.count > 70 ? String(name.prefix(69)) + "…" : name
     }
@@ -2607,10 +2593,8 @@ extension HubModel {
     /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
     @MainActor
     var showsTitlebarHeader: Bool {
-        switch mode {
-        case .prs: return prs.selected != nil
-        case .inbox, .timeline, .usage: return true
-        case .agents: return agents.selected != nil || agents.selectedMain != nil
+        switch owner(of: mode) {
+        case .model(let model): return model.showsTitlebarHeader
         case .worktrees:
             return worktrees.contains { $0.path == selectedWorktree }
                 || (selectedWorktree == WorktreeCleanup.selectionID && !loadingWorktrees)
