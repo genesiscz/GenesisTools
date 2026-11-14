@@ -2109,6 +2109,29 @@ export function langFor(file: string): Lang | null {
     return null;
 }
 
+/** The files ast-grep can parse, one list per grammar; a file `langFor` cannot place is left out. */
+export function groupByLang(files: Iterable<string>): Map<Lang, string[]> {
+    const byLang = new Map<Lang, string[]>();
+
+    for (const file of files) {
+        const lang = langFor(file);
+
+        if (lang === null) {
+            continue;
+        }
+
+        const bucket = byLang.get(lang);
+
+        if (bucket) {
+            bucket.push(file);
+        } else {
+            byLang.set(lang, [file]);
+        }
+    }
+
+    return byLang;
+}
+
 /**
  * Suppression: `// lint-rules-ignore: reason` on the line above, or trailing on
  * the same line.
@@ -2668,33 +2691,8 @@ export async function scanProcessToolSpawns(files: string[]): Promise<Finding[]>
 }
 
 async function scanAll(files: string[], options: { processToolOnly?: boolean } = {}): Promise<Finding[]> {
-    const byLang = new Map<Lang, string[]>();
-    const testsByLang = new Map<Lang, string[]>();
-
-    for (const file of files) {
-        const lang = langFor(file);
-
-        if (lang === null) {
-            continue;
-        }
-
-        if (isTestFile(file)) {
-            testsByLang.set(lang, [...(testsByLang.get(lang) ?? []), file]);
-            continue;
-        }
-
-        if (pluginsDisabledFor(file)) {
-            continue;
-        }
-
-        const bucket = byLang.get(lang);
-
-        if (bucket) {
-            bucket.push(file);
-        } else {
-            byLang.set(lang, [file]);
-        }
-    }
+    const testsByLang = groupByLang(files.filter(isTestFile));
+    const byLang = groupByLang(files.filter((file) => !isTestFile(file) && !pluginsDisabledFor(file)));
 
     // Suppression is deliberately NOT applied here: it needs the source lines,
     // and reading every file back would put the cost straight back. Only the

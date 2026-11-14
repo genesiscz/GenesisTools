@@ -16,9 +16,16 @@
  * that is unknown or not fetched. A base commit from before the manifest existed is no error.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { findInFiles, type Lang, type SgNode } from "@ast-grep/napi";
+import { findInFiles, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { isSuppressed, isTestFile, langFor, maskSwiftNonCode, pluginsDisabledFor, targetFiles } from "../lint-rules";
+import {
+    groupByLang,
+    isSuppressed,
+    isTestFile,
+    maskSwiftNonCode,
+    pluginsDisabledFor,
+    targetFiles,
+} from "../lint-rules";
 import { spawnWithDeadline } from "../spawn-deadline";
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
@@ -45,24 +52,7 @@ export function rosterFiles(definition: RosterDefinition, files: readonly string
 
 /** Every match of one roster's pattern, suppressed lines left out. */
 export async function scanRoster(definition: RosterDefinition, files: readonly string[]): Promise<RosterMatch[]> {
-    const byLang = new Map<Lang, string[]>();
-
-    for (const file of rosterFiles(definition, files)) {
-        const lang = langFor(file);
-
-        if (lang === null) {
-            continue;
-        }
-
-        const bucket = byLang.get(lang);
-
-        if (bucket) {
-            bucket.push(file);
-        } else {
-            byLang.set(lang, [file]);
-        }
-    }
-
+    const byLang = groupByLang(rosterFiles(definition, files));
     const nodes: SgNode[] = [];
 
     for (const [lang, paths] of byLang) {
