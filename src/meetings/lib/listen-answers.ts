@@ -2,16 +2,18 @@ import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { storedPresentAt } from "./person-stays";
 
 export function personKey(text: string): string {
-    return text
-        .replace(/\([^)]*\)/g, "")
-        .normalize("NFD")
-        .replace(/\p{M}/gu, "")
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .split(/\s+/)
-        .filter(Boolean)
-        .sort()
-        .join(" ");
+    return nameTokens(text).sort().join(" ");
+}
+
+/** A text's words without accents, in lower case: the one folding that every name comparison here uses. */
+function foldWords(text: string): string[] {
+    return (
+        text
+            .normalize("NFD")
+            .replace(/\p{M}/gu, "")
+            .toLowerCase()
+            .match(/[\p{L}\p{N}]+/gu) ?? []
+    );
 }
 
 export type PersonAnswer = { kind: "people"; people: string[] } | { kind: "comment"; text: string };
@@ -31,11 +33,7 @@ export function parsePersonAnswer(options: { text: string; people: string[]; sel
     if (exact) {
         return { kind: "people", people: [exact] };
     }
-    const folded = ` ${text
-        .normalize("NFD")
-        .replace(/\p{M}/gu, "")
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}]+/gu, " ")} `;
+    const folded = ` ${foldWords(text).join(" ")} `;
     const matches = known.flatMap((name) => {
         const tokens = nameTokens(name);
         const positions = tokens.filter((token) => token.length > 2).map((token) => folded.indexOf(` ${token} `));
@@ -68,21 +66,13 @@ export function parsePersonAnswer(options: { text: string; people: string[]; sel
 const SELF_WORDS = new Set(["me", "myself", "ja"]);
 
 /** The words a person answer may hold besides the names: list joins, order words and an affirming lead-in. */
-const ANSWER_GLUE = new Set([
-    ...["and", "a", "i", "plus", "with", "s", "se", "then", "potom", "pak", "first", "second", "nejdriv", "druha"],
-    ...["druhy", "druhe", "it", "is", "was", "that", "this", "to", "je", "byl", "byla"],
-]);
+const ANSWER_GLUE_WORDS =
+    "and a i plus with s se then potom pak first second nejdriv druha druhy druhe it is was that this to je byl byla";
+const ANSWER_GLUE = new Set(ANSWER_GLUE_WORDS.split(" "));
 
 /** A name's words, folded for matching, without a parenthesised note. */
 function nameTokens(name: string): string[] {
-    return (
-        name
-            .replace(/\([^)]*\)/g, "")
-            .normalize("NFD")
-            .replace(/\p{M}/gu, "")
-            .toLowerCase()
-            .match(/[\p{L}\p{N}]+/gu) ?? []
-    );
+    return foldWords(name.replace(/\([^)]*\)/g, ""));
 }
 
 export function recordPeople(record: MeetingRecord): string[] {
