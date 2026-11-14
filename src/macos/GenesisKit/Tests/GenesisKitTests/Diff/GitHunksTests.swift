@@ -37,6 +37,46 @@ final class GitHunksTests: XCTestCase {
         model.follow(nil, text: "")
     }
 
+    /// A HEAD read that failed (an index lock, a git that did not start) is no answer: the next repository change reads
+    /// again while HEAD stays where it is. It was cached as "read at this HEAD", so the gutter stayed empty until a commit.
+    func testAFailedHeadReadIsReadAgainAtTheNextRepositoryChange() async throws {
+        final class Flaky: GenesisKitGTCLIProvider, @unchecked Sendable {
+            private let lock = NSLock()
+            private var failing = true
+            private var reads = 0
+            var readCount: Int { lock.withLock { reads } }
+            func recover() { lock.withLock { failing = false } }
+            override func contents(of file: URL, at revision: GitRevision) throws -> String? {
+                let fails = lock.withLock {
+                    reads += 1
+                    return failing
+                }
+                if fails { throw ReviewError.git("git show exited 128: Unable to create index.lock") }
+                return "old\n"
+            }
+        }
+        let flaky = Flaky()
+        let previous = GenesisKitGT.provider
+        GenesisKitGT.provider = flaky
+        defer { GenesisKitGT.provider = previous }
+        let model = GitGutterModel()
+        model.headOf = { _ in "4e7a3bcd28" }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("flaky-gutter-\(UUID())/note.md")
+        model.follow(file, text: "new\n")
+        var end = Date().addingTimeInterval(3)
+        while flaky.readCount == 0, Date() < end { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(model.hunks.isEmpty, "a failed read has no hunks")
+
+        flaky.recover()
+        model.repositoryChanged()
+        end = Date().addingTimeInterval(3)
+        while model.hunks.isEmpty, Date() < end { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(flaky.readCount, 2, "the change read HEAD's copy again")
+        XCTAssertEqual(model.hunks.first?.kind, .modified)
+        model.follow(nil, text: "")
+    }
+
     func testAddedChangedAndRemovedLinesBecomeThreeHunks() {
         let old = "a\nb\nc\nd\ne\n"
         let new = "a\nB\nc\nnew\nd\n"
