@@ -21,6 +21,7 @@ export async function loadUsageSpendAlias(argv: readonly string[]): Promise<(usa
         };
     }
 
+    // lint-rules-ignore: `tools ai usage spend` mounts the ai-spend command, loaded only when it runs
     const { registerSpendCommand } = await import("@app/ai-spend/lib/register");
 
     return (usage) => {

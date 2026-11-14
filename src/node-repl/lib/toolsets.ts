@@ -45,6 +45,7 @@ export const REPL_TOOLSETS = {
         summary:
             "Record the screen as a movie, then cut, speed up, zoom and export it; the recorder window shows each edit. Use it for a demo video; recorder and editor are the lower-level frames tools.",
         load: async (): Promise<ReplToolset> => {
+            // lint-rules-ignore: the movies toolset lives with the recorder, loaded only when a REPL asks for it
             const { MoviesToolset } = await import("@app/recorder/lib/toolset");
             return new MoviesToolset();
         },

@@ -19,10 +19,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { findInFiles, type Lang, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isSuppressed, isTestFile, langFor, maskSwiftNonCode, pluginsDisabledFor, targetFiles } from "../lint-rules";
+import { spawnWithDeadline } from "../spawn-deadline";
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
 import { SWIFT_ROSTERS, type SwiftRoster, swiftRosterApplies, swiftRosterLines } from "./swift";
-import { countByKey, TREE_ROSTERS, type TreeMatch, treeInventory, unsuppressed } from "./tree";
+import { countByKey, notSuppressed, TREE_ROSTERS, type TreeMatch, treeInventory } from "./tree";
 
 export interface RosterMatch {
     file: string;
@@ -49,8 +50,16 @@ export async function scanRoster(definition: RosterDefinition, files: readonly s
     for (const file of rosterFiles(definition, files)) {
         const lang = langFor(file);
 
-        if (lang !== null) {
-            byLang.set(lang, [...(byLang.get(lang) ?? []), file]);
+        if (lang === null) {
+            continue;
+        }
+
+        const bucket = byLang.get(lang);
+
+        if (bucket) {
+            bucket.push(file);
+        } else {
+            byLang.set(lang, [file]);
         }
     }
 
@@ -196,11 +205,12 @@ function serialize(rosters: Rosters): string {
 
 /**
  * The manifest at `base`, or null when that commit predates it: a manifest that did not exist cannot have been edited
- * up. An unknown or unfetched ref, or any other git failure, throws, so a baseline check never passes unread.
+ * up. An unknown or unfetched ref, a stalled git (killed at its deadline) or any other git failure throws, so a
+ * baseline check never passes unread.
  */
 export function baseRosters(base: string, { cwd = process.cwd() }: { cwd?: string } = {}): Rosters | null {
     const git = (args: string[], what: string): string => {
-        const run = Bun.spawnSync(["git", ...args], { cwd });
+        const run = spawnWithDeadline(["git", ...args], { cwd });
 
         if (run.exitCode !== 0) {
             throw new Error(`rosters: cannot ${what} (git exited ${run.exitCode}): ${run.stderr.toString().trim()}`);
@@ -273,9 +283,10 @@ if (import.meta.main) {
 
     if (trees.length > 0) {
         const inventory = await treeInventory(files);
+        const kept = notSuppressed();
 
         for (const tree of trees) {
-            const matches = unsuppressed(tree.scan(inventory));
+            const matches = tree.scan(inventory, kept);
 
             treeMatches.set(tree.name, matches);
             found[tree.name] = countByKey(matches);

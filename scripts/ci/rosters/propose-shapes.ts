@@ -3,6 +3,8 @@
  * looks for per shape, and the module a file belongs to. Shared by every proposer source.
  */
 
+import { type DeadlineRun, spawnWithDeadline } from "../spawn-deadline";
+
 export type ShapeKind = "call" | "import" | "new" | "argv" | "declare" | "literal";
 
 export interface Shape {
@@ -200,18 +202,9 @@ export function grepPattern(shape: Shape): string {
 /** A git or tools child of the proposer that runs longer than this is stuck: it is killed and named. */
 export const PROPOSE_CHILD_TIMEOUT_MS = 120_000;
 
-/** `Bun.spawnSync` with a deadline; a child that passes it throws, unlike an ordinary failing exit. */
-export function proposerSpawn(
-    argv: string[],
-    timeoutMs = PROPOSE_CHILD_TIMEOUT_MS
-): { exitCode: number; stdout: Buffer; stderr: Buffer } {
-    const child = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: timeoutMs, killSignal: "SIGKILL" });
-
-    if (child.exitedDueToTimeout) {
-        throw new Error(`${argv.slice(0, 3).join(" ")} did not finish within ${timeoutMs / 1000} s and was killed`);
-    }
-
-    return { exitCode: child.exitCode ?? 1, stdout: child.stdout, stderr: child.stderr };
+/** `Bun.spawnSync` with the proposer's deadline; a child that passes it throws, unlike an ordinary failing exit. */
+export function proposerSpawn(argv: string[], timeoutMs = PROPOSE_CHILD_TIMEOUT_MS): DeadlineRun {
+    return spawnWithDeadline(argv, { timeoutMs });
 }
 
 export function isTestPath(file: string): boolean {

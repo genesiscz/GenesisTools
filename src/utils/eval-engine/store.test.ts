@@ -1,7 +1,7 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/store.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { appendFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { ConversationRecord } from "./conversation";
@@ -138,6 +138,34 @@ describe("the run folder", () => {
             (e: unknown) => e instanceof EvalConfigError && e.code === "unknown-run"
         );
     });
+});
+
+it("lets one process play a run at a time, and takes over the lock of an ended one", async () => {
+    const base = await runsDir();
+    const store = await createRun(base, { now: new Date(), label: "lock" }, manifest);
+    const second = await openRun(store.manifest.run, base);
+    const claim = await store.claim();
+    await assert.rejects(
+        second.claim(),
+        (e: unknown) =>
+            e instanceof EvalConfigError && e.code === "run-in-use" && e.message.includes(`pid ${process.pid}`)
+    );
+    await claim.release();
+    const again = await second.claim();
+    await again.release();
+
+    const ended = spawnSync(process.execPath, ["-e", ""], { env: process.env }).pid;
+    await writeFile(
+        join(store.dir, "run.lock"),
+        `${JSON.stringify({ pid: ended, host: hostname(), at: new Date(0).toISOString() })}\n`
+    );
+    const takenOver = await store.claim();
+    assert.match(await readFile(join(store.dir, "run.lock"), "utf8"), new RegExp(`"pid":${process.pid}`));
+    await takenOver.release();
+    assert.deepEqual(
+        (await readdir(store.dir)).filter((name) => name.startsWith("run.lock")),
+        []
+    );
 });
 
 it("reopens a run with a truncated diagnostic error tail", async () => {

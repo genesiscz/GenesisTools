@@ -11,6 +11,7 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         id: "jev",
         prefix: "jev_",
         optIn: false,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/jev/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
     {
@@ -18,6 +19,7 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         id: "control",
         prefix: "control_",
         optIn: false,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/control/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
     {
@@ -25,6 +27,7 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         id: "fetch",
         prefix: "fetch_",
         optIn: false,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/fetch/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
     {
@@ -32,6 +35,7 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         id: "alza",
         prefix: "alza_",
         optIn: true,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/alza/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
     {
@@ -39,6 +43,7 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         id: "waze",
         prefix: "waze_",
         optIn: true,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/waze/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
     {
@@ -46,6 +51,7 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         id: "usage",
         prefix: "usage_",
         optIn: false,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/ai/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
 ];

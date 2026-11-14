@@ -40,6 +40,7 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
         try {
             signal.throwIfAborted();
             const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
+            // lint-rules-ignore: the Changes door reads the agents tool's change log, loaded on demand
             const { toolChangesJson } = await import("@app/agents/lib/changes/tool-changes");
             const file = changeLogPath(session);
             const read = readChangeLogFile(file);
@@ -92,6 +93,7 @@ export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: numbe
         try {
             signal.throwIfAborted();
             const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
+            // lint-rules-ignore: the Changes door reads the agents tool's change log, loaded on demand
             const { sessionTurnChanges, turnChangesJson } = await import("@app/agents/lib/changes/tool-changes");
             const file = changeLogPath(session);
             const read = readChangeLogFile(file);

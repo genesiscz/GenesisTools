@@ -17,7 +17,9 @@ export async function startDashboard({
     // `lib/server/api.ts` 321 ms, `artifact/lib/serve.ts` 134-205 ms over three runs each.
     // Deferring serve.ts alone changed nothing, because api.ts was the larger of the two.
     const [{ serveArtifacts }, { resolveTemplateDir }, { jevApiPlugin }] = await Promise.all([
+        // lint-rules-ignore: the dashboard serves the artifact templates, loaded only when it starts
         import("@app/artifact/lib/serve"),
+        // lint-rules-ignore: the dashboard serves the artifact templates, loaded only when it starts
         import("@app/artifact/lib/templates"),
         import("../lib/server/api"),
     ]);
