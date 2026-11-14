@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { Lang, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { HARNESS_GUARD_ALLOWLIST, type HarnessGuardCounts } from "./harness-guard-allowlist";
+import { spawnWithDeadline } from "./spawn-deadline";
 
 export type HarnessGuardKind = "list" | "table" | "branch";
 
@@ -323,11 +324,7 @@ export function updateAllowlist(
 }
 
 function trackedFiles(repoRoot: string): string[] {
-    const proc = Bun.spawnSync(["git", "ls-files", "-z", "--", "src", "scripts", "plugins"], {
-        cwd: repoRoot,
-        stdout: "pipe",
-        stderr: "pipe",
-    });
+    const proc = spawnWithDeadline(["git", "ls-files", "-z", "--", "src", "scripts", "plugins"], { cwd: repoRoot });
 
     if (proc.exitCode !== 0) {
         process.stderr.write(`harness-guard: git ls-files failed (${proc.exitCode}): ${proc.stderr.toString()}\n`);

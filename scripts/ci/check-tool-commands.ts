@@ -35,6 +35,7 @@ import { out } from "@genesiscz/utils/logger";
 import { calleeName, parseSource, stringValue, unwrap, walk } from "@genesiscz/utils/ts/source/parse";
 import { resolveSpecifier } from "@genesiscz/utils/ts/source/resolve";
 import ts from "typescript";
+import { spawnWithDeadline } from "./spawn-deadline";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const COMMAND_WORD = /^[a-z][a-z0-9-]*$/;
@@ -707,10 +708,10 @@ export function checkTree(root: string, files: string[]): string[] {
 }
 
 function trackedSourceFiles(root: string): string[] {
-    const result = Bun.spawnSync(["git", "ls-files", "src/**/*.ts", "src/**/*.tsx"], { cwd: root, stdout: "pipe" });
+    const result = spawnWithDeadline(["git", "ls-files", "src/**/*.ts", "src/**/*.tsx"], { cwd: root });
 
     if (result.exitCode !== 0) {
-        throw new Error(`git ls-files failed (exit ${result.exitCode})`);
+        throw new Error(`git ls-files failed (exit ${result.exitCode}): ${result.stderr.toString().trim()}`);
     }
 
     return result.stdout
