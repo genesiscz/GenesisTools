@@ -92,14 +92,9 @@ export function autoAllowDaemon(script: string): string {
     return entry;
 }
 
-/** The defaults with arrays of their own, so a change made in place never reaches VAULT_AUTO_ALLOW_DEFAULTS. */
+/** A deep copy of the defaults, so a change made in place never reaches VAULT_AUTO_ALLOW_DEFAULTS. */
 function defaultSettings(): VaultAutoAllowSettings {
-    return {
-        ...VAULT_AUTO_ALLOW_DEFAULTS,
-        commands: [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
-        agentApps: [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
-        daemons: [...VAULT_AUTO_ALLOW_DEFAULTS.daemons],
-    };
+    return structuredClone(VAULT_AUTO_ALLOW_DEFAULTS);
 }
 
 /**
