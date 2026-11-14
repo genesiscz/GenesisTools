@@ -95,6 +95,26 @@ describe("redactHar", () => {
         expect(text).toContain("keepMe=on");
     });
 
+    test("redacts a text/plain form body, where & is part of the value", () => {
+        const har = makeHar([
+            makeEntry({
+                request: {
+                    postData: {
+                        mimeType: "text/plain;charset=UTF-8",
+                        text: "password=first-part&remaining-secret\r\nnote=a&access_token=amp-secret\r\nmessage=hello\r\n",
+                    },
+                },
+            }),
+        ]);
+
+        const text = redactedText(redactHar(har).har);
+
+        expect(text).not.toContain("first-part");
+        expect(text).not.toContain("remaining-secret");
+        expect(text).not.toContain("amp-secret");
+        expect(text).toContain("message=hello");
+    });
+
     test("redacts postData params array", () => {
         const har = makeHar([
             makeEntry({

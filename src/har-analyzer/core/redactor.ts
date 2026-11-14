@@ -456,6 +456,25 @@ class Redactor {
             .join("&");
     }
 
+    /**
+     * A text/plain body. A text/plain form puts one `name=value` pair on each line, and `&` is a literal character of
+     * its value, so a line whose name is a known key is masked to its end. Any other line may still be a URL-encoded
+     * string (`fetch` sends a string body as text/plain), so a known key after `&` is masked to the next `&`. The rest
+     * keeps the raw-body treatment (JWTs only).
+     */
+    private redactPlainFormText(text: string, location: string): string {
+        const maskPair = (pair: string, head: string, name: string, value: string): string => {
+            const kind = kindForKey(name);
+
+            return kind ? `${head}${name}=${this.maskKeyed(value, kind, `${location}:${name}`)}` : pair;
+        };
+        const pairs = text
+            .replace(/(^|[\r\n])([^=\r\n]+)=([^\r\n]*)/g, maskPair)
+            .replace(/(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g, maskPair);
+
+        return this.redactValuePatterns(pairs, location, { emails: false });
+    }
+
     /** Redact query values inside a URL string, preserving untouched params. */
     private redactUrl(url: string, location: string): string {
         const qIndex = url.indexOf("?");
@@ -559,6 +578,10 @@ class Redactor {
 
         if (normalizedMime === "application/x-www-form-urlencoded") {
             return this.redactFormText(text, location);
+        }
+
+        if (normalizedMime === "text/plain") {
+            return this.redactPlainFormText(text, location);
         }
 
         // Raw/unknown bodies: JWTs only; email matching in HTML would scrub
