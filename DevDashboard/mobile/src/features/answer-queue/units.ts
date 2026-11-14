@@ -192,7 +192,6 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     uncertain: "Uncertain: check the session",
 };
 
-
 /**
  * The queue with a stage the Mac took applied to its decision: the pick set (`""` clears it) and the note it staged.
  * Whatever the stage did not name stays as the queue had it. The Mac took the stage at `expectedRevision` only, so a
