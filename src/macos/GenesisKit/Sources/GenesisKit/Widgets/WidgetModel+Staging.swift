@@ -448,7 +448,8 @@ extension WidgetModel {
 
     /// Sends the staged decisions `ids`: one message per session. With `thenClose` (a send on the way out of the
     /// panel) the panel stays open until the hub answers and closes only when every answer was delivered, so a send
-    /// that failed is read where it happened instead of in a closed panel (ux catalogue P1).
+    /// that failed is read where it happened instead of in a closed panel (ux catalogue P1). An own answer goes apart
+    /// from the rest; a part that is not delivered cancels the fold the other part scheduled (`sendCloseRevision`).
     /// `known`: items the caller holds whose pick was staged here a moment ago, before a snapshot listed them; the
     /// send waits for that stage (`afterMutations`), so a Send now right after the click sends it.
     public func sendStaged(_ ids: [String], thenClose: Bool = false, known: [WidgetInboxItem] = []) {
@@ -571,6 +572,9 @@ extension WidgetModel {
                     }
                     return
                 }
+                // Not delivered: no fold that another part of the same Send scheduled may close over this result (an
+                // own answer is sent apart from the other staged decisions, and each part folds on its own success).
+                sendCloseRevision += 1
                 if outcome.failed > 0 {
                     if let sendingNote, notice == sendingNote { notice = nil }
                     fail(text, detail: outcome.details)
@@ -585,6 +589,7 @@ extension WidgetModel {
             } catch {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
+                self.sendCloseRevision += 1
                 if fromPeek {
                     self.applyAlertPopup(self.alertPopup.sendEnded(WidgetPeekOutcome(text: staged
                         ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it.",

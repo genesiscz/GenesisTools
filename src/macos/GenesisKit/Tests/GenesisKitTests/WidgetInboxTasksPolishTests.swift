@@ -1803,9 +1803,10 @@ final class WidgetStagingTests: XCTestCase {
         var confirmed = item
         confirmed.draftOption = "a"
         model.reconcileStaged([confirmed])
-        XCTAssertNil(model.decisions.pending[item.sourceId])
+        XCTAssertNotNil(model.decisions.pending[item.sourceId], "the write still runs, so the snapshot confirms nothing yet")
         try XCTUnwrap(held).resume(returning: ["ok": true])
         await fulfillment(of: [sent], timeout: 1)
+        XCTAssertNil(model.decisions.pending[item.sourceId], "the landed write was sent and the pick is forgotten")
     }
 
     func testOlderSendAtOnceDoesNotSendANewerNote() async throws {
@@ -2225,6 +2226,32 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(models[1].expanded, "a configured delay replaces the 2.5 second default")
         try await Task.sleep(for: .milliseconds(2600))
         XCTAssertEqual(models[0].expanded, .right, "Keep open disables the delayed fold")
+    }
+
+    /// Send on the way out with an own answer sends it apart from the other staged decisions. When the own answer is
+    /// delivered and the rest fails, the failure must stay readable: the panel does not fold over it.
+    func testAFailedSendOnTheWayOutKeepsThePanelOpenAfterAnEarlierSendDelivered() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let sends = SendCounter()
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == .string("send-staged") else { return ["ok": true] }
+            return sends.next() == 1 ? ["sent": 1, "failed": 0] : ["sent": 0, "failed": 1]
+        }
+        var wire = try JSONDecoder().decode(WidgetSnapshot.self,
+                                            from: Data(StagingFixture.snapshot(draftOption: "a", second: true).utf8))
+        wire.state.preferences.sendCloseSeconds = 0.3
+        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        model.select(key)
+        model.open(.right)
+        let first = try XCTUnwrap(model.cards.first { $0.sourceId == "d1" })
+        let second = try XCTUnwrap(model.cards.first { $0.sourceId == "d2" })
+        model.sendDecisionNow(first, option: "a", note: nil, thenClose: true)
+        model.sendDecisionNow(second, option: "a", note: nil, thenClose: true)
+        for _ in 0 ..< 300 where sends.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(sends.count, 2, "both decisions were sent")
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(model.expanded, .right, "the second send failed, so the panel stays open to show why")
     }
 
     /// An own answer with media goes through the durable journal, not `send-staged`: Send on the way out folds the panel
@@ -3201,4 +3228,12 @@ final class WidgetSessionSwitchTests: XCTestCase {
         XCTAssertNil(cache[key("s0")], "the session refreshed longest ago goes first")
         XCTAssertEqual(cache[key("s\(WidgetSessionCache.limit + 1)")]?.cards.count, 1)
     }
+}
+
+/// Counts the send-staged calls of a test whose action runner answers each one differently.
+private final class SendCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func next() -> Int { lock.withLock { value += 1; return value } }
 }
