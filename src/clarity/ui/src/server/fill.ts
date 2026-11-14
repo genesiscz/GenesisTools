@@ -55,7 +55,7 @@ export interface FillPreviewResult {
     totalUnmapped: number;
     adoConfig?: { org: string; project: string };
     userId?: number;
-    /** Days carrying mapped hours that no Clarity period covers. The write drops those hours. */
+    /** Days carrying mapped hours that no Clarity period covers. Their presence refuses the month without writes. */
     unresolvedDates?: string[];
     /** Weeks of the month whose timesheet could not be read; the fill cannot write them. */
     unreadableWeeks?: Array<{ timesheetId: number; error: string }>;

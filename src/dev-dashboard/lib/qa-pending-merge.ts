@@ -62,6 +62,17 @@ export function mergePendingSnapshot(input: PendingMergeInput): Map<string, AskF
     return next;
 }
 
+/**
+ * Stamp the forms of the live channel's own snapshot frame in `lastSseAt` before it is merged. That snapshot is as
+ * new as a stream frame, so a REST snapshot requested before it and answered after it must not drop a form it was
+ * too early to know about.
+ */
+export function stampStreamSnapshot(forms: AskForm[], lastSseAt: Map<string, number>, at: number): void {
+    for (const form of forms) {
+        lastSseAt.set(form.id, at);
+    }
+}
+
 /** Fold one lifecycle frame into the map. A resolved form leaves the section. */
 export function applyPendingFrame(
     previous: Map<string, AskForm>,

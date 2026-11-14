@@ -66,6 +66,27 @@ describe("createDashboardClient", () => {
         expect(refused).toMatchObject({ status: 503, body: "down", message: "/api/todos -> 503: down" });
     });
 
+    it("answerOnRefusal still throws a JSON refusal that is not the row's failure answer", async () => {
+        const bodies: Array<[number, string]> = [
+            [500, SafeJSON.stringify({ ok: false, error: "crashed" })],
+            [401, SafeJSON.stringify({ ok: false, error: "no token" })],
+            [409, SafeJSON.stringify({ error: "generic" })],
+            [400, "null"],
+        ];
+
+        for (const [status, body] of bodies) {
+            const fetchImpl = (async () => new Response(body, { status })) as unknown as typeof fetch;
+            const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
+
+            const refused = await client
+                .call(ENDPOINTS.cmuxFocusSession, { sessionId: "s1" }, { answerOnRefusal: true })
+                .catch((err: unknown) => err);
+
+            expect(refused).toBeInstanceOf(DashboardHttpError);
+            expect(refused).toMatchObject({ status, body });
+        }
+    });
+
     it("url builds a non-JSON row's address with its query", () => {
         const client = createDashboardClient({ baseUrl: "http://h", fetch });
 
