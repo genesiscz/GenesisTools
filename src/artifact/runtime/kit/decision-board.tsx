@@ -218,16 +218,23 @@ export function DecisionBoard({
     // The choices ride in the hash beside a section anchor; keep `#layers&d=…` scrolling to #layers.
     useSectionAnchor(Boolean(hash));
 
-    /** Normalize a change, then put every still-locked choice back: `normalize` may not move a locked decision. */
+    /**
+     * Pin every still-locked choice to its current value, normalize, then pin them again: `normalize` sees the
+     * locked values and may not move a locked decision.
+     */
     const applyKeepingLocks = (current: DecisionChoices, next: DecisionChoices) => {
-        const normalized = { ...apply(next) };
-        for (const point of points) {
-            if (point.locked && !unlocked.includes(point.key)) {
-                normalized[point.key] = current[point.key];
+        const lockedKeys = points
+            .filter((point) => point.locked && !unlocked.includes(point.key))
+            .map((point) => point.key);
+        const pin = (value: DecisionChoices) => {
+            for (const key of lockedKeys) {
+                value[key] = current[key];
             }
-        }
 
-        return normalized;
+            return value;
+        };
+
+        return pin({ ...apply(pin({ ...next })) });
     };
     const setChoice = (point: DecisionPoint, value: string) => {
         setChoices((current) => applyKeepingLocks(current, { ...current, [point.key]: value }));
@@ -274,16 +281,9 @@ export function DecisionBoard({
                         onChange={(id) => {
                             const selected = presets.find((item) => item.id === id);
                             if (selected) {
-                                setChoices((current) => {
-                                    const next = { ...initial, ...selected.choices };
-                                    for (const point of points) {
-                                        if (point.locked && !unlocked.includes(point.key)) {
-                                            next[point.key] = current[point.key];
-                                        }
-                                    }
-
-                                    return applyKeepingLocks(current, next);
-                                });
+                                setChoices((current) =>
+                                    applyKeepingLocks(current, { ...initial, ...selected.choices })
+                                );
                                 setBaseline(id);
                                 setCopied(false);
                             }
