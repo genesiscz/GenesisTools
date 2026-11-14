@@ -204,10 +204,8 @@ export class Outbox {
         }
 
         if (this.bytes > 0 && this.bytes + length > this.limit) {
-            this.dropping = true;
             const held = this.bytes + length;
-            this.chunks.length = 0;
-            this.bytes = 0;
+            this.discard();
             this.onFull(held);
             return;
         }
