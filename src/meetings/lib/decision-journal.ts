@@ -1033,16 +1033,13 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                     item.decidedAt = now;
                 }
             }
-            const { added, warnings } =
-                action.findings.length === 0
-                    ? { added: [], warnings: [] }
-                    : prepareFindings({
-                          findings: action.findings,
-                          items: record.items,
-                          allowDuplicates: action.allowDuplicates,
-                          force: action.force,
-                          ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
-                      });
+            const { added, warnings } = prepareFindings({
+                findings: action.findings,
+                items: record.items,
+                allowDuplicates: action.allowDuplicates,
+                force: action.force,
+                ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
+            });
             record.items.push(...added);
             return {
                 history: { command: "items add", change: `${added.length} finding${added.length === 1 ? "" : "s"}` },
