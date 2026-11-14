@@ -2755,6 +2755,14 @@ describe("arrival and muted (R16, RM), Martin's three lines of the example", () 
         expect(at(31)).toContainEqual(
             expect.objectContaining({ speaker: "Fil Example", rules: ["R16"], confidence: 0.65 })
         );
+        // The arrival range carries typed scores from its own line, as every speaker range does.
+        const arrival = at(31).find((item) => item.rules.join() === "R16");
+        expect(arrival ? speakerScoresOf(arrival)[0] : undefined).toMatchObject({
+            speaker: "Fil Example",
+            confidence: 0.65,
+            lines: 1,
+            evidence: expect.arrayContaining([{ kind: "timing", rule: "R16" }]),
+        });
         const rm = at(31).find((item) => item.rules.includes("RM"));
         expect(rm).toBeDefined();
         expect(rm?.speaker ?? "").not.toBe("Alice Example");

@@ -1878,6 +1878,46 @@ function itemKey(item: NewItem | MeetingItem): string {
     return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}${place}`;
 }
 
+/**
+ * A speaker range a rule made without typed candidate scores (an arrival, a shared microphone or call, a cluster),
+ * scored from its own lines as every other speaker range is. A range with scores, or with no line, stays as it is.
+ */
+function lineScored(
+    item: NewItem,
+    options: { lines: LineEvidence[]; selfName: string | undefined; samePerson?: SamePerson }
+): NewItem {
+    if (item.kind !== "speaker-range" || item.evidence?.candidateScores !== undefined) {
+        return item;
+    }
+
+    const own = options.lines.filter(
+        (line) => line.label === item.label && line.startSec >= item.fromSec && line.startSec <= item.toSec
+    );
+
+    if (own.length === 0) {
+        return item;
+    }
+
+    const selfName = options.selfName;
+    const candidates = item.candidates;
+    const scores = scoreCandidates({
+        tallies: lineTallies({
+            lines: own,
+            selfName: selfName ?? "",
+            nearby: [],
+            micHolds: (line) => selfName !== undefined && micSure(line),
+            samePerson: options.samePerson,
+        }).tallies.filter((tally) => tally.name !== ""),
+        lines: own.length,
+        label: item.label,
+        speaker: item.speaker,
+        confidence: item.confidence ?? 0,
+        rules: item.rules,
+        samePerson: options.samePerson,
+    }).filter((score) => !candidates || candidates.some((name) => sameName(name, score.speaker)));
+    return scores.length > 0 ? { ...item, evidence: { ...item.evidence, candidateScores: scores } } : item;
+}
+
 /** Two independent rules agreeing never reach certainty: a person still confirms. */
 const AGREEING_MAX = 0.95;
 
@@ -2223,13 +2263,22 @@ export function suggestItems(options: {
             speakingReadings: options.evidence.speaking,
         });
         // A greeting inside a swapped stretch is under a swapped label: R20 already names its speaker.
-        found.push(
+        const ruled = [
             ...channel.items,
             ...arrivals.filter((item) => !inSwap(channel.swaps, item.label, item.fromSec)),
             ...uncertainSharedCallRanges({
                 record,
                 lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
-            })
+            }),
+        ];
+        found.push(
+            ...ruled.map((item) =>
+                lineScored(item, {
+                    lines: departureLines,
+                    selfName: selfNameForDeparture,
+                    samePerson: options.samePerson,
+                })
+            )
         );
     }
 
