@@ -504,6 +504,13 @@ final class FailureInlineTests: XCTestCase {
 
     private static let tailArgv = ["ai", "sessions", "tail", "a1523c66-0000-4000-8000-000000000000", "--json", "--limit", "12"]
 
+    /// A unique path in the temporary directory, removed when the test ends. Nothing is created there.
+    private func temporaryURL(_ prefix: String, suffix: String = "") -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString)\(suffix)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
     func testATimeoutSaysWhatDidNotLoadWhatRanAndThatTheMacMayBeBusy() {
         let report = FailureReport.toolsCall(ToolsBridgeError.timeout(seconds: 30), outcome: "The transcript did not load",
                                              action: "Open the session's transcript",
@@ -568,9 +575,8 @@ final class FailureInlineTests: XCTestCase {
     }
 
     func testAddingTheCallLogReadsTheFileAndPointsOpenLogAtTheCallsLine() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("failure-log-\(UUID().uuidString)")
+        let folder = temporaryURL("failure-log")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
         let stamp = DateFormatter()
         stamp.dateFormat = "HH:mm:ss.SSS"
         stamp.locale = Locale(identifier: "en_US_POSIX")
@@ -611,8 +617,7 @@ final class FailureInlineTests: XCTestCase {
     }
 
     func testFailureIsPreparedAndPersistedBeforeDetailsAndReusesItsSnapshotAfterRestart() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("failure-capture-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = temporaryURL("failure-capture")
         let began = expectation(description: "triage starts at the error, without Details")
         let probe = FailureCaptureProbe()
         FailureCapture.enable(directory: directory, environment: {
@@ -653,8 +658,7 @@ final class FailureInlineTests: XCTestCase {
     }
 
     func testLaterFailuresGetFreshContextAndOldArchivesKeepTheirOriginalEventTime() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("failure-capture-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = temporaryURL("failure-capture")
         let probe = FailureCaptureProbe()
         let store = FailureCaptureStore(directory: directory, environment: {
             FailureEnvironment(markdown: "snapshot \(probe.next())")
@@ -699,8 +703,7 @@ final class FailureInlineTests: XCTestCase {
     }
 
     func testPersistedFailureDoesNotRepeatACredentialFromItsCall() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("failure-capture-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = temporaryURL("failure-capture")
         let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
         let call = ToolsCallLedger.Call(traceId: "fixture-secret", argv: ["fixture", "--token", "invented-secret"],
                                         started: Date(), via: "process", exit: 1, stderr: "rejected invented-secret")
@@ -757,9 +760,8 @@ final class FailureInlineTests: XCTestCase {
             "[\(at(-12))] mark call t=0e7710aa via=process pid=4242 ms=8190 exit=0 out=5120B start=\(at(-20.2)) argv=hub pr threads acme/storefront#4182 --json",
             "[\(at(0))] mark call t=297f7e79 via=server-timeout pid=4242 ms=31207 exit=-1 out=0B start=\(at(-31.2)) argv=ai sessions tail 5ca1ab1e --json --limit 12",
         ]
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("failure-shot-\(UUID().uuidString).log")
+        let file = temporaryURL("failure-shot", suffix: ".log")
         try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: file) }
         var call = Self.call(["ai", "sessions", "tail", "5ca1ab1e", "--json", "--limit", "12"], via: "server-timeout", exit: -1)
         call.started = now.addingTimeInterval(-31.2)
         call.ended = now
