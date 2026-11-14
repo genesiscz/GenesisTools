@@ -105,9 +105,7 @@ export class DoorWorkerRunner {
                 }
 
                 log.warn({ door: input.door }, "hub server: a door worker job hung; replacing the worker");
-                this.worker = undefined;
-                worker.terminate();
-                this.failPending("the door worker job timed out");
+                this.discard(worker, "the door worker job timed out");
             }, this.options.jobTimeoutMs ?? JOB_TIMEOUT_MS);
             deadline.unref?.();
             const cancel = (): void => {
@@ -164,9 +162,7 @@ export class DoorWorkerRunner {
 
     stop(): void {
         clearTimeout(this.idle);
-        this.worker?.terminate();
-        this.worker = undefined;
-        this.failPending("the door worker stopped");
+        this.discard(this.worker, "the door worker stopped");
     }
 
     private ensureWorker(): DoorWorker | undefined {
@@ -194,9 +190,7 @@ export class DoorWorkerRunner {
                 }
 
                 log.warn({ error: event.message }, "hub server: the door worker failed; the next ask starts one");
-                this.worker = undefined;
-                worker.terminate();
-                this.failPending(event.message || "the door worker failed");
+                this.discard(worker, event.message || "the door worker failed");
             };
             this.worker = worker;
             return worker;
@@ -204,6 +198,13 @@ export class DoorWorkerRunner {
             log.warn({ error }, "hub server: no door worker; heavy doors run on the event loop");
             return undefined;
         }
+    }
+
+    /** Drops the worker and ends it: the next ask starts one, and the callers of its lost jobs run their processes. */
+    private discard(worker: DoorWorker | undefined, reason: string): void {
+        this.worker = undefined;
+        worker?.terminate();
+        this.failPending(reason);
     }
 
     /** The callers of a lost job run their processes. */
@@ -223,8 +224,7 @@ export class DoorWorkerRunner {
 
         this.idle = setTimeout(() => {
             if (this.pending.size === 0) {
-                this.worker?.terminate();
-                this.worker = undefined;
+                this.discard(this.worker, "the door worker went idle");
             }
         }, this.options.idleMs ?? IDLE_MS);
         // An idle timer alone must not keep the server process running.
