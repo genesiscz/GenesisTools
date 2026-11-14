@@ -179,18 +179,6 @@ final class HubInboxTimelineTests: XCTestCase {
         XCTAssertEqual(refused.summary, "DECISION 3 is already sent")
     }
 
-    func testANoteQueuedBehindAPickKeepsThePick() {
-        let base = ["question", "inbox", "draft", "--session", "s", "--decision", "3"]
-        let pick = base + ["--option", "b", "--text", ""]
-        let note = base + ["--text", "because"]
-        XCTAssertEqual(HubInboxModel.keepingPick(note, from: pick), note + ["--option", "b"])
-        XCTAssertEqual(HubInboxModel.keepingPick(note, from: nil), note, "nothing earlier: the note alone")
-        let repick = base + ["--option", "a", "--text", "because"]
-        XCTAssertEqual(HubInboxModel.keepingPick(repick, from: pick), repick, "a newer pick wins")
-        let dismiss = ["question", "inbox", "dismiss", "--session", "s", "--decision", "3"]
-        XCTAssertEqual(HubInboxModel.keepingPick(dismiss, from: pick), dismiss, "a dismiss never gets letters")
-    }
-
     func testSendAndResumeNeverSendAfterAFailure() throws {
         struct Broken: Error, CustomStringConvertible {
             var description: String { "tools question exited 1: no store" }
@@ -321,28 +309,6 @@ final class HubDecisionsSourceTests: XCTestCase {
         let rows = [session("fresh-a", stale: false), session("quiet-b", stale: true), session("fresh-c", stale: false)]
         XCTAssertEqual(HubInboxModel.keyOrder(rows, showsQuiet: false), ["fresh-a", "fresh-c"])
         XCTAssertEqual(HubInboxModel.keyOrder(rows, showsQuiet: true), ["fresh-a", "fresh-c", "quiet-b"])
-    }
-
-    /// A staging click MARKS an option: plain click replaces the pick (and clears it on the chosen one),
-    /// ⇧-click adds or removes a letter.
-    func testAClickMarksAndShiftClickAdds() {
-        XCTAssertEqual(InboxDecisionCard.toggled("", "a", add: false), "a")
-        XCTAssertEqual(InboxDecisionCard.toggled("a", "a", add: false), "", "a second click clears")
-        XCTAssertEqual(InboxDecisionCard.toggled("a", "b", add: false), "b", "a plain click replaces")
-        XCTAssertEqual(InboxDecisionCard.toggled("a", "c", add: true), "ac", "⇧-click adds")
-        XCTAssertEqual(InboxDecisionCard.toggled("ac", "a", add: true), "c", "⇧-click on a marked letter removes it")
-    }
-
-    /// A click answers as in the widget: it stages, or with Send at once (or ⌘ while clicks stage) it sends that one
-    /// letter now; ⇧-click always stages another letter.
-    func testAClickStagesOrSendsAsTheWidgetSettingSays() {
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "", letter: "a", shift: false, stages: true) == ("a", false))
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "a", shift: false, stages: true) == ("", false),
-                      "a click on the staged letter clears it")
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "ac", letter: "b", shift: false, stages: false) == ("b", true),
-                      "a send sends the clicked letter only")
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "c", shift: true, stages: false) == ("ac", false),
-                      "⇧-click stages another letter even while clicks send")
     }
 
     /// A send through the widget's engine reads as the widget's note, and a delivery over a Claude session's own

@@ -22,20 +22,20 @@ public struct DecisionAddress: Equatable, Sendable {
 }
 
 /// The decision action set: every write a surface asks of the decision log. Undo writes nothing (a held Dismiss is
-/// dropped before it is written), so it is the engine's own (`DecisionAnswering.Engine.undo`).
-public enum DecisionAction: Equatable, Sendable {
+/// dropped before it is written), so it is the engine's own (`DecisionAnswering.Engine.undo`). A send is not here:
+/// both surfaces already send through one request (`DecisionAnswering.sendRequest`), and `Engine.stage(then:)` makes
+/// a send wait for its pick.
+public enum DecisionLogAction: Equatable, Sendable {
     /// Stages a pick (the letters; `""` clears it, nil keeps the stored one) and a note (nil keeps it, `""` clears it).
     case stage(DecisionAddress, option: String?, note: String?)
     /// Takes staged decisions out of every send.
     case unstage([DecisionAddress])
     /// Drops a decision that no longer matters, without sending anything.
     case dismiss(DecisionAddress)
-    /// Sends staged decisions, or answered ones again (`DecisionAnswering.sendRequest`).
-    case send(DecisionAnswering.SendAction, ids: [String], targets: [String: DecisionAnswering.Target])
 
     /// A note-only stage queued behind an earlier stage keeps that stage's letters: it replaces the queued write, and
     /// the running one may still fail. A newer pick wins, and nothing else takes letters.
-    func keepingPick(from earlier: DecisionAction?) -> DecisionAction {
+    func keepingPick(from earlier: DecisionLogAction?) -> DecisionLogAction {
         guard case .stage(let ref, let option, let note) = self, option == nil,
               case .stage(_, let earlierOption, _)? = earlier, let kept = earlierOption else { return self }
         return .stage(ref, option: kept, note: note)
@@ -55,7 +55,7 @@ public enum DecisionLogAnswer: Equatable, Sendable {
 /// the hub's Inbox runs `tools` (`HubInboxDecisionLog`).
 @MainActor
 public protocol DecisionLog: AnyObject {
-    func run(_ action: DecisionAction) async -> DecisionLogAnswer
+    func run(_ action: DecisionLogAction) async -> DecisionLogAnswer
 }
 
 extension DecisionAnswering {
@@ -113,12 +113,12 @@ extension DecisionAnswering {
         @Published public private(set) var held: Set<String> = []
 
         /// Called after each write with its action and the log's answer (a note's acknowledgement, a reload).
-        public var written: ((String, DecisionAction, DecisionLogAnswer) -> Void)?
+        public var written: ((String, DecisionLogAction, DecisionLogAnswer) -> Void)?
         /// Called when the last queued write of a decision ended, before the work that waited for it.
         public var drained: ((String) -> Void)?
 
         private struct Write {
-            var action: DecisionAction
+            var action: DecisionLogAction
             var version: UUID?
         }
 
@@ -129,7 +129,7 @@ extension DecisionAnswering {
         private var queued: [String: Write] = [:]
         /// Work waiting for a decision's writes to land (a send at once waits for its pick); dropped when one fails.
         private var afterWrites: [String: [() -> Void]] = [:]
-        private var holds: [String: (action: DecisionAction, task: Task<Void, Never>?)] = [:]
+        private var holds: [String: (action: DecisionLogAction, task: Task<Void, Never>?)] = [:]
 
         public init(log: DecisionLog, clock: any Clock<Duration> = ContinuousClock(),
                     now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 }) {
@@ -175,7 +175,7 @@ extension DecisionAnswering {
 
         /// Holds `action` for `id` until `commit` writes it or `undo` drops it; with `seconds`, it is written then by
         /// itself. Nothing reaches the log meanwhile, so Undo needs no move back.
-        public func hold(_ id: String, _ action: DecisionAction, seconds: Double? = nil) {
+        public func hold(_ id: String, _ action: DecisionLogAction, seconds: Double? = nil) {
             guard holds[id] == nil else { return }
             let clock = self.clock
             let task = seconds.map { seconds in
@@ -203,7 +203,7 @@ extension DecisionAnswering {
         }
 
         /// The changes still held, for a surface that must send them itself (the app quits).
-        public func heldActions() -> [String: DecisionAction] {
+        public func heldActions() -> [String: DecisionLogAction] {
             holds.mapValues(\.action)
         }
 

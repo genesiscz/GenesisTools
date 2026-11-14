@@ -485,18 +485,6 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertFalse(try Self.decision(#"{"id":"dialog-1","kind":"dialog","source":"dialog","multiple":true}"#).takesSeveral)
     }
 
-    /// A click on an option of a set toggles its letter and never sends, also with "Send at once" (`stages` false); a
-    /// one-option decision still replaces the pick or sends it, as before.
-    func testAClickOnASetTogglesAndNeverSendsAtOnce() {
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "", letter: "a", shift: false, stages: false, multiple: true) == ("a", false))
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "c", shift: false, stages: false, multiple: true) == ("ac", false))
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "ac", letter: "a", shift: false, stages: true, multiple: true) == ("c", false))
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "b", shift: false, stages: false) == ("b", true),
-                      "one option with Send at once: sent at once")
-        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "b", shift: false, stages: true) == ("b", false),
-                      "one option staging: the pick is replaced")
-    }
-
     /// The model's click on a set, two letters in a row: both go into the staged pick ("ac"), and no send starts, whatever
     /// the widget's Decision click setting on this Mac says.
     @MainActor

@@ -15,7 +15,7 @@ private final class FakeDecisionLog: DecisionLog {
     }
 
     var rows: [String: Row] = [:]
-    var actions: [DecisionAction] = []
+    var actions: [DecisionLogAction] = []
     /// Answers for the next actions, oldest first; without one a write lands.
     var answers: [DecisionLogAnswer] = []
     /// Set: the next write waits here until `release()`.
@@ -24,7 +24,7 @@ private final class FakeDecisionLog: DecisionLog {
     /// Milliseconds since 1970 of the next row change; the engine of a test runs at 1,000 s.
     var clockMs: Double = 0
 
-    func run(_ action: DecisionAction) async -> DecisionLogAnswer {
+    func run(_ action: DecisionLogAction) async -> DecisionLogAnswer {
         actions.append(action)
         if holdNext {
             holdNext = false
@@ -44,8 +44,6 @@ private final class FakeDecisionLog: DecisionLog {
             for ref in refs { rows[ref.id] = Row(updatedAt: clockMs) }
         case .dismiss(let ref):
             rows[ref.id, default: Row()].dismissed = true
-        case .send:
-            break
         }
         return answer
     }
@@ -157,13 +155,13 @@ final class DecisionAnsweringEngineTests: XCTestCase {
     }
 
     func testANoteKeepsThePickOfTheWriteBeforeIt() {
-        let note = DecisionAction.stage(ref, option: nil, note: "why")
-        let pick = DecisionAction.stage(ref, option: "b", note: nil)
+        let note = DecisionLogAction.stage(ref, option: nil, note: "why")
+        let pick = DecisionLogAction.stage(ref, option: "b", note: nil)
         XCTAssertEqual(note.keepingPick(from: pick), .stage(ref, option: "b", note: "why"))
         XCTAssertEqual(note.keepingPick(from: nil), note, "nothing earlier: the note alone")
-        let repick = DecisionAction.stage(ref, option: "c", note: nil)
+        let repick = DecisionLogAction.stage(ref, option: "c", note: nil)
         XCTAssertEqual(repick.keepingPick(from: pick), repick, "a newer pick wins")
-        XCTAssertEqual(DecisionAction.dismiss(ref).keepingPick(from: pick), .dismiss(ref), "a dismiss never gets letters")
+        XCTAssertEqual(DecisionLogAction.dismiss(ref).keepingPick(from: pick), .dismiss(ref), "a dismiss never gets letters")
     }
 
     func testADismissHeldForItsUndoWritesNothingUntilItsTimeAndUndoDropsIt() async {
