@@ -28,10 +28,10 @@ public enum TranscriptLoadState: Equatable {
     /// The first page did not load: the pane shows `FailureInline` with this report.
     case failed(FailureReport)
 
-    /// A failure a caller only has words for.
+    /// A failure a caller only has words for: the same report `FailureInline(message:…)` makes of words.
     public static func failed(_ message: String) -> TranscriptLoadState {
-        .failed(FailureReport(title: "The transcript did not load", headline: FailureLog.sentence(message) ?? message,
-                              dayLog: FailureReport.dayLogPath()))
+        .failed(FailureReport.unexpected(message, outcome: "The transcript did not load", action: "Read the transcript",
+                                         app: .launch))
     }
 
     public var failure: FailureReport? {
