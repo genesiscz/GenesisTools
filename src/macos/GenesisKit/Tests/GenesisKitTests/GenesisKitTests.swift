@@ -613,9 +613,13 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
     }
     /// A test program made once under `name` and never renamed or deleted, so syspolicyd never checks a file that is
     /// gone. Concurrent runs write their own draft and hard-link it into place; the loser uses the winner's file.
+    /// The folder name carries a hash of the body, so a changed body is a new file and never reuses an older one; the
+    /// older executable stays where it is.
     static func persistentScript(_ name: String, _ body: String) throws -> URL {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in body.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
         let folder = try XCTUnwrap(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
-            .appendingPathComponent("GenesisKitTests/\(name)")
+            .appendingPathComponent("GenesisKitTests/\(name)-\(String(hash, radix: 16))")
         let script = folder.appendingPathComponent("tools")
         if FileManager.default.isExecutableFile(atPath: script.path) { return script }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
