@@ -24,11 +24,11 @@ export function rmDenyReason(path: string): string | null {
  * Every doctor deletion: asks the `tools rm` hard-deny verdict, then moves the path into the rm trash under the rule
  * `doctor:<analyzerId>` with a grace of zero, so the drainer frees the space now and the ledger records it. No
  * approval request: the person already confirmed the doctor action. A path that is already gone is not removed and
- * not refused.
+ * not refused. `bytes` is a size the caller already measured, so the move does not walk the tree again.
  */
 export async function removeForDoctor(
     path: string,
-    input: { analyzerId: string }
+    input: { analyzerId: string; bytes?: number }
 ): Promise<{ removed: boolean; refusal?: string }> {
     const config = loadRmConfig();
     const target = resolveTarget(path, process.cwd());
@@ -44,7 +44,7 @@ export async function removeForDoctor(
     }
 
     let refusal: string | undefined;
-    const batch = moveToTrash([{ target, rule: `doctor:${input.analyzerId}` }], {
+    const batch = moveToTrash([{ target, rule: `doctor:${input.analyzerId}`, bytes: input.bytes }], {
         config,
         caller: rmCallerFromRuntime(),
         graceMinutes: 0,

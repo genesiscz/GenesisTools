@@ -166,7 +166,10 @@ function directDeleteAction(path: string): Action {
         method: "delete",
         execute: async (_ctx, finding): Promise<ActionResult> => {
             try {
-                const removal = await removeForDoctor(path, { analyzerId: "disk-space" });
+                const removal = await removeForDoctor(path, {
+                    analyzerId: "disk-space",
+                    bytes: finding.reclaimableBytes,
+                });
 
                 if (removal.refusal) {
                     throw new Error(`Refusing removal: ${removal.refusal}`);

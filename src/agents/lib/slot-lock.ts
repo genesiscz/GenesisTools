@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { sweepStaleLocks } from "@genesiscz/utils/storage/stale-lock-sweep";
 import { deriveRegistry } from "./derived-registry";
 import { appendFeed, readFeed } from "./feed";
@@ -40,18 +41,30 @@ export function tryAcquireSlot(lockPath: string, payload: SlotLockPayload): bool
 /**
  * Remove the slot when it still names this process. A login whose dead-looking slot was reaped and then claimed by a
  * new login must not delete the new holder's claim on its way out.
+ *
+ * The read and the unlink run under the slot's arbiter, the one the sweep's fenced takeover (`sweepStaleLocks`) holds
+ * while it judges and removes a claim. A reap cannot happen between them, and a new login can only create its slot
+ * after a reap, so the file this release removes is the one it read. A busy arbiter leaves the slot: it names this
+ * live process, and the sweep reaps it once the process is gone.
  */
 export function releaseSlot(lockPath: string): void {
     try {
-        const holder = readSlotPayload(lockPath);
+        withPathArbitrationSync(lockPath, () => {
+            const holder = readSlotPayload(lockPath);
 
-        if (holder?.pid !== process.pid) {
-            log.debug({ lockPath, holder: holder?.pid }, "slot names another process; leaving it");
+            if (holder?.pid !== process.pid) {
+                log.debug({ lockPath, holder: holder?.pid }, "slot names another process; leaving it");
+                return;
+            }
+
+            unlinkSync(lockPath);
+        });
+    } catch (err) {
+        if (isArbitrationBusy(err)) {
+            log.debug({ lockPath }, "slot arbiter busy; leaving the slot for the sweep");
             return;
         }
 
-        unlinkSync(lockPath);
-    } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
 
         if (code !== "ENOENT") {

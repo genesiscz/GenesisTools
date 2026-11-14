@@ -77,8 +77,11 @@ export function removePathsAction(opts: RemovePathsActionOpts): Action {
             }
 
             try {
+                // The finding's size is one path's size only when it names one path.
+                const bytes = paths.length === 1 ? finding.reclaimableBytes : undefined;
+
                 for (const path of paths) {
-                    const removal = await removeForDoctor(path, { analyzerId: opts.analyzerId });
+                    const removal = await removeForDoctor(path, { analyzerId: opts.analyzerId, bytes });
 
                     if (removal.refusal) {
                         throw new Error(`Refusing removal: ${removal.refusal}`);

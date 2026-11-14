@@ -21,6 +21,12 @@ function refuseUnsafe(path: string): string | null {
     return denied ? `${path}: ${denied}` : null;
 }
 
+/**
+ * The Trash method is the one deliberate exception to "every doctor removal goes through the rm trash": the user chose
+ * the macOS Trash to get Put Back and a visible Trash, which the rm trash (a hidden folder, zero grace, a ledger) does
+ * not give. It still asks the `tools rm` hard-deny verdict first (`refuseUnsafe`). The delete method goes through
+ * `removeForDoctor`.
+ */
 /** The system's own Trash command (macOS 15 and later): NSFileManager's trashItem, so no Finder, no Automation grant. */
 export const TRASH_COMMAND = "/usr/bin/trash";
 
