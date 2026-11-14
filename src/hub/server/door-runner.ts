@@ -131,6 +131,7 @@ export class DoorWorkerRunner {
                 deadline.unref?.();
                 this.pending.set(id, (answer) => {
                     clearTimeout(deadline);
+                    input.signal.removeEventListener("abort", cancel);
                     resolve(answer);
                 });
                 try {
@@ -171,7 +172,10 @@ export class DoorWorkerRunner {
                 this.queue.push({
                     id,
                     start: dispatch,
-                    fail: (error) => resolve({ id, ok: false, unsupported: true, error }),
+                    fail: (error) => {
+                        input.signal.removeEventListener("abort", cancel);
+                        resolve({ id, ok: false, unsupported: true, error });
+                    },
                 });
             }
         });
@@ -228,6 +232,8 @@ export class DoorWorkerRunner {
                 this.pending.delete(event.data.id);
                 answer?.(event.data);
                 this.startQueued();
+                // A caller that gave up is gone, so no run() continuation is left to arm the idle timer.
+                this.armIdle();
             };
             worker.onerror = (event) => {
                 if (this.worker !== worker) {
