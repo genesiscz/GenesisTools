@@ -1104,29 +1104,36 @@ describe("calibrateChannels", () => {
     });
 });
 
+/** The 44-byte header of a 2 kHz 16-bit stereo PCM WAV whose data chunk claims `frames` frames. */
+function stereoWavHeader(frames: number): Buffer {
+    const header = Buffer.alloc(44);
+    const dataBytes = frames * 4;
+    header.write("RIFF", 0);
+    header.writeUInt32LE(36 + dataBytes, 4);
+    header.write("WAVEfmt ", 8);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(2, 22);
+    header.writeUInt32LE(2000, 24);
+    header.writeUInt32LE(8000, 28);
+    header.writeUInt16LE(4, 32);
+    header.writeUInt16LE(16, 34);
+    header.write("data", 36);
+    header.writeUInt32LE(dataBytes, 40);
+    return header;
+}
+
 test.skipIf(!Bun.which("ffmpeg"))("concurrent energy builders publish complete stereo caches", async () => {
     const dir = new Storage("energy-concurrent-test").getBaseDir();
     mkdirSync(dir, { recursive: true });
     const audio = join(dir, "stereo.wav");
     const samples = 4000;
-    const wav = Buffer.alloc(44 + samples * 4);
-    wav.write("RIFF", 0);
-    wav.writeUInt32LE(wav.length - 8, 4);
-    wav.write("WAVEfmt ", 8);
-    wav.writeUInt32LE(16, 16);
-    wav.writeUInt16LE(1, 20);
-    wav.writeUInt16LE(2, 22);
-    wav.writeUInt32LE(2000, 24);
-    wav.writeUInt32LE(8000, 28);
-    wav.writeUInt16LE(4, 32);
-    wav.writeUInt16LE(16, 34);
-    wav.write("data", 36);
-    wav.writeUInt32LE(samples * 4, 40);
+    const pcm = Buffer.alloc(samples * 4);
     for (let i = 0; i < samples; i += 1) {
-        wav.writeInt16LE(1000, 44 + i * 4);
-        wav.writeInt16LE(100, 46 + i * 4);
+        pcm.writeInt16LE(1000, i * 4);
+        pcm.writeInt16LE(100, 2 + i * 4);
     }
-    writeFileSync(audio, wav);
+    writeFileSync(audio, Buffer.concat([stereoWavHeader(samples), pcm]));
     const cache = join(dir, "energy.bin");
     const results = await Promise.all([channelEnergy(audio, cache), channelEnergy(audio, cache)]);
     for (const energy of results) {
@@ -1239,26 +1246,7 @@ describe("isolated playback echo and speaker enrolment", () => {
         const root = mkdtempSync(join(tmpdir(), "echo-contract-"));
         const input = join(root, "stereo.wav"),
             cachePath = join(root, "echo.json");
-        const call = noise(4000, 11),
-            pcm = Buffer.alloc(4000 * 4),
-            wav = Buffer.alloc(44);
-        wav.write("RIFF");
-        wav.writeUInt32LE(36 + pcm.length, 4);
-        wav.write("WAVEfmt ", 8);
-        wav.writeUInt32LE(16, 16);
-        wav.writeUInt16LE(1, 20);
-        wav.writeUInt16LE(2, 22);
-        wav.writeUInt32LE(2000, 24);
-        wav.writeUInt32LE(8000, 28);
-        wav.writeUInt16LE(4, 32);
-        wav.writeUInt16LE(16, 34);
-        wav.write("data", 36);
-        wav.writeUInt32LE(pcm.length, 40);
-        for (let i = 0; i < call.length; i++) {
-            pcm.writeInt16LE(Math.round((call[i - 84] ?? 0) * 0.7 * 32767), i * 4);
-            pcm.writeInt16LE(Math.round(call[i]! * 32767), i * 4 + 2);
-        }
-        writeFileSync(input, Buffer.concat([wav, pcm]));
+        stereoWav(input);
         const before = fs.readFileSync(input);
         await collectEcho({ audioPath: input, cachePath, layout: "left-mic" });
         const reopened = await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" });
@@ -1280,20 +1268,7 @@ describe("isolated playback echo and speaker enrolment", () => {
     function stereoWav(path: string, options: { claimedFrames?: number } = {}): void {
         const call = noise(4000, 11),
             pcm = Buffer.alloc(4000 * 4),
-            wav = Buffer.alloc(44);
-        const dataBytes = (options.claimedFrames ?? 4000) * 4;
-        wav.write("RIFF");
-        wav.writeUInt32LE(36 + dataBytes, 4);
-        wav.write("WAVEfmt ", 8);
-        wav.writeUInt32LE(16, 16);
-        wav.writeUInt16LE(1, 20);
-        wav.writeUInt16LE(2, 22);
-        wav.writeUInt32LE(2000, 24);
-        wav.writeUInt32LE(8000, 28);
-        wav.writeUInt16LE(4, 32);
-        wav.writeUInt16LE(16, 34);
-        wav.write("data", 36);
-        wav.writeUInt32LE(dataBytes, 40);
+            wav = stereoWavHeader(options.claimedFrames ?? 4000);
         for (let i = 0; i < call.length; i++) {
             pcm.writeInt16LE(Math.round((call[i - 84] ?? 0) * 0.7 * 32767), i * 4);
             pcm.writeInt16LE(Math.round(call[i]! * 32767), i * 4 + 2);
