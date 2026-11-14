@@ -110,5 +110,10 @@ export async function originDriver(cwd: string, runner: CommandRunner = spawnRun
         return null;
     }
 
-    return origin.kind === "github" ? ghDriver(cwd, runner) : glabDriver(cwd, runner);
+    switch (origin.kind) {
+        case "github":
+            return ghDriver(cwd, runner);
+        case "gitlab":
+            return glabDriver(cwd, runner);
+    }
 }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readManifest } from "@app/macos/lib/permissions/app";
 import { installedParts } from "@app/macos/lib/permissions/parts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import { xxhash } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
@@ -633,7 +634,7 @@ export function proposalMarkdown(proposal: ReviewProposal): string {
             ...(proposal.notes ? { Notes: proposal.notes } : {}),
         }),
         {
-            title: `${proposal.provider === "gitlab" ? "!" : "#"}${proposal.number} ${proposal.title ?? proposal.project}`,
+            title: `${prNumberLabel(proposal.provider, proposal.number)} ${proposal.title ?? proposal.project}`,
         }
     );
 }

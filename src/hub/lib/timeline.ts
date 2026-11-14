@@ -14,7 +14,7 @@ import { readTailWindow } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { startOfDay } from "@genesiscz/utils/date";
-import { type CommandRunner, spawnRunner } from "@genesiscz/utils/git/origins";
+import { type CommandRunner, FORGE_FACTS, spawnRunner } from "@genesiscz/utils/git/origins";
 import { type CommitInfo, LOG_FORMAT_WITH_SOURCE, parseLogZ } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -382,7 +382,7 @@ function sessionEvents(rows: readonly AgentSessionRow[], window: TimelineWindow,
 
 function prRef(pr: HubPr): TimelinePrRef {
     const project = pr.origin.web ? new URL(pr.origin.web).pathname.replace(/^\/+|\/+$/g, "") : pr.repo;
-    const mark = pr.origin.kind === "gitlab" ? "!" : "#";
+    const mark = FORGE_FACTS[pr.origin.kind].mark;
     return { ref: `${project || pr.repo}${mark}${pr.number}`, number: pr.number, url: pr.url };
 }
 
@@ -452,7 +452,7 @@ function threadEvents(results: readonly ThreadsResult[], window: TimelineWindow)
 
     for (const result of results) {
         const { pr, viewer } = result;
-        const mark = pr.provider === "gitlab" ? "!" : "#";
+        const mark = FORGE_FACTS[pr.provider].mark;
         const ref: TimelinePrRef = {
             ref: `${pr.project}${mark}${pr.number}`,
             number: pr.number,
@@ -563,7 +563,7 @@ function ciEvents(
         }
 
         const pr = byUrl.get(item.url);
-        const mark = item.provider === "gitlab" ? "!" : "#";
+        const mark = FORGE_FACTS[item.provider ?? "github"].mark;
         const ref: TimelinePrRef = { ref: `${item.project}${mark}${item.number}`, number: item.number, url: item.url };
         const failed = item.type === "ciFailed";
         const mine = pr?.isMine ?? null;

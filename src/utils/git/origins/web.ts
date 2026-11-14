@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import type { OriginInfo } from "./detector";
+import { FORGE_FACTS } from "./facts";
 
 /**
  * The browser URL of a remote's project page: scp-like `git@host:g/p.git`, `ssh://git@host:2222/g/p.git`
@@ -61,7 +62,7 @@ export function branchWebUrl(origin: OriginInfo, branch: string): string | null 
         return null;
     }
 
-    return `${base}${origin.kind === "github" ? "/tree/" : "/-/tree/"}${encodePath(branch)}`;
+    return `${base}/${FORGE_FACTS[origin.kind].web.tree}/${encodePath(branch)}`;
 }
 
 /** The commit page: `/commit/<sha>` on GitHub, `/-/commit/<sha>` on GitLab; null for other hosts. */
@@ -72,5 +73,5 @@ export function commitWebUrl(origin: OriginInfo, sha: string): string | null {
         return null;
     }
 
-    return `${base}${origin.kind === "github" ? "/commit/" : "/-/commit/"}${sha}`;
+    return `${base}/${FORGE_FACTS[origin.kind].web.commit}/${sha}`;
 }

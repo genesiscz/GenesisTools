@@ -4,6 +4,7 @@ import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { lookupSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
@@ -103,7 +104,7 @@ export interface PrTaskInput {
 }
 
 export function prLabel(pr: Pick<FoundPr, "provider" | "number">): string {
-    return pr.provider === "gitlab" ? `!${pr.number}` : `#${pr.number}`;
+    return prNumberLabel(pr.provider, pr.number);
 }
 
 /** The asked-for threads in the PR's own order, and the ids it does not have. */
