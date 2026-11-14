@@ -83,17 +83,9 @@ final class ActivityStoreTests: XCTestCase {
         try store.pushIntent(kind: "studio")
         for _ in 0..<14 { try store.pushIntent(kind: "unknown") }
         let unclaimed = try store.pushIntent(kind: "start", payload: ["minutes": 5])
-        let entered = expectation(description: "store queue held")
-        let gate = DispatchSemaphore(value: 0)
-        let blocker = Task.detached {
-            try await ledger.perform { _ in
-                entered.fulfill()
-                return gate.wait(timeout: .now() + 5)
-            }
-        }
-        await fulfillment(of: [entered], timeout: 2)
+        let hold = await holdLedger(ledger)
         var progress: Task<Void, Never>?
-        controller.intentDrainWillTake = { progress = Task { @MainActor in gate.signal() } }
+        controller.intentDrainWillTake = { progress = Task { @MainActor in hold.release() } }
         controller.drainIntents()
         controller.drainIntents()
         // These arrive during the awaited claim. They run after the accepted intents, without stale completions.
@@ -103,7 +95,7 @@ final class ActivityStoreTests: XCTestCase {
         controller.stop(preservingSession: true)
         await controller.finishLedgerWrites()
         await progress?.value
-        let waitStatus = try await blocker.value
+        let waitStatus = try await hold.status()
         XCTAssertEqual(waitStatus, .success, "main must run before the store queue is released")
         XCTAssertFalse(controller.ownsRuntime)
         XCTAssertNil(controller.store)
@@ -137,19 +129,11 @@ final class ActivityStoreTests: XCTestCase {
         let recent = try store.openSegment(segment(now - 86_400_000, title: "recent"))
         try store.closeSegment(id: recent, at: now - 86_400_000 + 1_000)
         let due = try XCTUnwrap(controller.nextPrune).addingTimeInterval(1)
-        let entered = expectation(description: "store queue held")
-        let gate = DispatchSemaphore(value: 0)
-        let blocker = Task.detached {
-            try await ledger.perform { _ in
-                entered.fulfill()
-                return gate.wait(timeout: .now() + 5)
-            }
-        }
-        await fulfillment(of: [entered], timeout: 2)
-        let progress = Task { @MainActor in gate.signal() }
+        let hold = await holdLedger(ledger)
+        let progress = Task { @MainActor in hold.release() }
         await controller.pruneIfDueSuspending(store: ledger, now: due)
         await progress.value
-        let waitStatus = try await blocker.value
+        let waitStatus = try await hold.status()
         XCTAssertEqual(waitStatus, .success)
         XCTAssertEqual(controller.nextPrune, due.addingTimeInterval(FocusController.pruneInterval))
         let reopened = try ActivityStore(path: path)

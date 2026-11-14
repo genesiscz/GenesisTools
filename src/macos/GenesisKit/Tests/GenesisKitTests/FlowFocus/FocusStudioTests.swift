@@ -1134,8 +1134,8 @@ final class FocusSessionKeysTests: XCTestCase {
     }
 }
 
-/// The ledger queue held by `FocusStudioModelTests.holdLedger`.
-private struct LedgerHold {
+/// An `ActivityStore` queue held by `XCTestCase.holdLedger(_:_:)`.
+struct LedgerHold {
     let gate: DispatchSemaphore
     let blocker: Task<DispatchTimeoutResult, Error>
 
@@ -1143,6 +1143,20 @@ private struct LedgerHold {
 
     /// `.success` when the hold ended on `release()`, not on its 5 s timeout.
     func status() async throws -> DispatchTimeoutResult { try await blocker.value }
+}
+
+extension XCTestCase {
+    /// Parks a task inside the ledger's queue until `release()`, so later work on that store queues behind it.
+    @MainActor
+    func holdLedger(_ ledger: ActivityStore, _ label: String = "") async -> LedgerHold {
+        let entered = expectation(description: "ledger queue held \(label)")
+        let gate = DispatchSemaphore(value: 0)
+        let blocker = Task.detached {
+            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        return LedgerHold(gate: gate, blocker: blocker)
+    }
 }
 
 extension FocusStudioModelTests {
@@ -1156,24 +1170,12 @@ extension FocusStudioModelTests {
         return recorder
     }
 
-    /// Parks a task inside the ledger queue until `release()`, so later recorder work queues behind it.
-    private func holdLedger(_ label: String = "") async throws -> LedgerHold {
-        let entered = expectation(description: "ledger queue held \(label)")
-        let gate = DispatchSemaphore(value: 0)
-        let ledger = try XCTUnwrap(store)
-        let blocker = Task.detached {
-            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
-        }
-        await fulfillment(of: [entered], timeout: 2)
-        return LedgerHold(gate: gate, blocker: blocker)
-    }
-
     func testSuspendingCapturePausePreservesCountsAndSerializesLaterUIResumeAndPause() async throws {
         let recorder = startedRecorder()
         recorder.recordKeyForTesting()
         recorder.recordKeyForTesting()
         let prepared = expectation(description: "capture pause prepared")
-        let hold = try await holdLedger()
+        let hold = try await holdLedger(XCTUnwrap(store))
         recorder.suspendingTransitionPrepared = { prepared.fulfill() }
         let firstDeadline = Date().addingTimeInterval(600)
         let lastDeadline = firstDeadline.addingTimeInterval(600)
@@ -1209,7 +1211,7 @@ extension FocusStudioModelTests {
         recorder.recordKeyForTesting()
         recorder.recordKeyForTesting()
         let prepared = expectation(description: "session split prepared")
-        let hold = try await holdLedger()
+        let hold = try await holdLedger(XCTUnwrap(store))
         recorder.suspendingTransitionPrepared = { prepared.fulfill() }
         let attach = Task { @MainActor in
             await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.attachAsync(sessionId: second) }
@@ -1263,7 +1265,7 @@ extension FocusStudioModelTests {
     func testQueuedRecorderProbeAndSettingsStopKeepTheLedgerOffMainAndCloseEverySegment() async throws {
         let recorder = startedRecorder(title: "First")
         let prepared = expectation(description: "pause admitted")
-        let hold = try await holdLedger()
+        let hold = try await holdLedger(XCTUnwrap(store))
         recorder.suspendingTransitionPrepared = { prepared.fulfill() }
         let pause = Task { @MainActor in
             await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.pauseCaptureAsync(until: Date().addingTimeInterval(600)) }
@@ -1304,7 +1306,7 @@ extension FocusStudioModelTests {
             })
             let prepared = expectation(description: "attach prepared \(change)")
             let queued = expectation(description: "AX result queued behind settings \(change)")
-            let hold = try await holdLedger(change)
+            let hold = try await holdLedger(XCTUnwrap(store), change)
             recorder.suspendingTransitionPrepared = { prepared.fulfill() }
             let attach = Task { @MainActor in await recorder.attachAsync(sessionId: nil) }
             await fulfillment(of: [prepared], timeout: 2)
