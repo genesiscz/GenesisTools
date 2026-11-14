@@ -403,7 +403,7 @@ extension WidgetModel {
         let staged = items.filter(\.isStaged)
         noteClearedPicks(before: stagedRows, after: staged, listed: listed)
         if staged != stagedRows { stagedRows = staged }
-        refreshPeekStaging(staged)
+        alertPopup.stagingChanged(staged)
         let shown = Dictionary(items.map { ($0.sourceId, (pick: $0.draftOption ?? "", note: $0.draft, at: $0.updatedAt ?? 0)) },
                                uniquingKeysWith: { first, _ in first })
         let now = Date().timeIntervalSince1970 * 1000
@@ -516,7 +516,7 @@ extension WidgetModel {
         let staged = action == .sendStaged
         let opened = openedAt
         // Sent from the popup on screen (its Send now, or the staged reminder's): the popup shows the result.
-        let fromPeek = peekItem.map { shown in
+        let fromPeek = alertPopup.item.map { shown in
             items.contains { $0.sourceId == shown.sourceId } || shown.sourceId == WidgetAlerts.stagedReminderID
         } ?? false
         let closeRevision = sendCloseRevision
@@ -557,11 +557,11 @@ extension WidgetModel {
                 PerfLog.mark("widget.decision-send \(action.rawValue) result: \(text)")
                 let tone: WidgetNoticeTone = outcome.delivered ? .success : .warning
                 if fromPeek {
-                    self.showPeekOutcome(WidgetPeekOutcome(text: text, tone: tone, sendAgain: waiting,
-                                                           detail: outcome.details),
-                                         sent: ids, delivered: outcome.delivered)
+                    self.applyAlertPopup(self.alertPopup.sendEnded(
+                        WidgetPeekOutcome(text: text, tone: tone, sendAgain: waiting, detail: outcome.details),
+                        sent: ids, delivered: outcome.delivered))
                 } else if outcome.failed == 0 {
-                    self.dropSentFromPeek(ids)
+                    self.applyAlertPopup(self.alertPopup.sent(ids))
                 }
                 if outcome.delivered {
                     postNote(text, tone: .success)
@@ -595,9 +595,9 @@ extension WidgetModel {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
                 if fromPeek {
-                    self.showPeekOutcome(WidgetPeekOutcome(text: staged
+                    self.applyAlertPopup(self.alertPopup.sendEnded(WidgetPeekOutcome(text: staged
                         ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it.",
-                        tone: .warning, detail: error.localizedDescription), sent: ids, delivered: false)
+                        tone: .warning, detail: error.localizedDescription), sent: ids, delivered: false))
                 }
                 fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
                          : "The answers could not be sent again. They still wait for the session's next prompt.",

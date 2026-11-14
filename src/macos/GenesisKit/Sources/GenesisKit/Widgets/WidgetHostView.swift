@@ -393,18 +393,23 @@ struct WidgetHostView: View {
 
     private func previewPane(_ selected: WidgetModuleDescriptor) -> some View {
         VStack(spacing: 0) {
-            if selected.id == "agents", let item = model.peekItem {
-                // The alert popup (`showPeek`): one item, a click answers it, × or Esc closes it. Measured like the
-                // hover list, so the panel takes the popup's own height.
-                // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on every
-                // side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own edge. Only the
-                // content is measured, so the fill cannot feed its own height back (Martin's screenshot, 2026-10-25:
-                // a short card over an empty pane, its flash border hugging the text).
-                WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
-                    .padding(WidgetPeekView.inset)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else if selected.id == "agents" {
-                AgentWidgetPreview(model: model, surface: surface)
+            if selected.id == "agents" {
+                // Only this part follows the alert popup, so a popup change does not build the whole panel again.
+                WidgetAlertPopupReader(popup: model.alertPopup) { item in
+                    if let item {
+                        // The alert popup (`WidgetAlertPopup`): one item, a click answers it, × or Esc closes it.
+                        // Measured like the hover list, so the panel takes the popup's own height.
+                        // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on
+                        // every side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own
+                        // edge. Only the content is measured, so the fill cannot feed its own height back (Martin's
+                        // screenshot, 2026-10-25: a short card over an empty pane, its flash border hugging the text).
+                        WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
+                            .padding(WidgetPeekView.inset)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    } else {
+                        AgentWidgetPreview(model: model, surface: surface)
+                    }
+                }
             } else {
                 Button(action: expand) {
                     HStack {
@@ -540,15 +545,33 @@ struct WarmPaneVisibility: ViewModifier {
     }
 }
 
+/// Shows `content` for the alert popup's shown item and follows only the popup, so a popup change builds this part of
+/// a host view again and not the whole panel (`WidgetHostView` reads the model; the popup is a second object).
+struct WidgetAlertPopupReader<Content: View>: View {
+    @ObservedObject var popup: WidgetAlertPopup
+    @ViewBuilder var content: (WidgetInboxItem?) -> Content
+
+    var body: some View { content(popup.item) }
+}
+
 /// The alert popup: what arrived, from which session, and for a decision its options, which answer in place (Martin,
 /// 2026-10-26: "this is still ugly"). The panel is the container, so the tile draws no card of its own (golden gate:
 /// no card in a card); its shape carries only the alert flash. The header opens the item in its session; ×, Esc
 /// while the widget has the keyboard, and VoiceOver's escape close it without opening anything.
 struct WidgetPeekView: View {
     @ObservedObject var model: WidgetModel
+    /// The popup's outcome and the alerts waiting behind this one.
+    @ObservedObject private var popup: WidgetAlertPopup
     let item: WidgetInboxItem
     /// The tile's natural height, before it stretches to fill the pane.
     var measured: (CGFloat) -> Void = { _ in }
+
+    init(model: WidgetModel, item: WidgetInboxItem, measured: @escaping (CGFloat) -> Void = { _ in }) {
+        _model = ObservedObject(wrappedValue: model)
+        _popup = ObservedObject(wrappedValue: model.alertPopup)
+        self.item = item
+        self.measured = measured
+    }
 
     /// The gap between the tile and the panel edge on every side.
     static let inset: CGFloat = 8
@@ -591,7 +614,7 @@ struct WidgetPeekView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 header
-                if let outcome = model.peekOutcome {
+                if let outcome = popup.outcome {
                     // What the send from this popup did, read where it was sent (UX audit F5).
                     outcomeBlock(outcome)
                 } else {
@@ -605,7 +628,7 @@ struct WidgetPeekView: View {
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
                 }
-                if model.peekMany == .list, !model.peekQueue.isEmpty { waitingList }
+                if popup.many == .list, !popup.queue.isEmpty { waitingList }
             }
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self, of: \.size.height) { contentHeight = $0; report() }
@@ -643,7 +666,7 @@ struct WidgetPeekView: View {
     /// The first line. After a send from the staged reminder it no longer says "Staged, not sent" in orange over the
     /// outcome of that send.
     private var kicker: String {
-        isReminder && model.peekOutcome != nil ? "Staged decisions" : WidgetAlerts.kicker(item)
+        isReminder && popup.outcome != nil ? "Staged decisions" : WidgetAlerts.kicker(item)
     }
 
     /// The staged reminder (`WidgetCoordinator.remindStaged`): it lists the staged decisions, not one item.
@@ -660,7 +683,7 @@ struct WidgetPeekView: View {
     }
 
     /// The alerts queued after this one (Alerts → Several at once: one after another).
-    private var queued: Int { model.peekMany == .queue ? model.peekQueue.count : 0 }
+    private var queued: Int { popup.many == .queue ? popup.queue.count : 0 }
 
     private var closeTooltip: String {
         queued > 0 ? "Close it and show the next alert" : "Close without opening it"
@@ -673,7 +696,7 @@ struct WidgetPeekView: View {
                 HStack(spacing: 6) {
                     Image(systemName: Self.mark(item).symbol).foregroundStyle(Self.mark(item).tint)
                     Text(kicker).font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle((item.needsAnswer || item.isAnsweredElsewhere || isReminder) && model.peekOutcome == nil
+                        .foregroundStyle((item.needsAnswer || item.isAnsweredElsewhere || isReminder) && popup.outcome == nil
                                          ? Self.mark(item).tint : .secondary)
                     Spacer(minLength: 0)
                     if queued > 0 {
@@ -712,7 +735,7 @@ struct WidgetPeekView: View {
     private var optionList: some View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
-                // A pick sent at once stays in the popup, which shows its outcome (`peekOutcome`), or opens its session
+                // A pick sent at once stays in the popup, which shows its outcome (`WidgetAlertPopup.outcome`), or opens its session
                 // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
                 // Read at the click, ⌘ included: a click that only stages never opens anything.
                 // A decision that takes any set of its options only ticks the letter, in every click mode.
@@ -766,7 +789,7 @@ struct WidgetPeekView: View {
     /// The alerts that came while this one was open (Alerts → Several at once: listed together), one line each. A
     /// click shows that alert here in full, and this one takes its row.
     private var waitingList: some View {
-        let waiting = model.peekQueue
+        let waiting = popup.queue
         return VStack(alignment: .leading, spacing: 2) {
             Text(waiting.count == 1 ? "1 more alert" : "\(waiting.count) more alerts")
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.leading, 8)
@@ -871,7 +894,7 @@ struct WidgetPeekView: View {
     /// Real buttons where "Click to answer" was a hint: the own answer, then Send now while a pick waits, else Open.
     private var footer: some View {
         HStack(spacing: 6) {
-            if let outcome = model.peekOutcome {
+            if let outcome = popup.outcome {
                 Spacer(minLength: 0)
                 if !outcome.sendAgain.isEmpty {
                     let sending = outcome.sendAgain.allSatisfy { model.sendingDecisionIDs.contains($0.sourceId) }
@@ -998,12 +1021,19 @@ struct WidgetAnsweredOptionRow: View {
 
 struct AgentWidgetModuleView: View {
     @ObservedObject var model: WidgetModel
+    @ObservedObject private var popup: WidgetAlertPopup
     let presentation: WidgetModulePresentation
+
+    init(model: WidgetModel, presentation: WidgetModulePresentation) {
+        _model = ObservedObject(wrappedValue: model)
+        _popup = ObservedObject(wrappedValue: model.alertPopup)
+        self.presentation = presentation
+    }
 
     var body: some View {
         if presentation == .expanded {
             LiveWidgetView(model: model, edge: model.expanded ?? model.side, embedded: true)
-        } else if presentation == .preview, let item = model.peekItem {
+        } else if presentation == .preview, let item = popup.item {
             WidgetPeekView(model: model, item: item)
         } else {
             VStack(alignment: .leading, spacing: 10) {

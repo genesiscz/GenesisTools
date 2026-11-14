@@ -1289,10 +1289,10 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         // F5: a send from the popup shows its outcome there: delivered, then not delivered with Send again.
         model.dismissPeek(all: true)
         model.showPeek(six, on: side, seconds: 0, many: .list)
-        model.peekOutcome = WidgetPeekOutcome(text: "1 decision delivered.", tone: .success)
+        model.alertPopup.outcome = WidgetPeekOutcome(text: "1 decision delivered.", tone: .success)
         try write(WidgetPeekView(model: model, item: six).padding(WidgetPeekView.inset), CGSize(width: 310, height: 230),
                   "popup-outcome-delivered", model: model, folder: folder)
-        model.peekOutcome = WidgetPeekOutcome(
+        model.alertPopup.outcome = WidgetPeekOutcome(
             text: "Not delivered to Kalendora hotfix research: No open Claude terminal takes messages for this session. "
                 + "The answers wait for its next prompt.", tone: .warning, sendAgain: [six],
             detail: "Kalendora hotfix research: No native Claude receiver claims this session.")

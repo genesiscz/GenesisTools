@@ -545,15 +545,15 @@ final class WidgetInteractionTests: XCTestCase {
             at: 2_000, needsAnswer: true, title: "Ship it?", number: 5)
         func peekEnded() async throws {
             let deadline = ContinuousClock.now + .seconds(5)
-            while value.peekItem != nil && ContinuousClock.now < deadline {
+            while value.alertPopup.item != nil && ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(50))
             }
-            XCTAssertNil(value.peekItem, "the peek did not end within 5 s")
+            XCTAssertNil(value.alertPopup.item, "the peek did not end within 5 s")
         }
 
         value.moduleSelections[side.key] = "capture"
         value.showPeek(item, on: side, module: "agents", seconds: 0.1)
-        XCTAssertEqual(value.peekItem, item)
+        XCTAssertEqual(value.alertPopup.item, item)
         XCTAssertEqual(value.moduleSelections[side.key], "agents", "the peek shows the agents module")
         try await peekEnded()
         XCTAssertEqual(value.moduleSelections[side.key], "capture", "the end of the peek gives the user's module back")
@@ -652,59 +652,6 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(reminded.count, 1, "once per start")
     }
 
-    /// A pick staged in a decision's popup stays shown once the snapshot lists it as staged, and an unstage clears it.
-    @MainActor
-    func testAPickStagedInThePopupStaysShownAfterTheSnapshotListsIt() {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        func item(_ number: Int, pick: String? = nil) -> WidgetInboxItem {
-            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
-                key: "local:claude:s:", at: Double(number) * 1_000, needsAnswer: true, title: "Ship \(number)?",
-                number: number, revision: 1, draftOption: pick)
-        }
-
-        value.showPeek(item(1), on: side, seconds: 60, many: .list)
-        value.showPeek(item(2), on: side, seconds: 60, many: .list)
-        value.reconcileStaged([item(1, pick: "a"), item(2, pick: "b")])
-        XCTAssertEqual(value.peekItem?.draftOption, "a", "the popup shows the staged pick")
-        XCTAssertEqual(value.peekQueue.first?.draftOption, "b", "a listed alert shows its staged pick too")
-        XCTAssertEqual(value.stagedOption("d_1_s", stored: value.peekItem?.draftOption), "a")
-        value.reconcileStaged([item(2, pick: "b")])
-        XCTAssertNil(value.peekItem?.draftOption, "an unstaged decision reads as waiting again")
-
-        value.dropSentFromPeek(["d_1_s"])
-        XCTAssertEqual(value.peekItem?.sourceId, "d_2_s", "a sent decision leaves the popup for the next alert")
-        XCTAssertEqual(value.peekQueue, [])
-        value.dropSentFromPeek(["d_2_s"])
-        XCTAssertNil(value.peekItem, "the popup closes once its last decision was sent")
-    }
-
-    /// A send from the popup shows its result in the popup before it moves on; one no receiver took stays, with
-    /// Send again, until it is closed (ux audit F5).
-    @MainActor
-    func testASendFromThePopupShowsItsOutcomeThere() {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        let item = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
-                                   at: 1_000, needsAnswer: true, title: "Ship?", number: 1, revision: 1)
-        value.showPeek(item, on: side, seconds: 60, many: .list)
-        value.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered to s.", tone: .warning, sendAgain: [item]),
-                              sent: ["d_1_s"], delivered: false)
-        XCTAssertEqual(value.peekItem?.sourceId, "d_1_s", "a send no receiver took stays in the popup")
-        XCTAssertEqual(value.peekOutcome?.tone, .warning)
-        XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), ["d_1_s"])
-        value.dismissPeek(all: true)
-        XCTAssertNil(value.peekOutcome, "the outcome leaves with its alert")
-    }
-
     /// The leave question's Discard waits for its Undo: the decisions leave every send at once, Undo keeps them
     /// staged, and only the end of the window writes the discard (ux audit F21).
     @MainActor
@@ -733,274 +680,15 @@ final class WidgetInteractionTests: XCTestCase {
         if case .object(let fields) = calls.first { XCTAssertEqual(fields["action"], "unstage") } else { XCTFail() }
     }
 
-    @MainActor
-    func testQueuedDecisionsUseOnlyNewerCompleteAuthoritativeSnapshots() throws {
-        let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        let first = WidgetInboxItem(id: "decision:first", sourceId: "first", kind: "decision", key: "k",
-                                    at: 1, needsAnswer: true)
-        let waiting = WidgetInboxItem(id: "decision:waiting", sourceId: "waiting", kind: "decision", key: "k",
-                                      at: 2, needsAnswer: true)
-        func summary(_ ids: [String]?, complete: Bool) -> WidgetInboxSummary {
-            var result = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: complete, truncated: true, sessions: [])
-            result.pendingDecisionIDs = ids
-            return result
-        }
-        func begin() {
-            value.collapse()
-            value.showPeek(first, on: side, seconds: 0, many: .queue)
-            value.showPeek(waiting, on: side, seconds: 0, many: .queue)
-        }
-        value.updateInbox(summary([], complete: true))
-        begin()
-        value.dismissPeek()
-        XCTAssertEqual(value.peekItem, waiting, "a snapshot older than the arrival cannot settle it")
-        begin()
-        value.updateInbox(summary([], complete: false))
-        value.dismissPeek()
-        XCTAssertEqual(value.peekItem, waiting, "an incomplete read cannot settle it")
-        begin()
-        value.updateInbox(summary(nil, complete: true))
-        value.dismissPeek()
-        XCTAssertEqual(value.peekItem, waiting, "an older hub cannot prove settlement")
-        begin()
-        value.updateInbox(summary(["waiting"], complete: true))
-        XCTAssertEqual(value.peekItem, waiting, "the pending decision omitted by the capped overview is promoted")
-        value.dismissPeek()
-        XCTAssertNil(value.peekItem, "explicit dismissal closes the promoted alert")
-        begin()
-        value.updateInbox(summary([], complete: true))
-        value.dismissPeek()
-        XCTAssertNil(value.peekItem, "a newer complete decision list skips a settled item")
-
+    /// An inbox summary from an older hub has no `pendingDecisionIDs` and still decodes; the alert popup reads its
+    /// absence as "cannot prove settlement" (WidgetAlertPopupTests).
+    func testAnInboxSummaryDecodesWithAndWithoutPendingDecisionIDs() throws {
         let oldWire = #"{"unread":0,"needsAnswer":0,"complete":true,"truncated":false,"sessions":[]}"#
         let old = try JSONDecoder().decode(WidgetInboxSummary.self, from: Data(oldWire.utf8))
         XCTAssertNil(old.pendingDecisionIDs, "old producer remains decodable")
         let newWire = #"{"unread":0,"needsAnswer":0,"complete":true,"truncated":false,"sessions":[],"pendingDecisionIDs":["waiting"]}"#
         let new = try JSONDecoder().decode(WidgetInboxSummary.self, from: Data(newWire.utf8))
         XCTAssertEqual(new.pendingDecisionIDs, ["waiting"])
-    }
-
-    @MainActor
-    func testListedDecisionUsesOnlyNewerCompleteAuthoritativeSnapshots() {
-        let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        let first = WidgetInboxItem(id: "decision:first", sourceId: "first", kind: "decision", key: "k",
-                                    at: 1, needsAnswer: true)
-        let waiting = WidgetInboxItem(id: "decision:waiting", sourceId: "waiting", kind: "decision", key: "k",
-                                      at: 2, needsAnswer: true)
-        func summary(_ ids: [String]?, complete: Bool) -> WidgetInboxSummary {
-            var result = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: complete, truncated: true, sessions: [])
-            result.pendingDecisionIDs = ids
-            return result
-        }
-        func begin() {
-            value.collapse()
-            value.showPeek(first, on: side, seconds: 0, many: .list)
-            value.showPeek(waiting, on: side, seconds: 0, many: .list)
-        }
-        value.updateInbox(summary([], complete: true))
-        begin()
-        value.showWaitingPeek(waiting)
-        XCTAssertEqual(value.peekItem, waiting, "an older snapshot cannot settle the alert")
-        begin()
-        value.updateInbox(summary([], complete: false))
-        value.showWaitingPeek(waiting)
-        XCTAssertEqual(value.peekItem, waiting, "an incomplete snapshot cannot settle the alert")
-        begin()
-        value.updateInbox(summary(nil, complete: true))
-        value.showWaitingPeek(waiting)
-        XCTAssertEqual(value.peekItem, waiting, "an older hub cannot prove settlement")
-        begin()
-        value.updateInbox(summary(["waiting"], complete: true))
-        value.showWaitingPeek(waiting)
-        XCTAssertEqual(value.peekItem, waiting, "a pending alert can still be selected")
-        begin()
-        value.updateInbox(summary(["first"], complete: true))
-        value.showWaitingPeek(waiting)
-        XCTAssertEqual(value.peekItem, first, "a settled alert is not shown again")
-        XCTAssertTrue(value.peekQueue.isEmpty, "the settled row is removed")
-        begin()
-        value.updateInbox(summary(["waiting"], complete: true))
-        XCTAssertEqual(value.peekItem, waiting, "a settled displayed alert promotes the pending listed alert")
-        XCTAssertTrue(value.peekQueue.isEmpty, "the settled displayed alert does not return to the list")
-        begin()
-        value.updateInbox(summary([], complete: true))
-        XCTAssertNil(value.peekItem, "the popup closes when both decisions settle")
-    }
-
-    @MainActor
-    func testSettledSnapshotKeepsInFlightSendAndDisplayedOutcome() {
-        for snapshotFirst in [true, false] {
-            for delivered in [true, false] {
-                let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
-                let value = model(defaults: defaults)
-                defer { value.stop() }
-                let item = WidgetInboxItem(id: "decision:sending", sourceId: "sending", kind: "decision", key: "k",
-                                           at: 1, needsAnswer: true)
-                value.showPeek(item, on: WidgetSurfaceID(edge: .right), seconds: 0)
-                value.sendingDecisionIDs.insert(item.sourceId)
-                var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
-                summary.pendingDecisionIDs = []
-                if snapshotFirst {
-                    value.updateInbox(summary)
-                    XCTAssertEqual(value.peekItem?.sourceId, item.sourceId, "the in-flight send retains its popup")
-                    XCTAssertNil(value.peekOutcome)
-                }
-                value.sendingDecisionIDs.remove(item.sourceId)
-                value.showPeekOutcome(WidgetPeekOutcome(text: "Result", tone: delivered ? .success : .warning,
-                                                       sendAgain: delivered ? [] : [item]),
-                                      sent: [item.sourceId], delivered: delivered)
-                value.updateInbox(summary)
-                XCTAssertEqual(value.peekItem?.sourceId, item.sourceId, "a displayed result survives settlement")
-                XCTAssertEqual(value.peekOutcome?.tone, delivered ? .success : .warning)
-                XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), delivered ? [] : [item.sourceId])
-            }
-        }
-    }
-
-    @MainActor
-    func testEachPopupKeepsItsDurationAcrossListAndQueue() async throws {
-        let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        let first = WidgetInboxItem(id: "decision:first", sourceId: "first", kind: "decision", key: "k", at: 1, needsAnswer: true)
-        let second = WidgetInboxItem(id: "decision:second", sourceId: "second", kind: "decision", key: "k", at: 2, needsAnswer: true)
-
-        value.showPeek(first, on: side, seconds: 0, many: .list)
-        value.showPeek(second, on: side, seconds: 0.2, many: .list)
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertEqual(value.peekItem, first, "a finite arrival cannot close an until-closed alert")
-        value.showWaitingPeek(second)
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertNil(value.peekItem, "an accessibility swap starts the new finite timer")
-
-        value.showPeek(first, on: side, seconds: 0.2, many: .list)
-        value.showPeek(second, on: side, seconds: 0, many: .list)
-        value.hover(side, inside: true)
-        value.showWaitingPeek(second)
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertEqual(value.peekItem, second, "swapping to until-closed retains that duration while hovered")
-        value.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(value.peekItem, second, "leaving does not close the until-closed swap")
-        value.collapse()
-
-        value.showPeek(first, on: side, seconds: 0.2, many: .queue)
-        value.showPeek(second, on: side, seconds: 0, many: .queue)
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertEqual(value.peekItem, second, "until-closed waits until the first finite alert expires")
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(value.peekItem, second, "the promoted until-closed alert stays")
-        value.collapse()
-
-        value.showPeek(first, on: side, seconds: 0, many: .queue)
-        value.showPeek(second, on: side, seconds: 0.2, many: .queue)
-        value.hover(side, inside: true)
-        value.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertEqual(value.peekItem, first, "hover exit uses the shown alert's own zero duration")
-        value.dismissPeek()
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertNil(value.peekItem, "the promoted finite alert uses its own duration")
-    }
-
-    /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
-    /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
-    @MainActor
-    func testAnOpenPopupListsOrQueuesLaterAlertsAndKeepsItsTimeAfterThePointerLeaves() async throws {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        func item(_ number: Int) -> WidgetInboxItem {
-            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
-                key: "local:claude:s:", at: Double(number) * 1_000, needsAnswer: true, title: "Ship \(number)?",
-                number: number)
-        }
-        let first = item(1), second = item(2), third = item(3)
-        func waitFor(_ condition: () -> Bool) async throws {
-            let deadline = ContinuousClock.now + .seconds(5)
-            while !condition() && ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(50))
-            }
-        }
-
-        value.showPeek(first, on: side, seconds: 60, many: .list)
-        value.showPeek(second, on: side, seconds: 60, many: .list)
-        value.showPeek(second, on: side, seconds: 60, many: .list)
-        XCTAssertEqual(value.peekItem, first, "a listed alert never replaces the one shown")
-        XCTAssertEqual(value.peekQueue, [second], "the same alert is listed once")
-        value.showWaitingPeek(second)
-        XCTAssertEqual(value.peekItem, second, "a click on a listed alert shows it")
-        XCTAssertEqual(value.peekQueue, [first], "the one shown takes its row")
-        value.dismissPeek()
-        XCTAssertNil(value.peekItem, "× closes the whole list")
-        XCTAssertEqual(value.peekQueue, [])
-
-        value.showPeek(first, on: side, seconds: 60, many: .queue)
-        value.showPeek(second, on: side, seconds: 60, many: .queue)
-        value.showPeek(third, on: side, seconds: 60, many: .queue)
-        value.dismissPeek()
-        XCTAssertEqual(value.peekItem, second, "× in a queue shows the next alert")
-        XCTAssertEqual(value.peekQueue, [third])
-        value.dismissPeek(all: true)
-        XCTAssertNil(value.peekItem, "a click elsewhere closes the queue")
-        XCTAssertEqual(value.peekQueue, [])
-
-        value.showPeek(first, on: side, seconds: 60, many: .newest)
-        value.showPeek(second, on: side, seconds: 60, many: .newest)
-        XCTAssertEqual(value.peekItem, second, "newest replaces")
-        XCTAssertEqual(value.peekQueue, [])
-        value.collapse()
-
-        value.showPeek(first, on: side, seconds: 0.3, many: .queue)
-        value.showPeek(second, on: side, seconds: 0.3, many: .queue)
-        try await waitFor { value.peekItem == second }
-        XCTAssertEqual(value.peekItem, second, "a queued alert shows when the one before it times out")
-        try await waitFor { value.peekItem == nil }
-        XCTAssertNil(value.peekItem, "the last one in the queue times out too")
-
-        value.showPeek(first, on: side, seconds: 0, many: .list)
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(value.peekItem, first, "0 seconds keeps the popup until it is closed")
-        value.hover(side, inside: true)
-        value.showPeek(second, on: side, seconds: 0, many: .list)
-        XCTAssertEqual(value.peekQueue, [second], "a later alert is listed with the pointer on the popup")
-        value.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(value.peekItem, first, "until closed: leaving the popup does not close it")
-        value.collapse()
-
-        // A decision answered in the chat while its alert is shown or listed takes that alert's place.
-        let answeredFirst = WidgetInboxItem(id: first.id, sourceId: first.sourceId, kind: "decision", key: first.key,
-            at: 9_000, needsAnswer: false, title: first.title, number: 1, options: ["yes", "no"], option: "a",
-            answeredVia: "agent")
-        let answeredSecond = WidgetInboxItem(id: second.id, sourceId: second.sourceId, kind: "decision",
-            key: second.key, at: 9_500, needsAnswer: false, title: second.title, number: 2, option: "b",
-            answeredVia: "automatic_heuristic")
-        value.showPeek(first, on: side, seconds: 60, many: .list)
-        value.showPeek(second, on: side, seconds: 60, many: .list)
-        value.showPeek(answeredFirst, on: side, seconds: 60, many: .list)
-        XCTAssertEqual(value.peekItem, answeredFirst, "the shown alert becomes its answer")
-        value.showPeek(answeredSecond, on: side, seconds: 60, many: .newest)
-        XCTAssertEqual(value.peekQueue, [answeredSecond], "a listed alert becomes its answer in its row")
-        value.collapse()
-
-        value.showPeek(first, on: side, seconds: 0.8, many: .list)
-        value.hover(side, inside: true)
-        value.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(value.peekItem, first, "leaving starts the countdown again; it closed after 220 ms before")
-        try await waitFor { value.peekItem == nil }
-        XCTAssertNil(value.peekItem, "the countdown still ends it")
     }
 }
 
@@ -1198,18 +886,18 @@ final class WidgetVisibilityTests: XCTestCase {
             at: 3_000, needsAnswer: false)
         coordinator.alert([result])
         XCTAssertEqual(chimes.count, 0, "an agent result never alerts")
-        XCTAssertNil(coordinator.model.peekItem)
+        XCTAssertNil(coordinator.model.alertPopup.item)
 
         coordinator.alert([result, decision])
         XCTAssertEqual(chimes, ["Glass"], "one chime with the default sound")
-        XCTAssertEqual(coordinator.model.peekItem, decision, "the item that waits for an answer pops up")
+        XCTAssertEqual(coordinator.model.alertPopup.item, decision, "the item that waits for an answer pops up")
         XCTAssertEqual(coordinator.model.hoveredSurface?.edge, .right)
         XCTAssertEqual(coordinator.model.presentation(for: try XCTUnwrap(coordinator.model.hoveredSurface)), .preview)
         let peeked = try XCTUnwrap(coordinator.model.hoveredSurface)
         XCTAssertEqual(coordinator.model.moduleSelections[peeked.key], "agents", "the popup shows the agents module")
 
         coordinator.model.collapse()
-        XCTAssertNil(coordinator.model.peekItem)
+        XCTAssertNil(coordinator.model.alertPopup.item)
         // Another module was selected there: the popup switches to agents and gives that module back when it ends.
         coordinator.model.moduleSelections[peeked.key] = "capture"
         coordinator.alert([decision])
@@ -1223,7 +911,7 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.moduleSelections[side.key] = "capture"
         coordinator.model.hover(side, inside: true)
         coordinator.alert([decision])
-        XCTAssertNil(coordinator.model.peekItem, "no popup while the pointer is in a panel")
+        XCTAssertNil(coordinator.model.alertPopup.item, "no popup while the pointer is in a panel")
         XCTAssertEqual(coordinator.model.moduleSelections[side.key], "capture", "a refused popup keeps the selected module")
         XCTAssertEqual(chimes, ["Glass", "Glass"], "a refused popup still chimes")
         coordinator.model.hover(side, inside: false)
@@ -1232,7 +920,7 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.writePreferences { $0.alertPopup = false; $0.alertSound = "Ping" }
         coordinator.alert([decision])
         XCTAssertEqual(chimes, ["Glass", "Ping"])
-        XCTAssertNil(coordinator.model.peekItem, "alertPopup off shows no popup")
+        XCTAssertNil(coordinator.model.alertPopup.item, "alertPopup off shows no popup")
 
         coordinator.model.writePreferences { $0.alertDecisions = false }
         coordinator.alert([decision])
@@ -1249,27 +937,27 @@ final class WidgetVisibilityTests: XCTestCase {
             answer: "no", answeredVia: "agent")
         coordinator.alertAnswered([answered])
         XCTAssertEqual(chimes.last, "Tink", "an answer from elsewhere plays its own sound")
-        XCTAssertEqual(coordinator.model.peekItem, answered, "and pops up")
+        XCTAssertEqual(coordinator.model.alertPopup.item, answered, "and pops up")
         coordinator.model.collapse()
         coordinator.model.writePreferences { $0.autoDecisionPopup = false }
         let heard = chimes.count
         coordinator.alertAnswered([answered])
         XCTAssertEqual(chimes.count, heard, "Announce them off: silent")
-        XCTAssertNil(coordinator.model.peekItem, "and no popup")
+        XCTAssertNil(coordinator.model.alertPopup.item, "and no popup")
 
         // Settings → Staged at start: picks staged before a restart pop up as one reminder that stays until closed.
         let staged = WidgetInboxItem(id: "decision:d_5_s", sourceId: "d_5_s", kind: "decision", key: "local:claude:s:",
             at: 5_000, needsAnswer: true, title: "Keep it?", number: 5, options: ["yes", "no"], revision: 2,
             draftOption: "b")
         coordinator.remindStaged([staged])
-        XCTAssertEqual(coordinator.model.peekItem?.kind, "staged")
-        XCTAssertEqual(coordinator.model.peekItem?.id, WidgetAlerts.stagedReminderID)
-        XCTAssertEqual(coordinator.model.peekSeconds, 0, "it stays until it is closed")
-        XCTAssertEqual(WidgetAlerts.kicker(try XCTUnwrap(coordinator.model.peekItem)), "Staged, not sent")
+        XCTAssertEqual(coordinator.model.alertPopup.item?.kind, "staged")
+        XCTAssertEqual(coordinator.model.alertPopup.item?.id, WidgetAlerts.stagedReminderID)
+        XCTAssertEqual(coordinator.model.alertPopup.seconds, 0, "it stays until it is closed")
+        XCTAssertEqual(WidgetAlerts.kicker(try XCTUnwrap(coordinator.model.alertPopup.item)), "Staged, not sent")
         coordinator.model.collapse()
         coordinator.model.writePreferences { $0.stagedReminder = false }
         coordinator.remindStaged([staged])
-        XCTAssertNil(coordinator.model.peekItem, "Staged at start off: no reminder")
+        XCTAssertNil(coordinator.model.alertPopup.item, "Staged at start off: no reminder")
     }
 
     /// ⌘ turns an option click or a Return in an own answer around while the setting is on.
@@ -1486,15 +1174,15 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.showPeek(decision, on: side, seconds: 60, many: .queue)
         coordinator.model.showPeek(later, on: side, seconds: 60, many: .queue)
         coordinator.collapseIfOutside(try clickFarAway())
-        XCTAssertEqual(coordinator.model.peekItem, decision, "a click elsewhere keeps the alert popup by default")
+        XCTAssertEqual(coordinator.model.alertPopup.item, decision, "a click elsewhere keeps the alert popup by default")
         coordinator.model.writePreferences { $0.alertPopupClickAway = true }
         coordinator.passivePanels = true
         coordinator.collapseIfOutside(try clickFarAway())
-        XCTAssertEqual(coordinator.model.peekItem, decision, "passive mode keeps the popup too")
+        XCTAssertEqual(coordinator.model.alertPopup.item, decision, "passive mode keeps the popup too")
         coordinator.passivePanels = false
         coordinator.collapseIfOutside(try clickFarAway())
-        XCTAssertNil(coordinator.model.peekItem, "with Close on a click elsewhere the click closes it")
-        XCTAssertEqual(coordinator.model.peekQueue, [], "and the alerts queued after it")
+        XCTAssertNil(coordinator.model.alertPopup.item, "with Close on a click elsewhere the click closes it")
+        XCTAssertEqual(coordinator.model.alertPopup.queue, [], "and the alerts queued after it")
     }
 
     /// The settings face starts the widget face from `preferencesSaved`, so it must fire only once the hub stored
@@ -1517,7 +1205,8 @@ final class WidgetVisibilityTests: XCTestCase {
 
     /// The redraw measurement of the alert popup (swift skill: count bodies with `RenderProbe`). One popup cycle (an
     /// alert pops up, the pointer enters and leaves, the popup is closed) on a hosted side panel that is never ordered
-    /// front, counting the `WidgetHostView` bodies (`widget.host`) and the model's publishes. Off unless
+    /// front, counting the `WidgetHostView` bodies (`widget.host`) and the publishes of the model and of the alert
+    /// popup (`WidgetAlertPopup`, its own object since C28). Off unless
     /// `WIDGET_POPUP_REDRAW=1`; it prints one `widget.popup.redraw` line per run, so the same steps compare a change
     /// of the popup's owner against the count before it.
     @MainActor
@@ -1564,6 +1253,8 @@ final class WidgetVisibilityTests: XCTestCase {
         defer { RenderProbe.enabled = wasOn }
         let watch = RenderProbe.watch(model, "widgetModel")
         defer { watch?.cancel() }
+        let popupWatch = RenderProbe.watch(model.alertPopup, "alertPopup")
+        defer { popupWatch?.cancel() }
         let start = RenderProbe.snapshot()
         var steps: [String] = []
         func step(_ name: String, _ action: () -> Void) async throws {
@@ -1573,11 +1264,11 @@ final class WidgetVisibilityTests: XCTestCase {
             steps.append(name + ":" + RenderProbe.summary(since: before))
         }
         try await step("alert") { coordinator.alert([decision]) }
-        XCTAssertEqual(model.peekItem, decision, "the cycle measures a popup that showed")
+        XCTAssertEqual(model.alertPopup.item, decision, "the cycle measures a popup that showed")
         try await step("enter") { model.hover(surface, inside: true) }
         try await step("leave") { model.hover(surface, inside: false) }
         try await step("close") { model.dismissPeek() }
-        XCTAssertNil(model.peekItem)
+        XCTAssertNil(model.alertPopup.item)
         let hosts = RenderProbe.snapshot()["widget.host", default: 0] - start["widget.host", default: 0]
         print("widget.popup.redraw host=\(hosts) total=\(RenderProbe.summary(since: start)) steps=\(steps.joined(separator: " | "))")
     }

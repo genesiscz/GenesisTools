@@ -315,13 +315,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func popUp(_ first: WidgetInboxItem, with burst: [WidgetInboxItem], preferences: WidgetPreferences,
                        seconds: Double) {
         let many = WidgetAlerts.popupMany(preferences)
-        let open = model.peekItem != nil && (many != .newest || model.peekItem?.sourceId == first.sourceId)
-        guard let surface = model.peekItem == nil ? peekSurface() : model.hoveredSurface,
-              open || model.canPeek(on: surface) else { return }
+        let popup = model.alertPopup
+        let open = popup.item != nil && (many != .newest || popup.item?.sourceId == first.sourceId)
+        guard let surface = popup.item == nil ? peekSurface() : model.hoveredSurface,
+              open || popup.canShow(on: surface) else { return }
         // The peek shows the agents module and gives the user's own module back when it ends.
         let module = moduleIDs(for: surface).contains("agents") ? "agents" : nil
         model.showPeek(first, on: surface, module: module, seconds: seconds, many: many)
-        guard many != .newest, model.peekItem != nil else { return }
+        guard many != .newest, popup.item != nil else { return }
         for other in burst.filter({ $0.id != first.id }).sorted(by: { $0.at < $1.at }) {
             model.showPeek(other, on: surface, module: module, seconds: seconds, many: many)
         }
@@ -872,7 +873,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     func collapseIfOutside(_ event: NSEvent) {
         guard !passivePanels else { return }
         // A click elsewhere closes the alert popup (and every alert listed or queued in it) when Alerts says so.
-        if model.expanded == nil, model.peekItem != nil, model.preferences.alertPopupClickAway,
+        if model.expanded == nil, model.alertPopup.item != nil, model.preferences.alertPopupClickAway,
            isOutsidePanels(event) {
             model.dismissPeek(all: true)
             return
@@ -968,7 +969,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         // The alert popup never takes the keyboard, but when the widget has it (a panel of another edge is key), Esc
         // closes the popup before anything else.
-        if model.expanded == nil, model.peekItem != nil, panels.values.contains(where: { $0.panel === event.window }),
+        if model.expanded == nil, model.alertPopup.item != nil,
+           panels.values.contains(where: { $0.panel === event.window }),
            let stroke = KeyStroke(event),
            WidgetKeymap.commandIDs(for: stroke, in: [.window], keymap: WidgetKeymap.shared).contains(WidgetKeymap.collapse) {
             model.dismissPeek()

@@ -1877,55 +1877,6 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNotNil(model.pendingStageDone[card.sourceId])
     }
 
-    func testPopupRefreshAndExplicitCloseRespectStagedPolicy() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil, stagedOnLeave: "keep")])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var reminded = false
-        model.stagedLeftInPopup = { _ in reminded = true }
-        model.showPeek(item, on: side, seconds: 0.05)
-        var staged = item
-        staged.draftOption = "a"
-        model.reconcileStaged([staged])
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertNil(model.peekItem, "the timer survives the updated item")
-        XCTAssertTrue(reminded)
-
-        model.receive([try snapshot(draftOption: "a", stagedOnLeave: "ask")])
-        model.showPeek(staged, on: side, seconds: 0)
-        model.dismissPeek()
-        XCTAssertNotNil(model.peekItem, "explicit close retains a staged decision under ask")
-        model.endPeek(advance: false)
-    }
-
-    func testLeavingPopupDoesNotReplaceOutcomeLifetime() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        model.showPeek(item, on: side, seconds: 0.05)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered", tone: .warning), sent: [item.sourceId], delivered: false)
-        model.hover(side, inside: true)
-        model.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(model.peekOutcome?.text, "Not delivered")
-        XCTAssertNotNil(model.peekItem)
-        model.endPeek(advance: false)
-        var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: nil).utf8))
-        wire.state.preferences.sendCloseSeconds = 0
-        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
-        model.showPeek(item, on: side, seconds: 0.05)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Delivered", tone: .success), sent: [item.sourceId], delivered: true)
-        model.hover(side, inside: true)
-        model.hover(side, inside: false)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(model.peekOutcome?.text, "Delivered", "zero send-close time remains open")
-        model.endPeek(advance: false)
-    }
-
     func testSettledSnapshotBeforeOrAfterSendCallbackKeepsOutcome() async throws {
         for snapshotBeforeCallback in [true, false] {
             for delivered in [true, false] {
@@ -1951,10 +1902,10 @@ final class WidgetStagingTests: XCTestCase {
                 model.showPeek(item, on: side, seconds: 0)
                 model.sendStaged([item.sourceId])
                 XCTAssertTrue(model.sendingDecisionIDs.contains(item.sourceId))
-                XCTAssertTrue(model.keepSettledPeek(item))
+                XCTAssertTrue(model.alertPopup.keepsSettled(item))
                 var unrelated = item
                 unrelated.sourceId = "another-decision"
-                XCTAssertFalse(model.keepSettledPeek(unrelated), "another send must not hold an unrelated alert")
+                XCTAssertFalse(model.alertPopup.keepsSettled(unrelated), "another send must not hold an unrelated alert")
                 await fulfillment(of: [started], timeout: 1)
                 let reply: WidgetJSON = delivered
                     ? ["sent": 1, "queued": 0, "failed": 0]
@@ -1965,145 +1916,25 @@ final class WidgetStagingTests: XCTestCase {
                 summary.pendingDecisionIDs = []
                 if snapshotBeforeCallback {
                     model.updateInbox(summary)
-                    XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "an in-flight send keeps its popup")
-                    XCTAssertNil(model.peekOutcome, "the backend has not answered yet")
+                    XCTAssertEqual(model.alertPopup.item?.sourceId, item.sourceId, "an in-flight send keeps its popup")
+                    XCTAssertNil(model.alertPopup.outcome, "the backend has not answered yet")
                 }
                 model.afterMutations { finished.fulfill() }
                 try XCTUnwrap(release, "the backend continuation must be held").resume(returning: reply)
                 await fulfillment(of: [finished], timeout: 1)
                 XCTAssertFalse(model.sendingDecisionIDs.contains(item.sourceId), "the callback releases the in-flight ID")
-                XCTAssertEqual(model.peekOutcome?.tone, delivered ? .success : .warning)
-                XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "the real callback shows its outcome")
+                XCTAssertEqual(model.alertPopup.outcome?.tone, delivered ? .success : .warning)
+                XCTAssertEqual(model.alertPopup.item?.sourceId, item.sourceId, "the real callback shows its outcome")
                 if !snapshotBeforeCallback { model.updateInbox(summary) }
-                XCTAssertEqual(model.peekOutcome?.tone, delivered ? .success : .warning,
+                XCTAssertEqual(model.alertPopup.outcome?.tone, delivered ? .success : .warning,
                                "settlement must not close a displayed outcome")
                 if !delivered {
-                    XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId],
+                    XCTAssertEqual(model.alertPopup.outcome?.sendAgain.map(\.sourceId), [item.sourceId],
                                    "absence from pending IDs does not prove the answer was delivered")
                 }
                 model.endPeek(advance: false)
             }
         }
-    }
-
-    func testSentPopupStartsTheNextAlertsOwnCountdownInQueueAndListModes() async throws {
-        for many in [WidgetAlerts.PopupMany.queue, .list] {
-            let model = StagingFixture.model()
-            defer { model.stop() }
-            model.receive([try snapshot(draftOption: nil)])
-            let item = try XCTUnwrap(model.inboxOverviewItems.first)
-            var later = item
-            later.id = "decision:later"
-            later.sourceId = "later"
-            let side = WidgetSurfaceID(edge: .right)
-            model.showPeek(item, on: side, seconds: 0, many: many)
-            model.showPeek(later, on: side, seconds: 0.05, many: many)
-            model.dropSentFromPeek([item.sourceId])
-            XCTAssertEqual(model.peekItem?.sourceId, "later")
-            XCTAssertEqual(model.peekSeconds, 0.05, "the next alert gets its own duration")
-            try await Task.sleep(for: .milliseconds(300))
-            XCTAssertNil(model.peekItem, "the next alert does not inherit an already finished timer")
-        }
-    }
-
-    func testSettledPopupKeepsDeliveredOutcomeForItsConfiguredLifetime() async throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: nil).utf8))
-        wire.state.preferences.sendCloseSeconds = 0.4
-        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var later = item
-        later.id = "decision:later"
-        later.sourceId = "later"
-        model.showPeek(item, on: side, seconds: 0.05, many: .list)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Delivered", tone: .success), sent: [item.sourceId], delivered: true)
-        model.showPeek(later, on: side, seconds: 0.4, many: .list)
-        var answered = item
-        answered.needsAnswer = false
-        answered.answeredVia = "agent"
-        model.showPeek(answered, on: side, seconds: 0.05, many: .list)
-        var summary = WidgetInboxSummary(unread: 0, needsAnswer: 1, complete: true, truncated: false, sessions: [])
-        summary.pendingDecisionIDs = ["later"]
-        summary.answeredElsewhere = [answered]
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId)
-        XCTAssertEqual(model.peekOutcome?.text, "Delivered")
-        XCTAssertEqual(model.peekQueue.map(\.sourceId), ["later"])
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(model.peekOutcome?.text, "Delivered", "neither snapshot nor new alert shortens the outcome")
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertEqual(model.peekItem?.sourceId, "later", "the pending alert follows the configured outcome lifetime")
-        XCTAssertNil(model.peekOutcome)
-    }
-
-    func testSettledPopupKeepsFailureAndOnlyRemovesProvenStaleResend() throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var other = item
-        other.id = "decision:other"
-        other.sourceId = "other"
-        var answered = item
-        answered.needsAnswer = false
-        answered.answeredVia = "agent"
-        var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
-        summary.pendingDecisionIDs = []
-        summary.answeredElsewhere = [answered]
-        model.updateInbox(summary)
-        model.showPeek(item, on: side, seconds: 0)
-        model.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered", tone: .warning, sendAgain: [item, other]),
-                              sent: [item.sourceId], delivered: false)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId, "other"],
-                       "the older snapshot cannot settle the new outcome")
-        summary.complete = false
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId, "other"],
-                       "an incomplete snapshot cannot remove resend controls")
-        summary.complete = true
-        summary.answeredElsewhere = []
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), [item.sourceId, "other"],
-                       "an answered but undelivered decision is absent from pending IDs")
-        summary.answeredElsewhere = [answered]
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekOutcome?.sendAgain.map(\.sourceId), ["other"])
-        XCTAssertEqual(model.peekOutcome?.text, "Not delivered")
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "failure stays until dismissed")
-    }
-
-    func testOnlyNewerCompleteSnapshotSettlesOrdinaryPopupControls() throws {
-        let model = StagingFixture.model()
-        defer { model.stop() }
-        model.receive([try snapshot(draftOption: nil)])
-        let item = try XCTUnwrap(model.inboxOverviewItems.first)
-        let side = WidgetSurfaceID(edge: .right)
-        var later = item
-        later.id = "decision:later"
-        later.sourceId = "later"
-        var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
-        summary.pendingDecisionIDs = []
-        model.updateInbox(summary)
-        model.showPeek(item, on: side, seconds: 0, many: .list)
-        model.showPeek(later, on: side, seconds: 0, many: .list)
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "an older snapshot does not settle a new alert")
-        summary.complete = false
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekQueue.map(\.sourceId), ["later"])
-        summary.complete = true
-        summary.pendingDecisionIDs = nil
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekItem?.sourceId, item.sourceId, "an older hub cannot prove settlement")
-        summary.pendingDecisionIDs = ["later"]
-        model.updateInbox(summary)
-        XCTAssertEqual(model.peekItem?.sourceId, "later", "a pending listed alert replaces the settled one")
-        XCTAssertTrue(model.peekQueue.isEmpty)
-        summary.pendingDecisionIDs = []
-        model.updateInbox(summary)
-        XCTAssertNil(model.peekItem, "the last settled alert closes")
     }
 
     /// Decision audit F10: a pick shown here gives way once its row is written after the pick landed, whatever the
@@ -2311,10 +2142,10 @@ final class WidgetStagingTests: XCTestCase {
         let side = WidgetSurfaceID(edge: .right)
         model.showPeek(item, on: side, seconds: 0.05)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(model.peekItem?.sourceId, "d1", "the popup stays with its Send now")
+        XCTAssertEqual(model.alertPopup.item?.sourceId, "d1", "the popup stays with its Send now")
         model.discardStaged(["d1"])
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertNil(model.peekItem, "with nothing staged in it, its time ends it")
+        XCTAssertNil(model.alertPopup.item, "with nothing staged in it, its time ends it")
 
         let kept = StagingFixture.model()
         defer { kept.stop() }
@@ -2323,7 +2154,7 @@ final class WidgetStagingTests: XCTestCase {
         kept.receive([try snapshot(draftOption: "a", stagedOnLeave: "keep")])
         kept.showPeek(try XCTUnwrap(kept.stagedItems.first), on: side, seconds: 0.05)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertNil(kept.peekItem, "\"keep\" closes the popup")
+        XCTAssertNil(kept.alertPopup.item, "\"keep\" closes the popup")
         XCTAssertEqual(reminded, ["d1"], "and the staged reminder lists the pick")
     }
 

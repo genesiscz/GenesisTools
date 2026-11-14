@@ -130,39 +130,13 @@ public final class WidgetModel: ObservableObject {
     @Published public var expanded: EdgePanelPlacement?
     @Published public var activeSideGroup = 0
     @Published public var hoveredSurface: WidgetSurfaceID?
-    /// A new inbox item the widget pops up by itself (an alert). The agents preview shows it until `showPeek`'s
-    /// timer ends, or until the pointer leaves the panel when the user moved onto it.
-    @Published public private(set) var peekItem: WidgetInboxItem? {
-        didSet {
-            // An outcome belongs to the alert it was sent from; the next alert starts without one.
-            if peekItem?.id != oldValue?.id, peekOutcome != nil { peekOutcome = nil }
-        }
-    }
-    /// What a send from the popup did (its Send now, or Send now in the staged reminder), shown in the popup itself:
-    /// the popup stays for `sendCloseSeconds` with it before it moves on, so the result is read where it was sent
-    /// (ux audit F5). Nil while nothing was sent from the popup on screen.
-    @Published public internal(set) var peekOutcome: WidgetPeekOutcome?
-    /// Alerts that arrived while the popup was open, oldest first (Alerts → Several at once: listed or one after
-    /// another). The newest-replaces mode keeps it empty.
-    @Published public private(set) var peekQueue: [WidgetInboxItem] = []
-    /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
-    public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
-    private(set) var peekSeconds: Double = 7
-    /// Duration and the inbox generation when each displayed or waiting alert arrived, by item id. One entry per
-    /// alert, so a queue edit that drops an alert drops both.
-    private struct PeekTiming {
-        var seconds: Double
-        var inboxGeneration: Int
-    }
-    private var peekTimings: [String: PeekTiming] = [:]
-    private var inboxGeneration = 0
-    private var peekOutcomeInboxGeneration = 0
-    private var peekTask: Task<Void, Never>?
-    /// The module a peek replaced on its surface (`previous`, nil when none was chosen) and the one it showed. The
-    /// end of the peek puts `previous` back, unless the selection is no longer `shown`: the user picked a module.
-    private var peekReplaced: (surface: WidgetSurfaceID, previous: String?, shown: String)?
+    /// The alert popup (`WidgetAlertPopup`): its shown item, queue, timings and outcome. Its events return what the
+    /// widget should show for it, and `applyAlertPopup` applies that at one place.
+    public let alertPopup = WidgetAlertPopup()
+    /// Counts the inbox snapshots; the alert popup settles an alert only with a snapshot newer than its arrival.
+    private(set) var inboxGeneration = 0
     /// Surfaces the pointer is in now, without the hover delay: a popup never opens under the user's pointer.
-    private var pointerInside: Set<String> = []
+    private(set) var pointerInside: Set<String> = []
     /// Called with the items that arrived in a complete inbox snapshot (never the first one).
     public var inboxArrived: (([WidgetInboxItem]) -> Void)?
     /// Decisions answered outside the widget since the last snapshot (Automatic decisions), oldest first.
@@ -449,7 +423,7 @@ public final class WidgetModel: ObservableObject {
     private var lastSelected: WidgetSession?
     private var voiceKey: String?
     private var voiceFinals: [String] = []
-    private var stopping = false
+    private(set) var stopping = false
     private var quietTask: Task<Void, Never>?
     private var quietSignature = ""
 
@@ -496,6 +470,7 @@ public final class WidgetModel: ObservableObject {
                 PerfLog.mark("widget.form draft restore \(error.localizedDescription)")
             }
         }
+        alertPopup.host = self
     }
 
     public var sessions: [WidgetSession] { sessionRoster.visible }
@@ -842,7 +817,7 @@ public final class WidgetModel: ObservableObject {
         sendCloseRevision += 1
         // A Discard still in its Undo window is what the user chose: it goes out now, not never.
         commitHeldDiscard()
-        peekTask?.cancel()
+        alertPopup.stop()
         preferenceStore.stop()
         settingsTask?.cancel()
         settingsTask = nil
@@ -1001,19 +976,12 @@ public final class WidgetModel: ObservableObject {
     public func openModule(_ moduleID: String, on surface: WidgetSurfaceID) {
         // The user picked this module (also by clicking the peek itself): it stays after the peek. A pick on another
         // surface ends the peek here too, so the surface the peek switched gets its own module back first.
-        if peekReplaced?.surface == surface {
-            peekReplaced = nil
-        } else {
-            restorePeekModule()
-        }
+        applyAlertPopup(alertPopup.moduleOpened(on: surface))
         moduleSelections[surface.key] = moduleID
         defaults.set(moduleSelections, forKey: "widget.moduleSelections")
         activeSideGroup = surface.group
         hoveredSurface = nil
         hoverTask?.cancel()
-        peekTask?.cancel()
-        peekItem = nil
-        peekQueue = []
         open(surface.edge)
     }
 
@@ -1048,288 +1016,52 @@ public final class WidgetModel: ObservableObject {
         hoveredSession = nil
     }
 
-    /// Whether `showPeek` would pop an item up in `surface` now: never while the user is in a panel, a window or a drag.
-    func canPeek(on surface: WidgetSurfaceID) -> Bool {
-        !stopping && expanded == nil && !dialogOpen && !dragging && pointerInside.isEmpty
-            && (hoveredSurface == nil || hoveredSurface == surface)
-    }
-
-    /// Pops `item` up in `surface`'s preview for `seconds` (0: until it is closed), unless the user is in a panel, a
-    /// window or a drag. With `module`, the surface shows that module for the peek and gets the user's own module back
-    /// when the peek ends. While a popup is open, `many` decides: the new item is listed under it or queued after it
-    /// (even with the pointer on the popup, since nothing moves under it), or it replaces the shown one.
+    /// Pops `item` up in `surface`'s preview (`WidgetAlertPopup.alertArrived`): the coordinator's alerts.
     func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7,
                   many: WidgetAlerts.PopupMany = .newest) {
-        // The same decision again (answered elsewhere while its alert is shown or waits): it takes that place.
-        if let shown = peekItem, let peeked = hoveredSurface {
-            if shown.sourceId == item.sourceId {
-                // A snapshot may report this decision answered while its send outcome is still being shown.
-                // Keep the outcome and its timer; updateInbox removes any independently settled resend controls.
-                if peekOutcome != nil { return }
-                peekItem = item
-                peekSeconds = seconds
-                peekTimings[item.id] = PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)
-                PerfLog.mark("widget.peek replaced id=\(item.id) answered=\(item.isAnsweredElsewhere)")
-                schedulePeekEnd(on: peeked)
-                presentationChanged?()
-                return
-            }
-            if let index = peekQueue.firstIndex(where: { $0.sourceId == item.sourceId }) {
-                let previous = peekQueue[index]
-                peekTimings[previous.id] = nil
-                peekQueue[index] = item
-                peekTimings[item.id] = PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)
-                presentationChanged?()
-                return
-            }
-        }
-        if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
-            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) {
-                peekQueue.append(item)
-                peekTimings[item.id] = PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)
-            }
-            peekMany = many
-            PerfLog.mark("widget.peek added id=\(item.id) mode=\(many.rawValue) waiting=\(peekQueue.count)")
-            // A new row gives the list its full time again; a queue keeps the shown alert's own countdown.
-            if many == .list, peekOutcome == nil { schedulePeekEnd(on: peeked) }
-            presentationChanged?()
-            return
-        }
-        guard canPeek(on: surface) else { return }
-        if let module, moduleSelections[surface.key] != module {
-            if let replaced = peekReplaced, replaced.surface != surface { restorePeekModule() }
-            // A second alert during a peek keeps the module from before the first one.
-            peekReplaced = peekReplaced ?? (surface, moduleSelections[surface.key], module)
-            moduleSelections[surface.key] = module
-        }
-        hoverTask?.cancel()
-        peekItem = item
-        peekQueue = []
-        peekTimings = [item.id: PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)]
-        peekMany = many
-        peekSeconds = seconds
-        hoveredSurface = surface
-        presentationChanged?()
-        schedulePeekEnd(on: surface)
-    }
-
-    /// The popup's decisions take the staged pick and note of `staged` (every staged decision of the snapshot). The
-    /// popup holds the item it opened with, so without this a pick staged in it showed only until the snapshot listed
-    /// it, then read as unanswered (Martin, 2026-10-27: "it shown as staged for a second ... then it just reset").
-    func refreshPeekStaging(_ staged: [WidgetInboxItem]) {
-        guard peekItem != nil else { return }
-        let byId = Dictionary(staged.map { ($0.sourceId, $0) }, uniquingKeysWith: { first, _ in first })
-        func fresh(_ item: WidgetInboxItem) -> WidgetInboxItem {
-            guard item.kind == "decision", item.needsAnswer else { return item }
-            var copy = item
-            copy.draftOption = byId[item.sourceId]?.draftOption
-            copy.draft = byId[item.sourceId]?.draft
-            return copy
-        }
-        if let shown = peekItem {
-            let next = fresh(shown)
-            if next != shown { peekItem = next }
-        }
-        let queue = peekQueue.map(fresh)
-        if queue != peekQueue { peekQueue = queue }
-    }
-
-    /// The popup's time ran out with a decision staged in it: it does not just go away (D159, 2026-10-27: staged in
-    /// the popup at 01:08:32, the popup closed 7 s later, and the answer was never sent). "Closing with staged
-    /// decisions" decides, as for the panel: "send" sends them and the popup shows the result; "keep" closes it and
-    /// shows the staged reminder; "ask" (the default) keeps the popup with its Send now and looks again after its
-    /// time. Returns whether the end was handled here.
-    func holdPeekForStaged(on surface: WidgetSurfaceID) -> Bool {
-        guard let shown = peekItem else { return false }
-        let inPopup = Set(([shown] + peekQueue).map(\.sourceId))
-        // A send from the popup is under way: its result shows here (`showPeekOutcome`).
-        if !inPopup.isDisjoint(with: sendingDecisionIDs) {
-            schedulePeekEnd(on: surface)
-            return true
-        }
-        let staged = stagedForLeave.filter { inPopup.contains($0.sourceId) }
-        guard !staged.isEmpty else { return false }
-        switch preferences.stagedOnLeave {
-        case "send":
-            PerfLog.mark("widget.peek staged send=\(staged.count) id=\(shown.id)")
-            schedulePeekEnd(on: surface)
-            sendStaged(staged.map(\.sourceId), known: staged)
-        case "keep":
-            PerfLog.mark("widget.peek staged remind=\(staged.count) id=\(shown.id)")
-            endPeek(advance: false)
-            stagedLeftInPopup?(stagedForLeave)
-        default:
-            PerfLog.mark("widget.peek staged held=\(staged.count) id=\(shown.id)")
-            schedulePeekEnd(on: surface)
-        }
-        return true
-    }
-
-    /// Starts the popup's countdown again. It ends the popup only while the pointer is off it; with 0 seconds the
-    /// popup stays until it is closed.
-    private func schedulePeekEnd(on surface: WidgetSurfaceID) {
-        peekTask?.cancel()
-        peekTask = nil
-        guard peekSeconds > 0, let item = peekItem else { return }
-        let seconds = peekSeconds
-        peekTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-            guard let self, self.peekItem?.id == item.id, !self.pointerInside.contains(surface.key) else { return }
-            if self.holdPeekForStaged(on: surface) { return }
-            self.endPeek()
-        }
+        applyAlertPopup(alertPopup.alertArrived(item, on: surface, module: module, seconds: seconds, many: many))
     }
 
     /// A row of the popup's list of later alerts: that alert takes the popup, and the one shown takes its row.
     public func showWaitingPeek(_ item: WidgetInboxItem) {
-        guard let shown = peekItem, let index = peekQueue.firstIndex(where: { $0.id == item.id }) else { return }
-        let waiting = peekQueue[index]
-        if peekSettled(waiting) {
-            peekQueue.remove(at: index)
-            peekTimings[waiting.id] = nil
-            presentationChanged?()
-            return
-        }
-        peekQueue[index] = shown
-        peekItem = waiting
-        peekSeconds = peekTimings[waiting.id]?.seconds ?? 7
-        if let surface = hoveredSurface { schedulePeekEnd(on: surface) }
-        PerfLog.mark("widget.peek swapped id=\(waiting.id) for=\(shown.id)")
-        presentationChanged?()
+        applyAlertPopup(alertPopup.showWaiting(item))
     }
 
-    /// Decisions `ids` were sent: they leave the popup, which shows the next alert or closes. The popup holds the
-    /// decision it opened with, and a decision answered here is in no later snapshot list, so it read as unanswered
-    /// after a successful send (Martin, 2026-10-27: "i confirmed it after staging and it doesnt seem like").
-    func dropSentFromPeek(_ ids: Set<String>) {
-        let queue = peekQueue.filter { !ids.contains($0.sourceId) }
-        if queue != peekQueue { peekQueue = queue }
-        guard let shown = peekItem, ids.contains(shown.sourceId) else { return }
-        PerfLog.mark("widget.peek sent id=\(shown.id) waiting=\(peekQueue.count)")
-        endPeek(includeListed: true)
-    }
-
-    /// A snapshot must not close the popup before its in-flight send can show its result.
-    func keepSettledPeek(_ item: WidgetInboxItem) -> Bool {
-        peekOutcome != nil || sendingDecisionIDs.contains(item.sourceId)
-    }
-
-    /// A send started from the popup ended: the popup shows `outcome` instead of closing at once. `ids` are the
-    /// decisions sent. Delivered, it stays `sendCloseSeconds` (0: until closed), then moves on as a sent decision does
-    /// (`dropSentFromPeek`), and the staged reminder closes once nothing is staged any more. Not delivered or failed,
-    /// it stays until closed, with Send again for the answers no receiver took.
-    func showPeekOutcome(_ outcome: WidgetPeekOutcome, sent ids: Set<String>, delivered: Bool) {
-        guard let shown = peekItem,
-              ids.contains(shown.sourceId) || shown.sourceId == WidgetAlerts.stagedReminderID else {
-            if delivered { dropSentFromPeek(ids) }
-            return
-        }
-        peekOutcome = outcome
-        peekOutcomeInboxGeneration = inboxGeneration
-        // The popup's own countdown would end it under the result.
-        peekTask?.cancel()
-        peekTask = nil
-        PerfLog.mark("widget.peek outcome id=\(shown.id) tone=\(outcome.tone.rawValue) delivered=\(delivered)")
-        let seconds = preferences.sendCloseSeconds
-        guard delivered, seconds > 0 else { return }
-        peekTask = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-            guard let self, self.peekItem?.id == shown.id else { return }
-            if shown.sourceId == WidgetAlerts.stagedReminderID {
-                if self.stagedItems.allSatisfy({ ids.contains($0.sourceId) }) {
-                    self.endPeek(advance: false)
-                } else {
-                    self.peekOutcome = nil
-                }
-            } else {
-                self.dropSentFromPeek(ids)
-            }
-        }
-    }
-
-    /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything. In the
-    /// one-after-another mode it shows the next alert instead, unless `all`; a click elsewhere closes all of them.
+    /// The popup's close button, Esc and VoiceOver's escape (`WidgetAlertPopup.dismiss`); a click elsewhere passes
+    /// `all`.
     public func dismissPeek(all: Bool = false) {
-        guard let item = peekItem else { return }
-        if peekOutcome == nil, let surface = hoveredSurface, holdPeekForStaged(on: surface) { return }
-        PerfLog.mark("widget.peek dismissed id=\(item.id) all=\(all)")
-        hoverTask?.cancel()
-        endPeek(advance: !all)
-        // The pointer is on the panel (it pressed ×): without this the hover list would open in the popup's place.
-        if peekItem == nil, expanded == nil, let surface = hoveredSurface, presentation(for: surface) == .preview {
-            hoveredSurface = nil
-            presentationChanged?()
-        }
+        applyAlertPopup(alertPopup.dismiss(all: all))
     }
 
-    /// Only a newer complete snapshot with the uncapped decision list can prove settlement.
-    private func peekSettled(_ item: WidgetInboxItem) -> Bool {
-        guard item.kind == "decision", item.needsAnswer, inbox.complete,
-              inboxGeneration > (peekTimings[item.id]?.inboxGeneration ?? inboxGeneration),
-              let pending = inbox.pendingDecisionIDs else { return false }
-        return !pending.contains(item.sourceId)
+    /// Ends the popup (`WidgetAlertPopup.end`), or with `advance` shows the next queued alert.
+    func endPeek(advance: Bool = true) {
+        applyAlertPopup(alertPopup.end(advance: advance))
     }
 
-    /// The next queued alert that still applies: a decision answered in the meantime is skipped.
-    private func nextQueuedPeek() -> WidgetInboxItem? {
-        while !peekQueue.isEmpty {
-            let next = peekQueue.removeFirst()
-            if peekSettled(next) {
-                peekTimings[next.id] = nil
-                continue
-            }
-            guard let fresh = inboxOverviewItems.first(where: { $0.id == next.id }) else { return next }
-            if next.kind == "decision", next.needsAnswer { return fresh.needsAnswer ? fresh : next }
-            if fresh.needsAnswer || !next.needsAnswer { return fresh }
+    /// The alert popup's one hand-off: the modules and the preview an event of the popup chose, then the layout and
+    /// the staged decisions. The popup itself never writes `hoveredSurface` or `moduleSelections`.
+    func applyAlertPopup(_ effect: WidgetAlertPopup.Effect) {
+        for choice in effect.modules { moduleSelections[choice.surface.key] = choice.id }
+        switch effect.preview {
+        case .show(let surface): hoveredSurface = surface
+        case .hide: if hoveredSurface != nil { hoveredSurface = nil }
+        case nil: break
         }
-        return nil
-    }
-
-    func endPeek(advance: Bool = true, includeListed: Bool = false) {
-        peekTask?.cancel()
-        peekTask = nil
-        guard let item = peekItem else { return }
-        if advance, (peekMany == .queue || includeListed), let surface = hoveredSurface, let next = nextQueuedPeek() {
-            peekTimings[item.id] = nil
-            peekItem = next
-            peekSeconds = peekTimings[next.id]?.seconds ?? 7
-            PerfLog.mark("widget.peek next id=\(next.id) after=\(item.id) waiting=\(peekQueue.count)")
-            presentationChanged?()
-            schedulePeekEnd(on: surface)
-            return
+        if effect.cancelHover { hoverTask?.cancel() }
+        if effect.relayout { presentationChanged?() }
+        switch effect.staged {
+        case .send(let staged): sendStaged(staged.map(\.sourceId), known: staged)
+        case .remind: stagedLeftInPopup?(stagedForLeave)
+        case nil: break
         }
-        peekItem = nil
-        peekQueue = []
-        peekTimings = [:]
-        if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
-            hoveredSurface = nil
-        }
-        // An open panel keeps the peek's module under the user; `collapse` restores it once the panel closes.
-        if expanded == nil { restorePeekModule() }
-        PerfLog.mark("widget.peek end id=\(item.id)")
-        presentationChanged?()
-    }
-
-    /// Puts back the module a peek replaced, unless the user chose another one since. Not saved to the defaults:
-    /// the peek's own switch never was either.
-    private func restorePeekModule() {
-        guard let replaced = peekReplaced else { return }
-        peekReplaced = nil
-        guard moduleSelections[replaced.surface.key] == replaced.shown else { return }
-        moduleSelections[replaced.surface.key] = replaced.previous
     }
 
     public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
         if inside { pointerInside.insert(surface.key) } else { pointerInside.remove(surface.key) }
         pointerChanged?(surface, inside)
         if !inside { scheduleQuietReduction() }
-        if !inside, peekItem != nil, hoveredSurface == surface {
-            if peekOutcome != nil { return }
-            // The user moved onto the popup and away again: its countdown starts again, since "Preview stays" counts
-            // the time the pointer is off it. It closed after 220 ms before, 2.5 s after it appeared (Martin,
-            // 2026-10-26: "expands the widget for a few seconds then it disappears").
-            hoverTask?.cancel()
-            schedulePeekEnd(on: surface)
+        if let effect = alertPopup.pointer(surface, inside: inside) {
+            applyAlertPopup(effect)
             return
         }
         guard layout.hoverPreviews, !dialogOpen else { return }
@@ -1478,34 +1210,7 @@ public final class WidgetModel: ObservableObject {
         inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
         refreshRailActivity()
         inboxOverviewItems = Self.overviewItems(value.sessions)
-        // Remove settled alerts in both list and queue mode. A visible alert must not keep answer buttons either.
-        let settledWaiting = peekQueue.filter { peekSettled($0) }
-        if !settledWaiting.isEmpty {
-            let ids = Set(settledWaiting.map(\.id))
-            peekQueue.removeAll { ids.contains($0.id) }
-            for id in ids { peekTimings[id] = nil }
-            presentationChanged?()
-        }
-        if let shown = peekItem, peekSettled(shown), !keepSettledPeek(shown) {
-            if peekMany == .list, let next = peekQueue.first {
-                showWaitingPeek(next)
-                peekQueue.removeAll { $0.id == shown.id }
-                peekTimings[shown.id] = nil
-                presentationChanged?()
-            } else {
-                endPeek()
-            }
-        }
-        if let outcome = peekOutcome, value.complete, inboxGeneration > peekOutcomeInboxGeneration {
-            // Absence from pendingDecisionIDs is not enough: an answered decision can still need delivery.
-            // The explicit answered-elsewhere rows identify decisions already settled by another surface.
-            let answered = Set((value.answeredElsewhere ?? []).filter(\.isAnsweredElsewhere).map(\.sourceId))
-            let waiting = outcome.sendAgain.filter { !answered.contains($0.sourceId) }
-            if waiting != outcome.sendAgain {
-                peekOutcome = WidgetPeekOutcome(text: outcome.text, tone: outcome.tone, sendAgain: waiting,
-                                                detail: outcome.detail)
-            }
-        }
+        applyAlertPopup(alertPopup.inboxChanged())
         let listed = value.sessions.flatMap { $0.items ?? [] }
         reconcileStaged(value.staged ?? listed, listed: listed)
         if value.complete, !stagedStartChecked {
@@ -1984,10 +1689,7 @@ public final class WidgetModel: ObservableObject {
         followedTranscript = nil
         hoveredSurface = nil
         hoverTask?.cancel()
-        peekTask?.cancel()
-        peekItem = nil
-        peekQueue = []
-        restorePeekModule()
+        applyAlertPopup(alertPopup.reset())
         voice?.finishInput()
         speechTask?.cancel()
         reading = false
@@ -3420,23 +3122,6 @@ private final class WidgetShutdownCompletion {
 /// How the widget's note reads: plain, a success, or a warning (a send no receiver took, a refused write).
 public enum WidgetNoticeTone: String, Equatable, Sendable { case info, success, warning }
 
-/// What a send started from the alert popup did, for the popup to show before it moves on (`WidgetModel.peekOutcome`).
-public struct WidgetPeekOutcome: Equatable {
-    public let text: String
-    public let tone: WidgetNoticeTone
-    /// Answered decisions no receiver took, for the popup's Send again (`WidgetModel.resendAnswers`).
-    public let sendAgain: [WidgetInboxItem]
-    /// Hub details (each session's own reason), behind a Details disclosure.
-    public let detail: String?
-
-    public init(text: String, tone: WidgetNoticeTone, sendAgain: [WidgetInboxItem] = [], detail: String? = nil) {
-        self.text = text
-        self.tone = tone
-        self.sendAgain = sendAgain
-        self.detail = detail
-    }
-}
-
 /// Which session's cmux popover a row's accessibility action asked for, and in which list.
 public struct WidgetCmuxRequest: Equatable, Sendable {
     public let key: String
@@ -3469,3 +3154,6 @@ public struct WidgetChatDecision: Equatable, Sendable {
     /// The loaded conversation lacks it, so `tools claude cmux find --decision` ran.
     public var terminal = false
 }
+
+/// The alert popup reads the widget through this; `applyAlertPopup` is its one hand-off.
+extension WidgetModel: WidgetAlertPopupHost {}
