@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { type DeadlineExpiry, type FailureCaller, failuresDir, type ToolFailure } from "./record";
 import { currentRunFacts, FAILURE_MESSAGE_CHARS, FAILURE_STACK_CHARS, processFailureFields } from "./watch";
@@ -107,17 +108,11 @@ let sequence = 0;
 /** Writes one `deadline` record and returns it; a caller that does not arrive in time is null. */
 export async function recordDeadline(expiry: DeadlineExpiry, dir = failuresDir()): Promise<ToolFailure> {
     const boundMs = deadlineCaller.boundMs;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const caller = await Promise.race([
-        deadlineCaller.lookup(boundMs).catch((error: unknown) => {
-            logger.debug({ error }, "failures: no caller context for a command deadline");
-            return null;
-        }),
-        new Promise<null>((resolve) => {
-            timer = setTimeout(() => resolve(null), boundMs);
-        }),
-    ]);
-    clearTimeout(timer);
+    // The worker lookup ends itself at `boundMs`; the bound here also holds a replaced `lookup` that never answers.
+    const caller = await withTimeout(deadlineCaller.lookup(boundMs), boundMs).catch((error: unknown) => {
+        logger.debug({ error }, "failures: no caller context for a command deadline");
+        return null;
+    });
 
     const run = currentRunFacts();
     const now = new Date();
