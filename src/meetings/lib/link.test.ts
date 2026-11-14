@@ -550,6 +550,34 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         expect(merged?.sections).toEqual([{ fromSec: 0, toSec: 60, present: ["Alice"] }]);
     });
 
+    test("the preserved source audio of the record that goes away stays playable on the merged record", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const name = `${"a".repeat(64)}.m4a`;
+        const folder = join(store.folder(from), SOURCE_AUDIO_FOLDER);
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, name), "owned audio");
+        await store.update(from, { command: "test", change: "preserved" }, (next) => {
+            next.audio = {
+                sources: {
+                    wisprflow: {
+                        sourceMeetingId: "call-1",
+                        path: join(folder, name),
+                        sha256: "a".repeat(64),
+                        bytes: 11,
+                        savedAt: "2026-11-05T14:10:00.000Z",
+                    },
+                },
+            };
+        });
+
+        await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+        const merged = store.read(into);
+        const owned = merged ? preservedSourceAudio(merged) : undefined;
+
+        expect(owned?.path).toBe(join(store.folder(into), SOURCE_AUDIO_FOLDER, name));
+        expect(readFileSync(owned?.path ?? "", "utf8")).toBe("owned audio");
+    });
+
     test("attendance on a record's own clock moves onto the merged clock, or is refused when it cannot be placed", async () => {
         const unlinked = await call();
         await unlinked.store.update(unlinked.from, { command: "test", change: "attendance" }, (next) => {
