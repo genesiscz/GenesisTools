@@ -842,10 +842,15 @@ export const register: Register = (on) => {
         }
 
         rememberToolPaths(e);
-        // The start time the toolTime mod draws on the row: two reads of session state in this process.
-        await noteCallTime($, e.tool_use_id).catch((error: unknown) =>
-            logMod(host, "toolTime", { error: String(error) })
-        );
+
+        // The start time the toolTime mod draws on the row: a read and a write of session state, so only while the
+        // mod is on (it is off by default) and not on every call.
+        if ((await settingsOf(host)).toolTime.enabled) {
+            await noteCallTime($, e.tool_use_id).catch((error: unknown) =>
+                logMod(host, "toolTime", { error: String(error) })
+            );
+        }
+
         const ends = liveFeatures().flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
 
         try {
