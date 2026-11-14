@@ -70,6 +70,12 @@ export default function BriefScreen() {
             : `${Math.round(brief.weather.tempC)} °C, ${brief.weather.description}`
         : null;
     const decisions = brief && brief.decisionsWaiting !== null ? `${brief.decisionsWaiting} waiting` : "Could not count";
+    const resets = (brief?.resets ?? []).map((reset) => ({
+        key: `${reset.provider}-${reset.account}`,
+        name: `${reset.account} ${reset.label}`,
+        line: resetLine(reset),
+        high: reset.utilization >= 80,
+    }));
 
     return (
         <>
@@ -139,24 +145,24 @@ export default function BriefScreen() {
                                 ))}
                             </BriefLine>
                         ) : null}
-                        {brief.resets.length > 0 ? (
+                        {resets.length > 0 ? (
                             <BriefLine
                                 testID="brief-resets"
                                 title="Short windows"
-                                summary={brief.resets.map((reset) => `${reset.account} ${reset.label} ${resetLine(reset)}`).join(". ")}
+                                summary={resets.map((reset) => `${reset.name} ${reset.line}`).join(". ")}
                                 href="/claude-usage"
                             >
-                                {brief.resets.map((reset) => (
-                                    <View key={`${reset.provider}-${reset.account}`} className="flex-row justify-between">
-                                        <Text style={{ color: c.textSecondary, fontSize: 13 }}>{`${reset.account} ${reset.label}`}</Text>
+                                {resets.map((reset) => (
+                                    <View key={reset.key} className="flex-row justify-between">
+                                        <Text style={{ color: c.textSecondary, fontSize: 13 }}>{reset.name}</Text>
                                         <Text
                                             style={{
-                                                color: reset.utilization >= 80 ? c.warning : c.textPrimary,
+                                                color: reset.high ? c.warning : c.textPrimary,
                                                 fontFamily: "monospace",
                                                 fontSize: 12,
                                             }}
                                         >
-                                            {resetLine(reset)}
+                                            {reset.line}
                                         </Text>
                                     </View>
                                 ))}
