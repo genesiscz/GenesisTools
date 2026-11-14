@@ -859,11 +859,9 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             });
             // The look-alikes take the answer as it was stored (a matched person's own name), and only one person:
             // an ordered "Alice, then Bob" fits this range, not another range of the same voice.
+            const decided = new Set(question.decides);
             const severalVoices = record.items.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    question.decides.includes(item.id) &&
-                    (item.voices?.length ?? 0) > 1
+                (item) => item.kind === "speaker-range" && decided.has(item.id) && (item.voices?.length ?? 0) > 1
             );
             const alike =
                 action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
