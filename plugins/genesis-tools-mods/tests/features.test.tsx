@@ -1927,6 +1927,7 @@ test("links: a bare PR number takes the repository the reply means, not only the
         "acme/web#13": "web thirteen",
         "acme/api#14": "api fourteen",
         "acme/shop#15": "shop fifteen",
+        "acme/shop#16": "shop sixteen",
     };
     const done = (stdout: string, exitCode = 0) => ({
         exitCode,
@@ -2005,9 +2006,10 @@ test("links: a bare PR number takes the repository the reply means, not only the
     expect(await linkLine(one, "#11 is older.\n")).toBe(
         "[#11 (tools eleven)](https://github.com/acme/tools/pull/11) is older.\n"
     );
-    // A name no project of the session has is guessed under the session's owner; once gh confirms it, it is known.
-    expect(await linkLine(one, "shop#15, and #15 again.\n")).toBe(
-        "[shop#15 (shop fifteen)](https://github.com/acme/shop/pull/15), and [#15 (shop fifteen)](https://github.com/acme/shop/pull/15) again.\n"
+    // A name no project of the session has is guessed under the session's owner; once gh confirms it, later numbers
+    // of that name find it, and they stay a guess as well.
+    expect(await linkLine(one, "shop#15, shop#16, and #15 again.\n")).toBe(
+        "[shop#15 (shop fifteen)](https://github.com/acme/shop/pull/15), [shop#16 (shop sixteen)](https://github.com/acme/shop/pull/16), and [#15 (shop fifteen)](https://github.com/acme/shop/pull/15) again.\n"
     );
     // The nearest repository is a GitLab project: a #12 there is no GitHub PR, so it is not even asked.
     expect(await linkLine(one, "See https://gitlab.example.test/group/app/-/merge_requests/3 and #12.\n")).toBe(
@@ -2029,16 +2031,19 @@ test("links: a bare PR number takes the repository the reply means, not only the
     await appendLinkedPullRequestNote(async (text) => {
         note = text;
     });
-    // The guesses are listed with what makes them certain; #7 (linked in the reply), acme/api#9, web#10 and shop#15
-    // (written at the number, the second #15 linked in the reply) are only counted.
-    const guess = (n: number, repo: string, why: string) =>
-        `- ⚠️ #${n} -> https://github.com/${repo}/pull/${n} (guessed: ${why}). Next time write ${repo}#${n}, or [#${n} (<its title>)](https://github.com/${repo}/pull/${n}) after checking the title.`;
-    expect(note.split("\n").slice(1, 6)).toEqual([
+    // The guesses are listed with what makes them certain; #7 (linked in the reply), acme/api#9 and web#10 (written at
+    // the number) are only counted. shop#15, shop#16 and the second #15 have a guessed owner: gh finding the PR there
+    // does not show the reply meant it.
+    const guess = (n: number, repo: string, why: string, token = `#${n}`) =>
+        `- ⚠️ ${token} -> https://github.com/${repo}/pull/${n} (guessed: ${why}). Next time write ${repo}#${n}, or [#${n} (<its title>)](https://github.com/${repo}/pull/${n}) after checking the title.`;
+    expect(note.split("\n").slice(1, 8)).toEqual([
         guess(8, "acme/web", "the nearest repository the reply names"),
         guess(11, "acme/tools", "the session linked #11 there before"),
+        guess(15, "acme/shop", "the owner of the session's checkout"),
+        guess(16, "acme/shop", "the owner of the session's checkout", "shop#16"),
         guess(13, "acme/web", "the nearest repository the reply names"),
         guess(14, "acme/api", "the session's checkout"),
-        "4 more links were written with their repository and need no check.",
+        "3 more links were written with their repository and need no check.",
     ]);
     expect(note).not.toContain("acme/api#9 ->");
     expect(note).not.toContain("/pull/7");
@@ -2159,7 +2164,7 @@ test("links: the repository that heads a list of numbers owns them all, as in th
     const back = [1255, 1260, 1262, 1263];
     // Both repositories have every number, so a wrong guess gives a wrong link instead of none.
     const titles: Record<string, string> = {};
-    for (const n of [...front, ...back, 42, 43]) {
+    for (const n of [...front, ...back, 42, 43, 931, 932, 933, 934, 935, 936, 1264, 1265, 1266]) {
         titles[`acme/Toolbox#${n}`] = `toolbox ${n}`;
         titles[`acme/Playground#${n}`] = `playground ${n}`;
     }
@@ -2188,6 +2193,18 @@ test("links: the repository that heads a list of numbers owns them all, as in th
     // A name before the number that heads no list leaves the nearest name to decide, as before.
     expect(await linkLine(ctx, "Toolbox is done, and the API fix is #43 in Playground.\n")).toBe(
         `Toolbox is done, and the API fix is ${p(43)} in Playground.\n`
+    );
+    // A head written with its own number and title still heads the list after that title.
+    expect(await linkLine(ctx, "acme/Toolbox#931 (first fix), #932, and Playground #1264.\n")).toBe(
+        `[acme/Toolbox#931](https://github.com/acme/Toolbox/pull/931) (first fix), ${t(932)}, and Playground ${p(1264)}.\n`
+    );
+    // A colon may open the list after the name.
+    expect(await linkLine(ctx, "Toolbox: #933, #934, and Playground #1265.\n")).toBe(
+        `Toolbox: ${t(933)}, ${t(934)}, and Playground ${p(1265)}.\n`
+    );
+    // A period inside a written title ends no sentence, so the name before the title still heads the list.
+    expect(await linkLine(ctx, "Toolbox #935 (fix API. Keep state), #936, and Playground #1266.\n")).toBe(
+        `Toolbox [#935](https://github.com/acme/Toolbox/pull/935) (fix API. Keep state), ${t(936)}, and Playground ${p(1266)}.\n`
     );
     takeLinkedPullRequestNote();
 });

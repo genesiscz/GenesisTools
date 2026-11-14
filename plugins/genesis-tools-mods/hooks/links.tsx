@@ -264,7 +264,8 @@ export const PR_REFERENCE_SECTION: PromptComposeSection = {
 
 /**
  * The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. `certain`: the reply wrote the
- * repository at the number or linked the number itself; every other repository is a guess.
+ * repository at the number or linked the number itself; every other repository is a guess, and so is the owner given
+ * to a name no known project has (`shop#15`).
  */
 type LinkedPullRequest = { token: string; repo: string; number: string; why: string; url: string; certain: boolean };
 const linkedPullRequests = new Map<string, LinkedPullRequest>();
@@ -449,10 +450,14 @@ const LIST_PART = /\s+|,|(?:and|or|to)\b|#\d{1,6}\b/y;
  * Whether `span`, from a repository mention to a PR number, is a list that mention heads ("Toolbox #923, #925 to #927
  * and #930"): after the mention's own text, only commas, "and", "to", "or", other numbers and the titles written after
  * them. A mention inside an earlier number's title is cut off by the title's parenthesis, so it heads nothing.
+ * `numbered`: the mention carries a number itself (`acme/Toolbox#1`), so the title written after it is skipped too. A
+ * colon may open the list right after the mention ("Toolbox: #923, #930").
  */
-function headsList(span: string): boolean {
+function headsList(span: string, numbered: boolean): boolean {
     LIST_HEAD.lastIndex = 0;
     let i = LIST_HEAD.exec(span)?.[0].length ?? 0;
+    i += numbered ? writtenTitleSpan(span.slice(i)) : 0;
+    i += span[i] === ":" ? 1 : 0;
 
     while (i < span.length) {
         LIST_PART.lastIndex = i;
@@ -469,6 +474,14 @@ function headsList(span: string): boolean {
     return true;
 }
 
+/** Why a repository is guessed when a name no known project has (`shop#15`) gets the session checkout's owner. */
+const OWNER_GUESS = "the owner of the session's checkout";
+/**
+ * The projects guessed that way. Once gh finds the PR, the guess is known for the rest of the reply, and a later
+ * `shop#16` or `#15` that finds it is as much a guess as the first.
+ */
+const ownerGuesses = new WeakSet<ForgeProject>();
+
 async function prRepo(
     ctx: LinkContext,
     n: number,
@@ -480,7 +493,9 @@ async function prRepo(
         const project = mention.number === n && !mention.path ? await mentionProject(ctx, mention) : undefined;
 
         if (project?.kind === "github") {
-            return { project, why: `the reply links #${n} there`, certain: true };
+            return ownerGuesses.has(project)
+                ? { project, why: OWNER_GUESS }
+                : { project, why: `the reply links #${n} there`, certain: true };
         }
     }
 
@@ -503,7 +518,7 @@ async function prRepo(
             : ctx.line
                   .filter((m) => m.start < at && sameSentence(m))
                   .reverse()
-                  .find((m) => headsList(lineText.slice(m.start, at)));
+                  .find((m) => headsList(lineText.slice(m.start, at), m.number !== undefined));
     // A repository name inside the title written after the number is part of that title, not a pointer to the
     // repository: in a two-checkout session it counts only after the titles were compared.
     const titleFrom = at + `#${n}`.length;
@@ -590,9 +605,24 @@ async function prTarget(
     if (name && written) {
         const project = owner
             ? { kind: "github" as const, host: githubHost(ctx), path: `${owner}/${name}` }
-            : (projectNamed(name, knownProjects(ctx)) ?? sameOwner(name, ctx.project));
+            : projectNamed(name, knownProjects(ctx));
 
-        return project ? { project, number: written, why: "written at the number", certain: true } : undefined;
+        if (project) {
+            return ownerGuesses.has(project)
+                ? { project, number: written, why: OWNER_GUESS }
+                : { project, number: written, why: "written at the number", certain: true };
+        }
+
+        // `shop#15` with no known `shop`: gh finding the PR under the checkout's owner does not show the reply meant it.
+        const guess = sameOwner(name, ctx.project);
+
+        if (!guess) {
+            return undefined;
+        }
+
+        ownerGuesses.add(guess);
+
+        return { project: guess, number: written, why: OWNER_GUESS };
     }
 
     const n = token.slice(1);
@@ -873,7 +903,14 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
     let at = 0;
     const known = knownProjects({ ...ctx, line: [] });
     ctx.line = [...mentionsIn(line, githubHost(ctx)), ...namesIn(line, known)].sort((a, b) => a.start - b.start);
-    const ends = [...line.matchAll(/[.!?;](?=\s|$)/g)].map((match) => match.index ?? 0);
+    // A period inside the title written after a number ends no sentence: "Toolbox #923 (fix API. Keep state), #930".
+    const titles = [...line.matchAll(/#\d{1,6}\b/g)].map((match) => {
+        const from = (match.index ?? 0) + match[0].length;
+        return { from, to: from + writtenTitleSpan(line.slice(from)) };
+    });
+    const ends = [...line.matchAll(/[.!?;](?=\s|$)/g)]
+        .map((match) => match.index ?? 0)
+        .filter((end) => !titles.some(({ from, to }) => end > from && end < to));
     ctx.sentenceAt = (at) => ends.filter((end) => end < at).length;
     ctx.lineText = line;
 
