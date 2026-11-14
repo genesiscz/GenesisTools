@@ -102,6 +102,8 @@ export function rawMeeting(options: {
     points: SummaryPoint[];
     people?: PairedPerson[];
     terms?: RawTermEvidence;
+    /** Only the lines that start in this window, measured and listed (`evidence --table --from/--to`). */
+    window?: { fromSec: number; toSec: number };
 }): RawMeeting {
     const { record, meeting, evidence } = options;
     const roster = rosterPresence(record, Math.max(...meeting.transcript.map((entry) => (entry.startSec ?? 0) + 5), 0));
@@ -112,7 +114,8 @@ export function rawMeeting(options: {
         meeting.transcript,
         evidence ?? { segments: [], speaking: [] },
         presence,
-        options.energyMicShare
+        options.energyMicShare,
+        options.window ? { window: options.window } : {}
     );
     const selfName = record.participants.find((person) => person.self)?.name;
     const facts = indicatorFacts(options);

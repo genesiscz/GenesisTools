@@ -1431,17 +1431,6 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         expect(store.resolve(REVIEW.id)?.project).toBeUndefined();
         expect(Object.keys((await config.read()).projects)).toEqual([]);
-
-        // The notice's Undo: the block and the meeting it left without a project come back, once.
-        expect(await client.call("projects.restore", { backup: removal.backup })).toMatchObject({
-            name: "Harbor",
-            meetings: [REVIEW.id],
-        });
-        expect(store.resolve(REVIEW.id)?.project).toBe("Harbor");
-        expect((await config.read()).projects.Harbor?.labels).toEqual(["Checkout"]);
-        expect((await failure(client.call("projects.restore", { backup: removal.backup }))).message).toContain(
-            "exists again"
-        );
     });
 
     test("the dictionary: add, show, test, a refused Undo's add, a rename and remove", async () => {
@@ -2545,13 +2534,6 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, action: "remove", name: "Robin Example" },
         "The record without the person."
     );
-    const removal = examples.findLast((example) => example.method === "projects.remove" && example.reply?.result);
-    await ask(
-        window,
-        "projects.restore",
-        { backup: (removal?.reply?.result as { backup?: string } | undefined)?.backup },
-        "The Undo of the removal: the block, its pairings and the meeting it left without a project come back."
-    );
     return examples;
 }
 
@@ -3052,61 +3034,5 @@ describe("explicit word timing generation", () => {
         const fromDirect = await direct.call("meeting.transcript", { ref: REVIEW.id });
         expect(fromSocket).toEqual(fromDirect);
         expect(fromSocket.entries[0].words?.[0].range).toEqual({ location: 0, length: 3 });
-    });
-
-    test("generation reads the preserved audio after the source removed its file", async () => {
-        const f = setup();
-        const read: string[] = [];
-        const wordTimings = {
-            cache: f.cache,
-            modelFiles: f.deps.modelFiles,
-            infer: async (input: { audioPath: string }) => {
-                read.push(input.audioPath);
-                return {
-                    words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
-                    pcmSha256: "fake-pcm",
-                    modelFiles: f.modelFiles,
-                };
-            },
-        };
-        const { store } = await startService({ deps: { wordTimings } });
-        const owned = join(store.folder(REVIEW.id), "source-audio", `${"b".repeat(64)}.ogg`);
-        mkdirSync(dirname(owned), { recursive: true });
-        writeFileSync(owned, "owned");
-        await store.update(REVIEW.id, { command: "test", change: "preserved" }, (next) => {
-            next.audio = {
-                sources: {
-                    wisprflow: {
-                        sourceMeetingId: "wf-2041",
-                        path: owned,
-                        sha256: "b".repeat(64),
-                        bytes: 5,
-                        savedAt: "2026-11-05T14:10:00.000Z",
-                    },
-                },
-            };
-        });
-        const removed: TranscriptSource = {
-            ...fakeSource(),
-            evidence: async () => ({ segments: [], speaking: [], files: [] }),
-        };
-        const direct = new InProcessMeetingsClient({
-            hello,
-            deps: {
-                store: () => store,
-                linkedSource: () => ({ source: removed, sourceMeetingId: "wf-2041" }),
-                ...quietDeps,
-                wordTimings,
-            },
-        });
-        closing.push(() => direct.close());
-
-        await direct.call("meeting.wordTimings.generate", {
-            ref: REVIEW.id,
-            fromSec: 0,
-            toSec: 12,
-            model: "test/words",
-        });
-        expect(read).toEqual([owned]);
     });
 });

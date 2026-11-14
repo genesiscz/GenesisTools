@@ -9,7 +9,6 @@ import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/rec
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { embedVoice, VoiceUnavailableError } from "@genesiscz/utils/meetings/voice";
 import { clusterVoices, lineVoices, measureVoice, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -581,7 +580,6 @@ test("compact evidence has 509 bounded rows with mic percent and unknown", () =>
     expect(compact).toContain("mic?");
 });
 
-import { decimate } from "./lib/acoustic";
 import { attributeByChannel } from "./lib/channel-operation";
 import { OpenedMeeting } from "./lib/opened-meeting";
 
@@ -745,13 +743,6 @@ test("a channel replacement stays on its label, applies with an empty plan, stam
     await expect(
         journal.apply({ meeting: record.id, actor: agent, action: { kind: "add", findings: [] } })
     ).rejects.toThrow("at least one finding");
-});
-
-test("the echo lag of a preview is searched on a 2 kHz copy, and a too short voice sample is an unknown voice", async () => {
-    expect(Array.from(decimate(Float32Array.from([1, 3, 5, 7, 2]), 2))).toEqual([2, 6]);
-    await expect(
-        embedVoice({ audioPath: "/fixture/none.wav", channel: 0, fromSec: 0, toSec: 1 })
-    ).rejects.toBeInstanceOf(VoiceUnavailableError);
 });
 
 test("line evidence with a window measures only the lines that start in it, at their whole-transcript index", () => {

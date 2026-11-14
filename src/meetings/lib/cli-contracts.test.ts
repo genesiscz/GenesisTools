@@ -168,6 +168,50 @@ test("--clip --no-start plans once without cutting, saving or starting a player"
     }
 });
 
+test("evidence refuses the voice flags for an output that cannot show them, before it opens the recording", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Voices", start: "2026-11-09T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "evidence" });
+        await program.parseAsync(["evidence", record.id, "--voices", "3"], { from: "user" });
+        expect(process.exitCode).toBe(1);
+        expect(String(human.mock.calls.at(-1)?.[0])).toContain("--voices and --voice-features print with");
+    } finally {
+        human.mockRestore();
+        raw.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("items reject by a filter that matches nothing succeeds and writes no journal entry", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Filter", start: "2026-11-09T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const results: unknown[] = [];
+    const result = spyOn(out, "result").mockImplementation((data: unknown) => {
+        results.push(data);
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "reject" });
+        await program.parseAsync(["reject", record.id, "--kind", "term", "--json"], { from: "user" });
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(results.map((data) => SafeJSON.parse(String(data)))).toEqual([{ decided: [], skipped: [] }]);
+        expect(existsSync(join(store.folder(record.id), "decisions.ndjson"))).toBe(false);
+    } finally {
+        result.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("the items column keeps a long quote's source inside its width", async () => {
     const store = new MeetingStore();
     const record = await store.create(

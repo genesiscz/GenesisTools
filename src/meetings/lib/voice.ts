@@ -11,11 +11,13 @@ export async function meetingVoices(options: {
     opened: OpenedMeeting;
     voices?: number;
     channel?: number;
+    /** Decodes the recording's voice frames (tests pass a table); ffmpeg by default. */
+    frames?: typeof voiceFrames;
 }): Promise<LineVoice[]> {
     const meeting = await options.opened.meeting();
     const lines = lineEvidence(meeting.transcript, { segments: [], speaking: [] });
     const spans = lines.map((line) => ({ index: line.index, fromSec: line.startSec, toSec: line.endSec }));
-    const frames = await voiceFrames({ audioPath: await options.opened.audioPath() });
+    const frames = await (options.frames ?? voiceFrames)({ audioPath: await options.opened.audioPath() });
     const measured = lineVoices({ frames, spans });
     if (options.voices === undefined) {
         return measured;

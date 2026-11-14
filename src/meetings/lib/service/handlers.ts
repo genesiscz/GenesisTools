@@ -11,6 +11,7 @@ import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
+import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
@@ -84,6 +85,8 @@ export interface MeetingsHandlerDeps {
     cut?: typeof cutClip;
     /** Reads a recording's tracks and length (tests pass a fake); ffprobe by default. */
     probe?: typeof probeAudio;
+    /** Decodes a recording's voice frames for `meeting.voice` (tests pass a table); ffmpeg by default. */
+    voiceFrames?: typeof voiceFrames;
     /** Whether ffmpeg can cut here (tests answer); `Bun.which("ffmpeg")` by default. */
     hasFfmpeg?: () => boolean;
     /** Makes a tone preview (tests pass a fake); ffmpeg by default. */
@@ -210,6 +213,7 @@ function changedPeople<T>(value: T, context: MeetingsCallContext): T {
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
     const storeOf = deps.store ?? (() => new MeetingStore());
+    const acousticTarget = () => ({ store: storeOf(), linkedSource: deps.linkedSource });
 
     return {
         hello: (params, context) => context.hello(params),
@@ -284,6 +288,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 opened: OpenedMeeting.of(store, record, deps.linkedSource?.(record)),
                 voices: params.voices,
                 channel: params.channel,
+                frames: deps.voiceFrames,
             });
         },
         "meeting.transcript": async (params) => {
@@ -426,17 +431,21 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "tone.presets": async () => (await moments()).listTonePresets(),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
+        // The acoustic reads open the meeting with the service's source, as every other read does.
         "acoustic.inspect": async (params) =>
-            (await import("../acoustic")).inspectAcoustic({ store: storeOf(), ...params }),
-        "acoustic.clip": async (params) => (await import("../acoustic")).acousticClip({ store: storeOf(), ...params }),
-        "voice.score": async (params) => (await import("../acoustic")).voiceMeeting({ store: storeOf(), ...params }),
+            (await import("../acoustic")).inspectAcoustic({ ...acousticTarget(), ...params }),
+        "acoustic.clip": async (params) =>
+            (await import("../acoustic")).acousticClip({ ...acousticTarget(), ...params }),
+        "voice.score": async (params) => (await import("../acoustic")).voiceMeeting({ ...acousticTarget(), ...params }),
         "voice.prepare": async () => ({
             path: await (await import("@genesiscz/utils/meetings/voice")).prepareVoiceModel(),
         }),
-        "voice.enroll": async (params) => (await import("../acoustic")).voiceMeeting({ store: storeOf(), ...params }),
-        "acoustic.collect": async (params) => (await import("../acoustic")).collectAcoustic(storeOf(), params.meeting),
+        "voice.enroll": async (params) =>
+            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(), ...params }),
+        "acoustic.collect": async (params) =>
+            (await import("../acoustic")).collectAcoustic({ ...acousticTarget(), meeting: params.meeting }),
         "voice.collect": async (params) =>
-            (await import("../acoustic")).collectVoiceEvidence(storeOf(), params.meeting),
+            (await import("../acoustic")).collectVoiceEvidence({ ...acousticTarget(), meeting: params.meeting }),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
         "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),

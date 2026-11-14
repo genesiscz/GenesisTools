@@ -3,7 +3,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { parseClock } from "@genesiscz/utils/transcribe/render";
@@ -74,16 +74,20 @@ async function evidence(
 
         // A meeting without a transcript source fails in linked() with [no-transcript-source], as every command does.
         const opened = OpenedMeeting.of(store, record);
+        // The voice measurement decodes the whole recording: only when asked for, and only into an output that shows it.
+        const wantsVoice = opts.voiceFeatures === true || opts.voices !== undefined;
+        if (wantsVoice && (opts.table || (format === "table" && !opts.raw))) {
+            throw new Error("--voices and --voice-features print with --format json, --format lines or --raw");
+        }
+
         if (opts.table) {
-            const raw = await channelEvidence(opened);
             const from = opts.from === undefined ? 0 : (parseClock(opts.from) ?? NaN);
             const to = opts.to === undefined ? Infinity : (parseClock(opts.to) ?? NaN);
             if (!Number.isFinite(from) || Number.isNaN(to) || from < 0 || to < from) {
                 throw new Error("--from/--to need ordered, nonnegative seconds");
             }
-            out.print(
-                `${compactEvidence({ ...raw, lines: raw.lines.filter((line) => line.fromSec >= from && line.fromSec <= to) })}\n`
-            );
+            const raw = await channelEvidence(opened, { fromSec: from, toSec: to });
+            out.print(`${compactEvidence(raw)}\n`);
             return;
         }
         const { source } = await opened.linked();
@@ -92,14 +96,17 @@ async function evidence(
 
         const presence = await opened.presence(opts.attendance);
         const energy = await opened.energy();
-        const voice =
-            format === "json" || opts.raw || opts.voiceFeatures || opts.voices
-                ? await meetingVoices({
-                      opened,
-                      voices: opts.voices === undefined ? undefined : Number(opts.voices),
-                      channel: opts.channel === undefined ? undefined : Number(opts.channel),
-                  })
-                : undefined;
+        const voice = wantsVoice
+            ? new Map(
+                  (
+                      await meetingVoices({
+                          opened,
+                          voices: opts.voices === undefined ? undefined : Number(opts.voices),
+                          channel: opts.channel === undefined ? undefined : Number(opts.channel),
+                      })
+                  ).map((measured) => [measured.index, measured])
+              )
+            : undefined;
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw || format === "lines") {
@@ -145,7 +152,7 @@ async function evidence(
                     ...raw,
                     lines: raw.lines.map((line) => ({
                         ...line,
-                        voice: voice?.find((v) => v.index === line.index),
+                        ...(voice ? { voiceFeatures: voice.get(line.index) } : {}),
                         deviceCandidates: lineDeviceCandidates({
                             record: current,
                             atSec: line.fromSec,
@@ -211,25 +218,23 @@ async function evidence(
                         channels: energy.calibration ?? null,
                         files: found.files,
                         devices: found.devices,
-                        lines: lines.map((line) => ({
-                            ...line,
-                            voice: voice?.find((v) => v.index === line.index),
-                            deviceCandidates: lineDeviceCandidates({
+                        lines: lines.map((line) => {
+                            const deviceCandidates = lineDeviceCandidates({
                                 record,
                                 atSec: line.startSec,
                                 micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
                                 liveName: line.liveName,
-                            }),
-                            winner:
-                                lineDeviceCandidates({
-                                    record,
-                                    atSec: line.startSec,
-                                    micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
-                                    liveName: line.liveName,
-                                }).length > 1
-                                    ? undefined
-                                    : line.winner,
-                        })),
+                            });
+                            // A shared device names no winner: several people speak into it, whatever the share.
+                            const shared =
+                                deviceCandidates.length > 1 || (line.winner === SELF && sharedOwnMicrophone(record));
+                            return {
+                                ...line,
+                                ...(voice ? { voiceFeatures: voice.get(line.index) } : {}),
+                                deviceCandidates,
+                                winner: shared ? undefined : line.winner,
+                            };
+                        }),
                     },
                     null,
                     2
@@ -296,6 +301,12 @@ async function evidence(
     } catch (err) {
         fail(err);
     }
+}
+
+/** More than one person speaks into the owner's microphone: its microphone group, else the room seats. */
+function sharedOwnMicrophone(record: MeetingRecord): boolean {
+    const group = record.seats?.microphones?.find((one) => one.id === "self");
+    return (group?.people.length ?? record.seats?.room.length ?? 0) > 1;
 }
 
 export function registerEvidenceCommand(program: Command): void {
