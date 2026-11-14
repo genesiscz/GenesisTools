@@ -1134,21 +1134,46 @@ final class FocusSessionKeysTests: XCTestCase {
     }
 }
 
+/// The ledger queue held by `FocusStudioModelTests.holdLedger`.
+private struct LedgerHold {
+    let gate: DispatchSemaphore
+    let blocker: Task<DispatchTimeoutResult, Error>
+
+    func release() { gate.signal() }
+
+    /// `.success` when the hold ended on `release()`, not on its 5 s timeout.
+    func status() async throws -> DispatchTimeoutResult { try await blocker.value }
+}
+
 extension FocusStudioModelTests {
-    func testSuspendingCapturePausePreservesCountsAndSerializesLaterUIResumeAndPause() async throws {
-        let recorder = ActivityRecorder(store: store, liveServices: false)
+    /// A started recorder without live services, already capturing `title` in the Editor app.
+    private func startedRecorder(title: String = "Fixture",
+                                 probeReader: (@Sendable (pid_t, String) -> AXFocusProbe.Result)? = nil) -> ActivityRecorder {
+        let recorder = ActivityRecorder(store: store, liveServices: false, probeReader: probeReader)
         recorder.start()
-        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
-        recorder.recordKeyForTesting()
-        recorder.recordKeyForTesting()
-        let entered = expectation(description: "ledger queue held")
-        let prepared = expectation(description: "capture pause prepared")
+        recorder.applyProbe(.init(title: title, url: nil, displayId: nil), bundle: "test.editor", appName: "Editor",
+                            settings: FocusSettings(), idle: false)
+        return recorder
+    }
+
+    /// Parks a task inside the ledger queue until `release()`, so later recorder work queues behind it.
+    private func holdLedger(_ label: String = "") async throws -> LedgerHold {
+        let entered = expectation(description: "ledger queue held \(label)")
         let gate = DispatchSemaphore(value: 0)
         let ledger = try XCTUnwrap(store)
         let blocker = Task.detached {
             try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
         }
         await fulfillment(of: [entered], timeout: 2)
+        return LedgerHold(gate: gate, blocker: blocker)
+    }
+
+    func testSuspendingCapturePausePreservesCountsAndSerializesLaterUIResumeAndPause() async throws {
+        let recorder = startedRecorder()
+        recorder.recordKeyForTesting()
+        recorder.recordKeyForTesting()
+        let prepared = expectation(description: "capture pause prepared")
+        let hold = try await holdLedger()
         recorder.suspendingTransitionPrepared = { prepared.fulfill() }
         let firstDeadline = Date().addingTimeInterval(600)
         let lastDeadline = firstDeadline.addingTimeInterval(600)
@@ -1159,9 +1184,9 @@ extension FocusStudioModelTests {
         recorder.suspendingTransitionPrepared = nil
         recorder.resumeCapture()
         recorder.pauseCapture(until: lastDeadline)
-        gate.signal()
+        hold.release()
         await pause.value
-        let waitStatus = try await blocker.value
+        let waitStatus = try await hold.status()
         XCTAssertEqual(waitStatus, .success, "the main actor must progress while persistence waits")
         await recorder.waitForPersistence()
         let reopened = try ActivityStore(path: path)
@@ -1179,20 +1204,12 @@ extension FocusStudioModelTests {
     func testSuspendingAttachAttributesAFlushDuringTheWaitToItsNewSessionAndKeepsLaterUIAttach() async throws {
         let first = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 0))
         let second = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 1))
-        let recorder = ActivityRecorder(store: store, liveServices: false)
-        recorder.start()
-        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let recorder = startedRecorder()
         recorder.attach(sessionId: first)
         recorder.recordKeyForTesting()
         recorder.recordKeyForTesting()
-        let entered = expectation(description: "ledger queue held")
         let prepared = expectation(description: "session split prepared")
-        let gate = DispatchSemaphore(value: 0)
-        let ledger = try XCTUnwrap(store)
-        let blocker = Task.detached {
-            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
-        }
-        await fulfillment(of: [entered], timeout: 2)
+        let hold = try await holdLedger()
         recorder.suspendingTransitionPrepared = { prepared.fulfill() }
         let attach = Task { @MainActor in
             await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.attachAsync(sessionId: second) }
@@ -1202,9 +1219,9 @@ extension FocusStudioModelTests {
         recorder.recordKeyForTesting()
         recorder.flushOffMainForTesting()
         recorder.attach(sessionId: nil)
-        gate.signal()
+        hold.release()
         await attach.value
-        let waitStatus = try await blocker.value
+        let waitStatus = try await hold.status()
         XCTAssertEqual(waitStatus, .success)
         await recorder.waitForPersistence()
         let reopened = try ActivityStore(path: path)
@@ -1221,9 +1238,7 @@ extension FocusStudioModelTests {
     }
 
     func testSuspendingCaptureRetriesFailedInputAndSegmentAndGapCloses() async throws {
-        let recorder = ActivityRecorder(store: store, liveServices: false)
-        recorder.start()
-        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let recorder = startedRecorder()
         recorder.recordKeyForTesting()
         var other: OpaquePointer?
         XCTAssertEqual(sqlite3_open(path, &other), SQLITE_OK)
@@ -1246,18 +1261,9 @@ extension FocusStudioModelTests {
 
 extension FocusStudioModelTests {
     func testQueuedRecorderProbeAndSettingsStopKeepTheLedgerOffMainAndCloseEverySegment() async throws {
-        let recorder = ActivityRecorder(store: store, liveServices: false)
-        recorder.start()
-        let probe = AXFocusProbe.Result(title: "First", url: nil, displayId: nil)
-        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
-        let entered = expectation(description: "ledger queue held")
+        let recorder = startedRecorder(title: "First")
         let prepared = expectation(description: "pause admitted")
-        let gate = DispatchSemaphore(value: 0)
-        let ledger = try XCTUnwrap(store)
-        let blocker = Task.detached {
-            try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
-        }
-        await fulfillment(of: [entered], timeout: 2)
+        let hold = try await holdLedger()
         recorder.suspendingTransitionPrepared = { prepared.fulfill() }
         let pause = Task { @MainActor in
             await ActivityStore.$suspendingAccessRequired.withValue(true) { await recorder.pauseCaptureAsync(until: Date().addingTimeInterval(600)) }
@@ -1270,9 +1276,9 @@ extension FocusStudioModelTests {
         disabled.captureEnabled = false
         recorder.apply(settings: disabled)
         recorder.stop()
-        gate.signal()
+        hold.release()
         await pause.value
-        let waitStatus = try await blocker.value
+        let waitStatus = try await hold.status()
         XCTAssertEqual(waitStatus, .success)
         await recorder.waitForPersistence()
         let reopened = try ActivityStore(path: path)
@@ -1291,22 +1297,14 @@ extension FocusStudioModelTests {
             let readEntered = expectation(description: "AX read started \(change)")
             let readGate = DispatchSemaphore(value: 0)
             let secret = "Secret AX \(change)"
-            let recorder = ActivityRecorder(store: store, liveServices: false, probeReader: { _, _ in
+            let recorder = startedRecorder(title: "Visible", probeReader: { _, _ in
                 readEntered.fulfill()
                 guard readGate.wait(timeout: .now() + 5) == .success else { return .init() }
                 return .init(title: secret, url: nil, displayId: nil)
             })
-            recorder.start()
-            recorder.applyProbe(.init(title: "Visible", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
-            let entered = expectation(description: "ledger held \(change)")
             let prepared = expectation(description: "attach prepared \(change)")
             let queued = expectation(description: "AX result queued behind settings \(change)")
-            let gate = DispatchSemaphore(value: 0)
-            let ledger = try XCTUnwrap(store)
-            let blocker = Task.detached {
-                try await ledger.perform { _ in entered.fulfill(); return gate.wait(timeout: .now() + 5) }
-            }
-            await fulfillment(of: [entered], timeout: 2)
+            let hold = try await holdLedger(change)
             recorder.suspendingTransitionPrepared = { prepared.fulfill() }
             let attach = Task { @MainActor in await recorder.attachAsync(sessionId: nil) }
             await fulfillment(of: [prepared], timeout: 2)
@@ -1321,10 +1319,10 @@ extension FocusStudioModelTests {
             recorder.apply(settings: policy)
             readGate.signal()
             await fulfillment(of: [queued], timeout: 2)
-            gate.signal()
+            hold.release()
             await attach.value
             await read.value
-            let status = try await blocker.value
+            let status = try await hold.status()
             XCTAssertEqual(status, .success)
             await recorder.waitForPersistence()
             let reopened = try ActivityStore(path: path)
@@ -1344,9 +1342,7 @@ extension FocusStudioModelTests {
     private func checkExtractedInputHandoff(_ operation: String) async throws {
         let first = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 0))
         let second = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: nowMs(), state: "running", cycleIndex: 1))
-        let recorder = ActivityRecorder(store: store, liveServices: false)
-        recorder.start()
-        recorder.applyProbe(.init(title: "Visible", url: nil, displayId: nil), bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        let recorder = startedRecorder(title: "Visible")
         recorder.attach(sessionId: first)
         recorder.recordKeyForTesting()
         recorder.recordKeyForTesting()
