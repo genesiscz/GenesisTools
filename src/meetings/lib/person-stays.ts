@@ -99,6 +99,16 @@ export function personStays(options: {
                     sameName(voice.person, person.name)
                 );
             }) ?? false;
+        // What vetoes an inferred departure: a confirmed range of theirs, or a matched voice of theirs, after it.
+        const laterEvidence = (afterSec: number) =>
+            options.record.items.some(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.status === "confirmed" &&
+                    item.speaker &&
+                    sameName(item.speaker, person.name) &&
+                    item.toSec > afterSec
+            ) || laterMatchedVoice(afterSec);
         for (const event of options.departures ?? []) {
             if (!sameName(event.name, person.name)) {
                 continue;
@@ -109,15 +119,7 @@ export function personStays(options: {
                     !line.speakingUnknown &&
                     Object.keys(line.speaking).some((name) => sameName(name, person.name))
             );
-            const confirmed = options.record.items.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "confirmed" &&
-                    item.speaker &&
-                    sameName(item.speaker, person.name) &&
-                    item.toSec > event.atSec + 5
-            );
-            if (later || confirmed || laterMatchedVoice(event.atSec + 5)) {
+            if (later || laterEvidence(event.atSec + 5)) {
                 continue;
             }
             const stay = stays.findLast((one) => endable(one, event.atSec));
@@ -143,17 +145,7 @@ export function personStays(options: {
                         span.fromSec <= last.endSec + 5 && span.toSec >= last.endSec + options.silenceMinutes! * 60
                 );
             // The same vetoes as an explicit departure: a later confirmed range or a later matched voice of theirs.
-            const laterVoice =
-                last &&
-                (options.record.items.some(
-                    (item) =>
-                        item.kind === "speaker-range" &&
-                        item.status === "confirmed" &&
-                        item.speaker &&
-                        sameName(item.speaker, person.name) &&
-                        item.toSec > last.endSec + 5
-                ) ||
-                    laterMatchedVoice(last.endSec + 5));
+            const laterVoice = last && laterEvidence(last.endSec + 5);
             if (
                 last &&
                 stay &&
