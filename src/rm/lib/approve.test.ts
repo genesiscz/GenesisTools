@@ -60,6 +60,7 @@ import {
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
 import { describePolicy } from "../commands/profiles";
+import { subcommandMeant } from "../commands/remove";
 import { approveMany, askForApproval, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { agentMayDrainEarly, drainFailures } from "../commands/trash";
@@ -1220,6 +1221,19 @@ describe("a path named like a subcommand", () => {
         }
 
         expect(notes).toEqual([]);
+    });
+
+    test("a bare word that names no file and is close to a subcommand names that subcommand", () => {
+        // `tools rm approvals` (2026-11-14) refused a missing path and never said `approve`.
+        const program = createRmProgram();
+        expect(subcommandMeant("approvals", program)).toBe("approve");
+        expect(subcommandMeant("reqeusts", program)).toBe("requests");
+        expect(subcommandMeant("Trash", program)).toBe("trash");
+        // A path, a dot name or a word far from every subcommand is just a missing path.
+        expect(subcommandMeant("./approvals", program)).toBeNull();
+        expect(subcommandMeant("build/approve", program)).toBeNull();
+        expect(subcommandMeant("node_modules", program)).toBeNull();
+        expect(subcommandMeant("x", program)).toBeNull();
     });
 
     test("the help says to write ./<name>, because -- still runs the subcommand", () => {
