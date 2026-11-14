@@ -64,7 +64,7 @@ export interface CallOptions {
      * A refusal whose body is the row's own answer shape (the focus miss is a 409, an incomplete form a 400) is
      * returned instead of thrown. Only a 4xx that is not an auth refusal, with a JSON object whose `ok` is false (the
      * failure branch of every row that answers this way), is such an answer: any other refusal still throws
-     * `DashboardHttpError` with its status (`isAnswerRefusal`).
+     * `DashboardHttpError` with its status (`answerOfRefusal`).
      */
     answerOnRefusal?: boolean;
 }
@@ -72,18 +72,23 @@ export interface CallOptions {
 /** The auth refusals: their body is the server's auth error, never a row's answer. */
 const AUTH_REFUSALS = new Set([401, 403, 407]);
 
-/** Whether a refused response carries the row's own failure answer (`CallOptions.answerOnRefusal`). */
-export function isAnswerRefusal(status: number, body: string): boolean {
+/**
+ * The row's own failure answer a refused response carries (`CallOptions.answerOnRefusal`), parsed once; undefined
+ * for any other refusal.
+ */
+export function answerOfRefusal(status: number, body: string): unknown {
     if (status < 400 || status >= 500 || AUTH_REFUSALS.has(status)) {
-        return false;
+        return undefined;
     }
 
     try {
         const parsed: unknown = SafeJSON.parse(body, { strict: true });
-        return typeof parsed === "object" && parsed !== null && "ok" in parsed && parsed.ok === false;
+        return typeof parsed === "object" && parsed !== null && "ok" in parsed && parsed.ok === false
+            ? parsed
+            : undefined;
     } catch {
         // A body that is not JSON is a plain refusal, which the caller throws with its status.
-        return false;
+        return undefined;
     }
 }
 
@@ -168,9 +173,10 @@ export function createDashboardClient(opts: DashboardClientOptions) {
 
         if (!res.ok) {
             const text = await res.text().catch(() => "");
+            const answer = answerOnRefusal ? answerOfRefusal(res.status, text) : undefined;
 
-            if (answerOnRefusal && isAnswerRefusal(res.status, text)) {
-                return SafeJSON.parse(text, { strict: true }) as T;
+            if (answer !== undefined) {
+                return answer as T;
             }
 
             throw new DashboardHttpError(path, res.status, text);
