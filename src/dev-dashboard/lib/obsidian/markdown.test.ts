@@ -377,6 +377,13 @@ describe("app deep links", () => {
         expect(html).not.toContain('href="Shortcuts:');
         expect(html).toContain('<a href="myapp://ok">c</a>');
     });
+
+    test("a Keyboard Maestro macro run (kmtrigger://macro=...) loses its href", () => {
+        const { html } = renderMarkdown("[run](kmtrigger://macro=FixtureMacro) [ok](myapp://ok)", noop);
+
+        expect(html).not.toContain("kmtrigger:");
+        expect(html).toContain('<a href="myapp://ok">ok</a>');
+    });
 });
 
 describe("Obsidian syntax", () => {
