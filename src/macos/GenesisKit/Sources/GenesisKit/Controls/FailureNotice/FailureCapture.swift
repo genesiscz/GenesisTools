@@ -68,7 +68,7 @@ public actor FailureCaptureStore {
     private let environment: @Sendable () async -> FailureEnvironment?
     private let enrich: @Sendable (FailureReport) async -> FailureReport
     private var work: [String: Task<FailureReport, Never>] = [:]
-    private var gathering: (UUID, Task<FailureEnvironment?, Never>)?
+    private var gathering: Task<FailureEnvironment?, Never>?
 
     public init(directory: URL, environment: @escaping @Sendable () async -> FailureEnvironment? = { await FailureEnvironment.load() },
                 enrich: @escaping @Sendable (FailureReport) async -> FailureReport = { await $0.addingCallLog() }) {
@@ -80,7 +80,7 @@ public actor FailureCaptureStore {
     public nonisolated static func key(_ report: FailureReport) -> String {
         let identity = report.call.map { "call:\($0.traceId):\(Int64(($0.started.timeIntervalSince1970 * 1000).rounded()))" }
             ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(report.title):\(report.headline)"
-        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return digest(identity)
     }
 
     /// A visible notice keeps its original report across redraws. A changed error replaces it; dismissing and showing
@@ -89,7 +89,12 @@ public actor FailureCaptureStore {
         if report.call != nil { return key(report) }
         let identity = [report.title, report.headline, report.summary, report.action, report.command, report.folder, report.log]
             .compactMap { $0 }.joined(separator: "\n")
-        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return digest(identity)
+    }
+
+    /// The lowercase hex SHA-256 of an identity, the one encoding both keys use.
+    private nonisolated static func digest(_ identity: String) -> String {
+        SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     public nonisolated func file(for report: FailureReport) -> URL {
@@ -121,25 +126,13 @@ public actor FailureCaptureStore {
         let report = Self.sanitized(input)
         let key = Self.key(report)
         if let task = work[key] {
-            let captured = await task.value
-            var ready = report
-            ready.environment = captured.environment
-            if ready.log.isEmpty { ready.log = captured.log }
-            if var stored = read(report), stored.report != ready {
-                stored.report = ready
-                write(stored, for: report)
-            }
+            let ready = Self.merged(report, from: await task.value)
+            persist(ready, over: read(report), for: report)
             return ready
         }
         if let stored = read(report), stored.contextCapturedAt != nil {
-            var ready = report
-            ready.environment = stored.report.environment
-            if ready.log.isEmpty { ready.log = stored.report.log }
-            if ready != stored.report {
-                var updated = stored
-                updated.report = ready
-                write(updated, for: report)
-            }
+            let ready = Self.merged(report, from: stored.report)
+            persist(ready, over: stored, for: report)
             return ready
         }
 
@@ -170,13 +163,29 @@ public actor FailureCaptureStore {
         return ready
     }
 
+    /// A fresh report of a failure with the context an earlier capture of it gathered.
+    private static func merged(_ report: FailureReport, from captured: FailureReport) -> FailureReport {
+        var ready = report
+        ready.environment = captured.environment
+        if ready.log.isEmpty { ready.log = captured.log }
+        return ready
+    }
+
+    /// Rewrites a stored archive whose report differs from `ready`; no archive, or the same report, writes nothing.
+    private func persist(_ ready: FailureReport, over stored: Record?, for report: FailureReport) {
+        guard var stored, stored.report != ready else { return }
+        stored.report = ready
+        write(stored, for: report)
+    }
+
+    /// Only the caller that started a gather clears it: a joiner never writes `gathering`, and no new gather starts
+    /// while one is set.
     private func facts(_ load: @escaping @Sendable () async -> FailureEnvironment?) async -> FailureEnvironment? {
-        if let (_, task) = gathering { return await task.value }
-        let id = UUID()
+        if let gathering { return await gathering.value }
         let task = Task { await load() }
-        gathering = (id, task)
+        gathering = task
         let value = await task.value
-        if gathering?.0 == id { gathering = nil }
+        gathering = nil
         return value
     }
 
