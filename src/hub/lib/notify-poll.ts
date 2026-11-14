@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type ProjectRef, projectRefFromRemote } from "@genesiscz/utils/git";
+import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import { type RepoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -115,7 +116,7 @@ function writeNotifyState(state: NotifyState, path: string): void {
 
 /** `owner/repo#42` or `group/app!12`: the `--pr` form the hub resolves against its list. */
 export function hubPrRef(item: Pick<NotifyItem, "project" | "number" | "provider">): string {
-    return `${item.project}${item.provider === "gitlab" ? "!" : "#"}${item.number}`;
+    return `${item.project}${prNumberLabel(item.provider ?? "github", item.number)}`;
 }
 
 /**
@@ -313,15 +314,22 @@ async function pollProject(input: {
     const repoStarted = performance.now();
 
     try {
-        const fetched =
-            watched.project.kind === "github"
-                ? await deps.fetchGithub({ project: watched.project, botLogins: config.botLogins })
-                : await deps.fetchGitlab({
-                      project: watched.project,
-                      botLogins: config.botLogins,
-                      memory: state.prs,
-                      viewer: status?.viewer,
-                  });
+        let fetched: RepoFetch;
+
+        switch (watched.project.kind) {
+            case "github":
+                fetched = await deps.fetchGithub({ project: watched.project, botLogins: config.botLogins });
+                break;
+            case "gitlab":
+                fetched = await deps.fetchGitlab({
+                    project: watched.project,
+                    botLogins: config.botLogins,
+                    memory: state.prs,
+                    viewer: status?.viewer,
+                });
+                break;
+        }
+
         return { kind: "fetched", fetched, ms: Math.round(performance.now() - repoStarted) };
     } catch (err) {
         return { kind: "failed", err, ms: Math.round(performance.now() - repoStarted) };

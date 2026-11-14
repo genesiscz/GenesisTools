@@ -6,6 +6,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
     case inputMonitoring = "input-monitoring"
     case accessibility
     case microphone
+    case camera
     case speechRecognition = "speech"
     case screenRecording = "screen-recording"
     case calendars = "calendar"
@@ -32,6 +33,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case "input", "listen", "listen-event", "keyboard": self = .inputMonitoring
         case "ax": self = .accessibility
         case "mic": self = .microphone
+        case "cam", "video": self = .camera
         case "speech-recognition", "dictation": self = .speechRecognition
         case "screen", "screen-capture", "capture": self = .screenRecording
         case "calendars": self = .calendars
@@ -55,6 +57,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .inputMonitoring: return "Input Monitoring"
         case .accessibility: return "Accessibility"
         case .microphone: return "Microphone"
+        case .camera: return "Camera"
         case .speechRecognition: return "Speech Recognition"
         case .screenRecording: return "Screen Recording"
         case .calendars: return "Calendars"
@@ -75,6 +78,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .inputMonitoring: return "It lets the app notice which keys you press. It never reads or saves what you type."
         case .accessibility: return "It lets the app paste text and count activity in the app you are using."
         case .microphone: return "It lets the app record your voice for dictation and voice notes."
+        case .camera: return "It lets the recorder show your camera in a recording."
         case .speechRecognition: return "It lets macOS turn your recorded voice into text."
         case .screenRecording: return "It lets the app take the screenshots you ask for."
         case .calendars: return "It lets tools read and add calendar events."
@@ -94,6 +98,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .inputMonitoring: return "Privacy_ListenEvent"
         case .accessibility: return "Privacy_Accessibility"
         case .microphone: return "Privacy_Microphone"
+        case .camera: return "Privacy_Camera"
         case .speechRecognition: return "Privacy_SpeechRecognition"
         case .screenRecording: return "Privacy_ScreenCapture"
         case .calendars: return "Privacy_Calendars"
@@ -122,6 +127,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         case .inputMonitoring: return "keyboard"
         case .accessibility: return "accessibility"
         case .microphone: return "mic"
+        case .camera: return "camera"
         case .speechRecognition: return "waveform"
         case .screenRecording: return "rectangle.dashed.badge.record"
         case .calendars: return "calendar"
@@ -136,7 +142,7 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
 
     public var requestStyle: PermissionRequestStyle {
         switch self {
-        case .microphone, .speechRecognition, .calendars, .reminders, .contacts, .localNetwork: return .systemPrompt
+        case .microphone, .camera, .speechRecognition, .calendars, .reminders, .contacts, .localNetwork: return .systemPrompt
         case .accessibility, .screenRecording, .inputMonitoring: return .promptThenSettings
         case .fullDiskAccess: return .settingsOnly
         case .automation, .desktopFolder, .documentsFolder, .downloadsFolder: return .probe

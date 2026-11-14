@@ -7,6 +7,7 @@ import { parseQueryDate, parseShowQuery } from "@app/ms-teams/lib/query";
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import { type CallToolResult, type ListToolsResult, Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
@@ -180,7 +181,7 @@ export async function startMcpServer(): Promise<void> {
         }
     });
 
-    await server.connect(new StdioServerTransport());
+    await server.connect(recordMcpTransport({ transport: new StdioServerTransport(), server: "ms-teams" }));
 }
 
 function str(value: unknown): string | undefined {

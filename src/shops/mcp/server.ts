@@ -2,6 +2,7 @@ import { getShopsDatabase, type ShopsDatabase } from "@app/shops/db/ShopsDatabas
 import { buildRegistry, getAdvertisedTools, getHandler, type ToolEntry } from "@app/shops/mcp/registry";
 import { listResources, readResource } from "@app/shops/mcp/resources";
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import {
     type CallToolResult,
     type ListResourcesResult,
@@ -85,6 +86,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     });
 
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await server.connect(recordMcpTransport({ transport, server: "shops" }));
     log.info({ allowWrite, toolCount: getAdvertisedTools(registry, allowWrite).length }, "MCP server started");
 }

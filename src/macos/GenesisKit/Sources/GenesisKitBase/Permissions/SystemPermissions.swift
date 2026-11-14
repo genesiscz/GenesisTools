@@ -54,6 +54,8 @@ public struct SystemPermissions: PermissionSystem {
             return CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
         case .microphone:
             return Self.status(AVCaptureDevice.authorizationStatus(for: .audio))
+        case .camera:
+            return Self.status(AVCaptureDevice.authorizationStatus(for: .video))
         case .speechRecognition:
             switch SFSpeechRecognizer.authorizationStatus() {
             case .authorized: return .granted
@@ -89,6 +91,11 @@ public struct SystemPermissions: PermissionSystem {
         case .microphone:
             guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             await Self.waitForAnswer { done in AVCaptureDevice.requestAccess(for: .audio) { _ in done() } }
+        case .camera:
+            // Without NSCameraUsageDescription in the bundle, macOS ends the process at the request.
+            guard kind.systemPromptAsks(from: status(kind)),
+                  Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") != nil else { return status(kind) }
+            await Self.waitForAnswer { done in AVCaptureDevice.requestAccess(for: .video) { _ in done() } }
         case .speechRecognition:
             guard kind.systemPromptAsks(from: status(kind)) else { return status(kind) }
             await Self.waitForAnswer { done in SFSpeechRecognizer.requestAuthorization { _ in done() } }

@@ -7,6 +7,8 @@ export {
 } from "./approve";
 export {
     autoAllowCommand,
+    autoAllowCommandEntry,
+    autoAllowDaemon,
     loadVaultAutoAllow,
     saveVaultAutoAllow,
     updateVaultAutoAllow,

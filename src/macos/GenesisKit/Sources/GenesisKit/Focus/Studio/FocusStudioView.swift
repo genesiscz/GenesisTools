@@ -22,7 +22,7 @@ public struct FocusStudioView: View {
         }
         .background(Color.genBackground)
         .frame(minWidth: 880, minHeight: 560)
-        .task { model.reload() }
+        .task { model.scheduleReload() }
         // Without `children: .contain`, a container's identifier propagates to every descendant
         // and the whole window reports "focus-studio" — which makes every control in it
         // unaddressable by identifier, from the UI harness and from `tools control` alike.
@@ -74,7 +74,7 @@ public struct FocusStudioView: View {
                 TextField("filter windows and sites", text: $model.search)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 260)
-                    .onSubmit { model.reload() }
+                    .onSubmit { model.scheduleReload() }
                     .accessibilityIdentifier("focus-studio-search")
                     .instantTooltip("Match app, window title or site, then press Return")
                 Spacer()
@@ -110,14 +110,14 @@ public struct FocusStudioView: View {
     /// "what did that 25 minutes actually contain".
     private var sessionMenu: some View {
         Menu {
-            Button("whole range") { model.sessionFilter = nil; model.reload() }
+            Button("whole range") { model.sessionFilter = nil; model.scheduleReload() }
             if !model.sessionOptions.isEmpty { Divider() }
             ForEach(model.sessionOptions) { card in
                 Button("\(FocusFormat.clockTime(card.startedMs))  \(card.kind.replacingOccurrences(of: "_", with: " "))"
                        + (card.tag.map { " · \($0)" } ?? "")
                        + "  \(FocusFormat.duration(card.actualMs))") {
                     model.sessionFilter = card.id
-                    model.reload()
+                    model.scheduleReload()
                 }
             }
         } label: {
@@ -142,9 +142,9 @@ public struct FocusStudioView: View {
 
     private func filterMenu(title: String, options: [String], selection: Binding<String?>) -> some View {
         Menu {
-            Button("any \(title)") { selection.wrappedValue = nil; model.reload() }
+            Button("any \(title)") { selection.wrappedValue = nil; model.scheduleReload() }
             ForEach(options, id: \.self) { option in
-                Button(option) { selection.wrappedValue = option; model.reload() }
+                Button(option) { selection.wrappedValue = option; model.scheduleReload() }
             }
         } label: {
             Text(selection.wrappedValue.map { "\(title): \($0)" } ?? "\(title): any")

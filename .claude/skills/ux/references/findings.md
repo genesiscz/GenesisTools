@@ -3,6 +3,54 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-10 19:56 — **A transcript that did not load showed a red triangle and "tools call exceeded 30s", with nothing to
+  click (the owner: "this definitely deserves 1. details 2. a button to bug report").**
+  - *The pane drew the error's own words.* `TranscriptLoadState.failed(String)` carried `localizedDescription`, and the
+    placeholder printed it in red monospace. The words named the mechanism, not what the person missed, and the
+    failure window and issue draft the recorder had since the day before were one module away. Fix: GenesisKit
+    `FailureInline` (`.pane`, `.compact`) with Try again, Details and Report a bug, and `FailureReport.toolsCall`, the
+    one report of a failed `tools` call: "The transcript did not load: the tools call did not answer in 30 s.", what
+    ran (`ai sessions tail`), the typed command, and as its log the call's app-perf.log line plus every call of the
+    minute before, read off the main thread from the file's tail.
+  - *The failing call had no name once it failed.* `ToolsBridge.run` made a trace id and threw it away with the error.
+    Fix: a task-local `ToolsCallLedger` the caller binds around its work; the bridge and the hub's runner note each
+    call's start and end in it. A queue hop (`DispatchQueue.global`) leaves the task, so the hub's runner carries the
+    ledger across by hand. Rule: when an id exists for tracing, the error the person sees must be able to reach it.
+  - *The same defect in about twenty more places.* The sweep found raw error strings in red or grey in the hub (Agents,
+    Activity, Inbox, decisions, PR threads, Changes, digest, insights, searches), the widget's error pill, the Daemon
+    settings page, the Meetings notices, and a session list refresh that only wrote a perf mark while the sidebar kept
+    a stale list. Rule: a failure has one shape everywhere (`.claude/rules/macos-app.md`, "A load or an action that
+    failed"), and `rg 'Text\((verbatim: )?[^)]*(error|failure|localizedDescription)'` over `src/macos` is the check.
+
+- 2026-11-10 17:23 — **Meetings window, the first hour on a real meeting: a whole-meeting play that always started at
+  00:00, and a timeline the reader could zoom into but not out of.**
+  - *Every seek in the recording played its start.* The recording is Ogg Opus. The system player (`AVAudioPlayer`)
+    opens it, takes `currentTime`, reports the asked time, and decodes from the file's first second: the clock said
+    1:29:43 and the sound was the greeting. The player's tests used a fake sound that seeks, on a file named
+    `upload.ogg`. Found by a probe, not by ear: play at volume 0 with the meter on and compare the level sequence
+    after a seek to three times (identical on the Ogg file, different on WAV, AAC, MP3 and FLAC copies). Fix: the
+    file plays itself only in a coding that was measured to seek; any other one plays as cut stretches, which seek in
+    every format, and the next stretch is cut ahead. Rule: a fake of a system API has no format limits; measure the
+    real API on the user's real file once, and keep the allow list to what was measured.
+  - *An action did half of its sentence when its state was already on.* "Show 48:46 to 1:27:00" moved the sound only
+    when nothing of the meeting played yet; over a whole-meeting play it changed the view and left the sound and the
+    breadcrumb where they were. Rule: test an action twice in a row, and from every state its guard reads.
+  - *A zoom with no way back.* A click on a merged pin zoomed the timeline; the breadcrumb named what plays, not what
+    shows, and nothing went back. Fix: the ranges zoomed to are a trail, the breadcrumb names them after the playing
+    level, a click goes back, and "Back" stands beside the view choice. Rule: every view change the reader makes by a
+    click has a visible level and a click that undoes it.
+  - *A count that no zoom took apart.* Two items a second apart stayed "2" at every zoom: the zoom's smallest view
+    (10 s) still put them within one mark's width. Fix: rows (two by default, a setting): close pins stand under
+    each other with their texts, a count is the last resort, and a count that a zoom would not take apart opens a
+    list of its rows. Rule: when "click to expand" can end in the same picture, the click does something else there.
+  - *A ruler that did not name its ends.* A view from 48:46 showed "50:00" as its first time, and a time had no
+    line, so the reader could not see where 50:00 is. Fix: the view's start and end are labels at its two ends, and
+    each round mark has a line through the waveform. Rule: an axis names both ends, and a label has a mark.
+  - *My first picture of the fix had no waveform.* The service answers one connection's reads in order, and the
+    dock's waveform read stood behind the rows read the tab had sent; the picture was taken 900 ms after the window
+    showed. Rule: a picture waits for the data it is about, not for a fixed time.
+  Commits bb79a4d6d5 (the player) and a9d792e509 (the timeline).
+
 - 2026-11-10 04:58 — **Meetings window, a second look at a finished wave: defects that every test and a scored live
   check had passed.** Each one is a shape that will come back on another surface.
   - *Marks drew over each other*: the pin counts on the timeline strip, and "? Q7 ? Q9" banners over the speaker
@@ -620,3 +668,19 @@ checklist.md or motion.md as well.
   pictures. Each got a flag (`--select`, `--edit`, `--card`, `--sheet`); a popover or a sheet is drawn alone in
   a window of its own size. The first card picture showed three defects at once. Rule: a state without a picture
   is a state nobody reviewed.
+- 2026-11-10 18:45 — **A unit in a sentence is a unit nobody sees, and a dropped write is a dead click.** The Meetings
+  "Ask each time" card was seven rows of two-line sentences, each beside the system's text field and a stepper 13 pt
+  wide; the field said "48" and the sentence had to say "hours". Two more things were wrong under it: the system
+  stepper wrote the setting at every repeat of a held button, and the settings model dropped a write that arrived
+  while the write before it of the same key still ran, so the second of two quick presses did nothing. Now the
+  number, its unit and its steps are one control (`KitNumberField`: one write for each gesture), every row has a
+  glyph, the rows stand in two groups, the two calendar numbers have one picture, and the model keeps the newest
+  value and writes it next. Rule: put the unit in the control; when a control can fire faster than its host saves,
+  test two quick changes and read the saved value, not the screen.
+- 2026-11-11 01:20 — **A sandbox home that half the app ignores puts real data into a picture.** A worker took pictures of the
+  hub under `GENESIS_TOOLS_HOME=<scratch>`, and the Agents mode and the Activity page drew real session titles and
+  account names. The app asked the hub server on the real home's socket: `ToolsServerClient.defaultSocketPath` joined
+  `.genesis-tools` to the real home by hand, as about 40 other Swift paths did, while three copies of the override
+  lived in other files. Now every Swift path goes through `GenesisToolsHome` (GenesisKitBase/Paths), and lint-rules
+  `swift-hand-joined-genesis-tools` fails a hand join. Rule: before you keep a picture made under a sandbox home,
+  look for one real title or name in it; one hit means some path still reads the real home.

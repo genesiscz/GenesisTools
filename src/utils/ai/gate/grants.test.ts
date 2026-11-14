@@ -9,6 +9,8 @@ import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import {
     autoAllowCommand,
+    autoAllowCommandEntry,
+    autoAllowDaemon,
     loadVaultAutoAllow,
     saveVaultAutoAllow,
     updateVaultAutoAllow,
@@ -481,6 +483,62 @@ describe("vault auto-allow settings", () => {
         expect(statSync(vaultAutoAllowPath()).mode & 0o777).toBe(0o600);
     });
 
+    test("the daemons list has the usage and Codex daemons, and an entry is a script path under src/", () => {
+        expect(VAULT_AUTO_ALLOW_DEFAULTS.daemons).toEqual([
+            "src/ai/commands/usage/poll-daemon.ts",
+            "src/codex/daemon.ts",
+        ]);
+        expect(VAULT_AUTO_ALLOW_DEFAULTS.daemonNotifyHours).toBe(24);
+        expect(autoAllowDaemon(" ./src/shop/daemon.ts ")).toBe("src/shop/daemon.ts");
+
+        for (const bad of ["/repo/src/shop/daemon.ts", "src/../x/daemon.ts", "scripts/daemon.ts", "src/shop/daemon"]) {
+            expect(() => autoAllowDaemon(bad)).toThrow(/not a script path from the checkout's root/);
+        }
+
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        writeFileSync(
+            vaultAutoAllowPath(),
+            SafeJSON.stringify({ version: 1, daemons: ["src/shop/daemon.ts"], daemonNotifyHours: -2 })
+        );
+        expect(loadVaultAutoAllow()).toMatchObject({ daemons: ["src/shop/daemon.ts"], daemonNotifyHours: 0 });
+        writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, daemons: null }));
+        expect(loadVaultAutoAllow()).toMatchObject({
+            daemons: VAULT_AUTO_ALLOW_DEFAULTS.daemons,
+            daemonNotifyHours: 24,
+        });
+    });
+
+    test("a key of the wrong type fails as the app's decoder does, so an update never saves defaults over it", async () => {
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        for (const bad of [{ enabled: "false" }, { daemonNotifyHours: "often" }, { commands: ["ai usage", 2] }]) {
+            const text = SafeJSON.stringify({ version: 1, ...bad });
+            writeFileSync(vaultAutoAllowPath(), text);
+            expect(() => loadVaultAutoAllow()).toThrow(/has the wrong type; the app turns auto-allow off/);
+            await expect(updateVaultAutoAllow((settings) => ({ ...settings, notify: false }))).rejects.toThrow(
+                /has the wrong type; the app turns auto-allow off/
+            );
+            expect(readFileSync(vaultAutoAllowPath(), "utf8")).toBe(text);
+        }
+    });
+
+    test("a missing file hands out arrays of its own, so a change in place never reaches the defaults", async () => {
+        const before = SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS);
+        await updateVaultAutoAllow((settings) => {
+            settings.commands.push("shop sync");
+            settings.agentApps.splice(0);
+            settings.daemons.push("src/shop/daemon.ts");
+            return settings;
+        });
+        expect(SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS)).toBe(before);
+    });
+
+    test("a command entry is exactly <tool> <subcommand>, the only shape the app can match", () => {
+        expect(autoAllowCommandEntry(["claude ", " warmup"])).toBe("claude warmup");
+        for (const bad of [["ai", "accounts", "list"], ["claude"], ["claude", "--all"]]) {
+            expect(() => autoAllowCommandEntry(bad)).toThrow(/is not <tool> <subcommand>/);
+        }
+    });
+
     test("a file that is not a JSON object fails with its path instead of showing the defaults", () => {
         mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
         writeFileSync(vaultAutoAllowPath(), "[1, 2]");
@@ -520,16 +578,6 @@ describe("vault auto-allow settings", () => {
         );
         expect(readFileSync(vaultAutoAllowPath(), "utf8")).toBe(broken);
         expect(corruptCopies()).toEqual([]);
-    });
-
-    test("a missing file hands out arrays of its own, so a change in place never reaches the defaults", async () => {
-        const before = SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS);
-        await updateVaultAutoAllow((settings) => {
-            settings.commands.push("shop sync");
-            settings.agentApps.splice(0);
-            return settings;
-        });
-        expect(SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS)).toBe(before);
     });
 
     // Two commands at once: a `disable` lands while a `notify off` waits for the lock. The update must read the file

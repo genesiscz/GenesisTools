@@ -1,9 +1,8 @@
 import { basename } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
-import { currentTraceId } from "@genesiscz/utils/trace";
 import { type DeadlineExpiry, type FailureCaller, failuresDir, type ToolFailure } from "./record";
-import { currentRunFacts, TOOLS_ROOT } from "./watch";
+import { currentRunFacts, FAILURE_MESSAGE_CHARS, FAILURE_STACK_CHARS, processFailureFields } from "./watch";
 
 /*
  * The record of a command deadline: an `Executor` call that outlived its bound. executor.ts loads this module with a
@@ -120,25 +119,19 @@ export async function recordDeadline(expiry: DeadlineExpiry, dir = failuresDir()
     // No `runId`: the launchers read a record that carries the run's id as "the tool recorded its own end"
     // (launcher.ts `childRecorded`, LauncherFailures.swift `recorded`), and a deadline is not the end of the run.
     const failure: ToolFailure = {
-        v: 1,
+        ...processFailureFields(now),
         id: `${now.getTime().toString(36)}-${process.pid}-d${++sequence}`,
-        at: now.toISOString(),
         kind: "deadline",
         tool: run?.tool ?? basename(process.argv[1] ?? "unknown"),
         command: run?.command ?? null,
         argv: run?.argv ?? [],
         exitCode: null,
-        message: expiry.message.slice(0, 2000),
+        message: expiry.message.slice(0, FAILURE_MESSAGE_CHARS),
         errorName: "Error",
-        stack: expiry.stack?.slice(0, 8000) ?? null,
+        stack: expiry.stack?.slice(0, FAILURE_STACK_CHARS) ?? null,
         stderrTail: null,
         fatal: false,
         durationMs: Math.round(expiry.durationMs),
-        pid: process.pid,
-        ppid: process.ppid,
-        cwd: process.cwd(),
-        traceId: currentTraceId() ?? null,
-        toolsRoot: TOOLS_ROOT,
         caller,
         child: expiry.child,
     };

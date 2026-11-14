@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "./record-call";
 
 const { log } = logger.scoped("mcp-stdio");
 
@@ -77,7 +78,7 @@ export async function serveStdio<T>(
         process.on("exit", options.onExit);
     }
 
-    await server.connect(options.transport);
+    await server.connect(recordMcpTransport({ transport: options.transport, server: name }));
     log.info({ server: name }, "MCP server listening on stdio");
     return { stop };
 }

@@ -2,7 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { logger } from "@genesiscz/utils/logger";
 import { currentToolName } from "@genesiscz/utils/security/vault-purpose";
 import { z } from "zod";
-import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError, rpcErrorBody } from "./errors";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError, rpcErrorBody, rpcStandardErrorBody } from "./errors";
 
 /**
  * One side of a newline-delimited JSON-RPC 2.0 connection, the same on the server and on the client: it answers the
@@ -268,7 +268,7 @@ export interface RpcPeerOptions {
     log: RpcLog;
     /** Names the connection in log lines: `live recording` gives "live recording call refused". */
     label: string;
-    /** The tool named by an error reply; the current process tool when absent. */
+    /** The tool an error reply names in its `issue` (`meetings`); the tool this process runs when left out. */
     tool?: string;
     logFields?: Record<string, unknown>;
     /** What the other side speaks; a field left out keeps `DEFAULT_RPC_DIALECT`'s value. */
@@ -664,9 +664,11 @@ export class RpcPeer {
             const level = failedCallLevel(error, id === undefined);
             log[level]({ ...logFields, method, error }, `${label} call ${level === "warn" ? "failed" : "refused"}`);
 
-            const body = rpcErrorBody(error, this.options.tool ?? currentToolName());
-            const { stack: _stack, issue: _issue, ...standard } = body;
-            reply({ error: this.dialect.errorEvidence ? body : standard });
+            reply({
+                error: this.dialect.errorEvidence
+                    ? rpcErrorBody(error, this.options.tool ?? currentToolName())
+                    : rpcStandardErrorBody(error),
+            });
         }
     }
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { out } from "@genesiscz/utils/logger";
+import { recordMcpTransport } from "@genesiscz/utils/mcp/record-call";
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { shutdownManager } from "./mcp/shared";
@@ -31,7 +32,7 @@ registerModelsTools(server);
 // ── Start server ─────────────────────────────────────────────
 async function main(): Promise<void> {
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await server.connect(recordMcpTransport({ transport, server: "indexer" }));
 
     // ── Process-level error handlers ─────────────────────────
     process.on("unhandledRejection", (reason) => {

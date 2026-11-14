@@ -1,3 +1,4 @@
+import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import { out } from "@genesiscz/utils/logger";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { type DotStatusKind, formatDotStatus } from "@genesiscz/utils/table";
@@ -8,7 +9,7 @@ import { type PrReadiness, prReadinessMany, type ReadinessVerdict } from "../lib
 const DOT: Record<ReadinessVerdict, DotStatusKind> = { ready: "ok", waiting: "warn", blocked: "err", closed: "dim" };
 
 function render(readiness: PrReadiness): void {
-    const label = readiness.provider === "gitlab" ? `!${readiness.number}` : `#${readiness.number}`;
+    const label = prNumberLabel(readiness.provider, readiness.number);
     out.println(
         `${formatDotStatus(DOT[readiness.verdict], readiness.verdict)} ${pc.white(label)} ${readiness.title ?? ""}`
     );

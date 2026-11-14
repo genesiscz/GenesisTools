@@ -12,6 +12,7 @@ import {
 } from "@genesiscz/utils/ai/transcripts";
 import { listSubagents, type SessionSubagent } from "@genesiscz/utils/ai/transcripts/subagents";
 import { startOfDay } from "@genesiscz/utils/date";
+import { FORGE_FACTS } from "@genesiscz/utils/git/origins/facts";
 import { LOG_FORMAT, parseLogZ, parseNameStatusZ, parseNumstatZ } from "@genesiscz/utils/git/porcelain";
 import { type RepoFacts, repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
@@ -213,13 +214,13 @@ function excerpt(text: string, max: number): string {
 
 function prSummary(pr: HubPr): TimelinePrSummary {
     const project = pr.origin.web ? new URL(pr.origin.web).pathname.replace(/^\/+|\/+$/g, "") : pr.repo;
-    const mark = pr.origin.kind === "gitlab" ? "!" : "#";
+    const mark = FORGE_FACTS[pr.origin.kind].mark;
     return { ref: `${project || pr.repo}${mark}${pr.number}`, url: pr.url, title: pr.title, state: pr.state };
 }
 
 function threadPrSummary(result: ThreadsResult): TimelinePrSummary {
     const { pr } = result;
-    const mark = pr.provider === "gitlab" ? "!" : "#";
+    const mark = FORGE_FACTS[pr.provider].mark;
     return { ref: `${pr.project}${mark}${pr.number}`, url: pr.webUrl || pr.url, title: pr.title, state: pr.state };
 }
 

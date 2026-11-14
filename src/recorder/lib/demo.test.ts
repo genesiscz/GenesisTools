@@ -333,8 +333,8 @@ const hasFfmpeg = Bun.which("ffmpeg") !== null;
  * for the live entry, `recordVideo`, the session control and its marker door over the live socket, the segment join,
  * the project open, the idle search and the edit. What is faked, each at the lowest seam that needs a screen or the
  * app: the detached `tools recorder start` process (the test runs `recordVideo` in this process instead, so the
- * commander flag parsing of src/recorder/index.ts is not covered), the ScreenCaptureKit capture child (it writes a
- * small real movie), the native build, and the editor part's export render.
+ * commander flag parsing of src/recorder/commands/registrars/start.ts is not covered), the ScreenCaptureKit capture
+ * child (it writes a small real movie), the native build, and the editor part's export render.
  */
 describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
     let scratch: string;

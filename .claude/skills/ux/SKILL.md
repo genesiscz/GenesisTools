@@ -78,6 +78,12 @@ to make by screenshot.
 - **A dragged edge follows the pointer, and nothing jumps at release.** The panel's far side reflows with every
   step (never in buckets), the neighbours stay put until the mouse-up, and the release is one reflow with no hitch.
   Test it with a real drag and frame captures (`references/checklist.md`, "Dragged edges").
+- **A decision and its side effects are one transaction** (2026-11-11). Undo takes back what it carried, a changed
+  answer asks again about what it carried, each carried item can be rejected (struck, unstruck) on its own, and the
+  list never repeats the item being decided. Each carried item shows the same evidence (its own quote, its play
+  control) as the question did. `references/genesiscz.md` 6 and 9.
+- **Different states look different**: suggested vs confirmed vs rejected differ in hue and glyph, never only in
+  shade (`references/genesiscz.md` 12a).
 
 ## Design authorities (load before a judgment call)
 

@@ -87,17 +87,28 @@ export function issueHintOf(error: unknown): IssueHint | undefined {
 }
 
 /**
- * The error member of a reply to a failed call: the code (`internal` for anything that is no RpcError), the message,
- * the data, the stack of the error that caused it, and the issue with `tool` filled from the answering process.
+ * The standard JSON-RPC members of the error of a failed call: the code (`internal` for anything that is no RpcError),
+ * the message and the data. A dialect without error evidence replies with these alone.
+ */
+export function rpcStandardErrorBody(error: unknown): Omit<RpcErrorBody, "stack" | "issue"> {
+    const rpc = error instanceof RpcError ? error : undefined;
+    return {
+        code: rpc ? rpc.code : JSON_RPC_ERRORS.internal,
+        message: error instanceof Error ? error.message : String(error),
+        ...(rpc?.data !== undefined ? { data: rpc.data } : {}),
+    };
+}
+
+/**
+ * The error member of a reply to a failed call: the standard members ({@link rpcStandardErrorBody}), the stack of the
+ * error that caused it, and the issue with `tool` filled from the answering process.
  */
 export function rpcErrorBody(error: unknown, tool: string): RpcErrorBody {
     const rpc = error instanceof RpcError ? error : undefined;
     const stack = stackOf(rpc?.cause) ?? stackOf(error);
     const hint = issueHintOf(error) ?? issueHintOf(rpc?.cause);
     return {
-        code: rpc ? rpc.code : JSON_RPC_ERRORS.internal,
-        message: error instanceof Error ? error.message : String(error),
-        ...(rpc?.data !== undefined ? { data: rpc.data } : {}),
+        ...rpcStandardErrorBody(error),
         ...(stack ? { stack } : {}),
         issue: { tool, ...(hint?.title ? { title: hint.title } : {}) },
     };

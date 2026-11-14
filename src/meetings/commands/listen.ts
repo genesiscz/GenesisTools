@@ -1,6 +1,5 @@
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -17,6 +16,7 @@ import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
+import * as p from "@genesiscz/utils/prompts/p";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
@@ -83,12 +83,13 @@ async function askedPads(config: MeetingsConfigStore): Promise<ListenPads | unde
         return saved;
     }
 
-    const picked = await clack.select({
+    const picked = await p.select({
+        cancel: "back",
         message: "How much audio around each question? (saved as playback.listen.padBeforeSec and padAfterSec)",
         options: PAD_CHOICES.map((sec) => ({ value: sec, label: `${sec} seconds` })),
     });
 
-    if (clack.isCancel(picked)) {
+    if (p.isCancel(picked)) {
         return undefined;
     }
 
@@ -299,7 +300,7 @@ async function ask(options: {
                 footer: "↑↓ move  enter pick  esc back  space pause/resume",
             });
 
-            if (clack.isCancel(picked)) {
+            if (p.isCancel(picked)) {
                 return "back";
             }
 
@@ -308,7 +309,8 @@ async function ask(options: {
             }
             if (picked === SPLIT) {
                 playing.stop();
-                const voices = await clack.multiselect({
+                const voices = await p.multiselect({
+                    cancel: "back",
                     message: "Pick the voices in speaking order (space selects, enter continues):",
                     options: [...new Set([...choices, ...options.vocabulary])].map((name) => ({
                         value: name,
@@ -316,7 +318,7 @@ async function ask(options: {
                     })),
                     required: true,
                 });
-                if (clack.isCancel(voices)) {
+                if (p.isCancel(voices)) {
                     playing = playClip(options.player, options.clip, repeat);
                     paused = false;
                     continue;
@@ -337,8 +339,11 @@ async function ask(options: {
             }
             if (picked === COMMENT) {
                 playing.stop();
-                const comment = await clack.text({ message: "Your comment:" });
-                if (!clack.isCancel(comment) && comment?.trim()) {
+                const comment = await p.text({
+                    cancel: "back",
+                    message: "Your comment:",
+                });
+                if (!p.isCancel(comment) && comment?.trim()) {
                     return { answer: "", comment: comment.trim() };
                 }
                 playing = playClip(options.player, options.clip, repeat);
@@ -360,12 +365,13 @@ async function ask(options: {
             }
 
             playing.stop();
-            const comment = await clack.text({
+            const comment = await p.text({
+                cancel: "back",
                 message: `Comment (optional) ${pc.dim("(Esc: back to the choices)")}`,
                 placeholder: "Enter to skip",
             });
 
-            if (clack.isCancel(comment)) {
+            if (p.isCancel(comment)) {
                 playing = playClip(options.player, options.clip, repeat);
                 paused = false;
                 continue;
@@ -533,14 +539,15 @@ class TerminalAdapter implements ListenAdapter {
     }
 
     async confirmLeave(): Promise<boolean> {
-        const leave = await clack.select({
+        const leave = await p.select({
+            cancel: "back",
             message: "Leave this round? The answers are saved; the next listen goes on from here.",
             options: [
                 { value: "stay", label: "Stay on this question" },
                 { value: "leave", label: "Leave" },
             ],
         });
-        return clack.isCancel(leave) || leave === "leave";
+        return p.isCancel(leave) || leave === "leave";
     }
 
     note(note: SessionNote): void {

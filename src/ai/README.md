@@ -208,6 +208,9 @@ tools ai gate auto-allow add claude warmup         # let "tools claude warmup" t
 tools ai gate auto-allow remove claude warmup      # it no longer skips the window on this list
 tools ai gate auto-allow add-agent "Grok Bot"      # count an app's processes as an agent's
 tools ai gate auto-allow remove-agent "Grok Bot"
+tools ai gate auto-allow add-daemon src/codex/daemon.ts     # a background program of the checkout, whoever starts it
+tools ai gate auto-allow remove-daemon src/codex/daemon.ts  # it asks in the window again
+tools ai gate auto-allow daemon-notify 24          # hours between two notifications for one daemon; 0: every pass
 tools ai gate auto-allow notify on|off             # the audit line is written either way
 tools ai gate auto-allow enable|disable            # disable: this bypass stops; the list is kept
 tools ai gate revoke <tool>                        # forget remembered "Always" allows too
@@ -230,6 +233,15 @@ tools ai gate revoke <tool>                        # forget remembered "Always" 
   sets it in every shell it opens). Anything else gets the window.
 - The notification and the audit line's `detail` name the agent as the listed app, or the CLI's executable name and
   pid (`codex (pid 80)`), never with an argument: a CLI's first argument can be the prompt.
+- GenesisTools' own daemons are a second list in the same file (`daemons`, decision 61 b of 2026-11-10). Defaults: the
+  usage daemon `src/ai/commands/usage/poll-daemon.ts` and the Codex daemon `src/codex/daemon.ts`. A daemon passes
+  whoever starts it, when all of these hold: its script is that file of the checkout the app was built from; bun
+  itself runs it (`~/.bun/bin/bun`, a `gt-<tool>` launcher, or the same file under another name); and the only
+  variable that loads extra code is `NODE_PATH`. Every pass is logged (`auto-allowed`, detail `daemon: <script>`).
+  A daemon reads the key about once a minute, so its notification comes at most once in `daemonNotifyHours` (24).
+- A remembered approval ("Always for this program") is for the runtime and the script. Bun and every hard link of it
+  are one runtime: the kernel names a running hard link by the path that was looked up last, so a path compare asked
+  again for a program that was already approved (2026-11-10).
 - Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
   the key, and for these commands that decision is made once, here.
 
@@ -490,9 +502,10 @@ tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] 
   its reason. `--json` prints `{ schema: "sessions.report@1", session, report }`.
 - The report's calls are the session's own and those of every agent transcript it has (the agents it and its agents started, and the agents of its Workflow tool runs), each call once by its id across the files (`sessionCallsWithAgents`). The cost line names how many agent transcripts were read. The cache losses and the gaps read the main loop only. Read from the lead's transcript alone, a Claude session with agents printed sub-agents $0, because Claude Code writes each agent's calls into the agent's own file.
 
-### `ai sessions workflows`: a session's Workflow tool runs
+#### `ai sessions subagents` and `ai sessions workflows`: a session's agents and its Workflow tool runs
 
 ```bash
+tools ai sessions subagents <session-id> [--json]
 tools ai sessions workflows list [session-id] [--agents] [--usage] [--json]
 tools ai sessions workflows show <session-id> <run> [--usage] [--json]
 tools ai sessions workflows grep <session-id> <pattern> [--run <run>] [-i] [--before <iso>] [--max-hits 3] [--context 100] [--json]

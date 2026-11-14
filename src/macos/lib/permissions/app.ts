@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+    appendFileSync,
     cpSync,
     existsSync,
     mkdirSync,
@@ -13,6 +14,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { restartDaemonOnNewApp } from "@app/daemon/lib/launchd";
 import { isInteractive, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
@@ -1574,6 +1576,15 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     step("reap stale app-face processes");
     await reapStaleAppFaces({ step, relaunch, parts });
 
+    // The daemon runs under the launcher too, but the reap never touches a launcher process: it is restarted on the
+    // new bundle instead, or its tasks keep asking macOS for grants as the retired copy.
+    step("restart the daemon on the new bundle");
+    const daemon = await restartDaemonOnNewApp().catch((err: unknown) => {
+        logger.warn({ err }, "the daemon could not be restarted on the new bundle");
+        return "failed" as const;
+    });
+    logger.info({ daemon }, "daemon after the bundle swap");
+
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
     return { bundlePath, identity, signature, manifest };
@@ -2176,6 +2187,9 @@ async function reapStaleAppFaces({
         logger.info("relaunch: off (--no-relaunch); reaped faces stay closed");
     }
 
+    noteReapedFaces(
+        reapedFaceLines({ stale, processes: listing, at: new Date(), by: `pid ${process.pid}, ${process.cwd()}` })
+    );
     try {
         await killStaleFaces(stale, launcher, step);
     } finally {
@@ -2189,6 +2203,59 @@ async function reapStaleAppFaces({
                 step
             );
         }
+    }
+}
+
+/**
+ * One line for the app's lifecycle log (`~/.genesis-tools/app/lifecycle.jsonl`, Sources/Host/App/FaceLifecycle.swift)
+ * per face a build is about to close, in the log's own shape. A face ends on the build's SIGTERM and writes only
+ * "signal 15" itself, so a window that went away (and came back behind the others, not activated) had no line that
+ * said who closed it (2026-11-10: a hub restarted by another session's build was taken for a crash).
+ */
+export function reapedFaceLines({
+    stale,
+    processes,
+    at,
+    by,
+}: {
+    stale: string[];
+    processes: Pick<ProcessEntry, "pid" | "command">[];
+    at: Date;
+    /** Who runs the build: its pid and its folder. */
+    by: string;
+}): string[] {
+    const wanted = new Set(stale.map(Number));
+
+    return processes.flatMap((entry) => {
+        if (!wanted.has(entry.pid)) {
+            return [];
+        }
+
+        const face = /MacOS\/GenesisTools(?: (--[a-z-]+))?/.exec(entry.command ?? "")?.[1] ?? "--window";
+        return [
+            SafeJSON.stringify(
+                {
+                    detail: `closed by an app build (${by}); the build opens it again, not activated`,
+                    event: "reaped",
+                    face,
+                    pid: entry.pid,
+                    t: Math.floor(at.getTime() / 1000),
+                },
+                { strict: true }
+            ),
+        ];
+    });
+}
+
+function noteReapedFaces(lines: string[]): void {
+    if (lines.length === 0) {
+        return;
+    }
+
+    try {
+        appendFileSync(genesisToolsDir("app", "lifecycle.jsonl"), `${lines.join("\n")}\n`);
+    } catch (err) {
+        logger.debug({ err }, "the reap could not be noted in the lifecycle log");
     }
 }
 

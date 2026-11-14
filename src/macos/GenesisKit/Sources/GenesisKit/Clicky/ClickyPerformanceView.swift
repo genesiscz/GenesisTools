@@ -500,12 +500,12 @@ public struct ClickyPerformanceView: View {
                 identifier: "clicky.performance.reviewShare", value: percentBinding($reviewPercent),
                 in: 0...100, step: 5, ticks: [0, 50, 100], width: 160, format: { "\(Int($0))%" })
             NativeSettingsRow("Speech speed", detail: "Words kept divided by this speed give the speaking time.") {
-                HStack { NativeSettingsNumberPicker("Spoken words per minute", range: 60..<241,
-                    identifier: "clicky.performance.speech", value: $spokenWPM); Text("WPM").font(.caption) }
+                NativeSettingsNumberPicker("Spoken words per minute", range: 60..<241,
+                    identifier: "clicky.performance.speech", step: 5, suffix: .text("WPM"), value: $spokenWPM)
             }
             NativeSettingsRow("Setup per session", detail: "One dictation start per typing session. A session starts at text after a clock minute without text.") {
-                HStack { NativeSettingsNumberPicker("Setup seconds per session", range: 0..<16,
-                    identifier: "clicky.performance.setup", value: $setupSeconds); Text("sec").font(.caption) }
+                NativeSettingsNumberPicker("Setup seconds per session", range: 0..<16,
+                    identifier: "clicky.performance.setup", suffix: .text("sec"), value: $setupSeconds)
             }
             Text("Words kept are text-like presses minus delete presses, divided by 5; deleting a selection or undoing cannot be inferred. The estimate leaves out thinking time and transcription delay.")
                 .font(.caption).foregroundStyle(.secondary)

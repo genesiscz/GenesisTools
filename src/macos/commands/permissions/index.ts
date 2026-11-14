@@ -39,7 +39,13 @@ import {
     PARTS_FLAG_VALUES,
     parsePartsFlag,
 } from "../../lib/permissions/parts";
-import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
+import {
+    type PermissionsReport,
+    permissionsReport,
+    runPermissionStatus,
+    SETTINGS_PANES,
+    settingsUrl,
+} from "../../lib/permissions/report";
 import { createBuildProgressDisplay } from "../../lib/permissions/swift-progress";
 import { runCodesignTrust } from "./codesign-trust";
 
@@ -398,15 +404,7 @@ export function registerPermissionsCommand(program: Command): void {
             }
 
             const readStatus = () =>
-                permissionStatusLabel(
-                    new TextDecoder().decode(
-                        Bun.spawnSync([genesisAppLauncherPath(), "--permission-status", kind], {
-                            stdout: "pipe",
-                            stderr: "pipe",
-                            timeout: 10_000,
-                        }).stdout
-                    )
-                );
+                permissionStatusLabel(new TextDecoder().decode(runPermissionStatus(kind, 10_000).stdout));
 
             // An existing grant needs no dialog, and `open` would take the focus for nothing.
             if (readStatus() === "granted") {

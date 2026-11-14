@@ -30,6 +30,7 @@ public final class FocusController: ObservableObject {
     private var sessionWindows: [Int64: FocusSessionWindowController] = [:]
 
     private var intentTimer: Timer?
+    private var retiredRecorders: [ActivityRecorder] = []
     private var interruptionStartedAt: Date?
     private(set) var settings = FocusSettings()
     private var flowAnchorBundle: String?
@@ -60,6 +61,7 @@ public final class FocusController: ObservableObject {
             let plan = PomodoroPlan.from(appConfig: appConfig)
             let recorder = ActivityRecorder(store: store, settings: settings, liveServices: liveServices)
             let engine = PomodoroEngine(store: store, plan: plan)
+            engine.requestTick = { [weak self] in self?.drainIntents() }
 
             engine.onSessionChange = { [weak self, weak recorder] sessionId in
                 recorder?.attach(sessionId: sessionId)
@@ -67,6 +69,13 @@ public final class FocusController: ObservableObject {
                 // menu bar, a keyboard shortcut or `genesis focus start`.
                 if sessionId != nil, self?.presentsWindows == true, self?.settings.timerWindow == .automatic {
                     self?.hud?.show()
+                }
+            }
+            engine.onSessionChangeSuspending = { [weak self, weak recorder] sessionId in
+                await recorder?.attachAsync(sessionId: sessionId)
+                if sessionId != nil, let self, self.ownsRuntime, self.presentsWindows {
+                    await self.refreshIntentTags()
+                    self.hud?.show()
                 }
             }
             // Spec 17 already solved snapshot-and-restore; the pomodoro just has its own
@@ -139,10 +148,31 @@ public final class FocusController: ObservableObject {
     public func stop(preservingSession: Bool = false) {
         intentTimer?.invalidate()
         intentTimer = nil
+        if intentDrain != nil || recorder?.hasPendingPersistence == true {
+            guard intentShutdown == nil else { return }
+            ownsRuntime = false
+            let drain = intentDrain, recorder = self.recorder
+            intentShutdown = Task { @MainActor [self] in
+                if let drain { await drain.value }
+                recorder?.stop()
+                await recorder?.waitForPersistence()
+                completeStop(preservingSession: preservingSession)
+                await recorder?.waitForPersistence()
+                intentShutdown = nil
+            }
+            return
+        }
+        completeStop(preservingSession: preservingSession)
+    }
+
+    private func completeStop(preservingSession: Bool) {
         hud?.hide()
         idleWatch?.stop()
         statusItem?.remove()
-        recorder?.stop()
+        if let recorder {
+            recorder.stop()
+            retiredRecorders.append(recorder)
+        }
         if preservingSession || remoteCommand != nil { engine?.suspendForHandoff() }
         else { engine?.stop() }
         cancellables.removeAll()
@@ -291,6 +321,14 @@ public final class FocusController: ObservableObject {
         studio?.present()
     }
 
+    private func openStudioSuspending() async {
+        guard let studioModel else { return }
+        await studioModel.reloadSuspending()
+        guard presentsWindows, ownsRuntime else { return }
+        if studio == nil { studio = FocusStudioWindowController(model: studioModel) }
+        studio?.presentPrepared()
+    }
+
     public func setHUDStyle(_ style: FocusHUDStyle) {
         hud?.setStyle(style)
         // A shape chosen in Settings is a request to see it, so the window comes up if it was
@@ -312,14 +350,33 @@ public final class FocusController: ObservableObject {
         controller.present()
     }
 
+    /// The recent tags the intent drain read last (`refreshIntentTags`), for a HUD built while the drain may not
+    /// read the ledger on the main thread.
+    private var intentTags: [String] = []
+
+    private func refreshIntentTags() async {
+        guard let store else { return }
+        let window = Self.tagWindow()
+        let sessions = (try? await store.perform { try $0.sessions(from: window.from, to: window.to) }) ?? []
+        intentTags = Self.tagNames(in: sessions, limit: 8)
+    }
+
     /// Tags used in the last month, newest first. Read when the HUD is built rather than in a
     /// body: this is a query, and a body is not allowed to run one.
     private func recentTags(limit: Int = 8) -> [String] {
+        if ActivityStore.suspendingAccessRequired { return Array(intentTags.prefix(limit)) }
         guard let store else { return [] }
-        let now = Date()
-        let from = Int64(now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000)
-        let to = Int64(now.timeIntervalSince1970 * 1000) + 1
-        guard let sessions = try? store.sessions(from: from, to: to) else { return [] }
+        let window = Self.tagWindow()
+        guard let sessions = try? store.sessions(from: window.from, to: window.to) else { return [] }
+        return Self.tagNames(in: sessions, limit: limit)
+    }
+
+    /// The last 30 days up to and including now, in ledger milliseconds: the sessions whose tags the HUD offers.
+    private static func tagWindow(now: Date = Date()) -> (from: Int64, to: Int64) {
+        (Int64(now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000), Int64(now.timeIntervalSince1970 * 1000) + 1)
+    }
+
+    private static func tagNames(in sessions: [ActivityStore.FocusSession], limit: Int) -> [String] {
         var seen = Set<String>()
         var tags: [String] = []
         for session in sessions.reversed() {
@@ -348,6 +405,7 @@ public final class FocusController: ObservableObject {
 
     /// When the next retention prune is due: a day after one that succeeded, a few minutes after one that failed.
     private(set) var nextPrune: Date?
+    private var pendingPrune: Date?
     static let pruneInterval: TimeInterval = 86_400
     static let pruneRetryInterval: TimeInterval = 300
 
@@ -355,18 +413,48 @@ public final class FocusController: ObservableObject {
     /// `retentionDays` (titles, sites, projects, input, sessions, gaps) at start, when the setting changes and
     /// once a day while it runs. A prune the ledger refused (busy) is retried soon. Clients never write the ledger.
     func pruneExpiredActivity(now: Date = Date()) {
-        guard ownsRuntime, remoteCommand == nil, let store else { return }
+        if intentDrain != nil {
+            pendingPrune = now
+            return
+        }
+        guard let store, let cutoff = pruneCutoff(now: now) else { return }
+        let days = settings.retentionDays
+        applyPrune(Result { try store.prune(before: cutoff) }, days: days, now: now)
+    }
+
+    /// The ledger time a prune at `now` deletes before, or nil when this host does not prune or the retention
+    /// reaches past the epoch (then the next try is a day away).
+    private func pruneCutoff(now: Date) -> Int64? {
+        guard ownsRuntime, remoteCommand == nil else { return nil }
         let (span, overflow) = Int64(settings.retentionDays).multipliedReportingOverflow(by: 86_400_000)
         let cutoff = Int64(now.timeIntervalSince1970 * 1000) - span
         guard !overflow, cutoff > 0 else {
             nextPrune = now.addingTimeInterval(Self.pruneInterval)
-            return
+            return nil
         }
+        return cutoff
+    }
+
+    /// Runs a prune at `now` off the main thread (`ActivityStore.perform`) and applies its outcome.
+    private func pruneSuspending(store: ActivityStore, now: Date) async {
+        guard let cutoff = pruneCutoff(now: now) else { return }
+        let days = settings.retentionDays
         do {
-            let removed = try store.prune(before: cutoff)
-            nextPrune = now.addingTimeInterval(Self.pruneInterval)
-            FlowFocusLog.focus.info("retention \(self.settings.retentionDays)d removed segments=\(removed.segments) sessions=\(removed.sessions)")
+            let removed = try await store.perform { try $0.prune(before: cutoff) }
+            applyPrune(.success(removed), days: days, now: now)
         } catch {
+            applyPrune(.failure(error), days: days, now: now)
+        }
+    }
+
+    /// Schedules the next prune from how this one ended: a day after one that succeeded, a few minutes after one
+    /// that failed.
+    private func applyPrune(_ outcome: Result<(segments: Int, sessions: Int), Error>, days: Int, now: Date) {
+        switch outcome {
+        case .success(let removed):
+            nextPrune = now.addingTimeInterval(Self.pruneInterval)
+            FlowFocusLog.focus.info("retention \(days)d removed segments=\(removed.segments) sessions=\(removed.sessions)")
+        case .failure(let error):
             nextPrune = now.addingTimeInterval(Self.pruneRetryInterval)
             FlowFocusLog.focus.error("retention prune failed, retrying in \(Int(Self.pruneRetryInterval)) s: \(error.localizedDescription)")
         }
@@ -374,6 +462,11 @@ public final class FocusController: ObservableObject {
 
     func pruneIfDue(now: Date = Date()) {
         if let nextPrune, now >= nextPrune { pruneExpiredActivity(now: now) }
+    }
+
+    func pruneIfDueSuspending(store: ActivityStore, now: Date = Date()) async {
+        guard let nextPrune, now >= nextPrune else { return }
+        await pruneSuspending(store: store, now: now)
     }
 
     // MARK: - Forgetting activity
@@ -423,6 +516,11 @@ public final class FocusController: ObservableObject {
     /// Waits for every ledger deletion still running, so the owner gives up the ledger (its lease) only after its
     /// last write. Each deletion's own caller gets its result or error.
     func finishLedgerWrites() async {
+        if let shutdown = intentShutdown { await shutdown.value }
+        else if let drain = intentDrain { await drain.value }
+        await recorder?.waitForPersistence()
+        for recorder in retiredRecorders { await recorder.waitForPersistence() }
+        retiredRecorders.removeAll()
         for deletion in deletions.values { _ = await deletion.result }
     }
 
@@ -483,21 +581,47 @@ public final class FocusController: ObservableObject {
         intentTimer = timer
     }
 
+    private var intentDrain: Task<Void, Never>?
+    private var intentShutdown: Task<Void, Never>?
+    /// A deterministic scheduling point for queue-contention tests, before a drain starts its ledger claim.
+    var intentDrainWillTake: (() -> Void)?
+
+    /// Timer ticks share one drain, including its awaited persistence and application of the whole accepted batch.
     public func drainIntents() {
-        guard ownsRuntime else { return }
-        pruneIfDue()
-        guard let store, let engine else { return }
-        guard let intents = try? store.takeIntents(), !intents.isEmpty else { return }
-        for intent in intents {
-            switch intent.kind {
-            case "studio": openStudio()
-            case "hud": toggleHUD()
-            case "capture-pause":
-                let minutes = intent.payload["minutes"] as? Int ?? 60
-                recorder?.pauseCapture(until: Date().addingTimeInterval(TimeInterval(minutes * 60)))
-            case "capture-resume":
-                recorder?.resumeCapture()
-            default: engine.apply(intent: intent)
+        guard ownsRuntime, intentDrain == nil, intentShutdown == nil, let store, let engine else { return }
+        engine.beginIntentBatch()
+        intentDrain = Task { @MainActor [self] in
+            defer { intentDrain = nil }
+            await ActivityStore.$suspendingAccessRequired.withValue(true) {
+                await pruneIfDueSuspending(store: store)
+                intentDrainWillTake?()
+                let intents: [ActivityStore.Intent]
+                do { intents = try await store.perform { try $0.takeIntents() } }
+                catch {
+                    FlowFocusLog.focus.error("focus intents not read: \(error.localizedDescription)")
+                    await engine.endIntentBatch()
+                    return
+                }
+                for intent in intents {
+                    switch intent.kind {
+                    case "studio": await openStudioSuspending()
+                    case "hud":
+                        await refreshIntentTags()
+                        if ownsRuntime, presentsWindows { toggleHUD() }
+                    case "capture-pause":
+                        let minutes = intent.payload["minutes"] as? Int ?? 60
+                        await recorder?.pauseCaptureAsync(until: Date().addingTimeInterval(TimeInterval(minutes * 60)))
+                    case "capture-resume": await recorder?.resumeCaptureAsync()
+                    default: await engine.applySuspending(intent: intent)
+                    }
+                }
+                await engine.flushDeferredCommandsInBatch()
+                await engine.tickSuspendingInBatch()
+                if let pending = pendingPrune {
+                    pendingPrune = nil
+                    await pruneSuspending(store: store, now: pending)
+                }
+                await engine.endIntentBatch()
             }
         }
     }

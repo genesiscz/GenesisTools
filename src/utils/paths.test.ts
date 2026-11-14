@@ -558,3 +558,40 @@ describe("paths: canonicalPath", () => {
         });
     });
 });
+
+describe("shortenHomePaths", () => {
+    let shortenHomePaths: typeof import("./paths").shortenHomePaths;
+
+    beforeEach(async () => {
+        shortenHomePaths = (await import("./paths")).shortenHomePaths;
+    });
+
+    it("shortens a macOS home anywhere in a text, and keeps the rest of the path", () => {
+        const text =
+            "day log: /Users/alice/.genesis-tools/logs/2026-11-11.log\n    at clip (/Users/alice/src/a.ts:3:9)";
+        expect(shortenHomePaths(text, "/Users/alice")).toBe(
+            "day log: ~/.genesis-tools/logs/2026-11-11.log\n    at clip (~/src/a.ts:3:9)"
+        );
+        expect(shortenHomePaths("cwd /Users/alice", "/Users/alice")).toBe("cwd ~");
+    });
+
+    it("shortens a Linux home, and root's /root", () => {
+        expect(shortenHomePaths("open /home/alice/notes.md", "/home/alice")).toBe("open ~/notes.md");
+        expect(shortenHomePaths("read /root/.bashrc", "/root")).toBe("read ~/.bashrc");
+        expect(shortenHomePaths("read /root/.bashrc", "/home/alice")).toBe("read /root/.bashrc");
+    });
+
+    it("shortens a Windows home with either slash, any drive letter and any case", () => {
+        const home = "C:\\Users\\alice";
+        expect(shortenHomePaths("at C:\\Users\\alice\\src\\a.ts", home)).toBe("at ~\\src\\a.ts");
+        expect(shortenHomePaths("at d:/users/Alice/src/a.ts", home)).toBe("at ~/src/a.ts");
+        expect(shortenHomePaths('{"path":"C:\\\\Users\\\\alice\\\\x"}', home)).toBe('{"path":"~\\\\x"}');
+    });
+
+    it("leaves another user's home and a longer name alone", () => {
+        expect(shortenHomePaths("/Users/alicia/a /Users/alice2/b /data/Users/alice/c", "/Users/alice")).toBe(
+            "/Users/alicia/a /Users/alice2/b /data/Users/alice/c"
+        );
+        expect(shortenHomePaths("/Users/bob/a", "/Users/alice")).toBe("/Users/bob/a");
+    });
+});

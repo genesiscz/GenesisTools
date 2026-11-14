@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { CallerCore } from "@genesiscz/utils/agent/context";
 import type { RecordedCallerFacts } from "@genesiscz/utils/agent/identity/record-facts";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -106,6 +107,8 @@ export interface DeadlineExpiry {
 export interface ToolFailure {
     /** Only on a `deadline` record. */
     child?: DeadlineChild;
+    /** A handled protocol call within a long-running server; distinct from the server's actual CLI command. */
+    operation?: { transport: "mcp"; server: string; name: string };
 }
 
 export function failuresDir(): string {
@@ -125,6 +128,20 @@ export function appendFailure(failure: ToolFailure, dir = failuresDir()): void {
     const path = failureLogPath(formatLocalDate(new Date(failure.at)), dir);
     mkdirSync(dirname(path), { recursive: true });
     appendFileSync(path, `${SafeJSON.stringify(failure)}\n`);
+    try {
+        const module = requireSibling(import.meta, "context");
+        if (
+            typeof module === "object" &&
+            module !== null &&
+            "captureFailureContext" in module &&
+            typeof module.captureFailureContext === "function"
+        ) {
+            // A custom store remains self contained. The installed host also prepares full triage in a detached child.
+            module.captureFailureContext({ failure, dir, fullTriage: dir === failuresDir() });
+        }
+    } catch (error) {
+        logger.debug({ error, failureId: failure.id }, "failure context was not captured; base event is preserved");
+    }
 }
 
 /** The days that have a failure log, plain or compressed, oldest first. */

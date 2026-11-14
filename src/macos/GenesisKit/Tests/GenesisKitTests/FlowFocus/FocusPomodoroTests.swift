@@ -69,6 +69,41 @@ final class PomodoroEngineTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
     }
 
+    func testSuspendingCommandsPreserveTheSynchronousClockAndPersistedPauseHistory() async throws {
+        let secondPath = (path as NSString).deletingLastPathComponent + "/async.db"
+        let secondStore = try ActivityStore(path: secondPath)
+        let other = PomodoroEngine(store: secondStore, plan: engine.plan)
+        var now = Date(timeIntervalSince1970: 2_000_000_000)
+        engine.clock = { now }
+        other.clock = { now }
+        engine.requestTick = {}
+        other.requestTick = {}
+        engine.announcePhaseChange = { _, _, _ in }
+        other.announcePhaseChange = { _, _, _ in }
+        defer { other.stop() }
+        let commands = [
+            ActivityStore.Intent(id: 1, kind: "start", payload: ["minutes": 1, "tag": "draft", "note": "one"]),
+            ActivityStore.Intent(id: 2, kind: "pause", payload: [:]),
+            ActivityStore.Intent(id: 3, kind: "resume", payload: [:]),
+            ActivityStore.Intent(id: 4, kind: "skip", payload: [:]),
+            ActivityStore.Intent(id: 5, kind: "stop", payload: [:]),
+        ]
+        for command in commands {
+            engine.apply(intent: command)
+            await other.applySuspending(intent: command)
+            XCTAssertEqual(other.liveSnapshot, engine.liveSnapshot, command.kind)
+            now = now.addingTimeInterval(70)
+        }
+        let reopenedSync = try ActivityStore(path: path)
+        let reopenedAsync = try ActivityStore(path: secondPath)
+        let syncRows = try reopenedSync.sessions(from: 0, to: Int64(now.timeIntervalSince1970 * 1000))
+        let asyncRows = try reopenedAsync.sessions(from: 0, to: Int64(now.timeIntervalSince1970 * 1000))
+        XCTAssertEqual(asyncRows, syncRows)
+        for row in syncRows {
+            XCTAssertEqual(try reopenedAsync.pauses(sessionId: row.id), try reopenedSync.pauses(sessionId: row.id))
+        }
+    }
+
     func testHUDSummaryUsesVisibleReadyDurationAndPreservesActiveState() {
         let view = FocusHUDView(engine: engine, recorder: ActivityRecorder(store: store))
         XCTAssertEqual(engine.remainingSec, 0)

@@ -36,6 +36,11 @@ public final class FocusStudioWindowController: NSWindowController, NSWindowDele
     private var hasPresented = false
 
     public func present() {
+        model.scheduleReload()
+        presentPrepared()
+    }
+
+    func presentPrepared() {
         guard let window else { return }
         // Centered only the first time, and only when no autosaved frame was restored: a re-show keeps the place
         // the user moved the window to.
@@ -45,7 +50,7 @@ public final class FocusStudioWindowController: NSWindowController, NSWindowDele
                 window.center()
             }
         }
-        model.reload()
+
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
