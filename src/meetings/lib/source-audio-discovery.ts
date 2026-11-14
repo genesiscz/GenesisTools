@@ -262,6 +262,12 @@ export async function planSourceAudio(options: {
         // A provider meeting with neither a local file nor a record has nothing to reconcile, so the plan reads no
         // catalog: it asks the provider for one row only where a file has no record yet (create or unmatched).
         const ids = new Set([...grouped.keys(), ...linked.keys()]);
+        const rows: Array<{
+            sourceMeetingId: string;
+            held: MeetingRecord[];
+            files: PlannedAudioFile[];
+            settled: SourceAudioPlanEntry["status"] | undefined;
+        }> = [];
         for (const sourceMeetingId of [...ids].sort()) {
             const held = linked.get(sourceMeetingId) ?? [];
             const files = grouped.get(sourceMeetingId) ?? [];
@@ -289,7 +295,14 @@ export async function planSourceAudio(options: {
                           : held.length
                             ? "preserve"
                             : undefined;
-            const meeting = settled ? undefined : await source.load(sourceMeetingId);
+            rows.push({ sourceMeetingId, held, files, settled });
+        }
+        // The provider rows the unsettled meetings need are independent reads: they load together.
+        const meetings = await Promise.all(
+            rows.map((row) => (row.settled ? undefined : source.load(row.sourceMeetingId)))
+        );
+        rows.forEach(({ sourceMeetingId, held, files, settled }, index) => {
+            const meeting = meetings[index];
             const status = settled ?? (meeting?.sourceMeetingId === sourceMeetingId ? "create" : "unmatched");
             entries.push({
                 sourceId: source.id,
@@ -299,7 +312,7 @@ export async function planSourceAudio(options: {
                 status,
                 files,
             });
-        }
+        });
     }
     return { version: 1, meetingsRoot: options.store.root, entries };
 }
