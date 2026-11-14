@@ -225,11 +225,6 @@ export function guardLoop(payload: HookPayload): string {
 }
 
 /**
- * Whether the loop already read a rule in full: it was explained to the loop, and the loop's transcript records no
- * compaction since, because a compaction summary does not keep the explanation. The transcript is only read for a
- * rule the loop was told before, so a first firing costs no read.
- */
-/**
  * Whether the loop saw a rule's message within `quietMinutes` and has not compacted since. Only the clock and the
  * state file decide a rule the loop never saw, so the common case costs no transcript read.
  */
@@ -251,9 +246,13 @@ function seenRecentlyIn(options: {
 }
 
 /**
- * Whether each rule was explained since the last compaction, for one guard call. `compactedSince` reads up to 4 MiB of
- * the transcript's tail, and a command can fire several familiar rules, so the answers are shared: the earliest
- * explanation is asked first, and with no compaction since it (the usual case) every rule is settled by that one read.
+ * Whether the loop already read a rule in full: it was explained to the loop, and the loop's transcript records no
+ * compaction since, because a compaction summary does not keep the explanation. The transcript is only read for a
+ * rule the loop was told before, so a first firing costs no read.
+ *
+ * `compactedSince` reads up to 4 MiB of the transcript's tail, and a command can fire several familiar rules, so the
+ * answers of one guard call are shared: the earliest explanation is asked first, and with no compaction since it (the
+ * usual case) every rule is settled by that one read.
  * The answer is monotonic in `since` (none since t means none since any later t, one since t was since any earlier t),
  * so a later question is answered from the earlier ones when it can be, and reads the tail only when it cannot.
  */
