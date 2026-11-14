@@ -269,6 +269,38 @@ describe("safe restack helpers", () => {
         expect(lacksChanges(behindUnified({ cwd, branch: "unified-other-way", refs: [fixOnPr] }))).toBe(false);
     });
 
+    test("a clean fix in a file that also has a conflicting change is still named as missing", () => {
+        const { cwd, git } = verifyRepo();
+        const lines = Array.from({ length: 30 }, (_, index) => `export const v${index} = ${index};`);
+        const commit = (from: string, edits: Record<number, string>, message: string) => {
+            git("checkout", "-q", "--detach", from);
+            const next = lines.map((line, index) => edits[index] ?? line);
+            fs.writeFileSync(join(cwd, "f.ts"), `${next.join("\n")}\n`);
+            git("commit", "-qam", message);
+            return git("rev-parse", "HEAD");
+        };
+        fs.writeFileSync(join(cwd, "f.ts"), `${lines.join("\n")}\n`);
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        const base = git("rev-parse", "HEAD");
+        const pr = commit(base, { 0: "export const v0 = 100;", 25: "export const v25 = -25;" }, "fix(x): #1 followup");
+        git("branch", "unified-other-way", commit(base, { 0: "export const v0 = 200;" }, "unified's own change"));
+        git(
+            "branch",
+            "unified-with-fix",
+            commit(base, { 0: "export const v0 = 200;", 25: "export const v25 = -25;" }, "picked")
+        );
+
+        expect(behindUnified({ cwd, branch: "unified-other-way", refs: [pr] })[0]).toMatchObject({
+            lacking: ["f.ts"],
+            conflicted: ["f.ts"],
+        });
+        expect(behindUnified({ cwd, branch: "unified-with-fix", refs: [pr] })[0]).toMatchObject({
+            lacking: [],
+            conflicted: ["f.ts"],
+        });
+    });
+
     test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {
         const { cwd, git } = verifyRepo();
         fs.writeFileSync(join(cwd, "f.ts"), "export const a = 1;\n");
