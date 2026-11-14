@@ -84,17 +84,29 @@ export function parseWhere(text: string): MetricWhere {
     }
 
     if (op === "=" && raw.includes(",")) {
-        return {
-            dim,
-            op: "in",
-            value: raw.split(",").map((each) => {
-                const value = dimValueOf(each);
-                return typeof value === "number" ? value : String(value);
-            }),
-        };
+        return { dim, op: "in", value: raw.split(",").map((each) => listMember(dim, each)) };
     }
 
     return { dim, op: op === "!=" ? "!=" : "=", value: dimValueOf(raw) };
+}
+
+/**
+ * One member of `dim=a,b`, read as a single value is: `true` and `false` bind as the 1 and 0 SQLite stores for a JSON
+ * boolean, as the store binds a single boolean. `null` has no place in an IN list, so it is refused with the filter
+ * that does work.
+ */
+function listMember(dim: string, text: string): string | number {
+    const value = dimValueOf(text);
+
+    if (value === null) {
+        throw new FlagError(`--where ${dim}=…: null cannot be one of a list; filter it on its own with ${dim}=null`);
+    }
+
+    if (typeof value === "boolean") {
+        return value ? 1 : 0;
+    }
+
+    return value;
 }
 
 function limitOf(text: string | undefined): number | undefined {

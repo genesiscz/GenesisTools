@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -277,6 +277,49 @@ describe("the guard explains a rule once per loop", () => {
             expect(after?.explainedRules).toEqual(["stderr-discarded-then-counted"]);
         }
     }
+
+    const LONG_WARN = `${Array.from({ length: 34 }, (_, index) => `echo line ${index}`).join("\n")}\ntsgo | tail -5; echo $?`;
+
+    it("reads the transcript's tail once for all the familiar rules of one command", async () => {
+        const { dir, transcript } = fixture();
+        const sessionId = "sess-one-scan";
+        const both = { ...payload(sessionId, transcript), command: `${COMMAND}\n${LONG_WARN}` };
+        const scans = spyOn(HARNESS_HOOK_FACTS.claude, "compactedSince");
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: dir }, async () => {
+                const shown = { contextRules: [], loop: MAIN_LOOP };
+                await recordGuardShown(sessionId, {
+                    ...shown,
+                    explainedRules: ["stderr-discarded-then-counted"],
+                    at: EXPLAINED_AT,
+                });
+                await recordGuardShown(sessionId, {
+                    ...shown,
+                    explainedRules: ["exit-code-after-pipeline"],
+                    at: EXPLAINED_AT + 60_000,
+                });
+
+                scans.mockClear();
+                const familiar = evaluateGuard(both, DEFAULT_HOOKS_CONFIG);
+                expect(familiar?.explainedRules).toEqual([]);
+                expect(scans).toHaveBeenCalledTimes(1);
+
+                writeFileSync(
+                    transcript,
+                    `${SafeJSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: "2026-11-11T10:05:00.000Z" })}\n`,
+                    { flag: "a" }
+                );
+                scans.mockClear();
+                const after = evaluateGuard(both, DEFAULT_HOOKS_CONFIG);
+                expect(after?.explainedRules).toEqual(["stderr-discarded-then-counted", "exit-code-after-pipeline"]);
+                expect(scans.mock.calls.length).toBeLessThanOrEqual(2);
+            });
+        } finally {
+            scans.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 
     it("reads a compaction from each harness's own rows, and calls an unreadable tail compacted", () => {
         const { dir, transcript } = fixture();

@@ -24,8 +24,15 @@ interface DefineFlags {
     dim?: string[];
 }
 
-/** The spool files on disk and how many of their bytes the store has not taken in yet. */
-function spoolBacklog(read: readonly SpoolFileState[]): Array<{ path: string; bytes: number; pending: number }> {
+/**
+ * The spool files on disk and how many of their bytes the store has not taken in yet. The service may delete a drained
+ * file of an earlier day between the listing and its stat, so a file that is gone by then is left out; any other stat
+ * error names the file. `sizeOf` is a seam for a test.
+ */
+export function spoolBacklog(
+    read: readonly SpoolFileState[],
+    sizeOf: (path: string) => number = (path) => statSync(path).size
+): Array<{ path: string; bytes: number; pending: number }> {
     const dir = spoolDir();
     let names: string[];
 
@@ -36,11 +43,23 @@ function spoolBacklog(read: readonly SpoolFileState[]): Array<{ path: string; by
         return [];
     }
 
-    return names.sort().map((name) => {
+    return names.sort().flatMap((name) => {
         const path = join(dir, name);
-        const bytes = statSync(path).size;
+        let bytes: number;
+
+        try {
+            bytes = sizeOf(path);
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                log.debug({ path }, "a spool file was drained and deleted while the backlog was read");
+                return [];
+            }
+
+            throw new Error(`cannot read the size of the spool file ${path}`, { cause: error });
+        }
+
         const offset = read.find((file) => file.path === path)?.offset ?? 0;
-        return { path, bytes, pending: Math.max(0, bytes - offset) };
+        return [{ path, bytes, pending: Math.max(0, bytes - offset) }];
     });
 }
 

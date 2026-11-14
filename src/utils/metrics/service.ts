@@ -34,6 +34,11 @@ const DRAIN_EVERY_MS = 30_000;
 
 /** A burst of appends drains once, this long after the last change. */
 const DRAIN_SETTLE_MS = 200;
+/**
+ * The spool bytes one drain reads before it yields: a backlog is taken in steps, each on its own turn of the event
+ * loop, so the other clients and the subscriptions go on while it drains.
+ */
+const DRAIN_BUDGET_BYTES = 16 * 1024 * 1024;
 
 /** The project of the service's own measurements: `query.ms`, `ingest.events`, `ingest.rejected`, `drain.ms`. */
 export const SELF_PROJECT = "metrics";
@@ -190,10 +195,16 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
         }
     };
 
+    let backlog: ReturnType<typeof setTimeout> | undefined;
+
     const drain = () =>
         prof.measure("drain", () => {
             const started = performance.now();
-            const result = drainSpool(storeNow(), { dir: spool, onEvents: (events) => emit(events, "spool") });
+            const result = drainSpool(storeNow(), {
+                dir: spool,
+                maxBytes: DRAIN_BUDGET_BYTES,
+                onEvents: (events) => emit(events, "spool"),
+            });
             drains += 1;
             badLines += result.bad;
 
@@ -206,8 +217,27 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
                 }
             }
 
+            if (result.more && backlog === undefined) {
+                backlog = setTimeout(() => {
+                    backlog = undefined;
+
+                    try {
+                        drain();
+                    } catch (error) {
+                        log.warn({ error }, "a metrics spool backlog drain failed");
+                    }
+                }, 0);
+            }
+
             return result;
         });
+
+    /** Reads the whole spool, step after step; only `prune` waits for that, since it must see every old event. */
+    const drainAll = (): void => {
+        for (let step = drain(); step.more; step = drain()) {
+            log.debug({ lines: step.lines }, "a metrics spool backlog drains before prune");
+        }
+    };
 
     const ingest = (params: z.output<typeof METRICS_METHODS.ingest>): MetricsResult<"ingest"> =>
         prof.measure("ingest", () => {
@@ -286,6 +316,7 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
         watcher?.close();
         watcher = undefined;
         clearTimeout(settle);
+        clearTimeout(backlog);
         clearInterval(safety);
     };
 
@@ -316,7 +347,12 @@ export async function startMetricsService(options: MetricsServiceOptions = {}): 
             percentiles: storeNow().percentiles,
             spool: { dir: spool, files: storeNow().spoolFiles(), badLines, drains },
         })),
-        prune: handler("prune", METRICS_METHODS.prune, (params) => ({ removed: storeNow().prune(params.before) })),
+        // The spool first: an old event still in it would come back at the next drain, after a prune that said it
+        // was gone. A line written after this drain is the next drain's, and stays even when it is older.
+        prune: handler("prune", METRICS_METHODS.prune, (params) => {
+            drainAll();
+            return { removed: storeNow().prune(params.before) };
+        }),
         "checkpoint.add": handler("checkpoint.add", METRICS_METHODS["checkpoint.add"], (params) =>
             storeNow().addCheckpoint(params)
         ),

@@ -293,3 +293,87 @@ describe("metrics checkpoints", () => {
         expect(store.events({ project: "shop", metric: "checkout.ms", limit: 1 }).rows[0]?.checkpoint).toBeUndefined();
     });
 });
+
+describe("a spool chunk in one transaction", () => {
+    test("a chunk that fails leaves none of its definitions, and the next write gets a metric id that exists", () => {
+        const store = MetricsStore.open({ path: ":memory:" });
+
+        try {
+            const cursor = { path: "/fixture/writer-2026-11-11.jsonl", offset: 10, lines: 1 };
+            expect(() =>
+                store.ingest({
+                    definitions: [{ project: "shop", metric: "rolled.back", dims: ["kind"] }],
+                    checkpoints: [{ project: "shop", name: "no good" }],
+                    events: [],
+                    cursor,
+                    now: 1_000,
+                })
+            ).toThrow();
+            expect(store.catalog()).toEqual([]);
+            expect(store.spoolFile(cursor.path)).toBeUndefined();
+
+            store.insert([{ project: "shop", metric: "rolled.back", at: 1_000, value: 4, dims: {} }]);
+            expect(store.catalog()).toEqual([
+                expect.objectContaining({ project: "shop", metric: "rolled.back", count: 1 }),
+            ]);
+        } finally {
+            store.close();
+        }
+    });
+
+    test("a chunk's checkpoint and events commit with its offset, and define answers its own metric's counts", () => {
+        const store = MetricsStore.open({ path: ":memory:" });
+
+        try {
+            store.insert([{ project: "shop", metric: "other", at: 500, value: 1, dims: {} }]);
+            store.ingest({
+                definitions: [{ project: "shop", metric: "cart.items", unit: "count", dims: ["kind"] }],
+                checkpoints: [{ project: "shop", name: "v1", at: 900 }],
+                events: [{ project: "shop", metric: "cart.items", at: 1_000, value: 2, dims: { kind: "a" } }],
+                cursor: { path: "/fixture/writer-2026-11-11.jsonl", offset: 10, lines: 1 },
+                now: 1_000,
+            });
+
+            expect(store.checkpoints("shop").map((checkpoint) => checkpoint.name)).toEqual(["v1"]);
+            expect(store.spoolFile("/fixture/writer-2026-11-11.jsonl")?.offset).toBe(10);
+            expect(store.define({ project: "shop", metric: "cart.items" })).toMatchObject({
+                metric: "cart.items",
+                unit: "count",
+                dims: ["kind"],
+                count: 1,
+                first: 1_000,
+                last: 1_000,
+            });
+            expect(store.plan({ project: "shop", metric: "cart.items", groupBy: ["kind"] }).join(" ")).toContain(
+                "events_m"
+            );
+        } finally {
+            store.close();
+        }
+    });
+});
+
+test("a group by checkpoint over more checkpoints than SQLite takes as UNION terms still answers", () => {
+    const store = MetricsStore.open({ path: ":memory:" });
+
+    try {
+        for (let index = 0; index < 600; index++) {
+            store.addCheckpoint({ project: "shop", name: `c${index}`, at: 1_000 + index * 10 });
+        }
+
+        store.insert([
+            { project: "shop", metric: "cart.items", at: 500, value: 1, dims: {} },
+            { project: "shop", metric: "cart.items", at: 1_005, value: 2, dims: {} },
+            { project: "shop", metric: "cart.items", at: 6_995, value: 3, dims: {} },
+        ]);
+        const rows = store.query({ project: "shop", metric: "cart.items", groupBy: ["checkpoint"] }).rows;
+
+        expect(rows.map((row) => [row.group.checkpoint, row.values.count]).sort()).toEqual([
+            ["(before c0)", 1],
+            ["c0", 1],
+            ["c599", 1],
+        ]);
+    } finally {
+        store.close();
+    }
+});

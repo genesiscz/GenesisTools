@@ -51,7 +51,7 @@ export function dimExpr(dim: string): string {
 }
 
 /** The index name of a declared dim: the dim in hex, since SQLite index names ignore case and dim names do not. */
-function dimIndexName(metricId: number, dim: string): string {
+export function dimIndexName(metricId: number, dim: string): string {
     return `events_m${metricIdText(metricId)}_d${Buffer.from(assertDimName(dim)).toString("hex")}`;
 }
 
@@ -324,6 +324,12 @@ export function namesCheckpoint(filter: MetricFilter & { groupBy?: string[]; wit
 }
 
 /**
+ * The most checkpoint spans read as UNION ALL arms. SQLite refuses a compound SELECT of more than 500 terms
+ * (SQLITE_MAX_COMPOUND_SELECT), so a project with more checkpoints takes the one-pass CASE grouping instead.
+ */
+const MAX_SPAN_ARMS = 200;
+
+/**
  * A group by `checkpoint` (with time buckets at most) as one SELECT per checkpoint span, joined by UNION ALL: each
  * reads its time range from the `(metric_id, at)` index and needs no sort of the whole metric. At 1 M events and 5
  * checkpoints that is 32 ms against 218 ms for one pass that groups by the label (benchmark, 2026-11-11).
@@ -401,7 +407,12 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
     const limit = limitOf(query.limit, DEFAULT_QUERY_LIMIT);
     const needsWindow = percentiles === "window" && aggregates.some((aggregate) => percentileOf(aggregate.name));
 
-    if (!needsWindow && groupNames.some(isCheckpointGroup) && groupNames.every(readsTimeOnly)) {
+    if (
+        !needsWindow &&
+        groupNames.some(isCheckpointGroup) &&
+        groupNames.every(readsTimeOnly) &&
+        checkpointWindows(marks).size <= MAX_SPAN_ARMS
+    ) {
         const built = checkpointRangeSql({ metricId, query, marks, groups: aliases, aggregates, order, limit });
         return { ...built, groups: aliases, aggregates };
     }

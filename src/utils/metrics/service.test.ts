@@ -172,4 +172,48 @@ describe("metrics service", () => {
         ]);
         expect((await client.call("catalog", {})).find((entry) => entry.metric === "imported")?.count).toBe(1);
     });
+
+    test("an import cursor that does not move forward is refused, so it cannot be sent again and again", async () => {
+        const { client } = await started();
+        const event = { project: "shop", metric: "imported", value: 1, at: 1_000 };
+
+        for (const cursor of [
+            { path: "/fixture/a.jsonl", start: 0, end: 0, lines: 1 },
+            { path: "/fixture/a.jsonl", start: 40, end: 10, lines: 1 },
+        ]) {
+            await expect(client.call("ingest", { events: [event], cursor })).rejects.toThrow("cursor.end");
+        }
+
+        expect((await client.call("catalog", {})).find((entry) => entry.metric === "imported")).toBeUndefined();
+    });
+
+    test("prune drains the spool first, so an old event still in it does not come back after the prune", async () => {
+        const { client, spool } = await started();
+        appendSpoolLines({
+            dir: spool,
+            writer: "unit",
+            lines: [spoolLine({ project: "shop", metric: "old.metric", value: 1, at: 1_000 })],
+        });
+
+        expect(await client.call("prune", { before: 2_000 })).toEqual({ removed: 1 });
+        await client.call("drain", {});
+        expect((await client.call("catalog", {})).find((entry) => entry.metric === "old.metric")?.count ?? 0).toBe(0);
+    });
+
+    test("the stop function of a subscription ends it on the service too", async () => {
+        const { client } = await started();
+        const heard: MetricsEventNotification[] = [];
+        const stop = await client.subscribe({ project: "shop" }, (event) => heard.push(event));
+
+        stop();
+        // The unsubscribe goes out before this call, and a connection answers in order.
+        await client.call("status", {});
+        const raw: unknown[] = [];
+        client.socket.onNotification((notification) => raw.push(notification));
+        await client.call("ingest", { events: [{ project: "shop", metric: "cart.items", value: 1 }] });
+        await client.call("status", {});
+
+        expect(heard).toEqual([]);
+        expect(raw).toEqual([]);
+    });
 });

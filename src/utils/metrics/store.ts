@@ -1,7 +1,7 @@
 import { Database, type Statement } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { runMigrations } from "@genesiscz/utils/database/migrations";
+import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { applyPragmas } from "@genesiscz/utils/database/pragmas";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -19,6 +19,7 @@ import {
     buildAggregateSql,
     buildEventsSql,
     buildFirstAtSql,
+    dimIndexName,
     dimIndexSql,
     namesCheckpoint,
     type PercentileMode,
@@ -99,6 +100,37 @@ function dimsOf(text: string): Dims {
     }
 
     return Object.fromEntries(Object.entries(parsed).map(([name, value]) => [name, groupValue(value)]));
+}
+
+interface MetricCounts {
+    count: number;
+    first: number | null;
+    last: number | null;
+}
+
+const METRIC_COLUMNS =
+    "metrics.id AS id, projects.name AS project, metrics.name AS name, metrics.unit AS unit, metrics.description AS description, metrics.dims_json AS dims_json";
+
+function catalogEntryOf(row: MetricRow, counts: MetricCounts | undefined): MetricCatalogEntry {
+    return {
+        project: row.project,
+        metric: row.name,
+        ...(row.unit ? { unit: row.unit } : {}),
+        ...(row.description ? { description: row.description } : {}),
+        dims: declaredDims(row.dims_json),
+        count: counts?.count ?? 0,
+        ...(counts?.first != null ? { first: counts.first } : {}),
+        ...(counts?.last != null ? { last: counts.last } : {}),
+    };
+}
+
+/** A spool chunk for {@link MetricsStore.ingest}: what it declares, the checkpoints it upserts, its events and offset. */
+export interface IngestChunk {
+    definitions: readonly MetricDefinition[];
+    checkpoints: readonly MetricCheckpointInput[];
+    events: readonly StoredEvent[];
+    cursor: ReadCursor;
+    now: number;
 }
 
 function declaredDims(text: string): string[] {
@@ -260,36 +292,24 @@ export class MetricsStore {
     }
 
     /**
+     * Runs `work` in one transaction. A rolled-back transaction may have created a metric whose id the cache now holds,
+     * so the cache goes with it: a later write must not use an id SQLite took back or gave to another metric.
+     */
+    private write<T>(work: () => T): T {
+        try {
+            return this.db.transaction(work)();
+        } catch (error) {
+            this.ids.clear();
+            throw error;
+        }
+    }
+
+    /**
      * Adds a checkpoint, or updates the one of that name: a field given replaces the stored one, a field left out keeps
      * it. `at` is now for a new checkpoint without one, and stays for an existing one.
      */
     addCheckpoint(input: MetricCheckpointInput, now = Date.now()): MetricCheckpoint {
-        const check = checkCheckpoint(input, now);
-
-        if (!check.ok) {
-            throw new MetricsInputError(`checkpoint: ${check.reason}`);
-        }
-
-        const { checkpoint } = check;
-        this.db.transaction(() => {
-            const projectId = this.ensureProjectId(checkpoint.project, now);
-            this.db.run(
-                "INSERT INTO checkpoints (project_id, name, at, commit_sha, repo, note, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, name) DO UPDATE SET at = COALESCE(?, checkpoints.at), commit_sha = COALESCE(excluded.commit_sha, checkpoints.commit_sha), repo = COALESCE(excluded.repo, checkpoints.repo), note = COALESCE(excluded.note, checkpoints.note), data = COALESCE(excluded.data, checkpoints.data), updated_at = excluded.updated_at",
-                [
-                    projectId,
-                    checkpoint.name,
-                    checkpoint.at ?? now,
-                    checkpoint.commit ?? null,
-                    checkpoint.repo ?? null,
-                    checkpoint.note ?? null,
-                    check.dataJson ?? null,
-                    now,
-                    now,
-                    checkpoint.at ?? null,
-                ]
-            );
-        })();
-
+        const checkpoint = this.write(() => this.upsertCheckpoint(input, now));
         const stored = this.checkpoints(checkpoint.project).find((each) => each.name === checkpoint.name);
 
         if (!stored) {
@@ -298,6 +318,35 @@ export class MetricsStore {
 
         log.debug({ project: stored.project, name: stored.name, at: stored.at }, "metrics checkpoint added");
         return stored;
+    }
+
+    /** The upsert of {@link addCheckpoint}, inside the caller's transaction. */
+    private upsertCheckpoint(input: MetricCheckpointInput, now: number): { project: string; name: string } {
+        const check = checkCheckpoint(input, now);
+
+        if (!check.ok) {
+            throw new MetricsInputError(`checkpoint: ${check.reason}`);
+        }
+
+        const { checkpoint } = check;
+        const projectId = this.ensureProjectId(checkpoint.project, now);
+        this.db.run(
+            "INSERT INTO checkpoints (project_id, name, at, commit_sha, repo, note, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, name) DO UPDATE SET at = COALESCE(?, checkpoints.at), commit_sha = COALESCE(excluded.commit_sha, checkpoints.commit_sha), repo = COALESCE(excluded.repo, checkpoints.repo), note = COALESCE(excluded.note, checkpoints.note), data = COALESCE(excluded.data, checkpoints.data), updated_at = excluded.updated_at",
+            [
+                projectId,
+                checkpoint.name,
+                checkpoint.at ?? now,
+                checkpoint.commit ?? null,
+                checkpoint.repo ?? null,
+                checkpoint.note ?? null,
+                check.dataJson ?? null,
+                now,
+                now,
+                checkpoint.at ?? null,
+            ]
+        );
+
+        return { project: checkpoint.project, name: checkpoint.name };
     }
 
     /** The checkpoints of one project, or of every project, by project and time. */
@@ -338,39 +387,73 @@ export class MetricsStore {
 
     /** Declares a metric: its unit, description and the dims that get an index. A later call adds dims. */
     define(definition: MetricDefinition): MetricCatalogEntry {
+        const id = this.write(() => this.writeDefinition(definition));
+        this.ensureDimIndexes(id);
+        log.debug({ project: definition.project, metric: definition.metric, dims: definition.dims }, "metric defined");
+        return this.catalogEntry(id);
+    }
+
+    /** The metadata write of {@link define}, inside the caller's transaction; answers the metric id. */
+    private writeDefinition(definition: MetricDefinition): number {
         const project = assertMetricsName("project", definition.project);
         const metric = assertMetricsName("metric", definition.metric);
         const dims = (definition.dims ?? []).map(assertDimName);
+        const id = this.ensureMetricId(project, metric);
+        const row = this.db
+            .query<{ dims_json: string }, [number]>("SELECT dims_json FROM metrics WHERE id = ?")
+            .get(id);
+        const merged = [...new Set([...declaredDims(row?.dims_json ?? "[]"), ...dims])];
+        this.db.run(
+            "UPDATE metrics SET unit = COALESCE(?, unit), description = COALESCE(?, description), dims_json = ? WHERE id = ?",
+            [definition.unit ?? null, definition.description ?? null, SafeJSON.stringify(merged, { strict: true }), id]
+        );
+        return id;
+    }
 
-        this.db.transaction(() => {
-            const id = this.ensureMetricId(project, metric);
-            const row = this.db
-                .query<{ dims_json: string }, [number]>("SELECT dims_json FROM metrics WHERE id = ?")
-                .get(id);
-            const merged = [...new Set([...declaredDims(row?.dims_json ?? "[]"), ...dims])];
-            this.db.run(
-                "UPDATE metrics SET unit = COALESCE(?, unit), description = COALESCE(?, description), dims_json = ? WHERE id = ?",
-                [
-                    definition.unit ?? null,
-                    definition.description ?? null,
-                    SafeJSON.stringify(merged, { strict: true }),
-                    id,
-                ]
-            );
+    /**
+     * Creates the index of each declared dim of a metric through the serialized migration path (BEGIN IMMEDIATE and a
+     * recheck under the lock), so two processes cannot race on the DDL. An index already there costs one lookup.
+     */
+    private ensureDimIndexes(id: number): void {
+        const row = this.db
+            .query<{ dims_json: string }, [number]>("SELECT dims_json FROM metrics WHERE id = ?")
+            .get(id);
+        const migrations = declaredDims(row?.dims_json ?? "[]").map(
+            (dim): Migration => ({
+                id: `dim-index-${dimIndexName(id, dim)}`,
+                description: `the index of dim ${dim} of metric ${id}`,
+                isApplied: (db) =>
+                    db
+                        .query<{ name: string }, [string]>(
+                            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?"
+                        )
+                        .get(dimIndexName(id, dim)) !== null,
+                apply: (db) => {
+                    db.run(dimIndexSql(id, dim));
+                },
+            })
+        );
+        runMigrations(this.db, migrations, { tableName: METRICS_MIGRATION_SCOPE });
+    }
 
-            for (const dim of merged) {
-                this.db.run(dimIndexSql(id, dim));
-            }
-        })();
+    /** One metric's catalog entry, its counts read from its own events only. */
+    private catalogEntry(id: number): MetricCatalogEntry {
+        const row = this.db
+            .query<MetricRow, [number]>(
+                `SELECT ${METRIC_COLUMNS} FROM metrics JOIN projects ON projects.id = metrics.project_id WHERE metrics.id = ?`
+            )
+            .get(id);
 
-        log.debug({ project, metric, dims }, "metric defined");
-        const entry = this.catalog().find((each) => each.project === project && each.metric === metric);
-
-        if (!entry) {
-            throw new Error(`metric ${project}/${metric} is missing after define`);
+        if (!row) {
+            throw new Error(`metric ${id} is missing after define`);
         }
 
-        return entry;
+        const counts = this.db
+            .query<MetricCounts, [number]>(
+                "SELECT COUNT(*) AS count, MIN(at) AS first, MAX(at) AS last FROM events WHERE metric_id = ?"
+            )
+            .get(id);
+        return catalogEntryOf(row, counts ?? undefined);
     }
 
     /**
@@ -378,36 +461,47 @@ export class MetricsStore {
      * transaction, so a crash or a second read never doubles an event.
      */
     insert(events: readonly StoredEvent[], cursor?: ReadCursor): number {
-        const run = this.db.transaction(() => {
-            for (const event of events) {
-                const id = this.ensureMetricId(event.project, event.metric);
-                const context =
-                    event.context === undefined
-                        ? null
-                        : (event.contextJson ?? SafeJSON.stringify(event.context, { strict: true }));
-                this.insertEvent.run(
-                    id,
-                    event.at,
-                    event.value,
-                    SafeJSON.stringify(event.dims, { strict: true }),
-                    context
-                );
+        this.write(() => this.writeEvents(events, cursor));
+        return events.length;
+    }
+
+    /**
+     * One spool chunk in one transaction: its definitions, its checkpoint upserts, its events and the file's new offset.
+     * A crash leaves none of them, and the chunk is read again whole, so a replay never shows a half-applied chunk.
+     * The dim indexes of its definitions are made after the commit, on the serialized migration path.
+     */
+    ingest(chunk: IngestChunk): number {
+        const defined = this.write(() => {
+            const ids = chunk.definitions.map((definition) => this.writeDefinition(definition));
+
+            for (const checkpoint of chunk.checkpoints) {
+                this.upsertCheckpoint(checkpoint, chunk.now);
             }
 
-            if (cursor) {
-                this.writeCursor.run(cursor.path, cursor.offset, cursor.lines, Date.now());
-            }
+            this.writeEvents(chunk.events, chunk.cursor);
+            return ids;
         });
 
-        try {
-            run();
-        } catch (error) {
-            // A rolled-back transaction may have created a metric whose id the cache now holds.
-            this.ids.clear();
-            throw error;
+        for (const id of new Set(defined)) {
+            this.ensureDimIndexes(id);
         }
 
-        return events.length;
+        return chunk.events.length;
+    }
+
+    private writeEvents(events: readonly StoredEvent[], cursor: ReadCursor | undefined): void {
+        for (const event of events) {
+            const id = this.ensureMetricId(event.project, event.metric);
+            const context =
+                event.context === undefined
+                    ? null
+                    : (event.contextJson ?? SafeJSON.stringify(event.context, { strict: true }));
+            this.insertEvent.run(id, event.at, event.value, SafeJSON.stringify(event.dims, { strict: true }), context);
+        }
+
+        if (cursor) {
+            this.writeCursor.run(cursor.path, cursor.offset, cursor.lines, Date.now());
+        }
     }
 
     query(asked: MetricQuery): MetricQueryResult {
@@ -551,7 +645,7 @@ export class MetricsStore {
     catalog(): MetricCatalogEntry[] {
         const counts = new Map(
             this.db
-                .query<{ metric_id: number; count: number; first: number | null; last: number | null }, []>(
+                .query<MetricCounts & { metric_id: number }, []>(
                     "SELECT metric_id, COUNT(*) AS count, MIN(at) AS first, MAX(at) AS last FROM events GROUP BY metric_id"
                 )
                 .all()
@@ -559,22 +653,10 @@ export class MetricsStore {
         );
         return this.db
             .query<MetricRow, []>(
-                "SELECT metrics.id AS id, projects.name AS project, metrics.name AS name, metrics.unit AS unit, metrics.description AS description, metrics.dims_json AS dims_json FROM metrics JOIN projects ON projects.id = metrics.project_id ORDER BY projects.name, metrics.name"
+                `SELECT ${METRIC_COLUMNS} FROM metrics JOIN projects ON projects.id = metrics.project_id ORDER BY projects.name, metrics.name`
             )
             .all()
-            .map((row) => {
-                const count = counts.get(row.id);
-                return {
-                    project: row.project,
-                    metric: row.name,
-                    ...(row.unit ? { unit: row.unit } : {}),
-                    ...(row.description ? { description: row.description } : {}),
-                    dims: declaredDims(row.dims_json),
-                    count: count?.count ?? 0,
-                    ...(count?.first != null ? { first: count.first } : {}),
-                    ...(count?.last != null ? { last: count.last } : {}),
-                };
-            });
+            .map((row) => catalogEntryOf(row, counts.get(row.id)));
     }
 
     spoolFile(path: string): SpoolFileState | undefined {

@@ -204,6 +204,8 @@ async function spoolMetrics(
         );
         await spoolEvents({
             append: (to, record) => appendJsonl(host, to, record),
+            report: ({ error, ...failure }) =>
+                logMod(host, "hooks", { event: "metrics-failed", ...failure, error: String(error) }),
             home,
             definition: INJECTION_DEFINITION,
             events,

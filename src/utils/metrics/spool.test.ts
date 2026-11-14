@@ -95,6 +95,8 @@ describe("metrics spool", () => {
         writeFileSync(done, line(1));
         writeFileSync(torn, `${line(2)}{"v":1,"proj`);
         const fresh = new Date(NOW - 60_000);
+        const quiet = new Date(NOW - 3_600_000);
+        utimesSync(done, quiet, quiet);
         utimesSync(torn, fresh, fresh);
 
         const first = drainSpool(store, { dir, now: NOW });
@@ -108,6 +110,48 @@ describe("metrics spool", () => {
         const second = drainSpool(store, { dir, now: NOW });
         expect(second).toMatchObject({ bad: 1, removed: [torn] });
         expect(total(store)).toEqual({ count: 2, sum: 3 });
+    });
+
+    test("a finished file of an earlier day stays while a writer may still append to it", () => {
+        const { dir, store } = setup();
+        const yesterday = formatLocalDate(new Date(NOW - 86_400_000));
+        const recent = join(dir, `writer-${yesterday}.jsonl`);
+        const appended = join(dir, `other-${yesterday}.jsonl`);
+        writeFileSync(recent, line(1));
+        writeFileSync(appended, line(2));
+        const fresh = new Date(NOW - 5_000);
+        const quiet = new Date(NOW - 3_600_000);
+        utimesSync(recent, fresh, fresh);
+        utimesSync(appended, quiet, quiet);
+
+        // A writer's queued line lands in the quiet file while the drain reads it.
+        const first = drainSpool(store, {
+            dir,
+            now: NOW,
+            onEvents: (events) => {
+                if (events[0]?.value === 2) {
+                    appendFileSync(appended, line(3));
+                }
+            },
+        });
+        expect(first.removed).toEqual([]);
+        expect(existsSync(recent)).toBe(true);
+        expect(existsSync(appended)).toBe(true);
+
+        utimesSync(appended, quiet, quiet);
+        const second = drainSpool(store, { dir, now: NOW });
+        expect(second.removed).toEqual([appended]);
+        expect(total(store)).toEqual({ count: 3, sum: 6 });
+    });
+
+    test("a drain stops at its byte budget, says there is more, and the next one goes on where it stopped", () => {
+        const { dir, store } = setup();
+        writeFileSync(join(dir, `writer-${formatLocalDate(new Date(NOW))}.jsonl`), `${line(1)}${line(2)}${line(3)}`);
+        const budget = { dir, now: NOW, chunkBytes: line(1).length, maxBytes: line(1).length * 2 };
+
+        expect(drainSpool(store, budget)).toMatchObject({ events: 2, more: true });
+        expect(drainSpool(store, budget)).toMatchObject({ events: 1, more: false });
+        expect(total(store)).toEqual({ count: 3, sum: 6 });
     });
 
     test("record() buffers lines and writes them on flush; the drain takes them in", () => {

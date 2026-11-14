@@ -32,8 +32,8 @@ tools metrics query agent-context hook.injection --group-by checkpoint --since 1
   `--checkpoint` (each event names the checkpoint it falls under).
 - Both take `--since <when>` and `--until <when>` (`10d`, `2h`, `30m`, a date `2026-11-01`, a time `09:30`, or
   `checkpoint:<name>` for that checkpoint's time) and `--where` (repeatable): `dim=value`, `dim=a,b` (one of),
-  `dim!=value`, `dim~glob`. `null`, `true`, `false` and numbers are read as such. `checkpoint=<name>` keeps the
-  events from that checkpoint to the next one.
+  `dim!=value`, `dim~glob`. `null`, `true`, `false` and numbers are read as such, in a list too; a list takes no
+  `null` (write `dim=null` on its own). `checkpoint=<name>` keeps the events from that checkpoint to the next one.
 - `tail [project] [metric]`: print events as the service takes them in, until Ctrl-C. `--json` for one JSON line each,
   `--checkpoint` to name each event's checkpoint.
 - `checkpoint add <project> <name> [--commit <sha>] [--repo <text>] [--note <text>] [--at <when>] [--data <json>]`:
@@ -114,7 +114,7 @@ tools metrics events agent-context hook.injection --where checkpoint=pointers --
 ## Configuration
 
 - `mods.hooks.metrics` (default `true`): the mods plugin's hook ledger records each injection into the spool.
-  `tools agents hooks config set mods.hooks.metrics false` turns it off.
+  `tools agents hooks config set mods.hooks.metrics false --write` turns it off.
 - `GENESIS_TOOLS_HOME` moves the whole `~/.genesis-tools` tree (store, spool, service), as for every tool.
 
 ## For agents

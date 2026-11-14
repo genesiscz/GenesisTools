@@ -90,6 +90,9 @@ export const ingestParamsSchema = z.object({
             end: z.number().int().nonnegative(),
             lines: z.number().int().nonnegative(),
         })
+        // A batch moves its file's offset forward: an empty or backward range could be sent again and again, each
+        // time accepted, since the store's offset would still be its start.
+        .refine((cursor) => cursor.end > cursor.start, { message: "cursor.end must be after cursor.start" })
         .optional(),
 });
 
