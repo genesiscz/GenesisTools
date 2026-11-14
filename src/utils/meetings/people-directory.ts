@@ -720,9 +720,10 @@ export class PeopleDirectory {
 
     private async resolve(ref: string): Promise<{ person: KnownPerson; identity: Identity }> {
         const wanted = ref.trim();
-        const { identities } = await this.identities(sourceQuery(wanted), {});
-        const email = (wanted.startsWith("email:") ? wanted.slice(6) : wanted).toLowerCase();
-        const key = wanted.startsWith("name:") ? wanted.slice(5) : nameKey(wanted);
+        const parsed = parsePersonRef(wanted);
+        const { identities } = await this.identities(sourceQuery(parsed), {});
+        const email = (parsed.kind === "email" ? parsed.value : wanted).toLowerCase();
+        const key = parsed.kind === "name" ? parsed.value : nameKey(wanted);
         const found = identities.filter(
             (identity) =>
                 idOf(identity) === wanted ||
@@ -802,25 +803,30 @@ export class PeopleDirectory {
     }
 }
 
+/** A reference split once: an `email:` id with its email, a `name:` id with its name key, or plain text. */
+function parsePersonRef(ref: string): { kind: "email" | "name" | "text"; value: string } {
+    for (const kind of ["email", "name"] as const) {
+        if (ref.startsWith(`${kind}:`)) {
+            return { kind, value: ref.slice(kind.length + 1) };
+        }
+    }
+
+    return { kind: "text", value: ref };
+}
+
 /**
  * What a source is asked for a reference: an `email:` id asks for the email, a `name:` id for its longest name token
  * (a searching source such as Contacts knows no ids, and the key's tokens are sorted, not in the name's order).
  */
-function sourceQuery(ref: string): string {
-    if (ref.startsWith("email:")) {
-        return ref.slice(6);
+function sourceQuery(ref: ReturnType<typeof parsePersonRef>): string {
+    if (ref.kind !== "name") {
+        return ref.value;
     }
 
-    if (ref.startsWith("name:")) {
-        return (
-            ref
-                .slice(5)
-                .split(" ")
-                .reduce((longest, token) => (token.length > longest.length ? token : longest), "") || ref
-        );
-    }
-
-    return ref;
+    return (
+        ref.value.split(" ").reduce((longest, token) => (token.length > longest.length ? token : longest), "") ||
+        `name:${ref.value}`
+    );
 }
 
 /**
