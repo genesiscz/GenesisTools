@@ -24,14 +24,22 @@ if (root/'results.json').exists():
     raise SystemExit('Use a fresh scratch directory; an existing result would invalidate writer timings.')
 commands = []
 
-def run(argv, ok=(0,), stdout=subprocess.DEVNULL):
+# Every external command has a deadline: a stuck ditto, cmp or lsof ends the run with a recorded 'timeout' row
+# instead of waiting forever. A 4 GiB boundary copy took well under a minute on APFS; 30 minutes is the cap.
+TIMEOUT_S = 1800
+
+def run(argv, ok=(0,), stdout=subprocess.DEVNULL, timeout=TIMEOUT_S):
     start = time.monotonic_ns()
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    result = subprocess.run([str(v) for v in argv], stdout=stdout, stderr=subprocess.PIPE)
+    try:
+        result = subprocess.run([str(v) for v in argv], stdout=stdout, stderr=subprocess.PIPE, timeout=timeout)
+        code, stderr = result.returncode, result.stderr.decode(errors='replace')
+    except subprocess.TimeoutExpired as expired:
+        code, stderr = 'timeout', 'killed after %d s; %s' % (timeout, (expired.stderr or b'').decode(errors='replace'))
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     row = dict(argv=[str(v) for v in argv], elapsed_ms=(time.monotonic_ns()-start)/1e6,
                cpu_ms=(after.ru_utime+after.ru_stime-before.ru_utime-before.ru_stime)*1000,
-               exit=result.returncode, stderr=result.stderr.decode(errors='replace'))
+               exit=code, stderr=stderr)
     commands.append(row)
     if result.returncode not in ok:
         raise RuntimeError(row)
@@ -42,7 +50,7 @@ def info(p):
     result = dict(size=s.st_size, allocated=s.st_blocks*512, flags=s.st_flags,
                   mtime_ns=s.st_mtime_ns, inode=s.st_ino, device=s.st_dev, nlink=s.st_nlink)
     if s.st_flags & 32:
-        value = subprocess.run(['/usr/bin/xattr', '-px', 'com.apple.decmpfs', str(p)], capture_output=True)
+        value = subprocess.run(['/usr/bin/xattr', '-px', 'com.apple.decmpfs', str(p)], capture_output=True, timeout=60)
         if value.returncode == 0:
             header = bytes.fromhex(value.stdout.decode())[:16]
             if len(header) == 16:
@@ -100,7 +108,7 @@ for kind, paths in selected.items():
         # ditto preserves compression on an already compressed source. Materialize data fork plain.
         if info(plain)['flags'] & 32:
             with open(folder/'materialized','wb') as dst:
-                subprocess.run(['/bin/cat',str(plain)],stdout=dst,check=True)
+                subprocess.run(['/bin/cat',str(plain)],stdout=dst,check=True,timeout=TIMEOUT_S)
             os.utime(folder/'materialized', ns=(os.stat(plain).st_atime_ns,os.stat(plain).st_mtime_ns))
             plain = folder/'materialized'
         baseline = info(plain)

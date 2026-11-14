@@ -358,7 +358,7 @@ private final class IsolatedCompositor {
         self.initialCanvas = canvas
         self.displayCanvas = displayCanvas
         self.cursorGeometry = LockedCursorGeometry(CursorTrackGeometry(
-            rect: cursorTrackRect(display: canvas, movie: output), clickRegions: selected.map(\.bounds)))
+            rect: cursorTrackRect(display: canvas, movie: output), clickRegions: selected.map(\.bounds), canvas: canvas))
         self.layers = IsolatedLayers(selected.map { IsolatedLayer(id: $0.id, pid: $0.pid, bounds: $0.bounds) })
         CVPixelBufferPoolCreate(nil, nil, [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                                           kCVPixelBufferWidthKey: Int(output.width), kCVPixelBufferHeightKey: Int(output.height),
@@ -425,7 +425,7 @@ private final class IsolatedCompositor {
         guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else { return }
         context.render(image, to: buffer, bounds: outputRect, colorSpace: CGColorSpaceCreateDeviceRGB())
         cursorGeometry.value = CursorTrackGeometry(
-            rect: cursorTrackRect(display: canvas, movie: output), clickRegions: visible.map(\.bounds))
+            rect: cursorTrackRect(display: canvas, movie: output), clickRegions: visible.map(\.bounds), canvas: canvas)
         recorder.consume(buffer, timestamp: timestamp)
         layers.markRendered()
         let movieSeconds = throttle.rendered(at: elapsed)
@@ -603,7 +603,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                                        "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason,
                                        "motionBoxes": $0.motionBoxesJSON] as [String: Any] },
         "stats": withMovieLength(["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured,
-                                  "keptFrames": recorder.kept.count,
+                                  "writtenFrames": recorder.writtenFrames, "keptFrames": recorder.kept.count,
                                   "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1], recorder.movieMs),
         "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
     ]

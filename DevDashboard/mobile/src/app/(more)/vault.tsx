@@ -35,6 +35,7 @@ export default function VaultScreen() {
                     <SectionHeader title="Link" />
                     <TextInput
                         testID="vault-url"
+                        accessibilityLabel="Link to clip"
                         value={url}
                         onChangeText={setUrl}
                         placeholder="https://…"
@@ -50,6 +51,7 @@ export default function VaultScreen() {
                     <SectionHeader title="Note" />
                     <TextInput
                         testID="vault-note"
+                        accessibilityLabel="Optional note"
                         value={note}
                         onChangeText={setNote}
                         placeholder="Optional: why you keep it"

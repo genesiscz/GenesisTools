@@ -399,13 +399,16 @@ export const ENDPOINTS = {
     qaStream: row<Record<string, never>, never>("GET", "/api/qa/stream", "read", "stream"),
 
     // Handoffs.
-    handoffLog: row<{ limit?: number }, HandoffListResponse>("GET", "/api/handoff/log", "read"),
-    handoffGet: row<{ id: string }, HandoffGetResponse>("GET", "/api/handoff/get", "read"),
-    handoffAction: row<{ id: string; actions: HandoffActionInput[] }, HandoffActionResponse>(
-        "POST",
-        "/api/handoff/action",
-        "keyed-write"
-    ),
+    handoffLog: row<
+        { limit?: number; offset?: number; open?: "1"; project?: string; agent?: string; session?: string },
+        HandoffListResponse
+    >("GET", "/api/handoff/log", "read"),
+    /** By `id`, or by `name` (the handoff's slug) with an empty `id`. */
+    handoffGet: row<{ id: string; name?: string }, HandoffGetResponse>("GET", "/api/handoff/get", "read"),
+    handoffAction: row<
+        { id: string; name?: string; editId?: string; actions: HandoffActionInput[] },
+        HandoffActionResponse
+    >("POST", "/api/handoff/action", "keyed-write"),
 
     // AI accounts.
     aiAccounts: row<Record<string, never>, AiAccountsResult>("GET", "/api/ai/accounts", "read"),
@@ -679,6 +682,7 @@ export const ENDPOINTS = {
             tasks: HandoffTaskInput[];
             target?: HandoffTarget;
             refs?: string[];
+            project?: string;
         },
         HandoffPostResponse
     >("POST", "/api/handoff/post", "keyed-write"),

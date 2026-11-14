@@ -1,10 +1,7 @@
-import { parsePairingPayload } from "@dd/contract";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 
-import { applyPairingUri, type PairingSecrets } from "@/lib/apply-pairing";
-import { TIERS } from "@/transport/tiers";
+import { type PairingLinkParams, usePairingLink } from "@/features/connections/use-pairing-link";
 import { Screen } from "@/ui/Screen";
 
 const inputClass =
@@ -17,103 +14,14 @@ const inputClass =
  *
  * F5: a link never carries a secret. A `password` in the link is ignored (a link lands in browser history, logs and
  * the clipboard). A link never connects by itself: the screen shows its address and waits for a Pair tap, so a link
- * from anyone cannot point the phone at their server. A tunnel that answers without a password then connects; one
- * that refuses asks for its password here. A managed pairing asks for the one-time code the Mac shows before it
- * connects. `pk` is the agent key the QR codec writes; the older `apk` name is still read.
+ * from anyone cannot point the phone at their server. That holds for a managed link too, before it asks for the
+ * one-time code. A tunnel that answers without a password then connects; one that answers 401 asks for its password
+ * here. The state and its rules live in `usePairingLink`.
  */
 export default function PairScreen() {
-    const params = useLocalSearchParams<{
-        tier?: string;
-        baseUrl?: string;
-        username?: string;
-        pk?: string;
-        apk?: string;
-    }>();
-    const [error, setError] = useState<string | null>(null);
-    const [busy, setBusy] = useState(false);
-    const [asking, setAsking] = useState(false);
-    const [confirming, setConfirming] = useState(false);
-    const [secret, setSecret] = useState("");
-
-    const { tier, baseUrl, username, pk, apk } = params;
-    const uri = useMemo(() => {
-        const fields = { tier, baseUrl, username };
-        const query = new URLSearchParams();
-
-        for (const key of ["tier", "baseUrl", "username"] as const) {
-            const value = fields[key];
-
-            if (typeof value === "string" && value.length > 0) {
-                query.set(key, value);
-            }
-        }
-
-        const key = pk ?? apk;
-
-        if (typeof key === "string" && key.length > 0) {
-            query.set("pk", key);
-        }
-
-        return `devdashboard://pair?${query.toString()}`;
-    }, [tier, baseUrl, username, pk, apk]);
-
-    const pairing = parsePairingPayload(uri);
-    const needsCode = pairing ? TIERS[pairing.tier].pairing === "device-code" : false;
-
-    const pair = useCallback(
-        async (secrets: PairingSecrets): Promise<boolean> => {
-            setBusy(true);
-            setError(null);
-            let result: Awaited<ReturnType<typeof applyPairingUri>>;
-
-            try {
-                result = await applyPairingUri(uri, secrets);
-            } catch (err) {
-                result = { ok: false, error: err instanceof Error ? err.message : String(err) };
-            } finally {
-                setBusy(false);
-            }
-
-            if (result.ok) {
-                router.replace("/");
-                return true;
-            }
-
-            setError(result.error ?? "Could not reach the agent with that pairing.");
-            return false;
-        },
-        [uri]
-    );
-
-    useEffect(() => {
-        // A second link can land while this screen is still mounted: drop what the last link left first.
-        setError(null);
-        setAsking(false);
-        setConfirming(false);
-        setSecret("");
-
-        if (!pairing) {
-            setError("That is not a DevDashboard pairing link.");
-            return;
-        }
-
-        if (needsCode) {
-            setAsking(true);
-            return;
-        }
-
-        // The user confirms the address first; then a tunnel without Basic auth connects with no secret.
-        setConfirming(true);
-        // Key on the link itself; `pairing` is a fresh object each render.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [uri]);
-
-    const submit = () => void pair(needsCode ? { deviceCode: secret } : { password: secret });
-    const confirm = () => {
-        setConfirming(false);
-        // A refusal asks for the password below.
-        void pair({}).then((ok) => setAsking(!ok));
-    };
+    const params = useLocalSearchParams<PairingLinkParams>();
+    const { pairing, needsCode, error, busy, asking, confirming, secret, setSecret, submit, confirm } =
+        usePairingLink(params);
 
     return (
         <Screen testID="pair-screen">
@@ -140,8 +48,8 @@ export default function PairScreen() {
                     <View className="w-full gap-3">
                         <Text accessibilityLabel="pair-ask" className="text-center text-sm text-dd-text-secondary">
                             {needsCode
-                                ? "Type the pairing code your Mac shows."
-                                : "This tunnel asks for its password."}
+                                ? `Type the pairing code your Mac shows to pair with ${pairing.baseUrl}.`
+                                : `${pairing.baseUrl} asks for its password.`}
                         </Text>
                         <TextInput
                             accessibilityLabel={needsCode ? "pair-device-code" : "pair-password"}

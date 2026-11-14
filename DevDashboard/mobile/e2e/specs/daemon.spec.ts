@@ -1,6 +1,5 @@
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { daemonPage } from "@e2e/pages/DaemonPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 // The Daemon feature done-gate (plan 09 / the "More" rest features). The app boots into /connect
 // whenever no baseUrl is set (root `Stack.Protected guard={baseUrl !== null}`), so this spec first
@@ -30,12 +29,7 @@ describe("DaemonPage", () => {
     before(async () => {
         // Pair so the auth gate opens, then navigate to the daemon More screen.
         if (await connectPage.isShown()) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await daemonPage.openViaDeepLink();

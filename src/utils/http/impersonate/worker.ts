@@ -1,6 +1,7 @@
 import { JSCallback, type Pointer, toArrayBuffer } from "bun:ffi";
 import { CURLINFO, CURLOPT, type Libcurl, openLibcurl } from "./libcurl";
 import type { FromWorker, ToWorker, WorkerInit, WorkerRequest } from "./protocol";
+import { ResponseHead } from "./response-head";
 
 /**
  * The curl side of ImpersonatedHttpClient. One multi handle runs every transfer of one client; one share handle
@@ -29,7 +30,9 @@ interface Transfer {
     maxBodyBytes?: number;
     /** The body passed `maxBodyBytes` and the transfer was cut short. */
     overLimit: boolean;
-    headers: Record<string, string>;
+    /** The answer was a redirect the caller follows itself; the transfer stopped before its body. */
+    redirectCut: boolean;
+    head: ResponseHead;
     callbacks: JSCallback[];
 }
 
@@ -70,7 +73,8 @@ function start(request: WorkerRequest): void {
         received: 0,
         maxBodyBytes: request.maxBodyBytes,
         overLimit: false,
-        headers: {},
+        redirectCut: false,
+        head: new ResponseHead(!request.followRedirects),
         callbacks: [],
     };
     const target = config.target;
@@ -83,6 +87,11 @@ function start(request: WorkerRequest): void {
 
     const decoder = new TextDecoder("latin1");
     const onBody = chunkCallback((bytes) => {
+        if (transfer.head.redirect) {
+            transfer.redirectCut = true;
+            return false;
+        }
+
         transfer.received += bytes.byteLength;
         if (transfer.maxBodyBytes !== undefined && transfer.received > transfer.maxBodyBytes) {
             transfer.overLimit = true;
@@ -93,22 +102,7 @@ function start(request: WorkerRequest): void {
         return true;
     });
     const onHeader = chunkCallback((bytes) => {
-        const line = decoder.decode(bytes).trimEnd();
-        if (line.startsWith("HTTP/")) {
-            // A new status line starts a new response (a redirect hop or a proxy CONNECT): keep only the last.
-            transfer.headers = {};
-            return true;
-        }
-
-        const colon = line.indexOf(":");
-        if (colon > 0) {
-            // A repeated header (set-cookie) is joined with ", ", as curl_cffi's Headers.items() did.
-            const name = line.slice(0, colon).trim().toLowerCase();
-            const value = line.slice(colon + 1).trim();
-            const earlier = transfer.headers[name];
-            transfer.headers[name] = earlier === undefined ? value : `${earlier}, ${value}`;
-        }
-
+        transfer.head.line(decoder.decode(bytes));
         return true;
     });
     transfer.callbacks.push(onBody, onHeader);
@@ -189,7 +183,7 @@ function reply(transfer: Transfer, status: number, error: string | null): void {
             id: transfer.id,
             status,
             url: error ? "" : curl.infoString(transfer.easy, CURLINFO.EFFECTIVE_URL),
-            headers: error ? {} : transfer.headers,
+            headers: error ? {} : transfer.head.headers,
             body: error ? new ArrayBuffer(0) : buffer,
             error,
             overLimit: transfer.overLimit,
@@ -204,7 +198,10 @@ function finish(easy: Pointer, result: number): void {
         return;
     }
 
-    if (transfer.overLimit) {
+    if (transfer.redirectCut) {
+        // The refused body chunk ended the transfer with a write error; the head is the whole answer.
+        reply(transfer, transfer.head.status, null);
+    } else if (transfer.overLimit) {
         reply(transfer, 0, `the response body is larger than ${transfer.maxBodyBytes} bytes; the transfer was stopped`);
     } else if (result === 0) {
         reply(transfer, curl.infoLong(easy, CURLINFO.RESPONSE_CODE), null);

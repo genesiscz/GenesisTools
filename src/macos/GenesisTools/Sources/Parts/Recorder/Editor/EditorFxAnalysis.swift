@@ -140,7 +140,7 @@ struct PrivateDataSection: View {
                 ForEach(hits) { hit in row(hit) }
                 let open = hits.filter { picked.contains($0.id) && !$0.hidden }
                 if !hits.isEmpty {
-                    WideButton(title: open.isEmpty ? "All Hidden" : "Hide \(Plural.count(open.count, "Hit"))", systemImage: "eye.slash") {
+                    WideButton(title: Self.hideTitle(hits: hits, picked: picked), systemImage: "eye.slash") {
                         hide(open.map(\.id))
                     }
                     .disabled(open.isEmpty || busy)
@@ -149,6 +149,14 @@ struct PrivateDataSection: View {
                 }
             }
         }
+    }
+
+    /// The hide button's title: what a click hides; "Pick a Hit" while every hit still shows but none is ticked; "All
+    /// Hidden" only when every hit is hidden. On this surface an empty selection must never read as done.
+    static func hideTitle(hits: [PrivateHitRow], picked: Set<String>) -> String {
+        if hits.allSatisfy(\.hidden) { return "All Hidden" }
+        let open = hits.filter { picked.contains($0.id) && !$0.hidden }.count
+        return open == 0 ? "Pick a Hit" : "Hide \(Plural.count(open, "Hit"))"
     }
 
     private func row(_ hit: PrivateHitRow) -> some View {
@@ -191,11 +199,14 @@ struct PrivateDataSection: View {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
         busy = true
-        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leaveFixed)])) { result in
+        let leftVisible = leaveFixed
+        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leftVisible)])) { result in
             busy = false
             switch result {
             case .success:
-                model.show("Hid every place “\(text)” shows. ⌘Z brings it back.", error: false)
+                model.show(leftVisible
+                    ? "Hid “\(text)” where it moves; a header or bar that stays still was left visible. ⌘Z brings it back."
+                    : "Hid every place “\(text)” shows. ⌘Z brings it back.", error: false)
                 phrase = ""
             case let .failure(failure):
                 model.show("Nothing was hidden: \(failure.reason)", error: true)

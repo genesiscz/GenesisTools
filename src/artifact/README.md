@@ -281,7 +281,7 @@ bodies render as markdown.
   `routing="direct"` retains the previous straight routing for comparison.
 - UML: `UmlDiagram` draws class, primitive, data, enumeration, interface and note elements with typed connectors,
   role labels, multiplicities and marks. `look="modern"|"classic"` selects theme tokens or the EA palette.
-  `ModelBrowser` shows model packages and elements, and `PropertyGrid` shows grouped property rows, optional tab
+  `ModelBrowser` shows model packages and elements (with `tabRoots`, tabs that switch the tree; no tab strip by default), and `PropertyGrid` shows grouped property rows, optional tab
   contents and a footer. `UmlInspector` renders the selected element's fields and generated code.
   `UmlWorkbench` owns state and selection for a diagram-plus-inspector recipe, with a render function.
 - Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/- counts). `beforeValue` and

@@ -4,11 +4,16 @@ export type TranscriptState = "turns" | "none" | "error" | "gone";
 
 /** One live session (`app/(more)/agent-session.tsx`): its phase badge, the Stop action and the transcript. */
 class AgentSessionPage extends BasePage {
+    /**
+     * What the session view settled on. `session-loading` (the board not read yet) is no answer, so the wait goes on
+     * past it: `gone` means the phone read the board and the session was not on it.
+     */
     async transcriptState(timeout = 30_000): Promise<TranscriptState> {
         const ids: Array<[string, TranscriptState]> = [
             ["session-transcript", "turns"],
             ["transcript-none", "none"],
             ["transcript-error", "error"],
+            ["session-board-error", "error"],
             ["session-gone", "gone"],
         ];
         let found: TranscriptState | null = null;

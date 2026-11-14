@@ -1582,6 +1582,10 @@ describe("files the command NAMES rather than works in", () => {
         const note = join(vault, "last.md");
         writeFileSync(note, "x");
         expect(namedArguments(`bash -c "sed -i '' s/a/b/ ${note}"`, [vault])).toContain(note);
+        // Single quotes close the body the same way; a quote of the inner word stays its own.
+        expect(namedArguments(`bash -c 'cat ${note}'`, [vault])).toContain(note);
+        expect(namedArguments(`sh -c 'cat ${note} | wc -l'`, [vault])).toContain(note);
+        expect(namedArguments(`bash -c 'cat "${note}"'`, [vault])).toContain(note);
     });
 
     it("reads a relative literal in the folder the command last cd-ed into, before the session folder", () => {
@@ -3773,6 +3777,16 @@ describe("listing a wide untracked directory", () => {
 
             expect([...broken.values()]).toEqual([null, null, null]);
             expect(none.count).toBe(0);
+        });
+
+        it("stops at its deadline: a listing out of time fails for each directory and is never listed again", async () => {
+            // No git lists a tree within 1 ms, so the batch is stopped (or never starts when the clock already moved).
+            const dirs = [...small, "pat[x]/"];
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, dirs, 5, { budgetMs: 1 }));
+
+            // Without the shared deadline the batch, then each directory by itself: five listings, each unbounded.
+            expect(each.count).toBeLessThanOrEqual(1);
+            expect(dirs.map((dir) => each.result.get(dir))).toEqual([null, null, null, null]);
         });
     });
 });

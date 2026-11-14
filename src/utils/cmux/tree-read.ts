@@ -169,7 +169,9 @@ async function readOnce(options: ReadCmuxTreeOptions, run: TreeRunner, timeoutMs
 
     if (answer.ok) {
         const tree = cmuxTreeFromJson(answer.value);
-        result = tree ? { ok: true, tree } : { ok: false, reason: "failed", error: "cmux tree answered no object" };
+        result = tree
+            ? { ok: true, tree }
+            : { ok: false, reason: "failed", error: "cmux tree answered no tree (no windows list)" };
     } else {
         const probe =
             options.probe ??
@@ -277,9 +279,12 @@ function surfaceOf(raw: Record<string, unknown>): CmuxTreeReadSurface {
     };
 }
 
-/** The one parse of a `tree` answer; null when it is not an object. Strings stay as cmux sent them (an empty one too). */
+/**
+ * The one parse of a `tree` answer; null when it is not an object with a `windows` list (an error envelope, an array),
+ * so a malformed answer is a failed read and never an empty layout. Strings stay as cmux sent them (an empty one too).
+ */
 export function cmuxTreeFromJson(value: unknown): ParsedCmuxTree | null {
-    if (!isRecord(value)) {
+    if (!isRecord(value) || !Array.isArray(value.windows)) {
         return null;
     }
 

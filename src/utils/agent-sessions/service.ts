@@ -579,17 +579,18 @@ export class HistoryService {
     }
 
     /**
-     * The indexed rows of a catalog scope, newest first by `firstTimestamp`: the agent flags and the project, date
-     * and root filters apply to each row, and `limit` cuts after the sort.
+     * The indexed rows of a catalog scope, newest first by `catalogOrder` (`firstTimestamp` by default): the agent
+     * flags and the project, date and root filters apply to each row, and `limit` cuts after the sort.
      */
     private readCatalog(filters: AgentSearchFilters): CachedHistoryMetadata[] {
         const scoped = { ...filters, sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot) };
         const { repository, providerId } = this.options;
         const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
+        const orderBy = filters.catalogOrder ?? "firstTimestamp";
         const metadata = repository.metadata
             .listMetadata({
                 providerId,
-                orderBy: "firstTimestamp",
+                orderBy,
                 mtimeFrom: filters.mtimeFrom,
                 filePaths: filters.filePaths,
                 withUserText: false,
@@ -611,7 +612,7 @@ export class HistoryService {
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
                 .slice(0, filters.newest);
             metadata.push(...newest);
-            metadata.sort(byFirstTimestampDesc);
+            metadata.sort(orderBy === "mtime" ? (left, right) => right.mtime - left.mtime : byFirstTimestampDesc);
         }
 
         return filters.limit == null ? metadata : metadata.slice(0, Math.max(0, filters.limit));

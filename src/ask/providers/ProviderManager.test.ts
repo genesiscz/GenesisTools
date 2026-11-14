@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProviderManager } from "@ask/providers/ProviderManager";
+import { askChatDefault, ProviderManager } from "@ask/providers/ProviderManager";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
@@ -172,5 +172,44 @@ describe("ProviderManager.detectProviders", () => {
         const detected = await new ProviderManager().detectProviders();
 
         expect(detected.map((provider) => provider.name).sort()).toEqual(["anthropic", "openai", "xai"]);
+    });
+});
+
+describe("ask's @account/ chat default", () => {
+    function writeAskDefault(model: string): void {
+        const config: AiConfigData = {
+            version: CONFIG_VERSION,
+            accounts: [...ACCOUNTS, account("acc_side", "side-max", "anthropic-sub")],
+            defaults: { account: { chat: "@account/acc_max" }, app: { ask: { chat: { model } } } },
+        };
+        writeFileSync(join(home, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(config, null, 2));
+        AiConfigStore.invalidate();
+    }
+
+    test("names the account, its provider and the model after the colon", async () => {
+        writeAskDefault("@account/acc_side:opus");
+        expect(askChatDefault(await AiConfigStore.load())).toEqual({
+            provider: "anthropic",
+            model: "opus",
+            accountId: "acc_side",
+        });
+
+        writeAskDefault("@account/acc_side");
+        expect(askChatDefault(await AiConfigStore.load())).toEqual({ provider: "anthropic", accountId: "acc_side" });
+
+        writeAskDefault("xai/grok-4-fast");
+        expect(askChatDefault(await AiConfigStore.load())).toEqual({ model: "xai/grok-4-fast" });
+    });
+
+    test("the preferred account bills the provider instead of the global chat account", async () => {
+        writeAskDefault("@account/acc_side:opus");
+        const global = await new ProviderManager().detectProviders("anthropic");
+        expect(global.find((provider) => provider.name === "anthropic")?.account?.id).toBe("acc_max");
+
+        const manager = new ProviderManager();
+        await manager.detectProviders();
+        manager.preferAccount("acc_side");
+        const preferred = await manager.detectProviders("anthropic");
+        expect(preferred.find((provider) => provider.name === "anthropic")?.account?.id).toBe("acc_side");
     });
 });

@@ -275,6 +275,28 @@ describe("recommit edge cases", () => {
         expect(await repo.sha()).toBe(head);
         expect(await repo.git(["worktree", "list"])).not.toContain("recommit-verify-");
     });
+
+    test("--verify-each reports the last lines the command printed, in the order it printed them", async () => {
+        await groupGood();
+
+        const res = await run(repo, [
+            "apply",
+            "--base",
+            base,
+            "--plan",
+            join(repo.root, "groups.plan.txt"),
+            "--verify-each",
+            // The shell computes the markers, so the command text in the report never contains them.
+            "echo early-$((1+1)) >&2; seq 1 5000; echo late-$((2+2)) >&2; exit 3",
+        ]);
+
+        expect(res.exitCode).toBe(1);
+        expect(res.stderr).toContain("exited 3\n4987\n");
+        expect(res.stderr).toContain("5000\nlate-4");
+        // Output that scrolled past the last 15 lines stays out of the report.
+        expect(res.stderr).not.toContain("early-2");
+        expect(res.stderr).not.toContain("\n4986\n");
+    });
 });
 
 describe("auditCommits", () => {

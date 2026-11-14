@@ -50,7 +50,18 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    fstatSync,
+    mkdtempSync,
+    openSync,
+    readFileSync,
+    readSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalPaths, checkPlan, parsePlan } from "./recommit-plan-check";
@@ -402,6 +413,20 @@ export function auditCommits({
     return problems;
 }
 
+/** The last `lines` lines of a log file, read from at most its last 64 KiB. */
+function logTail(path: string, lines: number): string {
+    const fd = openSync(path, "r");
+
+    try {
+        const size = fstatSync(fd).size;
+        const tail = Buffer.alloc(Math.min(size, 64 * 1024));
+        readSync(fd, tail, 0, tail.length, size - tail.length);
+        return tail.toString("utf8").trim().split("\n").slice(-lines).join("\n");
+    } finally {
+        closeSync(fd);
+    }
+}
+
 /** Runs `command` on every new commit in a throwaway worktree; returns the failures. */
 function verifyEach({ cwd, shas, command }: { cwd: string; shas: string[]; command: string }): string[] {
     const failures: string[] = [];
@@ -418,13 +443,18 @@ function verifyEach({ cwd, shas, command }: { cwd: string; shas: string[]; comma
                     symlinkSync(modules, join(dir, "node_modules"));
                 }
 
-                const r = spawnSync("sh", ["-c", command], { cwd: dir, encoding: "utf8" });
-                process.stderr.write(`verify-each commit ${i + 1} ${sha.slice(0, 9)}: exit ${r.status}\n`);
+                // The output goes to a file, never into memory: a pipe past maxBuffer kills the command (a pass would
+                // read as a failure), and an unlimited one holds a whole build log when the report keeps 15 lines.
+                const log = join(root, `c${i + 1}.log`);
+                const out = openSync(log, "w");
+                // spawnSync reports a failed start in `r.error` instead of throwing, so the descriptor always closes.
+                const r = spawnSync("sh", ["-c", command], { cwd: dir, stdio: ["ignore", out, out] });
+                closeSync(out);
+                const outcome = r.error ? `failed to run (${r.error.message})` : `exited ${r.status ?? r.signal}`;
+                process.stderr.write(`verify-each commit ${i + 1} ${sha.slice(0, 9)}: ${outcome}\n`);
 
-                if (r.status !== 0) {
-                    failures.push(
-                        `commit ${i + 1} ${sha.slice(0, 9)}: \`${command}\` exited ${r.status}\n${`${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").slice(-15).join("\n")}`
-                    );
+                if (r.error || r.status !== 0) {
+                    failures.push(`commit ${i + 1} ${sha.slice(0, 9)}: \`${command}\` ${outcome}\n${logTail(log, 15)}`);
                 }
             } finally {
                 git(cwd, ["worktree", "remove", "--force", dir]);

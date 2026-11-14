@@ -206,7 +206,9 @@ export function ocrRowFiles(path: string): Set<string> {
 
         const head = line.match(/^\{"file":"((?:[^"\\]|\\.)*)"/)?.[1];
 
-        if (head !== undefined && !head.includes("\\")) {
+        // The fast path takes only a row that closes and holds one row: a crash can leave a row cut after its file
+        // name, and the next append then lands on the same line. Anything else is parsed whole.
+        if (head !== undefined && !head.includes("\\") && line.endsWith("}") && !line.includes('{"file":"', 1)) {
             files.add(head);
             continue;
         }

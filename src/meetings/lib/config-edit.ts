@@ -278,7 +278,7 @@ export async function applyConfigEdits(store: MeetingsConfigStore, edits: Config
         store.path === new MeetingsConfigStore().path &&
         Object.values(config.sources).some((source) => source.preserveAudio)
     ) {
-        await (await import("../commands/watch"))
+        await (await import("./watcher"))
             .ensureWatcher()
             .catch((error: unknown) =>
                 logger.warn({ error }, "source audio preservation is enabled; watcher startup will retry at login")

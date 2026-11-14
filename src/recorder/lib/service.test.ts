@@ -634,6 +634,30 @@ describe("the recorder service", () => {
         expect(service.sessions.size).toBe(0);
     });
 
+    // Regression test: PR #507 review — both windows of one edit took every `editor` change as their own.
+    test("two windows of one edit: each change's project.changed names the window that made it", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-two-writers-");
+        const watcher = await connect(service.entry);
+        const heard: RpcNotification[] = [];
+        watcher.onNotification((notification) => heard.push(notification));
+        await watcher.call<unknown>("subscribe", { events: ["project.changed"] });
+        const app = await connect(service.entry);
+        await app.call<unknown>("hello", hello("host"));
+        await app.call<unknown>("session.open", { path, holder: "window-1" });
+        await app.call<unknown>("session.open", { path, holder: "window-2" });
+        await app.call<unknown>("edit.apply", { path, holder: "window-2", ops: [{ op: "volume", volume: 0.4 }] });
+        await app.call<unknown>("edit.undo", { path, holder: "window-1" });
+        await app.call<unknown>("edit.redo", { path });
+        await waitUntil("every project.changed", () => heard.length === 3, 1_000);
+
+        expect(heard.map((notification) => Object(notification.params))).toEqual([
+            expect.objectContaining({ by: "editor", holder: "window-2" }),
+            expect.objectContaining({ by: "editor", holder: "window-1", action: "undo" }),
+            expect.not.objectContaining({ holder: expect.anything() }),
+        ]);
+    });
+
     // Regression test: hunt 2026-11-09 r2-editor-follows-moved-recording: a trashed recording's window made its folder again
     test("a recording moved away while a window edits it: its save makes no folder again, edits are refused and the close releases the hold", async () => {
         const { service } = await serviceFixture({ saveDelayMs: 50 });

@@ -76,7 +76,7 @@ async function runInteractiveSetup(driverFlag?: string): Promise<void> {
 }
 
 async function showConfig(config: ClarityConfig): Promise<void> {
-    const session = await claritySessionStore.read();
+    const session = await claritySessionStore.read(config.baseUrl);
 
     out.println("\nClarity Configuration:");
     out.println(`  Base URL:     ${config.baseUrl}`);

@@ -38,6 +38,16 @@ export type ClarityApiSource = ClarityApiConfig | (() => Promise<ClarityApiConfi
 const SEARCH_PAGE_SIZE = 100;
 const SEARCH_MAX_PAGES = 50;
 
+/**
+ * An expired session answers 200 with an HTML login page. Trusting `response.ok` alone would report a write that
+ * never reached Clarity as a success, so every write checks the body too.
+ */
+function rejectLoginPage(text: string, status: number, debug?: ApiDebugInfo): void {
+    if (text.trimStart().startsWith("<")) {
+        throw new ClarityApiError(`Clarity API returned a login page (${status}): session expired`, status, debug);
+    }
+}
+
 export class ClarityApi {
     private readonly source: ClarityApiSource;
     private current: Promise<ClarityApiConfig> | null = null;
@@ -125,14 +135,7 @@ export class ClarityApi {
             throw new ClarityApiError(`Clarity API error ${response.status}: ${text.slice(0, 500)}`, response.status);
         }
 
-        // An expired session answers 200 with an HTML login page. Trusting `response.ok` alone
-        // would report a write that never reached Clarity as a success.
-        if (text.trimStart().startsWith("<")) {
-            throw new ClarityApiError(
-                `Clarity API returned a login page (${response.status}): session expired`,
-                response.status
-            );
-        }
+        rejectLoginPage(text, response.status);
     }
 
     /**
@@ -253,6 +256,8 @@ export class ClarityApi {
             responseStatus: response.status,
             responseBody,
         };
+
+        rejectLoginPage(text, response.status, debug);
 
         if (!response.ok) {
             throw new ClarityApiError(

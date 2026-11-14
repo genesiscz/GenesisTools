@@ -92,10 +92,13 @@ async function runsOf(
 
 type AgentUsage = Map<WorkflowAgent, WorkflowAgentUsage | null>;
 
-/** The calls, tokens and list-price cost of each agent of a run that has a transcript. */
-async function usageOf(session: ResolvedTranscript, run: WorkflowRun): Promise<AgentUsage> {
+/**
+ * The calls, tokens and list-price cost of each agent of these runs that has a transcript. All runs share one bound of
+ * eight transcript reads, so `--usage` over every run of a session reads no more at once than over one run.
+ */
+async function usageOf(session: ResolvedTranscript, runs: readonly WorkflowRun[]): Promise<AgentUsage> {
     return concurrentMap({
-        items: run.agents.filter((agent) => agent.transcript !== null),
+        items: runs.flatMap((run) => run.agents.filter((agent) => agent.transcript !== null)),
         fn: (agent) => workflowAgentUsage(session.provider, agent.transcript ?? ""),
         concurrency: 8,
         onError: (agent, error) =>
@@ -184,9 +187,7 @@ export async function printWorkflowList(session: ResolvedTranscript, options: Wo
         return;
     }
 
-    const usage = options.usage
-        ? new Map(await Promise.all(runs.map(async (run) => [run, await usageOf(session, run)] as const)))
-        : null;
+    const usage = options.usage ? await usageOf(session, runs) : null;
 
     if (options.json) {
         out.result({
@@ -197,9 +198,7 @@ export async function printWorkflowList(session: ResolvedTranscript, options: Wo
             runs: options.agents ? runs : runs.map(summarizeWorkflowRun),
             ...(usage
                 ? {
-                      usage: Object.fromEntries(
-                          runs.map((run) => [run.runId, runUsage(run, usage.get(run) ?? new Map())])
-                      ),
+                      usage: Object.fromEntries(runs.map((run) => [run.runId, runUsage(run, usage)])),
                   }
                 : {}),
         });
@@ -228,7 +227,7 @@ export async function printWorkflowList(session: ResolvedTranscript, options: Wo
                     String(summary?.agents ?? 0),
                     String(summary?.transcripts ?? 0),
                     String(summary?.results ?? 0),
-                    ...(usage ? usageCells(runUsage(run, usage.get(run) ?? new Map())) : []),
+                    ...(usage ? usageCells(runUsage(run, usage)) : []),
                     run.phases.join(", "),
                 ];
             }),
@@ -261,7 +260,7 @@ export async function printWorkflowList(session: ResolvedTranscript, options: Wo
 
         for (const run of runs) {
             out.println(`\n${run.runId}  ${run.name ?? "(no record)"}  ${run.status ?? "no record"}`);
-            out.println(agentTable(run, live, usage?.get(run) ?? null));
+            out.println(agentTable(run, live, usage));
         }
     }
 }
@@ -278,7 +277,7 @@ export async function printWorkflowRun(
     }
 
     const run = pickWorkflowRun(runs, wanted);
-    const usage = options.usage ? await usageOf(session, run) : null;
+    const usage = options.usage ? await usageOf(session, [run]) : null;
 
     if (options.json) {
         out.result({

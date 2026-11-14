@@ -307,6 +307,7 @@ test("an agent request that carries the id of a waiting call is answered, and th
     try {
         expect(await client.listSessions()).toEqual([{ sessionId: SESSION_ID, title: "Fixture" }]);
         await Bun.sleep(10);
+        // The agent is no peer of ours: its error reply holds the standard members only, no stack and no issue.
         expect(answers).toEqual([
             {
                 jsonrpc: "2.0",

@@ -20,7 +20,7 @@ final class RecorderHuntR2TransitionOverlaysPerSideTests: XCTestCase {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<300 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            try await input.waitUntilReady()
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(nil, Self.size.width, Self.size.height, kCVPixelFormatType_32BGRA, nil, &buffer)
             guard let buffer else { continue }

@@ -146,6 +146,14 @@ export interface InjectionEntry {
     whole: boolean;
     /** The area-rule files whose blocks the dedupe replaced by a receipt. */
     droppedRules: readonly string[];
+    /** The receipts the model got instead; absent (an old hook log) leaves them uncounted. */
+    receipts?: InjectionReceipts;
+}
+
+/** The receipt text that replaced a whole entry, and each replaced area-rule block's by its path. */
+export interface InjectionReceipts {
+    whole?: string;
+    rules?: Readonly<Record<string, string>>;
 }
 
 /** A spool line's object, before `JSON.stringify`. */
@@ -176,6 +184,8 @@ function eventOf(
         dropped: boolean;
         source?: string;
         delivery?: Delivery;
+        /** The characters counted, when not the text's length. */
+        value?: number;
     }
 ): InjectionEvent {
     return {
@@ -183,7 +193,7 @@ function eventOf(
         project: INJECTION_PROJECT,
         metric: INJECTION_METRIC,
         at: part.at,
-        value: part.text.length,
+        value: part.value ?? part.text.length,
         dims: {
             session: facts.session,
             agent: facts.agent,
@@ -200,6 +210,37 @@ function eventOf(
         },
         context: part.text.slice(0, CONTEXT_CHARS),
     };
+}
+
+/**
+ * A part the dedupe dropped: one `dropped` event worth the characters it saved (the part's length less its receipt's),
+ * and one `receipt` event, not dropped, for the receipt the model got instead. So the events that are not dropped add
+ * up to what the model was handed, and the dropped ones to what it was spared. Without a receipt (an old hook log)
+ * the whole part counts as saved.
+ */
+function droppedEvents(
+    facts: InjectionFacts,
+    part: { text: string; receipt?: string; at: number; rule: string | null; source?: string; delivery: Delivery }
+): InjectionEvent[] {
+    const shared = {
+        at: part.at,
+        rule: part.rule,
+        source: part.source ?? injectionSource(part.text),
+        delivery: part.delivery,
+    };
+    const saved = eventOf(facts, {
+        ...shared,
+        text: part.text,
+        kind: "context",
+        dropped: true,
+        value: part.text.length - (part.receipt?.length ?? 0),
+    });
+
+    if (!part.receipt) {
+        return [saved];
+    }
+
+    return [saved, eventOf(facts, { ...shared, text: part.receipt, kind: "receipt", dropped: false })];
 }
 
 /** An entry's pointer lines, and its text without them. */
@@ -243,12 +284,11 @@ export function injectionEvents(
         if (entry.whole) {
             const delivery = deliveryOf(entry.text);
             events.push(
-                eventOf(facts, {
+                ...droppedEvents(facts, {
                     text: entry.text,
+                    receipt: entry.receipts?.whole,
                     at,
-                    kind: "context",
                     rule: null,
-                    dropped: true,
                     delivery,
                     ...(delivery ? { source: "area-rules" } : {}),
                 })
@@ -307,13 +347,28 @@ export function injectionEvents(
 
         for (const block of blocks) {
             const rule = /^Contents of (\S+)/.exec(block)?.[1] ?? null;
+
+            if (rule !== null && entry.droppedRules.includes(rule)) {
+                events.push(
+                    ...droppedEvents(facts, {
+                        text: block,
+                        receipt: entry.receipts?.rules?.[rule],
+                        at,
+                        rule,
+                        source: "area-rules",
+                        delivery: "full",
+                    })
+                );
+                continue;
+            }
+
             events.push(
                 eventOf(facts, {
                     text: block,
                     at,
                     kind: "context",
                     rule,
-                    dropped: rule !== null && entry.droppedRules.includes(rule),
+                    dropped: false,
                     source: "area-rules",
                     delivery: "full",
                 })
@@ -328,12 +383,11 @@ export function injectionEvents(
     return events;
 }
 
-/** The metrics this plugin load already declared, by `<project>/<metric>`. */
-const declared = new Set<string>();
-
 /**
- * Appends `events` to the day's spool file of `at`, one line each, after the metric's define line the first time this
- * plugin load writes that metric. A line that cannot be written is dropped; a producer never fails on the spool.
+ * Appends `events` to the day's spool file of `at`, one line each, after the metric's define line. Every batch carries
+ * its define line: the append swallows a failure (and the shared writer queues and swallows its own), so a define
+ * written once per plugin load and lost once left the metric undeclared until the next load. The drain treats a
+ * repeated define as an upsert. A line that cannot be written is dropped; a producer never fails on the spool.
  */
 export async function spoolEvents({
     append,
@@ -348,13 +402,12 @@ export async function spoolEvents({
     events: readonly SpoolEvent[];
     at: number;
 }): Promise<void> {
-    const path = modsSpoolPath(home, at);
-    const key = `${definition.define.project}/${definition.define.metric}`;
-
-    if (!declared.has(key)) {
-        declared.add(key);
-        await append(path, { ...definition }).catch(() => undefined);
+    if (events.length === 0) {
+        return;
     }
+
+    const path = modsSpoolPath(home, at);
+    await append(path, { ...definition }).catch(() => undefined);
 
     for (const event of events) {
         await append(path, { ...event }).catch(() => undefined);

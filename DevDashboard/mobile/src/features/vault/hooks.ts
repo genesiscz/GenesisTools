@@ -1,7 +1,8 @@
+import type { QaRow } from "@dd/contract";
 import { useMutation } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
-import { idempotencyKey } from "@/features/answer-queue/units";
-import { appendText, clipLink } from "@/features/vault/queries";
+import { clipLink, saveQaAnswer } from "@/features/vault/queries";
+import { idempotencyKey } from "@/lib/idempotency";
 
 export function useClipLink() {
     const client = useDashboardClient();
@@ -10,10 +11,10 @@ export function useClipLink() {
     });
 }
 
-export function useAppendToVault() {
+/** Saves a Q→A answer to the vault; a clipped answer is read whole first. */
+export function useSaveQaAnswer() {
     const client = useDashboardClient();
     return useMutation({
-        mutationFn: (input: { text: string; folder?: string; name?: string }) =>
-            appendText(client, { ...input, idempotencyKey: idempotencyKey() }),
+        mutationFn: (entry: QaRow) => saveQaAnswer(client, { entry, idempotencyKey: idempotencyKey() }),
     });
 }

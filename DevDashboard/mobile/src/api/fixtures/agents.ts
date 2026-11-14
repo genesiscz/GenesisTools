@@ -1,4 +1,5 @@
 import type { AgentsBoardDto, AgentTranscriptTurnDto, PreparedPromptDto, PromptVariableDto } from "@dd/contract";
+import { promptVariables, renderPrompt } from "@genesiscz/utils/template";
 
 // Invented sessions for the mock agent and the tests: ids, projects, accounts and prompts are made up.
 const NOW = Date.parse("2026-10-01T12:00:00Z");
@@ -61,6 +62,7 @@ export const MOCK_BOARD: AgentsBoardDto = {
                     status: "running",
                     lastAt: new Date(NOW - 60_000).toISOString(),
                     liveLabel: null,
+                    liveKey: null,
                     children: [],
                 },
             ],
@@ -141,20 +143,41 @@ export const MOCK_PROMPTS = [
     },
 ];
 
-/** One mock prompt prepared for a session: `branch` comes from the session, `pr` stays missing. */
-export function mockPreparedPrompt(name: string, session: string | null, supplied: Record<string, string> = {}): PreparedPromptDto {
+/**
+ * One mock prompt prepared for a session the way `preparePrompt` (`src/hub/lib/prompts.ts`) prepares a real one: a
+ * non-empty supplied value is `given`, `branch` comes from the session, anything else stays missing, and the shared
+ * renderer fills the text, so an empty value stays missing and a value is inserted literally.
+ */
+export function mockPreparedPrompt(name: string, session: string | null, supplied: Record<string, unknown> = {}): PreparedPromptDto {
     const prompt = MOCK_PROMPTS.find((entry) => entry.name === name) ?? MOCK_PROMPTS[1];
-    const variables = prompt.variables.map<PromptVariableDto>((variable) =>
-        typeof supplied[variable] === "string"
-            ? { name: variable, value: supplied[variable], source: "given" }
-            : variable === "branch" && session
-            ? { name: variable, value: "feat/cart", source: "session" }
-            : { name: variable, value: null, source: "missing" }
-    );
-    const missing = variables.filter((variable) => variable.value === null).map((variable) => variable.name);
-    const text = variables.reduce(
-        (rendered, variable) => (variable.value ? rendered.replaceAll(`{{${variable.name}}}`, variable.value) : rendered),
-        prompt.text
-    );
-    return { name: prompt.name, description: prompt.description, session, variables, text, missing, mode: "inline" };
+    const wanted = promptVariables(prompt.text);
+    const values: Record<string, string> = {};
+    const sources = new Map<string, PromptVariableDto["source"]>();
+
+    for (const variable of wanted) {
+        const value = Object.hasOwn(supplied, variable) ? supplied[variable] : undefined;
+
+        if (typeof value === "string" && value !== "") {
+            values[variable] = value;
+            sources.set(variable, "given");
+        } else if (variable === "branch" && session) {
+            values[variable] = "feat/cart";
+            sources.set(variable, "session");
+        }
+    }
+
+    const rendered = renderPrompt(prompt.text, values);
+    return {
+        name: prompt.name,
+        description: prompt.description,
+        session,
+        variables: wanted.map((variable) => ({
+            name: variable,
+            value: values[variable] ?? null,
+            source: sources.get(variable) ?? "missing",
+        })),
+        text: rendered.text,
+        missing: rendered.missing,
+        mode: "inline",
+    };
 }

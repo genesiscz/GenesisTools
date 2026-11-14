@@ -121,6 +121,15 @@ final class WorkflowArgumentsTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowArguments(base + ["--frame", "window", "--background"], command: "act"))
     }
 
+    func testPreparationMovesKeyboardFocusOnlyForActionsThatType() {
+        // A drag handle or a title-bar accessory cannot take keyboard focus: asking for it failed every prepared drag.
+        XCTAssertFalse(preparationFocusesElement(action: "drag"))
+        XCTAssertFalse(preparationFocusesElement(action: "click"))
+        for action in ["press", "key", "type", "paste", "select", "set"] {
+            XCTAssertTrue(preparationFocusesElement(action: action), action)
+        }
+    }
+
     func testOnlyADragMayLeaveTheWindow() throws {
         // The parser keeps a list of flags per command; a flag missing from it is refused as an unknown
         // option before anything runs, which is how the first --allow-outside build failed live.

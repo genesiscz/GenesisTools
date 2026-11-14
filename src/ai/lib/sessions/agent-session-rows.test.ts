@@ -286,13 +286,20 @@ test("exact transcript paths reach both provider catalogs before row hydration",
         report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
     });
     try {
-        expect(await listAgentSessionRows({ providers: ["claude", "codex"], filePaths, refresh: false })).toEqual([]);
+        expect(
+            await listAgentSessionRows({ providers: ["claude", "codex"], filePaths, refresh: false, limit: 3 })
+        ).toEqual([]);
         expect(catalog).toHaveBeenCalledTimes(2);
         expect(catalog.mock.calls.map(([options]) => options.provider).sort()).toEqual(["claude", "openai-sub"]);
         for (const [options] of catalog.mock.calls) {
             expect(options.filters?.filePaths).toEqual(filePaths);
             expect(options.refresh).toBe(false);
         }
+
+        // The Codex listing cuts by mtime inside the catalog, so its refresh is bounded too.
+        const codex = catalog.mock.calls.find(([options]) => options.provider === "openai-sub")?.[0];
+        expect(codex?.filters?.limit).toBe(3);
+        expect(codex?.filters?.catalogOrder).toBe("mtime");
     } finally {
         catalog.mockRestore();
     }

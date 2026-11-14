@@ -387,7 +387,7 @@ final class RecorderTimelineTests: XCTestCase {
         try outside.encoded().write(to: url, options: .atomic)
 
         var writes = 0
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             // `tools recorder apply`: the ops on the edit as the disk holds it, one revision on.
             guard argv.prefix(2) == ["recorder", "apply"],
                   let ops = try? JSONSerialization.jsonObject(with: Data(argv[3].utf8)) as? [[String: Any]],
@@ -418,7 +418,7 @@ final class RecorderTimelineTests: XCTestCase {
         project.revision = 3
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")), link: { nil })
         var sent: [[String]] = []
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             sent.append(argv)
             // What tools recorder apply and undo write: the edit with the marker, or without it, one revision on.
             var next = model.project
@@ -465,7 +465,7 @@ final class RecorderTimelineTests: XCTestCase {
         // The CLI, as the editor calls it: a switch and a redo write the plan after it, an undo the plan before it.
         var calls: [[String]] = []
         var fails = false
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             calls.append(argv)
             if fails { return done(1, "", "ffmpeg failed\n") }
             try? Data((argv.contains("--undo-switch") ? before : after).utf8).write(to: planFile)
@@ -530,7 +530,7 @@ final class RecorderTimelineTests: XCTestCase {
         service = FakeServiceLink(project: project, rules: FakeRules.basic)
         let model = EditorModel.on(service, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
         var held: [() -> Void] = []
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             let plan = argv.contains("--undo-switch") ? before : after
             let answer = {
                 try? Data(plan.utf8).write(to: planFile)
@@ -747,6 +747,78 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(holders("session.close"), [opens[1]])
     }
 
+    // Regression test: PR #507 review — two windows of one edit share the app's connection, so the service named both
+    // windows' changes `editor` and each window ignored the other's: it lost the undo or redo and drew a stale edit.
+    func testAnotherWindowsChangeOfTheSameEditIsAnOutsideChange() {
+        let service = FakeServiceLink(project: .whole(video: "/fixture/movie.mp4", durationUs: 1_000_000, width: 1920, height: 1080,
+                                                      cursor: nil, recording: nil))
+        let session = EditorSession(path: "/fixture/rec/edit.json", host: { service })
+        session.start()
+        session.edit("edit.undo", [:]) { _ in }
+        XCTAssertEqual(service.calls.last?.params["holder"] as? String, session.holder, "an edit call names the window")
+
+        func change(by: String, holder: String?) -> RecorderProtocol.ProjectChanged {
+            RecorderProtocol.ProjectChanged(path: "/fixture/rec/edit.json", revision: 2, by: by, holder: holder, action: "undo")
+        }
+        XCTAssertTrue(EditorSession.isOwn(change(by: "editor", holder: session.holder), holder: session.holder))
+        XCTAssertFalse(EditorSession.isOwn(change(by: "editor", holder: "another-window"), holder: session.holder),
+                       "another window's change reaches this window")
+        XCTAssertFalse(EditorSession.isOwn(change(by: "agent", holder: nil), holder: session.holder))
+        XCTAssertTrue(EditorSession.isOwn(change(by: "editor", holder: nil), holder: session.holder),
+                      "a service too old to name the holder: every window's change looks like its own, as before")
+    }
+
+    // Regression test: PR #507 review — a first screen scan had 30 minutes on the service, but its CLI fallback ran on
+    // the runner's 10-minute default and was killed while it read the movie.
+    func testAScreenScanHasItsHalfHourOnTheServiceAndOnTheCLI() {
+        let model = cameraModel()
+        service.serviceMethods.append("movie.privateData")
+        service.movieAnswer = { _, _ in [Any]() }
+        var listed: [Result<[PrivateHitRow], FxListFailure>] = []
+        model.fxList("privateData", argv: ["recorder", "private-data", model.fxRecordingPath, "--json"]) { listed.append($0) }
+        XCTAssertEqual(service.timeouts["movie.privateData"], 30 * 60)
+
+        var cliTimeout: TimeInterval?
+        model.runTools = { _, timeout, done in
+            cliTimeout = timeout
+            done(0, "[]", "")
+        }
+        model.fxList("waits", argv: ["recorder", "waits", model.fxRecordingPath, "--json"]) { (_: Result<[WaitRow], FxListFailure>) in }
+        XCTAssertEqual(cliTimeout, 30 * 60, "the service does not offer movie.waits: the CLI gets the same deadline")
+        XCTAssertEqual(listed.count, 1)
+    }
+
+    // Regression test: PR #507 review — an agent's undo after a display switch took the switch off the list instead of
+    // the agent's step: the switch could not be undone, and a later ⌘Z undid an earlier change.
+    func testAnOutsideUndoAfterADisplaySwitchTakesTheEditStepAndKeepsTheSwitch() throws {
+        let (model, held) = try displayModel()
+        model.addZoom(atOutput: 4_000_000)
+        model.switchDisplay(fromUs: 2_000_000, toUs: 10_000_000, displayId: 2)
+        for answer in held() { answer() }
+        XCTAssertEqual(model.undoName, "Display Switch")
+
+        try service.outside("edit.undo", path: model.store.url.path, action: "undo")
+
+        XCTAssertTrue(model.project.zooms.isEmpty, "the agent's undo took the zoom back")
+        XCTAssertEqual(model.undoName, "Display Switch", "the switch is still the next undo")
+        XCTAssertFalse(model.undoStack.contains(where: \.isEdit), "the zoom's step left the list")
+        XCTAssertTrue(model.canRedo, "⇧⌘Z makes the agent's step again")
+    }
+
+    // Regression test: PR #507 review — an outside undo during a drag was kept as a bare flag: after the drag it came
+    // back as a fresh edit, or not at all, and the window's list still held the step the agent had taken.
+    func testAnOutsideUndoDuringADragMovesTheStepItTook() throws {
+        let model = cameraModel()
+        model.addZoom(atOutput: 4_000_000)
+        model.changeCamera(.init(size: 0.3))
+        try service.outside("edit.undo", path: model.store.url.path, action: "undo")
+        model.finishGesture()
+
+        XCTAssertTrue(model.project.zooms.isEmpty, "the agent's undo stays drawn")
+        XCTAssertEqual(model.undoStack.count, 1, "only the drag's step: the agent took the zoom's")
+        XCTAssertFalse(model.canRedo, "the drag came after the undo, so nothing is left to redo")
+    }
+
     // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last
     // step off the list, and a drag that ended before the answer was that step: the drag could not be undone and the
     // zoom came back as a redo.
@@ -788,11 +860,11 @@ final class RecorderTimelineTests: XCTestCase {
         let remakes = model.runTools
         var failing: [() -> Void] = []
         let failRemakes = {
-            model.runTools = { argv, done in
+            model.runTools = { argv, timeout, done in
                 if argv.contains("--undo-switch") || argv.contains("--redo-switch") {
                     failing.append { done(1, "", "the movie was not made\n") }
                 } else {
-                    remakes(argv, done)
+                    remakes(argv, timeout, done)
                 }
             }
         }

@@ -522,6 +522,16 @@ describe("vault auto-allow settings", () => {
         expect(corruptCopies()).toEqual([]);
     });
 
+    test("a missing file hands out arrays of its own, so a change in place never reaches the defaults", async () => {
+        const before = SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS);
+        await updateVaultAutoAllow((settings) => {
+            settings.commands.push("shop sync");
+            settings.agentApps.splice(0);
+            return settings;
+        });
+        expect(SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS)).toBe(before);
+    });
+
     // Two commands at once: a `disable` lands while a `notify off` waits for the lock. The update must read the file
     // after it gets the lock, or it saves its old snapshot and turns the feature back on.
     test("an update waits for the file's lock and keeps a disable saved meanwhile", async () => {

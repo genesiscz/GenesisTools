@@ -77,7 +77,8 @@ tools metrics query agent-context hook.injection --group-by checkpoint --since 1
   "commit":…,"repo":…,"note":…,"data":…}}` does what `checkpoint add` does (`checkpointSpoolLine()` in
   `@genesiscz/utils/metrics/spool` writes one). Set `at`: without it a new name takes the drain's time.
 - **A producer can declare its metric in the spool**: a line `{"v":1,"define":{"project":…,"metric":…,"unit":…,
-  "dims":[…]}}` does what `define` does. The mods plugin writes one per plugin load, so the dims of
+  "dims":[…]}}` does what `define` does, and a repeated one changes nothing. The mods plugin writes one before every
+  batch of events (a define written once per plugin load was lost with a failed write), so the dims of
   `agent-context / hook.injection` (`session`, `agent`, `agentType`, `event`, `source`, `rule`, `dropped`, `model`,
   `delivery`) are indexed without any setup.
 - **The service** (`~/.genesis-tools/metrics/service/`: `service.json`, `service.sock`) starts on demand when a

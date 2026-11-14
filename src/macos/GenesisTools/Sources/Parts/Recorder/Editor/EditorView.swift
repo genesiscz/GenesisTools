@@ -1540,12 +1540,14 @@ private struct MusicSection: View {
     /// The chosen file's length in seconds, read once per file, for the "Starts at" slider.
     @State private var fileSeconds: Double?
     @State private var preview: AVAudioPlayer?
+    /// Whether the chosen file is gone, read off the main thread once per file (`FileMissing`).
+    @State private var musicMissing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel(text: "Music")
             if let music = model.project.audio.music {
-                let missing = !FileManager.default.fileExists(atPath: music.file)
+                let missing = musicMissing
                 HStack(spacing: 8) {
                     Image(systemName: missing ? "exclamationmark.triangle.fill" : "music.note")
                         .foregroundStyle(missing ? Color.red : RecorderPalette.dim)
@@ -1570,7 +1572,10 @@ private struct MusicSection: View {
                 .task(id: music.file) {
                     fileSeconds = nil
                     stopPreview()
-                    guard !missing, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration) else { return }
+                    let gone = await FileMissing.check(music.file)
+                    guard !Task.isCancelled else { return }
+                    musicMissing = gone
+                    guard !gone, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration) else { return }
                     fileSeconds = duration.seconds.isFinite ? duration.seconds : nil
                 }
                 if let fileSeconds, fileSeconds > 1 {

@@ -1,13 +1,13 @@
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { devDashboardRoutes } from "@e2e/adapter";
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 import { e2eRun } from "@e2e/run";
 
 /**
  * A screenshot of every screen, one per route, numbered in the order a user meets them: the connect gate (when the app
- * is not paired yet), the five tabs, then every (more) screen. Each screen is opened by its expo-router deep link (the
+ * is not paired yet), the tabs, every (more) screen, then the connect and pair screens. Each screen is opened by its expo-router deep link (the
  * native tab bar is not reachable through XCUITest, see app.page.ts), waited on by its `screen-*` root, given a moment
  * to load its data, and saved as `<NN>-<route>.png` in `tour/` of the spec's run folder under `tools e2e`, else in
  * `e2e/screenshots/tour/` (DD_TOUR_DIR overrides both).
@@ -22,22 +22,14 @@ const TOUR_DIR =
     (e2eRun.runDir ? path.join(e2eRun.runDir, "tour") : path.join(import.meta.dirname, "..", "screenshots", "tour"));
 const SETTLE_MS = Number(process.env.DD_TOUR_SETTLE_MS ?? "2500");
 
-// The link forms the page objects use: `devdashboard:///<tab>` for a tab, `devdashboard://<route>` for a (more) screen.
-// The (more) screens come from the expo-router folder, so a new screen file is in the tour without an edit here.
-const MORE_DIR = path.join(import.meta.dirname, "..", "..", "src", "app", "(more)");
-const MORE_ROUTES = readdirSync(MORE_DIR)
-    .filter((file) => file.endsWith(".tsx") && !file.startsWith("_") && !file.startsWith("+"))
-    .map((file) => file.replace(/\.tsx$/, ""))
-    .sort();
-
-const SCREENS: Array<{ route: string; screen: string; url: string }> = [
-    { route: "", screen: "screen-pulse", url: "devdashboard:///" },
-    { route: "terminals", screen: "screen-terminals", url: "devdashboard:///terminals" },
-    { route: "qa", screen: "screen-qa", url: "devdashboard:///qa" },
-    { route: "obsidian", screen: "screen-obsidian", url: "devdashboard:///obsidian" },
-    { route: "more", screen: "screen-more", url: "devdashboard:///more" },
-    ...MORE_ROUTES.map((route) => ({ route, screen: `screen-${route}`, url: `devdashboard://${route}` })),
-];
+// The routes `tools mobile` and `tools e2e` use (`e2e/adapter.ts`): the tabs in tab bar order, every (more) screen,
+// then the connect gate and the pairing landing, each with its link and its `screen-*` root. A new screen file, a new
+// tab or a new tab order is in the tour without an edit here.
+const SCREENS = devDashboardRoutes(path.join(import.meta.dirname, "..", "..")).map((route) => ({
+    name: route.name,
+    screen: route.rootId ?? `screen-${route.name}`,
+    url: route.url,
+}));
 
 async function shoot(index: number, name: string, missing = false): Promise<void> {
     const file = `${String(index).padStart(2, "0")}-${name}${missing ? ".MISSING" : ""}.png`;
@@ -52,23 +44,11 @@ describe("Screen tour: one screenshot per screen", () => {
         if (await connectPage.isShown()) {
             await browser.pause(SETTLE_MS);
             await shoot(0, "connect");
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(pairingUri());
-            // A fast Agent can pair and leave the gate before the badge is ever read as reachable.
-            await browser.waitUntil(
-                async () => (await connectPage.isReachabilityState("reachable")) || !(await connectPage.isShown()),
-                { timeout: 15_000, timeoutMsg: "the pairing never became reachable" }
-            );
-
-            if (await connectPage.isShown()) {
-                await connectPage.tapContinue();
-            }
+            await connectPage.pairWithTestAgent();
         }
     });
 
-    for (const [offset, { route, screen, url }] of SCREENS.entries()) {
-        const name = route || "pulse";
-
+    for (const [offset, { name, screen, url }] of SCREENS.entries()) {
         it(`shoots ${name}`, async () => {
             await browser.execute("mobile: deepLink", { url, bundleId: getDevDashboardBundleId() });
             const root = await $(`~${screen}`);

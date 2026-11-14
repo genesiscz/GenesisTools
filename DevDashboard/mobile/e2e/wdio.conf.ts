@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "./bundle-id";
+import { confirmPairing, pairingUri } from "./pages/testAgent";
 import { e2eRun } from "./run";
 import {
     failureScreenshotPath,
@@ -124,16 +125,16 @@ export const config: WebdriverIO.Config = {
         // suite pins EVERY spec to the side Agent regardless of stored state. No-op when unset.
         const testAgent = process.env.DD_TEST_AGENT;
         if (testAgent) {
-            const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=e2e`;
             try {
-                await browser.execute("mobile: deepLink", { url: uri, bundleId });
-                // A link never connects by itself: confirm the address on the pair screen.
-                const confirm = await $("~pair-confirm");
-                await confirm.waitForDisplayed({ timeout: 10_000 });
-                await confirm.click();
-                await browser.pause(3000);
-            } catch {
-                // A spec's own before() re-pairs too; a failed deep-link here is not fatal.
+                await browser.execute("mobile: deepLink", { url: pairingUri({ baseUrl: testAgent }), bundleId });
+                await confirmPairing();
+            } catch (err) {
+                // Fail closed: the specs would otherwise drive whatever Mac the app restored, and some of them write.
+                // WebdriverIO logs and swallows an error thrown from a config hook, so the worker ends itself instead,
+                // after closing the app so nothing reaches that Mac in the meantime.
+                console.error(`[e2e] could not pin the app to DD_TEST_AGENT=${testAgent}; stopping this spec:`, err);
+                await browser.execute("mobile: terminateApp", { bundleId }).catch(() => undefined);
+                process.exit(1);
             }
         }
     },

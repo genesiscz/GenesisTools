@@ -1,10 +1,11 @@
 import type { GateDecisionDto, GateRaiseReceiptDto, GateWaitDto } from "@dd/contract";
-import { Stack } from "expo-router";
+import { Stack, useIsFocused } from "expo-router";
 import { memo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useGateLedger, useRaiseGate } from "@/features/gates/hooks";
 import { GATE_LABELS, requestBytes, waitLine } from "@/features/gates/queries";
+import { useMinuteClock } from "@/lib/minute-clock";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { SectionHeader } from "@/ui/SectionHeader";
@@ -105,7 +106,7 @@ function DecisionRow({ decision }: { decision: GateDecisionDto }) {
 export default function TouchIdScreen() {
     const c = useThemeColors();
     const ledger = useGateLedger();
-    const now = Date.now();
+    const now = useMinuteClock(useIsFocused());
     const pending = ledger.data?.pending ?? [];
     const recent = ledger.data?.recent ?? [];
 

@@ -11,12 +11,13 @@ import { MobileKeyBar } from "@/features/terminals/components/MobileKeyBar";
 import { SessionsList } from "@/features/terminals/components/SessionsList";
 import { useDriverStore } from "@/features/terminals/driver-store";
 import { useRenameTtyd } from "@/features/terminals/hooks";
-import { resolveDriver } from "@/features/terminals/registry";
+import { usableDriver } from "@/features/terminals/registry";
 import type {
     TerminalExitReason,
     TerminalRenderer,
     TerminalStatus,
 } from "@/features/terminals/TerminalRenderer";
+import { useTierCapabilities } from "@/state/connection-store";
 import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -89,7 +90,9 @@ export default function TerminalsScreen() {
         }, []),
     );
 
-    const driver = useMemo(() => resolveDriver(driverId), [driverId]);
+    // No connection (the fixture app) counts as allowing plain URLs: nothing is loaded from a Mac then.
+    const plainUrls = useTierCapabilities()?.plainUrls ?? true;
+    const driver = useMemo(() => usableDriver({ id: driverId, plainUrls }), [driverId, plainUrls]);
     const DriverComponent = driver?.component ?? WebViewTtydRenderer;
     // Reference the html driver so the side-effect import is retained by the bundler.
     void WebViewHtmlRenderer;
@@ -113,7 +116,7 @@ export default function TerminalsScreen() {
         }
 
         void renderer.attach({ id: open.id, title: open.title }, callbacks);
-    }, [open, driverId, callbacks, renderer]);
+    }, [open, driver, callbacks, renderer]);
 
     const closeTerminal = useCallback(() => {
         void rendererRef.current?.detach();

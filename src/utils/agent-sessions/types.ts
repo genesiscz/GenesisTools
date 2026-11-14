@@ -88,6 +88,12 @@ export interface AgentSearchFilters {
     mtimeFrom?: number;
     /** Catalog only: exact transcript paths, applied before refresh, SQL decoding and row hydration. */
     filePaths?: string[];
+    /**
+     * Catalog only: the order `limit` cuts by. `"firstTimestamp"` (the default) keeps the sessions that started last,
+     * `"mtime"` the ones written last, so a long session that is still being written keeps its place. The refresh is
+     * bounded to the newest transcripts by mtime either way.
+     */
+    catalogOrder?: "firstTimestamp" | "mtime";
     /** With `mtimeFrom`: also the N newest sessions by mtime whatever their age (the `--min` top-up). */
     newest?: number;
     signal?: AbortSignal;

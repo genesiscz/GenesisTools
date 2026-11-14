@@ -353,7 +353,7 @@ describe("each provider type answers with its own facts", () => {
     test("an unknown provider is not implemented and cannot be built", async () => {
         expect(isProviderImplemented("carrier-pigeon")).toBe(false);
         await expect(createProvider(unknownProviderAccount())).rejects.toThrow(
-            "Provider not implemented yet: carrier-pigeon"
+            'Unknown ai-proxy provider "carrier-pigeon"'
         );
     });
 });

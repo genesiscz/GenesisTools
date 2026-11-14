@@ -104,8 +104,15 @@ extension EditorModel {
         gesture = nil
         open.commit?.cancel()
         edited = false
+        // Another writer's undo or redo during the drag came before the drag's commit on the service: its history move
+        // goes first, so it moves the step it took and not the drag's.
+        let outside = outsideDuringGesture
+        outsideDuringGesture = []
+        for action in outside { moveHistory(for: action, from: open.mark) }
+        if !outside.isEmpty { refreshUndoState() }
         guard !open.ops.isEmpty else {
             if session.isOnline { session.gesture("gesture.cancel", ["gesture": open.id]) { _ in } }
+            drawOutsideAfterGesture(outside)
             return
         }
         savingGestures += 1
@@ -136,7 +143,7 @@ extension EditorModel {
                         self.adopt(next, rebuild: Self.needsNewMovie(self.project, next))
                     }
                 }
-                self.refetchIfOutsideChanged()
+                self.drawOutsideAfterGesture(outside)
                 if case .success = result { self.gestureSaved(true) } else { self.gestureSaved(false) }
             }
         } else {
@@ -304,7 +311,7 @@ extension EditorModel {
         }
         guard let move = beginMove(undoing: true, counterpart: .edit(project)) else { return }
         ownOpsRunning += 1
-        runTools(["recorder", "undo", store.url.path]) { [weak self] status, _, stderr in
+        runTools(["recorder", "undo", store.url.path], ToolsRunner.defaultTimeout) { [weak self] status, _, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0, let next = self.readOwnFile() else {
@@ -432,7 +439,7 @@ extension EditorModel {
     private func runOps(_ ops: String, done: @escaping @MainActor (Result<EditProject, ApplyFailure>) -> Void) {
         ownOpsRunning += 1
         let target = FileManager.default.fileExists(atPath: store.url.path) ? store.url.path : project.source.video
-        runTools(["recorder", "apply", target, ops]) { [weak self] status, stdout, stderr in
+        runTools(["recorder", "apply", target, ops], ToolsRunner.defaultTimeout) { [weak self] status, stdout, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0 else {
@@ -475,7 +482,7 @@ extension EditorModel {
             }
             return
         }
-        runTools(argv) { [weak self] status, stdout, stderr in
+        runTools(argv, ToolsRunner.defaultTimeout) { [weak self] status, stdout, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0 else {
@@ -506,7 +513,9 @@ extension EditorModel {
             }
             return
         }
-        runTools(argv) { status, stdout, stderr in
+        // The CLI gets the call's deadline too (a first screen read of a long movie takes minutes), never less than a
+        // short command's own, since its process start and file reads cost more than the service's call.
+        runTools(argv, max(timeout, ToolsRunner.defaultTimeout)) { status, stdout, stderr in
             guard status == 0 else {
                 done(.failure(ApplyFailure(reason: stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")))
                 return
@@ -520,16 +529,20 @@ extension EditorModel {
     /// The service says another writer changed the edit: draw its version (one undo step away), after any drag.
     func outsideChanged(action: String? = nil) {
         guard gesture == nil else {
-            refetchPending = true
+            outsideDuringGesture.append(action)
             return
         }
         session.refetch { [weak self] next in self?.adoptExternal(next, action: action) }
     }
 
-    private func refetchIfOutsideChanged() {
-        guard refetchPending else { return }
-        refetchPending = false
-        outsideChanged()
+    /// The outside changes heard during a drag, whose history moves `finishGesture` already made: the edit as the
+    /// service holds it now is drawn and named (the drag's own answer may already show it).
+    private func drawOutsideAfterGesture(_ actions: [String?]) {
+        guard !actions.isEmpty else { return }
+        session.refetch { [weak self] next in
+            guard let self, next != self.project else { return }
+            self.drawExternal(next, action: actions.last ?? nil)
+        }
     }
 
     /// The file changed on disk. With the service the session is the edit (its own saves and the agents' changes come
@@ -546,18 +559,34 @@ extension EditorModel {
     /// (⇧⌘Z makes it again), a redo moves it back, and an edit is one more undo step.
     func adoptExternal(_ next: EditProject, action: String? = nil) {
         guard next != project else { return }
+        moveHistory(for: action, from: project)
+        drawExternal(next, action: action)
+    }
+
+    /// The window's lists after another writer's change to the edit as it was at `before`: an undo moves the
+    /// service's last edit step to the redo list, a redo moves it back, an edit is one more undo step. A display
+    /// switch is the window's own step, which the service does not keep: an outside undo or redo never takes it.
+    func moveHistory(for action: String?, from before: EditProject) {
         switch action {
         case "undo":
-            if undoStack.popLast() == nil, earlierSteps > 0 { earlierSteps -= 1 }
-            redoStack.append(.edit(project))
+            if let at = undoStack.lastIndex(where: \.isEdit) {
+                undoStack.remove(at: at)
+            } else if earlierSteps > 0 {
+                earlierSteps -= 1
+            }
+            redoStack.append(.edit(before))
         case "redo":
-            if !redoStack.isEmpty { redoStack.removeLast() }
-            undoStack.append(.edit(project))
+            if let at = redoStack.lastIndex(where: \.isEdit) { redoStack.remove(at: at) }
+            undoStack.append(.edit(before))
         default:
-            undoStack.append(.edit(project))
+            undoStack.append(.edit(before))
             redoStack.removeAll()
         }
         historyGeneration += 1
+    }
+
+    /// Draws another writer's version of the edit and names the change.
+    private func drawExternal(_ next: EditProject, action: String?) {
         let previous = project
         adopt(next, rebuild: Self.needsNewMovie(project, next))
         // An agent that transcribed the movie and turned captions on: read the transcript it cached now, before the

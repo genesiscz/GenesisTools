@@ -258,6 +258,8 @@ describe("roster patterns", () => {
         for (const definition of ROSTER_DEFINITIONS) {
             expect(definition.name).toMatch(/^roster-[a-z0-9-]+$/);
             expect(definition.candidate).toMatch(/^[CF]\d+$/);
+            // `propose.ts --scaffold` leaves TODO placeholders for a person to fill; a committed roster has none.
+            expect(definition.message).not.toMatch(/\bTODO\b/);
         }
     });
 });
@@ -575,6 +577,23 @@ describe("swift rosters", () => {
 });
 
 describe("callTo: a rename at the import does not evade a roster", () => {
+    test("a roster with an argument test still counts a renamed binding whose calls match", () => {
+        expect(
+            matches(
+                lockUnlinkOutsidePidfile,
+                'import { unlink as remove } from "node:fs/promises";\nawait remove(lockPath);'
+            )
+        ).toBe(1);
+        expect(matches(lockUnlinkOutsidePidfile, "const drop = fs.unlinkSync;\ndrop(join(dir, 'x.lock'));")).toBe(1);
+        expect(matches(lockUnlinkOutsidePidfile, "const { rmSync: wipe } = fs;\nwipe(lockFile);")).toBe(1);
+        expect(
+            matches(
+                lockUnlinkOutsidePidfile,
+                'import { unlink as remove } from "node:fs/promises";\nawait remove(outputPath);'
+            )
+        ).toBe(0);
+    });
+
     test("an aliased import, a rebinding and a destructured rename are findings; a plain import and a lookalike are not", () => {
         const root = parse(
             Lang.TypeScript,

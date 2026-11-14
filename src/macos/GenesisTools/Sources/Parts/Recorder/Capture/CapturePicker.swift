@@ -751,6 +751,7 @@ final class CaptureCountdown {
         timer?.invalidate()
         timer = nil
         lastSecondOver = true
+        model.lastSecondEnded()
         startRecorder()
         if framed {
             finish(true)
@@ -787,6 +788,16 @@ final class CountdownModel: ObservableObject {
     @Published var remaining = 3
     /// The recorder runs: Escape no longer cancels.
     @Published var starting = false
+
+    /// The last second is over: the number shows 0 until the movie's first frame ends the countdown.
+    func lastSecondEnded() {
+        remaining = 0
+    }
+
+    /// What VoiceOver reads: the seconds left, or that the recording is starting once the count reached 0.
+    var spoken: String {
+        remaining > 0 ? "Recording starts in \(Plural.count(remaining, "second"))" : "The recording is starting"
+    }
 }
 
 struct CountdownView: View {
@@ -807,6 +818,6 @@ struct CountdownView: View {
         .frame(width: 200, height: 200)
         .background(Circle().fill(.black.opacity(0.62)))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Recording starts in \(model.remaining) seconds")
+        .accessibilityLabel(model.spoken)
     }
 }

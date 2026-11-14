@@ -1,11 +1,7 @@
-import { type AgentBoardSession, ENDPOINTS, type PingWatchesDto } from "@dd/contract";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AgentBoardSession } from "@dd/contract";
 import { Pressable, Text } from "react-native";
-import { useDashboardClient } from "@/api/client-provider";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { usePingWatch } from "@/features/agents/hooks";
 import { useThemeColors } from "@/theme/colors";
-
-const pingsKey = ["agents", "pings"] as const;
 
 /**
  * "Ping me when done" (F15): the Mac watches this session and pushes once when its turn ends, with the agent's last
@@ -13,21 +9,7 @@ const pingsKey = ["agents", "pings"] as const;
  */
 export function PingButton({ session }: { session: AgentBoardSession }) {
     const c = useThemeColors();
-    const client = useDashboardClient();
-    const queryClient = useQueryClient();
-    const pings = useQuery({ queryKey: pingsKey, queryFn: () => client.call(ENDPOINTS.gatewayPings, {}) });
-    const watched = pings.data?.watches.some((watch) => watch.key === session.key) ?? false;
-    const toggle = useMutation({
-        mutationFn: (): Promise<PingWatchesDto> =>
-            watched
-                ? client.call(ENDPOINTS.pingUnwatch, { key: session.key }, { idempotencyKey: idempotencyKey() })
-                : client.call(
-                      ENDPOINTS.pingWatch,
-                      { key: session.key, label: session.title ?? session.project ?? undefined },
-                      { idempotencyKey: idempotencyKey() }
-                  ),
-        onSuccess: (next) => queryClient.setQueryData(pingsKey, next),
-    });
+    const { watched, loading, toggle } = usePingWatch(session);
 
     return (
         <Pressable
@@ -35,7 +17,7 @@ export function PingButton({ session }: { session: AgentBoardSession }) {
             accessibilityRole="button"
             accessibilityLabel={watched ? "Stop the ping when this turn ends" : "Ping me when this turn ends"}
             accessibilityState={{ selected: watched, disabled: toggle.isPending }}
-            disabled={toggle.isPending || pings.isPending}
+            disabled={toggle.isPending || loading}
             onPress={() => toggle.mutate()}
             className="items-center rounded-xl py-2.5"
             style={{ borderWidth: 1, borderColor: watched ? c.accent : c.border, opacity: toggle.isPending ? 0.6 : 1 }}

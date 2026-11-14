@@ -83,6 +83,9 @@
           "path": {
             "$ref": "#/$defs/__schema0"
           },
+          "holder": {
+            "$ref": "#/$defs/__schema1"
+          },
           "ops": {
             "$ref": "#/$defs/__schema2"
           },
@@ -102,6 +105,9 @@
         "properties": {
           "path": {
             "$ref": "#/$defs/__schema0"
+          },
+          "holder": {
+            "$ref": "#/$defs/__schema1"
           }
         },
         "required": [
@@ -113,6 +119,9 @@
         "properties": {
           "path": {
             "$ref": "#/$defs/__schema0"
+          },
+          "holder": {
+            "$ref": "#/$defs/__schema1"
           }
         },
         "required": [
@@ -160,6 +169,9 @@
         "properties": {
           "path": {
             "$ref": "#/$defs/__schema0"
+          },
+          "holder": {
+            "$ref": "#/$defs/__schema1"
           },
           "gesture": {
             "type": "string",
@@ -6197,6 +6209,9 @@
             "maximum": 9007199254740991
           },
           "by": {
+            "type": "string"
+          },
+          "holder": {
             "type": "string"
           },
           "action": {

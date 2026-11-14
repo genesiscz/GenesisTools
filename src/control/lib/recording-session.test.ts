@@ -118,7 +118,7 @@ function fakeRecorder(
         failFirst?: boolean;
         armLater?: boolean;
         prepares?: boolean;
-        /** What each run reports when a stop or pause ends it (ax-tool's capturedFrames). */
+        /** What each run reports when a stop or pause ends it (ax-tool's writtenFrames). */
         frames?: { frames: number };
         /** The length of each run's movie, as ax-tool reports it on a stop or pause. */
         movieMs?: number;
@@ -1135,7 +1135,9 @@ describe("nativeSegmentRecorder", () => {
                 captureFailed: false,
                 sessionDir,
                 warnings: [],
-                capture: { data: { stats: { durationMs: 2600, capturedFrames: 75, movieMs: 2480 } } },
+                capture: {
+                    data: { stats: { durationMs: 2600, capturedFrames: 81, writtenFrames: 75, movieMs: 2480 } },
+                },
             };
         });
         const starts: unknown[] = [];
@@ -1150,6 +1152,7 @@ describe("nativeSegmentRecorder", () => {
 
         const result = await record((start) => starts.push(start));
         expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }]);
+        // The movie's frames are the ones its writer accepted, not every buffer captured (81, six skipped).
         expect(result).toMatchObject({ durationMs: 2600, movieMs: 2480, frames: 75 });
 
         // A recorder that wrote no first-frame time (an older ax-tool) leaves the session to its own clock.
@@ -1538,6 +1541,15 @@ describe("segments of another shape: the picture and the cursor rows share one p
             y: 0,
             w: 1440,
             h: 900,
+        });
+        // A thin region keeps a picture of at least two pixels instead of rounding to 0.
+        expect(letterboxPlacement({ width: 2, height: 1920, into: { w: 1280, h: 720 } })).toMatchObject({
+            w: 2,
+            h: 720,
+        });
+        expect(letterboxPlacement({ width: 1920, height: 2, into: { w: 1280, h: 720 } })).toMatchObject({
+            w: 1280,
+            h: 2,
         });
     });
 

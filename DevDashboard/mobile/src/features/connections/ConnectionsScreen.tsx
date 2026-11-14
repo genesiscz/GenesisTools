@@ -5,7 +5,7 @@ import { ConnectionForm, type ConnectionFormValues } from "@/features/connection
 import { ConnectionRow } from "@/features/connections/ConnectionRow";
 import { Eyebrow, GhostButton, MeshOrbs, PrimaryButton } from "@/features/connections/components";
 import type { SavedConnection } from "@/features/connections/types";
-import { useConnectionStore } from "@/state/connection-store";
+import { type ConnectResult, useConnectionStore } from "@/state/connection-store";
 import { FAILURE_MESSAGE } from "@/transport/reachability";
 import { useThemeColors } from "@/theme/colors";
 import { Card } from "@/ui/Card";
@@ -35,23 +35,25 @@ function parseHostInput(value: string): ParsedHost {
 
 type Mode = { kind: "list" } | { kind: "add" } | { kind: "edit"; connection: SavedConnection };
 
+function throwOnFailure(result: ConnectResult): void {
+    if (!result.ok) {
+        throw new Error(result.error ?? FAILURE_MESSAGE[result.failure]);
+    }
+}
+
 export function ConnectionsScreen() {
     const c = useThemeColors();
     const connections = useConnectionStore((s) => s.connections);
     const activeId = useConnectionStore((s) => s.activeId);
     const listConnections = useConnectionStore((s) => s.listConnections);
-    const addConnection = useConnectionStore((s) => s.addConnection);
+    const connect = useConnectionStore((s) => s.connect);
     const activate = useConnectionStore((s) => s.activate);
     const updateConnection = useConnectionStore((s) => s.updateConnection);
     const removeConnection = useConnectionStore((s) => s.remove);
 
     /** Activates a saved row; a failed probe keeps the current Mac and says why. */
     async function activateConnection(id: string): Promise<void> {
-        const result = await activate(id);
-
-        if (!result.ok) {
-            throw new Error(result.error ?? FAILURE_MESSAGE[result.failure]);
-        }
+        throwOnFailure(await activate(id));
     }
 
     const [loading, setLoading] = useState(true);
@@ -112,16 +114,18 @@ export function ConnectionsScreen() {
 
         try {
             const { host, port, baseUrl } = parseHostInput(values.host);
-            const id = await addConnection({
-                tier: "lan",
-                label: values.label || undefined,
-                baseUrl,
-                host,
-                port,
-                username: values.username,
-                password: values.password,
-            });
-            await activateConnection(id);
+            // Build, probe, then save: a Mac that does not answer leaves no row and no stored password behind.
+            throwOnFailure(
+                await connect({
+                    tier: "lan",
+                    label: values.label || undefined,
+                    baseUrl,
+                    host,
+                    port,
+                    username: values.username,
+                    password: values.password,
+                })
+            );
             setMode({ kind: "list" });
         } catch (err) {
             console.warn("[connections] failed to add connection", err);

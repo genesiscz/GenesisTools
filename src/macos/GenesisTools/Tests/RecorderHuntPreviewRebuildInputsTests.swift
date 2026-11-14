@@ -27,7 +27,7 @@ final class RecorderHuntPreviewRebuildInputsTests: XCTestCase {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<60 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            try await input.waitUntilReady()
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(nil, 320, 200, kCVPixelFormatType_32BGRA, nil, &buffer)
             guard let buffer else { continue }
@@ -55,7 +55,7 @@ final class RecorderHuntPreviewRebuildInputsTests: XCTestCase {
     private func openModel(_ project: EditProject) async throws -> EditorModel {
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("screen.edit.json")),
                                 link: { nil })
-        model.runTools = { _, _ in }
+        model.runTools = { _, _, _ in }
         try await until("the preview has its first movie", timeout: 10) { model.player.currentItem?.videoComposition != nil }
         return model
     }
@@ -203,7 +203,7 @@ final class RecorderHuntPreviewRebuildInputsTests: XCTestCase {
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("screen.edit.json")),
                                 link: { nil })
-        model.runTools = { _, _ in }
+        model.runTools = { _, _, _ in }
         return model
     }
 

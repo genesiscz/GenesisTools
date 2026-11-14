@@ -4,8 +4,8 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { KeptEditsContext, useKeptState, useStagePick } from "@/features/answer-queue/hooks";
 import {
+    decisionDetails,
     flushDecision,
-    idempotencyKey,
     type NoteState,
     noteIsDirty,
     noteStateOf,
@@ -13,6 +13,7 @@ import {
     stagesOf,
     toggleStagedLetter,
 } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useThemeColors } from "@/theme/colors";
 
 interface DecisionCardProps {
@@ -20,6 +21,13 @@ interface DecisionCardProps {
     decision: WaitingDecisionDto;
     /** Hands the session card this card's flush (save the note, wait for a stage), so Send runs it first. */
     registerFlush: (number: number, flush: (() => Promise<void>) | null) => void;
+    /** Tells the session card whether this card holds a typed note not staged yet, so Send can send it as it is. */
+    reportNote: (number: number, typed: boolean) => void;
+    /**
+     * True while the session's Send flushes and sends. The answer is taken from the card at that point, so the card
+     * takes no pick and no note edit until the send settles: a later edit would show an answer the Mac never got.
+     */
+    frozen: boolean;
 }
 
 /**
@@ -28,7 +36,7 @@ interface DecisionCardProps {
  * message, as the notch widget does. The stage carries the revision shown, so a decision the agent re-posted refuses
  * the stale pick with the Mac's words.
  */
-export function DecisionCard({ session, decision, registerFlush }: DecisionCardProps) {
+export function DecisionCard({ session, decision, registerFlush, reportNote, frozen }: DecisionCardProps) {
     const c = useThemeColors();
     const stage = useStagePick();
     // Kept by the screen, not the card: the list unmounts a card scrolled far away, and the note must survive that.
@@ -64,14 +72,21 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
         return pending;
     };
 
+    // A flush waits for pending stages before it saves the note: it must save the note as it is then, not as it was
+    // when the flush started.
+    const latestNote = useRef(noteState);
+    latestNote.current = noteState;
+
     /** Stages the note against the revision it was written on; rejects when the Mac refuses it. */
     const saveNote = async () => {
-        if (!noteIsDirty(noteState)) {
+        const current = latestNote.current;
+
+        if (!noteIsDirty(current)) {
             return;
         }
 
-        const text = noteState.note.trim();
-        await stageAsync({ text }, noteState.base.revision);
+        const text = current.note.trim();
+        await stageAsync({ text }, current.base.revision);
         setNoteState((state) => ({ ...state, base: { ...state.base, draft: text } }));
     };
 
@@ -86,6 +101,13 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
         return () => registerFlush(decision.number, null);
     }, [decision.number, registerFlush]);
 
+    const typed = noteIsDirty(noteState) && noteState.note.trim() !== "";
+
+    useEffect(() => {
+        reportNote(decision.number, typed);
+        return () => reportNote(decision.number, false);
+    }, [decision.number, typed, reportNote]);
+
     return (
         <View testID={testId} className="gap-2 rounded-lg border border-dd-border p-3">
             <Text className="text-xs" style={{ color: c.textMuted, fontFamily: "monospace" }}>
@@ -99,6 +121,16 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                     {decision.prompt}
                 </Text>
             ) : null}
+            {decisionDetails(decision).map((detail) => (
+                <View key={detail.id} testID={`${testId}-${detail.id}`} className="gap-0.5">
+                    <Text className="text-xs" style={{ color: c.textMuted, fontFamily: "monospace" }}>
+                        {detail.label}
+                    </Text>
+                    <Text className="text-xs" style={{ color: c.textSecondary }}>
+                        {detail.text}
+                    </Text>
+                </View>
+            ))}
             {decision.multiple ? (
                 <Text className="text-xs" style={{ color: c.textMuted }}>
                     Pick any of these, then send.
@@ -114,11 +146,12 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                             accessibilityRole={decision.multiple ? "checkbox" : "button"}
                             accessibilityState={{
                                 selected: staged,
-                                disabled: stage.isPending,
+                                disabled: stage.isPending || frozen,
                                 ...(decision.multiple ? { checked: staged } : {}),
                             }}
                             accessibilityLabel={`Option ${choice.id}: ${choice.label}${choice.recommended ? ", recommended" : ""}`}
-                            disabled={stage.isPending}
+                            accessibilityHint={choice.rationale ?? undefined}
+                            disabled={stage.isPending || frozen}
                             onPress={() => {
                                 // A multiple decision stages the whole new set; the session's Send sends it.
                                 const option = decision.multiple
@@ -139,9 +172,20 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                             <Text className="font-bold" style={{ color: c.accent, fontFamily: "monospace" }}>
                                 {choice.id}
                             </Text>
-                            <Text className="flex-1 text-sm" style={{ color: c.textPrimary }}>
-                                {choice.label}
-                            </Text>
+                            <View className="flex-1 gap-0.5">
+                                <Text className="text-sm" style={{ color: c.textPrimary }}>
+                                    {choice.label}
+                                </Text>
+                                {choice.rationale ? (
+                                    <Text
+                                        testID={`${testId}-option-${choice.id}-rationale`}
+                                        className="text-xs"
+                                        style={{ color: c.textSecondary }}
+                                    >
+                                        {choice.rationale}
+                                    </Text>
+                                ) : null}
+                            </View>
                             {choice.recommended ? (
                                 <Text className="text-xs" style={{ color: c.textMuted }}>
                                     recommended
@@ -157,6 +201,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                 placeholder="Add a note…"
                 placeholderTextColor={c.textMuted}
                 value={noteState.note}
+                editable={!frozen}
                 onChangeText={(note) => setNoteState((state) => ({ ...state, note }))}
                 onEndEditing={() => void saveNote().catch(() => undefined)}
                 multiline

@@ -87,7 +87,7 @@ function TimingChips({
                         key={option}
                         testID={TIMING_CHIPS[option].testID}
                         accessibilityRole="radio"
-                        accessibilityState={{ selected: picked, disabled: !supported }}
+                        accessibilityState={{ checked: picked, disabled: !supported }}
                         accessibilityLabel={`${TIMING_CHIPS[option].word}${supported ? "" : ", not available"}`}
                         onPress={() => {
                             if (support && !support.supported) {

@@ -72,6 +72,42 @@ test("a windowed catalog refreshes and returns the window plus the newest top-up
     }
 });
 
+test("an mtime-ordered limited catalog refreshes only the newest transcripts and keeps a long session first", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-mtime-"));
+    const ids = Array.from(
+        { length: 30 },
+        (_, index) => `11111111-2222-4333-8444-${String(100 + index).padStart(12, "0")}`
+    );
+    ids.forEach((id, index) => {
+        session(root, id, (index + 2) * HOUR);
+    });
+    // Started before every other session, still being written: newest by mtime, oldest by first timestamp.
+    const long = ids[29];
+    utimesSync(join(root, `${long}.jsonl`), new Date(NOW - 60_000), new Date(NOW - 60_000));
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+        now: () => new Date(NOW),
+    });
+
+    try {
+        const listing = await service.catalog({ excludeAgents: true, limit: 2, catalogOrder: "mtime" });
+        expect(listing.metadata.map((entry) => entry.nativeId)).toEqual([long, ids[0]]);
+        // The refresh read the newest max(20, 4 x limit) transcripts by mtime, not the whole 30-session corpus.
+        expect(listing.report.parsed).toBe(20);
+
+        const byStart = await service.catalog({ excludeAgents: true, limit: 2 }, { refresh: false });
+        expect(byStart.metadata.map((entry) => entry.nativeId)).toEqual([ids[0], ids[1]]);
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
 /** A Claude sub-agent transcript under its lead; it carries the lead's session id, as Claude writes it. */
 function subagent(root: string, lead: string, agent: string, ageMs: number): void {
     const directory = join(root, lead, "subagents");

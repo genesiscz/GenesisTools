@@ -16,8 +16,9 @@ import {
     union,
     within,
 } from "@genesiscz/utils/chrome-devtools/shots/kit";
-import { LocatorSyntaxError, parseLocator } from "@genesiscz/utils/chrome-devtools/shots/locator";
+import { LocatorSyntaxError, parseLocator, splitChain } from "@genesiscz/utils/chrome-devtools/shots/locator";
 import {
+    annotationOf,
     capturePart,
     DEFAULT_SETUP,
     describeMiss,
@@ -29,6 +30,7 @@ import {
 } from "@genesiscz/utils/chrome-devtools/shots/page";
 import { parseShotPart } from "@genesiscz/utils/chrome-devtools/shots/part";
 import { type AnnotationRect, composeOverlay, encodeImage, validateAnnotations } from "@genesiscz/utils/image";
+import { labelSpot } from "@genesiscz/utils/image/mark-layout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { attach, type Page } from "../cdp";
@@ -122,6 +124,14 @@ describe("the locator grammar", () => {
         expect(parseShotPart({ clip: { viewport: true } }).clip.around).toBeUndefined();
         expect(() => parseShotPart({})).toThrow(/a part with no marks needs a clip/);
         expect(() => parseShotPart({ clip: { pad: 4 } })).toThrow(/a part with no marks needs a clip/);
+    });
+
+    test("a chain splits only at separators outside quotes and regex literals", () => {
+        expect(splitChain('role=button[name="Next >> page"]')).toEqual(['role=button[name="Next >> page"]']);
+        expect(splitChain('css=[title="a >> b"] >> nth=0')).toEqual(['css=[title="a >> b"]', "nth=0"]);
+        expect(splitChain("text=/a >> [/] b/ >> nth=1")).toEqual(["text=/a >> [/] b/", "nth=1"]);
+        expect(splitChain("text=Don't >> nth=1")).toEqual(["text=Don't", "nth=1"]);
+        expect(parseLocator('role=button[name="Next >> page"]').chains[0]?.steps).toHaveLength(1);
     });
 
     test("a malformed locator fails at the boundary and names itself", () => {
@@ -500,6 +510,45 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         const plan = await loadWebPlan(planPath);
 
         expect(plan.marks).toEqual([{ target: ["testid=panel", "testid=row-1"], label: "x" }]);
+    });
+});
+
+describe("what a shot's overlay paints and exports", () => {
+    test("the exported annotation carries the drawn style and the offset to where the chip was placed", () => {
+        const placedChip = { x: 120, y: 20, w: 60, h: 18 };
+        const annotation = annotationOf(
+            {
+                mark: { kind: "box", target: parseLocator("testid=x"), label: { text: "Here" } },
+                frame: {
+                    shape: "rect",
+                    box: { x: 100, y: 50, w: 200, h: 100 },
+                    stroke: "#ffb020",
+                    strokeWidth: 3,
+                    dash: [9, 6],
+                    radius: 8,
+                    fill: "",
+                },
+                chip: {
+                    spec: { text: "Here", style: { bg: "#ffb020", fg: "#111111", fontSize: 14 }, at: placedChip },
+                    placed: { chip: placedChip, position: "top-left", moved: true },
+                },
+            },
+            { x: 0, y: 0, w: 800, h: 600 },
+            2
+        );
+
+        if (annotation.kind !== "box") {
+            throw new Error(`expected a box annotation, got ${annotation.kind}`);
+        }
+
+        expect(annotation.style).toEqual({ stroke: "#ffb020", strokeWidth: 6, radius: 16, fill: "", dash: [18, 12] });
+        expect(annotation.label?.style).toEqual({ bg: "#ffb020", fg: "#111111", fontSize: 28 });
+        const rect = { x: 200, y: 100, w: 400, h: 200 };
+        const spot = labelSpot(
+            { rect, size: { w: 120, h: 36 }, position: "top-left", gap: 8, offset: annotation.label?.offset },
+            "top-left"
+        );
+        expect({ x: spot.x, y: spot.y }).toEqual({ x: 240, y: 40 });
     });
 });
 

@@ -13,8 +13,7 @@ import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { type ClarityConfig, getConfig as getClarityConfig } from "@app/clarity/config";
-import { getClarityApi } from "@app/clarity/lib/api";
-import { isClarityAuthError } from "@app/clarity/lib/auth/client";
+import { ClarityClient, isClarityAuthError } from "@app/clarity/lib/auth/client";
 
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
@@ -62,7 +61,8 @@ export async function pingClarity(config: ClarityConfig | null): Promise<Service
     }
 
     try {
-        await getClarityApi().getTimesheetApp();
+        // A status check reads only: an expired session is reported with its fix, never renewed by the saved driver.
+        await ClarityClient.withoutRenew().getTimesheetApp();
         return { status: "ok" };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

@@ -27,7 +27,7 @@ final class RecorderHuntExportSizeOneRuleTests: XCTestCase {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<60 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            try await input.waitUntilReady()
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(nil, 320, 200, kCVPixelFormatType_32BGRA, nil, &buffer)
             guard let buffer else { continue }
@@ -137,7 +137,7 @@ final class RecorderHuntExportSizeOneRuleTests: XCTestCase {
         let project = try await ProjectStore.load(path: movie.path).project
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("screen.edit.json")),
                                 link: { nil })
-        model.runTools = { _, _ in }
+        model.runTools = { _, _, _ in }
         let deadline = Date().addingTimeInterval(10)
         while model.sourceNominalFps == nil, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         let rate = try XCTUnwrap(model.sourceNominalFps, "the rate was read within 10 s")

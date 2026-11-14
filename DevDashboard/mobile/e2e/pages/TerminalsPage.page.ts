@@ -94,6 +94,31 @@ class TerminalsPage extends BasePage {
         return this.suffixesForPrefix("session-row-");
     }
 
+    /**
+     * Waits until the tmux list holds the Mac's answer: its rows, or its empty state (which also stands for a failed
+     * read). `terminals-tmux-loading` is no answer, so an empty list read before the query settles proves nothing.
+     */
+    async waitForTmuxList(timeout = 20_000): Promise<"rows" | "empty"> {
+        let state: "rows" | "empty" | null = null;
+        await this.waitUntil(
+            async () => {
+                if ((await this.tmuxSessionNames()).length > 0) {
+                    state = "rows";
+                    return true;
+                }
+
+                if (await this.isExisting("terminals-tmux-empty")) {
+                    state = "empty";
+                    return true;
+                }
+
+                return false;
+            },
+            { timeout, message: "the tmux list never showed its rows or its empty state" }
+        );
+        return state ?? "empty";
+    }
+
     async tmuxRowExists(name: string): Promise<boolean> {
         return this.isExisting(`session-row-${name}`);
     }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import type { TerminalDriverComponent, DriverMeta } from "@/features/terminals/registry";
-import { getDriverMeta, listDrivers, registerDriver, resolveDriver } from "@/features/terminals/registry";
+import {
+    driverUsable,
+    getDriverMeta,
+    listDrivers,
+    registerDriver,
+    resolveDriver,
+    usableDriver,
+} from "@/features/terminals/registry";
 
 /**
  * The registry's registration/lookup logic, tested with fake driver metas so no WebView (RN-native)
@@ -12,8 +19,20 @@ import { getDriverMeta, listDrivers, registerDriver, resolveDriver } from "@/fea
 // A stand-in component value; the registry only stores it, never renders it here.
 const fakeComponent = (() => null) as unknown as TerminalDriverComponent;
 
-const ttyd: DriverMeta = { id: "webview-ttyd", label: "ttyd (WebView)", blurb: "test", component: fakeComponent };
-const html: DriverMeta = { id: "webview-html", label: "xterm.js (WebView)", blurb: "test", component: fakeComponent };
+const ttyd: DriverMeta = {
+    id: "webview-ttyd",
+    label: "ttyd (WebView)",
+    blurb: "test",
+    needsPlainUrls: true,
+    component: fakeComponent,
+};
+const html: DriverMeta = {
+    id: "webview-html",
+    label: "xterm.js (WebView)",
+    blurb: "test",
+    needsPlainUrls: false,
+    component: fakeComponent,
+};
 
 describe("terminal driver registry", () => {
     it("registers and lists both webview drivers", () => {
@@ -46,5 +65,16 @@ describe("terminal driver registry", () => {
 
         // "native" is unregistered → fallback to the first registered driver, not undefined.
         expect(resolveDriver("native")).toBeDefined();
+    });
+
+    it("runs the saved ttyd driver where plain URLs work, and the xterm.js driver on a tier without them", () => {
+        registerDriver(ttyd);
+        registerDriver(html);
+
+        expect(usableDriver({ id: "webview-ttyd", plainUrls: true })?.id).toBe("webview-ttyd");
+        expect(usableDriver({ id: "webview-ttyd", plainUrls: false })?.id).toBe("webview-html");
+        expect(usableDriver({ id: "webview-html", plainUrls: false })?.id).toBe("webview-html");
+        expect(driverUsable(ttyd, false)).toBe(false);
+        expect(driverUsable(html, false)).toBe(true);
     });
 });

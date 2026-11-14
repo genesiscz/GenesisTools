@@ -12,7 +12,14 @@ import type { ElementTable, RenderElement } from "claude-code";
 import type { HookCount, HookLedger } from "../types";
 import { liveSince } from "./live";
 import { loopModel, noteLoopModel } from "./loop-model";
-import { AREA_BLOCK, INJECTION_DEFINITION, type InjectionEntry, injectionEvents, spoolEvents } from "./metrics";
+import {
+    AREA_BLOCK,
+    INJECTION_DEFINITION,
+    type InjectionEntry,
+    type InjectionReceipts,
+    injectionEvents,
+    spoolEvents,
+} from "./metrics";
 import { agentsDir, appendJsonl, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { barText, dimNote, divider, headerRow, type Kit, listRow, plural, sectionTitle, sidebarFrame } from "./sidebar";
 
@@ -114,7 +121,7 @@ export function dedupeEntry(
     text: string,
     held: Map<string, number>,
     now: number
-): { text: string; droppedChars: number; dropped: string[]; whole: boolean } {
+): { text: string; droppedChars: number; dropped: string[]; whole: boolean; receipts: InjectionReceipts } {
     const whole = keyOf(text);
     const before = held.get(whole);
 
@@ -122,18 +129,25 @@ export function dedupeEntry(
         const head = text.split("\n")[0]?.slice(0, 80) ?? "hook context";
         const note = receipt(`"${head}"`, text.length, before);
 
-        return { text: note, droppedChars: text.length - note.length, dropped: [head], whole: true };
+        return {
+            text: note,
+            droppedChars: text.length - note.length,
+            dropped: [head],
+            whole: true,
+            receipts: { whole: note },
+        };
     }
 
     held.set(whole, now);
     const [preface = "", ...blocks] = text.split(AREA_BLOCK);
 
     if (blocks.length === 0) {
-        return { text, droppedChars: 0, dropped: [], whole: false };
+        return { text, droppedChars: 0, dropped: [], whole: false, receipts: {} };
     }
 
     const kept: string[] = [];
     const dropped: string[] = [];
+    const rules: Record<string, string> = {};
     let droppedChars = 0;
 
     for (const block of blocks) {
@@ -149,6 +163,7 @@ export function dedupeEntry(
 
         const note = receipt(`area rules ${path}`, block.length, at);
         dropped.push(path);
+        rules[path] = note;
         droppedChars += block.length - note.length;
         kept.push(`${note}\n\n`);
     }
@@ -158,6 +173,7 @@ export function dedupeEntry(
         droppedChars,
         dropped,
         whole: false,
+        receipts: dropped.length ? { rules } : {},
     };
 }
 
@@ -245,7 +261,12 @@ export async function ledgerClassic(host: Host, input: unknown, answer: unknown)
             const out = dedupeEntry(entry, held, now);
             droppedChars += out.droppedChars;
             dropped.push(...out.dropped);
-            injections.push({ text: entry, whole: out.whole, droppedRules: out.whole ? [] : out.dropped });
+            injections.push({
+                text: entry,
+                whole: out.whole,
+                droppedRules: out.whole ? [] : out.dropped,
+                receipts: out.receipts,
+            });
 
             return out.text;
         });

@@ -1,28 +1,28 @@
 import type { AgentBoardSession, SnapReceiptDto } from "@dd/contract";
-import { Canvas, ImageFormat, Image as SkiaImage, Path, useCanvasRef, useImage } from "@shopify/react-native-skia";
+import { Canvas, ImageFormat, Image as SkiaImage, Path, type SkImage, useCanvasRef, useImage } from "@shopify/react-native-skia";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Stack } from "expo-router";
 import { useRef, useState } from "react";
 import { Pressable, ScrollView, Text, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useDashboardClient } from "@/api/client-provider";
+import { SessionPicker } from "@/features/agents/components/SessionPicker";
 import { useAgentsBoard } from "@/features/agents/hooks";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { type Stroke, snapToSession, strokePath } from "@/features/snap/queries";
+import { idempotencyKey } from "@/lib/idempotency";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
 
 /** The markup colour: red reads on whiteboards, paper and screens alike. */
 const INK = "#ef4444";
 
-function Markup({ uri, strokes, setStrokes, canvasRef, size }: {
-    uri: string;
+function Markup({ image, strokes, setStrokes, canvasRef, size }: {
+    image: SkImage | null;
     strokes: Stroke[];
     setStrokes: (next: Stroke[]) => void;
     canvasRef: ReturnType<typeof useCanvasRef>;
     size: { width: number; height: number };
 }) {
-    const image = useImage(uri);
     const live = useRef<Stroke | null>(null);
     const [draft, setDraft] = useState<Stroke | null>(null);
     const pan = Gesture.Pan()
@@ -76,6 +76,10 @@ export default function SnapScreen() {
     const [busy, setBusy] = useState(false);
     const [receipt, setReceipt] = useState<SnapReceiptDto | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    // The photo decodes after it is taken; until it has, a snapshot would send the strokes on an empty canvas.
+    const image = useImage(photo, (failure) => setLoadError(failure.message));
+    const ready = image !== null && !busy;
     const { width } = useWindowDimensions();
     const size = { width: width - 32, height: Math.round(((width - 32) * 4) / 3) };
 
@@ -84,12 +88,13 @@ export default function SnapScreen() {
 
         if (shot?.uri) {
             setPhoto(shot.uri);
+            setLoadError(null);
             setStrokes([]);
             setReceipt(null);
         }
     };
     const send = async (session: AgentBoardSession) => {
-        if (!session.sessionId) {
+        if (!session.sessionId || !image) {
             return;
         }
 
@@ -123,7 +128,7 @@ export default function SnapScreen() {
                     </Pressable>
                 ) : photo ? (
                     <>
-                        <Markup uri={photo} strokes={strokes} setStrokes={setStrokes} canvasRef={canvasRef} size={size} />
+                        <Markup image={image} strokes={strokes} setStrokes={setStrokes} canvasRef={canvasRef} size={size} />
                         <View className="flex-row gap-4">
                             <Pressable accessibilityRole="button" onPress={() => setStrokes(strokes.slice(0, -1))}>
                                 <Text style={{ color: c.accent }}>Undo</Text>
@@ -133,21 +138,17 @@ export default function SnapScreen() {
                             </Pressable>
                         </View>
                         <Text style={{ color: c.textSecondary, fontSize: 13 }}>Send to:</Text>
-                        {(board.data?.sessions ?? []).filter((session) => session.sessionId).slice(0, 10).map((session) => (
-                            <Pressable
-                                key={session.key}
-                                testID={`snap-to-${session.key}`}
-                                accessibilityRole="button"
-                                disabled={busy}
-                                onPress={() => void send(session)}
-                                className="rounded-xl px-3 py-2.5"
-                                style={{ borderWidth: 1, borderColor: c.border, opacity: busy ? 0.5 : 1 }}
-                            >
-                                <Text numberOfLines={1} style={{ color: c.textPrimary }}>
-                                    {`${session.project ?? session.provider} · ${session.title ?? session.label}`}
-                                </Text>
-                            </Pressable>
-                        ))}
+                        {loadError ? (
+                            <Text style={{ color: c.danger, fontSize: 13 }}>{`The photo did not load: ${loadError}. Retake it.`}</Text>
+                        ) : image ? null : (
+                            <Text style={{ color: c.textMuted, fontSize: 13 }}>Loading the photo…</Text>
+                        )}
+                        <SessionPicker
+                            sessions={(board.data?.sessions ?? []).filter((session) => session.sessionId)}
+                            disabled={!ready}
+                            testIDPrefix="snap-to-"
+                            onPick={(session) => void send(session)}
+                        />
                     </>
                 ) : (
                     <>

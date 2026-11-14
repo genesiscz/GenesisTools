@@ -18,6 +18,7 @@ import { currentHarnessSession, decisionFiles, sessionAnswers } from "./decision
 import { type DecisionRecord, type PostDecisionDeps, readDecisions } from "./decisions/store";
 import {
     type AskDeps,
+    cancelAskForm,
     listPendingForms,
     pollAskForms,
     postAskForm,
@@ -76,7 +77,8 @@ function decisionLog(deps: QuestionVerbDeps): { file: string; events: string } {
  *
  * A mixed post checks the decision half first, then posts the form (which throws before its insert on a bad item),
  * then stores the decisions, so a failed half never leaves the other one durable for a retry to store again under
- * new numbers. With `wait`, it then blocks on the form.
+ * new numbers. When storing the decisions fails (a lock, a full disk), the form it just posted is cancelled, so a retry
+ * leaves one pending form, not two. With `wait`, it then blocks on the form.
  */
 export async function postQuestion(
     payload: PostQuestionPayload,
@@ -116,7 +118,14 @@ export async function postQuestion(
         },
         deps
     );
-    const posted = await storeDecisions();
+    let posted: Awaited<ReturnType<typeof storeDecisions>>;
+    try {
+        posted = await storeDecisions();
+    } catch (error) {
+        cancelAskForm(form.id, deps);
+        throw error;
+    }
+
     const result: PostQuestionResult = { form, posted, tokens: transcluded.tokens, report };
 
     if (options.wait !== true) {

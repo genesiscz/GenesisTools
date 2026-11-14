@@ -1218,7 +1218,7 @@ func cmdAct(appName _: String) {
                 workflowFailure("selected element could not scroll into view")
             }
         }
-        if action != "click", !CFEqual(element,window.ax) {
+        if preparationFocusesElement(action: action), !CFEqual(element,window.ax) {
             let focused = AXUIElementSetAttributeValue(element,kAXFocusedAttribute as CFString,kCFBooleanTrue)
             guard focused == .success else { workflowFailure("selected input could not be focused during preparation") }
         }

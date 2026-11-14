@@ -58,6 +58,8 @@ enum RecorderProtocol {
         let path: String
         let revision: Int
         let by: String
+        /// The editor window whose call made it (its session holder); nil for an agent's change and from an older service.
+        var holder: String?
         /// "undo" or "redo" when the change took one back or made it again; nil for an edit (and from an older service).
         var action: String?
     }

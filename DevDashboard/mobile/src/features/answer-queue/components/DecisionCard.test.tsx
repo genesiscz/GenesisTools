@@ -59,7 +59,7 @@ it("keeps a refused pick blocking Send across card unmount and remount until a p
     const mount = () => render(
         createElement(QueryClientProvider, { client: queryClient },
             createElement(KeptEditsContext.Provider, { value: kept },
-                createElement(DecisionCard, { session: "session", decision, registerFlush })))
+                createElement(DecisionCard, { session: "session", decision, registerFlush, reportNote: () => {}, frozen: false })))
     );
     let card = await mount();
     const pick = async (option: string) => {
@@ -98,7 +98,7 @@ it("stages the whole set for a multiple decision and the single letter for a sin
         render(
             createElement(QueryClientProvider, { client: queryClient },
                 createElement(KeptEditsContext.Provider, { value: keptEdits() },
-                    createElement(DecisionCard, { session: "session", decision, registerFlush: () => {} })))
+                    createElement(DecisionCard, { session: "session", decision, registerFlush: () => {}, reportNote: () => {}, frozen: false })))
         );
     const idOf = (decision: typeof base, option: string) =>
         `answer-queue-decision-session-${decision.number}-option-${option}`;
@@ -122,34 +122,110 @@ it("stages the whole set for a multiple decision and the single letter for a sin
     queryClient.clear();
 });
 
-it("keeps the options disabled until the queue shows the staged set, so the next tap toggles from fresh data", async () => {
-    picks.length = 0;
+it("shows the decision's context, proposal, reasoning and each option's rationale before the user picks", async () => {
+    const queryClient = new QueryClient();
+    const base = fixtureQueue().sessions[0].items.find((item) => item.kind === "decision")!;
+    if (base.kind !== "decision") {
+        throw new Error("Expected a decision fixture");
+    }
+    const decision = {
+        ...base,
+        context: "The cache holds 2 GB.",
+        proposal: "Drop the cold half.",
+        reasoning: "Reads touch only the newest week.",
+        choices: [
+            { id: "a", label: "Drop it", rationale: "Frees 1 GB now.", recommended: true },
+            { id: "b", label: "Keep it", rationale: null, recommended: false },
+        ],
+    };
+    const card = await render(
+        createElement(QueryClientProvider, { client: queryClient },
+            createElement(KeptEditsContext.Provider, { value: keptEdits() },
+                createElement(DecisionCard, { session: "session", decision, registerFlush: () => {}, reportNote: () => {}, frozen: false })))
+    );
+    const id = `answer-queue-decision-session-${decision.number}`;
+    const text = (testID: string) => card.getByTestId(testID).props.children[1].props.children;
+
+    expect(text(`${id}-context`)).toBe("The cache holds 2 GB.");
+    expect(text(`${id}-proposal`)).toBe("Drop the cold half.");
+    expect(text(`${id}-reasoning`)).toBe("Reads touch only the newest week.");
+    expect(card.getByTestId(`${id}-option-a-rationale`).props.children).toBe("Frees 1 GB now.");
+    expect(card.queryByTestId(`${id}-option-b-rationale`)).toBeNull();
+    await card.unmount();
+    queryClient.clear();
+});
+
+/**
+ * A multiple decision read through the real queue query: the Mac's copy stages the last pick the stage door took, and
+ * `read` decides how each queue read goes (wait on a gate, or fail).
+ */
+async function queueHost(read: () => Promise<void>) {
     const { useQuery } = await import("@tanstack/react-query");
     const { answerQueueKeys } = await import("@/features/answer-queue/queries");
     const { waitFor } = await import("@testing-library/react-native/pure");
-    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { gcTime: 0 } } });
+    const queryClient = new QueryClient({
+        defaultOptions: { mutations: { retry: false }, queries: { gcTime: 0, retry: false } },
+    });
     const base = fixtureQueue().sessions[0].items.find((item) => item.kind === "decision")!;
     if (base.kind !== "decision") {
         throw new Error("Expected a decision fixture");
     }
     const choices = ["a", "b", "c"].map((id) => ({ id, label: `Option ${id}`, rationale: null, recommended: false }));
-    // The Mac's copy of the decision: its staged set is the last pick the stage door took.
     const server = { ...base, choices, multiple: true, draftOption: null as string | null };
-    let gate: Promise<void> = Promise.resolve();
-    let release = () => {};
     function Host() {
         const { data } = useQuery({
             queryKey: answerQueueKeys.queue,
             queryFn: async () => {
-                await gate;
-                return { ...server, draftOption: picks.at(-1) || null };
+                await read();
+                const decision = { ...server, draftOption: picks.at(-1) || null };
+                const session = { sessionId: "session", provider: null, title: null, project: null, counted: 1 };
+                return { total: 1, at: "", sessions: [{ ...session, items: [decision] }] };
             },
         });
-        return data ? createElement(DecisionCard, { session: "session", decision: data, registerFlush: () => {} }) : null;
+        const decision = data?.sessions[0].items[0];
+        return decision
+            ? createElement(DecisionCard, {
+                  session: "session",
+                  decision,
+                  registerFlush: () => {},
+                  reportNote: () => {},
+                  frozen: false,
+              })
+            : null;
     }
     const card = await render(createElement(QueryClientProvider, { client: queryClient }, createElement(Host)));
     const option = (id: string) => card.getByTestId(`answer-queue-decision-session-${server.number}-option-${id}`);
     await waitFor(() => expect(option("a")).toBeDefined());
+    return { card, option, queryClient, waitFor };
+}
+
+it("keeps the staged set when the queue read after a stage fails, so the next tap still adds to it", async () => {
+    picks.length = 0;
+    let failReads = false;
+    const { card, option, queryClient, waitFor } = await queueHost(async () => {
+        if (failReads) {
+            throw new Error("queue read failed");
+        }
+    });
+
+    failReads = true;
+    await fireEvent.press(option("a"));
+    await act(async () => {
+        await Bun.sleep(5);
+    });
+    await waitFor(() => expect(option("c").props.disabled).toBe(false));
+    expect(option("a").props.accessibilityState.checked).toBe(true);
+    await fireEvent.press(option("c"));
+    expect(picks).toEqual(["a", "ac"]);
+    await card.unmount();
+    queryClient.clear();
+});
+
+it("keeps the options disabled until the queue shows the staged set, so the next tap toggles from fresh data", async () => {
+    picks.length = 0;
+    let gate: Promise<void> = Promise.resolve();
+    let release = () => {};
+    const { card, option, queryClient, waitFor } = await queueHost(() => gate);
 
     // The stage resolves at once; the refetch that shows it waits.
     gate = new Promise((resolve) => {

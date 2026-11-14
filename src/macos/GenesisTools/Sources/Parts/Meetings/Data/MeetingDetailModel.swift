@@ -547,7 +547,10 @@ final class MeetingDetailModel {
             if recordStale || force { self.readRecord(quiet: true) }
             if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) || force { self.readTranscript(quiet: true) }
             if self.speakers != .idle, self.mustRead(.speakers, revisions?.speakers) || force { self.readSpeakers(quiet: true) }
-            if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) || force { self.readTimeline(quiet: true) }
+            if self.timeline != .idle,
+               self.mustRead(.timeline, Self.timelineToken(revisions?.timeline, lines: MeetingsPreferences.timelineLines())) || force {
+                self.readTimeline(quiet: true)
+            }
             if self.rows != .idle, recordStale || force { self.readRows(quiet: true) }
             if proposals, self.proposals != .idle { self.readProposals(quiet: true) }
             if self.comments != .idle { self.loadComments() }
@@ -560,6 +563,12 @@ final class MeetingDetailModel {
         let seen = readAt[part]
         readAt[part] = token
         return Self.mustRead(seen: seen, now: token)
+    }
+
+    /// The timeline's token with the window's own choice of lines in it: the source's revision does not change when
+    /// Settings → Meetings switches between changed lines and all lines, and that switch changes the read's argv.
+    static func timelineToken(_ revision: String?, lines: MeetingsPreferences.TimelineLines) -> String? {
+        revision.map { "\($0)|lines=\(lines.rawValue)" }
     }
 
     /// A part reads again unless both tokens are known and equal.

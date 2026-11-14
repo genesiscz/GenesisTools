@@ -23,6 +23,19 @@ final class RecorderEditorPerfTests: XCTestCase {
         print("recorder.perf \(text)")
     }
 
+    private struct LoadTimedOut: Error { let what: String }
+
+    /// Waits for a load the bench times, with a deadline: a load that never ends fails the bench instead of hanging it.
+    /// The short poll is the measurement's resolution, so it stays.
+    private static func waitFor(_ what: String, poll: Duration, seconds: TimeInterval = 300,
+                                _ loaded: @MainActor () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(seconds)
+        while await !loaded() {
+            guard Date() < deadline else { throw LoadTimedOut(what: what) }
+            try await Task.sleep(for: poll)
+        }
+    }
+
     private static func percentiles(_ values: [Double]) -> String {
         let sorted = values.sorted()
         guard !sorted.isEmpty else { return "none" }
@@ -111,7 +124,7 @@ final class RecorderEditorPerfTests: XCTestCase {
         window.alphaValue = 0
         window.orderBack(nil)
         defer { window.close() }
-        while !model.filmstrip.loaded { try await Task.sleep(for: .milliseconds(50)) }
+        try await Self.waitFor("the filmstrip", poll: .milliseconds(50)) { model.filmstrip.loaded }
         try await Task.sleep(for: .seconds(1))
         var arms: [String: [Double]] = [:]
         var writes: [String: Int] = [:]
@@ -181,13 +194,13 @@ final class RecorderEditorPerfTests: XCTestCase {
                 let strip = Filmstrip()
                 started = Date()
                 strip.load(video: video, durationUs: project.source.durationUs)
-                while !strip.loaded { try await Task.sleep(for: .milliseconds(10)) }
+                try await Self.waitFor("the filmstrip of \(name)", poll: .milliseconds(10)) { strip.loaded }
                 strips[name, default: []].append(Date().timeIntervalSince(started) * 1000)
 
                 let wave = Waveform()
                 started = Date()
                 wave.load(video: video)
-                while !wave.loaded { try await Task.sleep(for: .milliseconds(10)) }
+                try await Self.waitFor("the waveform of \(name)", poll: .milliseconds(10)) { wave.loaded }
                 waves[name, default: []].append(Date().timeIntervalSince(started) * 1000)
             }
         }

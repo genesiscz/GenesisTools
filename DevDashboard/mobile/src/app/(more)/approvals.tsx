@@ -1,11 +1,11 @@
 import type { ApprovalDetailDto, ApprovalReceiptDto, ApprovalVerdictDto, PendingApprovalDto } from "@dd/contract";
 import { Stack } from "expo-router";
-import { memo, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { useAnswerApproval, usePendingApprovals } from "@/features/approvals/hooks";
 import { BACKEND_LABELS, DIALOG_LABELS, receiptLine } from "@/features/approvals/queries";
 import { confirmWithFaceId } from "@/lib/face-id";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useThemeColors } from "@/theme/colors";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
@@ -13,6 +13,15 @@ import { StatusPill } from "@/ui/StatusPill";
 
 /** Lines of a diff or a plan shown before "+N more lines". */
 const DETAIL_LINES = 24;
+
+/** How many answered approvals keep their receipt on screen after they left the pending list. */
+const RECEIPTS_KEPT = 10;
+
+interface AnsweredApproval {
+    id: string;
+    tool: string;
+    receipt: ApprovalReceiptDto;
+}
 
 function clipped(text: string): { shown: string; more: number } {
     const lines = text.split("\n");
@@ -86,12 +95,21 @@ const VERDICT_LABELS: Readonly<Record<ApprovalVerdictDto, string>> = {
 
 const VERDICTS: readonly ApprovalVerdictDto[] = ["allow", "allow-always", "deny"];
 
-const ApprovalCard = memo(function ApprovalCard({ approval }: { approval: PendingApprovalDto }) {
+type OnApprovalReceipt = (approval: PendingApprovalDto, receipt: ApprovalReceiptDto) => void;
+
+const ApprovalCard = memo(function ApprovalCard({
+    approval,
+    receipt,
+    onReceipt,
+}: {
+    approval: PendingApprovalDto;
+    receipt: ApprovalReceiptDto | null;
+    onReceipt: OnApprovalReceipt;
+}) {
     const c = useThemeColors();
     const [reason, setReason] = useState("");
-    const [receipt, setReceipt] = useState<ApprovalReceiptDto | null>(null);
     const [gateError, setGateError] = useState<string | null>(null);
-    const answer = useAnswerApproval(setReceipt);
+    const answer = useAnswerApproval((answered) => onReceipt(approval, answered));
 
     // An allow runs something on the Mac, so it needs Face ID; a deny only stops the agent.
     const send = async (verdict: ApprovalVerdictDto) => {
@@ -138,6 +156,7 @@ const ApprovalCard = memo(function ApprovalCard({ approval }: { approval: Pendin
             <Detail detail={approval.detail} id={approval.id} />
             <TextInput
                 testID={`approval-reason-${approval.id}`}
+                accessibilityLabel={`Reason for denying ${approval.tool}`}
                 value={reason}
                 onChangeText={setReason}
                 placeholder="Reason for a deny (optional)"
@@ -198,6 +217,17 @@ export default function ApprovalsScreen() {
     const c = useThemeColors();
     const approvals = usePendingApprovals();
     const pending = approvals.data?.pending ?? [];
+    // Receipts live here, by approval id: an answered request leaves the Mac's pending list, and the refetch removes its
+    // card, but the "key sent", refusal or "unknown" line must stay readable after that.
+    const [answered, setAnswered] = useState<AnsweredApproval[]>([]);
+    const onReceipt = useCallback<OnApprovalReceipt>((approval, receipt) => {
+        setAnswered((current) =>
+            [...current.filter((entry) => entry.id !== approval.id), { id: approval.id, tool: approval.tool, receipt }].slice(
+                -RECEIPTS_KEPT
+            )
+        );
+    }, []);
+    const gone = answered.filter((entry) => !pending.some((approval) => approval.id === entry.id));
 
     return (
         <>
@@ -221,6 +251,15 @@ export default function ApprovalsScreen() {
                     <StatusPill label={`${pending.length} waiting`} tone={pending.length > 0 ? "danger" : "muted"} normalCase />
                     <MockBadge />
                 </View>
+                {gone.map((entry) => (
+                    <Text
+                        key={entry.id}
+                        testID={`approval-receipt-${entry.id}`}
+                        style={{ color: entry.receipt.outcome === "sent" ? c.accent : c.danger, fontSize: 12 }}
+                    >
+                        {`${entry.tool}: ${receiptLine(entry.receipt)}`}
+                    </Text>
+                ))}
                 {approvals.isPending ? (
                     <View className="items-center gap-2 py-10">
                         <ActivityIndicator color={c.accent} />
@@ -232,7 +271,14 @@ export default function ApprovalsScreen() {
                 ) : pending.length === 0 ? (
                     <Empty title="Nothing waits for approval" hint="Permission and plan dialogs, and codex worker requests, show here." />
                 ) : (
-                    pending.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)
+                    pending.map((approval) => (
+                        <ApprovalCard
+                            key={approval.id}
+                            approval={approval}
+                            receipt={answered.find((entry) => entry.id === approval.id)?.receipt ?? null}
+                            onReceipt={onReceipt}
+                        />
+                    ))
                 )}
             </ScrollView>
         </>

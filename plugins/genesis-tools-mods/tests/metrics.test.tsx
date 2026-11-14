@@ -1,5 +1,13 @@
 import { expect, test } from "claude-code/testing";
-import { injectionEvents, injectionSource, modsSpoolPath } from "../hooks/metrics";
+import { dedupeEntry } from "../hooks/hook-ledger";
+import {
+    INJECTION_DEFINITION,
+    type InjectionEvent,
+    injectionEvents,
+    injectionSource,
+    modsSpoolPath,
+    spoolEvents,
+} from "../hooks/metrics";
 
 const facts = {
     session: "s-1",
@@ -58,6 +66,69 @@ test("metrics: a whole repeat is one dropped event, a block reason its own event
         ["shell-hygiene", "context", true],
         ["decision-nudge", "block", false],
     ]);
+});
+
+test("metrics: a dropped part counts its receipt as handed and only the rest as saved, as the dedupe computed it", () => {
+    const sum = (events: InjectionEvent[], dropped: boolean) =>
+        events.filter((event) => event.dims.dropped === dropped).reduce((total, event) => total + event.value, 0);
+    const held = new Map<string, number>();
+    const hygiene = `⚠️ Shell hygiene (the command ran as written): ${"note ".repeat(80)}`;
+    const preface = "The Bash call touched files whose area rules were not in your context yet.\n\n";
+    const rules = `${preface}${area("/r/a.md")}\n\n${area("/r/b.md")}`;
+    dedupeEntry(hygiene, held, 1_000);
+    dedupeEntry(`${preface}${area("/r/b.md")}`, held, 1_000);
+
+    // A whole repeat: the receipt is what the model got, the rest what it was spared.
+    const whole = dedupeEntry(hygiene, held, 2_000);
+    const wholeEvents = injectionEvents(facts, {
+        entries: [{ text: hygiene, whole: true, droppedRules: [], receipts: whole.receipts }],
+        block: "",
+        at: 2_000,
+    });
+    expect(wholeEvents.map((event) => [event.dims.kind, event.dims.dropped, event.dims.source])).toEqual([
+        ["context", true, "shell-hygiene"],
+        ["receipt", false, "shell-hygiene"],
+    ]);
+    expect(sum(wholeEvents, false)).toBe(whole.text.length);
+    expect(sum(wholeEvents, true)).toBe(whole.droppedChars);
+
+    // One rule block repeated inside a new entry: its receipt is handed, its saving is the dedupe's own number.
+    const blocks = dedupeEntry(rules, held, 3_000);
+    expect(blocks.dropped).toEqual(["/r/b.md"]);
+    const blockEvents = injectionEvents(facts, {
+        entries: [{ text: rules, whole: false, droppedRules: blocks.dropped, receipts: blocks.receipts }],
+        block: "",
+        at: 3_000,
+    });
+    expect(blockEvents.map((event) => [event.dims.rule, event.dims.kind, event.dims.dropped])).toEqual([
+        [null, "context", false],
+        ["/r/a.md", "context", false],
+        ["/r/b.md", "context", true],
+        ["/r/b.md", "receipt", false],
+    ]);
+    expect(sum(blockEvents, true)).toBe(blocks.droppedChars);
+    expect(sum(blockEvents, false) + sum(blockEvents, true)).toBe(rules.length);
+});
+
+test("metrics: every batch carries its define line, so one lost write does not leave the metric undeclared", async () => {
+    const lines: Record<string, unknown>[] = [];
+    let fails = 1;
+    const append = async (_path: string, record: Record<string, unknown>) => {
+        if (fails > 0) {
+            fails--;
+            throw new Error("disk full");
+        }
+
+        lines.push(record);
+    };
+    const events = injectionEvents(facts, {
+        entries: [{ text: "Something new", whole: false, droppedRules: [] }],
+        block: "",
+        at: 4_000,
+    });
+    await spoolEvents({ append, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 4_000 });
+    await spoolEvents({ append, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 5_000 });
+    expect(lines.map((line) => ("define" in line ? "define" : "event"))).toEqual(["event", "define", "event"]);
 });
 
 test("metrics: sources by first line, a receipt names what it replaced, and the spool path", () => {

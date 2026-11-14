@@ -85,9 +85,12 @@ export function isOfflineError(error: unknown): boolean {
 export interface FlushResult {
     /** Drafts the Mac answered, with its receipt; they leave the outbox. */
     sent: { draft: SteerDraft; receipt: AgentSendReceiptDto }[];
-    /** Drafts the Mac refused at the HTTP level; they leave the outbox with the error. */
+    /**
+     * Drafts the Mac refused, or that failed other than offline. They stay in the outbox as blocked drafts with the
+     * error (also in `waiting`), and no flush sends them again until the user retries or drops them.
+     */
     failed: { draft: SteerDraft; error: string }[];
-    /** Drafts still waiting for the Mac. */
+    /** Every draft this flush keeps: still waiting for the Mac, or blocked with its error. */
     waiting: SteerDraft[];
 }
 

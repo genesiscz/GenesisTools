@@ -46,6 +46,16 @@ export function promptsQuery(client: DashboardClient) {
     });
 }
 
+/**
+ * The variables whose typed value is not the one the Mac prepared with. While one is left, the rendered text is not
+ * what the inputs show, so "Use" would send the old text: the values must be applied and prepared again first.
+ */
+export function unappliedVariables(draft: Record<string, string>, prepared: PreparedPromptDto): string[] {
+    return Object.entries(draft)
+        .filter(([name, value]) => value !== (prepared.variables.find((variable) => variable.name === name)?.value ?? ""))
+        .map(([name]) => name);
+}
+
 /** The prompt rendered for one session on the Mac: each variable's value and source (prompt prepare). */
 export function prepareQuery(
     client: DashboardClient,

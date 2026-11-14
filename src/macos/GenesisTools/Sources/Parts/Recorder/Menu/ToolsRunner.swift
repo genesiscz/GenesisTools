@@ -116,7 +116,9 @@ enum ToolsRunner {
 extension ToolsRunner {
     /// Runs a short `tools` command with its output captured, and calls `done` on the main thread with the exit
     /// status, stdout and stderr. For a step the window waits on (an edit op that needs ffmpeg), not a recording.
-    static func run(_ argv: [String], timeout: TimeInterval = 600, done: @escaping @MainActor (Int32, String, String) -> Void) {
+    static let defaultTimeout: TimeInterval = 600
+
+    static func run(_ argv: [String], timeout: TimeInterval = defaultTimeout, done: @escaping @MainActor (Int32, String, String) -> Void) {
         Task {
             do {
                 let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(subcommand: argv.first ?? "", args: Array(argv.dropFirst()),

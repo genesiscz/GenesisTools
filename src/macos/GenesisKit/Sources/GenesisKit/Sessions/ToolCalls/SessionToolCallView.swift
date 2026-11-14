@@ -267,7 +267,7 @@ public struct ToolPresentation: Equatable {
             filePath: path,
             line: loaded?.editStart
         )
-        presentation.columnar = resultBlock.map { isColumnar($0.lines.map(\.text)) } ?? false
+        presentation.columnar = resultBlock.map { isColumnar($0.lines.lazy.map(\.text)) } ?? false
         let count = resultBlock?.lines.count ?? lineCount(resultText)
         let rawInput = detail?.command ?? line.input
         // A call whose header shows one field of its input (an Agent's description, a Grep's
@@ -396,13 +396,16 @@ public struct ToolPresentation: Equatable {
         return first.utf8.count > 400 ? String(decoding: first.utf8.prefix(400), as: UTF8.self) + "…" : first
     }
 
+    static let columnarSampleLines = 400
+
     /// Text in columns: at least three lines, and a third of the non-blank ones, hold a gap of two or more spaces (or a
     /// tab, or a box-drawing bar) between two words, as `--help` flag lists, `ls -l`, `git branch -vv` and tables do.
-    /// Indentation alone is no column: the gap must follow text on its line.
-    public static func isColumnar(_ lines: [String]) -> Bool {
+    /// Indentation alone is no column: the gap must follow text on its line. Only the first `columnarSampleLines` lines
+    /// are read, so a caller passes a lazy view of a long output instead of copying every line.
+    public static func isColumnar<Lines: Sequence>(_ lines: Lines) -> Bool where Lines.Element == String {
         var filled = 0
         var columned = 0
-        for line in lines.prefix(400) {
+        for line in lines.prefix(columnarSampleLines) {
             let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
             guard !trimmed.isEmpty else { continue }
             filled += 1

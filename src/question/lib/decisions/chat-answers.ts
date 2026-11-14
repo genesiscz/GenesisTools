@@ -219,10 +219,13 @@ function answerIn(segment: string, n: number, decision: Choice): Found | undefin
         const letters =
             choice && decision.letters.length > 0 ? found(choice[1] ?? "", choice[2] ?? "", decision) : undefined;
         const option = letters?.option ?? "";
+        const separated = /[^a-z]/i.test((choice?.[1] ?? "").trim());
 
         // Own words that only look like letters ("D14: ok") stay words: a set must name the decision's letters. One
-        // letter past the options ("D14: z") is still a letter, so it reads as an unknown option.
-        return letters && ([...option].every((letter) => decision.letters.includes(letter)) || option.length === 1)
+        // letter past the options ("D14: z") is still a letter, so it reads as an unknown option, and so are letters
+        // written apart ("D14: a, z"): no word is spelled that way.
+        return letters &&
+            ([...option].every((letter) => decision.letters.includes(letter)) || option.length === 1 || separated)
             ? letters
             : words(answer, decision);
     }

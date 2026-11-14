@@ -98,18 +98,22 @@ class ASKTool {
                 return;
             }
 
-            // Apply ask's chat defaults from the AI config. A chat model that is an account ref
-            // names an account, not a model, so it is not a model default here.
+            // Apply ask's chat defaults from the AI config. An `@account/<id>[:<model>]` default names the
+            // account ask bills, so the provider manager prefers it over the global chat account.
             const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
-            const askChat = (await AiConfigStore.load()).data().defaults.app?.ask?.chat;
-            const askModel = askChat?.model?.startsWith("@account/") ? undefined : askChat?.model;
+            const { askChatDefault, providerManager } = await import("@ask/providers/ProviderManager");
+            const askDefault = askChatDefault(await AiConfigStore.load());
 
-            if (!argv.provider && askChat?.provider) {
-                argv.provider = askChat.provider;
+            if (askDefault.accountId) {
+                providerManager.preferAccount(askDefault.accountId);
             }
 
-            if (!argv.model && askModel) {
-                argv.model = askModel;
+            if (!argv.provider && askDefault.provider) {
+                argv.provider = askDefault.provider;
+            }
+
+            if (!argv.model && askDefault.model) {
+                argv.model = askDefault.model;
             }
 
             // Fuzzy model matching: resolve partial model names

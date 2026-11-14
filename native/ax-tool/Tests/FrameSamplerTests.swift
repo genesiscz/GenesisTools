@@ -228,4 +228,19 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         XCTAssertEqual(screenMovieBitRate(width: 320, height: 200, fps: 8), 6_000_000)
         XCTAssertEqual(screenMovieBitRate(width: 6016, height: 3384, fps: 120), 160_000_000)
     }
+
+    // Many separate changing patches (a 4K frame holds tens of thousands of blocks) must not run the all-pairs merge:
+    // past 64 regions they become one box, so the frame queue keeps its pace.
+    func testAFragmentedFrameMergesIntoOneBoxWithoutThePairwiseSearch() {
+        let patches = (0..<20_000).map { index in
+            BlockRect(minX: (index % 200) * 3, minY: (index / 200) * 3, maxX: (index % 200) * 3, maxY: (index / 200) * 3)
+        }
+        let started = Date()
+        let merged = mergeMotionRegions(patches, maxBoxes: 8)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1, "20,000 regions take one pass, not a cubic search")
+        XCTAssertEqual(merged, [BlockRect(minX: 0, minY: 0, maxX: 597, maxY: 297)])
+
+        let few = (0..<64).map { BlockRect(minX: $0 * 3, minY: 0, maxX: $0 * 3, maxY: 0) }
+        XCTAssertLessThanOrEqual(mergeMotionRegions(few, maxBoxes: 8).count, 8, "up to 64 regions keep their closest-pair merge")
+    }
 }

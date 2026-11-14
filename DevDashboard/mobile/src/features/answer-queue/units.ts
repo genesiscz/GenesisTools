@@ -1,4 +1,10 @@
-import type { DecisionSendDto, WaitingDecisionDto, WaitingFormDto, WaitingSessionDto } from "@dd/contract";
+import type {
+    DecisionSendDto,
+    WaitingDecisionDto,
+    WaitingFormDto,
+    WaitingQueueDto,
+    WaitingSessionDto,
+} from "@dd/contract";
 
 /**
  * Pure rules of the answer queue (F6): what a send's answer means for the user, what a session has staged, and
@@ -186,21 +192,67 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     uncertain: "Uncertain: check the session",
 };
 
+
 /**
- * A key that makes a write safe to retry: the Mac answers a repeat with the first answer. Made once per user
- * action and passed in the mutation's variables, so a retry of the same action sends the same key.
+ * The queue with a stage the Mac took applied to its decision: the pick set (`""` clears it) and the note it staged.
+ * Whatever the stage did not name stays as the queue had it.
  */
-export function idempotencyKey(): string {
-    return `phone-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+export function withStaged(
+    queue: WaitingQueueDto | undefined,
+    stage: { session: string; number: number; option?: string; text?: string }
+): WaitingQueueDto | undefined {
+    if (!queue) {
+        return queue;
+    }
+
+    const staged = (item: WaitingDecisionDto): WaitingDecisionDto => ({
+        ...item,
+        draftOption: stage.option === undefined ? item.draftOption : stage.option || null,
+        draft: stage.text === undefined ? item.draft : stage.text || null,
+    });
+
+    return {
+        ...queue,
+        sessions: queue.sessions.map((session) =>
+            session.sessionId === stage.session
+                ? {
+                      ...session,
+                      items: session.items.map((item) =>
+                          item.kind === "decision" && item.number === stage.number ? staged(item) : item
+                      ),
+                  }
+                : session
+        ),
+    };
+}
+
+/** The facts a decision carries besides its question, in the order the card shows them; empty ones are left out. */
+export function decisionDetails(
+    decision: Pick<WaitingDecisionDto, "context" | "proposal" | "reasoning">
+): { id: "context" | "proposal" | "reasoning"; label: string; text: string }[] {
+    const details = [
+        { id: "context" as const, label: "Context", text: decision.context },
+        { id: "proposal" as const, label: "Proposal", text: decision.proposal },
+        { id: "reasoning" as const, label: "Reasoning", text: decision.reasoning },
+    ];
+    return details.flatMap((detail) => (detail.text?.trim() ? [{ ...detail, text: detail.text.trim() }] : []));
 }
 
 export function decisionsOf(session: WaitingSessionDto): WaitingDecisionDto[] {
     return session.items.filter((item): item is WaitingDecisionDto => item.kind === "decision");
 }
 
-/** The decisions of a session with a staged pick or note: what one send delivers as one message. */
-export function stagedOf(session: WaitingSessionDto): WaitingDecisionDto[] {
-    return decisionsOf(session).filter((item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()));
+/**
+ * The decisions of a session one send delivers as one message: a staged pick or note, or a note typed on the phone and
+ * not staged yet (`typedNotes`, by number), which Send stages first. A note-only answer can be sent while it is typed.
+ */
+export function stagedOf(
+    session: WaitingSessionDto,
+    typedNotes: ReadonlySet<number> = new Set()
+): WaitingDecisionDto[] {
+    return decisionsOf(session).filter(
+        (item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()) || typedNotes.has(item.number)
+    );
 }
 
 /**

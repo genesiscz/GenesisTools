@@ -553,6 +553,14 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertTrue(MeetingDetailModel.mustRead(seen: "t1", now: nil), "a source that cannot tell always reads")
     }
 
+    /// The timeline reads again when Settings switched its lines, though the source's revision is the same.
+    func testTheTimelineReadsAgainWhenItsLinesSettingChanged() {
+        let changed = MeetingDetailModel.timelineToken("t1", lines: .changed)
+        XCTAssertFalse(MeetingDetailModel.mustRead(seen: changed, now: MeetingDetailModel.timelineToken("t1", lines: .changed)))
+        XCTAssertTrue(MeetingDetailModel.mustRead(seen: changed, now: MeetingDetailModel.timelineToken("t1", lines: .all)))
+        XCTAssertNil(MeetingDetailModel.timelineToken(nil, lines: .all), "no revision stays unknown, so the part reads")
+    }
+
     /// MP6: every open ran `assign proposals` (a process and a Calendar read) for a menu.
     func testOnlyAMeetingWithoutAProjectReadsItsProposalsAtOpen() throws {
         let overview = try JSONDecoder().decode(MeetingsOverview.self, from: overviewJSON())

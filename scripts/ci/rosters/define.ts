@@ -60,6 +60,36 @@ export function callTo(names: readonly string[]): NapiConfig {
 }
 
 /**
+ * The calls a `callTo` match stands for: the call itself, or, for a binding (`import { unlink as remove }`,
+ * `const remove = fs.unlinkSync`, `const { unlinkSync: remove } = fs`), every call of the bound name in its file. A
+ * finer `test` that reads the call's arguments reads them through this, so a rename does not hide the call from it.
+ * Only a binding (rare) walks its file, so a whole-tree scan stays one pass.
+ */
+export function callsOf(node: SgNode): SgNode[] {
+    if (node.kind() === "call_expression") {
+        return [node];
+    }
+
+    const bound =
+        node.kind() === "import_specifier"
+            ? node.field("alias")
+            : node.kind() === "variable_declarator"
+              ? node.field("name")
+              : node.field("value");
+    const name = bound?.text();
+    if (!name || !/^[\w$]+$/.test(name)) {
+        return [];
+    }
+
+    return node
+        .getRoot()
+        .root()
+        .findAll({
+            rule: { kind: "call_expression", has: { field: "function", regex: `^${name.replace(/\$/g, "\\$")}$` } },
+        });
+}
+
+/**
  * A string literal whose text matches `content`, in quotes or in a template: a state file's name (`/^cmux-refs\.jsonl$/`),
  * an environment variable's name, a URL path. The pattern is read by ast-grep's regex engine: keep it to plain
  * classes, anchors and alternation.

@@ -1,4 +1,5 @@
 import {
+    type AgentBoardChild,
     type AgentBoardPhaseRow,
     type AgentBoardSession,
     type AgentInterruptReceiptDto,
@@ -146,16 +147,58 @@ export function transcribeClip(
     );
 }
 
+/**
+ * Every live session the board holds: the top-level sessions, plus the worker sessions the Mac folded under the
+ * session that started them (a child's `liveKey`). The `agents` channel sends a phase row for both kinds.
+ */
+function boardMembers(board: AgentsBoardDto): Set<string> {
+    const keys = new Set(board.sessions.map((session) => session.key));
+    const addFolded = (children: readonly AgentBoardChild[]) => {
+        for (const child of children) {
+            if (child.liveKey) {
+                keys.add(child.liveKey);
+            }
+
+            addFolded(child.children);
+        }
+    };
+
+    for (const session of board.sessions) {
+        addFolded(session.children);
+    }
+
+    return keys;
+}
+
+/** The children with each folded worker's label taken from its phase row. */
+function withChildPhases(
+    children: readonly AgentBoardChild[],
+    byKey: ReadonlyMap<string, AgentBoardPhaseRow>
+): AgentBoardChild[] {
+    return children.map((child) => {
+        const row = child.liveKey ? byKey.get(child.liveKey) : undefined;
+        return { ...child, liveLabel: row ? row.label : child.liveLabel, children: withChildPhases(child.children, byKey) };
+    });
+}
+
+function mergePhases(board: AgentsBoardDto, byKey: ReadonlyMap<string, AgentBoardPhaseRow>): AgentsBoardDto {
+    return {
+        ...board,
+        sessions: board.sessions.map((session) => ({
+            ...session,
+            ...byKey.get(session.key),
+            children: withChildPhases(session.children, byKey),
+        })),
+    };
+}
+
 /** A `phase` frame merged into the board; undefined when the board does not hold that session (refetch it). */
 export function withPhase(board: AgentsBoardDto | undefined, row: AgentBoardPhaseRow): AgentsBoardDto | undefined {
-    if (!board || !board.sessions.some((session) => session.key === row.key)) {
+    if (!board || !boardMembers(board).has(row.key)) {
         return undefined;
     }
 
-    return {
-        ...board,
-        sessions: board.sessions.map((session) => (session.key === row.key ? { ...session, ...row } : session)),
-    };
+    return mergePhases(board, new Map([[row.key, row]]));
 }
 
 /** A `snapshot` frame merged into the board; undefined when a session started or ended (refetch the board). */
@@ -168,11 +211,12 @@ export function withPhases(
     }
 
     const byKey = new Map(rows.map((row) => [row.key, row]));
-    const same = board.sessions.length === rows.length && board.sessions.every((session) => byKey.has(session.key));
+    const members = boardMembers(board);
+    const same = members.size === byKey.size && [...members].every((key) => byKey.has(key));
 
     if (!same) {
         return undefined;
     }
 
-    return { ...board, sessions: board.sessions.map((session) => ({ ...session, ...byKey.get(session.key) })) };
+    return mergePhases(board, byKey);
 }

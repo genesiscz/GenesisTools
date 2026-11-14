@@ -1,4 +1,5 @@
 import LocalAuthentication
+import SwiftUI
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
@@ -427,6 +428,22 @@ final class ApprovalVerifierTests: XCTestCase {
         XCTAssertEqual(rows.map { $0.tickIdentifier(in: "rm-approve") }, [
             "rm-approve-tick-/aside/1/F13", "rm-approve-tick-/aside/2/F13", "rm-approve-tick-/w/F13",
         ])
+    }
+
+    // The vault window has no items and states "the caller has exited" in its summary (PR #507 review, 2026-11-13).
+    @MainActor
+    func testASummaryIsDrawnWhenTheRequestHasNoItems() throws {
+        func height(summary: String?) throws -> CGFloat {
+            let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "key.fill", facts: [], details: [],
+                                            warning: nil, footnote: "f", rememberChoices: [], rememberNote: nil,
+                                            allowTitle: "Allow", deadline: nil, identifier: "test", summary: summary)
+            let renderer = ImageRenderer(content: ApprovalDialogView(model: model))
+            return try XCTUnwrap(renderer.nsImage).size.height
+        }
+
+        let plain = try height(summary: nil)
+        let explained = try height(summary: "The caller has exited; only a remembered approval still helps it.")
+        XCTAssertGreaterThan(explained, plain + 8, "the summary must take room in a dialog of no items")
     }
 
     func testPendingIntentCannotApproveAnEmptySelection() {

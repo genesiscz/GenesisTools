@@ -20,6 +20,8 @@ const EOL = "\u001b[K";
 const ADDED = "\u001b[48;5;22m\u001b[38;5;151m";
 const REMOVED = "\u001b[48;5;52m\u001b[38;5;210m";
 const GUTTER = 6;
+/** Colour is decoration: a `bat` that stalls (a file on a slow filesystem) is stopped, and its rows stay plain. */
+const BAT_TIMEOUT_MS = 5_000;
 
 /**
  * One rendered body line, tagged so a byte budget can buy the CHANGES before the context.
@@ -128,7 +130,12 @@ export function highlightRange({
             "--",
             path,
         ],
-        { encoding: "utf8", maxBuffer: 16_000_000, env: { ...env.getProcessEnv(), COLORTERM: colourTerm(config) } }
+        {
+            encoding: "utf8",
+            maxBuffer: 16_000_000,
+            timeout: BAT_TIMEOUT_MS,
+            env: { ...env.getProcessEnv(), COLORTERM: colourTerm(config) },
+        }
     );
 
     if (run.status !== 0 || typeof run.stdout !== "string") {
@@ -627,6 +634,7 @@ function paintThemed(blocks: DiffBlock[], config: DiffConfig): void {
                 input: `${input.join("\n")}\n`,
                 encoding: "utf8",
                 maxBuffer: 16_000_000,
+                timeout: BAT_TIMEOUT_MS,
                 env: { ...env.getProcessEnv(), COLORTERM: colourTerm(config) },
             }
         );

@@ -1,8 +1,7 @@
 import { Stack } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
-import { useMacHealth, useSendWake, useWakeRelay } from "@/features/wake/hooks";
-import { WAKE_PATIENCE_MS } from "@/features/wake/queries";
+import { useMacHealth, useSendWake, useWakeDeadline, useWakeRelay } from "@/features/wake/hooks";
 import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -17,7 +16,7 @@ export default function WakeScreen() {
     const { relay, fromMac, isPending } = useWakeRelay();
     const wake = useSendWake();
     const [sentAt, setSentAt] = useState<number | null>(null);
-    const waiting = sentAt !== null && Date.now() - sentAt < WAKE_PATIENCE_MS;
+    const { waiting, expired } = useWakeDeadline(sentAt);
     const health = useMacHealth(waiting);
     const awake = health.isSuccess && (sentAt === null || health.dataUpdatedAt > sentAt);
 
@@ -80,7 +79,7 @@ export default function WakeScreen() {
                         {wake.data.detail}
                     </Text>
                 ) : null}
-                {sentAt !== null && !waiting && !awake ? (
+                {expired && !awake ? (
                     <Text style={{ color: c.danger, fontSize: 13 }}>
                         The Mac did not answer within 2 minutes. Wake-on-LAN needs the Mac on power and on the same LAN as the relay.
                     </Text>

@@ -1,5 +1,50 @@
 import { describe, expect, test } from "bun:test";
 import { ImpersonatedHttpClient, type ImpersonateEngine } from "./client";
+import { ResponseHead } from "./response-head";
+
+describe("ResponseHead", () => {
+    const read = (callerFollows: boolean, lines: string[]) => {
+        const head = new ResponseHead(callerFollows);
+        for (const line of lines) {
+            head.line(`${line}\r\n`);
+        }
+
+        return head;
+    };
+
+    test("a redirect with a Location that the caller follows ends before its body", () => {
+        const head = read(true, [
+            "HTTP/2 302",
+            "Location: https://example.com/next",
+            "Set-Cookie: a=1",
+            "Set-Cookie: b=2",
+            "",
+        ]);
+        expect(head).toMatchObject({ status: 302, redirect: true });
+        expect(head.headers).toEqual({ location: "https://example.com/next", "set-cookie": "a=1, b=2" });
+    });
+
+    test("a redirect curl follows, a redirect without a Location and a page all keep their body", () => {
+        expect(read(false, ["HTTP/1.1 301 Moved", "Location: /next", ""]).redirect).toBe(false);
+        expect(read(true, ["HTTP/1.1 303 See Other", ""]).redirect).toBe(false);
+        expect(read(true, ["HTTP/1.1 200 OK", "Location: /ignored", ""]).redirect).toBe(false);
+    });
+
+    test("only the last head counts: a proxy CONNECT before the answer, a page after a followed hop", () => {
+        const tunnel = read(true, ["HTTP/1.1 200 Connection established", "", "HTTP/2 307", "location: /moved", ""]);
+        expect(tunnel).toMatchObject({ status: 307, redirect: true, headers: { location: "/moved" } });
+
+        const hop = read(false, [
+            "HTTP/1.1 302 Found",
+            "Location: /final",
+            "",
+            "HTTP/1.1 200 OK",
+            "Content-Type: text/html",
+            "",
+        ]);
+        expect(hop).toMatchObject({ status: 200, redirect: false, headers: { "content-type": "text/html" } });
+    });
+});
 
 /** Workers that never answer a request; each start waits until the test releases it. No library, no thread. */
 class HeldEngines extends ImpersonatedHttpClient {

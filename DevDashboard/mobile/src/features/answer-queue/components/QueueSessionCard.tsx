@@ -7,13 +7,13 @@ import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useSendStaged } from "@/features/answer-queue/hooks";
 import {
     flushThenSend,
-    idempotencyKey,
     queueSessionKey,
     type RecentReceipt,
     shownDrafts,
     singleFlight,
     stagedOf,
 } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -36,7 +36,26 @@ export function QueueSessionCard({
     const testId = `answer-queue-session-${key}`;
     const label = session.title ?? session.project ?? "Agent question";
     const send = useSendStaged((receipt) => onReceipt({ testID: `${testId}-receipt`, label, receipt }));
-    const staged = stagedOf(session).length;
+    // Decisions whose card holds a typed note that is not staged yet: Send stages it first, so it counts as staged.
+    const [typedNotes, setTypedNotes] = useState<ReadonlySet<number>>(() => new Set());
+    const reportNote = useCallback((number: number, typed: boolean) => {
+        setTypedNotes((current) => {
+            if (current.has(number) === typed) {
+                return current;
+            }
+
+            const next = new Set(current);
+
+            if (typed) {
+                next.add(number);
+            } else {
+                next.delete(number);
+            }
+
+            return next;
+        });
+    }, []);
+    const staged = stagedOf(session, typedNotes).length;
     // Each decision card's flush, by number: Send saves every note being typed and waits for stages first.
     const flushes = useRef(new Map<number, () => Promise<void>>());
     const registerFlush = useCallback((number: number, flush: (() => Promise<void>) | null) => {
@@ -89,6 +108,8 @@ export function QueueSessionCard({
                             session={session.sessionId}
                             decision={item}
                             registerFlush={registerFlush}
+                            reportNote={reportNote}
+                            frozen={busy}
                         />
                     ) : null;
                 }

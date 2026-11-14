@@ -49,6 +49,21 @@ async function render(annotations: Annotation[], preset?: PresetName) {
     return renderAnnotationPlan({ input: baseImage, annotations, preset });
 }
 
+describe("an annotation plan's preset names", () => {
+    test("an inherited name such as toString or __proto__ is not a preset", async () => {
+        for (const preset of ["toString", "constructor", "__proto__"]) {
+            await expect(
+                loadAnnotationPlanValue(
+                    SafeJSON.stringify({ annotations: [{ kind: "box", rect: { x: 1, y: 1, w: 2, h: 2 } }], preset })
+                )
+            ).rejects.toThrow(/unknown preset/);
+            await expect(
+                loadAnnotationPlanValue(SafeJSON.stringify([{ kind: "box", rect: { x: 1, y: 1, w: 2, h: 2 }, preset }]))
+            ).rejects.toThrow();
+        }
+    });
+});
+
 describe("renderAnnotationPlan", () => {
     test("highlight strokes review-red on the rect edge, leaves the rest untouched", async () => {
         const result = await render([{ kind: "highlight", rect: { x: 40, y: 40, w: 200, h: 120 } }]);

@@ -480,6 +480,13 @@ test("channel plans split on eligibility and leave shared room voices unresolved
     expect(planByChannel({ lines, input: { ...input, room: ["Alice"] } }).ranges.at(-1)?.speaker).toBe("Alice");
     expect(planByChannel({ lines, input: { label: "Room", remote: ["Carol", "Dan"] } }).unresolved).toHaveLength(1);
     expect(() => planByChannel({ lines, input: { label: "Room", micMax: 0.9, micMin: 0.1 } })).toThrow();
+
+    // One room line of 12 s is long enough to ask about, though the run starts and ends at that line's start.
+    const long = [
+        { index: 0, fromSec: 100, toSec: 112, label: "Room", text: lines[0].text, channel: { micShare: 0.9 } },
+    ];
+    expect(planByChannel({ lines: long, input }).questions).toHaveLength(1);
+    expect(planByChannel({ lines: [{ ...long[0], toSec: 104 }], input }).questions).toHaveLength(0);
 });
 
 test("seats and atomic replacement persist, undo restores both and filter only selects suggestions", async () => {

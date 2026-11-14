@@ -30,7 +30,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { appendEvent } from "./ledger";
 import { isDeferredReply } from "./policy";
 import { probeAddedLines } from "./probe";
-import { flag, has, loadRun, worktreeFor } from "./run";
+import { flag, has, launch, loadRun, worktreeFor } from "./run";
 import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
 
 /** The guards `.githooks/pre-push` runs, label first. Keep this list in step with the hook. */
@@ -41,11 +41,19 @@ export const PRE_PUSH_GUARDS: string[][] = [
     ["ai-credentials-guard", "bash", "scripts/ci/ai-credentials-guard.sh"],
     ["pid-safety-guard", "bash", "scripts/ci/pid-safety-guard.sh"],
     ["package-boundaries", "bun", "scripts/ci/check-package-boundaries.ts"],
+    ["tree-rosters", "bun", "scripts/ci/rosters/generate.ts", "--check", "--tree"],
     ["plugin-standalone", "bun", "scripts/ci/check-plugin-standalone.ts"],
+    ["plugin-vendored", "bun", "scripts/gen-harness-plugin.ts", "--check"],
     ["tool-commands", "bun", "scripts/ci/check-tool-commands.ts", "--strict"],
     ["jev-instrumentation", "bun", "scripts/ci/jev-instrumentation-guard.ts"],
     ["entrypoint-imports", "bun", "scripts/ci/entrypoint-import-guard.ts"],
 ];
+
+/**
+ * The deadline of one integrate command. The slowest legitimate ones are the whole-repo typecheck and the guards above
+ * on a loaded Mac (minutes each) and a push; a quarter of an hour stops only a command that is stuck.
+ */
+const INTEGRATE_DEADLINE_MS = 15 * 60_000;
 
 export function postingExitCode(posted: number, followups: Array<{ code: number }>): number {
     return posted === 0 && followups.every((reply) => reply.code === 0) ? 0 : 1;
@@ -177,19 +185,13 @@ async function main(): Promise<void> {
 
     let executionRoot = wt;
     function exec(cmd: string[], opts: { cwd?: string; quiet?: boolean } = {}): { code: number; out: string } {
-        const p = Bun.spawnSync(cmd, {
-            cwd: opts.cwd ?? executionRoot,
-            stdout: "pipe",
-            stderr: "pipe",
-            env: env.getProcessEnv(),
-        });
-        const out = `${p.stdout.toString()}${p.stderr.toString()}`;
+        const { code, out } = launch(cmd, { cwd: opts.cwd ?? executionRoot, timeoutMs: INTEGRATE_DEADLINE_MS });
 
         if (!opts.quiet) {
-            console.log(`$ ${cmd.join(" ").slice(0, 140)} → exit ${p.exitCode}`);
+            console.log(`$ ${cmd.join(" ").slice(0, 140)} → exit ${code}`);
         }
 
-        return { code: p.exitCode ?? 1, out };
+        return { code, out };
     }
 
     function must(cmd: string[], label: string, cwd?: string): string {

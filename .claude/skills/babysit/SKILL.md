@@ -330,8 +330,10 @@ inline `bun -e` script: on 2026-10-14 one returned the pick names as text, wrote
 manifests (d9687720a), and the genesis-tools plugin did not load in any new session for 12 hours.
 
 During a rebase, `bun .claude/skills/babysit/scripts/resolve-same.ts --cwd <worktree>` is the only automatic
-resolver. It keeps the HEAD side only for matching conflict blocks and handles a version-only conflict by retaining
-the higher version. It stops for a real conflict, a parse failure, or an empty commit without proof that its patch is
+resolver. It keeps the HEAD side only when the file with every block on the HEAD side means the same as with every
+block on the replayed side: a TypeScript or JavaScript file compares token by token (only spaces between tokens on
+one line drop out; line breaks, comments and the spaces inside literals stay), JSON token by token, and any other
+file only byte for byte. It handles a version-only conflict by retaining the higher version. It stops for a real conflict, a parse failure, or an empty commit without proof that its patch is
 upstream. Start the rebase with `--empty=stop --reapply-cherry-picks` so Git cannot silently drop a later empty
 commit. The resolver refuses a rebase configured to drop empty commits. Never automatically keep ours or theirs for
 a whole file. Resolve the remaining conflicts manually with `conflicts.ts` and check them before continuing.
@@ -410,8 +412,10 @@ only prepares and prints the squash; every git call is an argument array, becaus
    origin/master..HEAD`.
 2. After any restack that resolved a conflict, run `bun .claude/skills/babysit/scripts/restack-verify.ts --branch
    <name>=<oldHead>..<newHead> --old-base <oldBase> --new-base <newBase> --reference <integration-ref>` for every
-   restacked branch before any push. Restore every DROPPED file and every CHANGED file that does not equal the
-   integration branch from the pre-restack version or the integration branch, then verify again. On 2026-11-05,
+   restacked branch before any push. Restore every DROPPED, CHANGED or ADDED file (ADDED: only the restacked range
+   changes it) from the pre-restack version or the integration branch, then verify again. A verdict that ends in
+   "(equals reference)" matches the integration branch and passes. ABSORBED passes too: the old patch applies in
+   reverse to the new base, so the base already holds the change; never restore such a file from an older snapshot. On 2026-11-05,
    whole-file conflict resolution lost review fixes in three PRs: a monitor test import, six mobile files, and three
    e2e files. This check compares each PR's own file patches to expose those losses.
    Push with `--force-with-lease=<branch>:<old head>`. An identical tree on a green head needs no new CI run

@@ -16,7 +16,20 @@ mock.module("expo-sqlite/kv-store", () => ({
     },
 }));
 
+const secure = new Map<string, string>();
+
+mock.module("expo-secure-store", () => ({
+    getItemAsync: async (key: string): Promise<string | null> => secure.get(key) ?? null,
+    setItemAsync: async (key: string, value: string): Promise<void> => {
+        secure.set(key, value);
+    },
+    deleteItemAsync: async (key: string): Promise<void> => {
+        secure.delete(key);
+    },
+}));
+
 const { getPref, removePref, setPref } = await import("@/lib/storage/kv");
+const { loadBasicCreds, saveBasicCreds } = await import("@/lib/storage/secure");
 
 describe("kv prefs round-trip", () => {
     beforeEach(() => {
@@ -42,5 +55,23 @@ describe("kv prefs round-trip", () => {
         expect(await getPref("dd.lastSessionId")).toBe("sess-42");
         await removePref("dd.lastSessionId");
         expect(await getPref("dd.lastSessionId")).toBeNull();
+    });
+});
+
+describe("the saved basic-auth login", () => {
+    beforeEach(() => {
+        secure.clear();
+    });
+
+    it("round-trips a login", async () => {
+        await saveBasicCreds({ username: "work", password: "pw" });
+        expect(await loadBasicCreds()).toEqual({ username: "work", password: "pw" });
+    });
+
+    it("reads a corrupt or misshapen stored value as no login instead of throwing", async () => {
+        secure.set("dd.basicAuth", "{not json");
+        expect(await loadBasicCreds()).toBeNull();
+        secure.set("dd.basicAuth", '{"username":"work"}');
+        expect(await loadBasicCreds()).toBeNull();
     });
 });

@@ -63,7 +63,9 @@ describe("Agents flow", () => {
         expect(transcript).not.toBe("error");
 
         if (transcript === "gone") {
-            // The session ended between the board read and the tap: a legal outcome, not a defect.
+            // The session ended between the board read and the tap: a legal outcome only when the server agrees.
+            const board = await agentGet<Board>("/api/gateway/board");
+            expect(board.sessions.map((session) => session.key)).not.toContain(key);
             return;
         }
 

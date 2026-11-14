@@ -35,6 +35,7 @@ import {
     countInTree,
     isTestPath,
     parseShape,
+    proposerSpawn,
     type Shape,
     type ShapeKind,
     shapeKey,
@@ -66,7 +67,7 @@ export interface Candidate {
     remaining: number;
     score: number;
 }
-export { grepNeedle, shapeKey, shapesOf } from "./propose-shapes";
+export { grepPattern, shapeKey, shapesOf } from "./propose-shapes";
 
 /** Reads a unified diff with zero context and counts every shape on its removed and added lines. Pure. */
 export function collectShapes(diff: string, skip: (file: string) => boolean): Map<string, ShapeStats> {
@@ -288,7 +289,7 @@ function fail(message: string): never {
 }
 
 function readDiff(range: string): string {
-    const diff = Bun.spawnSync(["git", "diff", "-U0", "--no-color", "--no-ext-diff", range, "--", "*.ts", "*.tsx"]);
+    const diff = proposerSpawn(["git", "diff", "-U0", "--no-color", "--no-ext-diff", range, "--", "*.ts", "*.tsx"]);
 
     if (diff.exitCode !== 0) {
         fail(`git diff ${range} failed: ${diff.stderr.toString()}`);
@@ -299,7 +300,7 @@ function readDiff(range: string): string {
 
 /** Tracked non-test TypeScript under src/, each file read once. */
 function readSourceTree(): Map<string, string> {
-    const list = Bun.spawnSync(["git", "ls-files", "-z", "--", "src/*.ts", "src/*.tsx"]);
+    const list = proposerSpawn(["git", "ls-files", "-z", "--", "src/*.ts", "src/*.tsx"]);
 
     if (list.exitCode !== 0) {
         fail(`git ls-files failed: ${list.stderr.toString()}`);

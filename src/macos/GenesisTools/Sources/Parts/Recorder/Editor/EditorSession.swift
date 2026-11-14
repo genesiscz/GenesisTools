@@ -109,10 +109,11 @@ final class EditorSession {
         }
     }
 
-    /// The service's answer to an edit (`edit.apply`, `edit.undo`, `edit.redo`, `gesture.commit`).
+    /// The service's answer to an edit (`edit.apply`, `edit.undo`, `edit.redo`, `gesture.commit`). The call names this
+    /// window's holder, so the change's notification tells this window's own change from another window's.
     func edit(_ method: String, _ params: [String: Any], timeout: TimeInterval = 30,
               done: @escaping (Result<RecorderProtocol.EditAnswer, Error>) -> Void) {
-        call(method, params.merging(["path": path]) { $1 }, timeout: timeout) { [weak self] result in
+        call(method, params.merging(["path": path, "holder": holder]) { $1 }, timeout: timeout) { [weak self] result in
             done(result.flatMap { value in
                 Result { try RecorderProtocol.decode(RecorderProtocol.EditAnswer.self, from: value) }
             }.map { answer in
@@ -134,10 +135,18 @@ final class EditorSession {
               let changed = try? RecorderProtocol.decode(RecorderProtocol.ProjectChanged.self, from: params),
               URL(fileURLWithPath: changed.path).standardizedFileURL.path == path else { return }
         // The window's own change: its answer carries the project (the notification comes just before it).
-        guard changed.by != "editor" else { return }
+        guard !Self.isOwn(changed, holder: holder) else { return }
         guard changed.revision != revision else { return }
         notifiedRevision = max(notifiedRevision ?? changed.revision, changed.revision)
         onOutsideChange?(changed)
+    }
+
+    /// Whether a change is this window's own. Another editor window of the same edit shares the app's connection, so
+    /// `by` says `editor` for both: the holder its call named tells them apart. A service too old to name the holder
+    /// leaves only `by`, and every window's change looks like its own, as before.
+    static func isOwn(_ changed: RecorderProtocol.ProjectChanged, holder: String) -> Bool {
+        if let writer = changed.holder { return writer == holder }
+        return changed.by == "editor"
     }
 
     /// The message of a refused call, for the window's notice.

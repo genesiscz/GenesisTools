@@ -124,21 +124,21 @@ export const serviceApi = defineApi({
         }),
         defineMethod({
             name: "edit.apply",
-            params: z.object({ path, ops, baseRevision: z.number().int().nonnegative().optional() }),
+            params: z.object({ path, holder, ops, baseRevision: z.number().int().nonnegative().optional() }),
             result: editAnswer,
             doc: "Applies ops as one change and one undo step; baseRevision refuses (1016) when the edit is at another revision.",
             effect: "reversible",
         }),
         defineMethod({
             name: "edit.undo",
-            params: z.object({ path }),
+            params: z.object({ path, holder }),
             result: editAnswer.extend({ undone: z.array(z.string()) }),
             doc: "Puts the edit back as it was before its last change.",
             effect: "reversible",
         }),
         defineMethod({
             name: "edit.redo",
-            params: z.object({ path }),
+            params: z.object({ path, holder }),
             result: editAnswer.extend({ redone: z.array(z.string()) }),
             doc: "Makes the last undone change again: the open session's, else the last undo saved to the file.",
             effect: "reversible",
@@ -159,7 +159,7 @@ export const serviceApi = defineApi({
         }),
         defineMethod({
             name: "gesture.commit",
-            params: z.object({ path, gesture: z.string().min(1) }),
+            params: z.object({ path, holder, gesture: z.string().min(1) }),
             result: editAnswer,
             doc: "Makes the drag's last preview one change and one undo step.",
             effect: "reversible",
@@ -418,6 +418,8 @@ export const NOTIFICATION_SCHEMAS = {
         path: z.string(),
         revision: z.number().int().nonnegative(),
         by: z.string(),
+        /** The editor window whose call made it (its session holder), so another window of the edit hears it. */
+        holder: z.string().optional(),
         /** The change undid or redid one before it; absent for an edit. */
         action: z.enum(["undo", "redo"]).optional(),
     }),

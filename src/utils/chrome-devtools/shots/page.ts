@@ -10,9 +10,16 @@ import {
     type AnnotationPreset,
     type AnnotationRect,
     type PresetName,
+    type ShapeLabel,
 } from "@genesiscz/utils/image/annotation-plan";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
-import { type LabelRequest, type PlacedLabel, placeLabel, rectsOverlap } from "@genesiscz/utils/image/mark-layout";
+import {
+    type LabelRequest,
+    labelSpot,
+    type PlacedLabel,
+    placeLabel,
+    rectsOverlap,
+} from "@genesiscz/utils/image/mark-layout";
 import type { CdpLike } from "../cdp-like.ts";
 import { callInPage, evaluateExpression } from "../evaluate.ts";
 import {
@@ -383,7 +390,7 @@ async function prepare(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise<
     return [];
 }
 
-interface PlacedMark {
+export interface PlacedMark {
     mark: Mark;
     frame: ShotFramePaint;
     chip?: { spec: ShotChipPaint; placed: PlacedLabel };
@@ -574,27 +581,46 @@ export async function capturePart(
     });
 }
 
-/** One mark as a pixel annotation of the final image, with the label where it was drawn. */
-function annotationOf(entry: PlacedMark, clip: DocBox, scale: number): Annotation {
+/**
+ * One mark as a pixel annotation of the final image: the frame and chip styles as they were drawn (the setup's preset
+ * filled in, sizes in the image's pixels), and the label's `offset` from its position's spot to where the chip was
+ * placed, so a replay of the plan draws the same look in the same place.
+ */
+export function annotationOf(entry: PlacedMark, clip: DocBox, scale: number): Annotation {
     const rect = toImage(entry.frame.box, clip, scale);
-    const own = entry.mark.label;
-    const label = entry.chip
-        ? {
-              text: entry.chip.spec.text,
-              position: entry.chip.placed.position,
-              // the nudge (dx, dy) in image pixels: control draw adds it at the same spot, as placeLabel did here
-              ...(own?.offset
-                  ? { offset: { x: Math.round(own.offset.x * scale), y: Math.round(own.offset.y * scale) } }
-                  : {}),
-              ...(own?.style ? { style: own.style } : {}),
-              ...(own?.leader !== undefined ? { leader: own.leader } : {}),
-          }
-        : undefined;
+    const { frame } = entry;
+    const style = {
+        stroke: frame.stroke,
+        strokeWidth: frame.strokeWidth * scale,
+        radius: frame.radius * scale,
+        fill: frame.fill,
+        ...(frame.dash.length > 0 ? { dash: frame.dash.map((step) => step * scale) } : {}),
+    };
+    let label: ShapeLabel | undefined;
+
+    if (entry.chip) {
+        const chip = toImage(entry.chip.placed.chip, clip, scale);
+        const { position } = entry.chip.placed;
+        const leader = entry.mark.label?.leader;
+        const spot = labelSpot(
+            { rect, size: { w: chip.w, h: chip.h }, position, gap: LABEL_GAP * scale, leader },
+            position
+        );
+        const chipStyle = entry.chip.spec.style;
+        label = {
+            text: entry.chip.spec.text,
+            position,
+            style: { bg: chipStyle.bg, fg: chipStyle.fg, fontSize: chipStyle.fontSize * scale },
+            offset: { x: chip.x - spot.x, y: chip.y - spot.y },
+            ...(leader !== undefined ? { leader } : {}),
+        };
+    }
+
     return {
         kind: entry.mark.kind,
         rect,
         ...(entry.mark.preset ? { preset: entry.mark.preset } : {}),
-        ...(entry.mark.style ? { style: entry.mark.style } : {}),
+        style,
         ...(label ? { label } : {}),
     };
 }

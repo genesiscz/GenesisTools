@@ -22,7 +22,6 @@ import {
     questionCalls,
     refreshAnswers,
     sendStaged,
-    takesSeveral,
 } from "../hooks/answers";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheBand, cacheRowsOf, cacheTone, markEnded } from "../hooks/cache-band";
@@ -48,13 +47,18 @@ import {
     answeredInChat,
     chatDecisions,
     DECISIONS_PANE,
+    decisionPressesDone,
     decisions,
     editAnswer,
+    forgetDecisions,
     openDecisions,
     pickAfterPress,
+    pressDecisionOption,
+    readChat,
     sendDecisionAnswers,
     shownDecisions,
     stagedMessage,
+    stagedPreview,
     stagedText,
     tickLocal,
     typedAnswer,
@@ -98,6 +102,7 @@ import {
 } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
+import { takesSeveral } from "../hooks/option-labels";
 import {
     checkoutOf,
     forgetRepoMentions,
@@ -535,38 +540,251 @@ test("decisions sidebar: a decision that takes any set toggles letters; a single
     expect(shownDecisions([], { open: asked }).map((d) => d.multiple)).toEqual([true, undefined]);
 });
 
+/** DECISION 16, asked in the chat as a several-letter ask the decision log does not have. */
+const ASK_16 = { role: "assistant", text: "❓ DECISION 16 which parts?\na) x\nb) y\nc) z\nPick several letters." };
+const ASK_16_OPTIONS = {
+    n: 16,
+    options: [
+        { letter: "a", text: "x" },
+        { letter: "b", text: "y" },
+        { letter: "c", text: "z" },
+    ],
+};
+
 test("decisions sidebar: ticks on an unlogged several-letter ask reach the prompt once, as one line", async () => {
     forgetAnswers();
+    forgetDecisions();
     const filled: { text: string; mode?: string }[] = [];
+    let refusals = 1;
+    let messages = [ASK_16];
     const host: Host = {
         ...checkoutHost(),
+        async messages() {
+            return messages;
+        },
         async fill(args) {
+            if (refusals > 0) {
+                refusals--;
+                throw new Error("fill refused");
+            }
+
             filled.push({ text: args.text, mode: args.mode });
             return {};
         },
     };
-    const ask = {
-        n: 16,
-        options: [
-            { letter: "a", text: "x" },
-            { letter: "b", text: "y" },
-            { letter: "c", text: "z" },
-        ],
-    };
+    await readChat(host);
 
     // a, c, a: only ticks, nothing is written to the prompt yet.
-    expect(tickLocal(ask, "a")).toBe("a");
-    expect(tickLocal(ask, "c")).toBe("ac");
-    expect(tickLocal(ask, "a")).toBe("c");
+    expect(tickLocal(ASK_16_OPTIONS, "a")).toBe("a");
+    expect(tickLocal(ASK_16_OPTIONS, "c")).toBe("ac");
+    expect(tickLocal(ASK_16_OPTIONS, "a")).toBe("c");
     expect(filled).toEqual([]);
 
+    // A fill the engine refuses keeps the ticks: they are the only copy of the answer.
+    await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
+    expect(filled).toEqual([]);
     await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
     expect(filled).toEqual([{ text: "D16: c)", mode: "replace" }]);
 
     // The ticks left with that line: a second put in prompt has nothing to write.
     await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
     expect(filled).toHaveLength(1);
+
+    // A tick of a decision answered in the chat since is forgotten, never sent as a second answer.
+    expect(tickLocal(ASK_16_OPTIONS, "b")).toBe("b");
+    messages = [ASK_16, { role: "user", text: "D16: a)" }];
+    await readChat(host);
+    await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
+    expect(filled).toHaveLength(1);
+    forgetDecisions();
     forgetAnswers();
+});
+
+test("decisions sidebar: without the tools CLI a press answers in the prompt or ticks, never only an error", async () => {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    forgetDecisions();
+    const filled: { text: string; mode?: string }[] = [];
+    const host: Host = {
+        ...checkoutHost(),
+        async messages() {
+            return [ASK_16];
+        },
+        async run() {
+            throw new Error("spawn tools ENOENT");
+        },
+        async fill(args) {
+            filled.push({ text: args.text, mode: args.mode });
+            return {};
+        },
+    };
+    await readChat(host);
+
+    // A one-letter decision: the answer goes into the prompt as `D16: b)`.
+    await pressDecisionOption(host, ASK_16_OPTIONS, "b");
+    expect(filled).toEqual([{ text: "D16: b)\n", mode: "append" }]);
+
+    // A several-letter decision: the press ticks in the sidebar, and the Staged block carries the line.
+    await pressDecisionOption(host, { ...ASK_16_OPTIONS, multiple: true }, "c");
+    expect(stagedPreview("")).toBe("D16: c)");
+    expect(filled).toHaveLength(1);
+    forgetDecisions();
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+});
+
+test("decisions sidebar: ticks the log takes over stay local until the stage succeeds", async () => {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    forgetDecisions();
+    const base = checkoutHost();
+    let logged = false;
+    let refuses = true;
+    let draftOption = "";
+    const result = (stdout: string, stderr = "", exitCode = 0) => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const snapshot = () => ({
+        sessionId: "sess-1",
+        full: true,
+        decisions: logged
+            ? [{ id: "d_16_sess-1", number: 16, title: "D16", prompt: "", status: "waiting", choices: [], draftOption }]
+            : [],
+        todos: [],
+        entries: [],
+        forms: [],
+    });
+    const host: Host = {
+        ...base,
+        async messages() {
+            return [ASK_16];
+        },
+        async run(argv, init) {
+            if (argv[1] === "genesis-tools") {
+                return result(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv.includes("draft")) {
+                if (refuses) {
+                    return result("", "the decision store is locked", 1);
+                }
+
+                draftOption = argv[argv.indexOf("--option") + 1] ?? "";
+                return result(JSON.stringify({ state: "drafted", draftOption }));
+            }
+
+            if (argv[1] === "question" && argv[2] === "inbox") {
+                return result(JSON.stringify(snapshot()));
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    await readChat(host);
+    expect(tickLocal(ASK_16_OPTIONS, "a")).toBe("a");
+    expect(tickLocal(ASK_16_OPTIONS, "c")).toBe("ac");
+
+    // The log now has DECISION 16, but the stage that moves the ticks there fails: the ticks are still the only copy.
+    logged = true;
+    await refreshAnswers(host, "logged", true);
+    await readChat(host);
+    expect(stagedPreview("")).toBe("D16: ac)");
+
+    // The next read moves them; the log's draft is the copy from then on, so nothing is sent twice.
+    refuses = false;
+    await readChat(host);
+    expect(draftOption).toBe("ac");
+    expect(stagedPreview("")).toBe("");
+    await refreshAnswers(host, "after", true);
+    forgetDecisions();
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+});
+
+test("decisions sidebar: local ticks alone offer send, quick presses build on each other, and the last untick clears", async () => {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    forgetDecisions();
+    const base = checkoutHost();
+    const drafts: string[] = [];
+    const submitted: string[] = [];
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => {
+        open = resolve;
+    });
+    const result = (stdout: string, stderr = "", exitCode = 0) => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async messages() {
+            return [ASK_16];
+        },
+        async submit(text) {
+            submitted.push(text);
+        },
+        async run(argv, init) {
+            if (argv[1] === "genesis-tools") {
+                return result(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv.includes("draft")) {
+                drafts.push(argv[argv.indexOf("--option") + 1] ?? "");
+
+                // The first stage is still running when the second press arrives.
+                if (drafts.length === 1) {
+                    await gate;
+                }
+
+                return result("", "DECISION 16 is not waiting", 1);
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    const ask = { ...ASK_16_OPTIONS, multiple: true };
+    await readChat(host);
+
+    // Nothing ticked: no Staged block.
+    expect(stagedPreview("")).toBe("");
+
+    // a, then c while a's stage still runs: c toggles the set a left, so the second write is `ac`, not `c`.
+    void pressDecisionOption(host, ask, "a");
+    void pressDecisionOption(host, ask, "c");
+    open();
+    await decisionPressesDone();
+    expect(drafts).toEqual(["a", "ac"]);
+
+    // Only local ticks: the Staged block is drawn (with its send and put in prompt) and shows the line send submits.
+    expect(stagedPreview("")).toBe("D16: ac)");
+    await sendDecisionAnswers(host, { outgoing: "", how: "send" });
+    expect(submitted).toEqual(["D16: ac)"]);
+
+    // Ticking a and unticking it again goes through the refused stage both times and leaves nothing ticked.
+    await pressDecisionOption(host, ask, "a");
+    expect(stagedPreview("")).toBe("D16: a)");
+    await pressDecisionOption(host, ask, "a");
+    expect(drafts).toEqual(["a", "ac", "a", ""]);
+    expect(stagedPreview("")).toBe("");
+    await sendDecisionAnswers(host, { outgoing: "", how: "send" });
+    expect(submitted).toHaveLength(1);
+    forgetDecisions();
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
 });
 
 test("decisions sidebar: a tick on an unlogged several-letter ask shows [send], and unticking its last letter clears it", async ($, on) => {
@@ -3474,8 +3692,12 @@ test("sending staged answers acknowledges only after successful prompt submissio
     expect(effects).toEqual(["prepare", `submit ${message}`, "release"]);
     rejects = false;
     effects.length = 0;
-    expect(await sendStaged(host)).toEqual({ text: message, numbers: [1] });
+    expect(await sendStaged(host)).toEqual({ text: message, numbers: [1], submitted: true });
     expect(effects).toEqual(["prepare", `submit ${message}`, "ack"]);
+    // Lines no store holds go out in the same message after the batch; only the batch is acknowledged.
+    effects.length = 0;
+    expect(await sendStaged(host, { extra: ["D16: ac)"] })).toEqual({ text: message, numbers: [1], submitted: true });
+    expect(effects).toEqual(["prepare", `submit ${message}\nD16: ac)`, "ack"]);
     forgetGenesisProbe();
     forgetAnswers();
 });
@@ -3608,6 +3830,22 @@ test("decision actions fill the exact preview and send an answered batch with no
     expect(submitted).toEqual([outgoing]);
     await sendDecisionAnswers(host, { outgoing: "", how: "send" });
     expect(submitted).toEqual([outgoing]);
+
+    // Logged drafts and a local tick together: one send submits both in one message, and the tick leaves with it.
+    forgetDecisions();
+    await readChat({
+        ...host,
+        async messages() {
+            return [ASK_16];
+        },
+    });
+    tickLocal(ASK_16_OPTIONS, "c");
+    await sendDecisionAnswers(host, { outgoing, how: "send" });
+    expect(submitted).toEqual([outgoing, `${outgoing}\nD16: c)`]);
+    expect(filled).toEqual([outgoing]);
+    await sendDecisionAnswers(host, { outgoing, how: "send" });
+    expect(submitted.at(-1)).toBe(outgoing);
+    forgetDecisions();
     forgetAnswers();
     forgetGenesisProbe();
     forgetSettings();

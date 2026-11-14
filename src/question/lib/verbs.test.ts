@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { handleQuestionPost } from "@app/genesis-tools-mcp/lib/tools/question-post";
 import { postFromCli } from "@app/question/commands/ask";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
@@ -117,6 +117,25 @@ describe("postQuestion", () => {
         ).rejects.toThrow(/invalid decision post/);
         expect(pollQuestions({}, deps)).toEqual({ kind: "pending", forms: [], answered: [] });
         expect(existsSync(deps.decisionLog.file)).toBe(false);
+    });
+
+    test("a mixed batch withdraws its form when the decision log cannot be written", async () => {
+        const deps = scratch();
+        const blocker = join(dirname(deps.decisionLog.file), "not-a-folder");
+        writeFileSync(blocker, "");
+        const broken = {
+            ...deps,
+            decisionLog: {
+                ...deps.decisionLog,
+                file: join(blocker, "decisions.jsonl"),
+                events: join(blocker, "e.jsonl"),
+            },
+        };
+
+        await expect(
+            postQuestion({ sessionHint: "sess-1", items: [{ promptMarkdown: "Which env?" }, decision] }, {}, broken)
+        ).rejects.toThrow(/not a directory/);
+        expect(pollQuestions({}, deps)).toEqual({ kind: "pending", forms: [], answered: [] });
     });
 
     test("wait blocks on the form after both halves are written", async () => {

@@ -47,7 +47,9 @@ function implemented(account: AiProxyAccountConfig): ProviderDefinition {
     const definition = providerDefinition(account.provider);
 
     if (!definition) {
-        throw new Error(`Provider not implemented yet: ${account.provider}`);
+        throw new Error(
+            `Unknown ai-proxy provider "${account.provider}": this build has no such provider; fix the account's provider in the config`
+        );
     }
 
     return definition;

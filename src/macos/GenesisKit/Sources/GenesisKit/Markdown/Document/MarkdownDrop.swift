@@ -60,6 +60,10 @@ enum MarkdownDrop {
 /// from `genres://`, so a `file://` navigation is never something we want.
 final class MarkdownDropWebView: WKWebView {
     var onDropFiles: (([URL]) -> Void)?
+    /// The right-click verbs of the document this page shows (`MarkdownWebView.pageMenu`); nil keeps WebKit's menu.
+    var pageMenu: (() -> [PathMenuEntry])?
+
+    var pageMenuEntries: [PathMenuEntry] { pageMenu?() ?? [] }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard !MarkdownDrop.urls(from: sender.draggingPasteboard).isEmpty else { return super.draggingEntered(sender) }
@@ -93,7 +97,7 @@ final class MarkdownDropWebView: WKWebView {
     /// A right-click on the page offers the document's verbs, the same list as its tab's menu (`MarkdownPageMenu`).
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
-        MarkdownPageMenu.adapt(menu, entries: MarkdownPageMenu.entries(for: self))
+        MarkdownPageMenu.adapt(menu, entries: pageMenuEntries)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

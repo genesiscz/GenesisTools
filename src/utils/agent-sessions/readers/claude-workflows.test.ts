@@ -305,6 +305,22 @@ describe("the Claude workflow reader", () => {
         expect(tail(run.scriptPath ?? "")).toBe(`scripts/review-${RUN_A}.js`);
     });
 
+    test("an epoch a Date cannot hold reads as no time, and the run is still listed", async () => {
+        const record = join(parent.replace(/\.jsonl$/, ""), "workflows", `${RUN_A}.json`);
+        const original = readFileSync(record, "utf8");
+        const row = SafeJSON.parse(original, { strict: true });
+        row.startTime = 1e20;
+        row.workflowProgress[1].startedAt = 1e20;
+        writeFileSync(record, SafeJSON.stringify(row) ?? "");
+        try {
+            const run = pickWorkflowRun(await runsOf(parent), "wf_aaaa");
+            expect(run.startedAt).toBeNull();
+            expect(run.agents.find((agent) => agent.agentId === "aaa1")?.startedAt).toBeNull();
+        } finally {
+            writeFileSync(record, original);
+        }
+    });
+
     test("keeps a run that has transcripts but no run record", async () => {
         const run = pickWorkflowRun(await runsOf(parent), "wf_bbbb");
         expect(run).toMatchObject({ recordPath: null, name: null, status: null, phases: ["Build"] });

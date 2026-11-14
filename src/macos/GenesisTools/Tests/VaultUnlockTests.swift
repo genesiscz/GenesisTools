@@ -688,6 +688,18 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertNil(match(warmupCaller(environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"], ancestors: [(5, "zsh"), (4, "Terminal")])))
         // another code-loading variable besides NODE_PATH
         XCTAssertNil(match(warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"])))
+        // NODE_PATH whose value is not inside a listed agent app's bundle
+        for value in ["/tmp/evil/node_modules", "/Applications/Grok Bot.app/Contents/../../../tmp/evil",
+                      "/Applications/Grok Bot.app/Contents/Resources:/tmp/evil", "/Applications/Grok Bot.app/Contents/Resources:",
+                      "", "Resources/deps", "/Applications/Other.app/Contents/Resources", "/Applications/Grok Bot.app.evil/Contents/x",
+                      "/Users/alice/Applications/Grok Bot.app/Contents/Resources"] {
+            XCTAssertNil(match(warmupCaller(environment: ["NODE_PATH=\(value)"])), "NODE_PATH=\(value)")
+        }
+        let grokDeps = "/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"
+        XCTAssertTrue(VaultAutoAllow.nodePath(grokDeps, isInsideBundlesOf: ["Grok Bot"]))
+        XCTAssertFalse(VaultAutoAllow.nodePath(grokDeps, isInsideBundlesOf: []), "no listed app: no NODE_PATH value passes")
+        XCTAssertFalse(VaultAutoAllow.nodePath("/Applications/.app/Contents/x", isInsideBundlesOf: ["", "..", "a/b"]),
+                       "an app name that is no plain bundle name lists nothing")
         // switched off, or no known checkout
         XCTAssertNil(match(warmupCaller(), settings: .disabled))
         XCTAssertNil(match(warmupCaller(), trustedRoot: nil))

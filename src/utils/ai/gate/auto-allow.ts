@@ -79,6 +79,15 @@ function settingsField<T>(
 
 const isBoolean = (field: unknown): field is boolean => typeof field === "boolean";
 
+/** The defaults with arrays of their own, so a change made in place never reaches VAULT_AUTO_ALLOW_DEFAULTS. */
+function defaultSettings(): VaultAutoAllowSettings {
+    return {
+        ...VAULT_AUTO_ALLOW_DEFAULTS,
+        commands: [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
+        agentApps: [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
+    };
+}
+
 /**
  * The settings on disk, a missing key taking its default. A file the app cannot decode (not JSON, not an object, or a
  * key of the wrong type) throws with its path: the app turns the feature off for such a file, so the CLI must not show
@@ -90,7 +99,7 @@ export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowS
         text = readFileSync(path, "utf8");
     } catch (err) {
         if (isMissingFileError(err)) {
-            return { ...VAULT_AUTO_ALLOW_DEFAULTS };
+            return defaultSettings();
         }
 
         throw err;

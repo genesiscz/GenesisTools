@@ -175,22 +175,43 @@ export function parseShape(text: string): Shape {
     return { kind: known, value: rest.join(":") };
 }
 
-/** The text a fixed-string grep looks for, for one shape. */
-export function grepNeedle(shape: Shape): string {
+/**
+ * The `git grep -P` pattern of one shape. A quoted shape (an import specifier, an argv head) takes either quote, as
+ * `shapesOf` does, so a file's quote style does not change its count.
+ */
+export function grepPattern(shape: Shape): string {
+    const value = shape.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
     switch (shape.kind) {
         case "call":
-            return `${shape.value}(`;
+            return `${value}\\(`;
         case "import":
-            return `"${shape.value}"`;
-        case "new":
-            return `new ${shape.value}(`;
         case "argv":
-            return `"${shape.value}"`;
+            return `["']${value}["']`;
+        case "new":
+            return `new ${value}\\(`;
         case "declare":
-            return `function ${shape.value}(`;
+            return `function ${value}\\(`;
         case "literal":
-            return shape.value;
+            return value;
     }
+}
+
+/** A git or tools child of the proposer that runs longer than this is stuck: it is killed and named. */
+export const PROPOSE_CHILD_TIMEOUT_MS = 120_000;
+
+/** `Bun.spawnSync` with a deadline; a child that passes it throws, unlike an ordinary failing exit. */
+export function proposerSpawn(
+    argv: string[],
+    timeoutMs = PROPOSE_CHILD_TIMEOUT_MS
+): { exitCode: number; stdout: Buffer; stderr: Buffer } {
+    const child = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: timeoutMs, killSignal: "SIGKILL" });
+
+    if (child.exitedDueToTimeout) {
+        throw new Error(`${argv.slice(0, 3).join(" ")} did not finish within ${timeoutMs / 1000} s and was killed`);
+    }
+
+    return { exitCode: child.exitCode ?? 1, stdout: child.stdout, stderr: child.stderr };
 }
 
 export function isTestPath(file: string): boolean {
@@ -230,16 +251,16 @@ export interface TreeUsage {
 
 const usageCache = new Map<string, TreeUsage>();
 
-/** How often the tree still holds a shape (a fixed-string `git grep` of its text, tests left out). Cached. */
+/** How often the tree still holds a shape (a `git grep -P` of its pattern, tests left out). Cached. */
 export function treeUsage(shape: Shape): TreeUsage {
-    const needle = grepNeedle(shape);
+    const needle = grepPattern(shape);
     const cached = usageCache.get(needle);
 
     if (cached) {
         return cached;
     }
 
-    const grep = Bun.spawnSync(["git", "grep", "-c", "-F", "-e", needle, "--", "src/*.ts", "src/*.tsx"]);
+    const grep = proposerSpawn(["git", "grep", "-c", "-P", "-e", needle, "--", "src/*.ts", "src/*.tsx"]);
 
     if (grep.exitCode !== 0 && grep.exitCode !== 1) {
         throw new Error(`git grep failed: ${grep.stderr.toString()}`);

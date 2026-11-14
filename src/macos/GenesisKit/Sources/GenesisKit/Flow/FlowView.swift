@@ -864,6 +864,7 @@ private struct FlowSnippetsPane: View {
                 TextEditor(text: $body_)
                     .font(GenTypography.body(12))
                     .scrollContentBackground(.hidden)
+                    .accessibilityLabel("Expands to")
                     .frame(height: 62)
                     .padding(GenSpacing.xs)
                     // TextEditor has no placeholder; an empty box beside
@@ -1084,6 +1085,7 @@ private struct FlowScratchpadPane: View {
                 .padding(GenSpacing.md)
                 .background(Color.settingsCard)
                 .clipShape(RoundedRectangle(cornerRadius: GenRadius.md))
+                .accessibilityLabel("Scratchpad")
                 .accessibilityIdentifier("flow-scratchpad")
         }
         .padding(GenSpacing.xl)

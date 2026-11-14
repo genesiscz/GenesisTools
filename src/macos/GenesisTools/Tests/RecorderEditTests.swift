@@ -274,7 +274,7 @@ final class RecorderScreenFindViewTests: XCTestCase {
         let named = try XCTUnwrap(fixture[2]["ops"] as? [String: [Any]])
 
         var sent: [[String]] = []
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             sent.append(argv)
             done(1, "", "no edit to change\n")
         }
@@ -1156,7 +1156,7 @@ final class RecorderEditTests: XCTestCase {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<60 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            try await input.waitUntilReady()
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(nil, 320, 200, kCVPixelFormatType_32BGRA, nil, &buffer)
             guard let buffer else { continue }

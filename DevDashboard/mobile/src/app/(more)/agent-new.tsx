@@ -1,10 +1,19 @@
-import type { AgentNewReceiptDto, LaunchAccountDto } from "@dd/contract";
+import type { AgentNewInput, AgentNewReceiptDto, LaunchAccountDto } from "@dd/contract";
 import { router, Stack } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { useLaunchOptions, useStartAgent } from "@/features/launch/hooks";
-import { filterRepos, headroomLine, suggestedAccount, TIER_LABELS } from "@/features/launch/queries";
+import {
+    type AccountPick,
+    chosenAccount,
+    filterRepos,
+    headroomLine,
+    launchKey,
+    type PendingLaunch,
+    sameLaunch,
+    TIER_LABELS,
+} from "@/features/launch/queries";
+import { idempotencyKey } from "@/lib/idempotency";
 import { MockBadge } from "@/ui/MockBadge";
 import { SectionHeader } from "@/ui/SectionHeader";
 import { useThemeColors } from "@/theme/colors";
@@ -41,7 +50,7 @@ function AccountRow({ account, selected, onPress }: { account: LaunchAccountDto;
         <Pressable
             testID={`launch-account-${account.name}`}
             accessibilityRole="radio"
-            accessibilityState={{ selected }}
+            accessibilityState={{ checked: selected }}
             onPress={onPress}
             className="flex-row items-center gap-3 rounded-xl px-3 py-2.5"
             style={{ backgroundColor: selected ? c.accentMuted : c.bgPanel, borderWidth: 1, borderColor: selected ? c.accentGlow : c.border }}
@@ -66,35 +75,36 @@ export default function AgentNewScreen() {
     const c = useThemeColors();
     const options = useLaunchOptions();
     const [agentId, setAgentId] = useState<string | null>(null);
-    const [accountName, setAccountName] = useState<string | null>(null);
+    const [accountPick, setAccountPick] = useState<AccountPick | null>(null);
     const [repo, setRepo] = useState<string | null>(null);
     const [filter, setFilter] = useState("");
     const [prompt, setPrompt] = useState("");
     const [receipt, setReceipt] = useState<AgentNewReceiptDto | null>(null);
-    const [key, setKey] = useState(idempotencyKey);
-    // Every answer is a known outcome, so the next tap is a new request: a refusal is not replayed, and a second
-    // agent started from this sheet is not answered with the first one's receipt. A failed request gives no answer and
-    // keeps the key, so its retry stays one request.
+    // The Start that has no answer yet. An answer is a known outcome, so the next tap is a new request; a failed request
+    // gave none, so a retry of the same body reuses its key and stays one launch, while changed values get a new key.
+    const [pending, setPending] = useState<PendingLaunch | null>(null);
     const start = useStartAgent((answer) => {
         setReceipt(answer);
-        setKey(idempotencyKey());
+        setPending(null);
     });
 
     const agents = options.data?.agents ?? [];
     const agent = agents.find((entry) => entry.id === agentId) ?? agents[0];
+    const accountName = chosenAccount(agent, accountPick);
     const repos = useMemo(() => filterRepos(options.data?.repos ?? [], filter), [options.data?.repos, filter]);
+    const input: AgentNewInput | null =
+        agent && accountName && repo ? { agent: agent.id, account: accountName, repo, prompt: prompt.trim() || undefined } : null;
+    const changedAfterNoAnswer = start.isError && pending !== null && input !== null && !sameLaunch(pending.input, input);
 
-    useEffect(() => {
-        setAccountName(suggestedAccount(agent)?.name ?? null);
-    }, [agent]);
-
-    const ready = Boolean(agent && accountName && repo) && !start.isPending;
+    const ready = input !== null && !start.isPending;
     const submit = () => {
-        if (!agent || !accountName || !repo) {
+        if (!input) {
             return;
         }
 
-        start.mutate({ agent: agent.id, account: accountName, repo, prompt: prompt.trim() || undefined, idempotencyKey: key });
+        const key = launchKey(pending, input, idempotencyKey);
+        setPending({ input, idempotencyKey: key });
+        start.mutate({ ...input, idempotencyKey: key });
     };
 
     if (options.isPending) {
@@ -140,7 +150,7 @@ export default function AgentNewScreen() {
                                 key={account.id}
                                 account={account}
                                 selected={account.name === accountName}
-                                onPress={() => setAccountName(account.name)}
+                                onPress={() => setAccountPick({ agentId: agent.id, name: account.name })}
                             />
                         ))
                     ) : (
@@ -151,6 +161,7 @@ export default function AgentNewScreen() {
                     <SectionHeader title="Repo" />
                     <TextInput
                         testID="launch-repo-filter"
+                        accessibilityLabel="Filter repos"
                         value={filter}
                         onChangeText={setFilter}
                         placeholder="Filter repos"
@@ -170,6 +181,7 @@ export default function AgentNewScreen() {
                     <SectionHeader title="First prompt" />
                     <TextInput
                         testID="launch-prompt"
+                        accessibilityLabel="First prompt"
                         value={prompt}
                         onChangeText={setPrompt}
                         placeholder="Optional: what the agent starts with"
@@ -204,6 +216,11 @@ export default function AgentNewScreen() {
                     </View>
                 ) : null}
                 {start.isError ? <Text style={{ color: c.danger }}>{String(start.error)}</Text> : null}
+                {changedAfterNoAnswer ? (
+                    <Text testID="launch-uncertain" style={{ color: c.warning, fontSize: 12 }}>
+                        {"The last start got no answer and may have run on the Mac. Start sends these changed values as a new request."}
+                    </Text>
+                ) : null}
             </ScrollView>
         </>
     );

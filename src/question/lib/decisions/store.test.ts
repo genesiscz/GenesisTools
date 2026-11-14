@@ -2188,6 +2188,7 @@ describe("chatAnswers", () => {
         expect(read("D46: a) - not a good idea")).toEqual({ unambiguous: ["a"], forAgent: [], ambiguous: [] });
         expect(read("D46: a) b) not a)").ambiguous).toEqual(["several answers"]);
         expect(read("D46: a) not z)").ambiguous).toEqual(["unknown option"]);
+        expect(read("D46: a, z").ambiguous).toEqual(["unknown option"]);
         // A decision that takes one letter: `a) b)` is two answers, and `b) not e)` is one letter for the agent.
         expect(read("D46: a) b)", false)).toEqual({ unambiguous: [], forAgent: [], ambiguous: ["several answers"] });
         expect(read("D46: b) not e)", false).forAgent).toEqual([["b", "e", "not e)"]]);

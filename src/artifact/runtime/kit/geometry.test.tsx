@@ -271,6 +271,33 @@ describe("diagram geometry", () => {
             await dom.unmount();
         }
     });
+    test("model browser tabs switch the tree, and no tab strip is drawn without tab contents", async () => {
+        const plain = await mountDom(<ModelBrowser root={[{ name: "Models", icon: "package" }]} />);
+        try {
+            expect(plain.container.querySelectorAll('[role="tab"]').length).toBe(0);
+            expect(plain.container.textContent).not.toContain("Project");
+        } finally {
+            await plain.unmount();
+        }
+
+        const dom = await mountDom(
+            <ModelBrowser
+                root={[]}
+                tabRoots={{
+                    Project: [{ name: "Models", icon: "package" }],
+                    Diagram: [{ name: "Overview", icon: "diagram" }],
+                }}
+            />
+        );
+        try {
+            expect(dom.container.textContent).toContain("Models");
+            await dom.click(dom.container.querySelectorAll('[role="tab"]')[1]);
+            expect(dom.container.textContent).toContain("Overview");
+            expect(dom.container.textContent).not.toContain("Models");
+        } finally {
+            await dom.unmount();
+        }
+    });
     test("property tabs change actual groups and keep row hints and footer", async () => {
         const groups = [
             {

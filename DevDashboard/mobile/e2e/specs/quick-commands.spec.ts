@@ -1,7 +1,6 @@
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { moreNavPage } from "@e2e/pages/MoreNav.page";
 import { quickCommandsPage } from "@e2e/pages/QuickCommandsPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 /**
  * Quick Commands done-gate. The app boots into /connect when no baseUrl is set, so this spec pairs
@@ -28,12 +27,7 @@ describe("QuickCommandsPage", () => {
         });
 
         if (onConnectScreen) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await moreNavPage.openTab();

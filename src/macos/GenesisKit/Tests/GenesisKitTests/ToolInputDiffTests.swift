@@ -186,4 +186,14 @@ final class ToolInputDiffTests: XCTestCase {
         let call = line("Bash", input: "tool set --help", result: help.joined(separator: "\n"))
         XCTAssertTrue(ToolPresentation.make(line: call, loaded: nil, context: 0, cwd: nil).columnar)
     }
+
+    func testColumnDetectionReadsOnlyItsSampleOfALongOutput() {
+        var read = 0
+        let output = (0..<50_000).lazy.map { index -> String in
+            read += 1
+            return "--flag-\(index)    what it does"
+        }
+        XCTAssertTrue(ToolPresentation.isColumnar(output))
+        XCTAssertEqual(read, ToolPresentation.columnarSampleLines, "a long output is not copied line by line")
+    }
 }

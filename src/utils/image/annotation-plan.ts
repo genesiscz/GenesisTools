@@ -187,8 +187,9 @@ export const GRID_DEFAULTS: Required<GridStyle> = {
     fontSize: 12,
 };
 
+/** An own preset name only: `toString`, `constructor` and `__proto__` are inherited, not presets. */
 export function isPresetName(value: string): value is PresetName {
-    return value in ANNOTATION_PRESETS;
+    return Object.hasOwn(ANNOTATION_PRESETS, value);
 }
 
 export function parseRect(rect: RectInput): AnnotationRect {

@@ -688,8 +688,8 @@ struct MeetingsDictionaryPage: View {
     @State private var spoken = ""
     @State private var caseSensitive = false
     @State private var editing: DictionaryEntry?
-    /// The value of an Add or Save in flight: the form clears once the dictionary holds it, so a refusal keeps it.
-    @State private var pending = DictionaryFormPending()
+    /// The entry an Add or Save sent: the form clears once the dictionary holds it, so a refusal keeps it.
+    @State private var pending = SentDraft<DictionaryFormDraft>()
 
     var body: some View {
         MeetingsSettingsFrame(model: model, reads: .dictionary) { settings in
@@ -762,13 +762,12 @@ struct MeetingsDictionaryPage: View {
                     }
                     Spacer()
                     Button(editing == nil ? "Add" : "Save") {
-                        let trimmed = value.trimmingCharacters(in: .whitespaces)
+                        let draft = formDraft
                         // An entry is keyed by its value: a renamed one replaces the old one in the same write.
-                        model.addEntry(type: type, value: trimmed,
-                                       substitution: substitution.trimmingCharacters(in: .whitespaces),
-                                       spoken: MeetingsDictionaryRules.spokenForms(spoken), meaning: meaning,
-                                       caseSensitive: caseSensitive, replacing: editing?.value)
-                        pending.submitted(trimmed)
+                        model.addEntry(type: draft.type, value: draft.value, substitution: draft.substitution,
+                                       spoken: draft.spoken, meaning: draft.meaning,
+                                       caseSensitive: draft.caseSensitive, replacing: editing?.value)
+                        pending.send(draft)
                     }
                     .buttonStyle(.borderedProminent).nativeSettingsPointer()
                     .disabled(!canSave)
@@ -805,9 +804,17 @@ struct MeetingsDictionaryPage: View {
             }
         }
         .onChange(of: model.dictionary.value?.entries ?? []) { _, entries in
-            if pending.landed(in: entries.map(\.value)) { clear() }
+            if pending.clears(form: formDraft, saved: { sent in entries.contains(where: sent.isSaved(as:)) }) { clear() }
         }
-        .onChange(of: value) { _, typed in pending.typed(typed.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// The form as a save sends it.
+    private var formDraft: DictionaryFormDraft {
+        DictionaryFormDraft(type: type, value: value.trimmingCharacters(in: .whitespaces),
+                            substitution: substitution.trimmingCharacters(in: .whitespaces),
+                            meaning: meaning.trimmingCharacters(in: .whitespaces),
+                            spoken: MeetingsDictionaryRules.spokenForms(spoken), caseSensitive: caseSensitive,
+                            scope: model.dictionaryScope)
     }
 
     private var entriesSubtitle: String {
@@ -892,26 +899,28 @@ struct UnpairPreview: Equatable {
     }
 }
 
-/// The value of the dictionary entry an Add or Save sent, until it shows up in the entries (then the form clears). A
-/// refused write or a Save that changes nothing never lands, so Cancel, a new edit or typing another value drops it: a
-/// later reload that holds the old value must not wipe what the user types now.
-struct DictionaryFormPending: Equatable {
-    private(set) var value: String?
+/// The dictionary form as an Add or Save sends it (trimmed, as the dictionary stores it), with the scope it saves in.
+/// The form clears once the entries hold this entry and the form still shows it (`SentDraft`): a refused write, or a
+/// reload that holds an older entry with the same value, must not wipe what the user types now.
+struct DictionaryFormDraft: Equatable {
+    var type: String
+    var value: String
+    var substitution: String
+    var meaning: String
+    var spoken: [String]
+    var caseSensitive: Bool
+    var scope: String?
 
-    mutating func submitted(_ value: String) { self.value = value }
-
-    mutating func reset() { value = nil }
-
-    /// The field changed to something other than what was sent.
-    mutating func typed(_ now: String) {
-        if now != value { value = nil }
-    }
-
-    /// True once (and then forgets it) when the sent value is among `entries`.
-    mutating func landed(in entries: [String]) -> Bool {
-        guard let value, entries.contains(value) else { return false }
-        self.value = nil
-        return true
+    /// Whether `entry` is this draft saved: its type and value, the fields its type keeps, and the scope's level.
+    func isSaved(as entry: DictionaryEntry) -> Bool {
+        guard entry.type == type, entry.value == value else { return false }
+        if scope != nil, let level = entry.level, !level.hasPrefix("project") { return false }
+        switch type {
+        case "fix": return (entry.substitution ?? "") == substitution && (entry.caseSensitive ?? false) == caseSensitive
+        case "abbr": return (entry.substitution ?? "") == substitution
+        case "term": return (entry.meaning ?? "") == meaning && (entry.spoken ?? []) == spoken
+        default: return true
+        }
     }
 }
 

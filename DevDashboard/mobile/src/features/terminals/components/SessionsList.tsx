@@ -268,8 +268,13 @@ export function SessionsList({ onOpen }: SessionsListProps) {
                 <ActionButton label="+ New" testID="btn-new-session" onPress={() => createTmux.mutate({})} />
             </View>
             <Card testID="terminals-tmux-card" className="overflow-hidden p-0">
-                {tmuxSessions.length === 0 ? (
-                    <Empty title="No tmux sessions" />
+                {tmux.isPending ? (
+                    // "No sessions" is an answer from the Mac; while the list is still read it would be a guess.
+                    <Text testID="terminals-tmux-loading" style={{ color: c.textMuted, padding: 12, fontSize: 12 }}>
+                        Reading tmux sessions…
+                    </Text>
+                ) : tmuxSessions.length === 0 ? (
+                    <Empty testID="terminals-tmux-empty" title={tmux.isError ? "tmux sessions unavailable" : "No tmux sessions"} />
                 ) : (
                     tmuxSessions.map((s, i) => {
                         const isAttached = s.attached > 0;

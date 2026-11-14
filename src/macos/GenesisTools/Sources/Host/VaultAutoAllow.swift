@@ -6,8 +6,10 @@
 // The list lives in `~/.genesis-tools/ai/gate/vault-auto-allow.json`, written by `tools ai gate auto-allow`
 // (src/utils/ai/gate/auto-allow.ts holds the same defaults). A request passes only when the script is a tool of the
 // GenesisTools checkout this app was built from, run by Bun or a `gt-<tool>` launcher, the command is on the list, an
-// agent process is among the caller's ancestors, and NODE_PATH is the only variable that loads extra code. Anything else
-// still gets the window. Every pass writes an audit line, and a notification when `notify` is on.
+// agent process is among the caller's ancestors, and NODE_PATH is the only variable that loads extra code, with every
+// entry inside the bundle of a listed agent app in /Applications (the value Grok Bot gives it; any other module folder
+// could load code the script path does not name). Anything else still gets the window. Every pass writes an audit
+// line, and a notification when `notify` is on.
 
 import Foundation
 import UserNotifications
@@ -70,7 +72,30 @@ struct VaultAutoAllowMatch: Equatable {
 
 enum VaultAutoAllow {
     /// The one code-loading variable a pass tolerates: Electron agent apps put their own bundle's modules there.
-    static let toleratedInjections: Set<String> = ["NODE_PATH"]
+    static let toleratedInjection = "NODE_PATH"
+
+    /// Nothing loads extra code, or only NODE_PATH does and every entry of it lies inside the bundle of a listed agent
+    /// app in /Applications. The name alone proves nothing: NODE_PATH=/tmp/x makes the script load modules from there.
+    static func loadsOnlyTrustedCode(_ caller: VaultCaller, apps: [String]) -> Bool {
+        let injected = caller.injected
+        if injected.isEmpty { return true }
+        guard injected == [toleratedInjection], let value = caller.args?.environmentValue(toleratedInjection) else { return false }
+        return nodePath(value, isInsideBundlesOf: apps)
+    }
+
+    /// True when every entry of a NODE_PATH value (an empty one included) is an absolute path inside
+    /// `/Applications/<app>.app/Contents/` for an app on the list, before and after its symbolic links are resolved.
+    static func nodePath(_ value: String, isInsideBundlesOf apps: [String]) -> Bool {
+        let bundles = apps.filter { !$0.isEmpty && !$0.contains("/") && $0 != "." && $0 != ".." }
+            .map { "/Applications/\($0).app/Contents/" }
+        guard !bundles.isEmpty else { return false }
+        return value.split(separator: ":", omittingEmptySubsequences: false).allSatisfy { entry in
+            guard entry.hasPrefix("/") else { return false }
+            let standard = (String(entry) as NSString).standardizingPath
+            let resolved = (standard as NSString).resolvingSymlinksInPath
+            return bundles.contains { bundle in standard.hasPrefix(bundle) && resolved.hasPrefix(bundle) }
+        }
+    }
 
     /// The listed command and the agent behind it, or nil for the window. The executable must be Bun or a `gt-<tool>`
     /// launcher at their known paths (`VaultGrants.runtime`): the script path is only an argument, and any other program
@@ -81,7 +106,7 @@ enum VaultAutoAllow {
         guard settings.enabled, let trustedRoot, let executable = caller.executable,
               VaultGrants.runtime(of: executable, home: home) == "bun",
               let script = caller.script, caller.args != nil,
-              Set(caller.injected).isSubset(of: toleratedInjections),
+              loadsOnlyTrustedCode(caller, apps: settings.agentApps),
               let tool = tool(of: script, root: trustedRoot),
               let subcommand = caller.scriptArguments.first, !subcommand.hasPrefix("-") else { return nil }
 

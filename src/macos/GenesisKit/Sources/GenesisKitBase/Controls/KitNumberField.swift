@@ -56,18 +56,39 @@ public enum KitNumberFieldMath {
 
     /// `value` moved by `count` steps. A value off the step grid lands on the grid first ("7" with a step of 5 goes
     /// up to 10 and down to 5), then moves whole steps.
+    ///
+    /// Every step of the sum is checked: a range or a step near the ends of `Int` trapped before the last addition
+    /// (Shift with a step of `Int.max` multiplied it by ten). A sum past the end of `Int` is past the range's end in
+    /// the same direction, so it lands on that limit.
     public static func stepped(_ value: Int, by count: Int, step: Int, in range: ClosedRange<Int>) -> Int {
         guard count != 0, step > 0 else { return clamped(value, in: range) }
-        let offset = value - range.lowerBound
-        let remainder = ((offset % step) + step) % step
+        let limit = count > 0 ? range.upperBound : range.lowerBound
+        let remainder = gridRemainder(value, from: range.lowerBound, step: step)
         var next = value
         var left = count
         if remainder != 0 {
-            next = count > 0 ? value + (step - remainder) : value - remainder
+            let (onGrid, overflow) = count > 0
+                ? value.addingReportingOverflow(step - remainder)
+                : value.subtractingReportingOverflow(remainder)
+            guard !overflow else { return limit }
+            next = onGrid
             left += count > 0 ? -1 : 1
         }
-        let (moved, overflow) = next.addingReportingOverflow(left * step)
-        return clamped(overflow ? (count > 0 ? range.upperBound : range.lowerBound) : moved, in: range)
+        let (distance, tooFar) = left.multipliedReportingOverflow(by: step)
+        guard !tooFar else { return limit }
+        let (moved, overflow) = next.addingReportingOverflow(distance)
+        return clamped(overflow ? limit : moved, in: range)
+    }
+
+    /// How far `value` sits past the step grid that starts at `lowerBound`, in `0..<step`. Each side is reduced by the
+    /// step first, so `value - lowerBound` (which overflows for a range across all of `Int`) is never computed.
+    private static func gridRemainder(_ value: Int, from lowerBound: Int, step: Int) -> Int {
+        func positive(_ number: Int) -> Int {
+            let rest = number % step
+            return rest < 0 ? rest + step : rest
+        }
+        let difference = positive(value) - positive(lowerBound)
+        return difference < 0 ? difference + step : difference
     }
 
     /// The most characters a value of the range takes, the minus included.

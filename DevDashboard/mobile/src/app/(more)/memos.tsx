@@ -2,6 +2,7 @@ import type { MemoActionKind, MemoActReceiptDto, MemoDto } from "@dd/contract";
 import { Stack } from "expo-router";
 import { memo as memoize, useState } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
+import { SessionPicker } from "@/features/agents/components/SessionPicker";
 import { useAgentsBoard } from "@/features/agents/hooks";
 import { useActOnMemo, useMemos } from "@/features/memos/hooks";
 import { ACTION_LABELS, offeredActions } from "@/features/memos/queries";
@@ -9,10 +10,15 @@ import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
 
+/** The memo's destination list; it reads the board only while it is open, not once per memo card. */
+function AgentPicker({ onPick }: { onPick: (sessionKey: string) => void }) {
+    const board = useAgentsBoard();
+    return <SessionPicker sessions={board.data?.sessions ?? []} onPick={(session) => onPick(session.key)} />;
+}
+
 const MemoCard = memoize(function MemoCard({ memo }: { memo: MemoDto }) {
     const c = useThemeColors();
     const act = useActOnMemo();
-    const board = useAgentsBoard();
     const [receipt, setReceipt] = useState<MemoActReceiptDto | null>(null);
     const [picking, setPicking] = useState(false);
     const run = (action: MemoActionKind, sessionKey?: string) =>
@@ -55,25 +61,12 @@ const MemoCard = memoize(function MemoCard({ memo }: { memo: MemoDto }) {
                 })}
             </View>
             {picking ? (
-                <View className="gap-1">
-                    {(board.data?.sessions ?? []).slice(0, 8).map((session) => (
-                        <Pressable
-                            key={session.key}
-                            accessibilityRole="button"
-                            onPress={() => {
-                                setPicking(false);
-                                run("agent", session.key);
-                            }}
-                            className="rounded-xl px-3 py-2"
-                            style={{ borderWidth: 1, borderColor: c.border }}
-                        >
-                            <Text numberOfLines={1} style={{ color: c.textPrimary, fontSize: 13 }}>
-                                {`${session.project ?? session.provider} · ${session.title ?? session.label}`}
-                            </Text>
-                        </Pressable>
-                    ))}
-                    {board.data?.sessions.length === 0 ? <Text style={{ color: c.textMuted, fontSize: 12 }}>No live session.</Text> : null}
-                </View>
+                <AgentPicker
+                    onPick={(sessionKey) => {
+                        setPicking(false);
+                        run("agent", sessionKey);
+                    }}
+                />
             ) : null}
             {receipt ? <Text style={{ color: receipt.ok ? c.textMuted : c.danger, fontSize: 12 }}>{receipt.detail}</Text> : null}
             {act.isError ? <Text style={{ color: c.danger, fontSize: 12 }}>{String(act.error)}</Text> : null}

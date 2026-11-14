@@ -2,7 +2,7 @@ import { keepsHeaders } from "@app/mcp-web-reader/lib/fetch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { blockVerdict, describeVerdict } from "./challenge";
-import { MAX_RESPONSE_BYTES, TRANSPORTS, type TransportOptions } from "./transports";
+import { MAX_RESPONSE_BYTES, REDIRECT_STATUSES, TRANSPORTS, type TransportOptions } from "./transports";
 import type {
     BlockVerdict,
     FetchedPage,
@@ -16,7 +16,6 @@ const { log } = logger.scoped("fetch");
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 5;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 /** The page is a bot wall the transport did not pass. Carries every attempt, so the message can say what was tried. */
 export class FetchBlockedError extends Error {

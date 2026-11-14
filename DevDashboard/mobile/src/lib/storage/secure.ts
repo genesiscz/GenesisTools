@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import * as SecureStore from "expo-secure-store";
 
 const CREDS_KEY = "dd.basicAuth";
@@ -8,7 +9,7 @@ export interface BasicCreds {
 }
 
 export async function saveBasicCreds(creds: BasicCreds): Promise<void> {
-    await SecureStore.setItemAsync(CREDS_KEY, JSON.stringify(creds));
+    await SecureStore.setItemAsync(CREDS_KEY, SafeJSON.stringify(creds));
 }
 
 export async function loadBasicCreds(): Promise<BasicCreds | null> {
@@ -18,7 +19,23 @@ export async function loadBasicCreds(): Promise<BasicCreds | null> {
         return null;
     }
 
-    return JSON.parse(raw) as BasicCreds;
+    try {
+        const parsed: unknown = SafeJSON.parse(raw, { strict: true });
+        return isBasicCreds(parsed) ? parsed : null;
+    } catch (err) {
+        // A corrupt stored value reads as no saved login rather than rejecting every caller.
+        console.warn("[secure] stored basic-auth login is unreadable; ignoring", err);
+        return null;
+    }
+}
+
+function isBasicCreds(value: unknown): value is BasicCreds {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        typeof Reflect.get(value, "username") === "string" &&
+        typeof Reflect.get(value, "password") === "string"
+    );
 }
 
 export async function clearBasicCreds(): Promise<void> {

@@ -272,5 +272,6 @@ registerDriver({
     id: "webview-html",
     label: "xterm.js (WebView)",
     blurb: "Local xterm.js page + its own ttyd WebSocket (token in the subprotocol — no cookie needed).",
+    needsPlainUrls: false,
     component: WebViewHtmlRenderer,
 });

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { runTool } from "@genesiscz/utils/cli";
+import { answerReadmeFlag } from "@genesiscz/utils/cli/readme-flag";
 import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -35,6 +36,8 @@ registerStatsCommand(program);
 registerRunCommand(program);
 
 async function main(): Promise<void> {
+    // Reading the README must not create the daemon's storage.
+    await answerReadmeFlag(import.meta.dir);
     await ensureStorage();
 
     if (process.argv.length <= 2) {

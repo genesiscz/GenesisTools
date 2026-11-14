@@ -1,10 +1,13 @@
 import type { AgentBoardChild, AgentBoardSession } from "@dd/contract";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
 import { useThemeColors } from "@/theme/colors";
 
-/** How many sub-agents a card lists; a long-running lead can hold a hundred. The session view lists them all. */
+/**
+ * How many sub-agents a card lists before "Show N more"; a long-running lead can hold a hundred. The card is the only
+ * place that lists them (the session screen shows the transcript), so the rest opens in place.
+ */
 const CHILDREN_SHOWN = 4;
 
 /** "4 min ago" from epoch ms; the board refreshes often enough that minutes are the right grain. */
@@ -26,7 +29,8 @@ export function ago(ms: number | null, now: number): string {
     return `${Math.round(minutes / 60)} h ago`;
 }
 
-function ChildRow({ child, depth }: { child: AgentBoardChild; depth: number }) {
+/** One sub-agent and, indented under it, its own sub-agents: the board card and the session screen list them. */
+export function ChildRow({ child, depth }: { child: AgentBoardChild; depth: number }) {
     const c = useThemeColors();
 
     return (
@@ -53,6 +57,16 @@ function ChildRow({ child, depth }: { child: AgentBoardChild; depth: number }) {
     );
 }
 
+/**
+ * The card's spoken name: two sessions in one project and phase differ by their title or newest prompt and account,
+ * so those are part of it.
+ */
+export function sessionAccessibilityLabel(session: AgentBoardSession): string {
+    return [session.project ?? session.provider, session.label, session.title ?? session.lastPrompt, session.account]
+        .filter(Boolean)
+        .join(", ");
+}
+
 interface SessionCardProps {
     session: AgentBoardSession;
     now: number;
@@ -63,12 +77,21 @@ interface SessionCardProps {
 export const SessionCard = memo(function SessionCard({ session, now, onOpen }: SessionCardProps) {
     const c = useThemeColors();
     const meta = [session.provider, session.account, session.model].filter(Boolean).join(" · ");
+    const [expanded, setExpanded] = useState(false);
+    const hidden = expanded ? 0 : Math.max(0, session.children.length - CHILDREN_SHOWN);
+    const showAll = () => setExpanded(true);
 
     return (
         <Pressable
             testID={`agent-row-${session.key}`}
             accessibilityRole="button"
-            accessibilityLabel={`${session.project ?? session.provider} ${session.label}`}
+            accessibilityLabel={sessionAccessibilityLabel(session)}
+            accessibilityActions={hidden > 0 ? [{ name: "showSubAgents", label: `Show ${hidden} more sub-agents` }] : []}
+            onAccessibilityAction={(event) => {
+                if (event.nativeEvent.actionName === "showSubAgents") {
+                    showAll();
+                }
+            }}
             onPress={() => onOpen(session.key)}
             className="gap-2 rounded-2xl p-4"
             style={{
@@ -102,13 +125,20 @@ export const SessionCard = memo(function SessionCard({ session, now, onOpen }: S
             ) : null}
             {session.children.length > 0 ? (
                 <View className="gap-1 pt-1">
-                    {session.children.slice(0, CHILDREN_SHOWN).map((child) => (
+                    {(expanded ? session.children : session.children.slice(0, CHILDREN_SHOWN)).map((child) => (
                         <ChildRow key={child.id} child={child} depth={0} />
                     ))}
-                    {session.children.length > CHILDREN_SHOWN ? (
-                        <Text style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 11 }}>
-                            {`+${session.children.length - CHILDREN_SHOWN} more`}
-                        </Text>
+                    {hidden > 0 ? (
+                        <Pressable
+                            testID={`agent-children-more-${session.key}`}
+                            accessibilityRole="button"
+                            hitSlop={8}
+                            onPress={showAll}
+                        >
+                            <Text style={{ color: c.accent, fontFamily: "monospace", fontSize: 11 }}>
+                                {`Show ${hidden} more`}
+                            </Text>
+                        </Pressable>
                     ) : null}
                 </View>
             ) : null}

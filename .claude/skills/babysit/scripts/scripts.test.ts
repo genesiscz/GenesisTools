@@ -33,7 +33,7 @@ import { hitsInAddedLines, probeAddedLines } from "./probe";
 import { resolveSameText } from "./resolve-same";
 import { classifyPatch } from "./restack-verify";
 import { reviewBrief, reviewSpawnCommand } from "./review-brief";
-import { loadRun, runPaths } from "./run";
+import { DEADLINE_EXIT, launch, loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
 import {
@@ -55,54 +55,14 @@ import {
     prepGit,
     resolveVersionConflicts,
     resolveVersionText,
+    spawnGit,
+    unpickedCommits,
 } from "./versions";
 import { createTaskLookup, pump } from "./watch-workers";
 
 describe("safe restack helpers", () => {
     const block = (a: string, b: string) => `<<<<<<< HEAD\n${a}\n=======\n${b}\n>>>>>>> change\n`;
-
-    test("resolves whitespace and trailing commas but preserves real conflicts", () => {
-        expect(resolveSameText("a.ts", block("const x = [1, 2];", "const x=[1,2];")).text).toBe("const x = [1, 2];\n");
-        expect(resolveSameText("a.ts", block("const x = [1,];", "const x = [1];")).unresolved).toBe(0);
-        expect(resolveSameText("a.ts", block("one", "two")).unresolved).toBe(1);
-        expect(resolveSameText("a.ts", block('"a b"', '"ab"')).unresolved).toBe(1);
-        expect(resolveSameText("a.ts", block('f(",]")', 'f("]")')).unresolved).toBe(1);
-        expect(resolveSameText("a.ts", block("return x", "returnx")).unresolved).toBe(1);
-    });
-
-    test("keeps a line break that automatic semicolon insertion reads as the end of a statement", () => {
-        const fn = (body: string) => `function f() {${body}}`;
-        expect(resolveSameText("a.ts", block(fn("\n    return\n    x;\n"), fn(" return x; "))).unresolved).toBe(1);
-        expect(resolveSameText("a.ts", block("a\n++b", "a ++b")).unresolved).toBe(1);
-        expect(resolveSameText("a.ts", block("const x = [\n    1,\n    2,\n];", "const x = [1, 2];")).unresolved).toBe(
-            0
-        );
-        expect(resolveSameText("a.ts", block("f(\n    a,\n    b\n);", "f(a, b);")).unresolved).toBe(0);
-        expect(
-            resolveSameText("a.ts", block("const y =\n    long;\nfoo();", "const y = long; foo();")).unresolved
-        ).toBe(0);
-    });
-
-    test("only resolves a version line when it is the version file's only conflict", () => {
-        const file = ".claude-plugin/marketplace.json";
-        const version = block('  "version": "1.2.3",', '  "version": "1.3.0",');
-        expect(resolveSameText(file, version).text).toContain('"1.3.0"');
-        expect(resolveSameText(file, version + block('"name": "a"', '"name": "b"')).unresolved).toBeGreaterThan(0);
-        expect(resolveSameText(file, block('"version": "1.0.0-beta.1"', '"version": "1.0.0"')).text).toContain(
-            '"1.0.0"'
-        );
-    });
-
-    test("classifies per-file patches", () => {
-        expect(classifyPatch({ oldPatch: "a", newPatch: "a", equalsReference: false })).toBe("OK");
-        expect(classifyPatch({ oldPatch: "a", newPatch: null, equalsReference: true })).toBe("DROPPED");
-        expect(classifyPatch({ oldPatch: "a", newPatch: "b", equalsReference: true })).toBe(
-            "CHANGED (equals reference)"
-        );
-        expect(classifyPatch({ oldPatch: "a", newPatch: "b", equalsReference: false })).toBe("CHANGED");
-    });
-
-    test("the verifier reports an unchanged patch and a dropped change in a real repository", () => {
+    const verifyRepo = () => {
         const cwd = fs.mkdtempSync(join(tmpdir(), "restack-verify-"));
         const git = (...args: string[]) => {
             const p = Bun.spawnSync(
@@ -122,34 +82,157 @@ describe("safe restack helpers", () => {
             return p.stdout.toString().trim();
         };
         git("init", "-q");
-        fs.writeFileSync(join(cwd, "file.txt"), "before\n");
+        return { cwd, git };
+    };
+    const verify = (cwd: string, args: string[]) =>
+        Bun.spawnSync(["bun", join(import.meta.dir, "restack-verify.ts"), ...args], {
+            cwd,
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+
+    test("resolves spaces between script tokens but preserves real conflicts", () => {
+        expect(resolveSameText("a.ts", block("const x = [1, 2];", "const x=[1,2];")).text).toBe("const x = [1, 2];\n");
+        expect(resolveSameText("a.ts", block("    foo(); ", "foo();")).unresolved).toBe(0);
+        // A trailing comma is a token: the comparison is spaces only.
+        expect(resolveSameText("a.ts", block("const x = [1,];", "const x = [1];")).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block("one", "two")).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block('"a b"', '"ab"')).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block('f(",]")', 'f("]")')).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block("return x", "returnx")).unresolved).toBe(1);
+    });
+
+    test("fails closed on spaces that carry meaning", () => {
+        // A line break after `return` makes it return undefined.
+        const asi = `function f(value: number) {\n${block("    return\n        value;", "    return value;")}}\n`;
+        expect(resolveSameText("a.ts", asi).unresolved).toBe(1);
+        // A line break between two statements (`a\n++b`) is not the space in `a ++b`.
+        expect(resolveSameText("a.ts", block("a\n++b", "a ++b")).unresolved).toBe(1);
+        // TypeScript reads `a! = b` as an assignment and `a != b` as a comparison.
+        expect(resolveSameText("a.ts", block("a! = b;", "a != b;")).unresolved).toBe(1);
+        // The block sits inside a template literal, so its indentation is string content.
+        expect(resolveSameText("a.ts", `const s = \`\n${block("  hello", "hello")}\`;\n`).unresolved).toBe(1);
+        // Indentation is syntax in Python and YAML; files without a tokenizer resolve only when byte-identical.
+        expect(resolveSameText("a.py", block("    x = 1", "x = 1")).unresolved).toBe(1);
+        expect(resolveSameText("a.yaml", block("a: 1 ", "a: 1")).unresolved).toBe(1);
+        expect(resolveSameText("a.json", `{\n${block('    "a": [1, 2]', '"a":[1,2]')}}\n`).unresolved).toBe(0);
+        expect(resolveSameText("a.json", `{\n${block('    "a": 1.0', '"a": 1')}}\n`).unresolved).toBe(1);
+        expect(resolveSameText("a.json", `{\n${block('    "a": "x y"', '"a": "xy"')}}\n`).unresolved).toBe(1);
+    });
+
+    test("only resolves a version line when it is the version file's only conflict", () => {
+        const file = ".claude-plugin/marketplace.json";
+        const version = block('  "version": "1.2.3",', '  "version": "1.3.0",');
+        expect(resolveSameText(file, version).text).toContain('"1.3.0"');
+        expect(resolveSameText(file, version + block('"name": "a"', '"name": "b"')).unresolved).toBeGreaterThan(0);
+        expect(resolveSameText(file, block('"version": "1.0.0-beta.1"', '"version": "1.0.0"')).text).toContain(
+            '"1.0.0"'
+        );
+    });
+
+    test("classifies per-file patches", () => {
+        const kept = { equalsReference: false, absorbed: false };
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: "a" })).toBe("OK");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: null })).toBe("DROPPED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: null, absorbed: true })).toBe("ABSORBED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: null, equalsReference: true })).toBe(
+            "DROPPED (equals reference)"
+        );
+        expect(classifyPatch({ ...kept, oldPatch: null, newPatch: "b" })).toBe("ADDED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: "b", equalsReference: true })).toBe(
+            "CHANGED (equals reference)"
+        );
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: "b" })).toBe("CHANGED");
+    });
+
+    test("the verifier tells a kept, a lost, an absorbed and a new change apart in a real repository", () => {
+        const { cwd, git } = verifyRepo();
+        const lines = Array.from({ length: 12 }, (_, i) => `l${i + 1}`);
+        const write = (file: string, content: string[]) => fs.writeFileSync(join(cwd, file), `${content.join("\n")}\n`);
+        write("file.txt", lines);
         git("add", "file.txt");
         git("commit", "-qm", "base");
-        fs.writeFileSync(join(cwd, "file.txt"), "after\n");
+        const base = git("rev-parse", "HEAD");
+        write("file.txt", lines.with(1, "L2"));
         git("commit", "-qam", "change");
-        const script = join(import.meta.dir, "restack-verify.ts");
-        const run = (newBase: string) =>
-            Bun.spawnSync(
-                [
-                    "bun",
-                    script,
-                    "--branch",
-                    "fixture=HEAD..HEAD",
-                    "--old-base",
-                    "HEAD^",
-                    "--new-base",
-                    newBase,
-                    "--reference",
-                    "HEAD",
-                ],
-                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
-            );
-        const same = run("HEAD^");
+        const oldHead = git("rev-parse", "HEAD");
+        write("extra.txt", ["new"]);
+        git("add", "extra.txt");
+        git("commit", "-qm", "an unexplained new file");
+        const withExtra = git("rev-parse", "HEAD");
+        git("checkout", "-q", "--detach", base);
+        // The new base already holds the change, plus a later edit outside the patch's context.
+        write("file.txt", lines.with(1, "L2").with(11, "L12"));
+        git("commit", "-qam", "upstream took the change");
+        const absorbingBase = git("rev-parse", "HEAD");
+        const run = (newHead: string, newBase: string, reference = oldHead) =>
+            verify(cwd, [
+                "--branch",
+                `fixture=${oldHead}..${newHead}`,
+                "--old-base",
+                base,
+                "--new-base",
+                newBase,
+                "--reference",
+                reference,
+            ]);
+
+        const same = run(oldHead, base);
         expect(same.exitCode, same.stderr.toString()).toBe(0);
         expect(same.stdout.toString()).toContain("OK\tfile.txt");
-        const dropped = run("HEAD");
+        const dropped = run(base, base);
         expect(dropped.exitCode, dropped.stderr.toString()).toBe(1);
         expect(dropped.stdout.toString()).toContain("DROPPED\tfile.txt");
+        const droppedLikeReference = run(base, base, base);
+        expect(droppedLikeReference.exitCode, droppedLikeReference.stderr.toString()).toBe(0);
+        expect(droppedLikeReference.stdout.toString()).toContain("DROPPED (equals reference)\tfile.txt");
+        const absorbed = run(absorbingBase, absorbingBase);
+        expect(absorbed.exitCode, absorbed.stderr.toString()).toBe(0);
+        expect(absorbed.stdout.toString()).toContain("ABSORBED\tfile.txt");
+        const added = run(withExtra, base);
+        expect(added.exitCode, added.stderr.toString()).toBe(1);
+        expect(added.stdout.toString()).toContain("OK\tfile.txt");
+        expect(added.stdout.toString()).toContain("ADDED\textra.txt");
+    });
+
+    test("a commit that changes only the spaces inside a string is not taken as already upstream", () => {
+        const { cwd, git } = verifyRepo();
+        const commit = (from: string, text: string, message: string) => {
+            git("checkout", "-q", "--detach", from);
+            fs.writeFileSync(join(cwd, "f.ts"), `export const s = "${text}";\n`);
+            git("commit", "-qam", message);
+            return git("rev-parse", "HEAD");
+        };
+        fs.writeFileSync(join(cwd, "f.ts"), 'export const s = "x";\n');
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        const base = git("rev-parse", "HEAD");
+        const upstream = commit(base, "a b", "upstream");
+        const spacesDiffer = commit(base, "ab", "spaces differ");
+        const sameChange = commit(base, "a b", "same change");
+        // Positive control: plain git cherry takes the spaces-only commit as upstream.
+        expect(git("cherry", upstream, spacesDiffer)).toStartWith("-");
+        expect(unpickedCommits({ cwd, upstream, head: spacesDiffer })).toEqual([spacesDiffer]);
+        expect(unpickedCommits({ cwd, upstream, head: sameChange })).toEqual([]);
+        expect(unpickedCommits({ cwd, upstream, head: spacesDiffer, limit: base })).toEqual([spacesDiffer]);
+    });
+
+    test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {
+        const { cwd, git } = verifyRepo();
+        fs.writeFileSync(join(cwd, "f.ts"), "export const a = 1;\n");
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        const base = git("rev-parse", "HEAD");
+        fs.appendFileSync(join(cwd, "f.ts"), 'export const s = "a b";\n');
+        git("commit", "-qam", "old");
+        const oldHead = git("rev-parse", "HEAD");
+        git("checkout", "-q", "--detach", base);
+        fs.appendFileSync(join(cwd, "f.ts"), 'export const s = "ab";\n');
+        git("commit", "-qam", "restacked");
+        const result = verify(cwd, ["--branch", `fixture=${oldHead}..HEAD`, "--old-base", base, "--new-base", base]);
+        expect(result.exitCode, result.stderr.toString()).toBe(1);
+        expect(result.stdout.toString()).toContain("CHANGED\tf.ts");
     });
 
     test("the resolver completes a rebase even when Git leaves REBASE_HEAD behind", () => {
@@ -182,7 +265,7 @@ describe("safe restack helpers", () => {
         fs.writeFileSync(join(cwd, "b.txt"), "after\n");
         must("commit", "-qam", "feature");
         must("checkout", "-q", "main");
-        fs.writeFileSync(join(cwd, "a.ts"), "const x = [1, 2,];\n");
+        fs.writeFileSync(join(cwd, "a.ts"), "const x = [1, 2];\n");
         must("commit", "-qam", "main");
         must("checkout", "-q", "feature");
         expect(git("rebase", "--empty=stop", "--reapply-cherry-picks", "main").exitCode).toBe(1);
@@ -194,7 +277,7 @@ describe("safe restack helpers", () => {
         });
         expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
         expect(result.stdout.toString()).toContain("summary: 1 files resolved");
-        expect(fs.readFileSync(join(cwd, "a.ts"), "utf8")).toBe("const x = [1, 2,];\n");
+        expect(fs.readFileSync(join(cwd, "a.ts"), "utf8")).toBe("const x = [1, 2];\n");
         expect(fs.readFileSync(join(cwd, "b.txt"), "utf8")).toBe("after\n");
     });
 });
@@ -688,6 +771,17 @@ describe("integrate's gates", () => {
     });
 });
 
+describe("launch deadlines", () => {
+    test("a command past its deadline is stopped and says so, a quick one answers as it is", () => {
+        const stuck = launch(["sleep", "30"], { timeoutMs: 200 });
+        expect(stuck.code).toBe(DEADLINE_EXIT);
+        expect(stuck.out).toContain("sleep 30 passed its 0 s deadline and was stopped");
+
+        const quick = launch(["sh", "-c", "echo out; echo err >&2; exit 3"], { timeoutMs: 10_000 });
+        expect(quick).toEqual({ code: 3, stdout: "out\n", out: "out\nerr\n" });
+    });
+});
+
 describe("negated tests", () => {
     test("a test ! guard before a read", () => {
         expect(readOnlyChain(entry, "test ! -f /x/AGENTS.md || cat /x/AGENTS.md")).toBe(true);
@@ -1057,6 +1151,14 @@ test("babysit control scripts use checkout-local executors", () => {
 
 describe("merge-prep version conflicts", () => {
     const manifest = (version: string) => `{\n    "name": "genesis-tools",\n    "version": "${version}"\n}\n`;
+
+    test("a git call past its deadline throws, so a stuck child cannot hold the resolver", () => {
+        const started = Date.now();
+        expect(() => spawnGit(["-c", "alias.hang=!sleep 5", "hang"], { timeoutMs: 300 })).toThrow(
+            "git hang did not finish within 0.3 s and was stopped"
+        );
+        expect(Date.now() - started).toBeLessThan(4_000);
+    });
 
     test("prepGit turns off hooks set in config, which ignore core.hooksPath", () => {
         const dir = fs.mkdtempSync(join(tmpdir(), "babysit-hooks-"));

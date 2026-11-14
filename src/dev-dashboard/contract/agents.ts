@@ -51,6 +51,11 @@ export interface AgentBoardChild {
      * label. The session is folded here and is not listed again at the top level.
      */
     liveLabel: AgentBoardLabel | null;
+    /**
+     * The folded live session's board key (`AgentBoardPhaseRow.key`), so a phase frame for it patches `liveLabel`
+     * here; null when the child is not a live session. Absent from a Mac that predates the field.
+     */
+    liveKey?: string | null;
     children: AgentBoardChild[];
 }
 

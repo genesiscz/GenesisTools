@@ -49,6 +49,11 @@ const aliasResolvers = [
         match: "@genesiscz/utils/notifications/phone-wire",
         target: path.resolve(workspaceRoot, "src/utils/notifications/phone-wire.ts"),
     },
+    // `{{name}}` prompt rendering for the fixture wire's prepared prompts: pure, no imports
+    {
+        match: "@genesiscz/utils/template",
+        target: path.resolve(workspaceRoot, "src/utils/template.ts"),
+    },
     { prefix: "@dd/", target: path.resolve(workspaceRoot, "src/dev-dashboard") },
     { prefix: "@/", target: path.resolve(projectRoot, "src") },
     { prefix: "@app/", target: path.resolve(workspaceRoot, "src") },

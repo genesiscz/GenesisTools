@@ -335,7 +335,8 @@ function registerAutoAllowCommands(gate: Command): void {
             }
 
             // The app matches `<tool> <subcommand>` exactly, so any other shape would sit on the list and match nothing.
-            if (command.split(" ").length !== 2) {
+            const parts = command.split(" ");
+            if (parts.length !== 2 || parts.some((part) => part.startsWith("-"))) {
                 out.log.error(`A command is a tool and its subcommand, like "claude warmup"; got "${command}".`);
                 process.exitCode = 1;
                 return;

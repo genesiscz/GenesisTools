@@ -10,6 +10,7 @@ import {
     type QaRow,
 } from "@dd/contract";
 import { QueryClient } from "@tanstack/react-query";
+import { createFixtureClient, setFixtureLatency } from "@/api/fixture-wire";
 import { mockPulse } from "@/api/fixtures/data";
 import { MOCK_BOARD } from "@/api/fixtures/agents";
 import { agentsKeys } from "@/features/agents/queries";
@@ -143,6 +144,31 @@ describe("the live cache table", () => {
         }, queryClient);
         expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
         expect(queryClient.getQueryData(agentsKeys.board)).toMatchObject({ sessions: MOCK_BOARD.sessions });
+    });
+
+    it("a phase or snapshot row for a worker folded under its parent patches that child's label", () => {
+        const queryClient = new QueryClient();
+        const [first, ...rest] = MOCK_BOARD.sessions;
+        const workerKey = "codex:cccccccc-0000-4000-8000-000000000003";
+        const worker = { ...first.children[0], id: "w1", liveLabel: "thinking" as const, liveKey: workerKey };
+        const board = { ...MOCK_BOARD, sessions: [{ ...first, children: [worker] }, ...rest] };
+        const workerRow = { ...first, key: workerKey, sessionId: workerKey.slice(6), label: "tool" as const };
+        queryClient.setQueryData(agentsKeys.board, board);
+
+        applyLiveFrame(LIVE_CACHE_TABLE, { v: 1, channel: "agents", type: "phase", payload: workerRow }, queryClient);
+        const afterPhase = queryClient.getQueryData<typeof board>(agentsKeys.board);
+        expect(afterPhase?.sessions[0].children[0]).toMatchObject({ id: "w1", liveLabel: "tool" });
+        expect(afterPhase?.sessions[0].label).toBe(first.label);
+
+        const snapshot = [...board.sessions, { ...workerRow, label: "waiting" as const }];
+        applyLiveFrame(
+            LIVE_CACHE_TABLE,
+            { v: 1, channel: "agents", type: "snapshot", payload: { sessions: snapshot } },
+            queryClient
+        );
+        expect(queryClient.getQueryData<typeof board>(agentsKeys.board)?.sessions[0].children[0].liveLabel).toBe(
+            "waiting"
+        );
     });
 
     it("an agents snapshot with a session that ended refetches the board", () => {
@@ -360,6 +386,53 @@ describe("createLiveCache", () => {
 
         expect(cache.status()).toBe("down");
         expect(cache.isLive("pulse")).toBe(false);
+    });
+});
+
+describe("the fixture live stream", () => {
+    async function until(done: () => boolean, what: string): Promise<void> {
+        const deadline = Date.now() + 3_000;
+
+        while (!done()) {
+            if (Date.now() > deadline) {
+                throw new Error(`timed out waiting for ${what}`);
+            }
+
+            await Bun.sleep(20);
+        }
+    }
+
+    it("keeps a channel updating after hello, feeds a channel added later, and stops one removed", async () => {
+        setFixtureLatency(0);
+        const client = createFixtureClient({ liveEveryMs: 100 });
+        const pulses: unknown[] = [];
+        let connected = false;
+        const subscription = client.live.subscribe(["qa"], {
+            onFrame: (frame) => {
+                if (frame.channel === "pulse") {
+                    pulses.push(frame.payload);
+                }
+            },
+            onConnect: () => {
+                connected = true;
+            },
+        });
+
+        try {
+            await until(() => connected, "the hello frame");
+            subscription.setChannels(["qa", "pulse"]);
+            // The first frame on join, then repeats: the poll the channel replaced is off, so it must keep coming.
+            await until(() => pulses.length >= 3, "three pulse frames after pulse joined");
+
+            subscription.setChannels(["qa"]);
+            await Bun.sleep(50);
+            const afterLeave = pulses.length;
+            await Bun.sleep(250);
+            expect(pulses.length).toBe(afterLeave);
+        } finally {
+            subscription.close();
+            setFixtureLatency(120);
+        }
     });
 });
 
