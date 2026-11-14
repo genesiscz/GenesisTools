@@ -52,6 +52,11 @@ function firstLine(output: string): string {
     return output.trim().split("\n")[0]?.trim() ?? "";
 }
 
+/** Why a `t3` call failed: the first line of its stderr, else of its stdout, else the fallback. */
+function failureReason(result: { stdout: string; stderr: string }, fallback: string): string {
+    return firstLine(result.stderr) || firstLine(result.stdout) || fallback;
+}
+
 /** The thread's state from `t3 thread show --json`, or null with the reason when T3 Code cannot show it. */
 export async function showT3Thread(
     threadId: string,
@@ -68,7 +73,7 @@ export async function showT3Thread(
     const parsed = result.status === 0 ? parseJson(result.stdout) : undefined;
     const thread = isObject(parsed) && isObject(parsed.thread) ? parsed.thread : undefined;
     if (!thread || text(thread.threadId) !== threadId) {
-        const reason = firstLine(result.stderr) || firstLine(result.stdout) || "T3 Code did not show the thread";
+        const reason = failureReason(result, "T3 Code did not show the thread");
         log.debug({ threadId, status: result.status, reason }, "t3 thread show answered no thread");
         return { reason };
     }
@@ -123,7 +128,7 @@ export async function sendT3ThreadMessage(
     }
 
     if (result.status !== 0) {
-        const reason = firstLine(result.stderr) || firstLine(result.stdout) || `t3 exited ${result.status}`;
+        const reason = failureReason(result, `t3 exited ${result.status}`);
         log.info({ threadId, status: result.status, reason }, "t3 thread send was refused");
         return { kind: "refused", reason };
     }
