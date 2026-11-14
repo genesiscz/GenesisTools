@@ -1684,16 +1684,15 @@ private final class ScreenStreamHost {
         let requested = options.selection.excludedWindowIDs
         let stream = self.stream
         let recorder = self.recorder
-        // ScreenCaptureKit's calls are XPC and can stall. Past the deadline the switch has failed: following and the
-        // `switch` command work again, and the late completion finds it no longer owns the stream (`LiveSwitchOwner`).
+        // ScreenCaptureKit's calls are XPC and can stall. Past the deadline the switch has failed and is reported, but
+        // the stream stays quarantined (`switching` and the frame hold stay): an update already submitted can still
+        // apply, so no newer switch may start and no frame may pass until the task below has settled and undone it.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.liveSwitchDeadline) { [self] in
             guard owner.end(token) else { return }
-            recorder.cancelPendingDisplay()
             let reason = "could not switch the recording to display \(target): screen capture did not finish within \(Int(Self.liveSwitchDeadline)) s"
             recorder.warn(reason)
             CaptureEvents.error("failed", reason)
             failedSwitch = (target, Date())
-            switching = false
         }
         Task {
             var sizeChanged = false
@@ -1750,11 +1749,15 @@ private final class ScreenStreamHost {
                     }
                     recorder.cancelPendingDisplay()
                 }
-                guard failsHere else { return }
-                recorder.warn("could not switch the recording to display \(target): \(error.localizedDescription)")
-                CaptureEvents.error("failed", "could not switch the recording to display \(target): \(error.localizedDescription)")
+                if failsHere {
+                    recorder.warn("could not switch the recording to display \(target): \(error.localizedDescription)")
+                    CaptureEvents.error("failed", "could not switch the recording to display \(target): \(error.localizedDescription)")
+                }
+                // The deadline already reported an expired switch; either way the stream is free only now, after the undo.
                 DispatchQueue.main.async {
-                    self.failedSwitch = (target, Date())
+                    if failsHere {
+                        self.failedSwitch = (target, Date())
+                    }
                     self.switching = false
                 }
             }
