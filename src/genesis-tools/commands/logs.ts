@@ -241,13 +241,14 @@ function registerShow(logs: Command): void {
                 pid: failure.pid,
                 limit: 200,
             });
-            const context = readFailureContext({ failure, dir: failuresDir() });
-            if (options.json) {
-                out.result({ failure, dayLog: lines.map((line) => line.record), context });
-                return;
-            }
+            // Only --json and --context print the prepared report; the plain view never reads it.
+            if (options.json || options.context) {
+                const context = readFailureContext({ failure, dir: failuresDir() });
+                if (options.json) {
+                    out.result({ failure, dayLog: lines.map((line) => line.record), context });
+                    return;
+                }
 
-            if (options.context) {
                 out.println(context.markdown);
                 return;
             }
