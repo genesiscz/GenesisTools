@@ -88,6 +88,7 @@ import {
     must,
     type PlanAuthor,
     type PlanGroup,
+    type PlanReport,
     parsePlan,
     runGit,
     type TreeEntry,
@@ -336,6 +337,32 @@ function authorProblems(cwd: string, groups: PlanGroup[]): string[] {
         const r = runGit(["var", "GIT_AUTHOR_IDENT"], { cwd, env: authorEnv(group.author) });
         return r.code === 0 ? [] : [`group ${group.index}: author ${formatAuthor(group.author)}: ${r.stderr.trim()}`];
     });
+}
+
+/**
+ * The whole `check`: `checkPlan` plus every AUTHOR line git must read. Prints the problems and returns null when the
+ * plan fails, so `group`, `check` and `apply` cannot drift apart on what a valid plan is.
+ */
+function passedPlan({
+    cwd,
+    base,
+    head,
+    groups,
+}: {
+    cwd: string;
+    base: string;
+    head: string;
+    groups: PlanGroup[];
+}): PlanReport | null {
+    const report = checkPlan({ cwd, base, head, groups });
+    const problems = [...report.problems, ...authorProblems(cwd, groups)];
+
+    if (problems.length) {
+        process.stderr.write(`✖ plan check:\n  ${problems.join("\n  ")}\n`);
+        return null;
+    }
+
+    return report;
 }
 
 function authorEnv(author: PlanAuthor): Record<string, string> {
@@ -721,11 +748,9 @@ function main(argv: string[]): number {
             return 1;
         }
 
-        const report = checkPlan({ cwd, base, head, groups: planned });
-        const problems = [...report.problems, ...authorProblems(cwd, planned)];
+        const report = passedPlan({ cwd, base, head, groups: planned });
 
-        if (problems.length) {
-            process.stderr.write(`✖ plan check:\n  ${problems.join("\n  ")}\n`);
+        if (!report) {
             return 1;
         }
 
@@ -740,11 +765,9 @@ function main(argv: string[]): number {
 
     const planText = readFileSync(args.plan, "utf8");
     const planned = parsePlan(planText);
-    const report = checkPlan({ cwd, base, head, groups: planned });
-    const problems = [...report.problems, ...authorProblems(cwd, planned)];
+    const report = passedPlan({ cwd, base, head, groups: planned });
 
-    if (problems.length) {
-        process.stderr.write(`✖ plan check:\n  ${problems.join("\n  ")}\n`);
+    if (!report) {
         return 1;
     }
 
