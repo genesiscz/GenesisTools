@@ -1,6 +1,8 @@
 import { type Score, scoreSchema } from "./types";
 
 const PPQ = 480;
+/** MIDI has 16 channels and the first drum part takes channel 10. */
+export const MIDI_PARTS = 15;
 
 interface Event {
     tick: number;
@@ -62,9 +64,19 @@ export function encodeMidi(input: Score): Buffer {
     let nextChannel = 0;
     let drumChannelUsed = false;
 
+    if (score.parts.length > MIDI_PARTS) {
+        throw new Error(`One MIDI file holds at most ${MIDI_PARTS} parts`);
+    }
+
     for (const part of score.parts) {
+        const source = part.source;
+
+        if (source.kind !== "soundfont") {
+            throw new Error(`Part ${part.name} has a ${source.kind} source; only SoundFont parts go into MIDI`);
+        }
+
         let channel: number;
-        if (part.percussion && !drumChannelUsed) {
+        if (source.percussion && !drumChannelUsed) {
             channel = 9;
             drumChannelUsed = true;
         } else {
@@ -75,9 +87,9 @@ export function encodeMidi(input: Score): Buffer {
         }
         // XG bank select gives every drum part its own channel and controller state.
         const events: Event[] = [
-            { tick: 0, order: -5, bytes: [0xb0 | channel, 0, part.percussion ? 127 : 0] },
+            { tick: 0, order: -5, bytes: [0xb0 | channel, 0, source.percussion ? 127 : 0] },
             { tick: 0, order: -4, bytes: [0xb0 | channel, 32, 0] },
-            { tick: 0, order: -3, bytes: [0xc0 | channel, part.program] },
+            { tick: 0, order: -3, bytes: [0xc0 | channel, source.program] },
             { tick: 0, order: -2, bytes: [0xb0 | channel, 7, part.volume] },
             { tick: 0, order: -1, bytes: [0xb0 | channel, 10, part.pan] },
         ];

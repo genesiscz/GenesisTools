@@ -7,6 +7,8 @@ import { Executor } from "@genesiscz/utils/cli/executor";
 import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { optIn } from "@genesiscz/utils/test/skip";
+import { RATE, stereo } from "./dsp";
+import { duck } from "./effects";
 import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
@@ -14,8 +16,11 @@ import { publishAudio, runAudio, withMusicSignal } from "./process";
 import { fluidSynthArgs, renderScore } from "./render";
 import { builtinScore, TRACK_KEYS } from "./scores";
 import { PINNED_SOUNDFONT } from "./soundfont";
+import { limit } from "./space";
+import { needsStems, resolvePatch } from "./stems";
+import { renderSynth } from "./synth";
 import { TAPS, tapAudio, tapAudition } from "./taps";
-import { type Score, scoreSchema } from "./types";
+import { migratePart, type Score, scoreSchema } from "./types";
 
 const minimal: Score = {
     key: "fixture",
@@ -26,8 +31,7 @@ const minimal: Score = {
     parts: [
         {
             name: "piano",
-            program: 0,
-            percussion: false,
+            source: { kind: "soundfont", program: 0, percussion: false },
             volume: 100,
             pan: 64,
             notes: [{ at: 0, duration: 1, midi: 60, velocity: 90 }],
@@ -46,14 +50,19 @@ const mix = {
 
 describe("music score and MIDI", () => {
     test("keeps all four source compositions as independently built, deterministic data", () => {
-        expect(TRACK_KEYS).toEqual(["Pulse", "PulseLight", "Calm", "Piano"]);
+        expect(TRACK_KEYS).toEqual(["Pulse", "PulseLight", "Calm", "Piano", "Orbit"]);
 
         for (const key of TRACK_KEYS) {
             const first = builtinScore(key);
             const second = builtinScore(key);
             expect(scoreSchema.safeParse(first).success).toBe(true);
             expect(first.parts.flatMap((part) => part.notes).length).toBeGreaterThan(100);
-            expect(encodeMidi(first)).toEqual(encodeMidi(second));
+            expect(first).toEqual(second);
+
+            if (!needsStems(first)) {
+                expect(encodeMidi(first)).toEqual(encodeMidi(second));
+            }
+
             expect(first).not.toBe(second);
         }
 
@@ -166,7 +175,7 @@ describe("music score and MIDI", () => {
             parts: Array.from({ length: 12 }, (_, i) => ({
                 ...part,
                 name: `part-${i}`,
-                percussion: i === 2,
+                source: { kind: "soundfont" as const, program: 0, percussion: i === 2 },
             })),
         };
         const midi = encodeMidi(score);
@@ -177,11 +186,12 @@ describe("music score and MIDI", () => {
 
     test("percussion parts retain independent volume and pan controllers", () => {
         const part = minimal.parts[0];
+        const drums = { kind: "soundfont" as const, program: 0, percussion: true };
         const midi = encodeMidi({
             ...minimal,
             parts: [
-                { ...part, name: "kick", percussion: true, volume: 1, pan: 0 },
-                { ...part, name: "snare", percussion: true, volume: 127, pan: 127 },
+                { ...part, name: "kick", source: drums, volume: 1, pan: 0 },
+                { ...part, name: "snare", source: drums, volume: 127, pan: 127 },
             ],
         });
         expect(midi.includes(Buffer.from([0xb9, 7, 1]))).toBe(true);
@@ -205,6 +215,83 @@ describe("music score and MIDI", () => {
         expect(args).toContain("synth.cpu-cores=1");
         expect(args).toContain("player.timing-source=sample");
         expect(args.slice(args.indexOf("-R"), args.indexOf("-R") + 4)).toEqual(["-R", "0", "-C", "0"]);
+    });
+});
+
+describe("sources, synth and stems", () => {
+    const legacy = { name: "piano", program: 5, percussion: true, volume: 90, pan: 10, notes: [] };
+
+    test("a part with flat program and percussion loads as a SoundFont source, once", () => {
+        const moved = migratePart(legacy);
+        expect(moved).toEqual({
+            name: "piano",
+            volume: 90,
+            pan: 10,
+            notes: [],
+            source: { kind: "soundfont", program: 5, percussion: true },
+        });
+        expect(migratePart(moved)).toBe(moved);
+        const loaded = scoreSchema.parse({ ...minimal, parts: [legacy] });
+        expect(loaded.parts[0].source).toEqual({ kind: "soundfont", program: 5, percussion: true });
+        expect(scoreSchema.parse(loaded)).toEqual(loaded);
+    });
+
+    test("only a plain SoundFont score keeps the one-pass render, and MIDI refuses a synth part", () => {
+        const synth = { ...minimal.parts[0], source: { kind: "synth" as const, patch: "sub" } };
+        expect(needsStems(minimal)).toBe(false);
+        expect(needsStems({ ...minimal, parts: [{ ...minimal.parts[0], effects: { highpass: 100 } }] })).toBe(true);
+        expect(needsStems({ ...minimal, parts: [synth] })).toBe(true);
+        expect(() => encodeMidi({ ...minimal, parts: [synth] })).toThrow("only SoundFont parts go into MIDI");
+        expect(() => resolvePatch("no-such-preset")).toThrow("Unknown synth preset");
+    });
+
+    test("refuses a duck on an unknown part, a reverb send with no room and a synth lane on a SoundFont part", () => {
+        const part = minimal.parts[0];
+        const refused = (extra: object) =>
+            scoreSchema.safeParse({ ...minimal, parts: [{ ...part, ...extra }] }).success;
+        expect(refused({ effects: { duck: { by: ["kick"], depth: 0.5, release: 100 } } })).toBe(false);
+        expect(refused({ effects: { reverb: 0.3 } })).toBe(false);
+        expect(refused({ lanes: [{ target: "cutoff", points: [[0, 1]] }] })).toBe(false);
+        expect(refused({ lanes: [{ target: "level", points: [[0, -6]] }] })).toBe(true);
+    });
+
+    test("a synth render repeats sample for sample and is silent before its first note", () => {
+        const options = {
+            patch: resolvePatch("reese"),
+            notes: [{ at: 0.1, duration: 0.2, midi: 41, velocity: 100 }],
+            samples: RATE / 2,
+            seed: 7,
+        };
+        const first = renderSynth(options);
+        const second = renderSynth(options);
+        expect(first.left).toEqual(second.left);
+        expect(first.left.subarray(0, RATE / 10 - 1).every((sample) => sample === 0)).toBe(true);
+        expect(first.left.some((sample) => Math.abs(sample) > 0.05)).toBe(true);
+        expect(first.left.some((sample, n) => sample !== first.right[n])).toBe(true);
+    });
+
+    test("a duck is fully down at the trigger and back up after its release", () => {
+        const buffer = stereo(RATE);
+        buffer.left.fill(1);
+        buffer.right.fill(1);
+        duck(buffer, { by: ["kick"], depth: 0.8, attack: 5, hold: 20, release: 100 }, [0.5]);
+        expect(buffer.left[RATE * 0.4]).toBe(1);
+        expect(buffer.left[RATE * 0.5]).toBeCloseTo(0.2, 5);
+        expect(buffer.left[RATE * 0.51]).toBeCloseTo(0.2, 5);
+        expect(buffer.left[RATE * 0.7]).toBe(1);
+    });
+
+    test("the limiter lets no sample over the ceiling and leaves quiet audio alone", () => {
+        const buffer = stereo(RATE / 10);
+
+        for (let n = 0; n < buffer.left.length; n++) {
+            buffer.left[n] = Math.sin(n / 9) * (n > 2000 && n < 2400 ? 3 : 0.2);
+            buffer.right[n] = buffer.left[n];
+        }
+
+        limit(buffer, 0.5);
+        expect(Math.max(...buffer.left.map(Math.abs))).toBeLessThanOrEqual(0.5 + 1e-6);
+        expect(buffer.left[100]).toBeCloseTo(Math.sin(100 / 9) * 0.2, 5);
     });
 });
 

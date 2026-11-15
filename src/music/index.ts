@@ -14,6 +14,8 @@ import {
     mixMusic,
     PINNED_SOUNDFONT,
     renderScore,
+    resolvePatch,
+    SYNTH_PRESETS,
     scoreSchema,
     soundfontPaths,
     TAPS,
@@ -59,6 +61,14 @@ program
         out.result(builtinScore(track));
     });
 
+program
+    .command("presets")
+    .description("List the synth presets a score part can name, or print one as an editable patch")
+    .argument("[name]")
+    .action((name?: string) => {
+        out.result(name ? resolvePatch(name) : { presets: Object.keys(SYNTH_PRESETS) });
+    });
+
 const soundfont = program.command("soundfont").description("Manage the explicitly pinned sample asset");
 soundfont
     .command("install")
@@ -78,8 +88,8 @@ interface RenderOptions {
     out: string;
     score?: string;
     soundfont?: string;
-    lufs: number;
-    peak: number;
+    lufs?: number;
+    peak?: number;
     overwrite?: boolean;
 }
 
@@ -89,10 +99,10 @@ program
     .requiredOption("--out <file>", "New .wav or .m4a output")
     .option("--score <json>", "Custom score document, instead of a built-in")
     .option("--soundfont <file>", "Explicit alternate SoundFont, whose hash is recorded")
-    .option("--lufs <number>", "Integrated loudness target", number, -20)
-    .option("--peak <db>", "True-peak ceiling", number, -3)
+    .option("--lufs <number>", "Integrated loudness target; default: the score master, else -20", number)
+    .option("--peak <db>", "True-peak ceiling; default: the score master, else -3", number)
     .option("--overwrite", "Replace the output only after successful mastering")
-    .description("Render MIDI through FluidSynth; no movie fades are baked into the track")
+    .description("Render a score: SoundFont parts through FluidSynth, synth parts and effects in the stem mixer")
     .action(async (track: string, options: RenderOptions) => {
         const score = options.score
             ? scoreSchema.parse(SafeJSON.parse(await readFile(options.score, "utf8"), { strict: true }))
