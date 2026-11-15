@@ -210,7 +210,7 @@ export const sourceSchema = z.discriminatedUnion("kind", [
     }),
     z.object({
         kind: z.literal("sample"),
-        /** An audio file the user owns: a path, absolute or relative to the working folder. */
+        /** A path to an audio file of your own, or the name of an installed sample (`sonic-pi/bd_tek.flac`). */
         file: z.string().min(1),
         /**
          * hit: every note plays the whole file. pitched: the note moves the speed around `root`, and the note

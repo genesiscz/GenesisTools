@@ -19,7 +19,13 @@ const names = [
     "ghost",
     "hat",
     "openHat",
-    "breakKit",
+    "kickHit",
+    "snareHit",
+    "snareTop",
+    "hatHit",
+    "breakKick",
+    "breakSnare",
+    "breakHat",
     "cymbal",
     "ride",
     "roll",
@@ -134,9 +140,9 @@ function drums(bar: number, options: { fill?: boolean; hats?: boolean } = {}) {
         }
     }
 
-    // A break played on the sampled kit under the main hits, for the shuffle of a real drummer.
+    // A break played on recorded acoustic hits under the main hits, for the shuffle of a real drummer.
     for (const step of [0, 2, 10, 11]) {
-        put("breakKit", bar, step, 1, 36, step === 0 ? 100 : 78);
+        put("breakKick", bar, step, 1, 36, step === 0 ? 100 : 78);
     }
     for (const [step, velocity] of [
         [4, 110],
@@ -145,10 +151,10 @@ function drums(bar: number, options: { fill?: boolean; hats?: boolean } = {}) {
         [12, 110],
         [15, 70],
     ]) {
-        put("breakKit", bar, step, 1, 38, velocity);
+        put("breakSnare", bar, step, 1, 38, velocity);
     }
     for (let step = 0; step < 16; step += 2) {
-        put("breakKit", bar, step, 1, step % 4 === 2 ? 46 : 42, 64);
+        put("breakHat", bar, step, 1, 42, step % 4 === 2 ? 96 : 58);
     }
 }
 
@@ -327,6 +333,7 @@ put("impact", END - 2, 0, 24, 36, 90);
 
 const synth = (patch: string): Source => ({ kind: "synth", patch });
 const kit = (program: number): Source => ({ kind: "soundfont", program, percussion: true });
+const hit = (file: string): Source => ({ kind: "sample", file, mode: "hit", root: 60, slices: 16, speed: 1 });
 const pump = (depth: number, release = 150): Effects["duck"] => ({ by: ["kick", "snare"], depth, hold: 25, release });
 const echo = (mix: number, feedback = 0.38): Effects["delay"] => ({
     time: STEP * 3,
@@ -365,7 +372,7 @@ const setup: Record<PartName, { source: Source; pan?: number; effects: Effects; 
                 { type: "peak", frequency: 320, gain: -3, q: 1.2 },
             ],
             drive: { amount: 3 },
-            gain: 1,
+            gain: -2,
         },
     },
     snare: {
@@ -378,20 +385,54 @@ const setup: Record<PartName, { source: Source; pan?: number; effects: Effects; 
             ],
             compressor: { threshold: -12, ratio: 3, attack: 6, release: 80, makeup: 2 },
             reverb: 0.14,
-            gain: -10,
+            gain: -13,
         },
     },
     ghost: { source: synth("snare"), effects: { highpass: 180, reverb: 0.1, gain: -8 } },
     hat: { source: synth("hat"), pan: 72, effects: { highpass: 6500, gain: -8 } },
     openHat: { source: synth("openHat"), pan: 56, effects: { highpass: 5000, gain: -9 } },
-    breakKit: {
-        source: kit(8),
+    kickHit: { source: hit("sonic-pi/bd_tek.flac"), effects: { highpass: 30, drive: { amount: 4 }, gain: -3 } },
+    snareHit: {
+        source: hit("sonic-pi/sn_dolf.flac"),
         effects: {
-            highpass: 320,
-            drive: { amount: 9 },
+            highpass: 140,
+            eq: [{ type: "peak", frequency: 200, gain: 2, q: 1.2 }],
+            compressor: { threshold: -12, ratio: 3, attack: 6, release: 80, makeup: 2 },
+            reverb: 0.12,
+            gain: -8,
+        },
+    },
+    snareTop: { source: hit("sonic-pi/sn_dub.flac"), effects: { highpass: 700, reverb: 0.1, gain: -13 } },
+    hatHit: { source: hit("sonic-pi/drum_cymbal_closed.flac"), pan: 58, effects: { highpass: 5000, gain: -17 } },
+    breakKick: {
+        source: hit("sonic-pi/drum_bass_hard.flac"),
+        effects: {
+            highpass: 220,
+            drive: { amount: 10 },
             compressor: { threshold: -20, ratio: 4, attack: 3, release: 60, makeup: 3 },
-            reverb: 0.08,
-            gain: 4,
+            reverb: 0.1,
+            gain: -13,
+        },
+    },
+    breakSnare: {
+        source: hit("sonic-pi/drum_snare_hard.flac"),
+        effects: {
+            highpass: 220,
+            drive: { amount: 10 },
+            compressor: { threshold: -20, ratio: 4, attack: 3, release: 60, makeup: 3 },
+            reverb: 0.1,
+            gain: -13,
+        },
+    },
+    breakHat: {
+        source: hit("sonic-pi/drum_cymbal_closed.flac"),
+        pan: 74,
+        effects: {
+            highpass: 220,
+            drive: { amount: 10 },
+            compressor: { threshold: -20, ratio: 4, attack: 3, release: 60, makeup: 3 },
+            reverb: 0.1,
+            gain: -13,
         },
     },
     cymbal: { source: kit(0), effects: { highpass: 400, reverb: 0.3, gain: 0 } },
@@ -489,6 +530,12 @@ const setup: Record<PartName, { source: Source; pan?: number; effects: Effects; 
     },
     impact: { source: synth("impact"), effects: { reverb: 0.5, gain: -7 } },
 };
+
+// The recorded hits play the same notes as the synth drums they are layered with.
+notes.kickHit = notes.kick;
+notes.snareHit = notes.snare;
+notes.snareTop = notes.snare;
+notes.hatHit = notes.hat;
 
 const parts = names.map((name) => ({
     name,

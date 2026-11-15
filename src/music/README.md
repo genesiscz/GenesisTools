@@ -97,7 +97,19 @@ envelope, a filter (low, high, band, notch or vowel) with its own envelope, LFOs
 `{ "kind": "sample", "file": "break.wav", "mode": "slices", "slices": 16, "speed": 1.24 }` plays an audio file
 you own. Mode `hit` plays the whole file for each note. Mode `pitched` moves its speed with the note around `root`.
 Mode `slices` cuts it in equal parts, and note 36 plays the first part, 37 the second. `speed` fits a loop to the
-score tempo (score bpm divided by loop bpm). No sample file ships with the tool.
+score tempo (score bpm divided by loop bpm). `file` is a path to your own audio, or the name of an installed sample.
+
+~~~sh
+tools music samples install         # 320 CC0 drum files, 47 MB, each checked against its SHA-256
+tools music samples list            # the sets and how many files are on disk
+tools music samples list sonic-pi   # the names a score can use, such as sonic-pi/bd_tek.flac
+~~~
+
+The two sets are the Sonic Pi samples (commit aa0c8e9, 204 FLAC files) and a TR-808 set (tidalcycles
+sounds-tr808-fischer, commit 85fbecf, 116 WAV files). Both repositories state CC0 1.0 for their samples; the
+license links are in the `list` output. The two Amen break cuts of the Sonic Pi set are left out, because no source
+shows that the original recording was cleared. The files live under `~/.genesis-tools/music/samples/`, never in
+git. Rendering never downloads; a score that names a missing sample fails with the install command.
 
 Each part may carry `effects`, applied in this order: highpass, lowpass, eq, drive, crush, compressor, delay,
 width and monoBelow, duck, gain. `duck` pulls the part down at every note start of the parts it names, which is
@@ -115,8 +127,9 @@ its crest factor. `--lufs` and `--peak` win over the score, and the range now en
 peaks of limited audio. When an .m4a goes over the cap, the cap wins and the file ships a little under the
 target; the printed measurement is the truth. A .wav has no such lift.
 
-Orbit is an original drum and bass score at 174 BPM that uses all of this. Its drums and basses are synthesized;
-the piano, the cymbals and a quiet break layer come from the sample bank.
+Orbit is an original drum and bass score at 174 BPM that uses all of this. Its basses, pads and leads are synthesized.
+Its drums layer recorded hits from the Sonic Pi set over synthesized ones, so it needs `tools music samples install`.
+The piano and the cymbals come from the sample bank.
 
 ## Mix under a video
 
