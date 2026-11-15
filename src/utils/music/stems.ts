@@ -1,7 +1,6 @@
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { Curve, gain, hash, RATE, type Stereo, stereo } from "./dsp";
 import { applyEffects } from "./effects";
@@ -9,6 +8,7 @@ import { fluidSynthArgs } from "./fluidsynth";
 import { encodeMidi, MIDI_PARTS } from "./midi";
 import { SYNTH_PRESETS } from "./presets";
 import { runAudio } from "./process";
+import { resolveSample } from "./samples";
 import { room } from "./space";
 import { renderSynth } from "./synth";
 import type { Note, Patch, SampleSource, Score, ScorePart } from "./types";
@@ -161,14 +161,10 @@ export function playSample(options: { data: Stereo; source: SampleSource; notes:
 }
 
 async function sampleStem(part: ScorePart, source: SampleSource, context: StemContext): Promise<Stereo> {
-    const file = resolve(source.file);
+    const file = resolveSample(source.file);
     let data = context.files.get(file);
 
     if (!data) {
-        if (!existsSync(file)) {
-            throw new Error(`Part ${part.name} names a sample file that does not exist: ${file}`);
-        }
-
         data = await readFloat(file);
         context.files.set(file, data);
     }

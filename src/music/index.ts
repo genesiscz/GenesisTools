@@ -9,13 +9,16 @@ import {
     auditionMusic,
     builtinScore,
     CHOSEN_TAP,
+    installSamples,
     installSoundfont,
+    listSampleSets,
     measureAudio,
     mixMusic,
     PINNED_SOUNDFONT,
     renderScore,
     resolvePatch,
     SYNTH_PRESETS,
+    sampleNames,
     scoreSchema,
     soundfontPaths,
     TAPS,
@@ -67,6 +70,22 @@ program
     .argument("[name]")
     .action((name?: string) => {
         out.result(name ? resolvePatch(name) : { presets: Object.keys(SYNTH_PRESETS) });
+    });
+
+const samples = program.command("samples").description("Manage the pinned CC0 drum sample sets");
+samples
+    .command("install")
+    .argument("[set]", "One set; all sets without it")
+    .description("Download the missing files of the pinned sets and verify each SHA-256")
+    .action(async (set?: string) => {
+        out.result(await installSamples(set));
+    });
+samples
+    .command("list")
+    .argument("[set]", "Print the sample names of one set")
+    .description("Show the sets and how many files are installed, without downloading")
+    .action(async (set?: string) => {
+        out.result(set ? { samples: sampleNames(set) } : await listSampleSets());
     });
 
 const soundfont = program.command("soundfont").description("Manage the explicitly pinned sample asset");

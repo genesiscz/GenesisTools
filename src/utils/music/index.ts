@@ -5,6 +5,7 @@ export { mixMusic, musicFilterGraph, placeMusic } from "./mix";
 export { SYNTH_PRESETS } from "./presets";
 export { withMusicSignal } from "./process";
 export { renderScore } from "./render";
+export { installSamples, listSampleSets, resolveSample, sampleNames } from "./samples";
 export { builtinScore, TRACK_KEYS } from "./scores";
 export { installSoundfont, PINNED_SOUNDFONT, soundfontPaths, verifySoundfont } from "./soundfont";
 export { mixScore, needsStems, resolvePatch } from "./stems";

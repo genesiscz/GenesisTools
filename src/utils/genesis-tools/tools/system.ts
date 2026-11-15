@@ -179,3 +179,8 @@ export function mobileRoutesCommand(): string {
 export function musicSoundfontInstallCommand(): string {
     return toolCommand("music soundfont install");
 }
+
+/** Explicitly installs the pinned CC0 drum sample sets. */
+export function musicSamplesInstallCommand(): string {
+    return toolCommand("music samples install");
+}
