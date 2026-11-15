@@ -70,8 +70,9 @@ tools music score PulseLight > score.json
 tools music render --score score.json --out out/custom.m4a
 ~~~
 
-A score has key, title, bpm, seconds, end and parts. Each part has a GM program number from 0 to 127, percussion,
-volume, pan, and notes. Each note has at and duration in seconds, a MIDI pitch and velocity. end is the written
+A score has key, title, bpm, seconds, end and parts. Each part has a source, volume, pan and notes. A SoundFont
+source has a GM program number from 0 to 127 and a percussion flag. A score file written before 2026-11-15 holds
+program and percussion flat on the part; it still loads, and is read as a SoundFont source. Each note has at and duration in seconds, a MIDI pitch and velocity. end is the written
 ending that the mix aligns, and must fit inside seconds. Notes cannot extend past the score. Program numbers are
 zero-based. Each part has an independent MIDI channel for volume and pan. The first percussion part uses channel 10;
 additional drum parts use XG bank selection on separate channels. FluidSynth 2.3.5 or newer is required.
@@ -79,13 +80,47 @@ additional drum parts use XG bank selection on separate channels. FluidSynth 2.3
 An explicit --soundfont file may select another sample bank. Its hash is printed, and its license remains the
 caller's responsibility. The default cached asset always receives the pinned file and license checks.
 
+## Synth parts, effects and a loud master
+
+~~~sh
+tools music presets                 # kick, snare, hat, sub, reese, stab, pad, voice, pluck, sweep, impact ...
+tools music presets reese           # one preset as an editable patch
+tools music render Orbit --out out/orbit.m4a
+tools music score Orbit > orbit.json
+~~~
+
+A part source is one of two kinds. `{ "kind": "soundfont", "program": 0, "percussion": false }` plays the sample
+bank. `{ "kind": "synth", "patch": "reese" }` plays the built-in synthesizer, with a preset name or a whole patch:
+oscillators (sine, triangle, saw, square, noise) with unison, detune, a pitch drop and phase modulation, an
+envelope, a filter (low, high, band, notch or vowel) with its own envelope, LFOs, mono glide and drive.
+
+Each part may carry `effects`, applied in this order: highpass, lowpass, eq, drive, crush, compressor, delay,
+width and monoBelow, duck, gain. `duck` pulls the part down at every note start of the parts it names, which is
+the sidechain pump of dance music. `reverb` is the send level into the one shared `room` of the score. `lanes`
+move a parameter over score time: cutoff, pitch, vowel, fm and lfoRate on a synth part, and level, lowpass and
+highpass on any part.
+
+A score that only names SoundFont programs renders in one FluidSynth pass, byte for byte as before. Any synth
+part, effect, lane or room switches the render to stems: one FluidSynth pass per SoundFont part, the synth parts
+in Bun, then one mix. A stem score may hold 32 parts. A synth render repeats sample for sample.
+
+`master` sets the loudness of a score: `{ "lufs": -9, "peak": -1, "limiter": true, "clip": 3 }`. With the
+limiter, a soft clipper and a look-ahead limiter bring the mix to the target, so a loud track is not refused for
+its crest factor. `--lufs` and `--peak` win over the score, and the range now ends at -6 LUFS. AAC lifts the
+peaks of limited audio. When an .m4a goes over the cap, the cap wins and the file ships a little under the
+target; the printed measurement is the truth. A .wav has no such lift.
+
+Orbit is an original drum and bass score at 174 BPM that uses all of this. Its drums and basses are synthesized;
+the piano, the cymbals and a quiet break layer come from the sample bank.
+
 ## Mix under a video
 
 ~~~sh
 tools music mix demo.mp4 --music out/pulse-light.m4a --end 91.5 --out demo-music.mp4
 ~~~
 
-All built-in scores have a written end of 91.5 s and a file duration of 95 s. A shorter movie trims the track's
+The four sampled built-in scores have a written end of 91.5 s and a file duration of 95 s. Orbit ends at 87.5 s
+in a 89.5 s file. A shorter movie trims the track's
 opening; a longer movie delays the track with silence. The written ending lands at the movie ending. --end takes
 the score's end, not its file duration.
 

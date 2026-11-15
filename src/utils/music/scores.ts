@@ -1,8 +1,11 @@
 import { MusicTracks, SCORE_END, SCORE_SECONDS, ShelvedTracks } from "./kalendora-score";
+import { orbitScore } from "./tracks/orbit";
 import { type Score, type ScorePart, scoreSchema } from "./types";
 
 const tracks = { ...MusicTracks, ...ShelvedTracks };
-export const TRACK_KEYS = Object.keys(tracks);
+/** Scores written for the synth and stem renderer. Each call builds a new score. */
+const SYNTH_TRACKS: Record<string, () => Score> = { Orbit: orbitScore };
+export const TRACK_KEYS = [...Object.keys(tracks), ...Object.keys(SYNTH_TRACKS)];
 const programs: Record<keyof typeof tracks, readonly number[]> = {
     Pulse: [89, 33, 12, 119, 0, 0, 0],
     PulseLight: [89, 33, 12, 119],
@@ -28,6 +31,12 @@ function trackKey(value: string): keyof typeof tracks {
 
 /** Original note patterns, voiced by sampled GM instruments instead of lavfi partials. */
 export function builtinScore(value: string): Score {
+    const synth = Object.keys(SYNTH_TRACKS).find((name) => name.toLowerCase() === value.toLowerCase());
+
+    if (synth !== undefined) {
+        return SYNTH_TRACKS[synth]();
+    }
+
     const key = trackKey(value);
     const original = tracks[key];
     const parts: ScorePart[] = original.instruments().map((instrument, index) => {
@@ -35,8 +44,7 @@ export function builtinScore(value: string): Score {
         const drum = key === "Piano" ? 70 : [36, 42, 39][index - 4];
         const part: ScorePart = {
             name: `${key}-${index + 1}`,
-            program: programs[key][index],
-            percussion,
+            source: { kind: "soundfont", program: programs[key][index], percussion },
             volume: volumes[key]?.[index] ?? Math.max(1, Math.min(127, Math.round(instrument.gain * 350))),
             pan: Math.round((127 * instrument.pan[1]) / (instrument.pan[0] + instrument.pan[1])),
             notes: [],
