@@ -3782,13 +3782,26 @@ describe("listing a wide untracked directory", () => {
         });
 
         it("stops at its deadline: a listing out of time fails for each directory and is never listed again", async () => {
-            // No git lists a tree within 1 ms, so the batch is stopped (or never starts when the clock already moved).
-            const dirs = [...small, "pat[x]/"];
-            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, dirs, 5, { budgetMs: 1 }));
+            // A git that never answers, so the batch always runs out of time. A real git on a fast runner
+            // listed this tree within 1 ms, which made a tiny budget no proof of the deadline.
+            const slowBin = realpathSync(mkdtempSync(join(tmpdir(), "gt-slow-git-")));
+            const slowGit = join(slowBin, "git");
+            const path = process.env.PATH;
+            writeFileSync(slowGit, "#!/bin/sh\nexec sleep 30\n");
+            chmodSync(slowGit, 0o755);
+            process.env.PATH = `${slowBin}:${path ?? ""}`;
 
-            // Without the shared deadline the batch, then each directory by itself: five listings, each unbounded.
-            expect(each.count).toBeLessThanOrEqual(1);
-            expect(dirs.map((dir) => each.result.get(dir))).toEqual([null, null, null, null]);
+            try {
+                const dirs = [...small, "pat[x]/"];
+                const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, dirs, 5, { budgetMs: 300 }));
+
+                // Without the shared deadline the batch, then each directory by itself: five listings, each unbounded.
+                expect(each.count).toBe(1);
+                expect(dirs.map((dir) => each.result.get(dir))).toEqual([null, null, null, null]);
+            } finally {
+                process.env.PATH = path;
+                rmSync(slowBin, { recursive: true, force: true });
+            }
         });
     });
 });
