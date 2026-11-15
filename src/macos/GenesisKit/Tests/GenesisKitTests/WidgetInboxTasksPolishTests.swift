@@ -1148,9 +1148,10 @@ private enum StagingFixture {
         return String(decoding: try JSONSerialization.data(withJSONObject: wire), as: UTF8.self)
     }
 
-    static func model(root: URL? = nil, defaults given: UserDefaults? = nil) -> WidgetModel {
+    /// `binary`: a tools executable that answers every call, for a test that needs the journal to drain.
+    static func model(root: URL? = nil, defaults given: UserDefaults? = nil, binary: URL? = nil) -> WidgetModel {
         let defaults = given ?? UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
-        return WidgetModel(binaryPath: root?.appendingPathComponent("missing-tools").path ?? "/fixture/tools",
+        return WidgetModel(binaryPath: binary?.path ?? root?.appendingPathComponent("missing-tools").path ?? "/fixture/tools",
             stateRoot: root?.path ?? FileManager.default.temporaryDirectory.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
                 notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
@@ -1802,9 +1803,10 @@ final class WidgetStagingTests: XCTestCase {
         var confirmed = item
         confirmed.draftOption = "a"
         model.reconcileStaged([confirmed])
-        XCTAssertNil(model.decisions.pending[item.sourceId])
+        XCTAssertNotNil(model.decisions.pending[item.sourceId], "the write still runs, so the snapshot confirms nothing yet")
         try XCTUnwrap(held).resume(returning: ["ok": true])
         await fulfillment(of: [sent], timeout: 1)
+        XCTAssertNil(model.decisions.pending[item.sourceId], "the landed write was sent and the pick is forgotten")
     }
 
     func testOlderSendAtOnceDoesNotSendANewerNote() async throws {
@@ -2224,6 +2226,76 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(models[1].expanded, "a configured delay replaces the 2.5 second default")
         try await Task.sleep(for: .milliseconds(2600))
         XCTAssertEqual(models[0].expanded, .right, "Keep open disables the delayed fold")
+    }
+
+    /// Send on the way out with an own answer sends it apart from the other staged decisions. When the own answer is
+    /// delivered and the rest fails, the failure must stay readable: the panel does not fold over it.
+    func testAFailedSendOnTheWayOutKeepsThePanelOpenAfterAnEarlierSendDelivered() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let sends = SendCounter()
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == .string("send-staged") else { return ["ok": true] }
+            return sends.next() == 1 ? ["sent": 1, "failed": 0] : ["sent": 0, "failed": 1]
+        }
+        var wire = try JSONDecoder().decode(WidgetSnapshot.self,
+                                            from: Data(StagingFixture.snapshot(draftOption: "a", second: true).utf8))
+        wire.state.preferences.sendCloseSeconds = 0.3
+        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        model.select(key)
+        model.open(.right)
+        let first = try XCTUnwrap(model.cards.first { $0.sourceId == "d1" })
+        let second = try XCTUnwrap(model.cards.first { $0.sourceId == "d2" })
+        model.sendDecisionNow(first, option: "a", note: nil, thenClose: true)
+        model.sendDecisionNow(second, option: "a", note: nil, thenClose: true)
+        for _ in 0 ..< 300 where sends.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(sends.count, 2, "both decisions were sent")
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(model.expanded, .right, "the second send failed, so the panel stays open to show why")
+    }
+
+    /// An own answer with media goes through the durable journal, not `send-staged`: Send on the way out folds the panel
+    /// once the hub queued it, by the same rule as a text answer. `reopen`: the user opened the panel again meanwhile.
+    private func ownAnswerWithMediaOnTheWayOut(reopen: Bool, hubTakes: Bool = true) async throws -> WidgetModel {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget.media-close." + UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("native-submissions"), withIntermediateDirectories: true)
+        let tools = root.appendingPathComponent("fixture-tools")
+        try "#!/bin/sh\n\(hubTakes ? "echo '{}'" : "echo refused >&2; exit 1")\n".write(to: tools, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.path)
+        let model = StagingFixture.model(root: root, binary: tools)
+        var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: "a").utf8))
+        wire.state.preferences.sendCloseSeconds = 0.05
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        model.select(key)
+        model.open(.right)
+        let card = try XCTUnwrap(model.cards.first)
+        model.openOwnAnswer(card)
+        model.drafts[key] = WidgetDraft(text: "see the screenshot", assetIds: ["fixture-image"])
+        model.sendStaged([card.sourceId], thenClose: true)
+        if reopen { model.open(.right) }
+        for _ in 0 ..< 200 where model.expanded != nil && !reopen { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(reopen || !hubTakes ? 500 : 0))
+        return model
+    }
+
+    func testAnOwnAnswerWithMediaSentOnTheWayOutFoldsThePanelOnceTheHubQueuedIt() async throws {
+        let model = try await ownAnswerWithMediaOnTheWayOut(reopen: false)
+        defer { model.stop() }
+        XCTAssertNil(model.expanded, "the hub took the answer, so the panel folds")
+    }
+
+    func testAnOwnAnswerWithMediaDoesNotFoldAPanelTheUserOpenedAgain() async throws {
+        let model = try await ownAnswerWithMediaOnTheWayOut(reopen: true)
+        defer { model.stop() }
+        XCTAssertEqual(model.expanded, .right, "a panel opened again meanwhile stays open")
+    }
+
+    func testAnOwnAnswerWithMediaTheHubRefusedKeepsThePanelOpen() async throws {
+        let model = try await ownAnswerWithMediaOnTheWayOut(reopen: false, hubTakes: false)
+        defer { model.stop() }
+        XCTAssertEqual(model.expanded, .right, "a send the hub refused stays in the journal and never folds")
     }
 
     func testASendNoSessionTookSaysWhyAndSendAgainDeliversIt() async throws {
@@ -3156,4 +3228,12 @@ final class WidgetSessionSwitchTests: XCTestCase {
         XCTAssertNil(cache[key("s0")], "the session refreshed longest ago goes first")
         XCTAssertEqual(cache[key("s\(WidgetSessionCache.limit + 1)")]?.cards.count, 1)
     }
+}
+
+/// Counts the send-staged calls of a test whose action runner answers each one differently.
+private final class SendCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func next() -> Int { lock.withLock { value += 1; return value } }
 }

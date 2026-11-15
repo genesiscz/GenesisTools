@@ -132,8 +132,8 @@ public struct LiveRecordingStore: Sendable {
     /// `${GENESIS_TOOLS_HOME:-$HOME}/.genesis-tools/recordings/live`, the TypeScript side's root.
     public static func folder(environment: [String: String] = ProcessInfo.processInfo.environment,
                               home: String = NSHomeDirectory()) -> URL {
-        let override = environment[GenesisToolsHome.variable].flatMap { $0.isEmpty ? nil : $0 }
-        return GenesisToolsHome.url("recordings/live", isDirectory: true, in: override ?? home)
+        let override = environment[GenesisToolsHome.variable]?.trimmingCharacters(in: .whitespaces) ?? ""
+        return GenesisToolsHome.url("recordings/live", isDirectory: true, in: override.isEmpty ? home : override)
     }
 
     public static let live = LiveRecordingStore(folder: folder())

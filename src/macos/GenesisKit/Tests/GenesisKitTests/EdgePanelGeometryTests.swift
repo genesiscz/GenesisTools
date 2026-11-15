@@ -711,16 +711,19 @@ final class WidgetVisibilityTests: XCTestCase {
             {"version":1,"state":{"version":1,"revision":0,"preferences":\(WidgetTestPreferences.json()),"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
             """
         try saved.write(to: directory.appendingPathComponent("saved.json"), atomically: true, encoding: .utf8)
+        // The fake `tools` is made once and kept (tests.md: a new executable that is started and then deleted crashed
+        // syspolicyd); this run reaches it through a link in its own folder, which is where `$0` puts the files.
         let script = directory.appendingPathComponent("tools")
-        try """
-        #!/bin/sh
-        case "$*" in
-          *--input*) printf '{}'; exit \(actionExit) ;;
-          *watch*) cat '\(directory.path)/saved.json'; printf '\\n'; cat > /dev/null; exit 0 ;;
-          *) cat '\(directory.path)/saved.json'; exit 0 ;;
-        esac
-        """.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try FileManager.default.createSymbolicLink(at: script, withDestinationURL: try WidgetVoiceDraftOrderingTests.persistentScript(
+            "widget-visibility", """
+            #!/bin/sh
+            run="$(dirname "$0")"
+            case "$*" in
+              *--input*) printf '{}'; exit \(actionExit) ;;
+              *watch*) cat "$run/saved.json"; printf '\\n'; cat > /dev/null; exit 0 ;;
+              *) cat "$run/saved.json"; exit 0 ;;
+            esac
+            """))
         let domain = "widget-tests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         let model = WidgetModel(
@@ -1234,7 +1237,8 @@ final class WidgetVisibilityTests: XCTestCase {
         }
         let surface = WidgetSurfaceID(edge: .right)
         let host = NSHostingView(rootView: WidgetHostView(
-            model: model, registry: registry, surface: surface, moduleIDs: ["agents", "capture"], cutout: 0,
+            model: model, registry: registry, motion: EdgePanelMotion(presentation: .preview),
+            surface: surface, moduleIDs: ["agents", "capture"], cutout: 0,
             headerHeight: 36, visibleHeight: 900))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 900), styleMask: .borderless,
                               backing: .buffered, defer: false)
@@ -1386,21 +1390,23 @@ final class WidgetConnectionTests: XCTestCase {
             """
         try snapshot.write(to: directory.appendingPathComponent("snapshot.json"), atomically: true, encoding: .utf8)
         let actions = directory.appendingPathComponent("actions.jsonl")
+        // Kept once, reached through a link in the run's folder (see `WidgetVisibilityTests.fixture`).
         let script = directory.appendingPathComponent("tools")
         let watch = watchExits ? "exit 3" : "cat > /dev/null; exit 0"
-        try """
-        #!/bin/sh
-        case "$*" in
-          *watch*) cat '\(directory.path)/snapshot.json'; printf '\\n'; \(watch) ;;
-          *snapshot*) cat '\(directory.path)/snapshot.json'; exit 0 ;;
-        esac
-        while [ "$#" -gt 0 ]; do
-          if [ "$1" = "--input" ]; then shift; cat "$1" >> '\(actions.path)'; printf '\\n' >> '\(actions.path)'; fi
-          shift
-        done
-        printf '{}'
-        """.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try FileManager.default.createSymbolicLink(at: script, withDestinationURL: try WidgetVoiceDraftOrderingTests.persistentScript(
+            "widget-connection", """
+            #!/bin/sh
+            run="$(dirname "$0")"
+            case "$*" in
+              *watch*) cat "$run/snapshot.json"; printf '\\n'; \(watch) ;;
+              *snapshot*) cat "$run/snapshot.json"; exit 0 ;;
+            esac
+            while [ "$#" -gt 0 ]; do
+              if [ "$1" = "--input" ]; then shift; cat "$1" >> "$run/actions.jsonl"; printf '\\n' >> "$run/actions.jsonl"; fi
+              shift
+            done
+            printf '{}'
+            """))
         let domain = "widget-tests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         let model = WidgetModel(

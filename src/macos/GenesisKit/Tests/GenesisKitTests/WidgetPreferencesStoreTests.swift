@@ -161,6 +161,32 @@ final class WidgetPreferencesStoreTests: XCTestCase {
                       "a later change made elsewhere shows")
     }
 
+    func testANewerEditWithTheValueInFlightIsStillSentAndReportsItsOutcome() {
+        var completions: [() -> Void] = []
+        var sent: [[String: WidgetJSON]] = []
+        var shown: WidgetPreferences? = .hubDefaults
+        let store = WidgetPreferencesStore(stateFile: "/fixture/no-state.json", wiring: .init(
+            shown: { shown }, show: { preferences, _ in shown = preferences },
+            send: { patch, _, completed in
+                sent.append(patch)
+                completions.append(completed)
+            },
+            readAgain: {}, report: { _ in }, stopping: { false }))
+        store.write { $0.inboxFilter = "inbox" }
+        store.flush()
+        // Off and on again while the first request runs: the newer edit equals the value in flight.
+        store.write { $0.inboxFilter = "all" }
+        var saved = false
+        store.write({ $0.inboxFilter = "inbox" }, saved: { saved = true })
+        completions[0]()
+        XCTAssertFalse(saved, "the first request confirmed only its own edit")
+        XCTAssertEqual(shown?.inboxFilter, "inbox")
+        store.flush()
+        XCTAssertEqual(sent.count, 2, "the newer edit was sent, not dropped with the value in flight")
+        completions[1]()
+        XCTAssertTrue(saved)
+    }
+
     func testAWriteReportsItsOwnOutcomeSoAPageConfirmsOnlyAStoredValue() {
         let harness = Harness(shown: nil)
         var refuse = true

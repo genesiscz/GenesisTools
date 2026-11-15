@@ -1149,6 +1149,7 @@ public final class WidgetModel: ObservableObject {
     public func open(_ edge: EdgePanelPlacement) {
         cancelHoverPrewarm()
         openedAt = ProcessInfo.processInfo.systemUptime
+        journalCloseGuards = [:]
         expanded = edge
         prewarmTranscript()
         resumeTranscript()
@@ -1573,6 +1574,10 @@ public final class WidgetModel: ObservableObject {
     }
     /// User edits and selections invalidate a send's pending automatic close, even if changed back afterwards.
     var sendCloseRevision = 0
+    /// What a send on the way out of the panel saw when it went into the journal, by the journal file's name: the
+    /// drain folds the panel by it once the hub took the file. A file the hub never took keeps its record until the
+    /// file goes or the panel opens again.
+    var journalCloseGuards: [String: (opened: TimeInterval, closeRevision: Int, draft: WidgetDraft)] = [:]
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
     @Published public var draftSavedAt: [String: Date] = [:]
 
@@ -2291,6 +2296,10 @@ public final class WidgetModel: ObservableObject {
                 do {
                     _ = try await self.runAction(file)
                     try FileManager.default.removeItem(at: file)
+                    if let guarded = self.journalCloseGuards.removeValue(forKey: file.lastPathComponent) {
+                        self.foldPanelAfterSend(opened: guarded.opened, closeRevision: guarded.closeRevision,
+                                                draft: guarded.draft)
+                    }
                 } catch {
                     blocked.insert(conversation)
                     self.error =
@@ -2344,7 +2353,9 @@ public final class WidgetModel: ObservableObject {
 
     /// `withDraft`: the draft's text and media go with it and the draft empties. Without, an option goes alone and a
     /// reply being typed in the composer stays where it is.
-    public func submit(choice: String? = nil, answering: Bool = false, withDraft: Bool = true) {
+    ///
+    /// `thenClose`: a Send on the way out of the panel; the panel folds once the hub took this submission (`drainJournal`).
+    public func submit(choice: String? = nil, answering: Bool = false, withDraft: Bool = true, thenClose: Bool = false) {
         guard let session = selected, importing == 0 else { return }
         let submitted = withDraft ? draft : WidgetDraft()
         do {
@@ -2402,6 +2413,7 @@ public final class WidgetModel: ObservableObject {
             draftTasks[selectedKey]?.cancel()
             draftOwnership.pending(selectedKey)
             drafts[selectedKey] = WidgetDraft()
+            if thenClose { journalCloseGuards[file.lastPathComponent] = (openedAt, sendCloseRevision, WidgetDraft()) }
             // A save of the typed text still on its way would land after the clear below and put the sent text back
             // on the hub; a new revision makes it skip itself.
             draftRevisions[selectedKey, default: 0] += 1

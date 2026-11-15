@@ -86,15 +86,15 @@ extension WidgetModel {
     /// the staged pick, and the field empties only once the hub has the note (`sendDecisionNow`); media cannot be staged,
     /// so it goes with the pick and the words through the durable outbox, as a click with media does. False when the
     /// field is empty, so the staged pick and note go as they are.
-    func sendOwnAnswerWithStage(_ card: WidgetCard) -> Bool {
+    func sendOwnAnswerWithStage(_ card: WidgetCard, thenClose: Bool = false) -> Bool {
         let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard card.kind == "decision", card.needsAnswer, !typed.isEmpty || !draft.assetIds.isEmpty else { return false }
         PerfLog.mark("widget.send-staged own answer goes with \(card.sourceId)")
         guard draft.assetIds.isEmpty else {
-            submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true)
+            submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true, thenClose: thenClose)
             return true
         }
-        sendDecisionNow(card, option: nil, note: typed)
+        sendDecisionNow(card, option: nil, note: typed, thenClose: thenClose)
         return true
     }
 
@@ -221,7 +221,8 @@ extension WidgetModel {
     /// Sends a card's selected option by staging its pick and note, then sending the staged decision.
     /// `option` nil keeps the staged letters, `note` nil keeps the staged note; typed words leave the composer
     /// once the hub has them. Text-only own answers use the durable outbox and carry their staged pick there.
-    func sendDecisionNow(_ card: WidgetCard, option: String?, note: String?) {
+    /// `thenClose`: the send came from a Send on the way out of the panel, which folds once the hub took the answer.
+    func sendDecisionNow(_ card: WidgetCard, option: String?, note: String?, thenClose: Bool = false) {
         guard let selected, let revision = card.revision else { return }
         let item = Self.inboxItem(card)
         let key = selectedKey
@@ -235,7 +236,7 @@ extension WidgetModel {
                       self.setText("")
                       if self.ownAnswerCardID == card.id { self.ownAnswerCardID = nil }
                   }
-                  self.deliverDecisions([item], action: .sendStaged)
+                  self.deliverDecisions([item], action: .sendStaged, thenClose: thenClose)
               })
     }
 
@@ -447,7 +448,8 @@ extension WidgetModel {
 
     /// Sends the staged decisions `ids`: one message per session. With `thenClose` (a send on the way out of the
     /// panel) the panel stays open until the hub answers and closes only when every answer was delivered, so a send
-    /// that failed is read where it happened instead of in a closed panel (ux catalogue P1).
+    /// that failed is read where it happened instead of in a closed panel (ux catalogue P1). An own answer goes apart
+    /// from the rest; a part that is not delivered cancels the fold the other part scheduled (`sendCloseRevision`).
     /// `known`: items the caller holds whose pick was staged here a moment ago, before a snapshot listed them; the
     /// send waits for that stage (`afterMutations`), so a Send now right after the click sends it.
     public func sendStaged(_ ids: [String], thenClose: Bool = false, known: [WidgetInboxItem] = []) {
@@ -455,7 +457,7 @@ extension WidgetModel {
         // them. Send sent the ticked set alone, and the words left with the field when the card closed (2026-11-10: a
         // 957-character note on a decision that takes several options).
         if let card = ownAnswerCard, ids.contains(card.sourceId), !sendingDecisionIDs.contains(card.sourceId),
-           sendOwnAnswerWithStage(card) {
+           sendOwnAnswerWithStage(card, thenClose: thenClose) {
             let rest = ids.filter { $0 != card.sourceId }
             if !rest.isEmpty { sendStaged(rest, thenClose: thenClose, known: known) }
             return
@@ -490,6 +492,20 @@ extension WidgetModel {
         guard !items.isEmpty else { return }
         postNote("Sending again…")
         deliverDecisions(items, action: .resendAnswers)
+    }
+
+    /// The delayed fold of a send on the way out of the panel, after the hub took the answer: it waits
+    /// `sendCloseSeconds` (0 keeps the panel open) so the note is readable, and folds only the panel this send left
+    /// from. One the user opened again, edited or switched meanwhile stays open.
+    func foldPanelAfterSend(opened: TimeInterval, closeRevision: Int, draft draftAtSend: WidgetDraft) {
+        let closeSeconds = preferences.sendCloseSeconds
+        guard expanded != nil, openedAt == opened, sendCloseRevision == closeRevision, closeSeconds > 0 else { return }
+        Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(closeSeconds)) } catch { return }
+            guard let self, self.expanded != nil, self.openedAt == opened,
+                  self.sendCloseRevision == closeRevision, self.draft == draftAtSend else { return }
+            self.collapse()
+        }
     }
 
     /// One message per session through the hub, then a note that says what really happened: delivered, waiting
@@ -551,18 +567,14 @@ extension WidgetModel {
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
                     // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
                     // (Martin, 2026-10-25).
-                    let closeSeconds = preferences.sendCloseSeconds
-                    if thenClose, expanded != nil, openedAt == opened, sendCloseRevision == closeRevision,
-                       closeSeconds > 0 {
-                        Task { [weak self] in
-                            do { try await Task.sleep(for: .seconds(closeSeconds)) } catch { return }
-                            guard let self, self.expanded != nil, self.openedAt == opened,
-                                  self.sendCloseRevision == closeRevision, self.draft == draftAtSend else { return }
-                            self.collapse()
-                        }
+                    if thenClose {
+                        foldPanelAfterSend(opened: opened, closeRevision: closeRevision, draft: draftAtSend)
                     }
                     return
                 }
+                // Not delivered: no fold that another part of the same Send scheduled may close over this result (an
+                // own answer is sent apart from the other staged decisions, and each part folds on its own success).
+                sendCloseRevision += 1
                 if outcome.failed > 0 {
                     if let sendingNote, notice == sendingNote { notice = nil }
                     fail(text, detail: outcome.details)
@@ -577,6 +589,7 @@ extension WidgetModel {
             } catch {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
+                self.sendCloseRevision += 1
                 if fromPeek {
                     self.applyAlertPopup(self.alertPopup.sendEnded(WidgetPeekOutcome(text: staged
                         ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it.",

@@ -1540,7 +1540,12 @@ const SWIFT_HAND_JOINED_HOME_RULE = {
         "server's socket and drew the real sessions into a picture (2026-11-10). Use `GenesisToolsHome.url(_:)` or " +
         "`GenesisToolsHome.path(_:)` (GenesisKitBase/Paths/GenesisToolsHome.swift).",
 };
-const SWIFT_HAND_JOINED_HOME = /appendingPathComponent\(\s*"\.genesis-tools\b/;
+/**
+ * `appendingPathComponent(".genesis-tools…` and a literal that starts at the home (`"/.genesis-tools…` after a `+`,
+ * `"~/.genesis-tools…`). The interpolated form (`"\(home)/.genesis-tools/…`) is the roster
+ * `roster-swift-hand-built-genesis-tools-path` (scripts/ci/rosters/swift.ts).
+ */
+const SWIFT_HAND_JOINED_HOME = /appendingPathComponent\(\s*"\.genesis-tools\b|"~?\/\.genesis-tools\b/;
 /** The helper itself and the tests, which build expected paths on purpose. */
 const SWIFT_HAND_JOINED_HOME_ALLOWED = /(?:^|\/)Tests\/|GenesisToolsHome\.swift$/;
 
@@ -1552,7 +1557,7 @@ interface SwiftLineRule {
     /** Files the rule never applies to. */
     skipFile?: RegExp;
     /** Old call sites the rule lets through while the ratchets are on; this list only shrinks. */
-    ratchet?: ReadonlyMap<string, string>;
+    ratchet?: ReadonlyMap<string, { sites: number }>;
 }
 
 const SWIFT_LINE_RULES: SwiftLineRule[] = [
@@ -1995,19 +2000,35 @@ export function checkSwiftSource(
         ...checkSwiftStructRules(file, lines, codeLines, isSuppressed),
         ...checkSwiftRowRules(file, lines, codeLines, isSuppressed, ratchets),
     ];
-    const lineRules = SWIFT_LINE_RULES.filter(
-        ({ skipFile, ratchet }) => !skipFile?.test(file) && !(ratchets && ratchet?.has(file))
-    );
+    const lineRules = SWIFT_LINE_RULES.filter(({ skipFile }) => !skipFile?.test(file));
+    /** Per rule, the launches of a ratcheted file the ratchet still lets through: the first `sites` ones. */
+    const ratchetLeft = new Map<SwiftLineRule, number>();
+
+    for (const lineRule of lineRules) {
+        const allowed = ratchets ? lineRule.ratchet?.get(file) : undefined;
+
+        if (allowed) {
+            ratchetLeft.set(lineRule, allowed.sites);
+        }
+    }
 
     for (const [index, text] of lines.entries()) {
         if (/^\s*\/\//.test(text) || isSuppressed(lines, index + 1)) {
             continue;
         }
 
-        for (const { rule, pattern, codeOnly } of lineRules) {
+        for (const lineRule of lineRules) {
+            const { rule, pattern, codeOnly } = lineRule;
             const column = (codeOnly ? codeLines[index] : text).search(pattern);
 
             if (column === -1) {
+                continue;
+            }
+
+            const left = ratchetLeft.get(lineRule);
+
+            if (left !== undefined && left > 0) {
+                ratchetLeft.set(lineRule, left - 1);
                 continue;
             }
 

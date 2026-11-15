@@ -7,6 +7,8 @@ paths:
   - "src/**/commands/*status*"
   - "src/**/commands/*test*"
   - "src/**/commands/*check*"
+  - "src/**/commands/*list*"
+  - "src/**/commands/*show*"
   - "src/utils/ai/**"
   - "src/utils/security/**"
 ---
