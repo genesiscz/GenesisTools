@@ -161,6 +161,39 @@ const impact: Patch = {
     envelope: GATE,
 };
 
+/**
+ * A wobble bass: the low-pass opens and closes once in each cycle, from the start of every note. The rate is
+ * 1 Hz, so an `lfoRate` lane on the part gives the speed in Hz, note by note.
+ */
+const wobble: Patch = {
+    oscillators: [
+        { wave: "saw", unison: 3, detune: 26, width: 0.6 },
+        { wave: "square", semitones: -12, pulseWidth: 0.5, level: 0.7 },
+        { wave: "saw", semitones: 12, unison: 2, detune: 14, width: 0.4, level: 0.3 },
+    ],
+    envelope: { attack: 0.004, decay: 0.2, sustain: 0.95, release: 0.05 },
+    filter: { type: "lowpass", cutoff: 460, q: 3.4 },
+    lfos: [{ target: "cutoff", rate: 1, depth: 2.7, shape: "sine", retrigger: true }],
+    mono: true,
+    glide: 0.02,
+    drive: 16,
+};
+
+/** A growl bass: FM sines and saws through the vowel filter. A `vowel` lane on the part makes it talk. */
+const growl: Patch = {
+    oscillators: [
+        { wave: "sine", fm: { ratio: 2, index: 7 } },
+        { wave: "sine", semitones: 12, fm: { ratio: 1.5, index: 5 }, level: 0.5 },
+        { wave: "saw", unison: 3, detune: 34, width: 0.7, level: 0.55 },
+    ],
+    envelope: { attack: 0.003, decay: 0.2, sustain: 0.9, release: 0.05 },
+    filter: { type: "vowel", cutoff: 1000, q: 5, vowel: 0 },
+    lfos: [{ target: "fm", rate: 1, depth: 0.5, shape: "saw", retrigger: true }],
+    mono: true,
+    glide: 0.03,
+    drive: 18,
+};
+
 /** Ready sounds for `{ kind: "synth", patch: "<name>" }`. A score may also carry a whole patch. */
 export const SYNTH_PRESETS: Record<string, Patch> = {
     kick,
@@ -170,6 +203,8 @@ export const SYNTH_PRESETS: Record<string, Patch> = {
     openHat,
     sub,
     reese,
+    wobble,
+    growl,
     stab,
     pad,
     voice,

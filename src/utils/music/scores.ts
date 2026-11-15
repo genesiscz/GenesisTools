@@ -1,10 +1,11 @@
 import { MusicTracks, SCORE_END, SCORE_SECONDS, ShelvedTracks } from "./kalendora-score";
 import { orbitScore } from "./tracks/orbit";
+import { tremorScore } from "./tracks/tremor";
 import { type Score, type ScorePart, scoreSchema } from "./types";
 
 const tracks = { ...MusicTracks, ...ShelvedTracks };
 /** Scores written for the synth and stem renderer. Each call builds a new score. */
-const SYNTH_TRACKS: Record<string, () => Score> = { Orbit: orbitScore };
+const SYNTH_TRACKS: Record<string, () => Score> = { Orbit: orbitScore, Tremor: tremorScore };
 export const TRACK_KEYS = [...Object.keys(tracks), ...Object.keys(SYNTH_TRACKS)];
 const programs: Record<keyof typeof tracks, readonly number[]> = {
     Pulse: [89, 33, 12, 119, 0, 0, 0],

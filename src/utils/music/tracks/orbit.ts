@@ -1,9 +1,8 @@
 // "Orbit": an original drum and bass track in F minor at 174 BPM. The notes first, then the sounds and the mix.
-import { type Effects, type Lane, type Note, type Score, type Source, scoreSchema } from "../types";
+import { grid, type PartSetup } from "../compose";
+import { type Effects, type Score, type Source, scoreSchema } from "../types";
 
 const BPM = 174;
-const STEP = 60 / BPM / 4;
-const BAR = STEP * 16;
 const INTRO = 0;
 const BUILD = 8;
 const DROP1 = 16;
@@ -23,9 +22,7 @@ const names = [
     "snareHit",
     "snareTop",
     "hatHit",
-    "breakKick",
-    "breakSnare",
-    "breakHat",
+    "amen",
     "cymbal",
     "ride",
     "roll",
@@ -42,11 +39,8 @@ const names = [
     "impact",
 ] as const;
 type PartName = (typeof names)[number];
-const notes = Object.fromEntries(names.map((name) => [name, [] as Note[]])) as Record<PartName, Note[]>;
-
-function put(part: PartName, bar: number, step: number, steps: number, midi: number, velocity: number) {
-    notes[part].push({ at: bar * BAR + step * STEP, duration: steps * STEP, midi, velocity: Math.round(velocity) });
-}
+const track = grid(BPM, names);
+const { step: STEP, bar: BAR, notes, put, at: t } = track;
 
 interface Chord {
     root: number;
@@ -101,7 +95,47 @@ function chords(part: PartName, bar: number, velocity: number, steps = 32) {
     }
 }
 
-function drums(bar: number, options: { fill?: boolean; hats?: boolean } = {}) {
+// The recorded break is four bars, cut in 64 sixteenth slices. Bars one and two are the plain pattern, bar three
+// delays its second snare, bar four ends on the crash. A chop plays slices in a new order.
+const AMEN_SECONDS = 6.857143;
+const AMEN_BARS = 4;
+const bar16 = (first: number) => Array.from({ length: 16 }, (_, step) => first + step);
+const AMEN = {
+    first: bar16(0),
+    second: bar16(16),
+    turn: bar16(32),
+    last: bar16(48),
+    chop: [0, 1, 2, 3, 4, 5, 2, 3, 4, 5, 10, 11, 12, 13, 12, 12],
+    stutter: [0, 1, 0, 1, 4, 5, 7, 9, 10, 10, 4, 5, 12, 13, 46, 47],
+} satisfies Record<string, number[]>;
+
+function amen(bar: number, cut: keyof typeof AMEN, velocity = 112) {
+    AMEN[cut].forEach((slice, step) => {
+        put("amen", bar, step, 1, 36 + slice, velocity);
+    });
+}
+
+/** The first half of the last break bar, then its snare again and again, faster at the end. */
+function amenFill(bar: number) {
+    AMEN.last.slice(0, 8).forEach((slice, step) => {
+        put("amen", bar, step, 1, 36 + slice, 112);
+    });
+
+    for (const [step, steps] of [
+        [8, 2],
+        [10, 2],
+        [12, 1],
+        [13, 1],
+        [14, 0.5],
+        [14.5, 0.5],
+        [15, 0.5],
+        [15.5, 0.5],
+    ]) {
+        put("amen", bar, step, steps, 36 + 4, 92 + step * 2);
+    }
+}
+
+function drums(bar: number, options: { fill?: boolean; chop?: boolean } = {}) {
     const turn = bar % 4 === 3;
     put("kick", bar, 0, 3, 36, 122);
 
@@ -140,21 +174,14 @@ function drums(bar: number, options: { fill?: boolean; hats?: boolean } = {}) {
         }
     }
 
-    // A break played on recorded acoustic hits under the main hits, for the shuffle of a real drummer.
-    for (const step of [0, 2, 10, 11]) {
-        put("breakKick", bar, step, 1, 36, step === 0 ? 100 : 78);
-    }
-    for (const [step, velocity] of [
-        [4, 110],
-        [7, 62],
-        [9, 58],
-        [12, 110],
-        [15, 70],
-    ]) {
-        put("breakSnare", bar, step, 1, 38, velocity);
-    }
-    for (let step = 0; step < 16; step += 2) {
-        put("breakHat", bar, step, 1, 42, step % 4 === 2 ? 96 : 58);
+    if (options.fill) {
+        amenFill(bar);
+    } else if (turn) {
+        amen(bar, options.chop ? "stutter" : bar % 16 === 11 ? "last" : "turn");
+    } else if (options.chop && bar % 2 === 1) {
+        amen(bar, "chop");
+    } else {
+        amen(bar, bar % 2 === 0 ? "first" : "second");
     }
 }
 
@@ -262,6 +289,11 @@ for (let bar = BUILD; bar < DROP1; bar++) {
     for (let step = 0; step < 16; step += 2) {
         put("hat", bar, step, 1, 42, step % 4 === 2 ? 96 : 56);
     }
+
+    // The break comes in thin under the build; its high-pass lane opens at the drop.
+    if (bar >= BUILD + 4 && bar < DROP1 - 1) {
+        amen(bar, bar % 2 === 0 ? "first" : "second", 96);
+    }
 }
 tune("voice", BUILD, 8, 92);
 build(BUILD + 2, 6);
@@ -269,7 +301,7 @@ build(BUILD + 2, 6);
 function drop(start: number, second: boolean) {
     for (let bar = start; bar < start + 16; bar++) {
         const last = bar === start + 15;
-        drums(bar, { fill: bar === start + 7 || last });
+        drums(bar, { fill: bar === start + 7 || last, chop: second && bar >= start + 8 });
         bass(bar);
         chords("pad", bar, 88);
         stabs(bar);
@@ -319,6 +351,8 @@ for (let bar = OUTRO; bar < END - 2; bar++) {
     for (let step = 0; step < 16; step += 2) {
         put("hat", bar, step, 1, 42, step % 4 === 2 ? 78 : 46);
     }
+
+    amen(bar, bar % 2 === 0 ? "first" : "second", 100);
 }
 tune("voice", OUTRO, 4, 86);
 put("impact", OUTRO, 0, 24, 36, 104);
@@ -334,6 +368,8 @@ put("impact", END - 2, 0, 24, 36, 90);
 const synth = (patch: string): Source => ({ kind: "synth", patch });
 const kit = (program: number): Source => ({ kind: "soundfont", program, percussion: true });
 const hit = (file: string): Source => ({ kind: "sample", file, mode: "hit", root: 60, slices: 16, speed: 1 });
+/** Hz of the high-pass on the break: thin in a build and in the outro, open in a drop. */
+const AMEN_OPEN = 150;
 const pump = (depth: number, release = 150): Effects["duck"] => ({ by: ["kick", "snare"], depth, hold: 25, release });
 const echo = (mix: number, feedback = 0.38): Effects["delay"] => ({
     time: STEP * 3,
@@ -342,8 +378,6 @@ const echo = (mix: number, feedback = 0.38): Effects["delay"] => ({
     pingPong: true,
     lowpass: 4800,
 });
-const t = (bar: number) => bar * BAR;
-
 /** A value that rises through each build and falls back for the next one. */
 function rises(from: number, to: number): [number, number][] {
     return [
@@ -362,7 +396,7 @@ function falls(from: number, to: number): [number, number][] {
     ]);
 }
 
-const setup: Record<PartName, { source: Source; pan?: number; effects: Effects; lanes?: Lane[] }> = {
+const setup: Record<PartName, PartSetup> = {
     kick: {
         source: synth("kick"),
         effects: {
@@ -404,36 +438,42 @@ const setup: Record<PartName, { source: Source; pan?: number; effects: Effects; 
     },
     snareTop: { source: hit("sonic-pi/sn_dub.flac"), effects: { highpass: 700, reverb: 0.1, gain: -13 } },
     hatHit: { source: hit("sonic-pi/drum_cymbal_closed.flac"), pan: 58, effects: { highpass: 5000, gain: -17 } },
-    breakKick: {
-        source: hit("sonic-pi/drum_bass_hard.flac"),
-        effects: {
-            highpass: 220,
-            drive: { amount: 10 },
-            compressor: { threshold: -20, ratio: 4, attack: 3, release: 60, makeup: 3 },
-            reverb: 0.1,
-            gain: -13,
+    amen: {
+        source: {
+            kind: "sample",
+            file: "amen/loop_amen_full.flac",
+            mode: "slices",
+            root: 60,
+            slices: AMEN_BARS * 16,
+            speed: AMEN_SECONDS / (AMEN_BARS * BAR),
         },
-    },
-    breakSnare: {
-        source: hit("sonic-pi/drum_snare_hard.flac"),
         effects: {
-            highpass: 220,
-            drive: { amount: 10 },
-            compressor: { threshold: -20, ratio: 4, attack: 3, release: 60, makeup: 3 },
-            reverb: 0.1,
-            gain: -13,
+            eq: [
+                { type: "peak", frequency: 210, gain: 2, q: 1.1 },
+                { type: "peak", frequency: 3200, gain: 2, q: 0.9 },
+                { type: "highshelf", frequency: 8000, gain: 4 },
+            ],
+            drive: { amount: 7 },
+            compressor: { threshold: -18, ratio: 4, attack: 8, release: 70, makeup: 3 },
+            reverb: 0.07,
+            gain: -6,
         },
-    },
-    breakHat: {
-        source: hit("sonic-pi/drum_cymbal_closed.flac"),
-        pan: 74,
-        effects: {
-            highpass: 220,
-            drive: { amount: 10 },
-            compressor: { threshold: -20, ratio: 4, attack: 3, release: 60, makeup: 3 },
-            reverb: 0.1,
-            gain: -13,
-        },
+        lanes: [
+            {
+                target: "highpass",
+                points: [
+                    [0, 2600],
+                    [t(DROP1) - STEP * 2, 700],
+                    [t(DROP1), AMEN_OPEN],
+                    [t(BREAK), AMEN_OPEN],
+                    [t(BUILD2), 2600],
+                    [t(DROP2) - STEP * 2, 700],
+                    [t(DROP2), AMEN_OPEN],
+                    [t(OUTRO), AMEN_OPEN],
+                    [t(END - 2), 2200],
+                ],
+            },
+        ],
     },
     cymbal: { source: kit(0), effects: { highpass: 400, reverb: 0.3, gain: 0 } },
     ride: { source: kit(0), pan: 76, effects: { highpass: 2500, gain: 7 } },
@@ -537,16 +577,6 @@ notes.snareHit = notes.snare;
 notes.snareTop = notes.snare;
 notes.hatHit = notes.hat;
 
-const parts = names.map((name) => ({
-    name,
-    source: setup[name].source,
-    volume: 127,
-    pan: setup[name].pan,
-    notes: notes[name],
-    effects: setup[name].effects,
-    lanes: setup[name].lanes,
-}));
-
 /** An original drum and bass track: synthesized drums and basses, sidechain, one room, and a limited master. */
 export function orbitScore(): Score {
     return scoreSchema.parse({
@@ -555,7 +585,7 @@ export function orbitScore(): Score {
         bpm: BPM,
         seconds: t(END) + 4,
         end: t(END) + 2,
-        parts,
+        parts: track.parts(setup),
         room: { size: 0.82, damp: 0.35, predelay: 18, highpass: 280, lowpass: 9000, level: -2 },
         master: { lufs: -9, peak: -1, limiter: true, clip: 3 },
     });

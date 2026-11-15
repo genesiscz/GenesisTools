@@ -32,8 +32,11 @@ export function resolveSample(file: string): string {
         return installed;
     }
 
-    if (sampleNames().includes(file)) {
-        throw new Error(`Sample ${file} is not installed; run ${musicSamplesInstallCommand()}`);
+    const set = Object.keys(SAMPLE_MANIFEST).find((key) => sampleNames(key).includes(file));
+
+    if (set !== undefined) {
+        const named = SAMPLE_MANIFEST[set].optIn === undefined ? undefined : set;
+        throw new Error(`Sample ${file} is not installed; run ${musicSamplesInstallCommand(named)}`);
     }
 
     throw new Error(`Sample file does not exist: ${own}`);
@@ -47,6 +50,8 @@ export interface SampleSetState {
     megabytes: number;
     license: string;
     licenseUrl: string;
+    /** Set for a set that installs only by name: the reason. */
+    optIn?: string;
     folder: string;
 }
 
@@ -61,6 +66,7 @@ async function state(set: string, downloaded: number): Promise<SampleSetState> {
         megabytes: Number((entry.files.reduce((sum, [, bytes]) => sum + bytes, 0) / 1e6).toFixed(1)),
         license: entry.license,
         licenseUrl: entry.licenseUrl,
+        optIn: entry.optIn,
         folder,
     };
 }
@@ -70,17 +76,25 @@ export function listSampleSets(): Promise<SampleSetState[]> {
     return Promise.all(Object.keys(SAMPLE_MANIFEST).map((set) => state(set, 0)));
 }
 
-/**
- * Explicit mutation: fetch every file of the pinned sets that is missing or changed, and keep one only when its
- * SHA-256 matches the manifest. A file lands by rename, so a reader never sees a partial sample.
- */
-export async function installSamples(only?: string): Promise<SampleSetState[]> {
-    const sets = Object.keys(SAMPLE_MANIFEST).filter((set) => only === undefined || set === only);
+/** The sets one install covers: the default sets without a name, and an opt-in set only by its name. */
+export function setsToInstall(only?: string): string[] {
+    const sets = Object.keys(SAMPLE_MANIFEST).filter((set) =>
+        only === undefined ? SAMPLE_MANIFEST[set].optIn === undefined : set === only
+    );
 
     if (sets.length === 0) {
         throw new Error(`Unknown sample set ${only}; choose ${Object.keys(SAMPLE_MANIFEST).join(", ")}`);
     }
 
+    return sets;
+}
+
+/**
+ * Explicit mutation: fetch every file of the pinned sets that is missing or changed, and keep one only when its
+ * SHA-256 matches the manifest. A file lands by rename, so a reader never sees a partial sample.
+ */
+export async function installSamples(only?: string): Promise<SampleSetState[]> {
+    const sets = setsToInstall(only);
     const result: SampleSetState[] = [];
 
     for (const set of sets) {

@@ -14,6 +14,7 @@ import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
 import { publishAudio, runAudio, withMusicSignal } from "./process";
 import { fluidSynthArgs, renderScore } from "./render";
+import { setsToInstall } from "./samples";
 import { builtinScore, TRACK_KEYS } from "./scores";
 import { PINNED_SOUNDFONT } from "./soundfont";
 import { limit } from "./space";
@@ -50,7 +51,7 @@ const mix = {
 
 describe("music score and MIDI", () => {
     test("keeps all four source compositions as independently built, deterministic data", () => {
-        expect(TRACK_KEYS).toEqual(["Pulse", "PulseLight", "Calm", "Piano", "Orbit"]);
+        expect(TRACK_KEYS).toEqual(["Pulse", "PulseLight", "Calm", "Piano", "Orbit", "Tremor"]);
 
         for (const key of TRACK_KEYS) {
             const first = builtinScore(key);
@@ -243,6 +244,24 @@ describe("sources, synth and stems", () => {
         expect(needsStems({ ...minimal, parts: [synth] })).toBe(true);
         expect(() => encodeMidi({ ...minimal, parts: [synth] })).toThrow("only SoundFont parts go into MIDI");
         expect(() => resolvePatch("no-such-preset")).toThrow("Unknown synth preset");
+    });
+
+    test("the break set installs only by name, and the built-in tracks chop it and wobble at a rate per note", () => {
+        expect(setsToInstall()).toEqual(["sonic-pi", "tr808"]);
+        expect(setsToInstall("amen")).toEqual(["amen"]);
+        expect(() => setsToInstall("no-such-set")).toThrow("Unknown sample set");
+
+        const amen = builtinScore("Orbit").parts.find((part) => part.name === "amen");
+        expect(amen?.source).toMatchObject({ kind: "sample", mode: "slices", slices: 64 });
+        const slices = new Set(amen?.notes.map((note) => note.midi - 36));
+        expect(Math.min(...slices)).toBe(0);
+        expect(Math.max(...slices)).toBe(63);
+
+        const wobble = builtinScore("Tremor").parts.find((part) => part.name === "wobble");
+        const rate = wobble?.lanes?.find((lane) => lane.target === "lfoRate");
+        expect(rate?.hold).toBe(true);
+        expect(rate?.points).toHaveLength(wobble?.notes.length ?? 0);
+        expect(new Set(rate?.points.map(([, hertz]) => hertz)).size).toBeGreaterThan(4);
     });
 
     test("refuses a duck on an unknown part, a reverb send with no room and a synth lane on a SoundFont part", () => {

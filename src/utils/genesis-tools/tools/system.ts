@@ -180,7 +180,7 @@ export function musicSoundfontInstallCommand(): string {
     return toolCommand("music soundfont install");
 }
 
-/** Explicitly installs the pinned CC0 drum sample sets. */
-export function musicSamplesInstallCommand(): string {
-    return toolCommand("music samples install");
+/** Explicitly installs the pinned drum sample sets: the default ones, or one set by name. */
+export function musicSamplesInstallCommand(set?: string): string {
+    return toolCommand(set === undefined ? "music samples install" : `music samples install ${set}`);
 }

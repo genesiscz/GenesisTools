@@ -1,6 +1,6 @@
 /**
  * Generated on 2026-11-15 from the two pinned repositories: every audio file with its size and SHA-256.
- * The Amen break cuts of the Sonic Pi set are left out on purpose.
+ * The two Amen break cuts of the Sonic Pi set are a set of their own, which installs only by name.
  */
 export interface SampleSet {
     repo: string;
@@ -9,6 +9,8 @@ export interface SampleSet {
     folder: string;
     license: string;
     licenseUrl: string;
+    /** Why this set installs only when it is named. A set without it installs by default. */
+    optIn?: string;
     /** [path inside the folder, bytes, SHA-256]. */
     files: [string, number, string][];
 }
@@ -351,6 +353,20 @@ export const SAMPLE_MANIFEST: Record<string, SampleSet> = {
             ["sd8/SD7525.WAV", 22094, "dc5c0d5c84cd5e09890c19f8263d2ec3729e59abc27d1def574ef41928de935b"],
             ["sd8/SD7550.WAV", 44146, "df1bbf736f5c0099d0f6d78305a5930353ff5e77a012fedafb7da6c99e68168f"],
             ["sd8/SD7575.WAV", 44146, "d7fa75dff476baaef99de0b251d86c39aa0e0f36a06043db9a97417350fe4439"],
+        ],
+    },
+    amen: {
+        repo: "sonic-pi-net/sonic-pi",
+        commit: "aa0c8e991911b4cd768b4926889db53cb2fc169a",
+        folder: "etc/samples/",
+        license: "CC0 1.0 as stated by the repository (LICENSE.md: all bundled samples)",
+        licenseUrl: "https://github.com/sonic-pi-net/sonic-pi/blob/aa0c8e991911b4cd768b4926889db53cb2fc169a/LICENSE.md",
+        optIn:
+            "A cut of the drum break of a 1969 record. The repository states CC0, but no source shows that the " +
+            "recording itself was cleared, so decide yourself before you publish music that uses it.",
+        files: [
+            ["loop_amen.flac", 210769, "96d3c6ea1fdadce5db26290275d4b34add11e8503a18fb6f405b8897d06ba50d"],
+            ["loop_amen_full.flac", 532669, "87ba57c489244e10436c0ea2f500625c95e58fbedb6e38db2639ed72eb1da1b7"],
         ],
     },
 };
