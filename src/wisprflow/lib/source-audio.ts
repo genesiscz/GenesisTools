@@ -71,7 +71,9 @@ function readMetadata<T>(dir: string, read: (db: Database) => T): T {
     const databasePath = join(dir, "flow.sqlite");
     let db: Database;
     try {
-        db = new Database(`file:${databasePath}?mode=ro`, { readonly: true });
+        // A plain path with `readonly`: a `file:…?mode=ro` URI is a literal file name to the SQLite Bun bundles on Linux
+        // (src/utils/database/attach.ts), and `readonly` refuses a missing file just as `mode=ro` does.
+        db = new Database(databasePath, { readonly: true });
     } catch (error) {
         // An absent provider is normal on machines where Wispr was never installed.
         log.debug({ error, path: databasePath }, "local audio metadata unavailable");

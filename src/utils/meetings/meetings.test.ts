@@ -1242,20 +1242,24 @@ describe("isolated playback echo and speaker enrolment", () => {
             correlateEcho({ mic: new Float32Array(4000), call: new Float32Array(4000), rate: 2000 }).cleanMicShare
         ).toBeUndefined();
     });
-    test("reopens a collected echo cache and rejects changed audio provenance", async () => {
-        const root = mkdtempSync(join(tmpdir(), "echo-contract-"));
-        const input = join(root, "stereo.wav"),
-            cachePath = join(root, "echo.json");
-        stereoWav(input);
-        const before = fs.readFileSync(input);
-        await collectEcho({ audioPath: input, cachePath, layout: "left-mic" });
-        const reopened = await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" });
-        expect(echoForRange(reopened!, 0, 2)?.echoOfCall).toBeGreaterThan(0.99);
-        expect(fs.readFileSync(input)).toEqual(before);
-        expect(await readEchoCache({ audioPath: input, cachePath, layout: "right-mic" })).toBeUndefined();
-        fs.utimesSync(input, new Date(), new Date(Date.now() + 3000));
-        expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeUndefined();
-    });
+    // These four decode a real file with ffprobe and ffmpeg, which a runner without them (CI) lacks.
+    test.skipIf(!Bun.which("ffmpeg") || !Bun.which("ffprobe"))(
+        "reopens a collected echo cache and rejects changed audio provenance",
+        async () => {
+            const root = mkdtempSync(join(tmpdir(), "echo-contract-"));
+            const input = join(root, "stereo.wav"),
+                cachePath = join(root, "echo.json");
+            stereoWav(input);
+            const before = fs.readFileSync(input);
+            await collectEcho({ audioPath: input, cachePath, layout: "left-mic" });
+            const reopened = await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" });
+            expect(echoForRange(reopened!, 0, 2)?.echoOfCall).toBeGreaterThan(0.99);
+            expect(fs.readFileSync(input)).toEqual(before);
+            expect(await readEchoCache({ audioPath: input, cachePath, layout: "right-mic" })).toBeUndefined();
+            fs.utimesSync(input, new Date(), new Date(Date.now() + 3000));
+            expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeUndefined();
+        }
+    );
     test("finds an echo delay between the coarse search's steps", () => {
         const call = noise(4000, 11);
         for (const delay of [85, 86, 87]) {
@@ -1275,68 +1279,77 @@ describe("isolated playback echo and speaker enrolment", () => {
         }
         writeFileSync(path, Buffer.concat([wav, pcm]));
     }
-    test("a damaged echo cache is a miss that collection writes again", async () => {
-        const root = mkdtempSync(join(tmpdir(), "echo-damaged-"));
-        const input = join(root, "stereo.wav"),
-            cachePath = join(root, "echo.json");
-        stereoWav(input);
-        writeFileSync(cachePath, '{ "version": 2, "blocks": [');
+    test.skipIf(!Bun.which("ffmpeg") || !Bun.which("ffprobe"))(
+        "a damaged echo cache is a miss that collection writes again",
+        async () => {
+            const root = mkdtempSync(join(tmpdir(), "echo-damaged-"));
+            const input = join(root, "stereo.wav"),
+                cachePath = join(root, "echo.json");
+            stereoWav(input);
+            writeFileSync(cachePath, '{ "version": 2, "blocks": [');
 
-        expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeUndefined();
-        expect((await collectEcho({ audioPath: input, cachePath, layout: "left-mic" }))?.blocks).toHaveLength(2);
-        expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeDefined();
-    });
-    test("a recording longer than the bound is refused before anything is decoded", async () => {
-        const root = mkdtempSync(join(tmpdir(), "echo-bound-"));
-        const input = join(root, "long.wav"),
-            cachePath = join(root, "echo.json");
-        stereoWav(input);
+            expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeUndefined();
+            expect((await collectEcho({ audioPath: input, cachePath, layout: "left-mic" }))?.blocks).toHaveLength(2);
+            expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeDefined();
+        }
+    );
+    test.skipIf(!Bun.which("ffmpeg") || !Bun.which("ffprobe"))(
+        "a recording longer than the bound is refused before anything is decoded",
+        async () => {
+            const root = mkdtempSync(join(tmpdir(), "echo-bound-"));
+            const input = join(root, "long.wav"),
+                cachePath = join(root, "echo.json");
+            stereoWav(input);
 
-        await expect(collectEcho({ audioPath: input, cachePath, layout: "left-mic", maxSec: 1 })).rejects.toThrow(
-            "audio bound of 1 seconds"
-        );
-        expect(fs.readdirSync(root).filter((name) => name.endsWith(".s16"))).toEqual([]);
-    });
-    test("echo blocks keep the container clock: a delayed audio start is padded, as the energy pads it", async () => {
-        const root = mkdtempSync(join(tmpdir(), "echo-clock-"));
-        const input = join(root, "stereo.wav"),
-            delayed = join(root, "delayed.mkv"),
-            cachePath = join(root, "echo.json");
-        stereoWav(input);
-        // A picture from zero and the sound from one second: the container's clock starts with the picture.
-        const mux = Bun.spawnSync(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=black:s=16x16:r=1:d=3",
-                "-itsoffset",
-                "1",
-                "-i",
-                input,
-                "-map",
-                "0:v",
-                "-map",
-                "1:a",
-                "-c:v",
-                "ffv1",
-                "-c:a",
-                "pcm_s16le",
-                delayed,
-            ],
-            { stderr: "pipe", timeout: 30_000, env: process.env }
-        );
-        expect(mux.exitCode).toBe(0);
+            await expect(collectEcho({ audioPath: input, cachePath, layout: "left-mic", maxSec: 1 })).rejects.toThrow(
+                "audio bound of 1 seconds"
+            );
+            expect(fs.readdirSync(root).filter((name) => name.endsWith(".s16"))).toEqual([]);
+        }
+    );
+    test.skipIf(!Bun.which("ffmpeg") || !Bun.which("ffprobe"))(
+        "echo blocks keep the container clock: a delayed audio start is padded, as the energy pads it",
+        async () => {
+            const root = mkdtempSync(join(tmpdir(), "echo-clock-"));
+            const input = join(root, "stereo.wav"),
+                delayed = join(root, "delayed.mkv"),
+                cachePath = join(root, "echo.json");
+            stereoWav(input);
+            // A picture from zero and the sound from one second: the container's clock starts with the picture.
+            const mux = Bun.spawnSync(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=16x16:r=1:d=3",
+                    "-itsoffset",
+                    "1",
+                    "-i",
+                    input,
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    "-c:v",
+                    "ffv1",
+                    "-c:a",
+                    "pcm_s16le",
+                    delayed,
+                ],
+                { stderr: "pipe", timeout: 30_000, env: process.env }
+            );
+            expect(mux.exitCode).toBe(0);
 
-        const cache = await collectEcho({ audioPath: delayed, cachePath, layout: "left-mic" });
-        expect(cache?.blocks).toHaveLength(3);
-        expect(cache?.blocks[0]?.quality).not.toBe("linear-estimate");
-        expect(echoForRange(cache!, 1, 3)?.echoOfCall).toBeGreaterThan(0.99);
-    });
+            const cache = await collectEcho({ audioPath: delayed, cachePath, layout: "left-mic" });
+            expect(cache?.blocks).toHaveLength(3);
+            expect(cache?.blocks[0]?.quality).not.toBe("linear-estimate");
+            expect(echoForRange(cache!, 1, 3)?.echoOfCall).toBeGreaterThan(0.99);
+        }
+    );
     test("reopens confirmed enrolments and keeps ambiguous or incompatible voices unknown", () => {
         const file = join(mkdtempSync(join(tmpdir(), "voice-contract-")), "voices.json");
         saveVoiceSample(file, {

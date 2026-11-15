@@ -1698,6 +1698,8 @@ describe("characterization: what a library recording asks its recorder for", () 
             pieceSec: 0.4,
         });
         expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 5_000 })).toBe(true);
+        // The second piece's first capture, before the stop: a slow runner (CI) stopped after only the first piece.
+        await recorder.waitFor(3);
         await recording.stop();
         const shape = recorder.requests.map((request) => ({
             target: request.target,

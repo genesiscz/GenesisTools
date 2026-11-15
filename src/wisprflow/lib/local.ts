@@ -54,7 +54,9 @@ export function localAvailable(): boolean {
 /** Read-only: the app keeps the database open and writes to it while we read. */
 function openDb(): Database {
     log.debug({ path: DB_PATH }, "opening Wispr Flow database read-only");
-    return new Database(`file:${DB_PATH}?mode=ro`, { readonly: true });
+    // A plain path with `readonly`: a `file:…?mode=ro` URI is a literal file name to the SQLite Bun bundles on Linux
+    // (src/utils/database/attach.ts), and `readonly` refuses a missing file just as `mode=ro` does.
+    return new Database(DB_PATH, { readonly: true });
 }
 
 function withDb<T>(fn: (db: Database) => T): T {

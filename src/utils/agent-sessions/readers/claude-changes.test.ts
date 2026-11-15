@@ -277,8 +277,12 @@ describe("readChanges finds the canonical copy of a duplicated id", () => {
 
     it("answers the conversation, not the stub listed first, from both locator forms and by an 8-character prefix", async () => {
         const { root, real } = duplicated();
-        // The case this guards: the first copy in folder order is the stub (the old lookup took it).
-        expect(readdirSync(root)[0]).toBe("-a-moved");
+        // The case this guards: the first copy in folder order is the stub (the old lookup took it). APFS lists names
+        // sorted, so on a Mac the stub comes first; ext4 (CI) lists them in hash order, where the answer must still be
+        // the conversation.
+        if (process.platform === "darwin") {
+            expect(readdirSync(root)[0]).toBe("-a-moved");
+        }
 
         for (const query of [id, id.toUpperCase(), id.slice(0, 8)]) {
             expect(canonicalClaudeTranscriptSync(query, { native: [root] })).toBe(real);
