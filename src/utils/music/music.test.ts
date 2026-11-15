@@ -17,7 +17,7 @@ import { fluidSynthArgs, renderScore } from "./render";
 import { builtinScore, TRACK_KEYS } from "./scores";
 import { PINNED_SOUNDFONT } from "./soundfont";
 import { limit } from "./space";
-import { needsStems, resolvePatch } from "./stems";
+import { needsStems, playSample, resolvePatch } from "./stems";
 import { renderSynth } from "./synth";
 import { TAPS, tapAudio, tapAudition } from "./taps";
 import { migratePart, type Score, scoreSchema } from "./types";
@@ -268,6 +268,26 @@ describe("sources, synth and stems", () => {
         expect(first.left.subarray(0, RATE / 10 - 1).every((sample) => sample === 0)).toBe(true);
         expect(first.left.some((sample) => Math.abs(sample) > 0.05)).toBe(true);
         expect(first.left.some((sample, n) => sample !== first.right[n])).toBe(true);
+    });
+
+    test("a sample plays whole as a hit, faster an octave up, and one slice at a time", () => {
+        const data = stereo(8);
+        data.left.set([1, 2, 3, 4, 5, 6, 7, 8]);
+        const base = { kind: "sample" as const, file: "x.wav", root: 60, slices: 4, speed: 1 };
+        const play = (mode: "hit" | "pitched" | "slices", midi: number) =>
+            Array.from(
+                playSample({
+                    data,
+                    source: { ...base, mode },
+                    notes: [{ at: 0, duration: 1, midi, velocity: 127 }],
+                    samples: 8,
+                }).left
+            );
+        // The last 4 ms of a sound fade out, which at this length is every sample; the order is the proof.
+        expect(play("hit", 60).filter((sample) => sample > 0)).toHaveLength(8);
+        expect(play("pitched", 72).filter((sample) => sample > 0)).toHaveLength(4);
+        expect(play("slices", 37).filter((sample) => sample > 0)).toHaveLength(2);
+        expect(play("slices", 37)[0]).toBeGreaterThan(play("slices", 36)[0]);
     });
 
     test("a duck is fully down at the trigger and back up after its release", () => {

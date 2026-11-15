@@ -89,10 +89,15 @@ tools music render Orbit --out out/orbit.m4a
 tools music score Orbit > orbit.json
 ~~~
 
-A part source is one of two kinds. `{ "kind": "soundfont", "program": 0, "percussion": false }` plays the sample
+A part source is one of three kinds. `{ "kind": "soundfont", "program": 0, "percussion": false }` plays the sample
 bank. `{ "kind": "synth", "patch": "reese" }` plays the built-in synthesizer, with a preset name or a whole patch:
 oscillators (sine, triangle, saw, square, noise) with unison, detune, a pitch drop and phase modulation, an
 envelope, a filter (low, high, band, notch or vowel) with its own envelope, LFOs, mono glide and drive.
+
+`{ "kind": "sample", "file": "break.wav", "mode": "slices", "slices": 16, "speed": 1.24 }` plays an audio file
+you own. Mode `hit` plays the whole file for each note. Mode `pitched` moves its speed with the note around `root`.
+Mode `slices` cuts it in equal parts, and note 36 plays the first part, 37 the second. `speed` fits a loop to the
+score tempo (score bpm divided by loop bpm). No sample file ships with the tool.
 
 Each part may carry `effects`, applied in this order: highpass, lowpass, eq, drive, crush, compressor, delay,
 width and monoBelow, duck, gain. `duck` pulls the part down at every note start of the parts it names, which is

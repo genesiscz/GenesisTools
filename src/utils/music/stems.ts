@@ -1,5 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { Curve, gain, hash, RATE, type Stereo, stereo } from "./dsp";
 import { applyEffects } from "./effects";
@@ -9,13 +11,15 @@ import { SYNTH_PRESETS } from "./presets";
 import { runAudio } from "./process";
 import { room } from "./space";
 import { renderSynth } from "./synth";
-import type { Patch, Score, ScorePart } from "./types";
+import type { Note, Patch, SampleSource, Score, ScorePart } from "./types";
 
 interface StemContext {
     score: Score;
     folder: string;
     soundfont: string;
     samples: number;
+    /** Decoded sample files, so two parts that share a file decode it once. */
+    files: Map<string, Stereo>;
 }
 
 /** A score that only names SoundFont programs renders in one FluidSynth pass. Anything else is mixed from stems. */
@@ -69,9 +73,9 @@ export async function writeFloatWav(file: string, buffer: Stereo): Promise<void>
     await writeFile(file, bytes);
 }
 
-/** Any audio file as 48 kHz stereo floats, cut or padded to `samples`. */
-export async function readFloat(file: string, samples: number): Promise<Stereo> {
-    const raw = `${file}.f32`;
+/** Any audio file as 48 kHz stereo floats: its whole length, or cut or padded to `samples`. */
+export async function readFloat(file: string, samples?: number): Promise<Stereo> {
+    const raw = join(await mkdtemp(join(tmpdir(), "genesis-music-read-")), "audio.f32");
     await runAudio([
         "ffmpeg",
         "-hide_banner",
@@ -90,11 +94,12 @@ export async function readFloat(file: string, samples: number): Promise<Stereo> 
         raw,
     ]);
     const bytes = await readFile(raw);
+    await rm(dirname(raw), { recursive: true, force: true });
     const data = new Float32Array(
         bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength - (bytes.byteLength % 4))
     );
-    const out = stereo(samples);
-    const frames = Math.min(samples, Math.floor(data.length / 2));
+    const out = stereo(samples ?? Math.floor(data.length / 2));
+    const frames = Math.min(out.left.length, Math.floor(data.length / 2));
 
     for (let n = 0; n < frames; n++) {
         out.left[n] = data[n * 2];
@@ -124,6 +129,68 @@ async function soundfontStem(part: ScorePart, index: number, context: StemContex
     return readFloat(raw, context.samples);
 }
 
+/** Play a decoded file once for each note, by the source mode. Linear interpolation between samples. */
+export function playSample(options: { data: Stereo; source: SampleSource; notes: Note[]; samples: number }): Stereo {
+    const { data, source } = options;
+    const out = stereo(options.samples);
+    const length = data.left.length;
+    const fade = Math.round(RATE * 0.004);
+
+    for (const note of options.notes) {
+        const slice = source.mode === "slices" ? Math.min(source.slices - 1, Math.max(0, note.midi - 36)) : 0;
+        const size = source.mode === "slices" ? length / source.slices : length;
+        const from = slice * size;
+        const rate = source.speed * (source.mode === "pitched" ? 2 ** ((note.midi - source.root) / 12) : 1);
+        const whole = Math.floor(size / rate);
+        const count = source.mode === "hit" ? whole : Math.min(whole, Math.round(note.duration * RATE) + fade);
+        const start = Math.round(note.at * RATE);
+        const level = (note.velocity / 127) ** 1.5;
+
+        for (let n = 0; n < count && start + n < options.samples; n++) {
+            const position = from + n * rate;
+            const index = Math.floor(position);
+            const next = Math.min(length - 1, index + 1);
+            const mix = position - index;
+            const edge = Math.min(1, (count - n) / fade) * level;
+            out.left[start + n] += (data.left[index] * (1 - mix) + data.left[next] * mix) * edge;
+            out.right[start + n] += (data.right[index] * (1 - mix) + data.right[next] * mix) * edge;
+        }
+    }
+
+    return out;
+}
+
+async function sampleStem(part: ScorePart, source: SampleSource, context: StemContext): Promise<Stereo> {
+    const file = resolve(source.file);
+    let data = context.files.get(file);
+
+    if (!data) {
+        if (!existsSync(file)) {
+            throw new Error(`Part ${part.name} names a sample file that does not exist: ${file}`);
+        }
+
+        data = await readFloat(file);
+        context.files.set(file, data);
+    }
+
+    return level(part, playSample({ data, source, notes: part.notes, samples: context.samples }));
+}
+
+/** MIDI volume and pan for a stem that FluidSynth did not render. */
+function level(part: ScorePart, buffer: Stereo): Stereo {
+    const pan = part.pan / 127;
+    const volume = (part.volume / 127) ** 2;
+    const left = volume * Math.min(1, 2 * (1 - pan));
+    const right = volume * Math.min(1, 2 * pan);
+
+    for (let n = 0; n < buffer.left.length; n++) {
+        buffer.left[n] *= left;
+        buffer.right[n] *= right;
+    }
+
+    return buffer;
+}
+
 function synthStem(part: ScorePart, patch: string | Patch, context: StemContext): Stereo {
     const buffer = renderSynth({
         patch: resolvePatch(patch),
@@ -132,17 +199,7 @@ function synthStem(part: ScorePart, patch: string | Patch, context: StemContext)
         samples: context.samples,
         seed: hash(part.name),
     });
-    const pan = part.pan / 127;
-    const volume = (part.volume / 127) ** 2;
-    const left = volume * Math.min(1, 2 * (1 - pan));
-    const right = volume * Math.min(1, 2 * pan);
-
-    for (let n = 0; n < context.samples; n++) {
-        buffer.left[n] *= left;
-        buffer.right[n] *= right;
-    }
-
-    return buffer;
+    return level(part, buffer);
 }
 
 async function renderStem(part: ScorePart, index: number, context: StemContext): Promise<Stereo> {
@@ -153,6 +210,8 @@ async function renderStem(part: ScorePart, index: number, context: StemContext):
             return soundfontStem(part, index, context);
         case "synth":
             return synthStem(part, source.patch, context);
+        case "sample":
+            return sampleStem(part, source, context);
         default: {
             const unknown: never = source;
             throw new Error(`Unknown source ${String(unknown)}`);
@@ -164,7 +223,7 @@ async function renderStem(part: ScorePart, index: number, context: StemContext):
 export async function mixScore(options: { score: Score; folder: string; soundfont: string }): Promise<Stereo> {
     const { score } = options;
     const samples = Math.round(score.seconds * RATE);
-    const context: StemContext = { ...options, samples };
+    const context: StemContext = { ...options, samples, files: new Map() };
     const mix = stereo(samples);
     const send = stereo(samples);
     const starts = new Map(score.parts.map((part) => [part.name, part.notes.map((note) => note.at)]));
