@@ -557,6 +557,41 @@ describe("what a shot's overlay paints and exports", () => {
         expect(covered(210 + 100, 120 + 50)).toBe(false);
     });
 
+    test("an elongated ellipse's thick stroke is covered along its whole band, ends included", () => {
+        const frame = {
+            shape: "ellipse" as const,
+            box: { x: 0, y: 0, w: 1000, h: 200 },
+            stroke: "#ff4d4f",
+            strokeWidth: 30,
+            dash: [],
+            radius: 0,
+            fill: "",
+        };
+        const areas = shotFrameArea(frame);
+        const covered = (x: number, y: number) =>
+            areas.some((area) => x >= area.x && x <= area.x + area.w && y >= area.y && y <= area.y + area.h);
+
+        expect(covered(916.5, 128.5)).toBe(true);
+
+        // Every point of the painted band: the centre line, moved along the inward normal by up to a stroke width.
+        for (let degree = 0; degree < 360; degree += 2) {
+            const angle = (degree * Math.PI) / 180;
+            const rx = 500;
+            const ry = 100;
+            const x = rx * Math.cos(angle);
+            const y = ry * Math.sin(angle);
+            const nx = x / rx ** 2;
+            const ny = y / ry ** 2;
+            const length = Math.hypot(nx, ny);
+
+            for (const depth of [0, 10, 20, 29]) {
+                expect(covered(500 + x - (nx / length) * depth, 100 + y - (ny / length) * depth)).toBe(true);
+            }
+        }
+
+        expect(covered(500, 100)).toBe(false);
+    });
+
     test("the exported annotation carries the drawn style and the offset to where the chip was placed", () => {
         const placedChip = { x: 120, y: 20, w: 60, h: 18 };
         const annotation = annotationOf(

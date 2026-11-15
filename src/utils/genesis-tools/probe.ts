@@ -135,7 +135,10 @@ const FILE_LINKS = [
     { path: APP_LINKS.finder.reveal.path({ target: "/" }), key: "target" },
 ].map(({ path, key }) => ({ pathname: `/${path.split("?")[0]}`, key }));
 
-/** The local file or folder a note or Finder link names, decoded as the router decodes it; null for other links. */
+/**
+ * The local file or folder a note or Finder link names, decoded as the router decodes it; null for other links, and
+ * an empty string for a note or Finder link with no path at all.
+ */
 export function linkedFile(url: string): string | null {
     if (!URL.canParse(url)) {
         return null;
@@ -144,7 +147,7 @@ export function linkedFile(url: string): string | null {
     const parsed = new URL(url);
     const entry = FILE_LINKS.find((item) => item.pathname === parsed.pathname);
 
-    return entry ? parsed.searchParams.get(entry.key) : null;
+    return entry ? (parsed.searchParams.get(entry.key) ?? "") : null;
 }
 
 /**
@@ -200,6 +203,10 @@ export function linkState(
     }
 
     const file = checkFile ? linkedFile(url) : null;
+
+    if (file === "") {
+        return problem("path-missing", "the link names no file or folder, so the click opens nothing", action);
+    }
 
     if (file !== null && !exists(file)) {
         return problem("path-missing", `${file} does not exist on this Mac, so the click opens nothing`, action);

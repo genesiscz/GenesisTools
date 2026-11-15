@@ -2,6 +2,7 @@ import { fmtHours } from "./account-picker";
 import type { AccountUsage } from "./api";
 import { effectiveLeftPct, extractCompactLimits } from "./compact-limits";
 import { weeklyStatusForAccount } from "./fable-guard";
+import { planAllowsClaudeCode } from "./subscription";
 
 /** One account that can still serve a turn, with how much of each window is USED (0-100). */
 export interface HeadroomRow {
@@ -20,7 +21,7 @@ export interface WeeklyLimitHit {
 
 /**
  * Accounts with room in the weekly window and in the 5-hour one (when they have one), least weekly used first.
- * Accounts with no reading, an error or the org-blocked flag are left out: a dead account can still hold a stale
+ * Accounts with no reading, an error, the org-blocked flag or a plan that cannot run Claude Code are left out: a dead account can still hold a stale
  * reading that looks healthy.
  */
 function accountsWithHeadroom(accounts: AccountUsage[], exclude: string, now: Date): HeadroomRow[] {
@@ -28,6 +29,11 @@ function accountsWithHeadroom(accounts: AccountUsage[], exclude: string, now: Da
 
     for (const account of accounts) {
         if (account.accountName === exclude || account.error || account.orgBlocked || !account.usage) {
+            continue;
+        }
+
+        // A free org keeps serving healthy-looking buckets while every call answers 403.
+        if (!planAllowsClaudeCode(account)) {
             continue;
         }
 

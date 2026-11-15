@@ -179,6 +179,16 @@ describe("anthropic-sub usage.poll", () => {
         expect(snapshotToAccountUsage(snapshot).billingAnchor).toBe("2026-07-07");
     });
 
+    it("the plan check stamp survives the snapshot round trip", async () => {
+        useAccount("work", {}, { subscriptionCheckedAt: 1_700_000_000_000 });
+        stubFetch(0);
+
+        const snapshot = await pollAnthropicAccount(entry("work"));
+
+        expect(snapshot.plan?.checkedAt).toBe(new Date(1_700_000_000_000).toISOString());
+        expect(snapshotToAccountUsage(snapshot).subscriptionCheckedAt).toBe(1_700_000_000_000);
+    });
+
     // The negative control: the rotate-on-429 unlock is what makes a shared poll work at
     // all, so a real poll must still reach it.
     it("a 429 on a real poll rotates the token and retries", async () => {

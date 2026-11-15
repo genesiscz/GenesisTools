@@ -680,16 +680,39 @@ function takeOverForMove(requests: readonly MoveRequest[], options: MoveOptions)
         return new Map();
     }
 
-    const needed = requests.flatMap((request) => (takeover.needed(request.target) ? [request] : []));
+    const notTaken = new Map<MoveRequest, string>();
+    const needed: MoveRequest[] = [];
 
-    if (needed.length === 0) {
-        return new Map();
+    for (const request of requests) {
+        if (!takeover.needed(request.target)) {
+            continue;
+        }
+
+        // The owner changes before the rename could notice a swap, so the approved target is checked first.
+        const changed = targetChangeReason(request.target);
+
+        if (changed) {
+            notTaken.set(request, `only an administrator can move it, and ${changed}`);
+            continue;
+        }
+
+        needed.push(request);
     }
 
-    const taken = takeover.take(needed.map((request) => request.target.canonical));
+    if (needed.length === 0) {
+        return notTaken;
+    }
+
+    const taken = takeover.take(
+        needed.map((request) => ({ path: request.target.canonical, identity: request.target.identity }))
+    );
 
     if (!taken.ok) {
-        return new Map(needed.map((request) => [request, `only an administrator can move it, and ${taken.reason}`]));
+        for (const request of needed) {
+            notTaken.set(request, `only an administrator can move it, and ${taken.reason}`);
+        }
+
+        return notTaken;
     }
 
     for (const request of needed) {
@@ -701,7 +724,7 @@ function takeOverForMove(requests: readonly MoveRequest[], options: MoveOptions)
         });
     }
 
-    return new Map();
+    return notTaken;
 }
 
 function batchFile(paths: TrashPaths, id: string): string {

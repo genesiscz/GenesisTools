@@ -42,6 +42,19 @@ export function upgradeCachedSnapshot(snapshot: AccountUsageSnapshot): AccountUs
     return { ...snapshot, limits: snapshot.limits.filter((window) => !absent.has(window.key)), absentLimits };
 }
 
+/** `plan.checkedAt` (ISO) as the Unix ms the `AccountUsage` row carries, or undefined when absent or unreadable. */
+function snapshotPlanCheckedAt(snapshot: AccountUsageSnapshot): number | undefined {
+    const checkedAt = snapshot.plan?.checkedAt;
+
+    if (checkedAt === undefined) {
+        return undefined;
+    }
+
+    const ms = Date.parse(checkedAt);
+
+    return Number.isNaN(ms) ? undefined : ms;
+}
+
 /**
  * The inverse of `snapshotBase`: a snapshot back into the `AccountUsage` row every
  * claude-only reader still speaks (`tools claude start`, the doctor, the dev-dashboard
@@ -63,6 +76,9 @@ export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountU
         ...(snapshot.plan?.billingAnchor === undefined ? {} : { billingAnchor: snapshot.plan.billingAnchor }),
         ...(snapshot.plan?.name === undefined ? {} : { subscriptionPlan: snapshot.plan.name }),
         ...(snapshot.plan?.status === undefined ? {} : { subscriptionStatus: snapshot.plan.status }),
+        ...(snapshotPlanCheckedAt(snapshot) === undefined
+            ? {}
+            : { subscriptionCheckedAt: snapshotPlanCheckedAt(snapshot) }),
         ...(snapshot.plan?.contradictedAt === undefined ? {} : { planContradictedAt: snapshot.plan.contradictedAt }),
         ...(refreshExpiresAt === undefined || Number.isNaN(refreshExpiresAt) ? {} : { refreshExpiresAt }),
         ...(snapshot.native === undefined ? {} : { usage: snapshot.native as UsageResponse }),

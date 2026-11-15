@@ -240,7 +240,12 @@ function ellipseStrokeArea(frame: ShotFramePaint): DocBox[] {
     const cy = frame.box.y + frame.box.h / 2;
     const slack = frame.strokeWidth / 2 + 1;
     const outer = { rx: frame.box.w / 2 + slack, ry: frame.box.h / 2 + slack };
-    const inner = { rx: frame.box.w / 2 - frame.strokeWidth - 1, ry: frame.box.h / 2 - frame.strokeWidth - 1 };
+    // The stroke is a band along the path normal, so shaving the stroke width off both radii leaves the ends of an
+    // elongated ellipse too far in. A similar ellipse scaled so that its gap to the outer one is a whole stroke at the
+    // minor axis (the narrowest gap between two similar ellipses) never reaches into the painted stroke.
+    const minor = Math.min(frame.box.w, frame.box.h) / 2;
+    const scale = Math.max(0, (minor - frame.strokeWidth - 1) / minor);
+    const inner = { rx: (frame.box.w / 2) * scale, ry: (frame.box.h / 2) * scale };
     const areas: DocBox[] = [];
     const strips = Math.max(1, Math.ceil((2 * outer.ry) / (frame.strokeWidth + 2)));
     const height = (2 * outer.ry) / strips;

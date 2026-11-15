@@ -630,7 +630,13 @@ export function judge(
     return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
 }
 
-/** Removes a tree, repeating the recursive delete while it ends with ENOTEMPTY (at most 10 passes, ACLs dropped after the first). */
+const RETRYABLE_REMOVE_CODES = new Set(["ENOTEMPTY", "EACCES", "EPERM", "EFAULT"]);
+
+/**
+ * Removes a tree, repeating the recursive delete while it ends with ENOTEMPTY or a permission error (at most 10 passes,
+ * ACLs dropped after the first). Bun 1.3.13 reports a child that a deny-delete ACL protects as EACCES, or as EFAULT
+ * when it maps no code; later versions report ENOTEMPTY.
+ */
 function removeTree(path: string): void {
     for (let pass = 1; ; pass++) {
         try {
@@ -639,7 +645,7 @@ function removeTree(path: string): void {
         } catch (error) {
             const code = error instanceof Error && "code" in error ? error.code : undefined;
 
-            if (code !== "ENOTEMPTY" || pass >= 10) {
+            if (!RETRYABLE_REMOVE_CODES.has(String(code)) || pass >= 10) {
                 throw error;
             }
 

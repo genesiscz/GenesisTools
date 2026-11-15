@@ -1364,6 +1364,22 @@ export const gitPushForceWithoutLease: ShellRule = {
     },
 };
 
+/**
+ * Whether executable code (quoted text and comments are blanked in `cleaned`) last turned `pipefail` on: `set -o
+ * pipefail` or `set -eo pipefail`, and not a later `set +o pipefail`.
+ */
+function pipefailEnabled(cleaned: string): boolean {
+    let enabled = false;
+
+    for (const match of cleaned.matchAll(
+        /(?:^|[\s;&|(){])set\s+(?:-[a-zA-Z]+\s+)*([-+])[a-zA-Z]*o\s+pipefail(?![\w-])/g
+    )) {
+        enabled = match[1] === "-";
+    }
+
+    return enabled;
+}
+
 export const gitCommitPiped: ShellRule = {
     id: "git-commit-piped",
     kind: "misread",
@@ -1381,7 +1397,7 @@ export const gitCommitPiped: ShellRule = {
         "previous commit's SHA while biome had refused the commit (bare JSON in a test). The SHA went into the reply " +
         "as the logging fix, and its hub link opened an unrelated commit.",
     detect(scan): ShellMatch | null {
-        if (/pipefail/.test(scan.command)) {
+        if (pipefailEnabled(scan.cleaned)) {
             return null;
         }
 

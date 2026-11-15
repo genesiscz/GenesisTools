@@ -112,6 +112,24 @@ describe("fableCapableAccounts", () => {
     });
 });
 
+describe("fableCapableAccounts and a plan contradiction", () => {
+    const lapsed: AccountUsage = {
+        accountName: "lapsed",
+        subscriptionPlan: "claude_free",
+        subscriptionStatus: "canceled",
+        planContradictedAt: 2000,
+        usage: usageWith(10),
+    };
+
+    test("a profile read newer than the contradiction drops the account", () => {
+        expect(fableCapableAccounts([{ ...lapsed, subscriptionCheckedAt: 3000 }], NOW)).toEqual([]);
+    });
+
+    test("a contradiction newer than the profile read keeps the account", () => {
+        expect(fableCapableAccounts([{ ...lapsed, subscriptionCheckedAt: 1000 }], NOW)).toEqual(["lapsed"]);
+    });
+});
+
 describe("weeklyStatusForAccount", () => {
     test("an unpolled account reports available so the gate never blocks blindly", () => {
         expect(weeklyStatusForAccount([], "nobody").available).toBe(true);
@@ -168,6 +186,19 @@ describe("fableCapableAccounts never recommends a dead account", () => {
         };
 
         expect(fableCapableAccounts([errored], NOW)).toEqual([]);
+    });
+
+    test("an account whose plan cannot run Claude Code is excluded, however full its buckets look", () => {
+        const free: AccountUsage = {
+            accountName: "freeorg",
+            subscriptionPlan: "claude_free",
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 0, resets_at: null },
+            },
+        };
+
+        expect(fableCapableAccounts([free], NOW)).toEqual([]);
     });
 });
 
@@ -227,6 +258,7 @@ describe("weeklyLimitHit", () => {
         windowsAccount("spent5h", 20, 100),
         windowsAccount("broken", 5, 5, { error: "401" }),
         windowsAccount("blocked", 5, 5, { orgBlocked: true }),
+        windowsAccount("freeorg", 1, 1, { subscriptionPlan: "claude_free" }),
         { accountName: "never" },
     ];
 

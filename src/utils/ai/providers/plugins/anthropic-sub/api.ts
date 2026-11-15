@@ -180,6 +180,8 @@ export interface AccountUsage {
     subscriptionPlan?: string;
     /** `subscription_status` from the OAuth profile ("active", "canceled", …). */
     subscriptionStatus?: string;
+    /** Unix ms of the last profile read that set the plan fields above. A contradiction newer than this wins. */
+    subscriptionCheckedAt?: number;
     /** A live probe contradicted the plan fields above — see usage/subscription.ts. */
     planContradictedAt?: number;
     /** Refresh-grant expiry (Unix ms) — past this the account needs a browser re-login. */
@@ -311,6 +313,7 @@ function identityOf(account: AccountEntry) {
         billingAnchor: billingAnchor(account),
         subscriptionPlan: account.subscriptionPlan,
         subscriptionStatus: account.subscriptionStatus,
+        subscriptionCheckedAt: account.subscriptionCheckedAt,
         planContradictedAt: account.planContradictedAt,
         refreshExpiresAt: account.credentials.refreshExpiresAt,
     };

@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { childDeadlineTermination } from "@genesiscz/utils/process/child-deadline";
 import { nonEmptyString as text } from "@genesiscz/utils/string";
 
 const { log } = logger.scoped("t3code:thread");
@@ -125,6 +126,17 @@ export async function sendT3ThreadMessage(
     if (result.status === null) {
         log.warn({ threadId, signal: result.signal }, "t3 thread send did not finish in time");
         return { kind: "unknown", reason: "T3 Code did not answer in time; the message may have arrived." };
+    }
+
+    // The deadline wrapper turns a signal into 128 + N and its own timeout into 124: T3 Code may have taken the message.
+    const cutShort = result.error ? result.error.message : childDeadlineTermination(result.status);
+
+    if (cutShort) {
+        log.warn({ threadId, status: result.status, cutShort }, "t3 thread send was cut short");
+        return {
+            kind: "unknown",
+            reason: `T3 Code did not finish the send (${cutShort}); the message may have arrived.`,
+        };
     }
 
     if (result.status !== 0) {
