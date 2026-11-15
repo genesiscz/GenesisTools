@@ -270,6 +270,7 @@ final class DecisionAnsweringEngineTests: XCTestCase {
         var retried = false
         log.holdNext = true
         log.answers = [.refused("refused", detail: nil)]
+        let ref = self.ref
         engine.unstage([ref, other]) { _ in
             guard !retried else { return }
             retried = true
