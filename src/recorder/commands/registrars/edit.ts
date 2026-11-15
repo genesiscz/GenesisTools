@@ -1,8 +1,7 @@
-import { parseTime } from "@app/recorder/commands/registrars/parse";
+import { parseTime, resolveEnumFlag } from "@app/recorder/commands/registrars/parse";
 import { prepareFramesMovie } from "@app/recorder/lib/frames-movie";
 import {
     EDITOR_TABS,
-    type EditorTab,
     ensureRecorderPart,
     listLibrary,
     movieOf,
@@ -10,17 +9,11 @@ import {
     resolveRecording,
 } from "@app/recorder/lib/library";
 import { hostOpenEditor } from "@app/recorder/lib/service-client";
-import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import type { Command } from "commander";
-
-/** A `--tab` value: the tab, or null when it is missing or not one of EDITOR_TABS. */
-function editorTab(raw: string | boolean): EditorTab | null {
-    const found = EDITOR_TABS.find((tab) => tab === raw);
-    return found ?? null;
-}
 
 /**
  * The recording `tools recorder edit` opens when none is named: a list of the newest ones in a terminal, the library
@@ -65,15 +58,15 @@ export function register(program: Command): void {
                     return;
                 }
 
-                const tab = flags.tab === undefined ? undefined : editorTab(flags.tab);
+                const tab = await resolveEnumFlag({
+                    flag: "--tab",
+                    raw: flags.tab,
+                    values: EDITOR_TABS,
+                    subcommand: ["edit"],
+                    message: "Which editor tab?",
+                });
 
                 if (tab === null) {
-                    out.printlnErr(
-                        suggestEnumFlag("tools recorder", "--tab", EDITOR_TABS, {
-                            given: typeof flags.tab === "string" ? flags.tab : undefined,
-                        })
-                    );
-                    process.exitCode = 1;
                     return;
                 }
 
@@ -81,7 +74,14 @@ export function register(program: Command): void {
                     flags.at === undefined ? undefined : timeToUs(parseTime(flags.at, "--at")) / 1_000_000;
                 const path = resolveRecording(value);
 
-                if (!value.endsWith(".mp4") && !value.endsWith(".mov") && !value.endsWith(".json") && !movieOf(path)) {
+                const lowerPath = path.toLowerCase();
+
+                if (
+                    !lowerPath.endsWith(".mp4") &&
+                    !lowerPath.endsWith(".mov") &&
+                    !lowerPath.endsWith(".json") &&
+                    !movieOf(path)
+                ) {
                     out.printlnErr("This recording has frames only; making proxy.mp4 for the editor…");
                     await prepareFramesMovie(path, {});
                 }

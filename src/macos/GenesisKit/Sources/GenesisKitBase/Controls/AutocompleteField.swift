@@ -724,7 +724,10 @@ struct AutocompleteTextField: NSViewRepresentable {
         field.onFocus = { [weak coordinator = context.coordinator] in coordinator?.parent.onFocus(true) }
         if let identifier, AutocompleteLaunch.take(identifier) {
             // A picture of the open list: the model opens it, with no key event and no first responder.
-            AutocompleteLaunch.whenInSight(field) { [weak coordinator = context.coordinator] in coordinator?.parent.onFocus(true) }
+            AutocompleteLaunch.whenInSight(field) { [weak coordinator = context.coordinator] in
+                coordinator?.parent.onFocus(true)
+                AutocompleteLaunch.markOpened()
+            }
         }
         return field
     }

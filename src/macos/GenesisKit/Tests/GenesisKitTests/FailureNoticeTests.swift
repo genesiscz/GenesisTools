@@ -696,6 +696,15 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertEqual(probe.count, 1)
     }
 
+    func testARunWhoseBinaryIsMissingReachesTheFailureObserver() async {
+        let probe = FailureCaptureProbe()
+        ToolsCallTrace.observeFailures { _ in _ = probe.next() }
+        defer { ToolsCallTrace.observeFailures(nil) }
+        let bridge = ToolsBridge(binaryPath: "/nonexistent/tools", server: nil)
+        _ = try? await bridge.run(subcommand: "fixture", args: ["read"])
+        XCTAssertEqual(probe.count, 1, "a call that never started a child is a failure the capture must hear of")
+    }
+
     func testPersistedFailureDoesNotRepeatACredentialFromItsCall() async throws {
         let directory = temporaryURL("failure-capture")
         let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
@@ -706,6 +715,110 @@ final class FailureInlineTests: XCTestCase {
         let text = try String(contentsOf: store.file(for: report), encoding: .utf8)
         XCTAssertFalse(text.contains("invented-secret"))
         XCTAssertTrue(text.contains("***"))
+    }
+
+    func testAHeaderCredentialIsHiddenInStderrThatRepeatsOnlyTheToken() {
+        let argv = ["fixture", "--header", "Authorization: Bearer fixture-token-123"]
+        XCTAssertEqual(ToolsCallTrace.redactedText("Rejected token fixture-token-123", argv: argv), "Rejected token ***")
+        XCTAssertEqual(ToolsCallTrace.redactedText("sent Authorization: Bearer other-token-456", argv: []),
+                       "sent Authorization: ***")
+    }
+
+    func testAReportWithoutACallIsRedactedBeforeItIsArchived() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
+        let report = FailureReport(headline: "failed", log: "curl: Authorization: Bearer fixture-token-123")
+        let ready = await store.prepared(report)
+        XCTAssertFalse(ready.log.contains("fixture-token-123"))
+    }
+
+    func testTheStackAndTheOtherReportTextAreRedactedBeforeTheyAreArchived() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { $0 })
+        let secret = "Authorization: Bearer fixture-token-123"
+        var report = FailureReport(headline: "failed", log: "")
+        report.title = "sent \(secret)"
+        report.stack = "Error: sent \(secret)\n    at fixture (a.ts:1:1)"
+        report.nextStep = "retry \(secret)"
+        report.action = "run \(secret)"
+        report.expected = "no \(secret)"
+        report.issue = FailureIssue(tool: "fixture", title: "bug \(secret)")
+        let ready = await store.prepared(report)
+        XCTAssertFalse(ready.stack?.contains("fixture-token-123") ?? true)
+        let text = try String(contentsOf: store.file(for: report), encoding: .utf8)
+        XCTAssertFalse(text.contains("fixture-token-123"), "no field of the archive repeats the credential")
+    }
+
+    func testAHeadlineWithACredentialKeepsOneArchiveKeyBeforeAndAfterRedaction() {
+        let raw = FailureReport(headline: "sent Authorization: Bearer fixture-token-123", log: "")
+        var archived = raw
+        archived.headline = ToolsCallTrace.redactedText(raw.headline, argv: [])
+        XCTAssertNotEqual(archived.headline, raw.headline)
+        XCTAssertEqual(FailureCaptureStore.key(raw), FailureCaptureStore.key(archived))
+    }
+
+    func testAQuotedCredentialHeaderNameIsRedacted() {
+        for text in [#"{"x-api-key":"fixture-key-123"}"#, #"{'Authorization': 'fixture-key-123'}"#, #"{"cookie": fixture-key-123}"#] {
+            let safe = ToolsCallTrace.redactedText(text, argv: [])
+            XCTAssertFalse(safe.contains("fixture-key-123"), safe)
+        }
+    }
+
+    func testAWrappedSchemeCredentialIsRedactedWithItsHeader() {
+        let safe = ToolsCallTrace.redactedText("Authorization: Bearer\n fixture-token-123", argv: [])
+        XCTAssertFalse(safe.contains("fixture-token-123"), safe)
+    }
+
+    func testAMergedCaptureKeepsTheLogLocationOfItsLog() async throws {
+        let directory = temporaryURL("failure-capture")
+        let store = FailureCaptureStore(directory: directory, environment: { nil }, enrich: { report in
+            var enriched = report
+            enriched.log = "captured"
+            enriched.logFile = "/tmp/fixture-perf.log"
+            enriched.logLine = 42
+            return enriched
+        })
+        let report = FailureReport(headline: "failed", log: "")
+        _ = await store.prepared(report)
+        let again = await store.prepared(report)
+        XCTAssertEqual(again.log, "captured")
+        XCTAssertEqual(again.logFile, "/tmp/fixture-perf.log")
+        XCTAssertEqual(again.logLine, 42)
+    }
+
+    func testAMergedCaptureKeepsItsDiagnosticsWhenTheCallerSuppliesANonemptyLog() async throws {
+        let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
+            var enriched = report
+            enriched.log = "error: refused\ntrace line"
+            enriched.logFile = "/tmp/fixture-perf.log"
+            enriched.logLine = 7
+            return enriched
+        })
+        let report = FailureReport(headline: "failed", log: "error: refused")
+        _ = await store.prepared(report)
+        let again = await store.prepared(report)
+        XCTAssertEqual(again.log, "error: refused\ntrace line")
+        XCTAssertEqual(again.logFile, "/tmp/fixture-perf.log")
+        XCTAssertEqual(again.logLine, 7)
+    }
+
+    func testTheEnrichedLogOfACaptureHidesACredentialInAPerfLogLine() async throws {
+        let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
+            var enriched = report
+            enriched.log = "mark stderr Authorization: Bearer fixture-token-123"
+            return enriched
+        })
+        let ready = await store.prepared(FailureReport(headline: "failed", log: ""))
+        XCTAssertFalse(ready.log.contains("fixture-token-123"), ready.log)
+    }
+
+    func testDiagnosticWorkOutsideTheCallersLedgerNeverBecomesItsFailedCall() async {
+        let ledger = ToolsCallLedger()
+        let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
+            XCTAssertNil(ToolsCallTrace.ledger, "the diagnostic runs outside the caller's ledger")
+            return report
+        })
+        await ledger.record { _ = await store.prepared(FailureReport(headline: "failed", log: "")) }
     }
 
     // MARK: - The inline view

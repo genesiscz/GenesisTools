@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import { captureRuntimeFacts, type RuntimeFacts, runtimeFactsSchema } from "@genesiscz/utils/diagnostics/runtime";
@@ -73,12 +73,42 @@ function prepared(failure: ToolFailure, facts: RuntimeFacts | null): FailureCont
     };
 }
 
+/** One full-triage worker starts per this long: a failing server must not fan out a worker per failure. */
+const TRIAGE_SPAWN_WINDOW_MS = 60_000;
+
+/**
+ * Claims the right to start a full-triage worker: true at most once per window, by the mtime of a stamp file in the
+ * failures folder. Every failure still gets its own event-time snapshot; only the heavy collection is coalesced.
+ */
+function claimTriageSpawn(dir: string, now: number): boolean {
+    const stamp = join(dir, "failure-contexts", ".triage-spawned");
+
+    try {
+        if (Math.abs(now - statSync(stamp).mtimeMs) < TRIAGE_SPAWN_WINDOW_MS) {
+            return false;
+        }
+
+        utimesSync(stamp, new Date(now), new Date(now));
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+        }
+
+        writeFileSync(stamp, "", { mode: 0o600 });
+        utimesSync(stamp, new Date(now), new Date(now));
+    }
+
+    return true;
+}
+
 /** Called after appendFailure writes its base event, including while the process is exiting. */
 export function captureFailureContext(options: {
     failure: ToolFailure;
     dir: string;
     facts?: RuntimeFacts;
     fullTriage?: boolean;
+    now?: number;
+    spawn?: typeof spawnToolDetached;
 }): void {
     const context = prepared(options.failure, options.facts ?? captureRuntimeFacts());
     writeContext(options.failure, options.dir, context);
@@ -87,11 +117,15 @@ export function captureFailureContext(options: {
     if (
         options.fullTriage &&
         !/^genesis-tools (?:triage|env|logs prepare)(?: |$)/.test(command) &&
-        options.failure.kind !== "interrupt"
+        options.failure.kind !== "interrupt" &&
+        claimTriageSpawn(options.dir, options.now ?? Date.now())
     ) {
-        spawnToolDetached(["genesis-tools", "logs", "prepare", options.failure.id, "--at", options.failure.at], {
-            reparent: true,
-        });
+        (options.spawn ?? spawnToolDetached)(
+            ["genesis-tools", "logs", "prepare", options.failure.id, "--at", options.failure.at],
+            {
+                reparent: true,
+            }
+        );
     }
 }
 

@@ -75,7 +75,7 @@ public final class FocusController: ObservableObject {
                 await recorder?.attachAsync(sessionId: sessionId)
                 if sessionId != nil, let self, self.ownsRuntime, self.presentsWindows {
                     await self.refreshIntentTags()
-                    self.hud?.show()
+                    if self.settings.timerWindow == .automatic { self.hud?.show() }
                 }
             }
             // Spec 17 already solved snapshot-and-restore; the pomodoro just has its own

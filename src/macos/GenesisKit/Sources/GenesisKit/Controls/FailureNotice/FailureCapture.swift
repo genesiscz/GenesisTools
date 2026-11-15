@@ -29,7 +29,8 @@ public enum FailureCapture {
 
     public static func record(_ report: FailureReport) {
         guard let work = lock.withLock({ prepare }) else { return }
-        Task { _ = await work(report) }
+        // Detached from the caller's call ledger: the diagnostic's own `tools` calls must not become its "failed call".
+        Task { await ToolsCallTrace.$ledger.withValue(nil) { _ = await work(report) } }
     }
 
     public static func prepared(_ report: FailureReport) async -> FailureReport {
@@ -77,9 +78,11 @@ public actor FailureCaptureStore {
         self.enrich = enrich
     }
 
+    /// The archive key. A report without a call is keyed by its headline as the archive stores it (redacted), so the
+    /// raw report and the archived one share a key when the headline held a credential.
     public nonisolated static func key(_ report: FailureReport) -> String {
         let identity = report.call.map { "call:\($0.traceId):\(Int64(($0.started.timeIntervalSince1970 * 1000).rounded()))" }
-            ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(report.title):\(report.headline)"
+            ?? "report:\(Int64((report.time.timeIntervalSince1970 * 1000).rounded())):\(ToolsCallTrace.redactedText(report.title, argv: [])):\(ToolsCallTrace.redactedText(report.headline, argv: []))"
         return digest(identity)
     }
 
@@ -137,25 +140,16 @@ public actor FailureCaptureStore {
         }
 
         let recordedAt = Date()
+        // The caller's own argv: `report` already carries it masked, and masked values cannot name a raw credential.
+        let argv = input.call?.argv ?? []
         write(Record(recordedAt: recordedAt, report: report), for: report)
         let environment = self.environment
         let enrich = self.enrich
         let task = Task { [weak self] in
-            let snapshot = Task { await self?.facts(environment) }
-            var ready = await enrich(report)
-            let facts = await snapshot.value
-            let capturedAt = Date()
-            if var context = report.environment ?? facts {
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss z"
-                let stamp = "Diagnostic context collected at \(formatter.string(from: capturedAt)); failure occurred at \(formatter.string(from: report.time))."
-                context.markdown = stamp + "\n\n" + context.markdown
-                context.values["app-build"] = [context.values["app-build"], stamp].compactMap { $0 }.joined(separator: "\n\n")
-                ready.environment = context
+            guard let self else { return report }
+            return await ToolsCallTrace.$ledger.withValue(nil) {
+                await self.gather(report, argv: argv, recordedAt: recordedAt, environment: environment, enrich: enrich)
             }
-            await self?.write(Record(recordedAt: recordedAt, contextCapturedAt: capturedAt, report: ready), for: report)
-            return ready
         }
         work[key] = task
         let ready = await task.value
@@ -163,11 +157,38 @@ public actor FailureCaptureStore {
         return ready
     }
 
+    private func gather(_ report: FailureReport, argv: [String], recordedAt: Date, environment: @escaping @Sendable () async -> FailureEnvironment?,
+                        enrich: @Sendable (FailureReport) async -> FailureReport) async -> FailureReport {
+        let snapshot = Task { await self.facts(environment) }
+        var ready = await enrich(report)
+        // The enrichment appends perf-log lines raw, and they can carry a child's stderr.
+        ready.log = ToolsCallTrace.redactedText(ready.log, argv: argv)
+        let facts = await snapshot.value
+        let capturedAt = Date()
+        if var context = report.environment ?? facts {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss z"
+            let stamp = "Diagnostic context collected at \(formatter.string(from: capturedAt)); failure occurred at \(formatter.string(from: report.time))."
+            context.markdown = stamp + "\n\n" + context.markdown
+            context.values["app-build"] = [context.values["app-build"], stamp].compactMap { $0 }.joined(separator: "\n\n")
+            ready.environment = context
+        }
+        self.write(Record(recordedAt: recordedAt, contextCapturedAt: capturedAt, report: ready), for: report)
+        return ready
+    }
+
     /// A fresh report of a failure with the context an earlier capture of it gathered.
     private static func merged(_ report: FailureReport, from captured: FailureReport) -> FailureReport {
         var ready = report
         ready.environment = captured.environment
-        if ready.log.isEmpty { ready.log = captured.log }
+        // The capture's log replaces the caller's when the caller had none, when the capture holds it, or when the
+        // capture located its trace line (its enrichment rebuilt the log, so the caller's text is the older one).
+        if ready.log.isEmpty || captured.log.contains(ready.log) || captured.logFile != nil {
+            ready.log = captured.log
+            ready.logFile = captured.logFile
+            ready.logLine = captured.logLine
+        }
         return ready
     }
 
@@ -190,16 +211,26 @@ public actor FailureCaptureStore {
     }
 
     private nonisolated static func sanitized(_ report: FailureReport) -> FailureReport {
-        guard let call = report.call else { return report }
+        // A report without call context has no argv to name its secrets, but its text still goes through the header
+        // and token patterns (a widget task command's stderr can echo an `Authorization` header).
+        let argv = report.call?.argv ?? []
         var safe = report
-        safe.headline = ToolsCallTrace.redactedText(report.headline, argv: call.argv)
-        safe.summary = report.summary.map { ToolsCallTrace.redactedText($0, argv: call.argv) }
-        safe.log = ToolsCallTrace.redactedText(report.log, argv: call.argv)
-        safe.command = report.command.map { ToolsCallTrace.redactedText($0, argv: call.argv) }
-        var safeCall = call
-        safeCall.argv = ToolsCallTrace.redacted(call.argv)
-        safeCall.stderr = call.stderr.map { ToolsCallTrace.redactedText($0, argv: call.argv) }
-        safe.call = safeCall
+        safe.headline = ToolsCallTrace.redactedText(report.headline, argv: argv)
+        safe.summary = report.summary.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.log = ToolsCallTrace.redactedText(report.log, argv: argv)
+        safe.command = report.command.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        // The other free text: the remote error's stack repeats its message, which can carry an argv credential.
+        safe.title = ToolsCallTrace.redactedText(report.title, argv: argv)
+        safe.nextStep = report.nextStep.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.action = report.action.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.expected = report.expected.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.stack = report.stack.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        safe.issue?.title = report.issue?.title.map { ToolsCallTrace.redactedText($0, argv: argv) }
+        if var safeCall = report.call {
+            safeCall.argv = ToolsCallTrace.redacted(safeCall.argv)
+            safeCall.stderr = safeCall.stderr.map { ToolsCallTrace.redactedText($0, argv: argv) }
+            safe.call = safeCall
+        }
         return safe
     }
 

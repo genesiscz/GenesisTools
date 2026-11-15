@@ -1,25 +1,10 @@
-import { parseSubtitleFormat, parseTime } from "@app/recorder/commands/registrars/parse";
-import {
-    EXPORT_FORMATS,
-    type ExportFormat,
-    exportAs,
-    exportProgressPrinter,
-    parseExportSize,
-} from "@app/recorder/lib/edit";
+import { parseTime, resolveEnumFlag } from "@app/recorder/commands/registrars/parse";
+import { EXPORT_FORMATS, exportAs, exportProgressPrinter, parseExportSize } from "@app/recorder/lib/edit";
 import { ensureRecorderPart } from "@app/recorder/lib/library";
 import { out } from "@genesiscz/utils/logger";
 import { timeToUs } from "@genesiscz/utils/recording-editor/plan";
+import { SUBTITLE_FORMATS } from "@genesiscz/utils/recording-editor/subtitles";
 import type { Command } from "commander";
-
-function parseFormat(raw: string): ExportFormat {
-    const format = EXPORT_FORMATS.find((candidate) => candidate === raw.toLowerCase());
-
-    if (!format) {
-        throw new Error(`--format takes ${EXPORT_FORMATS.join(", ")} (got "${raw}")`);
-    }
-
-    return format;
-}
 
 export function register(program: Command): void {
     program
@@ -33,12 +18,12 @@ export function register(program: Command): void {
             "the file to write; the extension follows the format (default: the file chosen in the editor, else <name>-edited.<format> beside the source; a part adds -part-<from>-<to>; never an existing file without --overwrite)"
         )
         .option(
-            "--format <format>",
+            "--format [format]",
             `${EXPORT_FORMATS.join(", ")} (default the --out extension, else mp4; a gif is 10 fps, at most 960 wide)`
         )
         .option("--from <time>", "export only the part from this OUTPUT time (seconds or m:ss; what plays)")
         .option("--to <time>", "export only the part up to this OUTPUT time")
-        .option("--subtitles <format>", "also write the transcript beside the movie: srt or vtt")
+        .option("--subtitles [format]", "also write the transcript beside the movie: srt or vtt")
         // R5 3 export overwrite, size, progress
         .option("--overwrite", "replace the file at --out (or the usual name) instead of refusing it")
         .option("--size <WxH>", "the picture's exact pixels: 1920x1080, 1920x (width) or x1080 (height)")
@@ -48,16 +33,36 @@ export function register(program: Command): void {
                 value: string,
                 flags: {
                     out?: string;
-                    format?: string;
+                    format?: string | boolean;
                     from?: string;
                     to?: string;
-                    subtitles?: string;
+                    subtitles?: string | boolean;
                     json?: boolean;
                     overwrite?: boolean;
                     size?: string;
                 }
             ) => {
                 try {
+                    const format = await resolveEnumFlag({
+                        flag: "--format",
+                        raw: flags.format,
+                        values: EXPORT_FORMATS,
+                        subcommand: ["export"],
+                        message: "Which export format?",
+                        foldCase: true,
+                    });
+                    const subtitles = await resolveEnumFlag({
+                        flag: "--subtitles",
+                        raw: flags.subtitles,
+                        values: SUBTITLE_FORMATS,
+                        subcommand: ["export"],
+                        message: "Which subtitle format?",
+                    });
+
+                    if (format === null || subtitles === null) {
+                        return;
+                    }
+
                     await ensureRecorderPart((line) => out.printlnErr(line));
                     const part =
                         flags.from === undefined && flags.to === undefined
@@ -71,9 +76,9 @@ export function register(program: Command): void {
                               };
                     const answer = await exportAs(value, {
                         out: flags.out,
-                        format: flags.format === undefined ? undefined : parseFormat(flags.format),
+                        format,
                         part,
-                        subtitles: flags.subtitles === undefined ? undefined : parseSubtitleFormat(flags.subtitles),
+                        subtitles,
                         overwrite: flags.overwrite,
                         size: flags.size === undefined ? undefined : parseExportSize(flags.size),
                         // Progress on stderr every 10 %, so a long export shows it is alive (stdout stays the result).

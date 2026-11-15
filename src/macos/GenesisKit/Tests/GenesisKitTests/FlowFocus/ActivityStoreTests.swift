@@ -45,6 +45,8 @@ final class ActivityStoreTests: XCTestCase {
         }
     }
 
+    // ActivityStore.onQueue calls the access assertion in DEBUG builds only, so a release build records nothing.
+    #if DEBUG
     @MainActor
     func testTheLedgerGuardCatchesARealMainThreadReadAndAllowsTheAwaitedRead() async throws {
         let ledger = try XCTUnwrap(store)
@@ -61,6 +63,7 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(values.map { $0.0 }, [false, true], "the actual onQueue guard must flag the MainActor plant")
         XCTAssertTrue(values.allSatisfy { $0.1.contains("must await ActivityStore.perform") })
     }
+    #endif
 
     @MainActor
     func testIntentDrainSuspendsForTheStoreAndKeepsOrderAcrossUICommandsAndShutdown() async throws {

@@ -93,7 +93,13 @@ export function recordMcpTransport<T>(options: {
             if (key === "send" && typeof value === "function") {
                 return async (...args: unknown[]) => {
                     const message = args[0];
-                    if (isObject(message) && (typeof message.id === "string" || typeof message.id === "number")) {
+                    // A server-to-client request (sampling, elicitation, ping) has its own id space and a method.
+                    if (
+                        isObject(message) &&
+                        message.method === undefined &&
+                        ("result" in message || "error" in message) &&
+                        (typeof message.id === "string" || typeof message.id === "number")
+                    ) {
                         const call = pending.get(message.id);
                         if (call) {
                             pending.delete(message.id);

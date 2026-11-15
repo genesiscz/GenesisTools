@@ -139,6 +139,9 @@ struct VaultCaller {
     }
 
     static func isInterpreter(_ executable: String) -> Bool {
+        // Whatever the runtime check accepts as Bun (a hard link under another name included) is an interpreter, so it
+        // gets the environment checks of `bun` itself.
+        if VaultGrants.runtime(of: executable) == "bun" { return true }
         let name = (executable as NSString).lastPathComponent.lowercased()
         return name.hasPrefix("gt-") || name.range(of:
             #"^(node|nodejs|bun|deno|python[0-9.]*|pypy[0-9.]*|ruby[0-9.]*|perl[0-9.]*|php[0-9.]*|lua[0-9.]*|luajit|tclsh[0-9.]*|wish|osascript|java|pwsh|sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh)$"#,
@@ -183,7 +186,174 @@ struct VaultCaller {
             found.append("interpreter flags \(shown.joined(separator: " "))")
         }
 
+        // Bun also runs the `preload` list of a bunfig.toml before the script: the working folder's, the user's
+        // `~/.bunfig.toml` and `$XDG_CONFIG_HOME/.bunfig.toml`. Neither an argument nor a variable names it.
+        if let executable, VaultGrants.runtime(of: executable) == "bun" {
+            let startedAt = identity.map { Date(timeIntervalSince1970: TimeInterval($0.startSeconds) + TimeInterval($0.startMicroseconds) / 1_000_000) }
+            found += Self.untrustedBunfigPreloads(cwd: cwd, home: NSHomeDirectory(),
+                                                  xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own,
+                                                  startedAt: startedAt)
+        }
+
         return found
+    }
+
+    /// The `preload` entries of the bunfig.toml files Bun reads that are not a checkout's own preloads, each as
+    /// `bunfig.toml preload <entry>`. A file that exists and cannot be read counts as one, and so does an unknown
+    /// working folder: both fail closed, because the approval has no window.
+    ///
+    /// The files are read now, not at the start: a preload of an untrusted bunfig.toml can delete its own file before
+    /// the key is asked for. So the working folder counts as changed, and fails closed, when its bunfig.toml (or, with
+    /// none, the folder itself) changed after the process started: the state that was read then can no longer be shown.
+    static func untrustedBunfigPreloads(cwd: String?, home: String, xdgConfigHome: String?, own: Set<String>,
+                                        startedAt: Date?, fileManager: FileManager = .default) -> [String] {
+        var files: [(path: String, base: String)] = []
+        if let cwd, !cwd.isEmpty { files.append(((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd)) }
+        files.append(((home as NSString).appendingPathComponent(".bunfig.toml"), home))
+        if let xdgConfigHome, !xdgConfigHome.isEmpty {
+            files.append(((xdgConfigHome as NSString).appendingPathComponent(".bunfig.toml"), xdgConfigHome))
+        }
+
+        var found: [String] = cwd == nil ? ["bunfig.toml preload (the working folder is not known)"] : []
+        if let cwd, !cwd.isEmpty {
+            let file = (cwd as NSString).appendingPathComponent("bunfig.toml")
+            let watched = fileManager.fileExists(atPath: file) ? file : cwd
+            if let startedAt {
+                if let changed = Self.changeTime(of: watched), changed >= startedAt {
+                    found.append("bunfig.toml preload (\(watched) changed after the process started)")
+                } else if Self.changeTime(of: watched) == nil {
+                    found.append("bunfig.toml preload (\(watched) cannot be inspected)")
+                }
+            } else {
+                found.append("bunfig.toml preload (the process start time is not known)")
+            }
+        }
+        for file in files where fileManager.fileExists(atPath: file.path) {
+            guard let text = try? String(contentsOfFile: file.path, encoding: .utf8) else {
+                found.append("bunfig.toml preload (\(file.path) is not readable)")
+                continue
+            }
+
+            for entry in bunfigPreloads(in: text) {
+                let absolute = entry.hasPrefix("/") ? entry : (file.base as NSString).appendingPathComponent(entry)
+                if !own.contains((absolute as NSString).standardizingPath) { found.append("bunfig.toml preload \(entry)") }
+            }
+        }
+
+        return found
+    }
+
+    /// The inode change time of a path (a rename, a delete inside a folder and a write all move it), or nil.
+    private static func changeTime(of path: String) -> Date? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.st_ctimespec.tv_sec) + TimeInterval(info.st_ctimespec.tv_nsec) / 1_000_000_000)
+    }
+
+    /// What `bunfigPreloads` returns for a `preload` value it cannot read as a list of TOML strings. It is no real
+    /// path, so it is never one of a checkout's own preloads, and the caller fails closed (the approval has no window).
+    static let unreadablePreload = "(the preload value is not a list of strings)"
+
+    /// The strings of the top-level `preload` key of a bunfig.toml (before its first `[table]`, where `[test]` has its
+    /// own `preload` that only `bun test` reads). The key may be bare or quoted; a string is basic (`"x"`, with escapes)
+    /// or literal (`'x'`), single-line or triple-quoted. A value that is anything else, an escape this does not know,
+    /// or a list that does not end, gives `unreadablePreload`: a config this cannot fully understand is not trusted.
+    static func bunfigPreloads(in text: String) -> [String] {
+        var top: [Substring] = []
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if raw.trimmingCharacters(in: .whitespaces).hasPrefix("[") { break }
+            top.append(raw)
+        }
+
+        let joined = top.joined(separator: "\n")
+        guard let key = joined.range(of: #"(?m)^\s*(?:preload|"preload"|'preload')\s*="#, options: .regularExpression) else {
+            return []
+        }
+
+        var scanner = TOMLScanner(Array(joined[key.upperBound...]))
+        scanner.skipSpace(newlines: false)
+        if scanner.peek == "[" {
+            scanner.advance()
+            var entries: [String] = []
+            while true {
+                scanner.skipSpace(newlines: true)
+                if scanner.peek == "]" { return entries.filter { !$0.isEmpty } }
+                if scanner.peek == "," {
+                    scanner.advance()
+                    continue
+                }
+
+                guard let entry = scanner.string() else { return [unreadablePreload] }
+                entries.append(entry)
+            }
+        }
+
+        guard let entry = scanner.string() else { return [unreadablePreload] }
+        return entry.isEmpty ? [] : [entry]
+    }
+
+    /// A cursor over TOML text that reads strings and skips comments: just what `bunfigPreloads` needs.
+    private struct TOMLScanner {
+        let chars: [Character]
+        var index = 0
+
+        init(_ chars: [Character]) { self.chars = chars }
+
+        var peek: Character? { index < chars.count ? chars[index] : nil }
+
+        mutating func advance() { index += 1 }
+
+        /// Skips blanks and, with `newlines`, line ends and `#` comments.
+        mutating func skipSpace(newlines: Bool) {
+            while let c = peek {
+                if c == " " || c == "\t" {
+                    advance()
+                } else if newlines, c == "\n" || c == "\r" {
+                    advance()
+                } else if newlines, c == "#" {
+                    while let d = peek, d != "\n" { advance() }
+                } else {
+                    return
+                }
+            }
+        }
+
+        private func has(_ quote: Character, times: Int) -> Bool {
+            index + times <= chars.count && chars[index..<index + times].allSatisfy { $0 == quote }
+        }
+
+        /// One TOML string at the cursor, or nil when none starts here or it does not end.
+        mutating func string() -> String? {
+            guard let quote = peek, quote == "\"" || quote == "'" else { return nil }
+            let multiline = has(quote, times: 3)
+            index += multiline ? 3 : 1
+            var out = ""
+            while let c = peek {
+                if multiline ? has(quote, times: 3) : c == quote {
+                    index += multiline ? 3 : 1
+                    return out
+                }
+
+                if !multiline, c == "\n" { return nil }
+                if quote == "\"", c == "\\" {
+                    advance()
+                    guard let escaped = peek else { return nil }
+                    switch escaped {
+                    case "\"", "\\": out.append(escaped)
+                    case "n": out.append("\n")
+                    case "t": out.append("\t")
+                    default: return nil
+                    }
+                    advance()
+                    continue
+                }
+
+                out.append(c)
+                advance()
+            }
+
+            return nil
+        }
     }
 
     /// Why this request can only be allowed once, or nil when an allow may be remembered.

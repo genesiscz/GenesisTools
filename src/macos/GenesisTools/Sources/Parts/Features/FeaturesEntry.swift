@@ -135,6 +135,12 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
                 FileHandle.standardError.write(Data("snapshot: the settings data did not load within 45 s\n".utf8))
                 exit(1)
             }
+            // The open list is a child window that exists only after its field came into sight and opened it, which
+            // takes about a second of steady layout. Capturing before that left it out of the picture.
+            guard await AutocompleteLaunch.waitUntilOpened() else {
+                FileHandle.standardError.write(Data("snapshot: the requested autocomplete field did not open its list\n".utf8))
+                exit(1)
+            }
             try? await Task.sleep(for: .seconds(delay))
             guard let capture = await WindowSnapshot.capture(window) else {
                 FileHandle.standardError.write(Data("snapshot: no content view\n".utf8))

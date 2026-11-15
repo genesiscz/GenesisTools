@@ -296,7 +296,8 @@ public final class PomodoroEngine: ObservableObject {
     private func resumeTransition() -> LedgerTransition? {
         guard state == .paused else { return nil }
         let now = nowMs(), pause = pauseId, session = sessionId, accrued = accruedPauseMs
-        let wasOverrunning = remainingSec <= 0
+        let canOverrun = phase == .flow && plan.allowOverrun
+        let wasOverrunning = canOverrun && remainingSec <= 0
         return { store in
             if let pause { try? store.closePause(id: pause, at: now) }
             if let session { try? store.closeOrphanedPauses(sessionId: session, keeping: nil, now: now) }
@@ -306,7 +307,7 @@ public final class PomodoroEngine: ObservableObject {
                 pauseReason = nil
                 pauseId = nil
                 accruedPauseMs = clampedPause(paused, now: now)
-                state = wasOverrunning || remainingSec <= 0 ? .overrun : .running
+                state = wasOverrunning || (canOverrun && remainingSec <= 0) ? .overrun : .running
                 if wasOverrunning { remainingSec = min(remainingSec, 0) }
                 armDNDIfNeeded()
                 startTicker()

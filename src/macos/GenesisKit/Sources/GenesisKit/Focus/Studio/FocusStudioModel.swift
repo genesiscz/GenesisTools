@@ -134,6 +134,10 @@ public final class FocusStudioModel: ObservableObject {
     /// `FocusController` decides what a session window is.
     public var onOpenSession: ((Int64) -> Void)?
 
+    /// The label of the range the cached totals and cards describe. `range` changes the moment the user steps, while
+    /// the numbers stay the old ones until the matching reload applies, so the digest heading reads this instead.
+    private var appliedRangeLabel: String?
+
     private let store: ActivityStore
 
     public init(store: ActivityStore) {
@@ -195,6 +199,7 @@ public final class FocusStudioModel: ObservableObject {
     }
 
     private func reloadSnapshot(now: Date, ledger: LedgerSnapshot) {
+        appliedRangeLabel = range.label
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let from = range.fromMs
         let to = range.toMs
@@ -494,7 +499,7 @@ public final class FocusStudioModel: ObservableObject {
 
     /// The digest the CLI prints, for the copy button — same numbers, same wording.
     public func digestMarkdown() -> String {
-        var lines = ["# Focus digest — \(range.label)", ""]
+        var lines = ["# Focus digest — \(appliedRangeLabel ?? range.label)", ""]
         lines.append("Focused \(FocusFormat.duration(totals.focusedMs)) · idle \(FocusFormat.duration(totals.idleMs)) · "
             + "\(totals.switches) context switches · longest unbroken \(FocusFormat.duration(totals.longestStretchMs))")
         lines.append("Keystrokes \(keys)")

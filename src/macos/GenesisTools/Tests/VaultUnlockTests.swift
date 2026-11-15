@@ -423,6 +423,62 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(injected.onceOnlyReason, "extra code may be loaded")
     }
 
+    func testBunfigPreloadsAreReadFromTheTopLevelKeyOnly() {
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"./a.ts\", \"b.ts\"] # two\n[install]\nx = 1"), ["./a.ts", "b.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = \"./one.ts\"\n"), ["./one.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "[test]\npreload = [\"x.ts\"]"), [])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "# preload = [\"x.ts\"]\n"), [])
+    }
+
+    func testBunfigPreloadsReadLiteralStringsQuotedKeysAndMultilineLists() {
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = ['./evil.ts']"), ["./evil.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "\"preload\" = [\"./a.ts\"]"), ["./a.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "'preload' = \"./b.ts\""), ["./b.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\n  \"a.ts\", # one\n  'b.ts',\n]\n"), ["a.ts", "b.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"has # hash.ts\"]"), ["has # hash.ts"])
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = \"\"\"./m.ts\"\"\""), ["./m.ts"])
+    }
+
+    func testBunfigPreloadsThatCannotBeReadFailClosed() {
+        let unreadable = [VaultCaller.unreadablePreload]
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"a.ts\""), unreadable)
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [./a.ts]"), unreadable)
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = [\"\\u0041.ts\"]"), unreadable)
+        XCTAssertEqual(VaultCaller.bunfigPreloads(in: "preload = { a = 1 }"), unreadable)
+    }
+
+    func testABunfigPreloadThatIsNotTheCheckoutsOwnIsExtraCode() throws {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
+        let home = root + "/home", work = root + "/work"
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "preload = [\"./evil.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
+
+        let started = Date().addingTimeInterval(60)
+        let found = VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: started)
+        XCTAssertEqual(found, ["bunfig.toml preload ./evil.ts"])
+        let own: Set<String> = [((work + "/evil.ts") as NSString).standardizingPath]
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: own, startedAt: started), [])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: nil, home: home, xdgConfigHome: nil, own: own, startedAt: started).isEmpty,
+                       "an unknown working folder fails closed")
+    }
+
+    func testAWorkingFolderChangedAfterTheProcessStartedFailsClosed() throws {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
+        let home = root + "/home", work = root + "/work"
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        // A preload deleted its bunfig.toml: no file is left to read, but the folder changed after the start.
+        let before = Date().addingTimeInterval(-60)
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: before).isEmpty)
+        let after = Date().addingTimeInterval(60)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after), [])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: nil).isEmpty,
+                       "an unknown start time fails closed")
+    }
+
     func testGenesisToolsOwnPreloadsAreNotExtraCodeAndDoNotHideTheScript() {
         // `tools claude login-long admin` as the tools wrapper starts it (2026-10-15: the window named the preload as
         // the program and allowed it only once).
@@ -826,6 +882,33 @@ final class VaultUnlockTests: XCTestCase {
                        ["src/codex/daemon.ts": hour, "src/ai/commands/usage/poll-daemon.ts": 2 * hour])
         XCTAssertFalse(VaultDaemonNotices.mark("src/codex/daemon.ts", now: hour, in: folder + "/missing/stamp.json"),
                        "a stamp that cannot be saved says so")
+    }
+
+    func testOnlyOneReservationOfADaemonNoticeSucceedsInTheHour() throws {
+        let folder = NSTemporaryDirectory() + "vault-daemon-reserve-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow-notified.json"
+        XCTAssertTrue(VaultDaemonNotices.reserve("src/codex/daemon.ts", now: 1_000, everyHours: 24, in: path))
+        XCTAssertFalse(VaultDaemonNotices.reserve("src/codex/daemon.ts", now: 2_000, everyHours: 24, in: path))
+        XCTAssertTrue(VaultDaemonNotices.reserve("src/ai/commands/usage/poll-daemon.ts", now: 2_000, everyHours: 24, in: path),
+                      "another daemon's stamp is kept, not overwritten")
+        XCTAssertEqual(VaultDaemonNotices.load(from: path).count, 2)
+    }
+
+    func testAHeldReservationLockSkipsTheNoticeInsteadOfWaiting() throws {
+        let folder = NSTemporaryDirectory() + "vault-daemon-lock-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow-notified.json"
+        let held = open(path + ".lock", O_CREAT | O_RDWR, 0o600)
+        XCTAssertGreaterThanOrEqual(held, 0)
+        XCTAssertEqual(flock(held, LOCK_EX), 0)
+        defer { close(held) }
+        let started = Date()
+        XCTAssertFalse(VaultDaemonNotices.reserve("src/codex/daemon.ts", now: 1_000, everyHours: 24, in: path))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        XCTAssertTrue(VaultDaemonNotices.load(from: path).isEmpty, "no stamp is written without the lock")
     }
 
     func testTheSettingsFileKeepsDefaultsForMissingKeysAndTurnsOffWhenItDoesNotDecode() throws {
