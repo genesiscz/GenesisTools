@@ -208,6 +208,20 @@ export const sourceSchema = z.discriminatedUnion("kind", [
         /** A preset name (`tools music presets`) or a whole patch. */
         patch: z.union([z.string().min(1), patchSchema]),
     }),
+    z.object({
+        kind: z.literal("sample"),
+        /** An audio file the user owns: a path, absolute or relative to the working folder. */
+        file: z.string().min(1),
+        /**
+         * hit: every note plays the whole file. pitched: the note moves the speed around `root`, and the note
+         * length gates it. slices: the file is cut in `slices` equal parts, and note 36 plays the first.
+         */
+        mode: z.enum(["hit", "pitched", "slices"]).default("hit"),
+        root: z.number().int().min(0).max(127).default(60),
+        slices: z.number().int().min(1).max(128).default(16),
+        /** Speed factor. Score bpm divided by loop bpm fits a loop to the score. */
+        speed: z.number().positive().max(8).default(1),
+    }),
 ]);
 
 const looseObject = z.record(z.string(), z.unknown());
@@ -302,6 +316,7 @@ export type Score = z.infer<typeof scoreSchema>;
 export type Note = z.infer<typeof noteSchema>;
 export type ScorePart = Score["parts"][number];
 export type Source = z.infer<typeof sourceSchema>;
+export type SampleSource = Extract<Source, { kind: "sample" }>;
 export type Envelope = z.infer<typeof envelopeSchema>;
 export type Oscillator = z.infer<typeof oscillatorSchema>;
 export type Patch = z.infer<typeof patchSchema>;
