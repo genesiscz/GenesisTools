@@ -627,6 +627,11 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         try body.write(to: draft, atomically: false, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: draft.path)
         do { try FileManager.default.linkItem(at: draft, to: script) } catch CocoaError.fileWriteFileExists {}
+        // A kept script whose execute bit an earlier run removed (its content is keyed by the hash, so only the mode
+        // can be wrong) is repaired, or every later run would get a fixture that cannot launch.
+        if !FileManager.default.isExecutableFile(atPath: script.path) {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        }
         return script
     }
     /// The reply box microphone dictates live in both modes (Martin, 2026-10-23: the words should appear "live" while

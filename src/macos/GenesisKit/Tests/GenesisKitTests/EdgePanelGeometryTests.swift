@@ -1478,8 +1478,9 @@ final class WidgetConnectionTests: XCTestCase {
         model.error = nil
         XCTAssertTrue(model.connectionLost, "dismissing the error keeps Reconnect")
 
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o644], ofItemAtPath: fixture.directory.appendingPathComponent("tools").path)
+        // Remove the run's own link, never chmod it: the link points at the script every run shares
+        // (`persistentScript`), and a chmod follows the link and leaves that script unusable for later runs.
+        try FileManager.default.removeItem(at: fixture.directory.appendingPathComponent("tools"))
         model.start()
         XCTAssertNotNil(model.error, "the tools binary can no longer launch")
         XCTAssertTrue(model.connectionLost, "a reconnect that cannot launch keeps Reconnect beside the snapshot")
