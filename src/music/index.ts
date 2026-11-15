@@ -72,10 +72,10 @@ program
         out.result(name ? resolvePatch(name) : { presets: Object.keys(SYNTH_PRESETS) });
     });
 
-const samples = program.command("samples").description("Manage the pinned CC0 drum sample sets");
+const samples = program.command("samples").description("Manage the pinned drum sample sets");
 samples
     .command("install")
-    .argument("[set]", "One set; all sets without it")
+    .argument("[set]", "One set; the default sets without it (an opt-in set installs only by name)")
     .description("Download the missing files of the pinned sets and verify each SHA-256")
     .action(async (set?: string) => {
         out.result(await installSamples(set));
