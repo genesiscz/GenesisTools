@@ -54,6 +54,8 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
         try {
             signal.throwIfAborted();
             const { toolChanges, file, rows, warning } = await readSessionChangeLog(session);
+            // A cancel the worker handled during the import must stop the job before the fold, which takes no signal.
+            signal.throwIfAborted();
             const outcome = await toolChanges.toolChangesJson({ session, toolIds, file, rows, storeBlobs: false });
             if ("error" in outcome) {
                 return { stdout: "", stderr: `${warning}${outcome.error}\n`, exit: 1 };
@@ -102,6 +104,8 @@ export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: numbe
         try {
             signal.throwIfAborted();
             const { toolChanges, file, rows, warning } = await readSessionChangeLog(session);
+            // A cancel the worker handled during the import must stop the job before the fold, which takes no signal.
+            signal.throwIfAborted();
             const { sessionTurnChanges, turnChangesJson } = toolChanges;
             const options = { json: true, lastTurns: String(lastTurns), storeBlobs };
             const result = await sessionTurnChanges({ session, file, rows, options, count: lastTurns });

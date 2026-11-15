@@ -1219,6 +1219,23 @@ private struct WidgetSettingsLoading: View {
 
 private struct WidgetSettingsError: View {
     @ObservedObject var model: WidgetModel
+    /// The report of the failure on screen, made when it first showed, so Details opens the machine's state at the
+    /// failure and not at the click.
+    @State private var occurrence: (message: String, report: FailureReport)?
+
+    private func capture(_ error: String?) {
+        guard let error else {
+            occurrence = nil
+            return
+        }
+
+        guard occurrence?.message != error else { return }
+        let report = FailureReport.unexpected(
+            error, outcome: "A widget setting failed", action: "Change a widget setting", area: "widget", app: .launch)
+        occurrence = (error, report)
+        FailureReporter.shared.prepare(report)
+    }
+
     var body: some View {
         if let error = model.error {
             HStack {
@@ -1227,11 +1244,12 @@ private struct WidgetSettingsError: View {
                 Spacer()
                 KitButton("Details", symbol: "doc.text.magnifyingglass", kind: .ghost, size: .small,
                           identifier: "widget.settings.error.details") {
-                    FailureReporter.shared.showDetails(FailureReport.unexpected(
-                        error, outcome: "A widget setting failed", action: "Change a widget setting", area: "widget", app: .launch))
+                    if let report = occurrence?.report { FailureReporter.shared.showDetails(report) }
                 }
                 Button("Dismiss") { model.error = nil }
             }.padding(10).background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .onAppear { capture(model.error) }
+            .onChange(of: model.error) { _, now in capture(now) }
         }
     }
 }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { getEventListeners } from "node:events";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -1006,6 +1007,72 @@ describe("DoorWorkerRunner", () => {
         expect(workers[0].messages.at(-1)).toEqual({ op: "cancel", id: 1 });
         reply(workers[0], { id: 1, ok: true, result: { stdout: "", stderr: "cancelled", exit: 130 } });
         expect((await answer).exit).toBe(130);
+        runner.stop();
+    });
+
+    it("arms idle cleanup when the worker answers the last job its caller gave up", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create, idleMs: 10 });
+        const controller = new AbortController();
+        const answer = job(runner, controller.signal);
+        controller.abort();
+        expect((await answer).exit).toBe(130);
+        expect(runner.running).toBe(1);
+
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "", stderr: "cancelled", exit: 130 } });
+        expect(runner.running).toBe(0);
+        await Bun.sleep(60);
+        expect(workers[0].terminated).toBe(true);
+    });
+
+    it("removes the abort listener when a job finishes or fails", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create, maxInFlight: 1 });
+        const controller = new AbortController();
+        const first = job(runner, controller.signal);
+        const queued = job(runner, controller.signal);
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(2);
+
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "one", stderr: "", exit: 0 } });
+        await first;
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+
+        workers[0].onerror?.({ message: "gone" } as ErrorEvent);
+        await expect(queued).rejects.toBeInstanceOf(DoorUnsupported);
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+        runner.stop();
+    });
+
+    it("never sends a job whose caller already gave up", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create });
+        const controller = new AbortController();
+        controller.abort();
+
+        expect((await job(runner, controller.signal)).exit).toBe(130);
+        expect(workers.flatMap((worker) => worker.messages)).toEqual([]);
+        runner.stop();
+    });
+
+    it("answers a caller that gives up at once, and keeps a job it has not sent out of the worker", async () => {
+        const { workers, create } = fakeWorkers();
+        const runner = new DoorWorkerRunner({ createWorker: create, maxInFlight: 1 });
+        const first = job(runner);
+        const controller = new AbortController();
+        const second = job(runner, controller.signal);
+        const third = job(runner);
+
+        expect(runner.running).toBe(1);
+        expect(runner.queued).toBe(2);
+        controller.abort();
+        expect((await second).exit).toBe(130);
+        expect(runner.queued).toBe(1);
+
+        reply(workers[0], { id: 1, ok: true, result: { stdout: "one", stderr: "", exit: 0 } });
+        expect((await first).stdout).toBe("one");
+        expect(workers[0].messages.map((message) => ("id" in message ? message.id : message.op))).toEqual([1, 3]);
+        reply(workers[0], { id: 3, ok: true, result: { stdout: "three", stderr: "", exit: 0 } });
+        expect((await third).stdout).toBe("three");
         runner.stop();
     });
 

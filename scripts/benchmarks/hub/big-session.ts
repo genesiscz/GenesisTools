@@ -17,11 +17,11 @@
  * not thrown).
  *
  * Usage:
- *   bun scripts/benchmarks/hub/big-session.ts --runs 3 [--session <id>] [--before <checkout>]
+ *   bun scripts/benchmarks/hub/big-session.ts --runs 5 [--session <id>] [--before <checkout>]
  *   bun scripts/benchmarks/hub/big-session.ts --baseline | --compare
  */
 import { readdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -32,7 +32,8 @@ const BASELINE_NAME = "hub-big-session";
 const REPO = join(import.meta.dir, "..", "..", "..");
 const CHILD = join(import.meta.dir, "big-session-child.ts");
 const argv = process.argv.slice(2);
-const args = parseBenchArgs(argv);
+/** Convention: N >= 5 for any timing metric, so five is both the default and the lowest `--runs`. */
+const args = parseBenchArgs(argv, { runs: { fallback: 5, minimum: 5 } });
 
 /** The largest main transcript under the Claude session roots: `<root>/<project>/<session id>.jsonl`. */
 function largestClaudeSession(): { id: string; bytes: number } | null {
@@ -51,8 +52,14 @@ function largestClaudeSession(): { id: string; bytes: number } | null {
             let files: string[];
             try {
                 files = readdirSync(join(root, project)).filter((file) => file.endsWith(".jsonl"));
-            } catch {
-                // A file beside the project folders: not a project.
+            } catch (error) {
+                // A file beside the project folders is not a project; any other failure hides a transcript.
+                if (!(error instanceof Error && "code" in error && error.code === "ENOTDIR")) {
+                    out.log.warn(
+                        `${join(root, project)}: ${error instanceof Error ? error.message : String(error)}; its transcripts are not counted`
+                    );
+                }
+
                 continue;
             }
 
@@ -76,7 +83,9 @@ if (!session) {
     throw new Error("no Claude transcript found; pass --session <id>");
 }
 
-const before = stringFlag(argv, "--before");
+const beforeFlag = stringFlag(argv, "--before");
+/** The child imports this path from its own folder, so a relative `--before` is made absolute against the repo root. */
+const before = beforeFlag ? resolve(REPO, beforeFlag) : undefined;
 const arms: Array<{ name: string; checkout: string }> = [
     { name: "current", checkout: REPO },
     ...(before ? [{ name: "before", checkout: before }] : []),
@@ -151,7 +160,7 @@ await finishBench({
     title: `The hub's calls for one very large session, through the server's doors (session ${session.slice(0, 8)})`,
     args,
     runs,
-    lowerIsBetter: Object.keys(runs[0] ?? {}).filter(timed),
+    lowerIsBetter: Object.keys(runs[0] ?? {}).filter((key) => timed(key) || key.endsWith(".failed")),
     // Under 50 ms a stall or a call is noise on a busy Mac; memory moves by tens of MB between runs.
     floor: Object.fromEntries(Object.keys(runs[0] ?? {}).map((key) => [key, timed(key) ? 50 : 0])),
     notes: `session ${session}${largest ? ` (the largest Claude transcript, ${Math.round(largest.bytes / 1024 / 1024)} MB)` : ""}, live files, read-only${before ? `; before = ${before}` : ""}`,

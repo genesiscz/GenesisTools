@@ -316,9 +316,9 @@ enum HubMenuCommands {
         return item
     }
 
-    /// The main view's review: the PR's in PRs mode, the session's otherwise.
+    /// The review on screen: the PR's in PRs mode, the session's otherwise, and none where its Changes pane is closed.
     static func review(of hub: HubModel) -> ReviewModel? {
-        hub.mainReview
+        hub.visibleReview
     }
 
     private static func toggleGlass() {

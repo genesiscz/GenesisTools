@@ -44,7 +44,7 @@ public final class FailureReporter {
         onOpen?("details", report)
         prepare(report)
         panel.show(report, options: options(), retry: retry, issue: issueTarget(),
-                   environment: { [weak self] in await self?.preparedReport(report).environment })
+                   prepared: { [weak self] in await self?.preparedReport(report) })
     }
 
     /// Opens the issue draft for `report` with the context captured for that failure.

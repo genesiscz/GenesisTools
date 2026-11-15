@@ -64,6 +64,9 @@ final class HubStuckStore: ObservableObject {
     private var polling = false
     /// The ids asked for while a check ran: one more check follows it, for the newest ask only.
     private var queued: [String]?
+    /// The newest ask, empty included: a check still running for an older, non-empty set must not publish once the
+    /// watched set is empty.
+    private var latest: [String] = []
 
     /// Polls until cancelled (the session list's `.task` ends it when the watched set changes).
     func watch(_ sessionIds: [String]) async {
@@ -78,7 +81,10 @@ final class HubStuckStore: ObservableObject {
     }
 
     func refresh(_ sessionIds: [String]) async {
+        latest = sessionIds
         guard !sessionIds.isEmpty else {
+            // An empty set supersedes a queued check as well: it must not start and bring obsolete verdicts back.
+            queued = nil
             if !verdicts.isEmpty { verdicts = [:] }
             return
         }
@@ -105,6 +111,11 @@ final class HubStuckStore: ObservableObject {
         let result = await Task.detached(priority: .utility) { Result { try check(sessionIds) } }.value
         switch result {
         case .success(let envelope):
+            guard !latest.isEmpty else {
+                span.end("dropped: nothing is watched any more")
+                return
+            }
+
             var next: [String: StuckVerdict] = [:]
             for session in envelope.sessions {
                 if let verdict = session.verdict { next[session.sessionId] = verdict }

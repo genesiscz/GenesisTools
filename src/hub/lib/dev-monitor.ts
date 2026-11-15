@@ -19,7 +19,7 @@ import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { darwinKernel, processPlatform } from "@genesiscz/utils/process/os";
-import { listProcessRows, readProcess } from "@genesiscz/utils/process/processes";
+import { listProcessRows, readProcess, readProcessesWithUsage } from "@genesiscz/utils/process/processes";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -120,6 +120,11 @@ export interface NamedProcess {
 async function readNamedProcesses(pids: number[]): Promise<NamedProcess[]> {
     if (processPlatform() === "darwin" && !darwinKernel()) {
         return listProcessRows({ timeoutMs: 1000 });
+    }
+
+    if (processPlatform() === "win32") {
+        // One process-table read for all pids; `readProcess` would start one PowerShell per pid.
+        return readProcessesWithUsage(pids).map((entry) => ({ pid: entry.pid, command: entry.command ?? entry.name }));
     }
 
     return pids.flatMap((pid) => {

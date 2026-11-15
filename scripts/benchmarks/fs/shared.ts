@@ -65,12 +65,17 @@ export function stringFlag(argv: string[], flag: string): string | undefined {
     return index < 0 ? undefined : argv[index + 1];
 }
 
-export function parseBenchArgs(argv: string[]): BenchArgs {
+export function parseBenchArgs(
+    argv: string[],
+    options: { runs?: { fallback: number; minimum: number } } = {}
+): BenchArgs {
+    const runs = options.runs ?? { fallback: 3, minimum: 1 };
+
     return {
         baseline: argv.includes("--baseline"),
         compare: argv.includes("--compare"),
         json: argv.includes("--json"),
-        runs: numberFlag(argv, "--runs", 3, 1),
+        runs: numberFlag(argv, "--runs", runs.fallback, runs.minimum),
         warmup: numberFlag(argv, "--warmup", 1, 0),
         files: numberFlag(argv, "--files", 20, 1),
     };

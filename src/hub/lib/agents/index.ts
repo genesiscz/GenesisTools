@@ -82,7 +82,7 @@ const SESSION_PS_TIMEOUT_MS = 3_000;
 
 /**
  * One reader of the open sessions for the whole process. Callers that ask while a read with their timeout runs get
- * that read, and a finished read is kept for `OPEN_SESSIONS_REUSE_MS`, or for ten times its own length when that is
+ * that read, and a finished read, a failed one too, is kept for `OPEN_SESSIONS_REUSE_MS`, or for ten times its own length when that is
  * longer (at most a minute).
  *
  * On 2026-11-10, at a load average of 550, the hub server's refreshes each started a `ps` of their own: five reports
@@ -94,11 +94,25 @@ export function openSessionsReader(
     clock: () => number = Date.now
 ): (psTimeoutMs?: number) => Promise<Set<string>> {
     let memo: { until: number; ids: Set<string> } | undefined;
+    /** A failed read, kept per timeout like `running`: a one-session read cut at 3 s says nothing about the whole table. */
+    const failures = new Map<number | undefined, { until: number; error: unknown }>();
     const running = new Map<number | undefined, Promise<Set<string>>>();
+    const keptFor = (startedAt: number, finishedAt: number) =>
+        finishedAt +
+        Math.max(
+            OPEN_SESSIONS_REUSE_MS,
+            Math.min((finishedAt - startedAt) * OPEN_SESSIONS_PACE, OPEN_SESSIONS_REUSE_MAX_MS)
+        );
 
     return (psTimeoutMs) => {
         if (memo && clock() < memo.until) {
             return Promise.resolve(memo.ids);
+        }
+
+        const failed = failures.get(psTimeoutMs);
+
+        if (failed && clock() < failed.until) {
+            return Promise.reject(failed.error);
         }
 
         const shared = running.get(psTimeoutMs);
@@ -109,12 +123,19 @@ export function openSessionsReader(
 
         const startedAt = clock();
         const started = read(psTimeoutMs)
-            .then((ids) => {
-                const paced = Math.min((clock() - startedAt) * OPEN_SESSIONS_PACE, OPEN_SESSIONS_REUSE_MAX_MS);
-                memo = { until: startedAt + Math.max(OPEN_SESSIONS_REUSE_MS, paced), ids };
+            .then(
+                (ids) => {
+                    failures.delete(psTimeoutMs);
+                    // From the finish: a read that lasted longer than its own reuse window must still be shared.
+                    memo = { until: keptFor(startedAt, clock()), ids };
 
-                return ids;
-            })
+                    return ids;
+                },
+                (error) => {
+                    failures.set(psTimeoutMs, { until: keptFor(startedAt, clock()), error });
+                    throw error;
+                }
+            )
             .finally(() => {
                 running.delete(psTimeoutMs);
             });
