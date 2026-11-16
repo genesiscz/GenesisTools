@@ -13,11 +13,11 @@ import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
 import { publishAudio, runAudio, withMusicSignal } from "./process";
-import { fluidSynthArgs, renderScore } from "./render";
+import { fluidSynthArgs, renderScore, searchBoost } from "./render";
 import { setsToInstall } from "./samples";
 import { builtinScore, TRACK_KEYS } from "./scores";
 import { PINNED_SOUNDFONT } from "./soundfont";
-import { limit } from "./space";
+import { guardLows, limit } from "./space";
 import { needsStems, playSample, resolvePatch } from "./stems";
 import { renderSynth } from "./synth";
 import { TAPS, tapAudio, tapAudition } from "./taps";
@@ -51,7 +51,7 @@ const mix = {
 
 describe("music score and MIDI", () => {
     test("keeps all four source compositions as independently built, deterministic data", () => {
-        expect(TRACK_KEYS).toEqual(["Pulse", "PulseLight", "Calm", "Piano", "Orbit", "Tremor"]);
+        expect(TRACK_KEYS).toEqual(["Pulse", "PulseLight", "Calm", "Piano", "Orbit", "Tremor", "Halo"]);
 
         for (const key of TRACK_KEYS) {
             const first = builtinScore(key);
@@ -331,6 +331,47 @@ describe("sources, synth and stems", () => {
         limit(buffer, 0.5);
         expect(Math.max(...buffer.left.map(Math.abs))).toBeLessThanOrEqual(0.5 + 1e-6);
         expect(buffer.left[100]).toBeCloseTo(Math.sin(100 / 9) * 0.2, 5);
+    });
+
+    test("the guard cuts a sub that stands far over the rest and leaves a balanced mix alone", () => {
+        const tones = (low: number, high: number) => {
+            const buffer = stereo(RATE * 2);
+
+            for (let n = 0; n < buffer.left.length; n++) {
+                const phase = (2 * Math.PI * n) / RATE;
+                buffer.left[n] = low * Math.sin(50 * phase) + high * Math.sin(1000 * phase);
+                buffer.right[n] = buffer.left[n];
+            }
+
+            return buffer;
+        };
+        const power = (buffer: { left: Float32Array }) =>
+            buffer.left.subarray(RATE).reduce((sum, sample) => sum + sample * sample, 0);
+        const heavy = tones(0.5, 0.02);
+        const before = power(heavy);
+        const cut = guardLows(heavy, 6);
+        expect(cut).toBeGreaterThan(6);
+        expect(cut).toBeLessThanOrEqual(9.01);
+        expect(10 * Math.log10(power(heavy) / before)).toBeLessThan(-5);
+
+        const balanced = tones(0.2, 0.2);
+        const untouched = power(balanced);
+        expect(guardLows(balanced, 6)).toBeCloseTo(0, 3);
+        expect(power(balanced)).toBeCloseTo(untouched, 3);
+    });
+
+    test("the master stops at the loss cap and ships quieter, and without the cap it refuses", async () => {
+        // A limiter that gives a dB of loudness for each dB of gain up to 10 dB, and nothing after that.
+        const limited = async (boostDb: number) => -30 + Math.min(boostDb, 10);
+        const capped = await searchBoost({ beforeLufs: -30, targetLufs: -8, maxLossDb: 3, limited });
+        expect(capped.lufs).toBe(-20);
+        expect(capped.lossDb).toBeLessThanOrEqual(3.1);
+        expect(capped.lossDb).toBeGreaterThan(2.7);
+
+        const free = { beforeLufs: -30, targetLufs: -8, maxLossDb: Number.POSITIVE_INFINITY };
+        await expect(searchBoost({ ...free, limited })).rejects.toThrow("The limiter stays");
+        const reached = await searchBoost({ ...free, limited: async (boostDb) => -30 + boostDb * 0.9 });
+        expect(Math.abs(reached.lufs + 8)).toBeLessThan(0.15);
     });
 });
 

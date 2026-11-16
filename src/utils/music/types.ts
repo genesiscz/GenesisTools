@@ -194,6 +194,11 @@ export const masterSchema = z.object({
     limiter: z.boolean().default(false),
     /** How many dB over the ceiling the clipper passes on to the limiter. */
     clip: z.number().min(0).max(12).optional(),
+    /**
+     * With the limiter: keep the low end near the level of the rest, and ship under the loudness target instead
+     * of a master that the limiter crushed. The render result names what the guard did.
+     */
+    guard: z.boolean().default(true),
 });
 
 /** Where a part's sound comes from. */
