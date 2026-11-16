@@ -3,13 +3,13 @@ import { writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { gain, RATE, type Stereo } from "./dsp";
-import { scale } from "./effects";
+import { filterPass, scale } from "./effects";
 import { fluidSynthArgs } from "./fluidsynth";
 import { measureAudio, parseLoudness } from "./measure";
 import { encodeMidi } from "./midi";
 import { publishAudio, runAudio, withMusicScratch } from "./process";
 import { soundfontPaths, verifySoundfont } from "./soundfont";
-import { limit, softClip } from "./space";
+import { guardLows, limit, softClip } from "./space";
 import { mixScore, needsStems, readFloat, writeFloatWav } from "./stems";
 import { type AudioMeasurement, MAX_LUFS, MIN_LUFS, type Score, scoreSchema } from "./types";
 
@@ -18,6 +18,22 @@ export { fluidSynthArgs } from "./fluidsynth";
 /** Room the limiter leaves under the ceiling at first. A lossy encoder lifts the peaks of limited audio. */
 const LIMITER_MARGIN_DB = 1.2;
 const LIMITER_ATTEMPTS = 5;
+/** Loudness the clipper and the limiter may take away. Past it the bass tears, so a guarded master ships quieter. */
+export const MAX_LIMITER_LOSS_DB = 3;
+/** How far the low end may stand over the rest of a guarded mix, in dB. */
+const LOW_GUARD_DB = 6;
+/** Rumble under this frequency moves a speaker and takes headroom, and nobody hears it. */
+const RUMBLE_HZ = 25;
+
+/** What the master did to a score with `master.limiter`. */
+export interface MasterReport {
+    /** Loudness the clipper and the limiter took away, in dB. */
+    limiterLossDb: number;
+    /** How far under the loudness target the file ships because of the loss cap. 0 when it reached the target. */
+    shortOfTargetDb: number;
+    /** The deepest cut of the low end by the guard, in dB. */
+    lowCutDb: number;
+}
 
 class MasterMiss extends Error {
     constructor(
@@ -60,8 +76,58 @@ async function analyze(file: string, trim: string): Promise<{ lufs: number; true
 }
 
 /**
+ * Find the input gain that brings a limited mix to the loudness target. Loudness after limiting is not linear in
+ * the gain, so the gain is searched. `limited` applies a gain and answers the loudness that came out. When the
+ * limiter would take away more than `maxLossDb`, the search stops at the loudest gain under that loss.
+ */
+export async function searchBoost(options: {
+    beforeLufs: number;
+    targetLufs: number;
+    maxLossDb: number;
+    limited: (boostDb: number) => Promise<number>;
+}): Promise<{ boostDb: number; lufs: number; lossDb: number }> {
+    const { beforeLufs, targetLufs, maxLossDb } = options;
+    let boost = targetLufs - beforeLufs;
+    let tooMuch = Number.POSITIVE_INFINITY;
+    let best: { boostDb: number; lufs: number; lossDb: number } | undefined;
+    let miss = 0;
+
+    for (let pass = 0; pass < 16; pass++) {
+        const lufs = await options.limited(boost);
+        const lossDb = beforeLufs + boost - lufs;
+        miss = targetLufs - lufs;
+
+        if (lossDb > maxLossDb + 0.1) {
+            tooMuch = boost;
+            boost = best ? (best.boostDb + boost) / 2 : boost - (lossDb - maxLossDb) * 1.3;
+            continue;
+        }
+
+        if (miss < -0.15) {
+            boost += miss;
+            continue;
+        }
+
+        best = { boostDb: boost, lufs, lossDb };
+
+        if (miss < 0.15 || tooMuch - boost < 0.3) {
+            break;
+        }
+
+        // Under heavy limiting a dB of input gain adds less than a dB of loudness.
+        boost = Number.isFinite(tooMuch) ? (boost + tooMuch) / 2 : boost + miss * 1.5;
+    }
+
+    if (!best || (!Number.isFinite(tooMuch) && miss >= 0.3)) {
+        throw new Error(`The limiter stays ${miss.toFixed(1)} LU under ${targetLufs} LUFS; lower the loudness target`);
+    }
+
+    return best;
+}
+
+/**
  * Bring the mix to the loudness target under a sample ceiling: a soft clipper takes the short peaks, a look-ahead
- * limiter the rest. Loudness after limiting is not linear in the input gain, so the gain is searched.
+ * limiter the rest. The file holds the limited mix at the gain the search chose.
  */
 async function limitToTarget(options: {
     mix: Stereo;
@@ -70,36 +136,35 @@ async function limitToTarget(options: {
     targetLufs: number;
     ceilingDb: number;
     clipDb: number;
-}): Promise<void> {
-    const { mix, file, trim, targetLufs } = options;
+    maxLossDb: number;
+}): Promise<{ lufs: number; lossDb: number }> {
+    const { mix, file, trim } = options;
     const ceiling = gain(options.ceilingDb);
     const clipAt = ceiling * gain(options.clipDb);
-    await writeFloatWav(file, mix);
-    let boost = targetLufs - (await analyze(file, trim)).lufs;
-    let miss = 0;
-
-    for (let pass = 0; pass < 14; pass++) {
+    let written = Number.NaN;
+    const limited = async (boostDb: number) => {
         const copy = { left: mix.left.slice(), right: mix.right.slice() };
-        scale(copy, gain(boost) / clipAt);
+        scale(copy, gain(boostDb) / clipAt);
         softClip(copy, 0.6);
         scale(copy, clipAt);
         limit(copy, ceiling);
         await writeFloatWav(file, copy);
-        miss = targetLufs - (await analyze(file, trim)).lufs;
+        written = boostDb;
+        return (await analyze(file, trim)).lufs;
+    };
+    await writeFloatWav(file, mix);
+    const found = await searchBoost({
+        beforeLufs: (await analyze(file, trim)).lufs,
+        targetLufs: options.targetLufs,
+        maxLossDb: options.maxLossDb,
+        limited,
+    });
 
-        if (Math.abs(miss) < 0.15) {
-            return;
-        }
-
-        // Under heavy limiting a dB of input gain adds less than a dB of loudness.
-        boost += miss * 1.5;
+    if (written !== found.boostDb) {
+        await limited(found.boostDb);
     }
 
-    if (Math.abs(miss) < 0.3) {
-        return;
-    }
-
-    throw new Error(`The limiter stays ${miss.toFixed(1)} LU under ${targetLufs} LUFS; lower the loudness target`);
+    return found;
 }
 
 export async function renderScore(options: {
@@ -116,11 +181,14 @@ export async function renderScore(options: {
     renderer: string;
     encoder: string;
     targetLufs: number;
+    master?: MasterReport;
 }> {
     const score = scoreSchema.parse(options.score);
     const targetLufs = options.targetLufs ?? score.master?.lufs ?? -20;
     const peakDb = options.peakDb ?? score.master?.peak ?? -3;
     const limiter = score.master?.limiter ?? false;
+    const guard = limiter && (score.master?.guard ?? true);
+    let report: MasterReport | undefined;
 
     if (
         !Number.isFinite(targetLufs) ||
@@ -164,25 +232,44 @@ export async function renderScore(options: {
         let margin = LIMITER_MARGIN_DB;
         let trimDb = 0;
 
+        let lowCutDb = 0;
+
+        if (limiter) {
+            mix ??= await readFloat(raw, samples);
+
+            if (guard) {
+                filterPass(mix, "highpass", RUMBLE_HZ);
+                lowCutDb = guardLows(mix, LOW_GUARD_DB);
+            }
+        }
+
         for (let attempt = 0; attempt < attempts; attempt++) {
             const last = attempt === attempts - 1;
             let source = raw;
+            // The loudness the file is brought to: the target, or less when the loss cap stopped the limiter.
+            let goal = targetLufs;
 
-            if (limiter) {
-                mix ??= await readFloat(raw, samples);
+            if (limiter && mix) {
                 source = join(folder, "limited.wav");
-                await limitToTarget({
+                const reached = await limitToTarget({
                     mix,
                     file: source,
                     trim,
                     targetLufs,
                     ceilingDb: peakDb - margin,
                     clipDb: score.master?.clip ?? 3,
+                    maxLossDb: guard ? MAX_LIMITER_LOSS_DB : Number.POSITIVE_INFINITY,
                 });
+                goal = Math.min(targetLufs, reached.lufs + 0.15);
+                report = {
+                    limiterLossDb: Number(reached.lossDb.toFixed(2)),
+                    shortOfTargetDb: Number(Math.max(0, targetLufs - reached.lufs - 0.15).toFixed(2)),
+                    lowCutDb: Number(lowCutDb.toFixed(2)),
+                };
             }
 
             const measured = await analyze(source, trim);
-            const gainDb = targetLufs - measured.lufs - trimDb;
+            const gainDb = goal - measured.lufs - trimDb;
             const over = measured.truePeakDb + gainDb - peakDb;
 
             if (over > 0) {
@@ -229,11 +316,11 @@ export async function renderScore(options: {
                         ]);
                         result = await measureAudio(temporary);
 
-                        const miss = result.lufs - targetLufs;
+                        const miss = result.lufs - goal;
 
                         if (miss > 0.35 || miss < -0.35 - trimDb || result.truePeakDb > peakDb + 0.1) {
                             throw new MasterMiss(
-                                `Mastered output misses LUFS target or true-peak cap: ${result.lufs} LUFS for ${targetLufs}, ${result.truePeakDb} dBTP for ${peakDb}`,
+                                `Mastered output misses LUFS target or true-peak cap: ${result.lufs} LUFS for ${goal.toFixed(2)}, ${result.truePeakDb} dBTP for ${peakDb}`,
                                 result.truePeakDb - peakDb
                             );
                         }
@@ -263,5 +350,6 @@ export async function renderScore(options: {
         renderer: fluidVersion.stdout.split("\n")[0],
         encoder: ffmpegVersion.stdout.split("\n")[0],
         targetLufs,
+        master: report,
     };
 }

@@ -1,4 +1,4 @@
-import { gain, RATE, type Stereo, stereo } from "./dsp";
+import { gain, RATE, type Stereo, Svf, stereo } from "./dsp";
 import { filterPass } from "./effects";
 import type { Room } from "./types";
 
@@ -59,6 +59,57 @@ export function room(input: Stereo, options: Room): Stereo {
     }
 
     return out;
+}
+
+/** The band under this frequency is the low end that `guardLows` watches. */
+const LOW_END_HZ = 120;
+/** The deepest cut of the low end, in dB. */
+const LOW_GUARD_FLOOR_DB = 9;
+
+/**
+ * Keep the low end at most `maxOverDb` above the rest of the mix. A loudness meter hardly counts a sub note, so a
+ * mix whose sub stands far over everything else is pushed into the limiter until the sub is a square wave, and
+ * that is hard on a speaker. Where the low end is too far up, a slow shelf brings it down, at most
+ * `LOW_GUARD_FLOOR_DB`. Returns the deepest cut in dB.
+ */
+export function guardLows(buffer: Stereo, maxOverDb: number): number {
+    const [lowA, lowB, highA, highB] = [new Svf(), new Svf(), new Svf(), new Svf()];
+    lowA.set(LOW_END_HZ, 0.541);
+    lowB.set(LOW_END_HZ, 1.307);
+    highA.set(LOW_END_HZ, 0.541);
+    highB.set(LOW_END_HZ, 1.307);
+    const meter = 1 - Math.exp(-1 / (0.3 * RATE));
+    const glide = 1 - Math.exp(-1 / (0.15 * RATE));
+    const pole = 1 - Math.exp((-2 * Math.PI * LOW_END_HZ) / RATE);
+    const ratio = gain(maxOverDb) ** 2;
+    const floor = gain(-LOW_GUARD_FLOOR_DB);
+    let lowPower = 0;
+    let restPower = 0;
+    let level = 1;
+    let deepest = 1;
+    let left = 0;
+    let right = 0;
+
+    for (let n = 0; n < buffer.left.length; n++) {
+        const mono = (buffer.left[n] + buffer.right[n]) / 2;
+        lowA.tick(mono);
+        lowB.tick(lowA.low);
+        highA.tick(mono);
+        highB.tick(highA.high);
+        lowPower += meter * (lowB.low ** 2 - lowPower);
+        restPower += meter * (highB.high ** 2 - restPower);
+        const tooMuch = lowPower > 1e-7 && lowPower > ratio * restPower;
+        const wanted = tooMuch ? Math.max(floor, Math.sqrt((ratio * restPower) / lowPower)) : 1;
+        level += glide * (wanted - level);
+        deepest = Math.min(deepest, level);
+        // The cut is a first-order shelf: the input minus a share of its own low end, which has no bump.
+        left += pole * (buffer.left[n] - left);
+        right += pole * (buffer.right[n] - right);
+        buffer.left[n] -= (1 - level) * left;
+        buffer.right[n] -= (1 - level) * right;
+    }
+
+    return -20 * Math.log10(deepest);
 }
 
 /** A knee above `threshold` that bends peaks toward 1 instead of cutting them. */

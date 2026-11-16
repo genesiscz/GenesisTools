@@ -194,6 +194,40 @@ const growl: Patch = {
     drive: 18,
 };
 
+/** Wide detuned saws for big chords. A deep duck on the part gives the pump of future bass. */
+const supersaw: Patch = {
+    oscillators: [
+        { wave: "saw", unison: 7, detune: 46, width: 1 },
+        { wave: "saw", semitones: 12, unison: 5, detune: 52, width: 1, level: 0.5 },
+        { wave: "saw", semitones: -12, unison: 2, detune: 18, width: 0.4, level: 0.4 },
+    ],
+    envelope: { attack: 0.012, decay: 0.3, sustain: 0.85, release: 0.22 },
+    filter: {
+        type: "lowpass",
+        cutoff: 5200,
+        q: 0.7,
+        envelope: { attack: 0.005, decay: 0.35, sustain: 0.5, release: 0.2 },
+        envelopeOctaves: 1.2,
+        keyTrack: 0.3,
+    },
+};
+
+/**
+ * An 808 bass: a sine that drops into its note and rings long. The drive adds harmonics that a small speaker can
+ * play. Notes that touch slide into each other.
+ */
+const bass808: Patch = {
+    oscillators: [
+        { wave: "sine", pitchEnvelope: { semitones: 14, decay: 0.035 } },
+        { wave: "sine", semitones: 12, level: 0.4 },
+        { wave: "noise", filter: { type: "highpass", cutoff: 3000 }, envelope: hit(0.01), level: 0.15 },
+    ],
+    envelope: { attack: 0.002, decay: 1.2, sustain: 0.5, release: 0.12 },
+    mono: true,
+    glide: 0.07,
+    drive: 14,
+};
+
 /** Ready sounds for `{ kind: "synth", patch: "<name>" }`. A score may also carry a whole patch. */
 export const SYNTH_PRESETS: Record<string, Patch> = {
     kick,
@@ -205,6 +239,8 @@ export const SYNTH_PRESETS: Record<string, Patch> = {
     reese,
     wobble,
     growl,
+    bass808,
+    supersaw,
     stab,
     pad,
     voice,

@@ -334,7 +334,7 @@ drop(DROP1, false);
 for (let bar = BREAK; bar < DROP2; bar++) {
     chords("pad", bar, 90);
     chords("piano", bar, 84, 28);
-    put("sub", bar, 0, 15.5, chordAt(bar).root, 84);
+    put("sub", bar, 0, 15.5, chordAt(bar).root, 46);
 }
 tune("voice", BREAK, 8, 88);
 put("impact", BREAK, 0, 24, 36, 96);
@@ -362,7 +362,7 @@ for (const midi of CHORDS[0].tones) {
     put("pad", END - 2, 0, 30, midi, 80);
     put("piano", END - 2, 0, 30, midi, 76);
 }
-put("sub", END - 2, 0, 24, 29, 90);
+put("sub", END - 2, 0, 24, 29, 56);
 put("impact", END - 2, 0, 24, 36, 90);
 
 const synth = (patch: string): Source => ({ kind: "synth", patch });

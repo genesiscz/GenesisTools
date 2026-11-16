@@ -218,7 +218,7 @@ function build(start: number, bars: number) {
 for (let bar = INTRO; bar < BUILD; bar++) {
     chords("pad", bar, 84);
     arp(bar, 62);
-    put("sub", bar, 0, 15.5, chordAt(bar).root, 76);
+    put("sub", bar, 0, 15.5, chordAt(bar).root, 40);
 
     if (bar >= 4) {
         for (let step = 0; step < 16; step += 2) {
@@ -265,7 +265,7 @@ function drop(start: number, order: RiffName[], second: boolean) {
         put("impact", bar, 0, 24, 36, bar === start ? 120 : 88);
     }
 
-    put("boom", start, 0, 64, 60, 118);
+    put("boom", start, 0, 64, 60, 100);
     put("down", start, 0, 28, 60, 110);
 
     if (second) {
@@ -279,7 +279,7 @@ drop(DROP1, ["call", "answer", "call", "climb"], false);
 for (let bar = BREAK; bar < DROP2; bar++) {
     chords("pad", bar, 90);
     arp(bar, 78);
-    put("sub", bar, 0, 15.5, chordAt(bar).root, 82);
+    put("sub", bar, 0, 15.5, chordAt(bar).root, 44);
 }
 tune("lead", BREAK, 8, 92);
 put("impact", BREAK, 0, 24, 36, 96);
@@ -293,7 +293,7 @@ drop(DROP2, ["answer", "climb", "call", "answer"], true);
 for (let bar = OUTRO; bar < END - 2; bar++) {
     chords("pad", bar, 84);
     arp(bar, 66);
-    put("sub", bar, 0, 15.5, chordAt(bar).root, 76);
+    put("sub", bar, 0, 15.5, chordAt(bar).root, 40);
 }
 tune("lead", OUTRO, 4, 84);
 put("impact", OUTRO, 0, 24, 36, 104);
@@ -302,7 +302,7 @@ put("cymbal", OUTRO, 0, 16, 49, 100);
 for (const midi of CHORDS[0].tones) {
     put("pad", END - 2, 0, 30, midi, 80);
 }
-put("sub", END - 2, 0, 24, 28, 90);
+put("sub", END - 2, 0, 24, 28, 54);
 put("impact", END - 2, 0, 24, 36, 90);
 
 // The recorded hits play the same notes as the synth drums they are layered with.
@@ -397,12 +397,12 @@ const setup: Record<PartName, PartSetup> = {
     roll: { source: synth("roll"), effects: { highpass: 150, reverb: 0.3, gain: -9 } },
     sub: {
         source: synth("sub"),
-        effects: { lowpass: 140, duck: { by: ["kick"], depth: 0.9, hold: 35, release: 120 }, gain: -9.5 },
+        effects: { lowpass: 140, duck: { by: ["kick"], depth: 0.9, hold: 35, release: 120 }, gain: -13 },
     },
     wobble: {
         source: synth("wobble"),
         effects: {
-            highpass: 85,
+            highpass: 100,
             eq: [{ type: "peak", frequency: 1300, gain: 3, q: 0.9 }],
             drive: { amount: 10 },
             lowpass: 9000,
@@ -507,7 +507,7 @@ const setup: Record<PartName, PartSetup> = {
         ],
     },
     impact: { source: synth("impact"), effects: { reverb: 0.5, gain: -6 } },
-    boom: { source: sample("sonic-pi/misc_cineboom.flac"), effects: { highpass: 45, reverb: 0.3, gain: -10 } },
+    boom: { source: sample("sonic-pi/misc_cineboom.flac"), effects: { highpass: 70, reverb: 0.3, gain: -14 } },
     dive: { source: sample("sonic-pi/bass_drop_c.flac", "pitched"), effects: { highpass: 30, gain: -6 } },
     rewind: {
         source: sample("sonic-pi/vinyl_rewind.flac", "pitched"),
@@ -525,6 +525,6 @@ export function tremorScore(): Score {
         end: t(END) + 2,
         parts: track.parts(setup),
         room: { size: 0.86, damp: 0.3, predelay: 22, highpass: 300, lowpass: 8500, level: -3 },
-        master: { lufs: -8, peak: -1, limiter: true, clip: 4 },
+        master: { lufs: -10.5, peak: -1, limiter: true, clip: 4 },
     });
 }

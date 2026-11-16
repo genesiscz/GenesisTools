@@ -83,10 +83,11 @@ caller's responsibility. The default cached asset always receives the pinned fil
 ## Synth parts, effects and a loud master
 
 ~~~sh
-tools music presets                 # kick, snare, hat, sub, reese, wobble, growl, stab, pad, voice, pluck ...
+tools music presets                 # kick, snare, hat, sub, reese, wobble, growl, bass808, supersaw, pad ...
 tools music presets reese           # one preset as an editable patch
 tools music render Orbit --out out/orbit.m4a
 tools music render Tremor --out out/tremor.m4a
+tools music render Halo --out out/halo.m4a
 tools music score Orbit > orbit.json
 ~~~
 
@@ -131,6 +132,19 @@ its crest factor. `--lufs` and `--peak` win over the score, and the range now en
 peaks of limited audio. When an .m4a goes over the cap, the cap wins and the file ships a little under the
 target; the printed measurement is the truth. A .wav has no such lift.
 
+A limited master is guarded, so a score cannot tear the bass of a speaker. A loudness meter hardly counts a sub
+note, so a mix with too much sub would be pushed into the limiter until the sub is a square wave. Three things
+stop that, and the render result names them under `master`:
+
+- Rumble under 25 Hz is removed.
+- `lowCutDb`: where the band under 120 Hz stands more than 6 dB over the rest of the mix, a slow shelf brings it
+  down, by 9 dB at most.
+- `limiterLossDb` and `shortOfTargetDb`: the clipper and the limiter may take away 3 dB of loudness and no more.
+  A mix that needs more ships under its target by `shortOfTargetDb`. Make the mix itself denser or lower the
+  target; do not push the limiter.
+
+`"guard": false` in `master` switches the three off.
+
 Orbit is an original drum and bass score at 174 BPM that uses all of this. Its basses, pads and leads are synthesized.
 Its drums layer recorded hits from the Sonic Pi set over synthesized ones, and under them plays the recorded break
 of the `amen` set, cut in 64 slices and chopped in a new order for fills. It needs `tools music samples install`
@@ -139,6 +153,10 @@ and `tools music samples install amen`. The piano and the cymbals come from the 
 Tremor is an original dubstep score at 140 BPM with half-time drums. Its wobble bass has an `lfoRate` lane with one
 held value per note, so the filter opens once, twice, three or eight times in a beat from note to note. Its growl
 bass has a `vowel` lane that moves the formants through each note. It needs `tools music samples install` only.
+
+Halo is an original melodic trap score at 110 BPM: saw chords (`supersaw`) that a deep duck pumps under the kick,
+an 808 bass (`bass808`) whose touching notes slide, hats and claps from the TR-808 set, and a lead where a singer
+would be. It needs `tools music samples install` only.
 
 Scores written in code share `grid(bpm, names)` from `src/utils/music/compose.ts`: sixteen steps to a bar, `put`
 for a note, and `parts(setup)` for the part list.
@@ -150,7 +168,7 @@ tools music mix demo.mp4 --music out/pulse-light.m4a --end 91.5 --out demo-music
 ~~~
 
 The four sampled built-in scores have a written end of 91.5 s and a file duration of 95 s. Orbit ends at 87.5 s
-in a 89.5 s file, and Tremor ends at 115.1 s in a 117.1 s file. A shorter movie trims the track's
+in a 89.5 s file, Tremor ends at 115.1 s in a 117.1 s file, and Halo ends at 159.1 s in a 161.1 s file. A shorter movie trims the track's
 opening; a longer movie delays the track with silence. The written ending lands at the movie ending. --end takes
 the score's end, not its file duration.
 
