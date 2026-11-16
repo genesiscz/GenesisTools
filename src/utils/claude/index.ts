@@ -100,6 +100,8 @@ export function _setFindClaudeCommandTestHooks(hooks: FindClaudeCommandTestHooks
  * fallback. Every `tools claude start/run` launch would otherwise pay the probe.
  */
 interface ResolvedCommandCache {
+    /** Absent in files written before 2026-11-16, which could hold a pick made while a wrapper did not answer. */
+    version?: number;
     command: string;
     shell: string;
     rcPath: string | null;
@@ -108,6 +110,7 @@ interface ResolvedCommandCache {
 }
 
 const RESOLVED_COMMAND_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const RESOLVED_COMMAND_CACHE_VERSION = 2;
 
 function resolvedCommandCachePath(): string {
     return toolDataDir("claude", "resolved-command.json");
@@ -149,7 +152,7 @@ function readResolvedCommandCache(shell: string): string | null {
 
         const cache = SafeJSON.parse(readFileSync(path, "utf8")) as ResolvedCommandCache;
 
-        if (cache.shell !== shell) {
+        if (cache.version !== RESOLVED_COMMAND_CACHE_VERSION || cache.shell !== shell) {
             return null;
         }
 
@@ -176,6 +179,7 @@ function writeResolvedCommandCache(command: string, shell: string): void {
         mkdirSync(dirname(path), { recursive: true });
         const rcPath = interactiveRcPath(shell);
         const cache: ResolvedCommandCache = {
+            version: RESOLVED_COMMAND_CACHE_VERSION,
             command,
             shell,
             rcPath,
@@ -187,6 +191,106 @@ function writeResolvedCommandCache(command: string, shell: string): void {
     } catch (error) {
         logger.debug({ error }, "[findClaudeCommand] cache write failed");
     }
+}
+
+/**
+ * What one probe proved about a candidate. `no-answer` is a name the shell defines whose `--version` failed or ran
+ * out of time. It can be the user's wrapper at a bad moment (a Claude Code update in progress, a new binary that
+ * macOS still checks), so a pick behind it is good for one launch only.
+ */
+export type ClaudeCandidateVerdict = "is-claude" | "not-claude" | "no-answer";
+
+/** The probe script's exit code for a name the shell does not define. */
+const NOT_DEFINED_EXIT = 97;
+
+/**
+ * `command -v` answers for a function and for a file. An alias counts as not defined, because the launch is
+ * `exec <command>` and a shell does not expand an alias there.
+ */
+function probeScript(candidate: string): string {
+    const defined = `case "$(command -v '${candidate}' 2>/dev/null)" in ''|alias\\ *) exit ${NOT_DEFINED_EXIT};; esac`;
+    return `${defined}; '${candidate}' --version 2>&1`;
+}
+
+async function probeClaudeCandidate(input: {
+    candidate: string;
+    shell: string;
+    timeoutMs: number;
+}): Promise<ClaudeCandidateVerdict> {
+    const proc = findClaudeCommandTestHooks?.spawnProbe
+        ? findClaudeCommandTestHooks.spawnProbe(input.candidate, input.shell)
+        : Bun.spawn({
+              cmd: [input.shell, "-ic", probeScript(input.candidate)],
+              stdio: ["ignore", "pipe", "pipe"],
+          });
+
+    try {
+        const stdout = await Promise.race([
+            new Response(proc.stdout).text(),
+            new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), input.timeoutMs)),
+        ]);
+        await proc.exited;
+
+        if (proc.exitCode === NOT_DEFINED_EXIT) {
+            return "not-claude";
+        }
+
+        if (proc.exitCode !== 0) {
+            return "no-answer";
+        }
+
+        return stdout.includes("Claude Code") ? "is-claude" : "not-claude";
+    } catch {
+        // Timeout or spawn failure
+        return "no-answer";
+    } finally {
+        proc.kill();
+    }
+}
+
+/**
+ * The first candidate that is Claude, or null when none is. `settled` is false while an earlier candidate still gives
+ * no answer: the caller must not remember that pick. On 2026-11-15 a probe that ran during a Claude Code update got
+ * no answer from the `ccc` wrapper, and the cached `claude` then started every session without the wrapper's flags.
+ * @internal exported for tests
+ */
+export async function pickClaudeCommand(input: {
+    candidates: string[];
+    probe: (candidate: string) => Promise<ClaudeCandidateVerdict>;
+}): Promise<{ command: string; settled: boolean } | null> {
+    const silent: string[] = [];
+
+    for (const candidate of input.candidates) {
+        const verdict = await input.probe(candidate);
+
+        if (verdict === "no-answer") {
+            silent.push(candidate);
+            continue;
+        }
+
+        if (verdict === "not-claude") {
+            continue;
+        }
+
+        // This candidate answered, so the binary runs now. Ask the silent ones once more, in their order.
+        let settled = true;
+
+        for (const earlier of silent) {
+            const second = await input.probe(earlier);
+
+            if (second === "is-claude") {
+                return { command: earlier, settled };
+            }
+
+            if (second === "no-answer") {
+                settled = false;
+            }
+        }
+
+        return { command: candidate, settled };
+    }
+
+    return null;
 }
 
 export async function findClaudeCommand(): Promise<string> {
@@ -202,33 +306,23 @@ export async function findClaudeCommand(): Promise<string> {
         }
     }
 
-    for (const candidate of candidates) {
-        const proc = findClaudeCommandTestHooks?.spawnProbe
-            ? findClaudeCommandTestHooks.spawnProbe(candidate, shell)
-            : Bun.spawn({
-                  cmd: [shell, "-ic", `'${candidate}' --version 2>&1`],
-                  stdio: ["ignore", "pipe", "pipe"],
-              });
+    const picked = await pickClaudeCommand({
+        candidates,
+        probe: (candidate) => probeClaudeCandidate({ candidate, shell, timeoutMs }),
+    });
 
-        try {
-            const stdout = await Promise.race([
-                new Response(proc.stdout).text(),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
-            ]);
-            await proc.exited;
-
-            if (proc.exitCode === 0 && stdout.includes("Claude Code")) {
-                if (!findClaudeCommandTestHooks) {
-                    writeResolvedCommandCache(candidate, shell);
-                }
-
-                return candidate;
-            }
-        } catch {
-            // Timeout or spawn failure — skip this candidate
-        } finally {
-            proc.kill();
-        }
+    if (!picked) {
+        return "claude";
     }
-    return "claude";
+
+    if (!picked.settled) {
+        logger.warn(
+            { command: picked.command, candidates, shell },
+            "[findClaudeCommand] an earlier candidate gave no answer, so this pick is not cached"
+        );
+    } else if (!findClaudeCommandTestHooks) {
+        writeResolvedCommandCache(picked.command, shell);
+    }
+
+    return picked.command;
 }
