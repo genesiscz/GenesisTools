@@ -402,7 +402,7 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
     const { ui } = await import("@genesiscz/utils/cli/ui");
     const { out } = await import("@genesiscz/utils/logger");
     const { registerItemCommands } = await import("../commands/items");
-    const { record } = await newRecord();
+    const { record } = await newRecord({ project: "work" });
     const resolve = spyOn(MeetingStore.prototype, "resolve").mockReturnValue(record);
     const run = spyOn(runner, "runSuggest").mockResolvedValue({
         fresh: [],
