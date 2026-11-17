@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
+import { stampOf } from "@genesiscz/utils/work/context";
 import { ingestLegacyHandoff, type ParityDifference, parityOf } from "@genesiscz/utils/work/legacy/shadow";
 import type { ItemFields } from "@genesiscz/utils/work/model/item";
 import {
@@ -21,6 +22,7 @@ import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import type { WorkCommand } from "@genesiscz/utils/work/store/decide";
 import type { Command } from "commander";
 import { actorHere, legacyHandoffs, sessionDelivery, t3Lineage } from "../adapters";
+import { contextHere } from "../adapters/context";
 import { openLegacySource } from "../adapters/legacy-source";
 import { emit } from "./emit";
 
@@ -102,6 +104,18 @@ function writeText(data: WriteData): string[] {
 
 async function runWrite(command: WorkCommand, flags: WriteFlags): Promise<void> {
     const ctx = context();
+
+    if (command.verb === "spot" && command.during === undefined) {
+        // The preflight context, local providers only: its stamp goes into the journal, and a strong inferred
+        // handoff pairs the item when no claim names one.
+        const { report } = await contextHere({ actor: ctx.actor, db: ctx.db, network: false });
+        ctx.stamp = stampOf(report);
+        const handoff = report.current.handoff;
+
+        if (handoff !== undefined && handoff.how.method === "inferred") {
+            ctx.inferred = { during: handoff.value, evidence: handoff.how.evidence };
+        }
+    }
 
     try {
         const reply = await write(ctx, command, {

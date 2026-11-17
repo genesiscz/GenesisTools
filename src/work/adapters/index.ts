@@ -2,47 +2,21 @@
  * The tool-side halves of the work package's ports: the caller, the old handoff store, session delivery and the
  * lineage of a T3 child thread.
  */
-import { basename, dirname } from "node:path";
 import { executeHandoffActions, type HandoffDeps, postHandoff } from "@app/handoff/executor";
 import { deliverToSession, isLiveDelivery, locateDelivery } from "@app/question/lib/decisions/deliver";
-import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
-import { gitCommonRoot } from "@genesiscz/utils/agent/identity";
+
 import { logger } from "@genesiscz/utils/logger";
-import { t3SessionThreads } from "@genesiscz/utils/t3code/session-threads";
-import type { Actor } from "@genesiscz/utils/work/model/item";
 import type {
     DeliveryReceipt,
     LegacyAction,
     LegacyHandoffs,
     LegacyWriteResult,
-    LineageResolver,
     SessionDelivery,
 } from "@genesiscz/utils/work/ports";
 
-const log = logger.child({ component: "work:adapters" });
+export { actorHere } from "./actor";
 
-/** The calling session as an actor, and its project: the folder name of the main checkout. */
-export function actorHere(): { actor: Actor; project: string } {
-    const identity = whoIsCallingHere({ facets: ["cwd", "git", "title", "model", "host"] });
-    const cwd = identity.cwd ?? process.cwd();
-    const common = gitCommonRoot(cwd);
-    // The common git dir is `<main checkout>/.git`; the project is the main checkout's folder name.
-    const project = common !== null ? basename(dirname(common)) : (identity.project ?? basename(cwd));
-    const actor: Actor = {
-        kind: identity.isInAgent ? "agent" : "owner",
-        harness: identity.agent,
-        sessionId: identity.sessionId,
-        sessionTitle: identity.sessionTitle ?? null,
-        model: identity.model ?? null,
-        host: identity.host ?? null,
-        subagentId: identity.subagentId ?? null,
-        project,
-        repoRoot: identity.repoRoot ?? null,
-        branch: identity.branch ?? null,
-        commitSha: identity.commitSha ?? null,
-    };
-    return { actor, project };
-}
+const log = logger.child({ component: "work:adapters" });
 
 /** Writes into the old handoff log through its own executor; its hook brings each event into the work store. */
 export function legacyHandoffs(deps: HandoffDeps = {}): LegacyHandoffs {
@@ -146,26 +120,4 @@ export function sessionDelivery(): SessionDelivery {
     };
 }
 
-/** A delegated T3 child's lead: the native sessions of its parent thread. */
-export function t3Lineage(): LineageResolver {
-    return {
-        async leadSessions({ sessionId, parentThreadId }) {
-            const threads = t3SessionThreads();
-            const parent = parentThreadId ?? (sessionId !== null ? (threads.get(sessionId)?.parent?.id ?? null) : null);
-
-            if (parent === null) {
-                return [];
-            }
-
-            const leads: string[] = [];
-
-            for (const [native, thread] of threads) {
-                if (thread.threadId === parent) {
-                    leads.push(native);
-                }
-            }
-
-            return leads;
-        },
-    };
-}
+export { t3Lineage } from "./lineage";

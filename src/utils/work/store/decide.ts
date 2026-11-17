@@ -66,6 +66,8 @@ export interface WriteEnv {
     stamp?: ContextStamp;
     /** The sessions whose live claims a spotted item may pair with: the caller's own, then its lead's. */
     lineage: string[];
+    /** A strong inferred handoff of the preflight context, used only when no claim names one. */
+    inferred?: { during: string; evidence: string };
 }
 
 export type Decision =
@@ -213,6 +215,24 @@ function pairSpot(
                     do: `pair it with ${item.id} (${item.title})`,
                     call: { method: "edit", params: { during: item.id } },
                 })),
+            };
+        }
+    }
+
+    if (env.inferred !== undefined) {
+        const resolved = view.resolve(env.inferred.during);
+
+        if (resolved !== null) {
+            return {
+                to: resolved.item.id,
+                diagnostics: [
+                    warningDiagnostic(
+                        "CONTEXT_INFERRED",
+                        `Paired with ${resolved.item.id} by inference: ${env.inferred.evidence}. Pass --during <ref> when that is wrong.`,
+                        "during"
+                    ),
+                ],
+                next: [{ do: "pair it with another task", call: { method: "edit", params: { during: "<ref>" } } }],
             };
         }
     }

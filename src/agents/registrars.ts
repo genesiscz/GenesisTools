@@ -11,4 +11,5 @@ export const AGENTS_REGISTRARS: LazyRegistrar[] = [
     { names: ["hooks"], load: async () => (await import("./commands/hooks")).registerHooksCommands },
     { names: ["changes"], load: async () => (await import("./commands/changes")).registerChangesCommand },
     { names: ["blame"], load: async () => (await import("./commands/blame")).registerBlameCommand },
+    { names: ["context"], load: async () => (await import("./commands/context")).registerContextCommand },
 ];
