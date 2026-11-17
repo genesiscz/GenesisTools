@@ -530,7 +530,8 @@ public struct LiveWidgetView: View {
 
     private var inboxHeadline: String {
         let cards = shownCards
-        let waiting = cards.filter(\.needsAnswer).count
+        // A decision that is sending or sent waits for nobody, while the snapshot still lists it as waiting.
+        let waiting = cards.filter { $0.needsAnswer && !model.isOnItsWay($0.sourceId) }.count
         let unread = cards.filter { !$0.read && !$0.needsAnswer }.count
         return [cards.count == 1 ? "1 item" : "\(cards.count) items",
                 waiting > 0 ? WidgetWords.waiting(waiting) : nil,
