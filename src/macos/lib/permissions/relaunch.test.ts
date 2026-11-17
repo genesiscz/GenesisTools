@@ -10,6 +10,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { parseRunningApplications } from "@genesiscz/utils/macos/launch-services";
+import { describeLinkRoute, holderArgs, linkHolderKind, linkRoute, linkRouteProblem } from "./links";
 import {
     argvFromPs,
     faceHome,
@@ -545,5 +547,91 @@ describe("a rebuild reopens each face on the environment it started with", () =>
             [13, ["--widget"]],
         ]);
         expect(read.recordDirs).toEqual([sandboxFaces, homeFaces, build]);
+    });
+});
+
+describe("link route", () => {
+    const APP = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
+    const listing = [
+        ' 1) "loginwindow" ASN:0x0-0x1001: ',
+        '    bundleID="com.apple.loginwindow"',
+        '    pid = 618 token=[sess=1 pid=618] type="UIElement" flavor=3',
+        '239) "GenesisTools" ASN:0x0-0x1c34a32e: (in front) ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4101  !signalled type="UIElement" flavor=2 Version="1"',
+        '240) "GenesisTools" ASN:0x0-0x1c373357: ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4102  !signalled type="BackgroundOnly" flavor=2 Version="1"',
+        '266) "GenesisTools" ASN:0x0-0x22062040: ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4103  type="UIElement" flavor=2 Version="2"',
+        '267) "GenesisTools" ASN:0x0-0x22063041: ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4104  type="Foreground" flavor=2 Version="2"',
+    ].join("\n");
+    const commands = new Map([
+        [4101, { command: `${APP} /Users/example/.genesis-tools/bin/gt-cc --resume abc`, startMs: 1 }],
+        [4102, { command: `${APP} /Users/example/.bun/bin/bun run daemon.ts`, startMs: 2 }],
+        [4103, { command: `${APP} --link-relay`, startMs: 3 }],
+        [4104, { command: `${APP} --hub --resume --no-activate`, startMs: 4 }],
+    ]);
+
+    it("reads every application of lsappinfo list with its check-in order", () => {
+        const apps = parseRunningApplications(listing);
+        expect(apps.map((app) => [app.pid, app.bundleId, app.type])).toEqual([
+            [618, "com.apple.loginwindow", "UIElement"],
+            [4101, "com.genesiscz.genesistools", "UIElement"],
+            [4102, "com.genesiscz.genesistools", "BackgroundOnly"],
+            [4103, "com.genesiscz.genesistools", "UIElement"],
+            [4104, "com.genesiscz.genesistools", "Foreground"],
+        ]);
+        expect(apps[1].order).toBeLessThan(apps[3].order);
+    });
+
+    it("names the launchers older than the relay as the ones that drop links", () => {
+        const apps = parseRunningApplications(listing).filter((app) => app.bundleId === "com.genesiscz.genesistools");
+        const route = linkRoute(apps.reverse(), commands);
+        expect(route.target?.pid).toBe(4101);
+        expect(route.relay?.pid).toBe(4103);
+        expect(route.olderThanRelay.map((holder) => [holder.pid, holder.kind])).toEqual([
+            [4101, "launcher"],
+            [4102, "launcher"],
+        ]);
+        const problem = linkRouteProblem(route) ?? "";
+        expect(problem).toContain("pid 4101");
+        expect(problem).toContain("these 2 launcher(s)");
+    });
+
+    it("has no problem when the relay is the oldest instance", () => {
+        const route = linkRoute(
+            [
+                { pid: 4103, order: 1 },
+                { pid: 4104, order: 2 },
+            ],
+            commands
+        );
+        expect(route.target?.kind).toBe("relay");
+        expect(linkRouteProblem(route)).toBeNull();
+        expect(describeLinkRoute(route)).toBe("the link relay takes them (pid 4103)");
+    });
+
+    it("names a launcher run by its program and arguments, without Bun's preloads and script", () => {
+        expect(
+            holderArgs(
+                `${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts --preload /repo/b.ts /repo/src/cc/index.ts run work --resume abc`
+            )
+        ).toBe("gt-cc run work --resume abc");
+        expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub --resume");
+        expect(holderArgs(null)).toBeNull();
+    });
+
+    it("tells a launcher from a face, a router and the relay", () => {
+        expect(linkHolderKind(`${APP} /bin/sleep 3`)).toBe("launcher");
+        expect(linkHolderKind(`${APP} bun --version`)).toBe("launcher");
+        expect(linkHolderKind(`${APP} --rpc {}`)).toBe("face");
+        expect(linkHolderKind(APP)).toBe("face");
+        expect(linkHolderKind(`${APP} https://example.test/a`)).toBe("router");
+        expect(linkHolderKind(`${APP} --link-relay`)).toBe("relay");
+        expect(linkHolderKind(null)).toBe("unknown");
     });
 });

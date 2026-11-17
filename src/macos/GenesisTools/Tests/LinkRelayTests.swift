@@ -4,6 +4,28 @@ import XCTest
 
 /// Which faces keep the link relay in front of them (LinkRelay.swift).
 final class LinkRelayTests: XCTestCase {
+    /// A launcher run that checks in with Launch Services becomes the oldest instance after a rebuild restarts the relay,
+    /// and every link ends in "GenesisTools.app is not open anymore" (2026-11-17). Only helper faces mark themselves.
+    func testOnlyHelperFacesMarkThemselvesBackgroundHelpers() {
+        for launcherRun in [
+            ["/Users/example/.genesis-tools/bin/gt-cc", "--resume", "abc"],
+            ["/Users/example/.bun/bin/bun", "run", "/repo/src/daemon/daemon.ts"],
+            ["bun", "--version"],
+            ["https://example.test/page"],
+            ["genesis-tools://hub?session=1"],
+            [],
+            ["-psn_0_12345"],
+            ["--window"],
+            ["--hub", "--resume"],
+            ["--widget", "--ensure-running"],
+        ] {
+            XCTAssertFalse(marksBackgroundHelper(launcherRun), launcherRun.joined(separator: " "))
+        }
+        for helper in [["--rpc", "{}"], ["--mic", "--list"], ["--capsule"], ["--permission-status", "all"], ["--link-relay"]] {
+            XCTAssertTrue(marksBackgroundHelper(helper), helper.joined(separator: " "))
+        }
+    }
+
     func testNewerSwitchClearsAndInvalidatesAnInFlightStackRead() throws {
         var snapshot = BrowserURLForwarder.StackSnapshot()
         let first = try XCTUnwrap(snapshot.begin(shouldRead: true))

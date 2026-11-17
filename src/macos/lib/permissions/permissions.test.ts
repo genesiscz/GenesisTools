@@ -714,6 +714,7 @@ describe("collectProblems", () => {
         oldBuilds: [],
         launchdJobsOutsideApp: [],
         disabledByMarker: false,
+        links: null,
         userDb: { readable: true },
         systemDb: { readable: true },
     };

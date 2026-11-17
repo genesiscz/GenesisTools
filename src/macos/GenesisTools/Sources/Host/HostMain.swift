@@ -22,7 +22,7 @@ package func runHost() -> Never {
     // "" when there is none, so no check below can trap on an argument-less launch.
     let firstArgument = arguments.first ?? ""
     let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
-    if !wantsWindow && AppParts.partOfFace[firstArgument] == nil && !firstArgument.contains("://") {
+    if marksBackgroundHelper(arguments) {
         markBackgroundHelper()
     }
 
