@@ -9,6 +9,25 @@ import XCTest
 /// read, and the rows from `meeting.rows` with their decisions through the journal.
 @MainActor
 final class MeetingsReviewRowTests: XCTestCase {
+    func testDictionaryQuestionsStayInTheWordRowAndMatchTheCurrentSpelling() throws {
+        func item(_ json: String) throws -> MeetingItem { try JSONDecoder().decode(MeetingItem.self, from: Data(json.utf8)) }
+        let word = try item(#"{"id":"q","kind":"question","status":"confirmed","about":"term","group":"words","heard":"zorb","answer":"Zorb","decides":["t"],"choices":["Zorb"]}"#)
+        let old = try item(#"{"id":"old","kind":"question","status":"confirmed","about":"dictionary","heard":"zorb","evidence":{"item":"t","fixed":"Zarb"}}"#)
+        let pending = try item(#"{"id":"dict","kind":"question","status":"suggested","about":"dictionary","heard":"zorb","evidence":{"item":"t","fixed":"Zorb","occurrences":31}}"#)
+        XCTAssertEqual(word.wordSuggestion, "Zorb")
+        XCTAssertEqual(word.dictionaryQuestion(in: [old, pending])?.id, "dict")
+        let rows = try rows().rows
+        var dictionary = rows[0]
+        dictionary = ReviewRow(id: "dict", label: "Q2", kind: "question", status: "suggested", confidence: nil, priority: 31,
+                             group: "words", what: "Add Zorb?", parts: [], choices: [], edit: "none", needs: nil, sources: [], target: .item("dict"))
+        XCTAssertEqual(ItemsTab.wordRows(rows + [dictionary], items: [word, pending]).map(\.id), rows.map(\.id))
+        let action = DecisionAction.answer("dict", "add")
+        let encoded = try JSONDecoder().decode(DecisionAction.self, from: JSONEncoder().encode(action))
+        XCTAssertEqual(encoded.answer, "add")
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[],"dictionary":[{"project":"work","heard":"zorb","fixed":"Zorb","seenBefore":0,"teaches":true,"adds":true}]}"#.utf8))
+        XCTAssertEqual(ReachList.dictionaryWords(reach.dictionary[0]), "Adds “zorb” → “Zorb” to the work dictionary now")
+    }
+
     func testRepeatedWordRowsDecodeCountsAndKeepTheEngineOrderAfterAnAnswer() throws {
         var rows = try JSONDecoder().decode(ReviewRows.self, from: Self.rowsJSON).rows
         rows[0].group = "words"
