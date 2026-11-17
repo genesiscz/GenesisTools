@@ -4,7 +4,7 @@ import { z } from "zod";
 import { defineApi, defineMethod } from "../api-descriptor";
 import { toCliCommands } from "../api-descriptor/cli";
 import { SafeJSON } from "../json";
-import { resolveFormat, UsageError } from "./formats";
+import { resolveOutputFormat, UsageError } from "./formats";
 import { defineFormatter, render } from "./formatter";
 import { failReply, okReply, warningDiagnostic } from "./reply";
 
@@ -49,8 +49,8 @@ describe("render", () => {
     });
 
     test("two different format flags are a usage error", () => {
-        expect(resolveFormat({ toon: true })).toBe("toon");
-        expect(() => resolveFormat({ md: true, json: true })).toThrow(UsageError);
+        expect(resolveOutputFormat({ toon: true })).toBe("toon");
+        expect(() => resolveOutputFormat({ md: true, json: true })).toThrow(UsageError);
     });
 });
 

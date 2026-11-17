@@ -388,7 +388,11 @@ export class TodoStore {
                     actor,
                     origin: { via: "local" },
                     kind: "moved",
-                    payload: { from: row.item.state, to: "dropped", why: "removed with tools todo remove" },
+                    payload: {
+                        from: row.item.state,
+                        to: "dropped",
+                        why: "removed with the remove command of the todo tool",
+                    },
                 });
                 return true;
             })
