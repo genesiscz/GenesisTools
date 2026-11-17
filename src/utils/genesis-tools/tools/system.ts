@@ -116,8 +116,8 @@ export function macosPermissionsOpenCommand(pane: string): string {
 }
 
 /** Builds and installs GenesisTools.app. */
-export function macosPermissionsBuildCommand(): string {
-    return toolCommand("macos permissions build");
+export function macosPermissionsBuildCommand(part?: string | null): string {
+    return `${toolCommand("macos permissions build")}${part ? ` --add-part ${part}` : ""}`;
 }
 
 /** Asks macOS for the notification grant of GenesisTools.app. */
@@ -178,4 +178,8 @@ export function mobileRoutesCommand(): string {
 /** Explicitly installs the pinned offline music asset and its license. */
 export function musicSoundfontInstallCommand(): string {
     return toolCommand("music soundfont install");
+}
+
+export function macosPermissionsCommand(): string {
+    return toolCommand("macos permissions");
 }

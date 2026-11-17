@@ -3,6 +3,7 @@ import type { StateStore, StateValue } from "@genesiscz/utils/genesis-tools/acti
 import { type AppBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
 import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
 import type { AppPartId, AppRpcMethod } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { macosPermissionsCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import type { PermissionKindId } from "@genesiscz/utils/macos/permission-kinds";
 
 /** Phase 2 fills it with the methods a connected face serves. */
@@ -220,11 +221,10 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
                 : fail("grant-missing", `the ${need.grant} grant is ${String(saved?.value)}`, null, "state");
         }
 
-        return fail(
-            "grant-missing",
-            `no recent report of the ${need.grant} grant; the app reports grants (Phase 2), or run tools macos permissions`,
-            { command: "tools macos permissions", sentence: "Shows every privacy grant of GenesisTools.app." }
-        );
+        return fail("grant-missing", `no recent report of the ${need.grant} grant; run ${macosPermissionsCommand()}`, {
+            command: macosPermissionsCommand(),
+            sentence: "Shows every privacy grant of GenesisTools.app.",
+        });
     },
 
     "person.display": async (_need, env) =>
