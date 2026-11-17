@@ -163,6 +163,6 @@ export function resolveWorkRules(layers: readonly RuleLayerInput[]): ResolvedRul
 
 export const DEFAULT_RULES = resolveWorkRules([]);
 
-export function allows(rule: RoleRule, roles: readonly Role[]): boolean {
+export function allows(rule: RoleRule | readonly Role[], roles: readonly Role[]): boolean {
     return rule === "anyone" || rule.some((role) => roles.includes(role));
 }

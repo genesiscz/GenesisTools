@@ -2,7 +2,15 @@ import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Change, NewChange } from "../model/change";
 import { stampOf } from "../model/item";
-import type { CreatedPayload, EditedPayload, LinkPayload, MovedPayload, PointedPayload } from "../model/payloads";
+import type {
+    CreatedPayload,
+    EditedPayload,
+    LinkPayload,
+    MovedPayload,
+    PairedPayload,
+    PointedPayload,
+    UnpairedPayload,
+} from "../model/payloads";
 import { selectItem } from "./rows";
 
 function json(value: unknown): string {
@@ -155,6 +163,24 @@ function applyPointed(db: Database, change: NewChange): void {
     );
 }
 
+function applyPaired(db: Database, change: NewChange): void {
+    const { pairing } = change.payload as PairedPayload;
+    db.run(
+        `INSERT INTO pairings (item, connector, remote_key, born, origin, state, updated_ts) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (item, connector) DO UPDATE SET remote_key = excluded.remote_key, born = excluded.born,
+             origin = excluded.origin, state = excluded.state, updated_ts = excluded.updated_ts`,
+        [
+            change.item,
+            pairing.connector,
+            pairing.remoteKey,
+            pairing.born,
+            json({ facts: pairing.origin, ...(pairing.note !== undefined ? { note: pairing.note } : {}) }),
+            pairing.state,
+            change.ts,
+        ]
+    );
+}
+
 /**
  * The only code that changes item rows. It writes the journal entry and its effect in the caller's transaction, so
  * a row and its history never disagree.
@@ -185,11 +211,18 @@ export function applyChange(db: Database, change: NewChange): Change {
         case "pointed":
             applyPointed(db, change);
             break;
+        case "paired":
+            applyPaired(db, change);
+            break;
+        case "unpaired":
+            db.run("DELETE FROM pairings WHERE item = ? AND connector = ?", [
+                change.item,
+                (change.payload as UnpairedPayload).connector,
+            ]);
+            break;
         case "commented":
         case "logged":
         case "delivered":
-        case "paired":
-        case "unpaired":
             break;
     }
 
