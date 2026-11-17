@@ -147,7 +147,7 @@ struct ReachList: View {
             if pending.reach.spelling == nil, let lines = pending.reach.lines, lines > 1 {
                 Label("\(Plural.count(lines, "line")) of the transcript", systemImage: "text.alignleft").font(.system(size: 12.5))
             }
-            ForEach(pending.reach.spelling == nil ? pending.reach.dictionary.filter(\.teaches) : [], id: \.self) { entry in
+            ForEach(pending.reach.spelling == nil ? pending.reach.dictionary.filter { $0.teaches || $0.adds == true } : [], id: \.self) { entry in
                 Label(Self.dictionaryWords(entry),
                       systemImage: "character.book.closed")
                     .font(.system(size: 12.5))

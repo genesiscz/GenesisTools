@@ -139,8 +139,14 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     }
 
     func dictionaryQuestion(in items: [MeetingItem]) -> MeetingItem? {
-        items.first { $0.about == "dictionary" && (decides ?? []).contains($0.dictionaryTarget ?? "") }
+        items.last {
+            guard (decides ?? []).contains($0.dictionaryTarget ?? ""),
+                  case .string(let fixed)? = $0.evidence?["fixed"] else { return false }
+            return fixed == answer
+        }
     }
+
+    var wordSuggestion: String? { about == "term" ? choices?.first : nil }
 }
 
 struct MeetingContextRef: Decodable, Equatable, Hashable, Identifiable {

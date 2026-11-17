@@ -57,6 +57,15 @@ struct RepeatedWordRow: View {
     let detail: MeetingDetailModel
     @State private var places: DecisionReach.Spelling?
     @State private var readingPlaces = false
+    @FocusState private var typing: Bool
+    @State private var earlierText = ""
+
+    private var answer: String { detail.drafts[row.id] ?? item.wordSuggestion ?? "" }
+    private var dictionary: ReviewRow? {
+        let items = detail.record.value?.items ?? []
+        let id = item.about == "dictionary" ? item.id : item.dictionaryQuestion(in: items)?.id
+        return detail.rows.value?.rows.first { $0.id == id }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -69,12 +78,58 @@ struct RepeatedWordRow: View {
                     .accessibilityLabel("\(row.occurrences ?? 1) occurrences")
                 Spacer(minLength: 0)
             }
-            ReviewRowView(row: row, detail: detail, player: detail.window?.player)
+            if row.isOpen, item.about == "term" {
+                if let suggestion = item.wordSuggestion, answer == suggestion {
+                    Label("Suggested spelling", systemImage: "sparkles").font(.caption).foregroundStyle(KitHue.play.ink)
+                }
+                TextField("Spelling", text: Binding(get: { answer }, set: { detail.drafts[row.id] = $0 }))
+                    .textFieldStyle(.roundedBorder).focused($typing)
+                    .accessibilityIdentifier("meetings.row.\(row.id).answer")
+                    .onSubmit { save(answer) }
+                    .onExitCommand { detail.drafts[row.id] = earlierText; typing = false; detail.closeEditor() }
+                Text("Fixes \(Plural.count(row.occurrences ?? 1, "place"))").font(.caption).foregroundStyle(.secondary)
+                WrapLayout(spacing: 8) {
+                    Button("Save") { save(answer) }.buttonStyle(.genHoverPlain()).disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Right as heard") { save(item.heard ?? "") }.buttonStyle(.genHoverPlain())
+                }
+            } else if item.about == "term", row.status == "confirmed" {
+                Label("“\(item.heard ?? "")” → “\(row.answer ?? item.answer ?? "")” · \(Plural.count(row.occurrences ?? 1, "place"))",
+                      systemImage: "checkmark.circle.fill").foregroundStyle(KitPalette.added).fixedSize(horizontal: false, vertical: true)
+            }
+            if let dictionary {
+                if dictionary.isOpen {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button("Add to the \(detail.record.value?.project ?? "project") dictionary") {
+                            detail.decide(dictionary, .answer(dictionary.id, "add"), askReach: false)
+                        }.buttonStyle(.genHoverPlain())
+                        Button("Not now") { detail.decide(dictionary, .answer(dictionary.id, "do not add"), askReach: false) }
+                            .buttonStyle(.genHoverPlain())
+                    }.disabled(detail.busyItems.contains(dictionary.id))
+                } else if dictionary.answer == "add" {
+                    Label("In the dictionary", systemImage: "character.book.closed.fill").font(.caption).foregroundStyle(KitPalette.added)
+                }
+            }
         }
+        .disabled(detail.busyItems.contains(row.id))
         .padding(.vertical, 8).liveRow(selected: detail.selectedRow == row.id)
+        .onChange(of: typing) { _, focused in
+            if focused { earlierText = answer; detail.selectedRow = row.id; detail.editingRow = row.id }
+            else if detail.editingRow == row.id { detail.closeEditor() }
+        }
+        .onChange(of: detail.editingRow) { _, id in typing = id == row.id && row.isOpen }
+        .onChange(of: row.isOpen) { wasOpen, open in
+            guard wasOpen, !open, typing else { return }
+            let rows = ItemsTab.wordRows(detail.rows.value?.rows ?? [], items: detail.record.value?.items ?? [])
+            if let next = MeetingDetailModel.nextOpenRow(after: row.id, in: rows), next.group == "words" { detail.edit(next) }
+        }
         .sheet(isPresented: Binding(get: { places != nil }, set: { if !$0 { places = nil } })) {
             if let places { WordOccurrencesSheet(spelling: places, detail: detail) { self.places = nil } }
         }
+    }
+
+    private func save(_ text: String) {
+        guard let text = MeetingsWords.typedAnswer(text) else { return }
+        detail.decide(row, .answer(row.id, text), askReach: false)
     }
 
     private func openPlaces() {
@@ -96,8 +151,8 @@ struct ItemsTab: View {
                                  (id: "long-stretch", title: "Long stretches"), (id: "words", title: "Repeated words")]
 
     static func wordRows(_ rows: [ReviewRow], items: [MeetingItem]) -> [ReviewRow] {
-        let attached = Set(items.filter { $0.group == "words" && $0.about == "term" }
-            .compactMap { $0.dictionaryQuestion(in: items)?.id })
+        let terms = Set(items.filter { $0.group == "words" && $0.about == "term" }.flatMap { $0.decides ?? [] })
+        let attached = Set(items.filter { terms.contains($0.dictionaryTarget ?? "") }.map(\.id))
         return rows.filter { !attached.contains($0.id) }
     }
 
@@ -193,7 +248,7 @@ struct ItemsTab: View {
                         Button("All") { questionGroup = "all" }.buttonStyle(.genHoverPlain())
                         ForEach(Self.questionGroups, id: \.id) { group in
                             let count = grouped.filter { ($0.group ?? "rules") == group.id && $0.isQuestion }.count
-                            Button { questionGroup = group.id } label: {
+                            Button { questionGroup = group.id; detail.itemsFilter = .all } label: {
                                 Badge("\(group.title) (\(count))", color: KitHue.ask.ink,
                                       look: questionGroup == group.id ? .filled : .tag)
                             }.buttonStyle(.genHoverPlain()).accessibilityAddTraits(questionGroup == group.id ? .isSelected : [])
