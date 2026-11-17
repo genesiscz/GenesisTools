@@ -1,5 +1,5 @@
-import { canonicalAgent, type HandoffAgent } from "@app/handoff/targeting";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { canonicalAgent, type HandoffAgent } from "@genesiscz/utils/agent/recipient";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";

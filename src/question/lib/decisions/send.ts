@@ -1,4 +1,4 @@
-import { canonicalAgent } from "@app/handoff/targeting";
+import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import { logger } from "@genesiscz/utils/logger";
 import { deliverDueAnswers } from "./answers";
 import { type DeliverDeps, type DeliveryResult, deliverToSession, type LocatedDelivery } from "./deliver";

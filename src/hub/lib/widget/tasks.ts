@@ -1,5 +1,4 @@
 import { existsSync, statSync } from "node:fs";
-import { canonicalAgent } from "@app/handoff/targeting";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
     createTodo,
@@ -11,6 +10,7 @@ import {
     type TodoUpdateSnapshot,
     updateTodo,
 } from "@app/question/lib/decisions/store";
+import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
