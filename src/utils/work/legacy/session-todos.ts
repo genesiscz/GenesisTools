@@ -174,6 +174,14 @@ export function mirrorSessionTodos(
         const state = sessionTodoState(row.state);
         const meta = metaOf(row);
         const metaJson = SafeJSON.stringify(meta);
+
+        // The pointer carries every field but the text, the update time and the log's state word included: when it
+        // is the same, the row did not change since the last write, and nothing is read or written.
+        if (had !== undefined && had.meta === metaJson) {
+            report.unchanged++;
+            continue;
+        }
+
         const ts = row.updatedTs;
         const actor = actorOf(row);
         const origin = { via: "legacy" as const, uid: `${SESSION_TODO_POINTER}:${row.id}:${row.updatedTs}` };
