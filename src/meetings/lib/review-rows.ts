@@ -9,7 +9,15 @@ import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
 import { personPresent } from "./listen-answers";
 import { momentsInText } from "./moment-schema";
-import { askedRank, inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
+import {
+    askedRank,
+    heardTimes,
+    inputNeeded,
+    NONE_OF_THESE,
+    type QuestionItem,
+    questionLabel,
+    questionView,
+} from "./questions";
 import type {
     ClockTime,
     ReviewRow,
@@ -690,6 +698,7 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
         ...confidenceOf(item.confidence),
         ...(item.kind === "question" && item.priority !== undefined ? { priority: item.priority } : {}),
         ...(item.kind === "question" && item.group ? { group: item.group } : {}),
+        ...(item.kind === "question" && item.group === "words" ? { occurrences: heardTimes(item) } : {}),
         ...(item.kind === "question" && typeof item.evidence?.reach === "number" ? { reach: item.evidence.reach } : {}),
         ...(item.kind === "question" && item.comment ? { comment: item.comment } : {}),
         what: itemWhat(item),

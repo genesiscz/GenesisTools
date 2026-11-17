@@ -221,39 +221,100 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             return undefined;
         }
 
-        const lines = linesOf(context.transcript);
-        const transcriptLine = item.evidence?.transcriptLine;
-        const said = lines
-            .occurrences({ heard: item.heard, fromSec: item.atSec, toSec: item.atSec })
-            .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
-        const clip = said ? lines.clip(said) : undefined;
+        const heard = heardTerm(item, item.atSec, context);
 
         return {
-            kind: "question",
-            status: "suggested",
-            about: "term",
-            fromSec: item.atSec,
-            toSec: item.atSec + TERM_CLIP_SEC,
+            ...heard.question,
             // No proposal: no layer knows the word and no term resembles it, so the listener types it.
             question: item.proposed
                 ? `Is "${item.heard}" at ${formatClock(item.atSec)} really "${item.proposed}"?`
                 : `What is "${item.heard}" at ${formatClock(item.atSec)}?`,
-            heard: item.heard,
             choices: item.proposed ? [item.proposed] : [],
-            decides: [item.id],
-            rules: item.rules,
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
-            ...(clip ? { clip } : {}),
-            signature: `term|${item.heard.toLowerCase()}`,
             evidence: {
                 impact: Math.log2(1 + occurrences) + (decision ? IMPACT.decision : 0) + (personName ? IMPACT.owner : 0),
                 occurrences,
-                ...(typeof transcriptLine === "number" ? { transcriptLine } : {}),
+                ...heard.evidence,
             },
         };
     }
 
     return undefined;
+}
+
+type TermItem = Extract<MeetingItem, { kind: "term" }>;
+
+/** The part of a term question that names the heard word: where it is said, the clip that plays it, its line. */
+function heardTerm(item: TermItem, atSec: number, context: Pick<QuestionContext, "transcript">) {
+    const lines = linesOf(context.transcript);
+    const transcriptLine = item.evidence?.transcriptLine;
+    const said = lines
+        .occurrences({ heard: item.heard, fromSec: atSec, toSec: atSec })
+        .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
+    const clip = said ? lines.clip(said) : undefined;
+
+    return {
+        question: {
+            kind: "question" as const,
+            status: "suggested" as const,
+            about: "term" as const,
+            fromSec: atSec,
+            toSec: atSec + TERM_CLIP_SEC,
+            heard: item.heard,
+            decides: [item.id],
+            rules: item.rules,
+            ...(clip ? { clip } : {}),
+            signature: `term|${item.heard.toLowerCase()}`,
+        },
+        evidence: typeof transcriptLine === "number" ? { transcriptLine } : {},
+    };
+}
+
+/** A word form heard this many times that no layer knows is asked in the group `words` (`global.suggest.words`). */
+export const DEFAULT_WORD_MIN_OCCURRENCES = 2;
+
+/** How many times an item's words are heard in the meeting (`evidence.occurrences`; 1 when it does not say). */
+export function heardTimes(item: Pick<MeetingItem, "evidence">): number {
+    const occurrences = item.evidence?.occurrences;
+    return typeof occurrences === "number" ? occurrences : 1;
+}
+
+/**
+ * One question of the group `words` per unknown word form heard `minOccurrences` times or more (the owner's answer to
+ * M3): a suggested term with nothing proposed, a known time, and no question that decides it already. One answer
+ * fixes every place the form is heard. The most heard come first; they stand outside the question budget.
+ */
+export function wordQuestions(items: MeetingItem[], context: QuestionContext, minOccurrences: number): NewQuestion[] {
+    const asked = new Set(items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
+
+    return items
+        .flatMap(
+            (item): Array<{ item: TermItem; atSec: number; occurrences: number }> =>
+                item.kind === "term" &&
+                item.status === "suggested" &&
+                item.atSec !== undefined &&
+                !item.proposed &&
+                !item.meaning &&
+                !item.quote &&
+                item.rules.includes(MeetingRule.UnknownWord) &&
+                heardTimes(item) >= minOccurrences &&
+                !asked.has(item.id)
+                    ? [{ item, atSec: item.atSec, occurrences: heardTimes(item) }]
+                    : []
+        )
+        .sort((a, b) => b.occurrences - a.occurrences || a.atSec - b.atSec)
+        .map(({ item, atSec, occurrences }) => {
+            const heard = heardTerm(item, atSec, context);
+            return {
+                ...heard.question,
+                group: "words" as const,
+                question: `What is "${item.heard}"? It is heard ${occurrences} times.`,
+                choices: [],
+                ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
+                priority: occurrences,
+                evidence: { occurrences, impact: Math.log2(1 + occurrences), ...heard.evidence },
+            };
+        });
 }
 
 /** Two questions are the same when they ask about the same range for the same items. */
@@ -299,11 +360,20 @@ export function askedRank(question: NewQuestion): number {
     return typeof rank === "number" && Number.isFinite(rank) ? rank : questionRank(question);
 }
 
-/** The open questions, the most valuable first, then in transcript order. */
+/**
+ * The open questions, the most valuable first, then in transcript order. The group `words` comes after every other
+ * group, the most heard word first.
+ */
 export function openQuestions(record: MeetingRecord): QuestionItem[] {
+    const words = (item: QuestionItem) => (item.group === "words" ? 1 : 0);
     return record.items
         .filter((item): item is QuestionItem => item.kind === "question" && item.status === "suggested")
-        .sort((a, b) => questionRank(b) - questionRank(a) || a.fromSec - b.fromSec);
+        .sort(
+            (a, b) =>
+                words(a) - words(b) ||
+                (words(a) === 1 ? heardTimes(b) - heardTimes(a) : questionRank(b) - questionRank(a)) ||
+                a.fromSec - b.fromSec
+        );
 }
 
 /** An answer raises compatible questions for the same labelled passage by this much, up to `PROPAGATED_MAX`. */

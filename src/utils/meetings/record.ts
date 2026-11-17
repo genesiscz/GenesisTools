@@ -113,9 +113,16 @@ const contextSchema = z.object({
 
 export const ITEM_STATUSES = ["suggested", "confirmed", "rejected"] as const;
 
-/** What a question asks about: whose voice, which word, or what was said. */
-export const QUESTION_TOPICS = ["speaker", "term", "text"] as const;
+/**
+ * What a question asks about: whose voice, which word, what was said, or whether a corrected word goes into the
+ * project dictionary (a person answers it; the tool never adds an entry on its own).
+ */
+export const QUESTION_TOPICS = ["speaker", "term", "text", "dictionary"] as const;
 export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
+
+/** The groups `listen --group` and the window's picker show. */
+export const QUESTION_GROUPS = ["rules", "spot-check", "long-stretch", "words"] as const;
+export type QuestionGroup = (typeof QUESTION_GROUPS)[number];
 
 const itemIdSchema = z.string().regex(/^i\d+$/);
 
@@ -294,7 +301,8 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         fromSec: z.number(),
         toSec: z.number(),
         question: z.string().min(1),
-        group: z.enum(["rules", "spot-check", "long-stretch"]).optional(),
+        /** `words`: a repeated unknown word or its dictionary question, asked after every other group. */
+        group: z.enum(QUESTION_GROUPS).optional(),
         /** The words in question (about a term or text), as the transcript shows them; marked until answered. */
         heard: z.string().min(1).optional(),
         choices: z.array(z.string()).default([]),
