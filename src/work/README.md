@@ -50,8 +50,21 @@ tools work reopen <ref> --why "<text>" [--deliver never]
 tools work comment <ref> "<text>"
 ```
 
-Every write takes `--request-id <id>` (a repeat returns the stored reply) and `--dry-run` (writes nothing).
-Warnings and next actions go to stderr; `--json` prints the whole reply object.
+Also: `tree`, `context`, `config` (`config set <path> <json>`), `claim`, `release`, `comment`, `batch`, and the admin
+commands `dump`, `migrate backfill`, `doctor --parity`.
+
+Every write takes `--request-id <id>` (a repeat returns the stored reply), `--dry-run` (writes nothing) and
+`--owner-said "<words>"` (the owner's words give the role owner; the journal keeps them). Every command takes
+`--json` (the whole reply object), `--json-compact`, `--toon`, `--md` or `--format <f>`. Warnings and next actions go
+to stderr.
+
+## One method table, four doors
+
+`workApi` (`src/utils/work/api.ts`) lists every method once. `toCliCommands` makes the commands above from it, the
+MCP group `work` (opt-in for now, `src/work/mcp/genesis-tools.ts`) serves `work_context`, `work_list`, `work_show`,
+`work_spot`, `work_reopen` and `work_write { method, params }`, and the node REPL toolset `work` answers
+`await work.list({ project: "GenesisTools" })` with the reply object. Each method has a formatter in
+`src/utils/work/formatters.ts`; a method without one does not compile.
 
 - `spot` pairs the item with `--during`, else with the caller's one live claim, else with the live claim of its lead
   (a native subagent shares its session; a delegated T3 child finds its parent thread's session). With none it

@@ -1,22 +1,18 @@
 // lint-rules-ignore: tools agents context is a door of the work store's preflight context (spec P4 decision 1)
 import { actorHere } from "@app/work/adapters/actor";
 // lint-rules-ignore: tools agents context is a door of the work store's preflight context (spec P4 decision 1)
-import { contextHere } from "@app/work/adapters/context";
+import { cliDoor } from "@app/work/commands/emit";
 // lint-rules-ignore: tools agents context is a door of the work store's preflight context (spec P4 decision 1)
-import { emit } from "@app/work/commands/emit";
-import { out } from "@genesiscz/utils/logger";
+import { runMethod } from "@app/work/commands/register";
+import { defineFormatter, emit } from "@genesiscz/utils/output/formatter";
 import { errorDiagnostic, failReply, okReply } from "@genesiscz/utils/output/reply";
-import { BIND_KINDS, bindContext, type ContextFact } from "@genesiscz/utils/work/context";
+import { BIND_KINDS, type Binding, bindContext } from "@genesiscz/utils/work/context";
 import { isOneOf } from "@genesiscz/utils/work/model/vocab";
-import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import type { Command } from "commander";
 
-function factLine(fact: ContextFact, explain: boolean): string {
-    const how = `${fact.how.method}${fact.how.strength ? ` ${fact.how.strength}` : ""}: ${fact.how.source}`;
-    return explain
-        ? `${fact.path} = ${fact.value}  (${how}; ${fact.how.evidence})`
-        : `${fact.path} = ${fact.value}  (${how})`;
-}
+const bindFormatter = defineFormatter<{ session: string; bindings: Binding[] }>({
+    text: (d) => d.bindings.map((b) => `bound.${b.kind} = ${b.target}`),
+});
 
 export function registerContextCommand(program: Command): void {
     const context = program
@@ -26,30 +22,11 @@ export function registerContextCommand(program: Command): void {
         .option("--network", "ask the forge for the pull request instead of the local lookup cache")
         .option("--json", "print the reply object as JSON")
         .action(async (opts: { explain?: boolean; network?: boolean; json?: boolean }) => {
-            const { actor } = actorHere({ model: false });
-            const db = openWorkDb();
-
-            try {
-                const { report } = await contextHere({ actor, db, network: opts.network === true });
-                const data = { session: actor.sessionId, harness: actor.harness, ...report };
-                emit(okReply("context", data), opts, (d) => {
-                    const lines = [`session ${d.session ?? "(none)"} (${d.harness})`];
-                    const current = Object.values(d.current);
-                    lines.push(
-                        ...(current.length > 0
-                            ? current.map((f) => factLine(f, opts.explain === true))
-                            : ["no current facts"])
-                    );
-
-                    if (opts.explain && d.candidates.length > 0) {
-                        lines.push("candidates:", ...d.candidates.map((f) => `  ${factLine(f, true)}`));
-                    }
-
-                    return lines;
-                });
-            } finally {
-                db.close();
-            }
+            // The same method as `tools work context`: one handler, one formatter.
+            await runMethod("context", opts.network ? { network: true } : {}, {
+                ...(opts.explain ? { explain: true } : {}),
+                ...(opts.json ? { json: true } : {}),
+            });
         });
 
     context
@@ -62,19 +39,18 @@ export function registerContextCommand(program: Command): void {
             const { actor } = actorHere({ model: false });
 
             if (!isOneOf(BIND_KINDS, opts.kind)) {
-                emit(
-                    failReply("context bind", [
-                        errorDiagnostic("BAD_VALUE", `--kind must be one of: ${BIND_KINDS.join(", ")}.`),
-                    ]),
-                    opts,
-                    () => []
-                );
+                const refused = failReply<{ session: string; bindings: Binding[] }>("context bind", [
+                    errorDiagnostic("BAD_VALUE", `--kind must be one of: ${BIND_KINDS.join(", ")}.`),
+                ]);
+                emit(refused, bindFormatter, opts, cliDoor);
                 return;
             }
 
             if (actor.sessionId === null) {
-                out.printlnErr("This shell runs in no agent session, so there is nothing to bind.");
-                process.exitCode = 1;
+                const refused = failReply<{ session: string; bindings: Binding[] }>("context bind", [
+                    errorDiagnostic("NO_SESSION", "This shell runs in no agent session, so there is nothing to bind."),
+                ]);
+                emit(refused, bindFormatter, opts, cliDoor);
                 return;
             }
 
@@ -83,8 +59,6 @@ export function registerContextCommand(program: Command): void {
                 target: opts.target,
                 ts: new Date().toISOString(),
             });
-            emit(okReply("context bind", { session: actor.sessionId, bindings }), opts, (d) =>
-                d.bindings.map((b) => `bound.${b.kind} = ${b.target}`)
-            );
+            emit(okReply("context bind", { session: actor.sessionId, bindings }), bindFormatter, opts, cliDoor);
         });
 }

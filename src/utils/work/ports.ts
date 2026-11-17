@@ -31,6 +31,7 @@ export type LegacyAction =
     | { action: "modify_task"; handoff: string; taskId: string; text?: string; acceptanceCriteria?: string }
     | { action: "comment"; handoff: string; text: string }
     | { action: "claim"; handoff: string }
+    | { action: "unclaim"; handoff: string }
     | {
           action: "add_tasks";
           handoff: string;

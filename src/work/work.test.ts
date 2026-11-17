@@ -151,3 +151,37 @@ describe("shadow mode", () => {
         expect(parity()).toEqual([]);
     });
 });
+
+describe("doors", () => {
+    test("work_spot and work_list answer through the MCP tool group, and work.list through the REPL toolset", async () => {
+        const { toolGroup } = await import("./mcp/genesis-tools");
+        const group = toolGroup();
+        expect(Object.keys(group.entries).sort()).toEqual([
+            "work_context",
+            "work_list",
+            "work_reopen",
+            "work_show",
+            "work_spot",
+            "work_write",
+        ]);
+        const spotted = await group.entries.work_spot.handler({
+            title: "seen through mcp",
+            type: "bug",
+            during: "none",
+        });
+        expect(typeof spotted === "string" ? spotted : spotted.text).toContain("NOT_FOUND");
+        const listed = await group.entries.work_list.handler({ type: ["bug"] });
+        expect(typeof listed === "string" ? listed : listed.structuredContent).toMatchObject({
+            ok: true,
+            verb: "list",
+        });
+
+        const { WorkToolset } = await import("@app/node-repl/lib/toolsets/work");
+        const globals = await new WorkToolset().bootstrap();
+        const work = globals.work as Record<
+            string,
+            (p: Record<string, unknown>) => Promise<{ ok: boolean; verb: string }>
+        >;
+        expect(await work.list({ limit: 1 })).toMatchObject({ ok: true, verb: "list" });
+    });
+});
