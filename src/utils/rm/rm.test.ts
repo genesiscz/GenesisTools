@@ -19,6 +19,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import {
+    DIALOG_PROGRAM_PATHS,
+    type DialogResult,
+    type DialogSystem,
+    dialogEnvironment,
+    isTrustedDialogProgram,
+    PERSON_DIALOGS,
+} from "@genesiscz/utils/genesis-tools/areas/person/system-dialog";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { sessionScratchPath } from "../../../plugins/genesis-tools/hooks/session-scratch";
@@ -41,12 +49,8 @@ import {
     confirmByPerson,
     createAsideRequest,
     createRmRequest,
-    DIALOG_PROGRAM_PATHS,
-    type DialogResult,
-    type DialogSystem,
     defaultRmConfig,
     defaultTempRoots,
-    dialogEnvironment,
     disposalGraceMinutes,
     drainDue,
     drainerNeeded,
@@ -60,7 +64,6 @@ import {
     isInside,
     isRootActive,
     isTrashRootName,
-    isTrustedDialogProgram,
     itemGitState,
     keepDiskReserve,
     ledgerAgent,
@@ -85,7 +88,6 @@ import {
     notMovableReason,
     type PathFact,
     type PathFacts,
-    PERSON_DIALOGS,
     parseRmConfig,
     pathPresent,
     pendingAsideDirs,
