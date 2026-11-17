@@ -16,6 +16,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private let epoch: Date
     private let hostTime: CMTime
     private var tracks: [CaptureAudioSource: AudioTrack] = [:]
+    private var announced: Set<CaptureAudioSource> = []
     private var sequence: [CaptureAudioSource: Int] = [:]
     private var retiredEnd: [CaptureAudioSource: CMTime] = [:]
     private var muted: [CaptureAudioSource: Bool] = [:]
@@ -119,6 +120,11 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                 fail(track.failures.last ?? "the \(source.rawValue) writer stopped accepting samples")
                 return
             }
+            if track.fileTimeline.durationMs > 0, !announced.contains(source), let url = track.sidecarURL {
+                announced.insert(source)
+                writeRow(["event": "segment-started", "file": url.lastPathComponent,
+                    "source": source.rawValue, "zeroAt": wallTime(track.first ?? time)])
+            }
             let end = CMTimeAdd(time, CMTime(seconds: Double(length) / rate, preferredTimescale: 1_000_000_000))
             if track.end == nil || CMTimeCompare(end, track.end!) > 0 { track.end = end }
             offset += length
@@ -136,6 +142,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
 
     private func retire(_ source: CaptureAudioSource) {
         guard let track = tracks.removeValue(forKey: source), let first = track.first else { return }
+        announced.remove(source)
         retiredEnd[source] = track.end
         let zeroAt = wallTime(first)
         finishing.enter()
@@ -149,19 +156,23 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             let row: [String: Any] = ["file": url.lastPathComponent, "source": source.rawValue,
                 "at": zeroAt, "zeroAt": zeroAt, "durationMs": track.fileTimeline.durationMs,
                 "mutedSpans": track.fileTimeline.mutedSpans, "lostSpans": track.lostSpans, "kept": "normal"]
-            do {
-                var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
-                data.append(0x0a)
-                outputLock.lock()
-                if let emit {
-                    emit(data)
-                } else {
-                    FileHandle.standardOutput.write(data)
-                }
-                outputLock.unlock()
-            } catch {
-                failed?("could not encode the \(source.rawValue) segment: \(error.localizedDescription)")
+            writeRow(row)
+        }
+    }
+
+    private func writeRow(_ row: [String: Any]) {
+        do {
+            var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+            data.append(0x0a)
+            outputLock.lock()
+            defer { outputLock.unlock() }
+            if let emit {
+                emit(data)
+            } else {
+                FileHandle.standardOutput.write(data)
             }
+        } catch {
+            failed?("could not encode an audio segment: \(error.localizedDescription)")
         }
     }
 

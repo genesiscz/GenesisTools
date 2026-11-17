@@ -48,6 +48,7 @@ function meetingRecorderConfig(run: MeetingRun) {
             format: { kind: "jpeg", quality: run.capture.jpegQuality },
             convert: deps.toJpeg,
         });
+        const salvages = new Set<Promise<void>>();
 
         return {
             kind: "meeting",
@@ -107,14 +108,19 @@ function meetingRecorderConfig(run: MeetingRun) {
             },
             hooks: {
                 onAudioSegment: (segment) => run.keptSound(segment),
-                onAudioWarning: (warning) => run.note(warning),
+                onAudioWarning: (warning) => {
+                    run.note(warning);
+                    state.warning = run.notes.join("; ");
+                    run.saveState();
+                },
                 onSoundPath: (sound) => {
                     state.sound = sound;
                     run.saveState();
                 },
                 beforeLoop: () => run.begin(recording),
-                afterLoop: () => {
-                    run.salvageTracks(run.pieceDir);
+                afterLoop: async () => {
+                    await Promise.all(salvages);
+                    await run.salvageTracks(run.pieceDir);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {
@@ -176,8 +182,15 @@ function meetingRecorderConfig(run: MeetingRun) {
                         }
                     },
                     onSettled: (entry) => {
-                        run.salvageTracks(entry.outDir);
-                        rmSync(entry.outDir, { recursive: true, force: true });
+                        const salvage = run
+                            .salvageTracks(entry.outDir)
+                            .then(() => rmSync(entry.outDir, { recursive: true, force: true }))
+                            .catch((err: unknown) => {
+                                log.error({ err, dir: entry.outDir }, "could not recover a capture's sound");
+                                run.note(`could not recover a capture's sound: ${errorText(err)}`);
+                            });
+                        salvages.add(salvage);
+                        void salvage.finally(() => salvages.delete(salvage));
                     },
                 },
             },

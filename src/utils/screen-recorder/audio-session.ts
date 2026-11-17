@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, renameSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
+import { getAudioInfo } from "@genesiscz/utils/audio/probe";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
@@ -28,6 +29,42 @@ export const audioSegmentSchema = z.object({
     kept: z.literal("normal"),
 });
 export type AudioSegment = z.infer<typeof audioSegmentSchema>;
+
+const segmentStartedSchema = audioSegmentSchema.pick({ file: true, source: true, zeroAt: true }).extend({
+    event: z.literal("segment-started"),
+});
+
+/** Recovery reads the sample clock saved beside the open file, even after the supervisor itself was killed. */
+export async function salvagedAudioTiming(file: string): Promise<{
+    at: string;
+    zeroAt?: string;
+    durationMs: number;
+    clockGuess?: "file-times";
+    durationGuess?: "file-times";
+}> {
+    const stat = statSync(file);
+    const startMs = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+    let zeroAt: string | undefined;
+    try {
+        const started = segmentStartedSchema.parse(
+            SafeJSON.parse(readFileSync(`${file}.json`, "utf8"), { strict: true })
+        );
+        if (started.file !== basename(file) || !started.file.endsWith(`-${started.source}.m4a`)) {
+            throw new Error("the saved sample clock belongs to another segment");
+        }
+        zeroAt = started.zeroAt;
+    } catch (error) {
+        log.debug({ file, error }, "no saved sample clock; recovery uses the file's times");
+    }
+    const info = await getAudioInfo(file, { timeoutMs: 2_000 });
+    const decoded = Number.isFinite(info.duration) && info.duration > 0;
+    return {
+        at: zeroAt ?? new Date(startMs).toISOString(),
+        ...(zeroAt ? { zeroAt } : { clockGuess: "file-times" }),
+        durationMs: Math.max(0, Math.round(decoded ? info.duration * 1000 : stat.mtimeMs - startMs)),
+        ...(!decoded ? { durationGuess: "file-times" } : {}),
+    };
+}
 
 const eventSchema = z.discriminatedUnion("event", [
     z.object({
@@ -179,7 +216,8 @@ export class AudioSession {
             );
         }
 
-        const row = audioSegmentSchema.parse(raw);
+        const started = segmentStartedSchema.safeParse(raw);
+        const row = started.success ? started.data : audioSegmentSchema.parse(raw);
         if (
             basename(row.file) !== row.file ||
             !/^audio-\d+-(mic|system)\.m4a$/.test(row.file) ||
@@ -187,9 +225,14 @@ export class AudioSession {
         ) {
             throw new Error("audio-record sent an invalid segment file");
         }
+        if (started.success) {
+            writeFileSync(join(this.options.outDir, `${row.file}.json`), SafeJSON.stringify(started.data));
+            return;
+        }
+        const closed = audioSegmentSchema.parse(raw);
         const file = `audio/${this.prefix}-${row.file}`;
         renameSync(join(this.options.outDir, row.file), join(this.options.folder, file));
-        const kept = { ...row, file };
+        const kept = { ...closed, file };
         try {
             appendFileSync(join(this.options.folder, "audio.jsonl"), `${SafeJSON.stringify(kept)}\n`);
         } catch (error) {
@@ -243,6 +286,10 @@ export class AudioSession {
         this.ready.reject(this.failure);
         this.pending?.reject(this.failure);
         this.options.onFailure?.(this.failure);
+    }
+
+    get failureReason(): Error | undefined {
+        return this.failure;
     }
 
     private command(command: Record<string, unknown>, accepts: (event: AudioEvent) => boolean): Promise<void> {

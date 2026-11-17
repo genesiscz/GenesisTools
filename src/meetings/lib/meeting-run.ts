@@ -15,7 +15,7 @@ import {
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
-import type { AudioSegment } from "@genesiscz/utils/screen-recorder/audio-session";
+import { type AudioSegment, salvagedAudioTiming } from "@genesiscz/utils/screen-recorder/audio-session";
 import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -166,7 +166,7 @@ export class MeetingRun {
      * meeting's OCR worker.
      */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
-        this.salvageTracks(this.pieceDir);
+        await this.salvageTracks(this.pieceDir);
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
         this.saveState();
@@ -287,10 +287,11 @@ export class MeetingRun {
     /**
      * Moves every sound file a capture left in `dir` (a crash, a kill, a failed capture) to the meeting's `audio/`,
      * so clearing `dir` loses no sound. A file named as ax-tool names a track (`audio-<source>.m4a`) gets a row with
-     * `kept: "salvaged"`, its start and length taken from the file's times; any other `.m4a` is moved without a row.
+     * `kept: "salvaged"`, its saved sample clock and decoded length (file times only as a marked fallback).
+     * Any other `.m4a` is moved without a row.
      * Answers how many files it kept.
      */
-    salvageTracks(dir: string): number {
+    async salvageTracks(dir: string): Promise<number> {
         let names: string[];
 
         try {
@@ -315,8 +316,8 @@ export class MeetingRun {
             }
 
             const source = SALVAGED_TRACK.exec(basename(path))?.[1];
-            const startMs = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
-            const at = new Date(startMs);
+            const timing = await salvagedAudioTiming(path);
+            const at = new Date(timing.at);
             const stem = frameName(at, 0).replace(/\.jpg$/, `-${source ?? basename(path, ".m4a")}`);
             let name = `${stem}-salvaged.m4a`;
 
@@ -332,8 +333,7 @@ export class MeetingRun {
                 appendAudioRow(this.folder, {
                     file: `${AUDIO_FOLDER}/${name}`,
                     source,
-                    at: at.toISOString(),
-                    durationMs: Math.max(0, Math.round(stat.mtimeMs - startMs)),
+                    ...timing,
                     mutedSpans: [],
                     kept: "salvaged",
                 });

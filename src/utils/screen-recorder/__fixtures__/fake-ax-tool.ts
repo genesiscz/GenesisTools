@@ -99,12 +99,16 @@ if (args[0] === "audio-record") {
     let position = 0;
     let paused = false;
     const spans: Record<string, Array<[number, number]>> = { mic: [], system: [] };
+    const openSegment = (file: string, source: string, zeroAt: string) => {
+        print({ event: "segment-started", file, source, zeroAt });
+    };
     const emitSegment = (durationMs: number) => {
         sequence += 1;
         for (const source of sources) {
             const file = `audio-${String(sequence).padStart(6, "0")}-${source}.m4a`;
             writeFileSync(join(outDir, file), "invented sound");
             const at = new Date(start + (sequence - 1) * 60_000).toISOString();
+            openSegment(file, source, at);
             print({
                 file,
                 source,
@@ -119,14 +123,24 @@ if (args[0] === "audio-record") {
         }
     };
     const state = () => print({ event: "state", state: paused ? "paused" : "recording", sources, muted }, "stderr");
-    if (fixtureMode === "--fixture-audio-session-dies-at-start") {
+    const restartCase =
+        fixtureMode === "--fixture-audio-session-dies-once" || fixtureMode === "--fixture-audio-session-restart-fails";
+    const restartMarker = join(outDir, "..", "audio-session-started");
+    const restarted = restartCase && existsSync(restartMarker);
+    if (restartCase) {
+        writeFileSync(restartMarker, "started");
+    }
+    if (
+        fixtureMode === "--fixture-audio-session-dies-at-start" ||
+        (fixtureMode === "--fixture-audio-session-restart-fails" && restarted)
+    ) {
         // As the real tool did on 2026-11-17: an error on the first captured buffer, before it was ready.
         print({ event: "error", message: "could not split system audio at the segment boundary" }, "stderr");
         process.exit(1);
     }
 
     state();
-    if (fixtureMode === "--fixture-audio-session-dies-later") {
+    if (fixtureMode === "--fixture-audio-session-dies-later" || (restartCase && !restarted)) {
         setTimeout(() => {
             print({ event: "error", message: "the system writer stopped accepting samples" }, "stderr");
             process.exit(1);
@@ -142,7 +156,23 @@ if (args[0] === "audio-record") {
         }
     }
     if (fixtureMode === "--fixture-audio-crash") {
-        writeFileSync(join(outDir, "audio-000001-system.m4a"), "unfinished sound");
+        // A decodable 1.25 s file under the native name: recovery must ignore its unrelated file times.
+        const sound = Buffer.alloc(44 + 40_000);
+        sound.write("RIFF", 0);
+        sound.writeUInt32LE(sound.length - 8, 4);
+        sound.write("WAVEfmt ", 8);
+        sound.writeUInt32LE(16, 16);
+        sound.writeUInt16LE(1, 20);
+        sound.writeUInt16LE(1, 22);
+        sound.writeUInt32LE(16_000, 24);
+        sound.writeUInt32LE(32_000, 28);
+        sound.writeUInt16LE(2, 32);
+        sound.writeUInt16LE(16, 34);
+        sound.write("data", 36);
+        sound.writeUInt32LE(40_000, 40);
+        const file = "audio-000001-system.m4a";
+        writeFileSync(join(outDir, file), sound);
+        openSegment(file, "system", new Date(start + 700).toISOString());
         process.exit(1);
     }
     let input = "";

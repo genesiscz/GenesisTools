@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type AudioSegment, AudioSession, audioSegmentSchema } from "./audio-session";
+import { type AudioSegment, AudioSession, audioSegmentSchema, salvagedAudioTiming } from "./audio-session";
 import type { AudioSource } from "./control";
 
 const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
@@ -115,7 +115,33 @@ describe("continuous sound over the fake tool", () => {
         } else {
             expect(session).toBeInstanceOf(Error);
         }
-        expect(existsSync(join(dir, ".piece", "sound", "audio-000001-system.m4a"))).toBe(true);
+        const file = join(dir, ".piece", "sound", "audio-000001-system.m4a");
+        expect(existsSync(file)).toBe(true);
+        const saved = SafeJSON.parse(readFileSync(`${file}.json`, "utf8"), { strict: true });
+        expect(saved).toEqual({
+            event: "segment-started",
+            file: "audio-000001-system.m4a",
+            source: "system",
+            zeroAt: "2026-11-03T12:00:00.700Z",
+        });
+        expect(await salvagedAudioTiming(file)).toEqual({
+            at: "2026-11-03T12:00:00.700Z",
+            zeroAt: "2026-11-03T12:00:00.700Z",
+            durationMs: 1250,
+        });
+    });
+
+    test("an older or unreadable open file keeps marked file-time guesses", async () => {
+        const dir = folder();
+        const session = await start(dir, "--fixture-audio-three");
+        await session.stop();
+        const file = join(dir, rows(dir)[0].file);
+        const recovered = await salvagedAudioTiming(file);
+        expect(recovered.at).toEqual(expect.any(String));
+        expect(recovered.zeroAt).toBeUndefined();
+        expect(recovered.clockGuess).toBe("file-times");
+        expect(recovered.durationGuess).toBe("file-times");
+        expect(recovered.durationMs).toBeGreaterThanOrEqual(0);
     });
 
     test("a ledger write failure leaves the closed file where recovery can salvage it", async () => {
