@@ -61,7 +61,7 @@ describe("the registry", () => {
         }
     });
 
-    it("holds the twenty-four general rules; personal ones load from guard.customRules", () => {
+    it("holds the twenty-five general rules; personal ones load from guard.customRules", () => {
         expect(SHELL_RULES.map((r) => r.id).sort()).toEqual(
             [
                 "bare-log-command",
@@ -85,6 +85,7 @@ describe("the registry", () => {
                 "stderr-discarded-then-counted-covered",
                 "stderr-discarded-then-counted-scratch",
                 "stderr-discarded-then-read",
+                "stopped-job-wake",
                 "swiftpm-stale-plan",
                 "zsh-glob-qualifier",
                 "zsh-word-split",
