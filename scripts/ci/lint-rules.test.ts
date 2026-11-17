@@ -26,6 +26,7 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { APP_CHECK_RATCHET } from "./app-check-ratchet";
 import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
@@ -1608,6 +1609,7 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             return result.stdout.trim();
         };
         const inputs = [
+            "app-check-ratchet.ts",
             "agent-context-ratchet.ts",
             "harness-ratchet.ts",
             "model-facts-ratchet.ts",
@@ -2255,4 +2257,31 @@ describe("no-exec-without-deadline", () => {
             countRatchetShortfalls([finding("src/a.ts"), finding("src/a.ts")], new Set(["src/a.ts"]), counts)
         ).toHaveLength(1);
     });
+});
+
+describe("app checks only leave the actions migration list", () => {
+    const rule = "no-hand-rolled-app-check";
+    test("a new caller fails, the owner passes, and growing the list fails", () => {
+        const source = "if (isGenesisAppBundleInstalled()) openWindow();";
+        expect(rules(source, "src/new-app-check.ts")).toContain(rule);
+        expect(rules(source, "src/utils/genesis-tools/capability/facts.ts")).not.toContain(rule);
+        expect(rules("existsSync(genesisAppBundlePath())", "src/new-app-check.ts")).toContain(rule);
+        expect(rules("existsSync(otherFile)", "src/new-app-check.ts")).not.toContain(rule);
+        expect(
+            ratchetAdditions(
+                "export const APP_CHECK_RATCHET = new Map([]);",
+                'export const APP_CHECK_RATCHET = new Map([["src/joined.ts", 1]]);'
+            )
+        ).toEqual(["APP_CHECK_RATCHET: src/joined.ts"]);
+    });
+    for (const [file, count] of APP_CHECK_RATCHET) {
+        test(`${file}: its counted checks pass, another check fails`, async () => {
+            const source = await Bun.file(file).text();
+            expect(checkSource(file, source, { ratchets: false }).filter((f) => f.rule === rule).length).toBe(count);
+            expect(checkSource(file, source).filter((f) => f.rule === rule)).toEqual([]);
+            expect(checkSource(file, `${source}\nisGenesisAppBundleInstalled();`).some((f) => f.rule === rule)).toBe(
+                true
+            );
+        });
+    }
 });
