@@ -172,6 +172,22 @@ final class HubSessionSeamsTests: XCTestCase {
         XCTAssertEqual(HubSessionDetailHost.searchTurns(earlier: old, window: current, start: 0).map(\.text), ["match live"])
     }
 
+    /// Reload starts a host lookup beside the one the journal's new pane started. The older one answering last must
+    /// not win: only the newest ticket applies, whatever order the answers arrive in.
+    func testAnOlderHostLookupThatAnswersLastIsDiscarded() {
+        var lookups = HubSessionDetailHost.HostLookups()
+        let older = lookups.start()
+        let newer = lookups.start()
+        var applied: [String] = []
+        for (ticket, answer) in [(newer, "new pane"), (older, "old pane")] where lookups.isLatest(ticket) {
+            applied.append(answer)
+        }
+        XCTAssertEqual(applied, ["new pane"])
+        let retry = lookups.start()
+        XCTAssertFalse(lookups.isLatest(newer))
+        XCTAssertTrue(lookups.isLatest(retry))
+    }
+
     // MARK: tools ai-spend session
 
     func testSpendCacheCoalescesConcurrentReadersAndAllowsExplicitRefresh() async throws {
