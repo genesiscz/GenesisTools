@@ -739,6 +739,10 @@ function clampCentre(view: CompareView, pane: CompareSize, canvas: CompareSize):
     return { scale: view.scale, cx, cy };
 }
 
+/**
+ * Where the pane draws the canvas for a view. A view made on another canvas (a mode that shows the aligned pair,
+ * another image B) is drawn inside this one, so the pane never shows empty space past the image's edge.
+ */
 export function resolveView(view: CompareView, pane: CompareSize, canvas: CompareSize): ViewTransform {
     if (view.scale === null) {
         const scale = fitScale(pane, canvas);
@@ -746,11 +750,9 @@ export function resolveView(view: CompareView, pane: CompareSize, canvas: Compar
         return { scale, x: (pane.width - canvas.width * scale) / 2, y: 0 };
     }
 
-    return {
-        scale: view.scale,
-        x: pane.width / 2 - view.cx * view.scale,
-        y: pane.height / 2 - view.cy * view.scale,
-    };
+    const { cx, cy } = clampCentre(view, pane, canvas);
+
+    return { scale: view.scale, x: pane.width / 2 - cx * view.scale, y: pane.height / 2 - cy * view.scale };
 }
 
 /** Zooms by `factor` keeping the canvas point under `point` (pane pixels) where it is. */
@@ -820,6 +822,38 @@ export function panView({
     return clampCentre({ scale: now.scale, cx, cy }, pane, canvas);
 }
 
+/** Which way each arrow key moves the canvas: ArrowDown shows what is below, so the canvas moves up. */
+const PAN_KEYS = new Map<string, { x: number; y: number }>([
+    ["ArrowLeft", { x: 1, y: 0 }],
+    ["ArrowRight", { x: -1, y: 0 }],
+    ["ArrowUp", { x: 0, y: 1 }],
+    ["ArrowDown", { x: 0, y: -1 }],
+]);
+
+/**
+ * How far an arrow key pans, in pane pixels, as a drag would move the canvas (for `panView`): a tenth of the pane,
+ * half a pane with Shift. Undefined for any other key.
+ */
+export function panKeyDelta({
+    key,
+    shift,
+    pane,
+}: {
+    key: string;
+    shift: boolean;
+    pane: CompareSize;
+}): { dx: number; dy: number } | undefined {
+    const direction = PAN_KEYS.get(key);
+
+    if (!direction) {
+        return undefined;
+    }
+
+    const parts = shift ? 2 : 10;
+
+    return { dx: (direction.x * pane.width) / parts, dy: (direction.y * pane.height) / parts };
+}
+
 /** True when the canvas at this view is larger than the pane on some axis, so a drag has something to move. */
 export function canPan(view: CompareView, pane: CompareSize, canvas: CompareSize): boolean {
     const { scale } = resolveView(view, pane, canvas);
@@ -854,70 +888,140 @@ export function viewForRect({
 
 // ─── Region marks ───
 
+/**
+ * The index of the region a picked one has become in a new diff (another threshold, another image B, Align turned
+ * off): the same box, else the region over the picked box's centre, else -1.
+ */
+export function matchRegion(regions: CompareRect[], picked: CompareRect | undefined): number {
+    if (!picked) {
+        return -1;
+    }
+
+    const same = regions.findIndex(
+        (region) => region.x === picked.x && region.y === picked.y && region.w === picked.w && region.h === picked.h
+    );
+
+    if (same >= 0) {
+        return same;
+    }
+
+    return regions.findIndex((region) => insideRect(region, picked.x + picked.w / 2, picked.y + picked.h / 2));
+}
+
 /** Height of a region number in the gutter beside the stage, in screen pixels. */
 export const GUTTER_LABEL_HEIGHT = 16;
 /** Space between two numbers in the gutter. */
 const GUTTER_LABEL_GAP = 2;
+/** Length of the tick that marks where a leader leaves its box, in screen pixels: the only part on the image. */
+export const LEADER_TICK = 6;
 
-/** A region's number in the gutter, and where its leader line meets the box. */
+/** A region's number in the gutter, and the parts of its leader inside the pane. */
 export interface GutterLabel {
     /** The region's index in the diff's list. */
     index: number;
     /** Pane y of the number's top edge; the gutter starts at the pane's top. */
     top: number;
-    /** Pane point the leader ends at: the box's right edge, half way down the part of the box in view. */
+    /** Pane point the leader starts at: the box's right edge, half way down the part of the box in view. */
     anchor: { x: number; y: number };
+    /** Pane x span of the tick at the anchor, the only part of the leader drawn on the image. */
+    tick: [number, number];
+    /**
+     * Pane x span of the leader at the anchor's y through the empty pane between the image's right edge and the
+     * pane's; null when the image reaches the pane's edge. Between the tick and this span the leader is not drawn, so
+     * it hides no image pixel; the tick and this span sit on one line, so the eye still follows it.
+     */
+    margin: [number, number] | null;
+}
+
+/** The marks in the gutter: a number for each region in view that fits, and one mark for the rest. */
+export interface GutterLayout {
+    labels: GutterLabel[];
+    /** The "+count" mark at the gutter's bottom for the regions in view without a number; null when none is left out. */
+    more: { count: number; top: number } | null;
 }
 
 /**
  * Where each region's number goes in the gutter at the right of the stage, so no number ever covers an image pixel:
  * level with its box where there is room, in box order from the top, at least one number's height apart, and inside
- * the pane's height. A box out of view gets no number.
+ * the pane's height. A box out of view gets no number. When more boxes are in view than numbers fit, the active
+ * region and then the largest ones keep a number, and a "+count" mark at the bottom counts the others.
  */
 export function gutterLabels({
     regions,
     transform,
     pane,
+    canvas,
+    active = -1,
 }: {
-    regions: CompareRect[];
+    regions: CompareRegion[];
     transform: ViewTransform;
     pane: CompareSize;
-}): GutterLabel[] {
-    const labels = regions
+    /** The canvas the pane draws, for the image's right edge. */
+    canvas: CompareSize;
+    /** The index of the active region, which keeps its number in a full gutter. */
+    active?: number;
+}): GutterLayout {
+    const imageRight = transform.x + canvas.width * transform.scale;
+    const inView = regions
         .map((region, index) => {
             const top = transform.y + region.y * transform.scale;
             const left = transform.x + region.x * transform.scale;
 
             return {
                 index,
+                pixels: region.pixels,
                 top,
                 bottom: top + region.h * transform.scale,
                 left,
                 right: left + region.w * transform.scale,
             };
         })
-        .filter((box) => box.bottom > 0 && box.top < pane.height && box.right > 0 && box.left < pane.width)
+        .filter((box) => box.bottom > 0 && box.top < pane.height && box.right > 0 && box.left < pane.width);
+    const step = GUTTER_LABEL_HEIGHT + GUTTER_LABEL_GAP;
+    const capacity = Math.max(1, Math.floor((pane.height + GUTTER_LABEL_GAP) / step));
+    const full = inView.length > capacity;
+    // A full gutter keeps its last place for the "+count" mark.
+    const numbered = full
+        ? [...inView]
+              .sort(
+                  (p, q) =>
+                      Number(q.index === active) - Number(p.index === active) ||
+                      q.pixels - p.pixels ||
+                      p.index - q.index
+              )
+              .slice(0, capacity - 1)
+        : inView;
+    const labels = numbered
         .map((box): GutterLabel => {
             const y = (Math.max(0, box.top) + Math.min(pane.height, box.bottom)) / 2;
+            const x = Math.min(pane.width, box.right);
+            const tickEnd = Math.min(pane.width, x + LEADER_TICK);
+            const marginStart = Math.max(imageRight, tickEnd);
 
             return {
                 index: box.index,
                 top: y - GUTTER_LABEL_HEIGHT / 2,
-                anchor: { x: Math.min(pane.width, box.right), y },
+                anchor: { x, y },
+                tick: [x, tickEnd],
+                margin: marginStart < pane.width ? [marginStart, pane.width] : null,
             };
         })
         .sort((p, q) => p.anchor.y - q.anchor.y || p.index - q.index);
-    const step = GUTTER_LABEL_HEIGHT + GUTTER_LABEL_GAP;
+    const bottom = pane.height - GUTTER_LABEL_HEIGHT - (full ? step : 0);
 
-    // Down the gutter: each number below the one before. Then up from the bottom: back inside the pane.
+    // Down the gutter: each number below the one before. Then up from the bottom: back inside the pane. The capacity
+    // above leaves room for every number, so the second pass never pushes one above the top.
     for (let i = 0; i < labels.length; i++) {
         labels[i].top = Math.max(labels[i].top, 0, i > 0 ? labels[i - 1].top + step : 0);
     }
 
     for (let i = labels.length - 1; i >= 0; i--) {
-        const floor = i < labels.length - 1 ? labels[i + 1].top - step : pane.height - GUTTER_LABEL_HEIGHT;
+        const floor = i < labels.length - 1 ? labels[i + 1].top - step : bottom;
         labels[i].top = Math.max(0, Math.min(labels[i].top, floor));
     }
 
-    return labels;
+    return {
+        labels,
+        more: full ? { count: inView.length - labels.length, top: pane.height - GUTTER_LABEL_HEIGHT } : null,
+    };
 }

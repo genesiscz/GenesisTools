@@ -18,6 +18,7 @@ import {
     canPan,
     NO_SHIFT,
     paneHeight,
+    panKeyDelta,
     panView,
     resolveView,
     type Shift,
@@ -29,8 +30,8 @@ import type { IdleCache, PixelPair } from "./load";
 
 /**
  * The stage every mode draws into: a pane that owns zoom and pan (Ctrl or Cmd plus the wheel zooms at the pointer, a
- * drag pans once the canvas is larger than the pane), layers that carry the shared transform, and the small parts
- * the modes share. A mode is a `CompareMode` object; `registry.ts` lists them.
+ * drag or the arrow keys pan once the canvas is larger than the pane), layers that carry the shared transform, and
+ * the small parts the modes share. A mode is a `CompareMode` object; `registry.ts` lists them.
  */
 
 // ─── The mode interface ───
@@ -79,6 +80,12 @@ export const COMPARE_MODE_DEFAULTS: CompareModeDefaults = {
     diff: { underlayOpacity: 0.4 },
 };
 
+/** A pane's inner size and the canvas it draws. */
+export interface PaneGeometry {
+    pane: CompareSize;
+    canvas: CompareSize;
+}
+
 export interface CompareStageProps {
     /** Image A (before) and image B (after). */
     a: CompareImage;
@@ -89,8 +96,11 @@ export interface CompareStageProps {
     setView: (update: (view: CompareView) => CompareView) => void;
     /** Shows `rect` of the canvas whole in every pane. */
     zoomTo: (rect: CompareRect) => void;
-    /** A pane reports its size, so the zoom buttons know what fit and 100% mean. */
-    onPaneSize: (size: CompareSize) => void;
+    /**
+     * A pane reports its size and the canvas it draws (an aligned pair's in Diff and Heat), so the zoom buttons, the
+     * zoom label and a region's zoom work on what is on screen.
+     */
+    onPaneGeometry: (geometry: PaneGeometry) => void;
     maxHeight: number;
     pixels: PixelState;
     /** pixelmatch threshold of this comparison and its setter (the comparison then keeps its own). */
@@ -113,6 +123,8 @@ export interface CompareMode {
     Controls?: ComponentType<CompareStageProps>;
     /** True when the mode needs decoded pixels of both images (diff, heat). */
     needsPixels?: boolean;
+    /** Keys of this mode's settings that a comparison with an `id` saves, so a reload keeps them (Blink's interval). */
+    saved?: readonly string[];
 }
 
 export function numberSetting(settings: CompareSettings, key: string, fallback: number): number {
@@ -156,6 +168,11 @@ export function usePaneSize(): CompareSize {
     return useContext(TransformContext).pane;
 }
 
+/** The canvas the pane around the caller draws: for marks placed against the image's edges. */
+export function useCanvasSize(): CompareSize {
+    return useContext(TransformContext).canvas;
+}
+
 /** A pane click that did not move the pointer further than this is a tap, not a pan. */
 const TAP_DISTANCE = 4;
 
@@ -166,7 +183,10 @@ export interface ComparePaneProps {
     children: ReactNode;
     /** A click or tap that did not pan (Blink flips on it). */
     onTap?: () => void;
-    /** Keys for the mode while the pane has focus (Blink's Space); the comparison's own keys bubble past it. */
+    /**
+     * Keys for the mode while the pane has focus (Blink's Space); the comparison's own keys bubble past it. The arrow
+     * keys pan a zoomed pane unless this handler (or a control inside the pane, such as Slider's handle) took them.
+     */
     onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
     /** The canvas this pane shows, when a mode draws a different one (an aligned pair). Default: the stage's. */
     canvas?: CompareSize;
@@ -211,7 +231,8 @@ export function ComparePane({
     const pane = { width, height };
     const transform = resolveView(stage.view, pane, stage.canvas);
     const pannable = width > 0 && canPan(stage.view, pane, stage.canvas);
-    const { onPaneSize } = stage;
+    const { onPaneGeometry } = stage;
+    const { width: canvasWidth, height: canvasHeight } = stage.canvas;
 
     useLayoutEffect(() => {
         const element = paneRef.current;
@@ -239,9 +260,9 @@ export function ComparePane({
 
     useEffect(() => {
         if (width > 0) {
-            onPaneSize({ width, height });
+            onPaneGeometry({ pane: { width, height }, canvas: { width: canvasWidth, height: canvasHeight } });
         }
-    }, [width, height, onPaneSize]);
+    }, [width, height, canvasWidth, canvasHeight, onPaneGeometry]);
 
     // React's wheel listener is passive, so it cannot keep the page from scrolling; this one can.
     useEffect(() => {
@@ -332,6 +353,24 @@ export function ComparePane({
         }
     };
 
+    // The keyboard's way to pan, where a drag pans. An arrow the mode or a control inside the pane took stays theirs.
+    const onKeys = (event: KeyboardEvent<HTMLDivElement>): void => {
+        onKeyDown?.(event);
+
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !pannable) {
+            return;
+        }
+
+        const delta = panKeyDelta({ key: event.key, shift: event.shiftKey, pane });
+
+        if (!delta) {
+            return;
+        }
+
+        event.preventDefault();
+        stage.setView((view) => panView({ view, pane, canvas: stage.canvas, ...delta }));
+    };
+
     const cursor = dragging ? "cursor-grabbing" : pannable ? "cursor-grab" : onTap ? "cursor-pointer" : "";
     const style: CSSProperties = { height: width > 0 ? height : undefined, touchAction: pannable ? "none" : "auto" };
 
@@ -355,7 +394,7 @@ export function ComparePane({
                         role="group"
                         aria-label={label}
                         tabIndex={0}
-                        onKeyDown={onKeyDown}
+                        onKeyDown={onKeys}
                         onPointerDown={onPointerDown}
                         onPointerMove={onPointerMove}
                         onPointerUp={onPointerUp}

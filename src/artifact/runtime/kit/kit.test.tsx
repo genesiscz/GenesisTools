@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parsePatch } from "diff";
 import { act, type ReactNode, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
@@ -3013,6 +3014,17 @@ function fakePixels(src: string, width: number, height: number): Uint8ClampedArr
         }
     }
 
+    // "dots": a 6 x 6 navy block every 40 px down the image, each its own region.
+    if (src.includes("dots")) {
+        for (let top = 10; top + 6 <= height; top += 40) {
+            for (let y = top; y < top + 6; y++) {
+                for (let x = 12; x < 18; x++) {
+                    data.set([20, 30, 120, 255], (y * width + x) * 4);
+                }
+            }
+        }
+    }
+
     return data;
 }
 
@@ -3055,6 +3067,7 @@ async function mountImageCompare(node: ReactNode, prepare?: (window: DomHarness[
                 drawImage(image: { src: string }) {
                     source = image.src;
                 },
+                fillRect() {},
                 getImageData(_x: number, _y: number, width: number, height: number) {
                     return { data: fakePixels(source, width, height) };
                 },
@@ -3097,6 +3110,31 @@ async function settlePixels(): Promise<void> {
     for (let round = 0; round < 4; round++) {
         await settleFor(150);
     }
+}
+
+/** Where the first pane draws its canvas (pane pixels) and at which scale, and the canvas size it draws. */
+function paneView(container: ParentNode): { x: number; y: number; scale: number; width: number; height: number } {
+    const layer = container.querySelector<HTMLElement>('[role="group"][tabindex="0"] .origin-top-left');
+    const value = "(-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?)";
+    const match = new RegExp(`translate\\(${value}px, ${value}px\\) scale\\(${value}\\)`).exec(
+        layer?.style.transform ?? ""
+    );
+
+    return {
+        x: Number(match?.[1]),
+        y: Number(match?.[2]),
+        scale: Number(match?.[3]),
+        width: Number.parseFloat(layer?.style.width ?? ""),
+        height: Number.parseFloat(layer?.style.height ?? ""),
+    };
+}
+
+/** A keydown that the page may still act on, and whether the comparison took it. */
+async function keyTaken(dom: DomHarness, target: Element | null, key: string): Promise<boolean> {
+    const event = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    await dom.fire(target, event);
+
+    return event.defaultPrevented;
 }
 
 describe("ImageCompare", () => {
@@ -3151,6 +3189,23 @@ describe("ImageCompare", () => {
             const numbers = [...dom.container.querySelectorAll("[data-region-label]")];
             expect(numbers.map((label) => label.textContent)).toEqual(["1", "2"]);
             expect(dom.container.querySelectorAll("[data-region-leader]").length).toBe(2);
+            // A leader hides no image pixel: past a short tick at its box's edge it runs only through the empty pane
+            // beside the image and the gutter. The leaders' SVG starts at the pane's 1 px border.
+            const view = paneView(dom.container);
+            const [imageLeft, imageRight] = [view.x + 1, view.x + view.width * view.scale + 1];
+            const leaders = [
+                ...(dom.container.querySelector("[data-region-leader]")?.closest("svg")?.querySelectorAll("line") ??
+                    []),
+            ];
+            expect(leaders.length).toBeGreaterThan(0);
+
+            for (const line of leaders) {
+                const [from, to] = [Number(line.getAttribute("x1")), Number(line.getAttribute("x2"))].sort(
+                    (p, q) => p - q
+                );
+                expect(Math.max(0, Math.min(to, imageRight) - Math.max(from, imageLeft))).toBeLessThanOrEqual(6);
+            }
+
             await dom.click(button("Next region"));
             expect(text()).toContain("Region 1 of 2");
             // The region view zooms in; Fit returns to the first view, and a zoom step from there is 125%.
@@ -3596,6 +3651,252 @@ describe("ImageCompare", () => {
             expect(block(dark.painted)).toEqual([10, 200, 30]);
         } finally {
             await dark.restore();
+        }
+    }, 20_000);
+
+    test("a short stage with more changed regions than its gutter holds numbers what fits and counts the rest", async () => {
+        // Ten blocks 40 px apart on a 400 px tall pair, fitted into a 100 px stage: the gutter holds five 16 px marks.
+        const { dom, text, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://120x400/plain-v" }}
+                after={{ src: "fake://120x400/dots-v" }}
+                defaultMode="diff"
+                maxHeight={100}
+            />
+        );
+
+        try {
+            await settlePixels();
+            expect(text()).toContain("10 regions");
+            // The marks' tops are pane y plus the pane's 1 px border.
+            const tops = [...dom.container.querySelectorAll<HTMLElement>("[data-region-label], [data-region-more]")]
+                .map((mark) => Number.parseFloat(mark.style.top))
+                .sort((p, q) => p - q);
+
+            for (let i = 1; i < tops.length; i++) {
+                expect(tops[i] - tops[i - 1]).toBeGreaterThanOrEqual(16);
+            }
+
+            expect(tops.every((top) => top >= 1 && top + 16 <= 101)).toBe(true);
+            const shown = dom.container.querySelectorAll("[data-region-label]").length;
+            expect(shown).toBe(4);
+            expect(dom.container.querySelector("[data-region-more]")?.textContent).toBe("+6");
+            expect(dom.container.querySelectorAll("[data-region-leader]").length).toBe(4);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the A and B picks follow their images when the images prop is reordered or loses one", async () => {
+        const image = (name: string, label: string) => ({ src: `fake://80x60/plain-${name}`, label });
+        const three = [image("q1", "First"), image("q2", "Second"), image("q3", "Third")];
+
+        function ListSwitcher() {
+            const [list, setList] = useState(three);
+
+            return (
+                <>
+                    <button type="button" onClick={() => setList([three[2], three[0], three[1]])}>
+                        Reorder
+                    </button>
+                    <button type="button" onClick={() => setList([three[0], three[1]])}>
+                        Two left
+                    </button>
+                    <ImageCompare id="kit-list" images={list} />
+                </>
+            );
+        }
+
+        const { dom, button, restore } = await mountImageCompare(<ListSwitcher />);
+
+        try {
+            const selects = () => [...dom.container.querySelectorAll("select")];
+            const shown = () =>
+                [...dom.container.querySelectorAll('[role="group"] img')].map((img) => img.getAttribute("alt"));
+            const pickA = selects()[0];
+            pickA.value = "2";
+            await dom.fire(pickA, new dom.window.Event("change", { bubbles: true }));
+            expect(selects().map((select) => select.value)).toEqual(["2", "1"]);
+            expect(shown()).toEqual(["Third", "Second"]);
+
+            // Reordered: A is still Third and B still Second, at their new places in the list.
+            await dom.click(button("Reorder"));
+            expect(selects().map((select) => select.value)).toEqual(["0", "2"]);
+            expect(shown()).toEqual(["Third", "Second"]);
+            expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-list:picks")).toBe("Third\nSecond");
+
+            // Third is gone: the first two, never one image on both sides.
+            await dom.click(button("Two left"));
+            expect(shown()).toEqual(["First", "Second"]);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a region's zoom and the zoom label use the aligned canvas the diff stage shows", async () => {
+        // Before is the page moved by +3, +12 px, so After sits at (3, 12) on a 163 x 232 aligned canvas; the common
+        // canvas is only 160 x 220. After's 20 extra rows are the one region, and its last 12 rows lie below 220.
+        const { dom, text, button, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://160x200/page-shifted-y" }}
+                after={{ src: "fake://160x220/page-y" }}
+                defaultMode="diff"
+                maxHeight={116}
+            />
+        );
+
+        try {
+            await settlePixels();
+            expect(text()).toContain("After is shifted by -3, -12 px");
+            const box = dom.container.querySelector<HTMLElement>('[data-region="1"]');
+            const region = {
+                top: Number.parseFloat(box?.style.top ?? ""),
+                height: Number.parseFloat(box?.style.height ?? ""),
+            };
+            expect(region.top + region.height).toBe(232);
+
+            // The table's number zooms until the region shows whole, its last rows included.
+            await dom.click(button("Zoom to region 1"));
+            const zoomed = paneView(dom.container);
+            expect(zoomed.y + region.top * zoomed.scale).toBeGreaterThanOrEqual(-1e-6);
+            expect(zoomed.y + (region.top + region.height) * zoomed.scale).toBeLessThanOrEqual(116 + 1e-6);
+
+            // Fit draws the 232 px tall canvas into the 116 px stage at 50%, and the label says so.
+            await dom.click(button("Fit"));
+            expect(paneView(dom.container).scale).toBe(0.5);
+            expect(dom.container.querySelector('[role="toolbar"][aria-label="Zoom"] span')?.textContent).toBe("50%");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the arrow keys pan a zoomed image with the stage focused, and the slider handle keeps its own arrows", async () => {
+        const { dom, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://120x400/plain-w" }}
+                after={{ src: "fake://120x400/plain-x" }}
+                defaultMode="slider"
+                maxHeight={100}
+            />
+        );
+
+        try {
+            const pane = () => dom.container.querySelector('[role="group"][tabindex="0"]');
+            const slider = () => dom.container.querySelector('[role="slider"]');
+
+            // At fit the whole image shows: an arrow has nothing to pan, so the page keeps it.
+            expect(await keyTaken(dom, pane(), "ArrowDown")).toBe(false);
+
+            for (let i = 0; i < 3; i++) {
+                await dom.press(pane(), "+");
+            }
+
+            const zoomed = paneView(dom.container);
+            expect(await keyTaken(dom, pane(), "ArrowDown")).toBe(true);
+            // ArrowDown shows what is below: the image moves up.
+            expect(paneView(dom.container).y).toBeLessThan(zoomed.y);
+            expect(await keyTaken(dom, pane(), "ArrowUp")).toBe(true);
+            expect(paneView(dom.container).y).toBeCloseTo(zoomed.y);
+
+            // On the handle, an arrow moves the handle and never the view.
+            await dom.press(slider(), "ArrowDown");
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("48");
+            expect(paneView(dom.container).y).toBeCloseTo(zoomed.y);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("with an id, the blink interval and the diff underlay opacity a user sets survive a reload", async () => {
+        const settingsKey = "artifact.image-compare:item:kit-saved:settings";
+        const pair = { before: { src: "fake://60x40/plain-z" }, after: { src: "fake://60x40/changed-z" } };
+        const control = (scope: ParentNode, name: string) =>
+            [...scope.querySelectorAll("label")]
+                .find((label) => label.textContent?.startsWith(name))
+                ?.querySelector("input");
+        let saved: string | null = null;
+
+        const first = await mountImageCompare(<ImageCompare id="kit-saved" {...pair} defaultMode="blink" />);
+
+        try {
+            await first.dom.type(control(first.dom.container, "Interval"), "1500");
+            await first.dom.click(first.radio("Diff"));
+            await first.dom.type(control(first.dom.container, "Underlay opacity"), "60");
+            saved = first.dom.window.localStorage.getItem(settingsKey);
+            expect(saved === null ? null : SafeJSON.parse(saved, { strict: true })).toEqual({
+                "blink.interval": 1500,
+                "diff.underlayOpacity": 0.6,
+            });
+        } finally {
+            await first.restore();
+        }
+
+        // A reload: a fresh window with the same storage. The saved mode (Diff) comes back too.
+        const reload = await mountImageCompare(
+            <ImageCompare id="kit-saved" {...pair} defaultMode="blink" />,
+            (window) => {
+                window.localStorage.setItem(settingsKey, saved ?? "");
+                window.localStorage.setItem("artifact.image-compare:item:kit-saved:mode", "diff");
+            }
+        );
+
+        try {
+            expect(control(reload.dom.container, "Underlay opacity")?.value).toBe("60");
+            await reload.dom.click(reload.radio("Blink"));
+            expect(control(reload.dom.container, "Interval")?.value).toBe("1500");
+        } finally {
+            await reload.restore();
+        }
+
+        // Without an id the value changes, and nothing is saved.
+        const anonymous = await mountImageCompare(<ImageCompare {...pair} defaultMode="blink" />);
+
+        try {
+            await anonymous.dom.type(control(anonymous.dom.container, "Interval"), "1500");
+            expect(control(anonymous.dom.container, "Interval")?.value).toBe("1500");
+            expect(anonymous.dom.window.localStorage.length).toBe(0);
+        } finally {
+            await anonymous.restore();
+        }
+    }, 20_000);
+
+    test("a new image B drops the old pair's active region and its failed PNG note", async () => {
+        const { dom, text, button, restore } = await mountImageCompare(
+            <ImageCompare
+                images={[
+                    { src: "fake://120x80/plain-r1", label: "First" },
+                    { src: "fake://120x90/changed-r2", label: "Second" },
+                    { src: "fake://120x100/plain-r3", label: "Third" },
+                ]}
+                defaultMode="diff"
+            />,
+            (window) => {
+                // The browser cannot make the PNG.
+                Object.defineProperty(window.HTMLCanvasElement.prototype, "toBlob", {
+                    configurable: true,
+                    value(done: (blob: Blob | null) => void) {
+                        done(null);
+                    },
+                });
+            }
+        );
+
+        try {
+            await settlePixels();
+            await dom.click(button("Next region"));
+            expect(text()).toContain("Region 1 of 2");
+            await dom.click(button("Download diff PNG"));
+            expect(text()).toContain("The browser could not make the PNG.");
+
+            // Third differs from First only in its 20 extra rows: no region of the new diff is where the picked one
+            // was, and the note was about the old diff's PNG.
+            await dom.press(dom.container.querySelector('[role="group"]'), "]");
+            await settlePixels();
+            expect(text()).toContain("1 region");
+            expect(text()).not.toContain("Region 1 of 1");
+            expect(text()).not.toContain("could not make the PNG");
+        } finally {
+            await restore();
         }
     }, 20_000);
 });

@@ -124,4 +124,10 @@ function BlinkControls(props: CompareStageProps) {
     );
 }
 
-export const blinkMode: CompareMode = { id: "blink", label: "Blink", Stage: BlinkStage, Controls: BlinkControls };
+export const blinkMode: CompareMode = {
+    id: "blink",
+    label: "Blink",
+    Stage: BlinkStage,
+    Controls: BlinkControls,
+    saved: [INTERVAL],
+};

@@ -1,4 +1,5 @@
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Field, Select } from "../forms";
 import { MdInline } from "../md";
 import { SegmentedControl } from "../primitives";
@@ -32,13 +33,21 @@ import {
     zoomViewBy,
 } from "./core";
 import { loadImageSize, loadPixelPair } from "./load";
-import { COMPARE_MODES, checkModeId, compareModesFor, DEFAULT_COMPARE_MODE, findCompareMode } from "./registry";
+import {
+    COMPARE_MODES,
+    checkModeId,
+    compareModesFor,
+    DEFAULT_COMPARE_MODE,
+    findCompareMode,
+    SAVED_SETTINGS,
+} from "./registry";
 import type {
     CompareImage,
     CompareMode,
     CompareSettings,
     CompareSettingValue,
     CompareStageProps,
+    PaneGeometry,
     PixelState,
 } from "./stage";
 import { COMPARE_MODE_DEFAULTS, RangeControl } from "./stage";
@@ -58,15 +67,24 @@ export interface ImageCompareProps {
     defaultMode?: string;
     /** pixelmatch colour threshold, 0 to 1 (default 0.15). The user's pick on the page or the comparison wins over it. */
     threshold?: number;
-    /** Saves this comparison's own mode, threshold and A and B picks under this id, so a reload keeps them. */
+    /**
+     * Saves this comparison's own mode, threshold, A and B picks, Blink interval and Diff underlay opacity under this
+     * id, so a reload keeps them.
+     */
     id?: string;
     /** Pane height cap in px (default 640). */
     maxHeight?: number;
     /** How far the alignment looks for a moved page, in px either way (default 128). */
     alignWindow?: number;
-    /** Blink's automatic flip interval in ms (default 700, 200 to 3000). The Interval control on the comparison wins. */
+    /**
+     * Blink's automatic flip interval in ms (default 700, 200 to 3000). The Interval control on the comparison wins,
+     * and with an `id` it is saved.
+     */
     blinkInterval?: number;
-    /** Opacity of Diff's grey underlay, 0 to 1 (default 0.4). The Underlay opacity control on the comparison wins. */
+    /**
+     * Opacity of Diff's grey underlay, 0 to 1 (default 0.4). The Underlay opacity control on the comparison wins, and
+     * with an `id` it is saved.
+     */
     diffUnderlayOpacity?: number;
 }
 
@@ -171,16 +189,76 @@ function clampThreshold(value: number): number {
     return Math.min(1, Math.max(0, value));
 }
 
-/**
- * The saved A and B picks (their labels, one per line) as indexes into `all`. A label that is no longer among the
- * images, or both picks on one image, falls back to the first two.
- */
-function picksFromStored(all: ResolvedCompareImage[], stored: string | undefined): { a: number; b: number } {
-    const [labelA, labelB] = stored?.split("\n") ?? [];
-    const a = all.findIndex((image) => image.label === labelA);
-    const b = all.findIndex((image) => image.label === labelB);
+interface Picks {
+    a: number;
+    b: number;
+}
 
-    return a >= 0 && b >= 0 && a !== b ? { a, b } : { a: 0, b: 1 };
+const FIRST_TWO: Picks = { a: 0, b: 1 };
+
+/** The A and B picks: their labels as saved (one per line), and the indexes they had when picked. */
+interface PickedImages {
+    labels: string | undefined;
+    at: Picks;
+}
+
+/** A picked image's index: where it was while that image still has its label (two may share one), else its label's. */
+function pickIndex(all: ResolvedCompareImage[], label: string, at: number): number {
+    return all[at]?.label === label ? at : all.findIndex((image) => image.label === label);
+}
+
+/**
+ * The A and B picks as indexes into the current `all`, found again by label on every render, so a pick follows its
+ * image when the `images` prop is reordered. A label that is no longer among the images falls back to the first two.
+ */
+function resolvePicks(all: ResolvedCompareImage[], picked: PickedImages): Picks {
+    const [labelA, labelB] = picked.labels?.split("\n") ?? [];
+
+    if (labelA === undefined || labelB === undefined) {
+        return FIRST_TWO;
+    }
+
+    const a = pickIndex(all, labelA, picked.at.a);
+    const b = pickIndex(all, labelB, picked.at.b);
+
+    return a >= 0 && b >= 0 ? { a, b } : FIRST_TWO;
+}
+
+/** The settings a mode saves under the comparison's id, read from storage (a JSON object); nothing else is taken. */
+function parseSavedSettings(stored: string | undefined): CompareSettings {
+    if (stored === undefined) {
+        return {};
+    }
+
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(stored, { strict: true });
+    } catch {
+        // Not JSON (a hand-edited value): nothing is restored, and the next change writes a good one.
+        return {};
+    }
+
+    const settings: Record<string, CompareSettingValue> = {};
+
+    if (!isJsonObject(parsed)) {
+        return settings;
+    }
+
+    for (const [key, value] of Object.entries(parsed)) {
+        if (
+            SAVED_SETTINGS.has(key) &&
+            (typeof value === "number" || typeof value === "boolean" || typeof value === "string")
+        ) {
+            settings[key] = value;
+        }
+    }
+
+    return settings;
+}
+
+function sameSize(p: CompareSize, q: CompareSize): boolean {
+    return p.width === q.width && p.height === q.height;
 }
 
 /**
@@ -208,9 +286,10 @@ export function ImageCompare({
     const itemKey = id === undefined ? undefined : `${page?.storageKey ?? IMAGE_COMPARE_STORAGE_KEY}:item:${id}`;
     // Saved by label, so a pick follows its image when the list changes; without an id the picks live in state only.
     const picksKey = itemKey === undefined ? undefined : `${itemKey}:picks`;
-    const [picks, setPicksState] = useStoredValue(picksKey, (stored) => picksFromStored(all, stored));
-    const first = all[Math.min(picks.a, all.length - 1)];
-    const second = all[Math.min(picks.b, all.length - 1)];
+    const [picked, setPicked] = useStoredValue(picksKey, (stored): PickedImages => ({ labels: stored, at: FIRST_TWO }));
+    const picks = resolvePicks(all, picked);
+    const first = all[picks.a];
+    const second = all[picks.b];
     const allowed = compareModesFor(modes);
     checkModeId(defaultMode, "defaultMode");
     // Keyed by the id, so a new id brings that comparison's own picks in the same render.
@@ -230,8 +309,15 @@ export function ImageCompare({
     const sizeA = sizes.get(first.src);
     const sizeB = sizes.get(second.src);
     const [view, setView] = useState<CompareView>(FIT_VIEW);
-    const [pane, setPane] = useState<CompareSize | null>(null);
-    const [settings, setSettings] = useState<CompareSettings>({});
+    // What the stage shows: its pane and the canvas it draws (the aligned pair's in Diff and Heat).
+    const [geometry, setGeometry] = useState<PaneGeometry | null>(null);
+    // The settings a mode saves (Blink's interval, Diff's underlay opacity) live under the id; the rest in state.
+    const settingsKey = itemKey === undefined ? undefined : `${itemKey}:settings`;
+    const [savedSettings, setSavedSettings] = useStoredValue(settingsKey, parseSavedSettings);
+    const latestSaved = useRef(savedSettings);
+    latestSaved.current = savedSettings;
+    const [sessionSettings, setSessionSettings] = useState<CompareSettings>({});
+    const settings = useMemo(() => ({ ...sessionSettings, ...savedSettings }), [sessionSettings, savedSettings]);
     const pixels = usePixelPair({
         a: first.src,
         b: second.src,
@@ -240,21 +326,35 @@ export function ImageCompare({
     });
     const canvas = sizeA && sizeB ? commonSize(sizeA, sizeB) : undefined;
 
-    const setSetting = useCallback((key: string, value: CompareSettingValue) => {
-        setSettings((previous) => ({ ...previous, [key]: value }));
-    }, []);
-    const onPaneSize = useCallback((size: CompareSize) => {
-        setPane((previous) =>
-            previous && previous.width === size.width && previous.height === size.height ? previous : size
+    const setSetting = useCallback(
+        (key: string, value: CompareSettingValue) => {
+            if (!SAVED_SETTINGS.has(key)) {
+                setSessionSettings((previous) => ({ ...previous, [key]: value }));
+                return;
+            }
+
+            const next = { ...latestSaved.current, [key]: value };
+            latestSaved.current = next;
+            setSavedSettings(next);
+
+            if (settingsKey) {
+                writeStored(settingsKey, SafeJSON.stringify(next));
+            }
+        },
+        [settingsKey, setSavedSettings]
+    );
+    const onPaneGeometry = useCallback((next: PaneGeometry) => {
+        setGeometry((previous) =>
+            previous && sameSize(previous.pane, next.pane) && sameSize(previous.canvas, next.canvas) ? previous : next
         );
     }, []);
     const zoomTo = useCallback(
         (rect: CompareRect) => {
-            if (pane && canvas) {
-                setView(viewForRect({ rect, pane, canvas }));
+            if (geometry) {
+                setView(viewForRect({ rect, ...geometry }));
             }
         },
-        [pane, canvas]
+        [geometry]
     );
 
     const pickOwnMode = (next: string): void => {
@@ -282,15 +382,16 @@ export function ImageCompare({
     };
 
     const zoomBy = (factor: number): void => {
-        if (pane && canvas) {
-            setView((current) => zoomViewBy({ view: current, pane, canvas, factor }));
+        if (geometry) {
+            setView((current) => zoomViewBy({ view: current, ...geometry, factor }));
         }
     };
-    const setPicks = (next: { a: number; b: number }): void => {
-        setPicksState(next);
+    const setPicks = (next: Picks): void => {
+        const labels = `${all[next.a].label}\n${all[next.b].label}`;
+        setPicked({ labels, at: next });
 
         if (picksKey) {
-            writeStored(picksKey, `${all[next.a].label}\n${all[next.b].label}`);
+            writeStored(picksKey, labels);
         }
     };
     /** Steps B through the images, past A. */
@@ -330,7 +431,7 @@ export function ImageCompare({
             stepB(action.by);
         }
     };
-    const scale = view.scale ?? (pane && canvas ? fitScale(pane, canvas) : 1);
+    const scale = view.scale ?? (geometry ? fitScale(geometry.pane, geometry.canvas) : 1);
     const loadFailed = [
         { size: sizeA, image: first },
         { size: sizeB, image: second },
@@ -360,7 +461,7 @@ export function ImageCompare({
             view,
             setView,
             zoomTo,
-            onPaneSize,
+            onPaneGeometry,
             maxHeight,
             pixels,
             threshold: effectiveThreshold,
@@ -440,8 +541,8 @@ export function ImageCompare({
                         size="sm"
                         variant="ghost"
                         onClick={() => {
-                            if (pane && canvas) {
-                                setView((current) => actualSizeView(current, pane, canvas));
+                            if (geometry) {
+                                setView((current) => actualSizeView(current, geometry.pane, geometry.canvas));
                             }
                         }}
                     >
@@ -460,7 +561,7 @@ export function ImageCompare({
                 <p className="mt-1">
                     {`With the comparison focused (click an image): 1 to ${allowed.length} pick a mode, + and - zoom, 0 fits.${
                         all.length > 2 ? " [ and ] step image B." : ""
-                    } In Blink, Space shows the other image. Keys never reach the comparison while a text field or a select has focus.`}
+                    } Zoomed in, the arrow keys pan the image, a tenth of the stage per press and half with Shift; on the slider's handle they move the handle. In Blink, Space shows the other image. Keys never reach the comparison while a text field or a select has focus.`}
                 </p>
             </details>
         </figure>

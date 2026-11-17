@@ -288,14 +288,17 @@ bodies render as markdown.
   `afterValue` accept JSON values and sort nested object keys, preserving array order. Split context rows use
   each file's own line number, and `wrap` uses normal break opportunities.
 - Compare images: `ImageCompare` takes `before`/`after`, or two or more `images` (A and B selects; `[` and `]` step
-  B; with an `id` the picks are saved by label, and a saved image that is gone falls back to the first two), and
+  B; a pick follows its image by label when the list is reordered; with an `id` the picks, the blink interval and the
+  diff underlay opacity are saved, and a saved image that is gone falls back to the first two), and
   switches between side by side, a slider (`role="slider"`, arrows and Home/End), blink (click or Space; an auto flip
   every `blinkInterval` ms, 700 by default, with an Interval range, that reduced motion turns off), fade, a pixel diff
   and a heat map. The diff runs pixelmatch in the
   browser on both images placed top-left on one canvas, paints changed pixels pink (`IMAGE_DIFF_COLOR`) over a grey
   underlay (`diffUnderlayOpacity`, 0.4 by default, with an Underlay opacity range), boxes the changed regions with
   the same clustering as `tools control compare-screenshot` (`src/utils/image/regions.ts`), puts their numbers in a
-  gutter at the right of the stage with a thin line to each box (a number never covers an image pixel), lists them in
+  gutter at the right of the stage, each joined to its box by a leader that leaves the box with a short tick and runs
+  on only through the empty stage beside the image (neither a number nor a line covers an image pixel), numbers the
+  active and the largest regions with a "+N" mark for the rest when the gutter is full, lists them all in
   a table whose numbers zoom to them, steps the zoom from region to region, and downloads the diff as
   a PNG. Heat draws each pixel's colour distance on a ramp of the kit tones. Before both, `estimateShift` looks for
   one whole-pixel offset of B within `alignWindow` px (128 by default; the estimate of a 1280 x 2000 pair takes about
@@ -306,7 +309,9 @@ bodies render as markdown.
   sizes differ too, the pixels only one image has because of the sizes count as changed (the strips the move uncovered
   do not), and the summary adds them. An
   unrelated pair gets no offset. Every mode shares one zoom and pan (buttons, Ctrl or Cmd with the wheel at the
-  pointer, drag); the first view fits the image, never above 100%, centred across with its top edge at the top.
+  pointer, a drag, and the arrow keys on a focused stage: a tenth of the stage per press, half with Shift), on the
+  canvas the stage shows (the aligned pair's in Diff and Heat); the first view fits the image, never above 100%,
+  centred across with its top edge at the top.
   Labels sit in a strip above each stage, never on the image.
   With a comparison focused, 1 to 6 pick a mode, + and - zoom and 0 fits; a select or text field keeps its keys.
   `ImageCompareProvider` plus `ImageCompareModeSwitch` set the mode and threshold of every comparison on a page; a

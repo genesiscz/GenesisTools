@@ -14,6 +14,7 @@ import {
     gutterLabels,
     IMAGE_DIFF_COLOR,
     type ImageDiff,
+    matchRegion,
     type RgbaImage,
     type Shift,
 } from "../core";
@@ -24,6 +25,7 @@ import {
     boolSetting,
     type CompareMode,
     ComparePane,
+    type CompareSettings,
     type CompareStageProps,
     choiceSetting,
     type IdleResult,
@@ -33,6 +35,7 @@ import {
     StageImage,
     StaleNote,
     ToggleControl,
+    useCanvasSize,
     useIdleCompute,
     usePaneSize,
     useViewTransform,
@@ -45,7 +48,9 @@ const REGION = "diff.region";
 const UNDERLAY_OPACITY = "diff.underlayOpacity";
 const UNDERLAYS = ["after", "before", "mask"] as const;
 /** Width of the gutter at the right of the stage that holds the region numbers. */
-const GUTTER_WIDTH = 32;
+const GUTTER_WIDTH = 40;
+/** Where the numbers start in the gutter: the strip left of them holds the slanted end of each leader. */
+const LEADER_RUN = 12;
 const REGION_INK = readableTextOn(IMAGE_DIFF_COLOR);
 /** A diff of a large pair holds a canvas-sized overlay, so only the latest few stay. */
 const diffCache = createIdleCache<ImageDiff>(6);
@@ -117,14 +122,19 @@ function RegionBoxes({ regions, active }: { regions: CompareRegion[]; active: nu
 }
 
 /**
- * The region numbers in the gutter at the right of the stage, each with a thin leader line to its box, so a number
- * never covers an image pixel. The gutter's origin is the pane's outer top-right corner; the pane has a 1 px border.
+ * The region numbers in the gutter at the right of the stage, so a number never covers an image pixel. Each leader
+ * leaves its box with a short tick, is not drawn over the image, runs on through the empty pane beside the image (on
+ * the tick's line) and slants to its number in the gutter. A full gutter numbers the active and the largest regions,
+ * and "+count" at its bottom counts the others; the regions table lists every one. The SVG's x starts at the pane's
+ * outer left edge, so a pane x is one more (its 1 px border).
  */
 function RegionGutter({ regions, active }: { regions: CompareRegion[]; active: number }) {
     const transform = useViewTransform();
     const pane = usePaneSize();
-    const labels = gutterLabels({ regions, transform, pane });
+    const canvas = useCanvasSize();
+    const { labels, more } = gutterLabels({ regions, transform, pane, canvas, active });
     const outerWidth = pane.width + 2;
+    const mark = "absolute whitespace-nowrap rounded-sm px-1 text-center font-mono text-[11px] font-semibold leading-4";
 
     return (
         <>
@@ -133,26 +143,38 @@ function RegionGutter({ regions, active }: { regions: CompareRegion[]; active: n
                 className="pointer-events-none absolute top-0 overflow-visible"
                 style={{ left: -outerWidth, width: outerWidth + GUTTER_WIDTH, height: pane.height + 2 }}
             >
-                {labels.map((label) => (
-                    <line
-                        key={label.index}
-                        data-region-leader={label.index + 1}
-                        x1={label.anchor.x + 1}
-                        y1={label.anchor.y + 1}
-                        x2={outerWidth + 4}
-                        y2={label.top + 1 + GUTTER_LABEL_HEIGHT / 2}
-                        stroke={IMAGE_DIFF_COLOR}
-                        strokeWidth={label.index === active ? 2 : 1}
-                        strokeOpacity={0.85}
-                    />
-                ))}
+                {labels.map((label) => {
+                    const y = label.anchor.y + 1;
+
+                    return (
+                        <g
+                            key={label.index}
+                            data-region-leader={label.index + 1}
+                            stroke={IMAGE_DIFF_COLOR}
+                            strokeWidth={label.index === active ? 2 : 1}
+                            strokeOpacity={0.85}
+                        >
+                            <line x1={label.tick[0] + 1} y1={y} x2={label.tick[1] + 1} y2={y} />
+                            {label.margin ? (
+                                <line x1={label.margin[0] + 1} y1={y} x2={label.margin[1] + 1} y2={y} />
+                            ) : null}
+                            <line
+                                x1={pane.width + 1}
+                                y1={y}
+                                x2={outerWidth + LEADER_RUN}
+                                y2={label.top + 1 + GUTTER_LABEL_HEIGHT / 2}
+                            />
+                        </g>
+                    );
+                })}
             </svg>
             {labels.map((label) => (
                 <span
                     key={label.index}
                     data-region-label={label.index + 1}
-                    className="absolute left-1 whitespace-nowrap rounded-sm px-1 text-center font-mono text-[11px] font-semibold leading-4"
+                    className={mark}
                     style={{
+                        left: LEADER_RUN,
                         top: label.top + 1,
                         height: GUTTER_LABEL_HEIGHT,
                         background: IMAGE_DIFF_COLOR,
@@ -164,6 +186,20 @@ function RegionGutter({ regions, active }: { regions: CompareRegion[]; active: n
                     {label.index + 1}
                 </span>
             ))}
+            {more ? (
+                <span
+                    data-region-more={more.count}
+                    className={`${mark} bg-panel text-ink`}
+                    style={{
+                        left: LEADER_RUN,
+                        top: more.top + 1,
+                        height: GUTTER_LABEL_HEIGHT,
+                        boxShadow: `inset 0 0 0 1px ${IMAGE_DIFF_COLOR}`,
+                    }}
+                >
+                    {`+${more.count}`}
+                </span>
+            ) : null}
         </>
     );
 }
@@ -176,9 +212,26 @@ function underlayOpacity(props: CompareStageProps): number {
     );
 }
 
+/**
+ * The active region's index in this diff. It is kept as its box ("x,y,w,h"), so a new diff (another threshold,
+ * image B or Align) makes active only the region at the same place, never whichever region took its number.
+ */
+function activeRegion(settings: CompareSettings, regions: CompareRegion[]): number {
+    const value = settings[REGION];
+
+    if (typeof value !== "string") {
+        return -1;
+    }
+
+    const [x, y, w, h] = value.split(",").map(Number);
+
+    return matchRegion(regions, { x, y, w, h });
+}
+
 function goToRegion(props: CompareStageProps, regions: CompareRegion[], index: number): void {
-    props.setSetting(REGION, index);
-    props.zoomTo(regions[index]);
+    const region = regions[index];
+    props.setSetting(REGION, `${region.x},${region.y},${region.w},${region.h}`);
+    props.zoomTo(region);
 }
 
 const REGION_COLUMNS = [
@@ -239,9 +292,9 @@ function RegionTable({
 function DiffStage(props: CompareStageProps) {
     const underlay = choiceSetting(props.settings, UNDERLAY, UNDERLAYS, "after");
     const showRegions = boolSetting(props.settings, REGIONS, true);
-    const active = numberSetting(props.settings, REGION, -1);
     const { result, shift: wanted } = useDiff(props);
     const diff = result.status === "ready" ? result.value : null;
+    const active = diff ? activeRegion(props.settings, diff.regions) : -1;
     // While a new diff computes, the shown one keeps the underlay where it was computed, so the two stay in register.
     const shift = diff?.shift ?? wanted;
     const shown = underlay === "after" ? props.b : underlay === "before" ? props.a : undefined;
@@ -361,8 +414,9 @@ function DiffControls(props: CompareStageProps) {
     // The diff of an older setting, shown until the current one is ready.
     const stale = result.status === "ready" && result.stale;
     const regions = diff?.regions ?? [];
-    const active = numberSetting(props.settings, REGION, -1);
-    const [downloadFailed, setDownloadFailed] = useState(false);
+    const active = activeRegion(props.settings, regions);
+    // The diff whose PNG the browser could not make: the note goes with that diff, not with the next one.
+    const [failedFor, setFailedFor] = useState<ImageDiff | null>(null);
     const step = (by: number): void => {
         if (regions.length === 0) {
             return;
@@ -386,7 +440,7 @@ function DiffControls(props: CompareStageProps) {
             at: underlay === "after" ? { x: -diff.shift.dx, y: -diff.shift.dy } : { x: 0, y: 0 },
             opacity: underlayOpacity(props),
             name: `diff-${fileSlug(props.a.label)}-${fileSlug(props.b.label)}.png`,
-        }).then((ok) => setDownloadFailed(!ok));
+        }).then((ok) => setFailedFor(ok ? null : diff));
     };
 
     return (
@@ -443,7 +497,7 @@ function DiffControls(props: CompareStageProps) {
             <Button size="sm" disabled={!diff || stale} onClick={download}>
                 Download diff PNG
             </Button>
-            {downloadFailed ? (
+            {failedFor !== null && failedFor === diff ? (
                 <span role="alert" className="text-xs text-err">
                     The browser could not make the PNG.
                 </span>
@@ -469,4 +523,5 @@ export const diffMode: CompareMode = {
     Stage: DiffStage,
     Controls: DiffControls,
     needsPixels: true,
+    saved: [UNDERLAY_OPACITY],
 };

@@ -11,7 +11,11 @@ import {
     FIT_VIEW,
     GUTTER_LABEL_HEIGHT,
     gutterLabels,
+    LEADER_TICK,
+    matchRegion,
     paneHeight,
+    panKeyDelta,
+    panView,
     percentAt,
     placeImage,
     type RgbaImage,
@@ -794,31 +798,122 @@ describe("image compare core", () => {
         expect(resolveView(actualSizeView(FIT_VIEW, pane, small), pane, small)).toEqual({ scale: 1, x: 320, y: 0 });
     });
 
+    test("a view kept from a larger canvas is drawn inside the smaller canvas the pane now shows", () => {
+        // Zoomed in at the foot of a 2000 px tall pair, then B is stepped to a pair only 900 px tall.
+        const pane = { width: 400, height: 300 };
+        const view = { scale: 1, cx: 200, cy: 1800 };
+        expect(resolveView(view, pane, { width: 400, height: 900 })).toEqual({ scale: 1, x: 0, y: -600 });
+        // In the canvas it was made for, the view is drawn as it is.
+        expect(resolveView(view, pane, { width: 400, height: 2000 })).toEqual({ scale: 1, x: 0, y: -1650 });
+    });
+
+    test("an arrow key pans a tenth of the pane the way it points, half a pane with Shift, and other keys none", () => {
+        const pane = { width: 600, height: 200 };
+        expect(panKeyDelta({ key: "ArrowRight", shift: false, pane })).toEqual({ dx: -60, dy: 0 });
+        expect(panKeyDelta({ key: "ArrowLeft", shift: false, pane })).toEqual({ dx: 60, dy: 0 });
+        expect(panKeyDelta({ key: "ArrowDown", shift: false, pane })).toEqual({ dx: 0, dy: -20 });
+        expect(panKeyDelta({ key: "ArrowUp", shift: true, pane })).toEqual({ dx: 0, dy: 100 });
+        expect(panKeyDelta({ key: "a", shift: false, pane })).toBeUndefined();
+
+        // ArrowDown shows what is below: the canvas point at the pane centre moves down.
+        const down = panKeyDelta({ key: "ArrowDown", shift: false, pane }) ?? { dx: 0, dy: 0 };
+        const view = { scale: 1, cx: 300, cy: 500 };
+        expect(panView({ view, pane, canvas: { width: 600, height: 2000 }, ...down }).cy).toBe(520);
+    });
+
+    test("the active region follows a new diff only to the region at the same place", () => {
+        const regions = [
+            { x: 0, y: 80, w: 120, h: 20, pixels: 2400 },
+            { x: 12, y: 30, w: 8, h: 6, pixels: 48 },
+        ];
+        expect(matchRegion(regions, { x: 12, y: 30, w: 8, h: 6 })).toBe(1);
+        // A threshold change grew the box: the region over the old one's centre is still the one.
+        expect(matchRegion(regions, { x: 13, y: 31, w: 5, h: 4 })).toBe(1);
+        expect(matchRegion(regions, { x: 200, y: 200, w: 4, h: 4 })).toBe(-1);
+        expect(matchRegion(regions, undefined)).toBe(-1);
+    });
+
+    test("a gutter with more numbers than it holds shows the active and the largest regions and counts the rest", () => {
+        // Ten boxes down a 100 px pane: five 16 px marks fit 2 px apart, so four numbers and "+6".
+        const pane = { width: 400, height: 100 };
+        const canvas = { width: 400, height: 100 };
+        const transform = { scale: 1, x: 0, y: 0 };
+        const regions = Array.from({ length: 10 }, (_, i) => ({ x: 10, y: i * 10, w: 20, h: 4, pixels: 10 + i }));
+        regions[7].pixels = 50;
+        const { labels, more } = gutterLabels({ regions, transform, pane, canvas, active: 2 });
+
+        // The active region, the largest (7), then the next largest (9 and 8), in box order.
+        expect(labels.map((label) => label.index)).toEqual([2, 7, 8, 9]);
+        expect(more).toEqual({ count: 6, top: 100 - GUTTER_LABEL_HEIGHT });
+        const tops = [...labels.map((label) => label.top), more?.top ?? Number.NaN];
+
+        for (let i = 1; i < tops.length; i++) {
+            expect(tops[i] - tops[i - 1]).toBeGreaterThanOrEqual(GUTTER_LABEL_HEIGHT);
+        }
+
+        expect(tops.every((top) => top >= 0 && top + GUTTER_LABEL_HEIGHT <= pane.height)).toBe(true);
+
+        // As many as fit: every number, no mark.
+        const five = gutterLabels({ regions: regions.slice(0, 5), transform, pane, canvas });
+        expect(five.labels.length).toBe(5);
+        expect(five.more).toBeNull();
+    });
+
+    test("a leader leaves its box with a short tick and runs on only through the empty pane beside the image", () => {
+        // A 200 px wide image centred in a 400 px pane spans x 100 to 300.
+        const pane = { width: 400, height: 300 };
+        const canvas = { width: 200, height: 300 };
+        const regions = [
+            { x: 20, y: 50, w: 30, h: 10, pixels: 1 },
+            { x: 180, y: 150, w: 20, h: 10, pixels: 1 },
+        ];
+        const [inner, edge] = gutterLabels({ regions, transform: { scale: 1, x: 100, y: 0 }, pane, canvas }).labels;
+        expect(inner.tick).toEqual([150, 150 + LEADER_TICK]);
+        expect(inner.margin).toEqual([300, 400]);
+        // A box at the image's right edge: its tick is already beside the image.
+        expect(edge.tick).toEqual([300, 300 + LEADER_TICK]);
+        expect(edge.margin).toEqual([300 + LEADER_TICK, 400]);
+
+        // An image as wide as the pane leaves no empty pane: only the tick is drawn on it.
+        const wide = gutterLabels({ regions, transform: { scale: 2, x: 0, y: 0 }, pane, canvas }).labels[0];
+        expect(wide.tick).toEqual([100, 100 + LEADER_TICK]);
+        expect(wide.margin).toBeNull();
+    });
+
     test("region numbers sit in a gutter beside the stage, in box order, apart, inside, with a leader to each box", () => {
         const pane = { width: 400, height: 300 };
+        const canvas = { width: 400, height: 300 };
         const transform = { scale: 1, x: 0, y: 0 };
         const box = (x: number, y: number, h = 10) => ({ x, y, w: 20, h, pixels: 1 });
         const regions = [box(10, 100), box(50, 102), box(90, 104), box(10, 600)];
-        const labels = gutterLabels({ regions, transform, pane });
+        const { labels, more } = gutterLabels({ regions, transform, pane, canvas });
 
-        // The fourth box is out of view, so it has no number in the gutter.
+        // The fourth box is out of view, so it has no number in the gutter, and the three in view all fit.
         expect(labels.map((label) => label.index)).toEqual([0, 1, 2]);
+        expect(more).toBeNull();
 
         for (let i = 1; i < labels.length; i++) {
             expect(labels[i].top - labels[i - 1].top).toBeGreaterThanOrEqual(GUTTER_LABEL_HEIGHT);
         }
 
         expect(labels.every((label) => label.top >= 0 && label.top + GUTTER_LABEL_HEIGHT <= pane.height)).toBe(true);
-        // The leader ends at the box's right edge, half way down.
+        // The leader starts at the box's right edge, half way down.
         expect(labels[0].anchor).toEqual({ x: 30, y: 105 });
 
         // A lone box gets its number level with it; a box at the bottom edge pulls its number inside the pane.
-        expect(gutterLabels({ regions: [box(10, 100)], transform, pane })[0].top).toBe(105 - GUTTER_LABEL_HEIGHT / 2);
-        expect(gutterLabels({ regions: [box(0, 296, 4)], transform, pane })[0].top).toBe(300 - GUTTER_LABEL_HEIGHT);
+        const lone = gutterLabels({ regions: [box(10, 100)], transform, pane, canvas });
+        expect(lone.labels[0].top).toBe(105 - GUTTER_LABEL_HEIGHT / 2);
+        const low = gutterLabels({ regions: [box(0, 296, 4)], transform, pane, canvas });
+        expect(low.labels[0].top).toBe(300 - GUTTER_LABEL_HEIGHT);
 
         // Zoomed in and panned, the anchor follows the box on screen.
-        const zoomed = gutterLabels({ regions: [box(10, 100)], transform: { scale: 2, x: -20, y: -150 }, pane });
-        expect(zoomed[0].anchor).toEqual({ x: 40, y: 60 });
+        const zoomed = gutterLabels({
+            regions: [box(10, 100)],
+            transform: { scale: 2, x: -20, y: -150 },
+            pane,
+            canvas,
+        });
+        expect(zoomed.labels[0].anchor).toEqual({ x: 40, y: 60 });
     });
 
     /** A text-like page: bars of seeded lengths on white, drawn moved by `shift`. */

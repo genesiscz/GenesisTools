@@ -199,13 +199,13 @@ export default function ImageComparePage() {
         <GalleryPage
             title={meta.title}
             summary={meta.summary}
-            keyboard="Click an image (or Tab to a stage) to focus a comparison. Then 1 to 6 pick a mode, + and - zoom, 0 fits, and with three or more images [ and ] step image B. A key typed into a select or a text field stays there. The mode switch is a radio group: the arrows pick a mode. In Slider, Tab reaches the handle: Left and Right move it 2%, with Shift 10%, and Home and End jump to the edges. In Blink, Space on the stage shows the other image. Ctrl or Cmd with the wheel zooms at the pointer, and a drag pans once the image is larger than the stage. The Keys line under each comparison repeats this."
+            keyboard="Click an image (or Tab to a stage) to focus a comparison. Then 1 to 6 pick a mode, + and - zoom, 0 fits, and with three or more images [ and ] step image B. A key typed into a select or a text field stays there. The mode switch is a radio group: the arrows pick a mode. In Slider, Tab reaches the handle: Left and Right move it 2%, with Shift 10%, and Home and End jump to the edges. In Blink, Space on the stage shows the other image. Ctrl or Cmd with the wheel zooms at the pointer, and once the image is larger than the stage a drag pans it, and so do the arrow keys on the focused stage: a tenth of the stage per press, half with Shift (on the slider's handle the arrows move the handle). The Keys line under each comparison repeats this."
         >
             {samples ? (
                 <>
                     <Demo
                         title="Equal sizes"
-                        note="Every mode on one pair. In Diff, the threshold, the underlay and its opacity and the region buttons sit under the switch, and the region numbers sit in a gutter at the right of the stage with a thin line to each box, so no number covers an image pixel. In Blink, the Interval range sets how fast Auto flips."
+                        note="Every mode on one pair. In Diff, the threshold, the underlay and its opacity and the region buttons sit under the switch, and the region numbers sit in a gutter at the right of the stage. A thin leader joins each number to its box: it leaves the box with a short tick, is not drawn over the image, and runs on through the empty stage beside the image, so neither a number nor a line covers an image pixel. When more regions are in view than the gutter holds, the active one and the largest keep their numbers and a +N mark at the bottom counts the rest; the regions table lists every one. In Blink, the Interval range sets how fast Auto flips."
                     >
                         <ImageCompare
                             before={{ src: samples.light.before }}
@@ -255,7 +255,7 @@ export default function ImageComparePage() {
                     </Demo>
                     <Demo
                         title="Three images"
-                        note="With three or more images, two selects pick A and B; with the comparison focused, [ and ] step B. With an id, the picks are saved, so a reload keeps them; a saved image that is gone from the list falls back to the first two."
+                        note="With three or more images, two selects pick A and B; with the comparison focused, [ and ] step B. A pick follows its image by label when the list is reordered. With an id, the picks, Blink's interval and Diff's underlay opacity are saved, so a reload keeps them; a saved image that is gone from the list falls back to the first two."
                     >
                         <ImageCompare
                             id="gallery-three-images"
@@ -269,7 +269,7 @@ export default function ImageComparePage() {
                     </Demo>
                     <Demo
                         title="Starting values a page sets"
-                        note="blinkInterval={1200} makes Blink's Auto flip every 1.2 s, and diffUnderlayOpacity={0.2} fades Diff's grey underlay to 20%. The Interval and Underlay opacity controls on the comparison change them for that comparison; the system's reduced-motion setting still turns Auto off."
+                        note="blinkInterval={1200} makes Blink's Auto flip every 1.2 s, and diffUnderlayOpacity={0.2} fades Diff's grey underlay to 20%. The Interval and Underlay opacity controls on the comparison change them for that comparison, and a comparison with an id saves what the user set; the system's reduced-motion setting still turns Auto off."
                     >
                         <ImageCompare
                             before={{ src: samples.light.before }}

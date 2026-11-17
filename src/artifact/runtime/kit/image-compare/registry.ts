@@ -19,6 +19,9 @@ export const COMPARE_MODES: readonly CompareMode[] = [
 /** The mode a comparison shows when nothing else picks one. */
 export const DEFAULT_COMPARE_MODE = sideBySideMode.id;
 
+/** The settings a comparison with an `id` saves: every mode's `saved` list. */
+export const SAVED_SETTINGS: ReadonlySet<string> = new Set(COMPARE_MODES.flatMap((mode) => mode.saved ?? []));
+
 export function findCompareMode(id: string | undefined): CompareMode | undefined {
     return COMPARE_MODES.find((mode) => mode.id === id);
 }
