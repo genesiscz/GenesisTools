@@ -277,6 +277,40 @@ describe("the T3 Code thread of a session", () => {
         expect(await t3ThreadOfSession({ sessionId: "codex-session", homeDir: t3 })).toBeUndefined();
     });
 
+    test("an older terminal pin does not hide a Codex session that T3 Code ran after it; a newer one ends it", async () => {
+        const t3 = join(home, "t3-home-runs");
+        await mkdir(join(t3, "userdata"), { recursive: true });
+        const db = new Database(join(t3, "userdata", "statev2.sqlite"));
+        db.exec(
+            "CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, thread_id TEXT, payload_json TEXT)"
+        );
+        db.exec("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT)");
+        db.exec("CREATE TABLE orchestration_v2_projection_runs (provider_thread_id TEXT, requested_at TEXT)");
+        db.query("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?, ?)").run(
+            "pt-1",
+            "mcp:launch:codex-thread",
+            SafeJSON.stringify({ nativeThreadRef: { nativeId: "codex-resumed" } })
+        );
+        db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run("mcp:launch:codex-thread", "{}");
+        // Two runs: the newest one is the time that counts.
+        db.query("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?)").run("pt-1", "2026-11-17T10:00:00.000Z");
+        db.query("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?)").run("pt-1", "2026-11-17T12:00:00.000Z");
+        db.close();
+        const lastRun = Date.parse("2026-11-17T12:00:00.000Z");
+
+        // The session first ran in a terminal: a pin with no host. T3 Code resumed it later and wrote no pin.
+        await recordPin(pin({ sessionId: "codex-resumed", provider: "codex", at: lastRun - 60_000 }));
+        expect(await t3ThreadOfSession({ sessionId: "codex-resumed", homeDir: t3 })).toBe("mcp:launch:codex-thread");
+        // A pin of another app that is older than the run loses the same way.
+        await recordPin(
+            pin({ sessionId: "codex-resumed", provider: "codex", host: { kind: "cmux" }, at: lastRun - 1 })
+        );
+        expect(await t3ThreadOfSession({ sessionId: "codex-resumed", homeDir: t3 })).toBe("mcp:launch:codex-thread");
+        // Resumed in a terminal after T3 Code's last run: T3 Code no longer runs it.
+        await recordPin(pin({ sessionId: "codex-resumed", provider: "codex", at: lastRun + 60_000 }));
+        expect(await t3ThreadOfSession({ sessionId: "codex-resumed", homeDir: t3 })).toBeUndefined();
+    });
+
     test("the desktop link keeps the thread id percent-encoded as T3 Code prints it", () => {
         expect(t3AppLink("https://app.t3.codes/threads/env-1/thread%3Adelegated-task%3Acommand%253Amcp")).toBe(
             "t3code://threads/env-1/thread%3Adelegated-task%3Acommand%253Amcp"
