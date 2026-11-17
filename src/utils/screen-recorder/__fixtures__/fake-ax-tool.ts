@@ -5,7 +5,7 @@
  * `--fixture-late-png=<epoch ms>` writes the first PNG 800 ms after that capture time and reports the time as
  * `firstFrameEpochMs`, as ax-tool does; `--fixture-late-png-old=<epoch ms>` leaves it out, as an older ax-tool did.
  */
-import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
@@ -36,7 +36,10 @@ if (args[0] === "--help") {
     }
 
     process.stdout.write(
-        "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n"
+        "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n" +
+            (fixtureMode === "--fixture-no-audio-session"
+                ? ""
+                : "  ax-tool audio-record --sources mic,system --segment-sec 60\n")
     );
     process.exit(0);
 }
@@ -77,8 +80,95 @@ if (args[0] === "screens") {
     process.exit(0);
 }
 
-const value = (flag: string) => args[args.indexOf(flag) + 1];
+const value = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const outDir = value("--out") ?? ".";
+if (args[0] === "audio-record") {
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, "argv.json"), SafeJSON.stringify(args));
+    const requested = (value("--sources") ?? "mic,system").split(",");
+    const sources = requested.filter((source) => fixtureMode !== "--fixture-no-mic-grant" || source !== "mic");
+    if (sources.length !== requested.length) {
+        print(
+            { event: "warning", message: "the microphone is not granted; the recording keeps the system sound only" },
+            "stderr"
+        );
+    }
+    const muted: Record<string, boolean> = { mic: false, system: false };
+    const start = Date.parse("2026-11-03T12:00:00.000Z");
+    let sequence = 0;
+    let position = 0;
+    let paused = false;
+    const spans: Record<string, Array<[number, number]>> = { mic: [], system: [] };
+    const emitSegment = (durationMs: number) => {
+        sequence += 1;
+        for (const source of sources) {
+            const file = `audio-${String(sequence).padStart(6, "0")}-${source}.m4a`;
+            writeFileSync(join(outDir, file), "invented sound");
+            const at = new Date(start + (sequence - 1) * 60_000).toISOString();
+            print({ file, source, at, zeroAt: at, durationMs, mutedSpans: spans[source], kept: "normal" });
+            spans[source] = [];
+        }
+    };
+    const state = () => print({ event: "state", state: paused ? "paused" : "recording", sources, muted }, "stderr");
+    state();
+    if (fixtureMode === "--fixture-audio-three") {
+        for (let segment = 0; segment < 3; segment++) {
+            emitSegment(60_000);
+        }
+    }
+    if (fixtureMode === "--fixture-audio-crash") {
+        writeFileSync(join(outDir, "audio-000001-system.m4a"), "unfinished sound");
+        process.exit(1);
+    }
+    let input = "";
+    let stopping = false;
+    const stop = () => {
+        if (stopping) {
+            return;
+        }
+        stopping = true;
+        if (sequence === 0 || position > 0) {
+            emitSegment(Math.max(position, 1));
+        }
+        process.exit(0);
+    };
+    process.stdin.on("data", (chunk) => {
+        input += chunk.toString();
+        const lines = input.split("\n");
+        input = lines.pop() ?? "";
+        for (const line of lines.filter(Boolean)) {
+            const command = commandSchema.parse(SafeJSON.parse(line, { strict: true }));
+            appendFileSync(join(outDir, "commands.jsonl"), `${SafeJSON.stringify(command)}\n`);
+            if (!paused && !(fixtureMode === "--fixture-audio-three" && command.cmd === "stop" && position === 0)) {
+                for (const source of sources) {
+                    if (muted[source]) {
+                        spans[source].push([position, position + 15_000]);
+                    }
+                }
+                position += 15_000;
+            }
+            if (command.cmd === "stop") {
+                stop();
+            } else if (command.cmd === "mute" || command.cmd === "unmute") {
+                muted[command.source ?? "mic"] = command.cmd === "mute";
+                state();
+            } else if (command.cmd === "set-mic") {
+                print(
+                    command.deviceId === "built-in-mic"
+                        ? { event: "settings", micDevice: command.deviceId }
+                        : { event: "error", code: "device-missing", message: `no input device ${command.deviceId}` },
+                    "stderr"
+                );
+            } else if (command.cmd === "pause" || command.cmd === "resume") {
+                paused = command.cmd === "pause";
+                state();
+            }
+        }
+    });
+    process.stdin.on("end", stop);
+    process.on("SIGINT", stop);
+    await new Promise(() => undefined);
+}
 let displayId = Number(value("--display-id"));
 const frames: Array<Record<string, unknown>> = [];
 let finished = false;
@@ -126,7 +216,11 @@ const finish = (cancelled: boolean) => {
                       warnings: ["the mic sidecar could not start: disk full"],
                   },
               ]
-            : undefined;
+            : (value("--audio")?.split(",") ?? []).map((source) => {
+                  const path = join(outDir, `audio-${source}.m4a`);
+                  writeFileSync(path, "invented piece sound");
+                  return { source, path, durationMs: 1000, mutedSpans: [] };
+              });
     print({
         ok: true,
         success: true,
