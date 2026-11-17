@@ -48,7 +48,15 @@ import {
     RpcError,
     readLiveRecording,
 } from "./live";
-import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, NativeLiveCapture, nativeArgv } from "./native";
+import {
+    audioArgv,
+    captureErrorKind,
+    flagsInHelp,
+    NativeFrameRecorder,
+    NativeLiveCapture,
+    nativeArgv,
+    parseNativeTrack,
+} from "./native";
 import { blockInFrame, changedAreas, mergeAreaRead, planRead } from "./ocr-region";
 import { peekabooCaptureError } from "./peekaboo";
 import type { SessionCapture } from "./session";
@@ -251,6 +259,13 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
         expect(result.tracks).toEqual([
             { source: "mic", durationMs: 0, mutedSpans: [], warnings: ["the mic sidecar could not start: disk full"] },
         ]);
+    });
+
+    test("a track's start before the first frame passes on as startOffsetMs; an older ax-tool sends none", () => {
+        const row = { source: "system", path: "/tmp/audio-system.m4a", durationMs: 30_000, mutedSpans: [] };
+
+        expect(parseNativeTrack({ ...row, startMs: -240 })).toMatchObject({ startOffsetMs: -240 });
+        expect(parseNativeTrack(row)).not.toHaveProperty("startOffsetMs");
     });
 
     test("replacing a pending display switch clears its deadline and completes the replacement", async () => {
