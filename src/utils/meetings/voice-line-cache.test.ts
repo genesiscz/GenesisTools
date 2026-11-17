@@ -135,7 +135,20 @@ test("the background worker owns model work and returns validated line results",
     }
     expect(command.slice(0, 2)).toEqual(prefix);
     expect(command[2]).toBe(process.execPath);
-    expect(f.backend).not.toHaveBeenCalled();
+    expect(f.backend).toHaveBeenCalledTimes(1);
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(f.decode).not.toHaveBeenCalled();
+});
+
+test("a complete cache hit starts neither a background worker nor extraction", async () => {
+    const f = await fixture();
+    const expected = await voice.embedVoiceLines(f.options);
+    f.compute.mockClear();
+    f.decode.mockClear();
+    const spawn = spyOn(Bun, "spawn");
+    spies.push(spawn);
+    expect(await voice.embedVoiceLines({ ...f.options, workerPrefix: ["fixture-priority"] })).toEqual(expected);
+    expect(spawn).not.toHaveBeenCalled();
     expect(f.compute).not.toHaveBeenCalled();
     expect(f.decode).not.toHaveBeenCalled();
 });
