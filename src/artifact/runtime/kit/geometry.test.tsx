@@ -18,8 +18,11 @@ import {
     shiftText,
     sliderKeyPercent,
     viewForRect,
+    ZOOM_STEP,
     zoomViewAt,
+    zoomViewBy,
 } from "./image-compare/core";
+import { heatMap } from "./image-compare/modes/heat";
 import { type DiagramLayer, LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ModelBrowser } from "./model-browser";
 import { PropertyGrid } from "./property-grid";
@@ -684,6 +687,58 @@ describe("image compare core", () => {
 
         const region = viewForRect({ rect: { x: 800, y: 600, w: 88, h: 38 }, pane, canvas });
         expect(region).toEqual({ scale: 4, cx: 844, cy: 619 });
+    });
+
+    test("a long screenshot that fits below 5% zooms out to its fit, never in, and a page-tall region still fits", () => {
+        // A 1280 x 20000 screenshot in a 640 px high pane fits at 3.2%, under the 5% floor of the zoom buttons.
+        const pane = { width: 1250, height: 640 };
+        const canvas = { width: 1280, height: 20000 };
+        const fit = resolveView(FIT_VIEW, pane, canvas).scale;
+        expect(fit).toBe(0.032);
+
+        const zoomOut = zoomViewBy({ view: FIT_VIEW, pane, canvas, factor: 1 / ZOOM_STEP });
+        expect(resolveView(zoomOut, pane, canvas).scale).toBe(fit);
+        const zoomIn = zoomViewBy({ view: FIT_VIEW, pane, canvas, factor: ZOOM_STEP });
+        expect(resolveView(zoomIn, pane, canvas).scale).toBeCloseTo(fit * ZOOM_STEP);
+        const page = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+        expect(viewForRect({ rect: page, pane, canvas }).scale).toBeLessThanOrEqual(fit);
+
+        // A canvas that fits above 5% keeps the 5% floor.
+        const short = { width: 1280, height: 2000 };
+        const far = zoomViewBy({
+            view: { scale: 0.06, cx: 640, cy: 1000 },
+            pane,
+            canvas: short,
+            factor: 1 / ZOOM_STEP,
+        });
+        expect(far.scale).toBe(0.05);
+    });
+
+    test("the heat map takes coverage from where each image lies, not from its alpha", () => {
+        const stops = [
+            { r: 0, g: 0, b: 255 },
+            { r: 255, g: 0, b: 0 },
+        ];
+        const white = (width: number, height: number) => solid({ width, height, rgb: WHITE });
+        const clearAt = (image: RgbaImage, x: number, y: number): RgbaImage => {
+            const data = new Uint8ClampedArray(image.data);
+            data.set([0, 0, 0, 0], (y * image.width + x) * 4);
+
+            return { ...image, data };
+        };
+
+        // Aligned: inside the overlap, opaque navy in A against a transparent pixel of B is a change.
+        const a = solid({ width: 20, height: 10, rgb: WHITE, block: { x: 5, y: 5, w: 1, h: 1, rgb: NAVY } });
+        const aligned = heatMap({ a, b: clearAt(white(20, 10), 7, 5), shift: { dx: 2, dy: 0 }, stops });
+        expect({ changed: aligned.changed, total: aligned.total }).toEqual({ changed: 1, total: 180 });
+        expect(aligned.data[(5 * 20 + 5) * 4 + 3]).toBeGreaterThan(0);
+
+        // Unaligned, the same size: a transparent pixel blends over white, so against white it is no change.
+        const unaligned = heatMap({ a: clearAt(white(4, 1), 1, 0), b: white(4, 1), shift: { dx: 0, dy: 0 }, stops });
+        expect(unaligned.changed).toBe(0);
+
+        // A row inside only one image is still the largest distance.
+        expect(heatMap({ a: white(4, 1), b: white(4, 2), shift: { dx: 0, dy: 0 }, stops }).changed).toBe(4);
     });
 
     /** The first view of a canvas in a pane of this width, as ComparePane sizes it. */

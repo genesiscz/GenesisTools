@@ -1,7 +1,15 @@
 import { useEffect, useRef } from "react";
 import { parseCssColor, type Rgb } from "../../color";
 import { resolveCssColor, useColorSchemeTick } from "../../theme";
-import { alignedSize, type CompareSize, overlapRect, placeImage, type RgbaImage, type Shift } from "../core";
+import {
+    alignedSize,
+    type CompareRect,
+    type CompareSize,
+    overlapRect,
+    placeImage,
+    type RgbaImage,
+    type Shift,
+} from "../core";
 import { createIdleCache } from "../load";
 import {
     AlignControl,
@@ -13,6 +21,7 @@ import {
     isAligned,
     PixelNotice,
     StageImage,
+    StaleNote,
     useIdleCompute,
     ViewLayer,
 } from "../stage";
@@ -38,6 +47,8 @@ interface HeatMap {
     /** Pixels at or above the floor. */
     changed: number;
     total: number;
+    /** The shift of B the map was computed with; the map is placed for it. */
+    shift: Shift;
 }
 
 function blend(value: number, alpha: number): number {
@@ -72,14 +83,22 @@ function rampAt(stops: Rgb[], t: number): Rgb {
     };
 }
 
+function inside(rect: CompareRect, x: number, y: number): boolean {
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
 /**
- * Every pixel's colour distance on the ramp. Unshifted, a pixel inside only one image is the largest distance; on an
- * aligned pair only the overlap is drawn, as the diff compares it.
+ * Every pixel's colour distance on the ramp. Which image covers a pixel comes from where each image lies on the
+ * canvas, never from its alpha: inside both, the distance blends both over white (a transparent pixel of an image is
+ * still that image). Unshifted, a pixel inside only one image is the largest distance; on an aligned pair only the
+ * overlap is drawn, as the diff compares it.
  */
-function heatMap({ a, b, shift, stops }: { a: RgbaImage; b: RgbaImage; shift: Shift; stops: Rgb[] }): HeatMap {
+export function heatMap({ a, b, shift, stops }: { a: RgbaImage; b: RgbaImage; shift: Shift; stops: Rgb[] }): HeatMap {
     const size = alignedSize(a, b, shift);
     const placedA = placeImage(a, size);
     const placedB = placeImage(b, size, { x: -shift.dx, y: -shift.dy });
+    const rectA: CompareRect = { x: 0, y: 0, w: a.width, h: a.height };
+    const rectB: CompareRect = { x: -shift.dx, y: -shift.dy, w: b.width, h: b.height };
     const aligned = shift.dx !== 0 || shift.dy !== 0;
     const area = overlapRect(a, b, shift);
     const pixels = size.width * size.height;
@@ -88,31 +107,33 @@ function heatMap({ a, b, shift, stops }: { a: RgbaImage; b: RgbaImage; shift: Sh
     const data = new Uint8ClampedArray(pixels * 4);
     let changed = 0;
 
-    for (let i = 0; i < pixels; i++) {
-        const at = i * 4;
-        const inA = placedA.data[at + 3] > 0;
-        const inB = placedB.data[at + 3] > 0;
+    for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+            const at = (y * size.width + x) * 4;
+            const inA = inside(rectA, x, y);
+            const inB = inside(rectB, x, y);
 
-        if ((!inA && !inB) || (aligned && inA !== inB)) {
-            continue;
+            if ((!inA && !inB) || (aligned && inA !== inB)) {
+                continue;
+            }
+
+            const t = inA !== inB ? 1 : colourDistance(placedA.data, placedB.data, at);
+
+            if (t < FLOOR) {
+                continue;
+            }
+
+            changed++;
+            const colour = rampAt(stops, t);
+            data[at] = colour.r;
+            data[at + 1] = colour.g;
+            data[at + 2] = colour.b;
+            // A larger distance is also more opaque, so a faint change stays faint.
+            data[at + 3] = 110 + 145 * Math.min(1, t * 2);
         }
-
-        const t = inA !== inB ? 1 : colourDistance(placedA.data, placedB.data, at);
-
-        if (t < FLOOR) {
-            continue;
-        }
-
-        changed++;
-        const colour = rampAt(stops, t);
-        data[at] = colour.r;
-        data[at + 1] = colour.g;
-        data[at + 2] = colour.b;
-        // A larger distance is also more opaque, so a faint change stays faint.
-        data[at + 3] = 110 + 145 * Math.min(1, t * 2);
     }
 
-    return { size, data, changed, total };
+    return { size, data, changed, total, shift };
 }
 
 /** The ramp's colours as the page's theme resolves them now. */
@@ -160,8 +181,10 @@ function HeatCanvas({ heat }: { heat: HeatMap }) {
 
 /** How far each pixel's colour moved, on a ramp from a small change to a large one, over the faded After image. */
 function HeatStage(props: CompareStageProps) {
-    const { result, shift } = useHeat(props);
+    const { result, shift: wanted } = useHeat(props);
     const heat = result.status === "ready" ? result.value : null;
+    // While a new map computes, the shown one keeps the underlay where it was computed, so the two stay in register.
+    const shift = heat?.shift ?? wanted;
 
     return (
         <ComparePane
@@ -180,8 +203,10 @@ function HeatStage(props: CompareStageProps) {
 }
 
 function HeatControls(props: CompareStageProps) {
-    const { result, shift } = useHeat(props);
+    const { result, shift: wanted } = useHeat(props);
     const heat = result.status === "ready" ? result.value : null;
+    // The legend and the summary describe the map on screen, which an older setting may still have made.
+    const shift = heat?.shift ?? wanted;
     const share = heat ? (heat.changed / Math.max(1, heat.total)) * 100 : 0;
 
     return (
@@ -206,6 +231,7 @@ function HeatControls(props: CompareStageProps) {
                             {`${share >= 10 ? share.toFixed(1) : share.toFixed(2)}% of pixels changed colour`}
                         </span>
                         {`${isAligned(shift) ? " on the aligned pair, where both overlap," : ""} in ${Math.round(result.ms)} ms`}
+                        {result.stale ? <StaleNote /> : null}
                     </>
                 ) : props.pixels.status === "error" ? null : (
                     "Computing the heat map..."

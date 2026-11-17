@@ -200,16 +200,46 @@ export interface Computed<T> {
 export interface IdleCache<T> {
     peek: (key: string) => Computed<T> | undefined;
     /**
-     * Computes after the browser goes idle, once per key; callers asking for a running key share it. An aborted
-     * signal that fires before the work starts skips it and leaves no entry, so a dragged slider computes only the
-     * value it stops on.
+     * Computes after the browser goes idle, once per key; callers asking for a running key share it. Each caller's
+     * signal speaks for that caller only: the work runs while any caller still waits, and resolves null for a caller
+     * whose signal aborted. When every caller left before the work starts, it is skipped and leaves no entry, so a
+     * dragged slider computes only the value it stops on.
      */
     run: (options: { key: string; compute: () => T; signal: AbortSignal }) => Promise<Computed<T> | null>;
 }
 
+/** A computation waiting for the browser to go idle, and every caller waiting for it. */
+interface IdleJob<T> {
+    pending: Promise<Computed<T> | null>;
+    /** The work runs the compute of the first caller still waiting; one key always means the same inputs. */
+    callers: { compute: () => T; signal: AbortSignal }[];
+}
+
 export function createIdleCache<T>(max: number): IdleCache<T> {
     const done = new Map<string, Computed<T>>();
-    const running = new Map<string, Promise<Computed<T> | null>>();
+    const running = new Map<string, IdleJob<T>>();
+
+    const start = (key: string): IdleJob<T> => {
+        const callers: IdleJob<T>["callers"] = [];
+        const pending = whenIdle(500).then(() => {
+            running.delete(key);
+            const live = callers.find((caller) => !caller.signal.aborted);
+
+            if (!live) {
+                return null;
+            }
+
+            const started = performance.now();
+            const result = { value: live.compute(), ms: performance.now() - started };
+            remember(done, key, result, max);
+
+            return result;
+        });
+        const job = { pending, callers };
+        running.set(key, job);
+
+        return job;
+    };
 
     return {
         peek: (key) => done.get(key),
@@ -220,28 +250,10 @@ export function createIdleCache<T>(max: number): IdleCache<T> {
                 return Promise.resolve(hit);
             }
 
-            const shared = running.get(key);
+            const job = running.get(key) ?? start(key);
+            job.callers.push({ compute, signal });
 
-            if (shared) {
-                return shared;
-            }
-
-            const pending = whenIdle(500).then(() => {
-                running.delete(key);
-
-                if (signal.aborted) {
-                    return null;
-                }
-
-                const started = performance.now();
-                const result = { value: compute(), ms: performance.now() - started };
-                remember(done, key, result, max);
-
-                return result;
-            });
-            running.set(key, pending);
-
-            return pending;
+            return job.pending.then((result) => (signal.aborted ? null : result));
         },
     };
 }

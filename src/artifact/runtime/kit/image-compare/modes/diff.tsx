@@ -31,6 +31,7 @@ import {
     PixelNotice,
     RangeControl,
     StageImage,
+    StaleNote,
     ToggleControl,
     useIdleCompute,
     useViewTransform,
@@ -197,8 +198,10 @@ function DiffStage(props: CompareStageProps) {
     const underlay = choiceSetting(props.settings, UNDERLAY, UNDERLAYS, "after");
     const showRegions = boolSetting(props.settings, REGIONS, true);
     const active = numberSetting(props.settings, REGION, -1);
-    const { result, shift } = useDiff(props);
+    const { result, shift: wanted } = useDiff(props);
     const diff = result.status === "ready" ? result.value : null;
+    // While a new diff computes, the shown one keeps the underlay where it was computed, so the two stay in register.
+    const shift = diff?.shift ?? wanted;
     const shown = underlay === "after" ? props.b : underlay === "before" ? props.a : undefined;
 
     return (
@@ -306,8 +309,10 @@ function downloadDiff({
 function DiffControls(props: CompareStageProps) {
     const underlay = choiceSetting(props.settings, UNDERLAY, UNDERLAYS, "after");
     const showRegions = boolSetting(props.settings, REGIONS, true);
-    const { result, shift } = useDiff(props);
+    const { result } = useDiff(props);
     const diff = result.status === "ready" ? result.value : null;
+    // The diff of an older setting, shown until the current one is ready.
+    const stale = result.status === "ready" && result.stale;
     const regions = diff?.regions ?? [];
     const active = numberSetting(props.settings, REGION, -1);
     const [downloadFailed, setDownloadFailed] = useState(false);
@@ -323,7 +328,7 @@ function DiffControls(props: CompareStageProps) {
         );
     };
     const download = (): void => {
-        if (!diff || props.pixels.status !== "ready") {
+        if (!diff || stale || props.pixels.status !== "ready") {
             return;
         }
 
@@ -331,7 +336,7 @@ function DiffControls(props: CompareStageProps) {
         downloadDiff({
             diff,
             underlay: underlay === "after" ? pair.b : underlay === "before" ? pair.a : undefined,
-            at: underlay === "after" ? { x: -shift.dx, y: -shift.dy } : { x: 0, y: 0 },
+            at: underlay === "after" ? { x: -diff.shift.dx, y: -diff.shift.dy } : { x: 0, y: 0 },
             name: `diff-${fileSlug(props.a.label)}-${fileSlug(props.b.label)}.png`,
         }).then((ok) => setDownloadFailed(!ok));
     };
@@ -378,7 +383,7 @@ function DiffControls(props: CompareStageProps) {
                     </span>
                 ) : null}
             </div>
-            <Button size="sm" disabled={!diff} onClick={download}>
+            <Button size="sm" disabled={!diff || stale} onClick={download}>
                 Download diff PNG
             </Button>
             {downloadFailed ? (
@@ -390,7 +395,8 @@ function DiffControls(props: CompareStageProps) {
                 {diff && result.status === "ready" ? (
                     <>
                         <span className="font-medium text-ink">{diffSummary(diff)}</span>
-                        {`${isAligned(shift) ? " on the aligned pair, where both overlap," : ""} in ${Math.round(result.ms)} ms`}
+                        {`${isAligned(diff.shift) ? " on the aligned pair, where both overlap," : ""} in ${Math.round(result.ms)} ms`}
+                        {stale ? <StaleNote /> : null}
                     </>
                 ) : props.pixels.status === "error" ? null : (
                     "Computing the diff..."

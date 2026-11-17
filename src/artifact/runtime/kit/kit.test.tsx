@@ -12,6 +12,7 @@ import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { type EditableColumn, type EditableRow, EditableTable, editableCellError, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { ImageCompare, ImageCompareModeSwitch, ImageCompareProvider } from "./image-compare";
+import { createIdleCache } from "./image-compare/load";
 import { LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
 import { MD_BODY_CLASS, MD_DOCUMENT_CLASS, Md, MdViewer } from "./md";
@@ -3254,6 +3255,101 @@ describe("ImageCompare", () => {
             await dom.click(align?.querySelector("input"));
             await settlePixels();
             expect(text()).not.toContain("on the aligned pair");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a shared pixel computation runs for every caller still waiting, whichever caller started it", async () => {
+        const dom = await mountDom(null);
+
+        try {
+            const cache = createIdleCache<string>(4);
+            let runs = 0;
+            const compute = (): string => {
+                runs++;
+                return "diff";
+            };
+
+            // The first caller leaves before the browser goes idle; the second still gets the work, done once.
+            const first = new AbortController();
+            const second = new AbortController();
+            const left = cache.run({ key: "pair", compute, signal: first.signal });
+            const stays = cache.run({ key: "pair", compute, signal: second.signal });
+            first.abort();
+            expect((await stays)?.value).toBe("diff");
+            expect(await left).toBeNull();
+            expect(runs).toBe(1);
+
+            // A caller that comes back to a job every caller had left still gets it.
+            const gone = new AbortController();
+            const back = new AbortController();
+            const abandoned = cache.run({ key: "other", compute, signal: gone.signal });
+            gone.abort();
+            expect((await cache.run({ key: "other", compute, signal: back.signal }))?.value).toBe("diff");
+            expect(await abandoned).toBeNull();
+
+            // When every caller left, nothing runs and nothing is kept.
+            const alone = new AbortController();
+            const skipped = cache.run({ key: "third", compute, signal: alone.signal });
+            alone.abort();
+            expect(await skipped).toBeNull();
+            expect(cache.peek("third")).toBeUndefined();
+            expect(runs).toBe(2);
+        } finally {
+            await dom.unmount();
+        }
+    });
+
+    test("while a new diff or heat map computes, the old one stays at its own shift, says so, and the PNG waits", async () => {
+        const { dom, text, radio, button, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://160x200/page-c" }}
+                after={{ src: "fake://160x200/page-shifted-c" }}
+                defaultMode="diff"
+            />
+        );
+
+        try {
+            const underlay = () => dom.container.querySelector<HTMLImageElement>('[role="group"][tabindex="0"] img');
+            const align = () =>
+                [...dom.container.querySelectorAll("label")]
+                    .find((label) => label.textContent === "Align")
+                    ?.querySelector("input");
+            const download = () => button("Download diff PNG");
+
+            await settlePixels();
+            expect(text()).toContain("on the aligned pair");
+            expect(underlay()?.style.left).toBe("-3px");
+            expect(download()?.disabled).toBe(false);
+
+            // Align off: until the unshifted diff is ready, the aligned one stays drawn where it was computed.
+            await dom.click(align());
+            expect(underlay()?.style.left).toBe("-3px");
+            expect(underlay()?.style.top).toBe("-12px");
+            expect(text()).toContain("on the aligned pair");
+            expect(text()).toContain("Updating for the new settings");
+            expect(download()?.disabled).toBe(true);
+
+            await settlePixels();
+            expect(underlay()?.style.left).toBe("0px");
+            expect(text()).not.toContain("on the aligned pair");
+            expect(text()).not.toContain("Updating for the new settings");
+            expect(download()?.disabled).toBe(false);
+
+            // Heat, the other way round: Align on keeps the unshifted map until the aligned one is ready.
+            await dom.click(radio("Heat"));
+            await settlePixels();
+            expect(text()).toContain("inside only one image: largest");
+            await dom.click(align());
+            expect(underlay()?.style.left).toBe("0px");
+            expect(text()).toContain("inside only one image: largest");
+            expect(text()).toContain("Updating for the new settings");
+
+            await settlePixels();
+            expect(underlay()?.style.left).toBe("-3px");
+            expect(text()).toContain("% of pixels changed colour on the aligned pair");
+            expect(text()).not.toContain("Updating for the new settings");
         } finally {
             await restore();
         }

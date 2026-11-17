@@ -557,6 +557,11 @@ export function useIdleCompute<T>({
     return { status: "loading" };
 }
 
+/** After a stale summary: the numbers belong to the product on screen, not yet to the settings now chosen. */
+export function StaleNote() {
+    return <span className="text-warn">. Updating for the new settings...</span>;
+}
+
 /** The loading line or the error of a pixel mode, over its pane. */
 export function PixelNotice({ pixels, computing }: { pixels: PixelState; computing: boolean }) {
     if (pixels.status === "error") {

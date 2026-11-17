@@ -46,6 +46,8 @@ export interface ImageDiff {
     changed: number;
     total: number;
     regions: CompareRegion[];
+    /** The shift of B the diff was computed with; the overlay and the regions are placed for it. */
+    shift: Shift;
 }
 
 // ─── Images ───
@@ -262,7 +264,7 @@ export function diffImages({
 
     const regions = changed === 0 ? [] : clusterMask({ mask: overlay, width, height, ...DEFAULT_REGION_OPTIONS });
 
-    return { size, overlay, changed, total, regions };
+    return { size, overlay, changed, total, regions, shift };
 }
 
 type Span = [number, number];
@@ -650,8 +652,12 @@ export function paneHeight({
     return Math.max(1, Math.ceil(Math.min(maxHeight, canvas.height * Math.min(1, width / canvas.width))));
 }
 
-function clampScale(scale: number): number {
-    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
+/**
+ * Keeps a scale between the zoom limits. The lower limit is ZOOM_MIN, or the fit scale when that is smaller (a long
+ * screenshot), so zooming out from the whole image never zooms in.
+ */
+function clampScale({ scale, pane, canvas }: { scale: number; pane: CompareSize; canvas: CompareSize }): number {
+    return Math.min(ZOOM_MAX, Math.max(Math.min(ZOOM_MIN, fitScale(pane, canvas)), scale));
 }
 
 /**
@@ -700,7 +706,7 @@ export function zoomViewAt({
     point: { x: number; y: number };
 }): CompareView {
     const now = resolveView(view, pane, canvas);
-    const scale = clampScale(now.scale * factor);
+    const scale = clampScale({ scale: now.scale * factor, pane, canvas });
     const px = (point.x - now.x) / now.scale;
     const py = (point.y - now.y) / now.scale;
     const x = point.x - px * scale;
@@ -771,9 +777,15 @@ export function viewForRect({
     canvas: CompareSize;
     padding?: number;
 }): CompareView {
-    const scale = clampScale(
-        Math.min(8, (pane.width - 2 * padding) / Math.max(1, rect.w), (pane.height - 2 * padding) / Math.max(1, rect.h))
-    );
+    const scale = clampScale({
+        scale: Math.min(
+            8,
+            (pane.width - 2 * padding) / Math.max(1, rect.w),
+            (pane.height - 2 * padding) / Math.max(1, rect.h)
+        ),
+        pane,
+        canvas,
+    });
 
     return clampCentre({ scale, cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2 }, pane, canvas);
 }
