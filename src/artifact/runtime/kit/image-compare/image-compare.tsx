@@ -1,5 +1,14 @@
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    type KeyboardEvent,
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import { Button, Field, Select } from "../forms";
 import { MdInline } from "../md";
 import { SegmentedControl } from "../primitives";
@@ -98,7 +107,9 @@ const PIXELS_LOADING: PixelState = { status: "loading" };
 function useNaturalSizes(srcs: string[]): ReadonlyMap<string, CompareSize | null> {
     const [sizes, setSizes] = useState<ReadonlyMap<string, CompareSize | null>>(() => new Map());
     const latest = useRef(srcs);
-    latest.current = srcs;
+    useLayoutEffect(() => {
+        latest.current = srcs;
+    });
     const key = srcs.join("\n");
 
     useEffect(() => {
@@ -328,8 +339,12 @@ export function ImageCompare({
     // The settings a mode saves (Blink's interval, Diff's underlay opacity) live under the id; the rest in state.
     const settingsKey = itemKey === undefined ? undefined : `${itemKey}:settings`;
     const [savedSettings, setSavedSettings] = useStoredValue(settingsKey, parseSavedSettings);
+    // Set after a commit, never in render: a render that never commits (a new id in a transition) must not leave its
+    // comparison's settings for setSetting to save under this id. A new id brings its settings in the same commit.
     const latestSaved = useRef(savedSettings);
-    latestSaved.current = savedSettings;
+    useLayoutEffect(() => {
+        latestSaved.current = savedSettings;
+    }, [savedSettings]);
     const [sessionSettings, setSessionSettings] = useState<CompareSettings>({});
     const settings = useMemo(() => ({ ...sessionSettings, ...savedSettings }), [sessionSettings, savedSettings]);
     const pixels = usePixelPair({

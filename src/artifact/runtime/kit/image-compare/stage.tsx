@@ -227,7 +227,9 @@ export function ComparePane({
     const [dragging, setDragging] = useState(false);
     const drag = useRef<{ id: number; x: number; y: number; moved: boolean; pans: boolean } | null>(null);
     const latest = useRef(stage);
-    latest.current = stage;
+    useLayoutEffect(() => {
+        latest.current = stage;
+    });
     const height = paneHeight({ canvas: stage.canvas, width, maxHeight: stage.maxHeight });
     const pane = { width, height };
     const transform = resolveView(stage.view, pane, stage.canvas);
@@ -605,7 +607,9 @@ export function useIdleCompute<T>({
 }): IdleResult<T> {
     const [last, setLast] = useState<{ key: string; group: string; value: T; ms: number }>();
     const latest = useRef(job);
-    latest.current = job;
+    useLayoutEffect(() => {
+        latest.current = job;
+    });
     const key = job?.key ?? null;
 
     useEffect(() => {

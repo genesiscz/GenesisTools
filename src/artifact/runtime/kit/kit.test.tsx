@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parsePatch } from "diff";
-import { act, type ReactNode, useState } from "react";
+import { act, type ReactNode, Suspense, startTransition, use, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
 import { SERIES_COLOR } from "./charts";
 import { contrastRatio, parseCssColor, readableInlineInk, readableTextOn } from "./color";
@@ -4112,6 +4112,57 @@ describe("ImageCompare", () => {
             expect(anonymous.dom.window.localStorage.length).toBe(0);
         } finally {
             await anonymous.restore();
+        }
+    }, 20_000);
+
+    test("a setting changed while a new id waits in a transition is saved for the comparison on screen only", async () => {
+        const settingsKey = (id: string) => `artifact.image-compare:item:${id}:settings`;
+        const pair = { before: { src: "fake://60x40/plain-t" }, after: { src: "fake://60x40/changed-t" } };
+        const never = new Promise<never>(() => {});
+        // Suspends under the second id, so the render with that id never commits and the first comparison stays.
+        const Gate = ({ hold }: { hold: boolean }) => (hold ? use(never) : null);
+
+        function Switcher() {
+            const [id, setId] = useState("kit-carry-one");
+
+            return (
+                <>
+                    <button type="button" onClick={() => startTransition(() => setId("kit-carry-two"))}>
+                        Next item
+                    </button>
+                    <Suspense fallback={null}>
+                        <ImageCompare id={id} {...pair} defaultMode="blink" />
+                        <Gate hold={id === "kit-carry-two"} />
+                    </Suspense>
+                </>
+            );
+        }
+
+        const { dom, button, restore } = await mountImageCompare(<Switcher />, {
+            prepare: (window) =>
+                window.localStorage.setItem(
+                    settingsKey("kit-carry-two"),
+                    SafeJSON.stringify({ "diff.underlayOpacity": 0.9 })
+                ),
+        });
+        const saved = (id: string) => {
+            const stored = dom.window.localStorage.getItem(settingsKey(id));
+
+            return stored === null ? null : SafeJSON.parse(stored, { strict: true });
+        };
+
+        try {
+            await dom.click(button("Next item"));
+            const interval = [...dom.container.querySelectorAll("label")]
+                .find((label) => label.textContent?.startsWith("Interval"))
+                ?.querySelector("input");
+            await dom.type(interval, "1500");
+
+            // Only the interval, under the first id: the second comparison's opacity stays its own.
+            expect(saved("kit-carry-one")).toEqual({ "blink.interval": 1500 });
+            expect(saved("kit-carry-two")).toEqual({ "diff.underlayOpacity": 0.9 });
+        } finally {
+            await restore();
         }
     }, 20_000);
 
