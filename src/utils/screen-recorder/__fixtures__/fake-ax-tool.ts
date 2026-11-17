@@ -93,11 +93,15 @@ if (args[0] === "audio-record") {
             "stderr"
         );
     }
-    const muted: Record<string, boolean> = { mic: false, system: false };
+    const initiallyMuted = (value("--muted") ?? "").split(",");
+    const muted: Record<string, boolean> = {
+        mic: initiallyMuted.includes("mic"),
+        system: initiallyMuted.includes("system"),
+    };
     const start = Date.parse("2026-11-03T12:00:00.000Z");
     let sequence = 0;
     let position = 0;
-    let paused = false;
+    let paused = args.includes("--paused");
     const spans: Record<string, Array<[number, number]>> = { mic: [], system: [] };
     const openSegment = (file: string, source: string, zeroAt: string) => {
         print({ event: "segment-started", file, source, zeroAt });
@@ -191,7 +195,7 @@ if (args[0] === "audio-record") {
             return;
         }
         stopping = true;
-        if (sequence === 0 || position > 0) {
+        if ((!paused && sequence === 0) || position > 0) {
             emitSegment(Math.max(position, 1));
         }
         process.exit(0);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { z } from "zod";
 import { type AudioSegment, AudioSession, audioSegmentSchema, salvagedAudioTiming } from "./audio-session";
 import type { AudioSource } from "./control";
 
@@ -37,6 +38,30 @@ const start = (dir: string, mode?: string, onSegment?: (segment: AudioSegment) =
     });
 
 describe("continuous sound over the fake tool", () => {
+    test("muted and paused state reaches the process launch before its first samples", async () => {
+        const dir = folder();
+        const options = {
+            folder: dir,
+            outDir: join(dir, ".piece", "sound"),
+            request: { sources: ["mic", "system"] as AudioSource[] },
+            muted: ["mic"] as AudioSource[],
+            paused: true,
+            argv: [process.execPath, fake],
+            launch: (argv: string[]) => argv,
+        };
+        const session = await AudioSession.start(options);
+        try {
+            const argv = z
+                .array(z.string())
+                .parse(SafeJSON.parse(readFileSync(join(options.outDir, "argv.json"), "utf8")));
+            expect(argv).toContain("--muted");
+            expect(argv[argv.indexOf("--muted") + 1]).toBe("mic");
+            expect(argv).toContain("--paused");
+        } finally {
+            await session.stop();
+        }
+    });
+
     test("a process exit reports failure before inherited output pipes close", async () => {
         const dir = folder();
         const failed = Promise.withResolvers<Error>();

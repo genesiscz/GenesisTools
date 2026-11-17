@@ -148,6 +148,9 @@ export interface RecorderAudioOptions {
     /** Under the piece folder, so P14's salvage sees any file a killed process left open. */
     outDir: string;
     request: NonNullable<CaptureRequest["audio"]>;
+    /** Applied by the native process before it accepts its first buffer. */
+    muted?: AudioSource[];
+    paused?: boolean;
     signal?: AbortSignal;
     onSegment?: (segment: AudioSegment) => void;
     onWarning?: (warning: string) => void;
@@ -193,6 +196,8 @@ export class AudioSession {
             "--sources",
             options.request.sources.join(","),
             ...(options.request.micDeviceId ? ["--mic-device", options.request.micDeviceId] : []),
+            ...(options.muted?.length ? ["--muted", options.muted.join(",")] : []),
+            ...(options.paused ? ["--paused"] : []),
             "--out",
             options.outDir,
             "--segment-sec",
