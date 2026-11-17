@@ -1,10 +1,12 @@
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { explainAction, runAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { explainAction, findAction, runAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { callRunningService } from "@genesiscz/utils/genesis-tools/service/clients";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { registerCliAppBuilder } from "../lib/app-builder";
 
 function parseArgs(json: string | boolean | undefined): unknown {
     return typeof json === "string" ? SafeJSON.parse(json, { strict: true }) : {};
@@ -14,10 +16,17 @@ async function explain(
     id: string,
     options: { fresh?: boolean; json?: string | boolean; format?: string }
 ): Promise<void> {
-    const result = await explainAction(AREAS, id, liveEngineDeps(AREAS), {
+    const remote = await callRunningService("actions.explain", {
+        id,
         fresh: options.fresh === true,
         args: parseArgs(options.json),
     });
+    const result = remote.called
+        ? (await import("@genesiscz/utils/genesis-tools/service/api")).explainSchema.parse(remote.value)
+        : await explainAction(AREAS, id, liveEngineDeps(AREAS), {
+              fresh: options.fresh === true,
+              args: parseArgs(options.json),
+          });
 
     if (options.json === true || options.format === "json") {
         out.result(result);
@@ -62,12 +71,13 @@ export function registerActionCommand(program: Command): void {
         .argument("[target]", "with `explain`: the <area>.<action> to explain")
         .option("--json [args]", "arguments as JSON; without args, explain prints JSON")
         .option("--fresh", "explain: probe instead of reading state (writes state only)")
+        .option("--timeout-ms <ms>", "action deadline in milliseconds")
         .option("--format <format>", "explain: text or json", "text")
         .action(
             async (
                 id: string,
                 target: string | undefined,
-                options: { json?: string | boolean; fresh?: boolean; format?: string }
+                options: { json?: string | boolean; fresh?: boolean; format?: string; timeoutMs?: string }
             ) => {
                 if (id === "explain") {
                     if (!target) {
@@ -80,10 +90,28 @@ export function registerActionCommand(program: Command): void {
                     return;
                 }
 
-                const outcome = await runAction(AREAS, id, parseArgs(options.json), liveEngineDeps(AREAS));
+                const timeoutMs =
+                    options.timeoutMs === undefined
+                        ? (findAction(AREAS, id).action.timeoutMs ?? 120_000)
+                        : Number(options.timeoutMs);
+                if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+                    throw new Error("--timeout-ms must be positive");
+                }
+                const remote = await callRunningService(id, parseArgs(options.json), timeoutMs + 10_000);
+                if (!remote.called) {
+                    registerCliAppBuilder();
+                }
+                const outcome = remote.called
+                    ? remote.value
+                    : await runAction(AREAS, id, parseArgs(options.json), liveEngineDeps(AREAS), { timeoutMs });
                 out.result(outcome);
 
-                if (outcome.status !== "ran") {
+                if (
+                    typeof outcome !== "object" ||
+                    outcome === null ||
+                    !("status" in outcome) ||
+                    outcome.status !== "ran"
+                ) {
                     process.exitCode = 1;
                 }
             }
