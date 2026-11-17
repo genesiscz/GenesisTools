@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
@@ -10,12 +11,15 @@ import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import * as voiceBackend from "@genesiscz/utils/meetings/voice";
+import { addVoicePrint, readVoiceStore, type VoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
 import { renderBrief } from "@genesiscz/utils/repl/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import { z } from "zod";
+import { playbackSlice, playSoundSlice } from "../commands/play";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
@@ -24,6 +28,7 @@ import { DecisionJournal } from "./decision-journal";
 import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { planMoment } from "./moment";
+import { OpenedMeeting } from "./opened-meeting";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { decisionReachSchema } from "./service/api";
 import { InProcessMeetingsClient } from "./service/client";
@@ -31,9 +36,22 @@ import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
 import { meetingsToolsetApi } from "./service/toolset-api";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
-import { appendAudioRow } from "./sound";
+import { showText } from "./show-text";
+import * as soundModule from "./sound";
+import { appendAudioRow, meetingSound } from "./sound";
 import { preserveSourceAudio } from "./source-audio";
 import { linkedSource } from "./sources";
+import * as labelsModule from "./speaker-labels";
+import * as suggestRun from "./suggest-run";
+import {
+    applyVoices,
+    listVoices,
+    planVoiceRemoval,
+    previewVoices,
+    removeVoice,
+    voiceReadMeeting,
+    voiceSample,
+} from "./voices";
 
 /**
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
@@ -52,6 +70,179 @@ test("meeting help lists each handle method once", () => {
     for (const handle of handles) {
         const methods = handle.methods.map((method) => method.name);
         expect(new Set(methods).size).toBe(methods.length);
+    }
+});
+
+test("voices has one tree, the voice alias, and all old and new subcommands", async () => {
+    for (const requested of ["voices", "voice"]) {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested });
+        const tree = program.commands.find((command) => command.name() === "voices")!;
+        expect(tree.aliases()).toContain("voice");
+        expect(tree.commands.map((command) => command.name()).sort()).toEqual([
+            "add",
+            "apply",
+            "collect",
+            "enroll",
+            "play",
+            "prepare",
+            "preview",
+            "remove",
+            "score",
+        ]);
+    }
+});
+
+test("play's positional time and track reach the original track's file seconds without starting sound", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Track", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    const sound = meetingSound({
+        folder: "/fixture",
+        timelineZeroMs: 0,
+        tracks: "best",
+        rows: [{ file: "mic.m4a", source: "mic", at: "1970-01-01T00:00:10Z", durationMs: 30000, mutedSpans: [] }],
+    });
+    const opened = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(sound);
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+        throw new Error("must not play");
+    });
+    const model = spyOn(voiceBackend, "localVoiceBackend").mockImplementation(() => {
+        throw new Error("play must not load a voice model");
+    });
+    const embed = spyOn(voiceBackend, "embedVoiceLines").mockRejectedValue(new Error("play must not embed a meeting"));
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+        await program.parseAsync(
+            ["play", record.id, "15", "--track", "mic-raw", "--before", "0", "--no-start", "--json"],
+            { from: "user" }
+        );
+        expect(SafeJSON.parse(String(printed.mock.calls.at(-1)?.[0]), { strict: true })).toMatchObject({
+            track: "mic-raw",
+            path: "/fixture/mic.m4a",
+            fileFromSec: 5,
+            fileToSec: 30,
+            clock: "stamp",
+        });
+        expect(spawn).not.toHaveBeenCalled();
+        expect(model).not.toHaveBeenCalled();
+        expect(embed).not.toHaveBeenCalled();
+    } finally {
+        opened.mockRestore();
+        printed.mockRestore();
+        spawn.mockRestore();
+        model.mockRestore();
+        embed.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("default play chooses the line seat's best track and source setting is respected", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Seat", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    const opened = OpenedMeeting.of(store, record);
+    const base = {
+        folder: "/fixture",
+        timelineZeroMs: 0,
+        rows: [
+            { file: "mic.m4a", source: "mic" as const, at: "1970-01-01T00:00:10Z", durationMs: 30000, mutedSpans: [] },
+        ],
+        source: { path: "/source", source: "wisprflow" as const, layout: "left-mic" as const, durationSec: 60 },
+    };
+    const sound = spyOn(opened, "sound").mockResolvedValue(meetingSound({ ...base, tracks: "best" }));
+    const meeting = spyOn(opened, "meeting").mockResolvedValue({
+        sourceMeetingId: "fixture",
+        title: "Seat",
+        start: record.start,
+        participants: [],
+        speakers: [],
+        folders: [],
+        transcript: [{ startSec: 15, text: "On the microphone.", speaker: "Speaker 1" }],
+    });
+    const evidence = spyOn(opened, "evidence").mockResolvedValue({
+        segments: [{ channel: "mic", startSec: 15, endSec: 20 }],
+        speaking: [],
+        files: [],
+    });
+    const energy = spyOn(opened, "energy").mockResolvedValue({});
+    try {
+        expect(await playbackSlice({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject({
+            track: "mic-raw",
+            fileFromSec: 5,
+            fileToSec: 10,
+        });
+        sound.mockResolvedValue(meetingSound({ ...base, tracks: "source" }));
+        expect(await playbackSlice({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject({
+            track: "source-mic",
+            fileFromSec: 15,
+            fileToSec: 20,
+            channel: 0,
+        });
+    } finally {
+        sound.mockRestore();
+        meeting.mockRestore();
+        evidence.mockRestore();
+        energy.mockRestore();
+    }
+});
+
+test("sample playback feeds the Moment player the selected channel and seconds at 48 kHz, never the model's 16 kHz", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Native rate", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    const audio = join(store.folder(record.id), "native.wav"),
+        captured = join(store.folder(record.id), "player.wav");
+    const dataBytes = 48000 * 4 * 2;
+    const wav = Buffer.alloc(44 + dataBytes);
+    wav.write("RIFF");
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(2, 22);
+    wav.writeUInt32LE(48000, 24);
+    wav.writeUInt32LE(192000, 28);
+    wav.writeUInt16LE(4, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write("data", 36);
+    wav.writeUInt32LE(dataBytes, 40);
+    for (let frame = 0; frame < 48000 * 2; frame++) {
+        wav.writeInt16LE(1000, 44 + frame * 4);
+        wav.writeInt16LE(2000, 46 + frame * 4);
+    }
+    writeFileSync(audio, wav);
+    const available = spyOn(PLAYERS.afplay, "available").mockReturnValue(true);
+    // The player is replaced by a stdin capture process. No audio device is opened.
+    const player = spyOn(PLAYERS.afplay, "clipArgv").mockReturnValue([
+        "bun",
+        "-e",
+        "await Bun.write(process.argv[1], await Bun.stdin.arrayBuffer())",
+        captured,
+    ]);
+    try {
+        await playSoundSlice({
+            player: "afplay",
+            slice: { track: "source-call", path: audio, channel: 1, fileFromSec: 0.5, fileToSec: 1.5, clock: "source" },
+        });
+        const received = readFileSync(captured);
+        expect(received.readUInt32LE(24)).toBe(48000);
+        expect(received.readUInt16LE(22)).toBe(1);
+        const data = received.indexOf(Buffer.from("data")) + 8;
+        expect(received.length - data).toBe(48000 * 2);
+        expect(received.readInt16LE(data)).toBe(2000);
+        expect(player).toHaveBeenCalledWith("/dev/stdin");
+    } finally {
+        available.mockRestore();
+        player.mockRestore();
     }
 });
 
@@ -1918,4 +2109,293 @@ test("terminal listen stops its in-process playback before search and comment pr
         }
         process.exitCode = 0;
     }
+});
+
+const p6VoiceSpies: Array<{ mockRestore(): void }> = [];
+afterEach(() => {
+    for (const mock of p6VoiceSpies.splice(0).reverse()) {
+        mock.mockRestore();
+    }
+});
+const p6Alice = { person: "Alice Example" },
+    p6Bob = { person: "Bob Example" };
+const p6Print: VoicePrint = {
+    meeting: "training",
+    sourceSha: "digest",
+    seat: "mic",
+    track: "source-mic",
+    fromSec: 0,
+    toSec: 5,
+    embedding: [1, 0],
+    confirmedAt: "2026-11-01T10:00:00Z",
+};
+test("listen slices reject any muted overlap, fall back to source, and keep half-open boundaries", () => {
+    const sound = meetingSound({
+        folder: "/fixture",
+        timelineZeroMs: 0,
+        tracks: "best",
+        rows: [
+            {
+                file: "mic.m4a",
+                source: "mic",
+                at: "1970-01-01T00:00:10Z",
+                durationMs: 30000,
+                mutedSpans: [[2000, 4000]],
+            },
+        ],
+        source: { path: "/source", source: "wisprflow", layout: "left-mic", durationSec: 100 },
+    });
+    const request = { seat: "mic" as const, purpose: "listen" as const, fromSec: 11, toSec: 12 };
+    expect(sound.slice(request)?.track).toBe("mic-raw");
+    expect(sound.slice({ ...request, toSec: 12.1 })?.track).toBe("source-mic");
+    expect(sound.slice({ ...request, fromSec: 14, toSec: 15 })?.track).toBe("mic-raw");
+    expect(sound.slice({ ...request, fromSec: 12, toSec: 14, track: "mic-raw" })).toBeUndefined();
+    expect(sound.slice({ ...request, fromSec: 11, toSec: 15, track: "mic-raw" })).toBeUndefined();
+});
+
+test("voice preview measures in memory, returns refusals and current names, and writes neither clock nor record", async () => {
+    const store = new MeetingStore(new Storage("voice-preview-fixture"));
+    const record = await store.create(
+        { title: "Preview", start: "2026-11-01T10:00:00Z", createdBy: "new", project: "preview-voice-fixture" },
+        { command: "new", change: "fixture" }
+    );
+    const opened = OpenedMeeting.of(store, record);
+    const inputs: soundModule.SoundInputs = {
+        folder: store.folder(record.id),
+        timelineZeroMs: 0,
+        tracks: "best",
+        rows: [{ file: "mic.m4a", source: "mic", at: "1970-01-01T00:00:00Z", durationMs: 30000, mutedSpans: [] }],
+    };
+    const before = readFileSync(store.path(record.id));
+    const saved = spyOn(soundModule, "saveSoundClock").mockImplementation(() => {
+        throw new Error("preview must not save a clock");
+    });
+    const update = spyOn(store, "update").mockRejectedValue(new Error("preview must not save a record"));
+    const propose = spyOn(labelsModule, "proposeSpeakerLabels").mockImplementation(async (safe, options) => {
+        expect(options.seat.enabled).toBe(false);
+        expect((await safe.sound()).tracks[0]?.clock).toBe("measured");
+        return [
+            {
+                labeler: "voice",
+                index: 0,
+                seat: "mic",
+                score: 0.4,
+                reason: "unsampled-present",
+                next: { person: p6Bob.person, score: 0 },
+            },
+        ];
+    });
+    p6VoiceSpies.push(
+        saved,
+        update,
+        propose,
+        spyOn(OpenedMeeting, "of").mockReturnValue(opened),
+        spyOn(opened, "meeting").mockResolvedValue({
+            sourceMeetingId: "fixture",
+            title: "Preview",
+            start: record.start,
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript: [{ speaker: "Speaker 1", startSec: 0, text: "Some words." }],
+        }),
+        spyOn(opened, "config").mockResolvedValue(meetingsConfigSchema.parse({})),
+        spyOn(soundModule, "readSoundInputs").mockResolvedValue(inputs),
+        spyOn(soundModule, "measureSoundClock").mockResolvedValue({
+            clock: { version: 1, sources: { mic: { correctionSec: 0, pieces: 1, clear: 1 } } },
+            pieces: [],
+        })
+    );
+    const result = await previewVoices({ store, meeting: record.id });
+    expect(result.lines).toMatchObject([
+        {
+            current: "Speaker 1",
+            text: "Some words.",
+            score: 0.4,
+            reason: "unsampled-present",
+            next: { person: p6Bob.person },
+        },
+    ]);
+    expect(saved).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(readFileSync(store.path(record.id))).toEqual(before);
+});
+
+test("voice reads suppress a failed clock measurement without letting the base labeler save it", async () => {
+    const store = new MeetingStore(new Storage("voice-stamp-read-fixture"));
+    const record = await store.create(
+        { title: "Stamp", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    p6VoiceSpies.push(
+        spyOn(soundModule, "readSoundInputs").mockResolvedValue({
+            folder: store.folder(record.id),
+            timelineZeroMs: 0,
+            tracks: "best",
+            rows: [{ file: "mic", source: "mic", at: "1970-01-01T00:00:00Z", durationMs: 30000, mutedSpans: [] }],
+        }),
+        spyOn(soundModule, "measureSoundClock").mockResolvedValue(undefined)
+    );
+    const opened = await voiceReadMeeting(OpenedMeeting.of(store, record));
+    expect((await opened.sound()).tracks).toEqual([]);
+    expect((await opened.sound()).slice({ seat: "mic", fromSec: 1, toSec: 3, purpose: "voice" })).toBeUndefined();
+});
+
+test("sample reads use the confirmed track and hash; removal invalidates project suggestions but preserves decisions", async () => {
+    const store = new MeetingStore(new Storage("voice-removal-fixture"));
+    const project = "remove-voice-fixture";
+    const create = (title: string) =>
+        store.create(
+            { title, start: "2026-11-01T10:00:00Z", createdBy: "new", project },
+            { command: "new", change: "fixture" }
+        );
+    const first = await create("One"),
+        second = await create("Two");
+    for (const record of [first, second]) {
+        await store.update(record.id, { command: "new", change: "fixture suggestions" }, (record) => {
+            record.items = [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    speaker: p6Alice.person,
+                    fromSec: 1,
+                    toSec: 4,
+                    status: "suggested",
+                    rules: [MeetingRule.VoiceEmbedding],
+                    suggestedAt: p6Print.confirmedAt,
+                },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    speaker: p6Alice.person,
+                    fromSec: 5,
+                    toSec: 8,
+                    status: "confirmed",
+                    rules: [MeetingRule.VoiceEmbedding],
+                    suggestedAt: p6Print.confirmedAt,
+                },
+            ];
+        });
+    }
+    const audio = `${store.folder(first.id)}/source.wav`;
+    writeFileSync(audio, "native rate audio");
+    addVoicePrint(
+        project,
+        p6Alice.person,
+        {
+            ...p6Print,
+            meeting: first.id,
+            fromSec: 1,
+            toSec: 4,
+            sourceSha: createHash("sha256").update(readFileSync(audio)).digest("hex"),
+        },
+        "fixture-model"
+    );
+    const sound = meetingSound({
+        folder: store.folder(first.id),
+        timelineZeroMs: 0,
+        rows: [],
+        tracks: "best",
+        source: { path: audio, source: "wisprflow", layout: "left-mic", durationSec: 30 },
+    });
+    p6VoiceSpies.push(
+        spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(sound),
+        spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+            sourceMeetingId: "fixture",
+            title: "One",
+            start: first.start,
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript: [{ speaker: p6Alice.person, startSec: 1, text: "The sample words." }],
+        })
+    );
+    const before = readFileSync(store.path(first.id));
+    const model = spyOn(voiceBackend, "localVoiceBackend").mockImplementation(() => {
+        throw new Error("a voice list must not load a model");
+    });
+    const embed = spyOn(voiceBackend, "embedVoiceLines").mockRejectedValue(
+        new Error("a voice list must not embed a meeting")
+    );
+    p6VoiceSpies.push(model, embed);
+    const listed = await listVoices({ store, project });
+    expect(listed.people.find((row) => row.person === p6Alice.person)?.samples[0]).toMatchObject({
+        sample: 1,
+        words: "The sample words.",
+        seat: "mic",
+        track: "source-mic",
+    });
+    expect(await voiceSample({ store, project, person: p6Alice.person })).toMatchObject({
+        path: audio,
+        fileFromSec: 1,
+        fileToSec: 4,
+        channel: 0,
+        track: "source-mic",
+    });
+    expect(readFileSync(store.path(first.id))).toEqual(before);
+    expect(model).not.toHaveBeenCalled();
+    expect(embed).not.toHaveBeenCalled();
+    expect(planVoiceRemoval({ store, project, person: p6Alice.person }).affected).toHaveLength(2);
+    await removeVoice({ store, project, person: p6Alice.person });
+    expect(readVoiceStore(project).people[p6Alice.person]).toBeUndefined();
+    for (const record of [first, second]) {
+        expect(new MeetingStore(store.storage).read(record.id)?.items.map((item) => item.id)).toEqual(["i2"]);
+    }
+});
+
+test("voices apply delegates to the existing speakers pass and never confirms its output", async () => {
+    const store = new MeetingStore(new Storage("voice-apply-fixture"));
+    const record = await store.create(
+        { title: "Apply", start: "2026-11-01T10:00:00Z", createdBy: "new", project: "apply-voice-fixture" },
+        { command: "new", change: "fixture" }
+    );
+    const run = spyOn(suggestRun, "runSuggest").mockResolvedValue({
+        fresh: [],
+        retired: [],
+        warnings: ["fixture warning"],
+    });
+    p6VoiceSpies.push(run);
+    expect(await applyVoices({ store, meeting: record.id })).toEqual({
+        meeting: record.id,
+        added: 0,
+        warnings: ["fixture warning"],
+    });
+    expect(run).toHaveBeenCalledWith({ store, record, rules: ["speakers"] });
+});
+
+test("removing one numbered sample preserves other tracks sharing its meeting and start time", async () => {
+    const store = new MeetingStore(new Storage("voice-numbered-removal-fixture"));
+    const project = "numbered-removal-fixture";
+    addVoicePrint(project, p6Alice.person, p6Print, "fixture-model");
+    addVoicePrint(project, p6Alice.person, { ...p6Print, track: "mic-raw" }, "fixture-model");
+    addVoicePrint(project, p6Alice.person, { ...p6Print, toSec: 6 }, "fixture-model");
+    await removeVoice({ store, project, person: p6Alice.person, sample: 1 });
+    expect(
+        readVoiceStore(project).people[p6Alice.person]?.samples.map((sample) => [sample.track, sample.toSec])
+    ).toEqual([
+        ["mic-raw", 5],
+        ["source-mic", 6],
+    ]);
+});
+
+test("show names recorder tracks and their saved clock without decoding audio", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Track inventory", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    soundModule.appendAudioRow(store.folder(record.id), {
+        file: "audio/mic.m4a",
+        source: "mic",
+        at: record.start,
+        durationMs: 30000,
+        mutedSpans: [],
+    });
+    soundModule.saveSoundClock(store.folder(record.id), {
+        version: 1,
+        sources: { mic: { correctionSec: 0.1, pieces: 1, clear: 1 } },
+    });
+    expect(showText(record)).toContain("sound: mic-raw (measured)");
 });

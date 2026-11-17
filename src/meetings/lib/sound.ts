@@ -273,7 +273,22 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
                 }
 
                 const piece = track.pieces.find(
-                    (one) => one.zeroSec <= request.fromSec && request.toSec <= one.zeroSec + one.durationSec
+                    (one) =>
+                        one.zeroSec <= request.fromSec &&
+                        request.toSec <= one.zeroSec + one.durationSec &&
+                        !(
+                            request.purpose === "listen" &&
+                            track.from.kind === "recorder" &&
+                            inputs.rows.some(
+                                (row) =>
+                                    join(inputs.folder, row.file) === one.path &&
+                                    row.mutedSpans.some(
+                                        ([fromMs, toMs]) =>
+                                            request.fromSec - one.zeroSec < toMs / 1000 &&
+                                            request.toSec - one.zeroSec > fromMs / 1000
+                                    )
+                            )
+                        )
                 );
 
                 if (piece) {

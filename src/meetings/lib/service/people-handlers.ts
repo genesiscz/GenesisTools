@@ -1,10 +1,42 @@
+import type { RpcHandlers } from "@genesiscz/utils/api-descriptor";
 import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
-import type { MeetingsParsedParams, MeetingsResult } from "./api";
+import { applyVoices, listVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
+import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
 import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
+
+/** Five handlers ready for the service's central dispatch table; reads use the same functions as the CLI. */
+export function voicesHandlers(
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps = {}
+): RpcHandlers<{ methods: typeof VOICES_METHODS }, import("./handlers").MeetingsCallContext> {
+    const access = { store, linkedSource: deps.linkedSource, config: deps.config };
+    return {
+        "voices.list": (params) => listVoices({ ...access, ...params }),
+        "voices.preview": (params) => previewVoices({ ...access, ...params }),
+        "voices.sample": (params) => voiceSample({ ...access, ...params }),
+        "voices.apply": async (params, context) => {
+            const result = await applyVoices({ ...access, ...params });
+            context.emit?.("meeting.changed", { meeting: result.meeting, parts: ["show", "speakers", "transcript"] });
+            return result;
+        },
+        "voices.remove": async (params, context) => {
+            const result = params.preview
+                ? planVoiceRemoval({ ...access, ...params })
+                : await removeVoice({ ...access, ...params });
+            if (!params.preview) {
+                context.emit?.("people.changed", {});
+                for (const meeting of new Set(result.affected.map((row) => row.meeting))) {
+                    context.emit?.("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] });
+                }
+            }
+            return result;
+        },
+    };
+}
 
 /**
  * The Meetings service's people methods (`people.known`, `people.add`, `people.hide`, `people.planMerge`,

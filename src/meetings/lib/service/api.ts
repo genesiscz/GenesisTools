@@ -50,6 +50,7 @@ import {
 } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
 import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
+import { TRACK_KINDS } from "../sound";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
 import { wordTimingModelIdSchema } from "../word-timing-worker";
 
@@ -1457,6 +1458,121 @@ export const meetingVoice = defineMethod({
     doc: "Read-only stereo RMS, low-band share, tilt and pitch per line; optional anchored N-voice clustering. One bounded streaming decode, no durable cache or downloads.",
     effect: "read",
 });
+
+const voiceSampleRowSchema = z.object({
+    sample: z.number().int().positive(),
+    meeting: z.string(),
+    seat: z.enum(["mic", "call"]),
+    track: z.enum(TRACK_KINDS),
+    fromSec: z.number(),
+    toSec: z.number(),
+    confirmedAt: z.string(),
+    words: z.string(),
+    available: z.boolean(),
+});
+const voiceSelectionSchema = z
+    .object({
+        project: z.string().min(1),
+        person: z.string().trim().min(1),
+        sample: z.number().int().positive().optional(),
+    })
+    .strict();
+const voiceRemovalSchema = z.object({
+    project: z.string(),
+    person: z.string(),
+    removed: z.number().int().nonnegative(),
+    affected: z.array(z.object({ meeting: z.string(), item: z.string(), fromSec: z.number(), toSec: z.number() })),
+});
+
+export const voicesList = defineMethod({
+    name: "voices.list",
+    params: z.object({ project: z.string().min(1).optional() }).strict(),
+    result: z.object({
+        people: z.array(
+            z.object({
+                project: z.string(),
+                person: z.string(),
+                meetings: z.array(z.string()),
+                samples: z.array(voiceSampleRowSchema),
+            })
+        ),
+    }),
+    doc: "Read project voice samples, their meeting, seat, track, transcript times and words. An attended person without a sample has an empty samples array. Saves nothing.",
+    effect: "read",
+});
+export const voicesPreview = defineMethod({
+    name: "voices.preview",
+    params: z.object({ meeting: meetingRef }).strict(),
+    result: z.object({
+        meeting: z.string(),
+        project: z.string().optional(),
+        lines: z.array(
+            z.object({
+                labeler: z.literal("voice"),
+                index: z.number().int(),
+                seat: z.enum(["mic", "call"]),
+                fromSec: z.number(),
+                toSec: z.number(),
+                text: z.string(),
+                current: z.string(),
+                person: z.string().optional(),
+                score: z.number().optional(),
+                next: z.object({ person: z.string(), score: z.number() }).optional(),
+                reason: z.enum([
+                    "named",
+                    "below-gate",
+                    "no-rival-sample",
+                    "unsampled-present",
+                    "not-the-seat-person",
+                    "no-voice",
+                    "seat-of-one",
+                    "seat-shared",
+                    "seat-unknown",
+                ]),
+            })
+        ),
+    }),
+    doc: "Read the voice labeler's proposals, scores, current names and refusal reasons. Clock measurements stay in memory; no record, sample or cache is written.",
+    effect: "read",
+});
+export const voicesApply = defineMethod({
+    name: "voices.apply",
+    params: z.object({ meeting: meetingRef }).strict(),
+    result: z.object({ meeting: z.string(), added: z.number().int().nonnegative(), warnings: z.array(z.string()) }),
+    doc: "Run the meeting's existing suggestion pass for speaker rules. Names stay suggested and keep the voice score; confirms no speaker.",
+    effect: "reversible",
+});
+export const voicesRemove = defineMethod({
+    name: "voices.remove",
+    params: voiceSelectionSchema.extend({ preview: z.boolean().optional() }).strict(),
+    result: voiceRemovalSchema,
+    doc: "With preview, read which suggested lines lose a voice name without writing. Otherwise retire those suggestions across the project before removing the person's samples, or one numbered sample. Human-confirmed names remain.",
+    effect: "reversible",
+});
+export const voicesSample = defineMethod({
+    name: "voices.sample",
+    params: voiceSelectionSchema,
+    result: z.object({
+        meeting: z.string(),
+        fromSec: z.number(),
+        toSec: z.number(),
+        track: z.enum(TRACK_KINDS),
+        path: z.string(),
+        channel: z.union([z.literal(0), z.literal(1)]).optional(),
+        fileFromSec: z.number(),
+        fileToSec: z.number(),
+        clock: z.enum(["source", "measured", "stamp"]),
+    }),
+    doc: "Resolve a confirmed sample through MeetingSound.slice at its original rate. Returns the track file, channel and file seconds for playback; verifies the confirmed file's hash and saves nothing.",
+    effect: "read",
+});
+
+/** Pending dispatch integration: these descriptors and people-handlers share the CLI implementation. */
+export const VOICES_METHODS = [voicesList, voicesPreview, voicesApply, voicesRemove, voicesSample] as const;
+export type VoicesMethod = (typeof VOICES_METHODS)[number]["name"];
+type VoiceMethodNamed<M extends VoicesMethod> = Extract<(typeof VOICES_METHODS)[number], { name: M }>;
+export type VoicesParams<M extends VoicesMethod> = z.output<VoiceMethodNamed<M>["params"]>;
+export type VoicesResult<M extends VoicesMethod> = z.output<VoiceMethodNamed<M>["result"]>;
 
 export const meetingsApi = defineApi({
     id: "meetings-service",
