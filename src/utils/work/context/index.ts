@@ -177,7 +177,7 @@ const bound: ContextProvider = {
             provider: "bound",
             path: `bound.${binding.kind}`,
             value: binding.target,
-            how: { method: "given", source: "tools agents context bind", evidence: `bound at ${binding.ts}` },
+            how: { method: "given", source: "context bind", evidence: `bound at ${binding.ts}` },
         }));
     },
 };

@@ -534,7 +534,7 @@ export function parityOf(db: Database, handoff: LegacyHandoff): ParityDifference
     const item = selectItem(db, handoff.id);
 
     if (item === null) {
-        return [{ handoff: handoff.id, what: "no item in the work store (run tools work migrate backfill)" }];
+        return [{ handoff: handoff.id, what: "no item in the work store (the backfill has not seen it)" }];
     }
 
     if (item.state !== handoffStateOf(handoff.status)) {
