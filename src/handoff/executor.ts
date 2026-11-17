@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
@@ -155,7 +156,10 @@ function shadowIntoWork(db: Database, deps: HandoffDeps, events: readonly Handof
             }
         });
     } catch (error) {
-        log.warn({ err: error, ids }, "work shadow: the ingest failed; tools work migrate backfill repairs it");
+        log.warn(
+            { err: error, ids },
+            `work shadow: the ingest failed; ${toolCommand("work", "migrate", "backfill")} repairs it`
+        );
     }
 }
 

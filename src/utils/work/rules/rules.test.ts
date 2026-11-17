@@ -9,7 +9,7 @@ import { type WorkContext, write } from "../service";
 import { openWorkDb } from "../store/db";
 import { migrateWorkConfig, type WorkConfigMigration } from "./config";
 import { loadWorkRules, readWorkConfig, setWorkConfigValue } from "./load";
-import { resolveRules } from "./resolve";
+import { resolveWorkRules } from "./resolve";
 
 let dir: string;
 let configPath: string;
@@ -132,7 +132,7 @@ describe("the config file", () => {
 });
 
 describe("the write rules", () => {
-    const strict = resolveRules([
+    const strict = resolveWorkRules([
         {
             layer: "config.project",
             rules: { types: { bug: { fields: { where: { level: "required", measure: "path:line of the defect" } } } } },
@@ -181,7 +181,7 @@ describe("the write rules", () => {
         const id = own.ok ? own.data.items[0].id : "";
         expect((await write(ctx("finder"), { verb: "accept", refs: [id] })).ok).toBe(true);
 
-        const routed = resolveRules([
+        const routed = resolveWorkRules([
             {
                 layer: "config.project",
                 // biome-ignore lint/suspicious/noThenProperty: the routing rule's shape is { when, then }

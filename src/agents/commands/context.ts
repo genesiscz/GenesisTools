@@ -1,5 +1,8 @@
+// lint-rules-ignore: tools agents context is a door of the work store's preflight context (spec P4 decision 1)
 import { actorHere } from "@app/work/adapters/actor";
+// lint-rules-ignore: tools agents context is a door of the work store's preflight context (spec P4 decision 1)
 import { contextHere } from "@app/work/adapters/context";
+// lint-rules-ignore: tools agents context is a door of the work store's preflight context (spec P4 decision 1)
 import { emit } from "@app/work/commands/emit";
 import { out } from "@genesiscz/utils/logger";
 import { errorDiagnostic, failReply, okReply } from "@genesiscz/utils/output/reply";

@@ -15,7 +15,7 @@ import {
     type WorkConfigFile,
     workConfigFileSchema,
 } from "./config";
-import { type ResolvedRules, type RuleLayerInput, resolveRules } from "./resolve";
+import { type ResolvedRules, type RuleLayerInput, resolveWorkRules } from "./resolve";
 
 const log = logger.child({ component: "work:rules" });
 
@@ -145,7 +145,7 @@ export async function loadWorkRules({
         sources.push({ layer: "config.project", path: configPath });
     }
 
-    return { project, rules: resolveRules(layers), problems, sources };
+    return { project, rules: resolveWorkRules(layers), problems, sources };
 }
 
 function setPath(target: Record<string, unknown>, path: string[], value: unknown): void {

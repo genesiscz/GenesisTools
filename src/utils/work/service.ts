@@ -43,7 +43,7 @@ export interface WriteData {
 
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
-export function randomSuffix(): string {
+export function randomItemSuffix(): string {
     const bytes = randomBytes(8);
     let out = "";
 
@@ -77,7 +77,7 @@ function stampWithOwner(ctx: WorkContext): ContextStamp | undefined {
 
 export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEnv> {
     const now = ctx.now ?? (() => new Date().toISOString());
-    const random = ctx.random ?? randomSuffix;
+    const random = ctx.random ?? randomItemSuffix;
     return {
         actor: ctx.actor,
         now: now(),
