@@ -16,6 +16,11 @@ export interface HandoffTaskInput {
     id?: string;
     text: string;
     acceptanceCriteria?: string;
+    /**
+     * The id of an existing work item this task is a copy of (`tools work handoff --from`, `add --under`). The fold
+     * ignores it; the work store's shadow ingest reads it, so a task never becomes a second item.
+     */
+    item?: string;
 }
 
 export interface HandoffProof {

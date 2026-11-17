@@ -1,9 +1,12 @@
 import type { Database } from "bun:sqlite";
+import { dirname, join } from "node:path";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
+import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
 import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches, targetMatchesSession } from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
@@ -47,6 +50,11 @@ import type {
 const log = logger.child({ component: "handoff:executor" });
 
 export interface HandoffDeps {
+    /**
+     * The work store that shadows this handoff store. Default: beside `dbPath` when a test or a sandbox sets one,
+     * else `~/.genesis-tools/work/work.db`. `null` turns the shadow off.
+     */
+    workDbPath?: string | null;
     /** Log + attachment store base dir override (tests). */
     base?: string;
     /** qa.db path override (tests). */
@@ -107,6 +115,47 @@ function withDb<T>(deps: HandoffDeps, fn: (db: Database) => T): T {
         return fn(db);
     } finally {
         db.close();
+    }
+}
+
+function workDbFor(deps: HandoffDeps): string | null {
+    if (deps.workDbPath !== undefined) {
+        return deps.workDbPath;
+    }
+
+    return deps.dbPath !== undefined ? join(dirname(deps.dbPath), "work.db") : workDbPath();
+}
+
+/**
+ * Shadow mode of the work store: after each append, bring the touched handoffs into it. A failure here never fails
+ * the handoff write; `tools work migrate backfill` repairs what it missed, and `tools work doctor --parity` names it.
+ */
+function shadowIntoWork(db: Database, deps: HandoffDeps, events: readonly HandoffEvent[]): void {
+    const path = workDbFor(deps);
+
+    if (path === null || events.length === 0) {
+        return;
+    }
+
+    const ids = [...new Set(events.map((event) => event.id))];
+
+    try {
+        withWorkDb(path, (work) => {
+            for (const id of ids) {
+                const handoff = getHandoffById(db, id);
+
+                if (handoff === null) {
+                    continue;
+                }
+
+                const refs = events
+                    .filter((event) => event.id === id)
+                    .map((event) => ({ event, outcome: getEventOutcome(db, event.uid) }));
+                ingestLegacyHandoff(work, handoff, refs);
+            }
+        });
+    } catch (error) {
+        log.warn({ err: error, ids }, "work shadow: the ingest failed; tools work migrate backfill repairs it");
     }
 }
 
@@ -406,6 +455,7 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
 
     return withDb(deps, (db) => {
         catchUpHandoffs(db, deps.base);
+        shadowIntoWork(db, deps, [event]);
         const handoff = getHandoffById(db, event.id);
 
         if (handoff === null) {
@@ -582,6 +632,7 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         if (events.length > 0) {
             appendHandoffEvents(events, deps.base);
             catchUpHandoffs(db, deps.base);
+            shadowIntoWork(db, deps, events);
         }
 
         const handoff = getHandoffById(db, id);
@@ -966,6 +1017,7 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
         if (events.length > 0) {
             appendHandoffEvents(events, deps.base);
             catchUpHandoffs(db, deps.base);
+            shadowIntoWork(db, deps, events);
         }
 
         const handoff = getHandoffById(db, id);
@@ -1303,6 +1355,10 @@ function parseAction(
                         task.acceptanceCriteria = item.acceptanceCriteria;
                     }
 
+                    if (typeof item.item === "string") {
+                        task.item = item.item;
+                    }
+
                     tasks.push(task);
                 }
             }
@@ -1499,6 +1555,7 @@ export function attachHandoffBytes(input: AttachBytesInput, deps: HandoffDeps = 
         };
         appendHandoffEvents([event], deps.base);
         catchUpHandoffs(db, deps.base);
+        shadowIntoWork(db, deps, [event]);
         const outcome = getEventOutcome(db, event.uid);
 
         if (outcome !== null && !outcome.applied) {
