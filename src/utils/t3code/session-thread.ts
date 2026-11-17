@@ -10,8 +10,9 @@ const { log } = logger.scoped("t3code:thread");
 /**
  * The T3 Code thread a session runs in, for every agent T3 Code runs (Claude, Codex). T3 Code's own state names the
  * thread of each native session (`t3SessionThreads`); that is the only record for a Codex thread, which writes no
- * SessionStart pin. The newest pin decides as in the session list (`t3ThreadHolding`): a session resumed later in a
- * terminal pins again with no host, so it no longer names the thread. A pinned T3 thread that T3 Code's state does not
+ * SessionStart pin. The newer of the newest pin and T3 Code's last run decides, as in the session list
+ * (`t3ThreadHolding`): a session resumed later in a terminal pins again with no host, so it no longer names the
+ * thread, until T3 Code runs it again. A pinned T3 thread that T3 Code's state does not
  * list (an older T3 Code, an unreadable database) still counts. Undefined for a session no T3 thread runs.
  */
 export async function t3ThreadOfSession({
