@@ -128,10 +128,11 @@ struct PersonPicker: View {
 
     static let rowHeight: CGFloat = 40
 
-    @State private(set) var newName: String?
+    @State private var offeredName: String?
+    var newName: String? { addNew == nil ? nil : PeopleText.newName(query, people: people, rule: addRule) }
     /// The rows Up and Down move through: the people, then the add row.
     private var offersEverybody: Bool { restrictToPresent && !showEverybody }
-    private var rowCount: Int { shownPeople.count + (newName == nil ? 0 : 1) + (offersEverybody ? 1 : 0) }
+    private var rowCount: Int { shownPeople.count + (offeredName == nil ? 0 : 1) + (offersEverybody ? 1 : 0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -174,7 +175,7 @@ struct PersonPicker: View {
 
     private func updatePeople() {
         shownPeople = PeopleText.questionPeople(people, choices: preferredNames, query: query, hideAbsent: restrictToPresent && !showEverybody)
-        newName = addNew == nil ? nil : PeopleText.newName(query, people: people, rule: addRule)
+        offeredName = newName
     }
 
     private var searchField: some View {
@@ -212,8 +213,8 @@ struct PersonPicker: View {
                             PersonPickerRow(person: person, highlighted: highlighted == index, use: !query.isEmpty) { pick(person) }
                                 .id(index)
                         }
-                        if let newName {
-                            addRow(newName).id(shownPeople.count)
+                        if let offeredName {
+                            addRow(offeredName).id(shownPeople.count)
                         }
                         if offersEverybody {
                             Button("Show everybody") { showEverybody = true; highlighted = nil }
@@ -269,9 +270,9 @@ struct PersonPicker: View {
         if let row = highlighted {
             if row < shownPeople.count { pick(shownPeople[row]) }
             else if offersEverybody && row == rowCount - 1 { showEverybody = true; highlighted = nil }
-            else if let newName { addNew?(newName) }
-        } else if shownPeople.isEmpty, let newName {
-            addNew?(newName)
+            else if let offeredName { addNew?(offeredName) }
+        } else if shownPeople.isEmpty, let offeredName {
+            addNew?(offeredName)
         }
     }
 }
