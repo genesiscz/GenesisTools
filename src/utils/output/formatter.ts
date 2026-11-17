@@ -5,7 +5,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type Block, json2md } from "@genesiscz/utils/json2md";
 import { out } from "@genesiscz/utils/logger";
-import { type FormatFlags, type OutputFormat, resolveFormat } from "./formats";
+import { type FormatFlags, type OutputFormat, resolveOutputFormat } from "./formats";
 import type { NextAction, Reply } from "./reply";
 import { toToon } from "./toon";
 
@@ -116,7 +116,7 @@ export function render<T>(
 
 /** The one printer: the result on stdout, diagnostics and next actions on stderr, exit code 1 when `ok` is false. */
 export function emit<T>(reply: Reply<T>, formatter: Formatter<T>, flags: FormatFlags, door: Door): void {
-    const format = resolveFormat(flags);
+    const format = resolveOutputFormat(flags);
     const tty = process.stdout.isTTY === true;
     const { stdout, stderr } = render(reply, formatter, format, { tty, width: process.stdout.columns ?? 120, door });
 

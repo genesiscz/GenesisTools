@@ -26,7 +26,7 @@ export interface FormatFlags {
 }
 
 /** A format is machine-readable when a parser, rather than a person, is the consumer. */
-export function isMachineFormat(format: OutputFormat): boolean {
+export function isMachineOutputFormat(format: OutputFormat): boolean {
     return format === "json" || format === "json-compact" || format === "toon";
 }
 
@@ -43,7 +43,7 @@ export class UsageError extends Error {}
  * JSON silently, so a caller that asked for both learned nothing about which one it got.
  * Repeating the same answer (`--format json --json`) is fine.
  */
-export function resolveFormat(flags: FormatFlags): OutputFormat {
+export function resolveOutputFormat(flags: FormatFlags): OutputFormat {
     const asked: OutputFormat[] = [];
 
     if (flags.format !== undefined) {

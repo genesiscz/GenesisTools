@@ -11,6 +11,7 @@ export class WorkToolset extends ReplToolset {
         // lint-rules-ignore: the work toolset reaches the store through its session, loaded on bootstrap
         const [{ callWork }, { openSession }] = await Promise.all([
             import("@genesiscz/utils/work/handlers"),
+            // lint-rules-ignore: the REPL global work is a door of the work store (spec P2); it needs the store session
             import("@app/work/session"),
         ]);
         const work: Record<string, (params?: Record<string, unknown>, call?: CallOptions) => Promise<unknown>> = {};

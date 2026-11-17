@@ -2,11 +2,11 @@
 export {
     emitRendered as emit,
     type FormatFlags,
-    isMachineFormat,
+    isMachineOutputFormat as isMachineFormat,
     OUTPUT_FORMATS,
     type OutputFormat,
     type Rendered,
     renderRendered as render,
-    resolveFormat,
+    resolveOutputFormat as resolveFormat,
     UsageError,
 } from "@genesiscz/utils/output/formats";
