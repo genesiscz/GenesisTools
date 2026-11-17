@@ -1,4 +1,8 @@
 import { writeFileSync } from "node:fs";
+// lint-rules-ignore: the session to-do items are read from the question tool's decision log until P9's switch
+import { decisionFiles } from "@app/question/lib/decisions/paths";
+// lint-rules-ignore: the session to-do items are read from the question tool's decision log until P9's switch
+import { kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { toCliCommands } from "@genesiscz/utils/api-descriptor/cli";
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -9,10 +13,11 @@ import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/util
 import { WORK_CLI_POSITIONAL, type WorkMethodName, workApi, workMethods } from "@genesiscz/utils/work/api";
 import { workFormatters } from "@genesiscz/utils/work/formatters";
 import { callWork } from "@genesiscz/utils/work/handlers";
+import { type MirrorReport, mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
 import { ingestLegacyHandoff, type ParityDifference, parityOf } from "@genesiscz/utils/work/legacy/shadow";
 import { showItem } from "@genesiscz/utils/work/read";
 import { setWorkConfigValue, workConfigPath } from "@genesiscz/utils/work/rules/load";
-import { openWorkDb } from "@genesiscz/utils/work/store/db";
+import { openWorkDb, withWorkDb } from "@genesiscz/utils/work/store/db";
 import type { Command } from "commander";
 import { actorHere } from "../adapters/actor";
 import { openLegacySource } from "../adapters/legacy-source";
@@ -226,6 +231,19 @@ export function registerWorkCommands(program: Command): void {
                 source.close();
                 db.close();
             }
+        });
+
+    migrate
+        .command("session-todos")
+        .description("Mirror the numbered to-do items of the decision log into the work store (safe to repeat)")
+        .option("--json", "print the reply object as JSON")
+        .action((opts: { json?: boolean }) => {
+            const rows = readDecisions(decisionFiles().file).filter((row) => kindOf(row) === "todo");
+            const formatter = defineFormatter<MirrorReport>({
+                text: (d) => [`session to-do items: ${d.created} new, ${d.changed} changed, ${d.unchanged} unchanged`],
+            });
+            const report = withWorkDb(undefined, (db) => mirrorSessionTodos(db, rows));
+            emitAs(okReply("migrate session-todos", report), formatter, opts);
         });
 
     program
