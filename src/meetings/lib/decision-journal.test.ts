@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmdirSync } from "
 import { join } from "node:path";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
     type MeetingItem,
@@ -11,6 +11,7 @@ import {
     MeetingStore,
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -98,7 +99,11 @@ const lookAlikes = () => [
     question("i4", { fromSec: 70, toSec: 74, decides: ["i2"] }),
 ];
 
-async function fixture(items: Record<string, unknown>[], labels: Record<string, string> = {}) {
+async function fixture(
+    items: Record<string, unknown>[],
+    labels: Record<string, string> = {},
+    fields: Partial<MeetingRecord> = {}
+) {
     stores += 1;
     const store = new MeetingStore(new Storage(`meetings-journal-${process.pid}-${stores}`));
     const meeting = await store.create(
@@ -108,6 +113,7 @@ async function fixture(items: Record<string, unknown>[], labels: Record<string, 
             createdBy: "new",
             items: items as MeetingItem[],
             speakers: { labels },
+            ...fields,
         },
         { command: "test", change: "fixture" }
     );
@@ -465,6 +471,108 @@ describe("decision journal", () => {
         expect(fx.ledger[0]).toMatchObject({ learn: false });
         await fx.journal.revert({ meeting: fx.meeting.id, token: decided.entry!.token, actor: person });
         expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items[0]).not.toHaveProperty("reach");
+    });
+
+    test("an answer with learn add writes the dictionary entry, and its Undo removes that entry", async () => {
+        const words = { heard: "zorb", rules: [MeetingRule.UnknownWord], evidence: { occurrences: 3 } };
+        const fx = await fixture(
+            [term("i1", 5, words), question("i2", { heard: "zorb", choices: [], decides: ["i1"], group: "words" })],
+            {},
+            { project: "work" }
+        );
+        const config = new MeetingsConfigStore(fx.store.storage);
+        const entries = async () => (await config.read()).projects.work?.dictionary?.entries ?? [];
+        const answer = (text: string) =>
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i2", answer: text, learn: "add" },
+                actor: person,
+            });
+
+        const fixed = await answer("sorb");
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "sorb" }]);
+        expect(fixed.entry?.dictionary).toEqual([
+            {
+                scope: { kind: "project", project: "work" },
+                after: { type: "fix", value: "zorb", substitution: "sorb" },
+            },
+        ]);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: fixed.entry!.token, actor: person });
+        expect(await entries()).toEqual([]);
+        expect(fx.item("i1")).toMatchObject({ status: "suggested" });
+
+        const kept = await answer("zorb");
+        expect(await entries()).toEqual([{ type: "keep", value: "zorb" }]);
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "zorb" });
+
+        // An entry edited after the answer is the person's own now: the Undo leaves it and says so.
+        await config.putDictionaryEntry(
+            { kind: "project", project: "work" },
+            { type: "fix", value: "zorb", substitution: "zorbik" }
+        );
+        const undone = await fx.journal.revert({ meeting: fx.meeting.id, token: kept.entry!.token, actor: person });
+        expect(undone.warnings).toContain('The work dictionary entry "zorb" changed since this answer; it stays.');
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "zorbik" }]);
+    });
+
+    test("a word corrected without learn leaves one dictionary question; a person's yes writes the entry, an agent's is refused", async () => {
+        const words = { heard: "zorb", rules: [MeetingRule.UnknownWord], evidence: { occurrences: 3 } };
+        const fx = await fixture(
+            [term("i1", 5, words), question("i2", { heard: "zorb", choices: [], decides: ["i1"], group: "words" })],
+            {},
+            { project: "work" }
+        );
+        const config = new MeetingsConfigStore(fx.store.storage);
+        const entries = async () => (await config.read()).projects.work?.dictionary?.entries ?? [];
+        const agent = { kind: "agent", harness: "claude", session: null } as const;
+
+        await expect(
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i2", answer: "sorb", learn: "add" },
+                actor: agent,
+            })
+        ).rejects.toThrow("person");
+        const answered = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i2", answer: "sorb" },
+            actor: agent,
+        });
+        expect(await entries()).toEqual([]);
+        const asks = fx.store
+            .read(fx.meeting.id)!
+            .items.filter((item) => item.kind === "question" && item.about === "dictionary");
+        expect(asks).toEqual([
+            expect.objectContaining({
+                status: "suggested",
+                group: "words",
+                heard: "zorb",
+                choices: ["add", "do not add"],
+                evidence: { fixed: "sorb", occurrences: 3, item: "i1" },
+            }),
+        ]);
+        const ask = asks[0]!.id;
+        await expect(
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: ask, answer: "add" },
+                actor: agent,
+            })
+        ).rejects.toThrow("person");
+
+        const yes = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: ask, answer: "add" },
+            actor: person,
+        });
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "sorb" }]);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: yes.entry!.token, actor: person });
+        expect(await entries()).toEqual([]);
+        expect(fx.item(ask)).toMatchObject({ status: "suggested" });
+
+        // The Undo of the word's answer takes its dictionary question back too.
+        await fx.journal.revert({ meeting: fx.meeting.id, token: answered.entry!.token, actor: person });
+        expect(fx.item(ask)).toBeUndefined();
     });
 
     test("spelling preview resolves moved line addresses and omits untimed lines", async () => {

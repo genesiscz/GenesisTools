@@ -27,6 +27,23 @@ export function missingProjectWarning(record: MeetingRecord, config: MeetingsCon
         : undefined;
 }
 
+/**
+ * Why suggestions wait for a project (the owner's answer to M4): the term rules read the project's dictionary, so a
+ * meeting with no project gets this refusal, with the command that sets one. Undefined when the meeting has one.
+ */
+export function projectRequired(record: MeetingRecord, config: MeetingsConfig): string | undefined {
+    if (record.project) {
+        return undefined;
+    }
+
+    const known = Object.keys(config.projects);
+    return (
+        "This meeting has no project. Suggestions use the project's dictionary. Set it: " +
+        `${toolCommand("meetings set", record.id, "--project", "<name>")}. ` +
+        `Known projects: ${known.length > 0 ? known.join(", ") : "none yet; a new name makes one"}.`
+    );
+}
+
 const NEW_PROJECT = "\u0000new";
 const NO_PROJECT = "\u0000none";
 

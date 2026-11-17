@@ -5,6 +5,7 @@ import {
     speakerAssignmentSchema,
     spellingReachSchema,
 } from "@genesiscz/utils/meetings/record";
+import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
 import { findingSchema } from "./findings";
@@ -82,6 +83,12 @@ export const DECISION_ACTION_OPTIONS = [
          * earlier entry is undone and this answer made in one entry, so its Undo brings the earlier answer back.
          */
         replaces: z.string().min(1).optional(),
+        /**
+         * A question about a word only. `add`: the answer goes into the meeting's project dictionary in this decision
+         * (a person's choice; refused for an agent). `none`: it does not, and nothing asks. Absent: when the word is
+         * heard often enough, a dictionary question waits on the record for a person (the owner's answer to M5).
+         */
+        learn: z.enum(["add", "none"]).optional(),
     }),
     z.object({ kind: z.literal("skip"), question: itemRef }),
     /** "Several voices": the question is cut into one question per line and voice. */
@@ -243,6 +250,20 @@ export type DecisionSkip = z.infer<typeof skipSchema>;
  * look-alike questions an answer settled; `corrections`: the ledger lines it wrote; `fields`: the meeting's own fields
  * it changed (`set`); `assignments`: the speaker assignments it changed (`assign`).
  */
+/** A dictionary level, as `MeetingsConfigStore` names it (`DictionaryScope`). */
+const dictionaryScopeSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("global") }),
+    z.object({ kind: z.literal("project"), project: z.string().min(1) }),
+]);
+
+/** One dictionary entry a decision wrote (`after`) or took back (`before`), so its Undo can do the reverse. */
+export const dictionaryChangeSchema = z.object({
+    scope: dictionaryScopeSchema,
+    before: dictionaryEntrySchema.optional(),
+    after: dictionaryEntrySchema.optional(),
+});
+export type DictionaryChange = z.infer<typeof dictionaryChangeSchema>;
+
 export const journalEntrySchema = z.object({
     token: z.string().min(1),
     at: z.string().min(1),
@@ -264,6 +285,8 @@ export const journalEntrySchema = z.object({
     /** The speaker assignments it changed (`assign`, or the Undo of one); absent when it changed none. */
     assignments: z.array(assignmentChangeSchema).optional(),
     corrections: z.array(correctionSchema).default([]),
+    /** The dictionary entries it wrote or took back; absent when it changed none (and in entries older than it). */
+    dictionary: z.array(dictionaryChangeSchema).optional(),
 });
 export type JournalEntry = z.infer<typeof journalEntrySchema>;
 

@@ -3,6 +3,7 @@ import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { nameKey } from "@genesiscz/utils/meetings/people";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { type DictionaryEntry, dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
 import {
     type HeardContext,
@@ -810,6 +811,84 @@ export function answerQuestion(
     }
 
     return ledger;
+}
+
+/**
+ * After an answer to a word question, every open word question whose heard word starts with the answered one (and is
+ * longer) gets the derived spelling as its first choice: "zorb" answered "sorb" offers "sorb-fe" for "zorb-fe". A
+ * prefix replacement, no language rule; a person still confirms each. Mutates `record`.
+ */
+export function siblingChoices(record: MeetingRecord, answered: QuestionItem, answer: string): void {
+    const stem = answered.heard?.toLowerCase();
+
+    if (!stem || answer.toLowerCase() === NONE_OF_THESE || answer.toLowerCase() === stem) {
+        return;
+    }
+
+    for (const item of record.items) {
+        if (
+            item.kind !== "question" ||
+            item.id === answered.id ||
+            item.status !== "suggested" ||
+            item.group !== "words" ||
+            item.about !== "term" ||
+            !item.heard ||
+            item.heard.length <= stem.length ||
+            !item.heard.toLowerCase().startsWith(stem)
+        ) {
+            continue;
+        }
+
+        const choice = answer + item.heard.slice(stem.length);
+
+        if (!item.choices.includes(choice)) {
+            item.choices.unshift(choice);
+        }
+
+        item.evidence = { ...item.evidence, derivedFrom: answered.id };
+    }
+}
+
+/** The two answers of a dictionary question. */
+export const DICTIONARY_CHOICES = ["add", "do not add"] as const;
+
+/** The dictionary entry a corrected word becomes: kept as heard when the answer equals it, else a fix. */
+export function learnedEntry(heard: string, fixed: string): DictionaryEntry {
+    return fixed.toLowerCase() === heard.toLowerCase()
+        ? dictionaryEntrySchema.parse({ type: "keep", value: heard })
+        : dictionaryEntrySchema.parse({ type: "fix", value: heard, substitution: fixed });
+}
+
+/**
+ * The question a corrected word leaves for a person (the owner's answer to M5): add it to the project dictionary or
+ * not. The tool never adds it on its own; `listen` asks it at once in a terminal, every other caller leaves it here.
+ */
+export function dictionaryQuestion(options: {
+    term: Extract<MeetingItem, { kind: "term" }>;
+    fixed: string;
+    project: string;
+}): NewQuestion {
+    const { term, fixed, project } = options;
+    const occurrences = heardTimes(term);
+    const fromSec = term.atSec ?? 0;
+    const keep = fixed.toLowerCase() === term.heard.toLowerCase();
+    return {
+        kind: "question",
+        status: "suggested",
+        about: "dictionary",
+        group: "words",
+        fromSec,
+        toSec: fromSec + TERM_CLIP_SEC,
+        question: keep
+            ? `Keep "${term.heard}" as a word of the ${project} dictionary? It is heard ${occurrences} times.`
+            : `Add "${term.heard}" → "${fixed}" to the ${project} dictionary? It is heard ${occurrences} times.`,
+        heard: term.heard,
+        choices: [...DICTIONARY_CHOICES],
+        decides: [],
+        rules: [],
+        priority: occurrences,
+        evidence: { fixed, occurrences, item: term.id },
+    };
 }
 
 /** A skipped question is rejected; the items it decides stay as they were. Mutates `record`. */

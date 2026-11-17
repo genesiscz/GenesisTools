@@ -672,6 +672,32 @@ describe("a meeting without a transcript source", () => {
             `[no-transcript-source] ${created.id} has no source with a transcript. Link one: tools meetings link ${created.id} 'wisprflow:<id>'`,
         ]);
     });
+
+    test("suggest refuses a meeting with no project and names the command that sets it", async () => {
+        const store = new MeetingStore();
+        const created = await store.create(
+            { title: "No project yet", start: "2026-11-06T11:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "create" }
+        );
+        const errors: string[] = [];
+        const err = spyOn(ui, "err").mockImplementation((line: string) => {
+            errors.push(line);
+        });
+
+        try {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "suggest" });
+            await program.parseAsync(["suggest", created.id], { from: "user" });
+            expect(process.exitCode).toBe(1);
+        } finally {
+            err.mockRestore();
+            process.exitCode = 0;
+        }
+
+        expect(errors.join("\n")).toContain("This meeting has no project.");
+        expect(errors.join("\n")).toContain(`meetings set ${created.id} --project`);
+        expect(store.read(created.id)?.items).toEqual([]);
+    });
 });
 
 describe("--json is the short form of --format json (MC19)", () => {
