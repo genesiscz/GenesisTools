@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -9,6 +10,27 @@ import XCTest
 /// and states of the panes (the deep manual test of 2026-11-06, findings MU1 to MU19).
 @MainActor
 final class MeetingsUXTests: XCTestCase {
+    func testItemsWithoutAProjectShowsThePickerAndNoSuggestActionAtNarrowWidths() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let record = try JSONDecoder().decode(MeetingRecordView.self, from: Data(#"{"id":"m","title":"Word review","labels":[],"start":"2026-11-12T14:00:00Z","items":[],"context":[],"speakers":{"labels":{}},"sources":{}}"#.utf8))
+        detail.settleDecisionRecord(record)
+        detail.rows = .loaded(.init(meeting: "m", rows: [], hidden: .init(lowPriority: 0, minPriority: 0.5)))
+        for width in [300.0, 600.0] {
+            let renderer = ImageRenderer(content: ItemsTab(detail: detail, projectPicker: AnyView(Text("Choose project")))
+                .frame(width: width, height: 240).background(Color.white).environment(\.colorScheme, .light))
+            renderer.scale = 2
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .fast
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            XCTAssertTrue(text.contains("This meeting has no project."), text)
+            XCTAssertTrue(text.contains("dictionary."), text)
+            XCTAssertTrue(text.contains("Choose project"), text)
+            XCTAssertFalse(text.contains("Suggest items"), text)
+        }
+    }
+
     func testSourceAudioStatusDecodesAlongsideOlderServiceReplies() throws {
         let old = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON())
         XCTAssertNil(old.meetings[0].sourceAudio)
