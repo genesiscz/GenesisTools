@@ -185,6 +185,17 @@ describe("fetchAgentCmuxTree", () => {
         expect(pane.frame).toEqual({ x: 0, y: 0, width: 800, height: 600 });
     });
 
+    test("a reused tab's old title marker is no hint when the journal names the surface's session", async () => {
+        const reused = snapshotOf(
+            [workspace("workspace:1")],
+            [{ ...livePane, surfaces: [{ ...livePane.surfaces[0], title: "old · 9f8e7d6c" }] }]
+        );
+        const tree = await fetchAgentCmuxTree({ ...deps, fetchSnapshot: async () => reused });
+        const surface = tree.windows[0].workspaces[0].panes[0].surfaces[0];
+
+        expect([surface.sessionId, surface.sessionHint]).toEqual([claudeId, null]);
+    });
+
     // 2026-10-14: after a cmux relaunch every `surface:N` ref is renumbered, so the journal's refs name
     // nothing live. The UUID survives the relaunch, and it is what finds the session.
     test("after a relaunch the session is found by surface UUID, not by the renumbered ref", async () => {

@@ -236,6 +236,20 @@ describe("the cmux host", () => {
         expect(views.has("nowhere")).toBe(false);
     });
 
+    test("a reused tab whose title still names an older session holds only the session the journal places there", async () => {
+        const host = createCmuxSessionHost(
+            cmuxDeps({
+                tree: async () =>
+                    cmuxTree([{ sessionId: "bbbbbbbb-new-session", hint: "aaaaaaaa", title: "old · aaaaaaaa" }]),
+                refs: () => new Map(),
+            })
+        );
+        const views = await host.describe(["aaaaaaaa-old-session", "bbbbbbbb-new-session"]);
+
+        expect(views.has("aaaaaaaa-old-session")).toBe(false);
+        expect(views.get("bbbbbbbb-new-session")?.live).toBe(true);
+    });
+
     test("an unreachable cmux disables every action with its error", async () => {
         const host = createCmuxSessionHost(cmuxDeps({ tree: async () => cmuxTree([], false) }));
         const view = (await host.describe(["claude-closed"])).get("claude-closed");
