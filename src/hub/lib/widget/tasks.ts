@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { canonicalAgent } from "@app/handoff/targeting";
 import { decisionFiles } from "@app/question/lib/decisions/read";
+import { DECISION_STATES } from "@app/question/lib/decisions/schema";
 import {
     createTodo,
     type DecisionRecord,
@@ -12,6 +13,8 @@ import {
 } from "@app/question/lib/decisions/store";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { readSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import type { WidgetCard } from "./snapshot";
 
@@ -98,7 +101,33 @@ export function taskProvider(provider: string | undefined): WidgetTask["provider
     const trimmed = provider?.trim();
     return trimmed ? (canonicalAgent(trimmed) ?? trimmed) : "unknown";
 }
-export function widgetTask(row: DecisionRecord): WidgetTask {
+/** The fields of a to-do row the widget shows; a row of the decision log and a row of the work store both have them. */
+export type WidgetTaskSource = Pick<
+    DecisionRecord,
+    | "id"
+    | "number"
+    | "title"
+    | "prompt"
+    | "revision"
+    | "state"
+    | "updatedTs"
+    | "createdTs"
+    | "blocking"
+    | "for"
+    | "sessionId"
+    | "provider"
+    | "sessionTitle"
+    | "aiAgent"
+    | "project"
+    | "cwd"
+    | "repoRoot"
+    | "branch"
+    | "commitSha"
+    | "isWorktree"
+    | "worktreePath"
+>;
+
+export function widgetTask(row: WidgetTaskSource): WidgetTask {
     return {
         id: row.id,
         number: row.number,
@@ -131,17 +160,22 @@ export function widgetTask(row: DecisionRecord): WidgetTask {
 
 /** A metadata view of the canonical TODO ledger. Missing files are empty; inspecting never creates storage. */
 export function listWidgetTasks({
-    file = decisionFiles().file,
+    file: fileArg,
+    store: storeArg,
     filters,
     signal,
 }: {
     file?: string;
+    /** The work store to read from (work-items P9). Default: the user's store when no log file is named. */
+    store?: string;
     filters?: Partial<WidgetTaskFilters>;
     signal?: AbortSignal;
 } = {}): WidgetTaskSnapshot {
     signal?.throwIfAborted();
     const options = widgetTaskFiltersSchema.parse(filters ?? {});
-    if (!existsSync(file)) {
+    const file = fileArg ?? decisionFiles().file;
+    const store = storeArg ?? (fileArg === undefined ? workDbPath() : undefined);
+    if (store === undefined && !existsSync(file)) {
         return {
             tasks: [],
             total: 0,
@@ -153,24 +187,32 @@ export function listWidgetTasks({
             sessions: [],
         };
     }
-    const stat = statSync(file);
-    if (stat.size > MAX_LEDGER_BYTES) {
-        throw new Error("The task ledger is too large for the Widget. Open the question task list to inspect it.");
-    }
-    const stamp = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
-    let cached = taskCache.get(file);
-    if (cached?.stamp !== stamp) {
-        const tasks = prof.measure("tasks-read", () =>
-            readDecisions(file)
-                .filter((row) => kindOf(row) === "todo")
-                .map(widgetTask)
-        );
-        cached = { stamp, tasks };
-        if (taskCache.size >= 4) {
-            taskCache.delete(taskCache.keys().next().value ?? "");
+    const fromStore = store !== undefined ? readStoreTasks(store) : null;
+    let cached: { stamp: string; tasks: WidgetTask[] } | undefined;
+    let stamp: string;
+    if (fromStore !== null) {
+        stamp = `store:${fromStore.stamp}`;
+        cached = { stamp, tasks: fromStore.tasks };
+    } else {
+        const stat = statSync(file);
+        if (stat.size > MAX_LEDGER_BYTES) {
+            throw new Error("The task ledger is too large for the Widget. Open the question task list to inspect it.");
         }
-        taskCache.set(file, cached);
-        logger.debug({ file, count: tasks.length, bytes: stat.size }, "Widget task metadata read");
+        stamp = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+        cached = taskCache.get(file);
+        if (cached?.stamp !== stamp) {
+            const tasks = prof.measure("tasks-read", () =>
+                readDecisions(file)
+                    .filter((row) => kindOf(row) === "todo")
+                    .map(widgetTask)
+            );
+            cached = { stamp, tasks };
+            if (taskCache.size >= 4) {
+                taskCache.delete(taskCache.keys().next().value ?? "");
+            }
+            taskCache.set(file, cached);
+            logger.debug({ file, count: tasks.length, bytes: stat.size }, "Widget task metadata read");
+        }
     }
     const selected = cached.tasks
         .filter((task) => {
@@ -217,9 +259,49 @@ export function listWidgetTasks({
         total: selected.length,
         activeCount: cached.tasks.filter((task) => ["open", "acknowledged"].includes(task.state)).length,
         truncated: selected.length > options.limit,
-        sourcePath: file,
+        sourcePath: fromStore !== null && store !== undefined ? store : file,
         sourceStamp: stamp,
     };
+}
+
+const storeCache = new Map<string, { stamp: string; tasks: WidgetTask[] }>();
+
+function isDecisionState(value: string): value is DecisionRecord["state"] {
+    return (DECISION_STATES as readonly string[]).includes(value);
+}
+
+/**
+ * The to-do items as the work store holds them; null when the store has none yet (before the first import), so the
+ * caller reads the decision log as before. One indexed query; the result is cached by the store's last change.
+ */
+function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[] } | null {
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    try {
+        return withWorkDb(path, (db) => {
+            const head = String(
+                (db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0
+            );
+            const cached = storeCache.get(path);
+
+            if (cached?.stamp === head) {
+                return cached.tasks.length > 0 ? cached : null;
+            }
+
+            const { rows, stamp } = prof.measure("tasks-read-store", () => readSessionTodos(db));
+            const tasks = rows.flatMap((row) =>
+                isDecisionState(row.state) ? [widgetTask({ ...row, state: row.state })] : []
+            );
+            storeCache.set(path, { stamp, tasks });
+            logger.debug({ path, count: tasks.length }, "Widget task metadata read from the work store");
+            return tasks.length > 0 ? { stamp, tasks } : null;
+        });
+    } catch (error) {
+        logger.warn({ err: error, path }, "Widget tasks: the work store is unreadable; reading the decision log");
+        return null;
+    }
 }
 
 export async function updateWidgetTask({

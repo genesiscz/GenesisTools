@@ -17,6 +17,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
+import { mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
 import { setNoticeDeps } from "../notices/notices";
@@ -1912,6 +1914,53 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         const controller = new AbortController();
         controller.abort();
         expect(() => listWidgetTasks({ file: files.file, signal: controller.signal })).toThrow();
+    });
+
+    test("parity (work-items P9, list 2): every task the log shows today shows the same from the work store", () => {
+        const { files, row } = fixture();
+        const rows: DecisionRecord[] = [
+            row,
+            {
+                ...row,
+                id: "t_2_fixture",
+                number: 2,
+                state: "acknowledged",
+                title: undefined,
+                prompt: "No title\nsecond",
+            },
+            { ...row, id: "t_3_fixture", number: 3, state: "implemented", project: "Other", blocking: false },
+            { ...row, id: "t_4_fixture", number: 4, state: "dismissed", provider: "grok" },
+            { ...row, id: "t_5_local", sessionId: LOCAL_TASK_SESSION, number: 1, provider: undefined },
+            { ...row, id: "d_1_fixture", type: "decision" },
+        ];
+        writeFileSync(files.file, rows.map((entry) => SafeJSON.stringify(entry)).join("\n") + "\n");
+        const store = join(files.file, "..", "work.db");
+        const db = openWorkDb(store);
+
+        try {
+            mirrorSessionTodos(
+                db,
+                rows.filter((r) => r.type === "todo")
+            );
+        } finally {
+            db.close();
+        }
+
+        for (const filters of [
+            {},
+            { scope: "all" as const },
+            { scope: "completed" as const },
+            { scope: "dismissed" as const },
+            { scope: "all" as const, projects: ["Other"] },
+            { scope: "all" as const, sessions: [`codex:${LOCAL_TASK_SESSION}`] },
+        ]) {
+            const fromLog = listWidgetTasks({ file: files.file, filters });
+            const fromStore = listWidgetTasks({ file: files.file, store, filters });
+            expect(fromStore.sourcePath).toBe(store);
+            const { sourcePath: _a, sourceStamp: _b, ...log } = fromLog;
+            const { sourcePath: _c, sourceStamp: _d, ...stored } = fromStore;
+            expect(stored).toEqual(log);
+        }
     });
 
     test("a task's session is trimmed once, so it numbers on with that session's tasks", async () => {
