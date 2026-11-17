@@ -98,6 +98,7 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let choices: [String]?
     let answer: String?
     var group: String? = nil
+    var decides: [String]? = nil
     let priority: Double?
     let evidence: [String: JSONValue]?
 
@@ -130,6 +131,15 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     var reason: String? {
         if case .string(let text)? = evidence?["reason"] { return text }
         return nil
+    }
+
+    var dictionaryTarget: String? {
+        guard about == "dictionary", case .string(let item)? = evidence?["item"] else { return nil }
+        return item
+    }
+
+    func dictionaryQuestion(in items: [MeetingItem]) -> MeetingItem? {
+        items.first { $0.about == "dictionary" && (decides ?? []).contains($0.dictionaryTarget ?? "") }
     }
 }
 

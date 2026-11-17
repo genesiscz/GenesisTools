@@ -9,6 +9,22 @@ import XCTest
 /// read, and the rows from `meeting.rows` with their decisions through the journal.
 @MainActor
 final class MeetingsReviewRowTests: XCTestCase {
+    func testRepeatedWordRowsDecodeCountsAndKeepTheEngineOrderAfterAnAnswer() throws {
+        var rows = try JSONDecoder().decode(ReviewRows.self, from: Self.rowsJSON).rows
+        rows[0].group = "words"
+        rows[0].occurrences = 31
+        rows[1].group = "words"
+        rows[1].occurrences = 18
+        rows[0].status = "confirmed"
+        XCTAssertEqual(ItemsTab.wordRows(rows, items: []).map(\.id), ["q1", "i2", "i3"])
+        let json = #"{"id":"q","label":"Q1","kind":"question","status":"suggested","group":"words","occurrences":31,"what":"What is zorb?","parts":[],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#
+        let row = try JSONDecoder().decode(ReviewRow.self, from: Data(json.utf8))
+        XCTAssertEqual(row.group, "words")
+        XCTAssertEqual(row.occurrences, 31)
+        XCTAssertNil(rows[2].occurrences, "older replies still decode")
+        XCTAssertEqual(ItemsTab.questionGroups.map(\.title), ["Rules", "Spot check", "Long stretches", "Repeated words"])
+    }
+
     func testWorkshopLineEvidenceKeepsRulesIgnoredIndicatorAndSkippedSwaps() throws {
         let json = #"{"id":"i1","kind":"speaker-range","status":"suggested","fromSec":20,"rules":["R20","energy"],"evidence":{"indicatorIgnored":"stretch-stuck","swap":{"skipped":[21,22]},"departure":{"name":"Carol Example"}}}"#
         let item = try JSONDecoder().decode(MeetingItem.self, from: Data(json.utf8))
