@@ -28,6 +28,8 @@ import { Command } from "commander";
 import { z } from "zod";
 import { registerServeCommand } from "../../commands/serve";
 import { MeetingComments } from "../comments";
+import { DecisionJournal } from "../decision-journal";
+import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
 import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
@@ -58,11 +60,51 @@ import {
 } from "./client";
 import { MeetingsFolderWatch } from "./folder-watch";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
+import { testDictionaryPhrase } from "./library-handlers";
 import { previewTone } from "./moment-handlers";
+import { readRows } from "./reads-handlers";
 import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
 const CODE = "0123456789ab";
+
+test("a draft dictionary entry previews only the changed meeting lines without saving", async () => {
+    const { store, source, config, linkedSource } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({
+        ...original,
+        transcript: [
+            { startSec: 0, speaker: "Dana Example", text: "A glimmer here." },
+            { startSec: 5, speaker: "Alex Example", text: "Nothing changes." },
+            { startSec: 10, speaker: "Alex Example", text: "Another glimmer." },
+        ],
+    });
+    const before = readFileSync(store.path(REVIEW.id), "utf8");
+    const result = await testDictionaryPhrase(
+        { phrase: "glimmer", meeting: REVIEW.id, entry: { type: "term", value: "Glimmer", spoken: ["glimmer"] } },
+        { store: () => store, configStore: () => config, linkedSource }
+    );
+    expect(result.lines).toEqual([
+        {
+            index: 0,
+            startSec: 0,
+            endSec: 5,
+            speaker: "Dana Example",
+            before: "A glimmer here.",
+            after: "A Glimmer here.",
+        },
+        {
+            index: 2,
+            startSec: 10,
+            endSec: 15,
+            speaker: "Alex Example",
+            before: "Another glimmer.",
+            after: "Another Glimmer.",
+        },
+    ]);
+    expect(readFileSync(store.path(REVIEW.id), "utf8")).toBe(before);
+    expect((await config.read()).global.dictionary.entries).toEqual([]);
+});
 
 const closing: Array<() => void> = [];
 
@@ -194,6 +236,204 @@ function scratchStore(): {
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
+
+async function questionRowsFixture() {
+    const fixture = scratchStore();
+    const original = await fixture.source.load("wf-2041");
+    fixture.source.load = async () => ({
+        ...original,
+        transcript: [
+            { startSec: 0, speaker: "Speaker 2", text: "word ".repeat(70).trim() },
+            { startSec: 10, speaker: "Speaker 3", text: "A different label." },
+            { startSec: 20, speaker: "Speaker 2", text: "Same doubt here." },
+            { startSec: 30, speaker: "Speaker 2", text: "Outside range." },
+            { startSec: 40, speaker: "Speaker 3", text: "Other label again." },
+            { startSec: 50, speaker: "Speaker 2", text: "Not asked yet." },
+        ],
+    });
+    const base = { status: "suggested", rules: [], confidence: 0.4, suggestedAt: REVIEW.createdAt };
+    await fixture.store.update(REVIEW.id, { command: "fixture", change: "question rows" }, (record) => {
+        record.items = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                ...[
+                    ["i1", 0, 10],
+                    ["i2", 30, 30],
+                    ["i3", 20, 20],
+                    ["i4", 50, 50],
+                ].map(([id, fromSec, toSec]) => ({
+                    ...base,
+                    id,
+                    kind: "speaker-range",
+                    label: "Speaker 2",
+                    fromSec,
+                    toSec,
+                    speaker: "Alex Example",
+                    evidence: { signature: "shape", choices: ["Alex Example", "Dana Example"] },
+                })),
+                {
+                    ...base,
+                    id: "i5",
+                    kind: "question",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 5,
+                    question: "Who speaks?",
+                    choices: ["Alex Example", "Dana Example"],
+                    decides: ["i1", "i2"],
+                    signature: "shape",
+                    priority: 1,
+                    evidence: { labels: ["Speaker 2"] },
+                },
+                {
+                    ...base,
+                    id: "i6",
+                    kind: "question",
+                    about: "speaker",
+                    fromSec: 20,
+                    toSec: 25,
+                    question: "Who speaks?",
+                    choices: ["Alex Example", "Dana Example"],
+                    decides: ["i3"],
+                    signature: "shape",
+                    priority: 1,
+                    evidence: { labels: ["Speaker 2"] },
+                },
+            ],
+        }).items;
+    });
+    const deps = {
+        store: () => fixture.store,
+        config: () => fixture.config.read(),
+        linkedSource: fixture.linkedSource,
+    };
+    return { ...fixture, deps };
+}
+
+test("question rows keep each decided line, including targets outside the question and all its text", async () => {
+    const { store, deps } = await questionRowsFixture();
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    const lines = result.questionDetails?.find((row) => row.id === "i5")?.decidedLines;
+    expect(lines?.map((line) => line.index)).toEqual([0, 3]);
+    expect(lines?.[0]?.text).toBe("word ".repeat(70).trim());
+    expect(lines?.[1]).toEqual({ index: 3, startSec: 30, endSec: 40, speaker: "Speaker 2", text: "Outside range." });
+});
+
+test("question impact counts distinct lines and words and includes unasked ranges with the same doubt", async () => {
+    const { store, deps } = await questionRowsFixture();
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(result.questionDetails?.find((row) => row.id === "i5")?.impact).toEqual({
+        lines: 2,
+        words: 72,
+        sameDoubtLines: 4,
+    });
+});
+
+test("answered rows name the lines actually raised by that answer after reopening the journal", async () => {
+    const { store, deps } = await questionRowsFixture();
+    await new DecisionJournal({ store, listenBelow: 0.9, ledger: () => undefined }).apply({
+        meeting: REVIEW.id,
+        actor: { kind: "window" },
+        action: { kind: "answer", question: "i5", answer: "Alex Example" },
+    });
+    const reopened = new MeetingStore(store.storage);
+    const result = await readRows({ meeting: REVIEW.id }, reopened, deps);
+    expect(result.questionDetails?.find((row) => row.id === "i5")?.raisedLines?.map((line) => line.index)).toEqual([
+        2, 5,
+    ]);
+    expect(result.questionDetails?.find((row) => row.id === "i6")?.raisedLines).toBeUndefined();
+});
+
+test("meeting rows expose a stored attendance failure even without a readable transcript", async () => {
+    const { store, config, source, linkedSource } = scratchStore();
+    source.load = async () => {
+        throw new Error("Fixture transcript unavailable");
+    };
+    await store.update(
+        REVIEW.id,
+        { command: "attendance-failed", change: "Fixture attendance not found" },
+        () => undefined
+    );
+    const result = await readRows({ meeting: REVIEW.id }, new MeetingStore(store.storage), {
+        config: () => config.read(),
+        linkedSource,
+    });
+    expect(result.attendanceWarning).toBe("Fixture attendance not found");
+});
+
+test("line evidence names the active swaps that skipped each source line", async () => {
+    const { store, deps } = await questionRowsFixture();
+    await store.update(REVIEW.id, { command: "fixture", change: "swap skips" }, (record) => {
+        record.items[0]!.evidence = { swap: { skipped: [10, 40] } };
+        record.items[1]!.evidence = { swap: { skipped: [40] } };
+        record.items[2]!.evidence = { swap: { skipped: [10] } };
+        record.items[2]!.status = "rejected";
+    });
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(result.lineEvidence?.map((line) => line.swapSkippedBy)).toEqual([
+        undefined,
+        ["i1"],
+        undefined,
+        undefined,
+        ["i1", "i2"],
+        undefined,
+    ]);
+});
+
+test("line evidence warns only outside known remote windows and omits a warning when presence is unknown", async () => {
+    const { store, deps, source } = await questionRowsFixture();
+    const meeting = await source.load("wf-2041");
+    meeting.transcript[1]!.speaker = "Dana Example";
+    source.load = async () => meeting;
+    const unknown = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(unknown.lineEvidence).toBeUndefined();
+    await store.update(REVIEW.id, { command: "fixture", change: "remote windows" }, (record) => {
+        record.seats = { room: ["Dana Example"], remote: [{ name: "Alex Example", fromSec: 20, toSec: 40 }] };
+    });
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(result.lineEvidence?.map((line) => line.noRemotePresent)).toEqual([
+        true,
+        undefined,
+        undefined,
+        undefined,
+        true,
+        true,
+    ]);
+});
+
+test("line evidence returns measured call level, echo and microphone share per line, leaving missing measurements absent", async () => {
+    const { store, deps } = await questionRowsFixture();
+    const share = Object.assign((fromSec: number) => (fromSec === 20 ? undefined : 0.25), {
+        acoustic: (fromSec: number) =>
+            fromSec === 20
+                ? undefined
+                : {
+                      callRms: 0.1 + fromSec / 1000,
+                      echoOfCall: 0.8,
+                      correlation: 0.9,
+                      lagMs: 10,
+                      gain: 0.4,
+                      rawMicRms: 0.2,
+                      cleanMicRms: 0.05,
+                      quality: "linear-estimate" as const,
+                  },
+    });
+    const energy = spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({ share });
+    try {
+        const result = await readRows({ meeting: REVIEW.id }, store, deps);
+        expect(result.lineEvidence?.[0]).toMatchObject({
+            index: 0,
+            micShare: 0.25,
+            callRms: 0.1,
+            echoOfCall: 0.8,
+            acousticQuality: "linear-estimate",
+        });
+        expect(result.lineEvidence?.[1]?.callRms).toBe(0.11);
+        expect(result.lineEvidence?.[2]).toEqual({ index: 2, startSec: 20, endSec: 30 });
+    } finally {
+        energy.mockRestore();
+    }
+});
 
 /** A stand-in for @parcel/watcher: `raise` hands the folder watch the events a write of these paths would raise. */
 function fakeFolderEvents(): {

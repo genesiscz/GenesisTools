@@ -16,7 +16,7 @@ import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import type { MicEnergy } from "./energy";
 import * as energyModule from "./energy";
-import { OpenedMeeting } from "./opened-meeting";
+import { attendanceWarning, OpenedMeeting } from "./opened-meeting";
 import { faceTimePlatform } from "./platforms/facetime";
 import { preserveSourceAudio } from "./source-audio";
 
@@ -451,6 +451,54 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
 });
 
 describe("suggest attendance resilience", () => {
+    test("a failed automatic attendance lookup stays recorded when suggestions fall back to the roster", async () => {
+        const { store, record } = await newRecord({
+            platform: "teams",
+            participants: [{ name: "Alice Example", self: true, firstSeenSec: 0, from: [] }],
+        });
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture attendance missing")
+        );
+        try {
+            const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+            await opened.collect();
+            await opened.suggestionPresence({ warnings: [] });
+            expect(attendanceWarning(new MeetingStore(store.storage).read(record.id)!)).toBe(
+                "attendance not collected: Fixture attendance missing"
+            );
+        } finally {
+            reader.mockRestore();
+        }
+    });
+    test("attendance failures survive reopening and a later successful lookup clears the warning", async () => {
+        const { store, record } = await newRecord();
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing")
+        );
+        try {
+            const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+            const warnings: string[] = [];
+            await opened.suggestionPresence({ attendance: "teams", warnings });
+            const reopened = new MeetingStore(store.storage).read(record.id)!;
+            expect(attendanceWarning(reopened)).toBe(warnings[0]);
+            expect(reopened.history.at(-1)?.command).toBe("attendance-failed");
+            const history = reopened.history.length;
+            await opened.suggestionPresence({ attendance: "teams", warnings: [] });
+            expect(new MeetingStore(store.storage).read(record.id)?.history).toHaveLength(history);
+            reader.mockResolvedValue({ presence: [], note: "fixture recovered" });
+            await OpenedMeeting.of(store, reopened, {
+                source: fakeSource(),
+                sourceMeetingId: "abc",
+            }).suggestionPresence({ attendance: "teams", warnings: [] });
+            const recovered = new MeetingStore(store.storage).read(record.id)!;
+            expect(attendanceWarning(recovered)).toBeUndefined();
+            expect(recovered.history.at(-1)?.command).toBe("attendance-recovered");
+        } finally {
+            reader.mockRestore();
+        }
+    });
     test("edited copies look up the source title and clock", async () => {
         const { MEETING_PLATFORMS } = await import("./platforms");
         const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockResolvedValue({

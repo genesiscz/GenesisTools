@@ -1,5 +1,68 @@
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
+import type { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { termFixPattern } from "@genesiscz/utils/transcribe/terms";
 import { storedPresentAt } from "./person-stays";
+
+export interface DecidedLine {
+    index: number;
+    startSec?: number;
+    endSec?: number;
+    speaker: string;
+    text: string;
+}
+
+/** The source lines an item changes. Ranges keep the correction engine's inclusive end and label filter. */
+export function itemLines(item: MeetingItem, transcript: TranscriptLines): DecidedLine[] {
+    return transcript.entries.flatMap((entry, index) => {
+        const at = entry.startSec;
+        let matches = false;
+
+        if (item.kind === "speaker-range" || item.kind === "label") {
+            matches = at !== undefined && at >= item.fromSec && at <= item.toSec && entry.speaker === item.label;
+        } else if (item.kind === "term") {
+            const pattern = termFixPattern({ ...item, replacement: item.proposed ?? item.heard });
+            const local = item.scope === "line" || item.quote !== undefined || item.meaning !== undefined;
+            const anchorLine = item.evidence?.transcriptLine;
+            const anchors =
+                item.reach?.lines ??
+                (local && item.atSec !== undefined
+                    ? [
+                          {
+                              atSec: item.atSec,
+                              ...(typeof anchorLine === "number" ? { line: anchorLine } : {}),
+                          },
+                      ]
+                    : undefined);
+            const targets = anchors?.map((anchor) => heardLineAt(transcript, anchor, pattern));
+            matches =
+                pattern.test(entry.text) &&
+                (targets === undefined ||
+                    (targets.every((target) => target.kind === "found") &&
+                        targets.some((target) => target.kind === "found" && target.index === index)));
+        } else if (item.kind === "join") {
+            matches = at === item.atSec;
+        } else if (at !== undefined) {
+            matches = at >= item.fromSec && (at < item.toSec || at === item.fromSec);
+        }
+
+        return matches && entry.text.trim()
+            ? [{ index, startSec: at, endSec: transcript.end(index), speaker: entry.speaker, text: entry.text }]
+            : [];
+    });
+}
+
+/** A question decides its targets wherever they are, or its own half-open span when it has no targets. */
+export function decidedLines(options: {
+    record: MeetingRecord;
+    question: Extract<MeetingItem, { kind: "question" }>;
+    transcript: TranscriptLines;
+}): DecidedLine[] {
+    const { record, question, transcript } = options;
+    const targets = record.items.filter((item) => question.decides.includes(item.id));
+    const lines = (targets.length ? targets : [question]).flatMap((item) => itemLines(item, transcript));
+    return [...new Map(lines.map((line) => [line.index, line])).values()].sort((a, b) => a.index - b.index);
+}
 
 export function personKey(text: string): string {
     return nameTokens(text).sort().join(" ");

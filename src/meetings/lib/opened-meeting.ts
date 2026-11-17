@@ -35,6 +35,17 @@ export interface CollectOutcome {
     notes: Array<{ ok: boolean; text: string }>;
 }
 
+/** The last attendance attempt's failure, retained in the record's existing event history. */
+export function attendanceWarning(record: MeetingRecord): string | undefined {
+    const event = record.history.findLast(
+        (one) =>
+            one.command === "attendance" ||
+            one.command === "attendance-failed" ||
+            one.command === "attendance-recovered"
+    );
+    return event?.command === "attendance-failed" ? event.change : undefined;
+}
+
 /**
  * One meeting, opened once: its record and, read lazily and once, the linked source's meeting, the evidence (filtered
  * by the platform), the call timeline with presence, the calibrated energy share, the silent call stretches, the
@@ -253,15 +264,35 @@ export class OpenedMeeting {
         warnings: string[];
     }): Promise<Presence[] | undefined> {
         try {
-            return await this.presence(options.attendance, options.attendanceId);
+            const presence = await this.presence(options.attendance, options.attendanceId);
+            if (presence !== undefined && (options.attendance || this.current.attendance)) {
+                await this.rememberAttendanceAttempt();
+            }
+            return presence;
         } catch (error) {
             if (!(error instanceof AttendanceUnavailableError)) {
                 throw error;
             }
 
             log.warn({ error, meeting: this.current.id }, "attendance unavailable for suggestions");
-            options.warnings.push(`attendance unavailable; E2 skipped: ${error.message}`);
+            const warning = `attendance unavailable; E2 skipped: ${error.message}`;
+            await this.rememberAttendanceAttempt(warning);
+            options.warnings.push(warning);
             return undefined;
+        }
+    }
+
+    private async rememberAttendanceAttempt(warning?: string): Promise<void> {
+        const updated = await this.store.updateIf(
+            this.current.id,
+            {
+                command: warning ? "attendance-failed" : "attendance-recovered",
+                change: warning ?? "attendance lookup succeeded",
+            },
+            (record) => (warning ? attendanceWarning(record) !== warning : attendanceWarning(record) !== undefined)
+        );
+        if (updated) {
+            this.current = updated;
         }
     }
 
@@ -438,10 +469,9 @@ export class OpenedMeeting {
                 } catch (err) {
                     // The note below tells the user; the day log keeps the stack.
                     log.debug({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
-                    notes.push({
-                        ok: false,
-                        text: `attendance not collected: ${err instanceof Error ? err.message : String(err)}`,
-                    });
+                    const warning = `attendance not collected: ${err instanceof Error ? err.message : String(err)}`;
+                    await this.rememberAttendanceAttempt(warning);
+                    notes.push({ ok: false, text: warning });
                 }
             }
         }
