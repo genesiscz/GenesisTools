@@ -10,6 +10,7 @@ struct MeetingsRootView: View {
     @State private var dockHeight: CGFloat = 0
     /// The window's width: below `panelHidesListBelow` the open settings panel hides the meetings list (G53).
     @State private var windowWidth: CGFloat = 0
+    @State private var serviceFailure: MeetingsCLI.Failure?
 
     var body: some View {
         // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
@@ -23,6 +24,15 @@ struct MeetingsRootView: View {
                 panes
             }
         }
+            .overlay(alignment: .top) {
+                if let failure = serviceFailure {
+                    NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
+                               fixes: [failure.detailsFix { checkService() }])
+                        .padding(.top, 32)
+                }
+            }
+            .onChange(of: model.overview, initial: true) { _, _ in checkService() }
+            .onChange(of: model.service?.state) { _, _ in checkService() }
             .environment(\.meetingsDockInset, dockHeight)
             .sheet(item: Bindable(model.people).pendingAssign) { pending in
                 AssignReachSheet(pending: pending, window: model)
@@ -41,6 +51,20 @@ struct MeetingsRootView: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
             // Last, so the dock and the sheets above take the look too.
             .meetingsLook()
+    }
+
+    private func checkService() {
+        serviceFailure = Self.serviceFailure(model.service?.discover(), readFailure: model.overview.failure)
+    }
+    static func serviceFailure(_ discovery: MeetingsService.Discovery?, readFailure: MeetingsCLI.Failure?) -> MeetingsCLI.Failure? {
+        switch discovery {
+        case .otherCheckout(let root):
+            return .init(sentence: "The Meetings service belongs to another checkout; this window uses its command instead.",
+                         detail: "Service checkout: \(root ?? "not named"). Close that checkout's service to let this window start its own.")
+        case .none, .some(.none):
+            return readFailure.map { .init(sentence: "No Meetings service answers. \($0.sentence)", detail: $0.detail) }
+        default: return nil
+        }
     }
 
     /// The settings panel takes 320 pt of the meeting's column (`MeetingDetailView.paneWidth`). Below this window width
