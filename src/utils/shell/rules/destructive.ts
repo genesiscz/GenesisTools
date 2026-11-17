@@ -113,16 +113,51 @@ function isSignal(signal: string, names: readonly (keyof typeof constants.signal
 /** The signals that end a process once it runs again. SIGKILL is not one: it ends a stopped process at once. */
 const ENDING_SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"] as const;
 
+/** `pkill` and `killall` signal every process whose name matches, not a pid. */
+const NAME_KILLERS = new Set(["pkill", "killall"]);
+
+/** True when `word` (without its dash) names a signal of this platform, or is a signal number. */
+function isSignalWord(word: string): boolean {
+    return /^\d+$/.test(word) || Object.hasOwn(constants.signals, `SIG${word.toUpperCase().replace(/^SIG/, "")}`);
+}
+
+/**
+ * The signal of a `pkill` or `killall` word list: `-<signal>`, `--signal <signal>`, `--signal=<signal>`, and Linux's
+ * `killall -s <signal>` (on macOS `killall -s` is a dry run). No signal option means SIGTERM.
+ */
+function nameKillerSignal(program: string, args: readonly string[]): string {
+    for (let k = 0; k < args.length; k++) {
+        const arg = args[k];
+
+        if (arg === "--signal" || (arg === "-s" && program === "killall" && process.platform === "linux")) {
+            return args[k + 1] ?? "";
+        }
+
+        if (arg.startsWith("--signal=")) {
+            return arg.slice("--signal=".length);
+        }
+
+        if (arg.startsWith("-") && !arg.startsWith("--") && isSignalWord(arg.slice(1))) {
+            return arg.slice(1);
+        }
+    }
+
+    return "TERM";
+}
+
 interface KillCall {
+    /** `kill`, `pkill` or `killall`. */
+    program: string;
     signal: string;
+    /** `kill`'s pids and process groups; empty for `pkill` and `killall`, which match names. */
     targets: string[];
-    /** Offset of the `kill` word in the original command. */
+    /** Offset of the program word in the original command. */
     start: number;
     /** The whole call in the original command. */
     matched: string;
 }
 
-/** Every `kill` call of the command, in order, with its words as the shell splits them. */
+/** Every `kill`, `pkill` and `killall` call of the command, in order, with its words as the shell splits them. */
 function killCalls(scan: ShellScan): KillCall[] {
     const calls: KillCall[] = [];
 
@@ -135,15 +170,19 @@ function killCalls(scan: ShellScan): KillCall[] {
             for (const element of splitPipeline(statement)) {
                 const tokens = tokenize(element);
                 const cmd = commandTokenIndex(tokens, scan.command);
+                const program = cmd === -1 ? "" : commandWord(tokens[cmd].text);
 
-                if (cmd === -1 || commandWord(tokens[cmd].text) !== "kill") {
+                if (program !== "kill" && !NAME_KILLERS.has(program)) {
                     continue;
                 }
 
                 const start = tokens[cmd].start;
                 // The scan blanks quotes, so `-"$g"` tokenizes as `-` and `$g`; the shell's own words keep it whole.
-                const { signal, targets } = killArguments(wordsFrom(scan, start).words.slice(1));
+                const args = wordsFrom(scan, start).words.slice(1);
+                const { signal, targets } =
+                    program === "kill" ? killArguments(args) : { signal: nameKillerSignal(program, args), targets: [] };
                 calls.push({
+                    program,
                     signal,
                     targets: targets.filter((target) => target !== "--"),
                     start,
@@ -172,13 +211,14 @@ function killArguments(args: readonly string[]): { signal: string; targets: stri
 }
 
 // kill -CONT to a process group, or to a pid the same command also sends TERM: the end of the usual "TERM, then
-// CONT" way to stop a job. A plain resume of one pid stays allowed (a process a debugger left stopped).
+// CONT" way to stop a job. pkill and killall -CONT wake every stopped match. A plain resume of one pid stays allowed
+// (a process a debugger left stopped).
 export const stoppedJobWake: ShellRule = {
     id: "stopped-job-wake",
     kind: "destructive",
     title:
-        "kill -CONT to a process group, or to a pid this command also sends TERM, wakes a stopped job, which " +
-        "then rewrites the tty a live TUI may use",
+        "kill -CONT to a process group or to a pid this command ends, or pkill / killall -CONT, wakes a stopped " +
+        "job, which then rewrites the tty a live TUI may use",
     severity: "block",
     why:
         "SIGCONT lets a stopped (Ctrl-Z) job run again on its old tty, where a live TUI such as Claude may run now. " +
@@ -203,6 +243,16 @@ export const stoppedJobWake: ShellRule = {
         for (const call of calls) {
             if (!isSignal(call.signal, ["SIGCONT"])) {
                 continue;
+            }
+
+            if (call.program !== "kill") {
+                return {
+                    matched: call.matched,
+                    index: call.start,
+                    detail:
+                        `SIGCONT by name (${call.program}) wakes every stopped process that matches; ` +
+                        "resume one process with kill -CONT <pid>",
+                };
             }
 
             const groups = call.targets.filter((target) => target.startsWith("-"));
