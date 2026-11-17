@@ -792,6 +792,44 @@ struct ReviewRows: Decodable, Equatable {
     let meeting: String
     var rows: [ReviewRow]
     let hidden: Hidden
+    var attendanceWarning: String? = nil
+    var lineEvidence: [WindowLineEvidence]? = nil
+    var questionDetails: [QuestionDetails]? = nil
+}
+
+struct WindowLineEvidence: Decodable, Equatable, Hashable {
+    let index: Int
+    let startSec, endSec: Double
+    var swapSkippedBy: [String]? = nil
+    var noRemotePresent: Bool? = nil
+    var micShare: Double? = nil
+    var callRms: Double? = nil
+    var echoOfCall: Double? = nil
+    var acousticQuality: String? = nil
+
+    var echoText: String? { echoOfCall.map { "Echo of call: \(Int(($0 * 100).rounded())) % of microphone power" } }
+    var acousticText: [String] {
+        var text: [String] = []
+        if let micShare { text.append("Microphone share: \(Int((micShare * 100).rounded())) %") }
+        if let callRms { text.append(String(format: "Call level (RMS): %.4f", callRms)) }
+        if let acousticQuality {
+            text.append(["linear-estimate": "Linear acoustic estimate", "quiet": "Quiet audio", "insufficient": "Insufficient audio for an estimate"][acousticQuality] ?? acousticQuality)
+        }
+        return text
+    }
+}
+
+struct QuestionDetails: Decodable, Equatable {
+    struct Line: Decodable, Equatable {
+        let index: Int
+        let startSec, endSec: Double?
+        let speaker, text: String
+    }
+    struct Impact: Decodable, Equatable { let lines, words, sameDoubtLines: Int }
+    let id: String
+    let decidedLines: [Line]
+    let impact: Impact
+    let raisedLines: [Line]?
 }
 
 /// A decision's changed rows. Before values protect rows that a later decision changed while this reply travelled.

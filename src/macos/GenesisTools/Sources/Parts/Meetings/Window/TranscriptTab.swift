@@ -10,11 +10,11 @@ struct TranscriptTab: View {
     @State private var filter = ""
     /// The one threshold: the blocks pane's "Apply above" picker and Settings set it. A second picker here kept its own
     /// value, so its preview and the pane's marks disagreed (90 % here still showed 80 % voices as plain names).
-    @AppStorage(MeetingsPreferences.Transcript.applyAbove.key) private var applyAbove = MeetingsPreferences.Transcript.applyAbove.defaultValue
+    @State private var threshold = MeetingsApplyThreshold.shared
     @FocusState private var filterFocused: Bool
 
     /// The service's preview nearest the threshold (`applyAbove` in percent), or the plain entries without previews.
-    static func shown(_ transcript: MeetingTranscript, applyAbove: Int) -> [TranscriptLine] {
+    static func shown(_ transcript: MeetingTranscript, applyAbove: Double) -> [TranscriptLine] {
         let threshold = Double(applyAbove) / 100
         return transcript.previews?.min { abs($0.threshold - threshold) < abs($1.threshold - threshold) }?.entries ?? transcript.entries
     }
@@ -30,7 +30,7 @@ struct TranscriptTab: View {
                 // then built and hosted each of the 274 rows (10 to 13 s of CPU per walk, 2026-11-06).
                 // The filter field is the pane's header line, beside "Follows playback": as a line of its own it
                 // left that one switch alone on a second line.
-                TranscriptBlocksPane(detail: detail, entries: Self.shown(transcript, applyAbove: applyAbove), filter: filter,
+                TranscriptBlocksPane(detail: detail, entries: Self.shown(transcript, applyAbove: threshold.percent ?? 70), filter: filter,
                                      headerField: AnyView(FilterField(text: $filter, prompt: "Filter the transcript", focused: $filterFocused)))
             }
         }

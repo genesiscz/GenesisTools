@@ -62,7 +62,9 @@ struct TranscriptBlocksPane: View {
     @State private var timingModel = "onnx-community/whisper-large-v3-turbo_timestamped"
     @State private var timingLanguage = "cs"
     /// The one transcript threshold (the Transcript tab picks the service's preview by it too).
-    @AppStorage(MeetingsPreferences.Transcript.applyAbove.key) private var applyAbove = MeetingsPreferences.Transcript.applyAbove.defaultValue
+    @State private var threshold = MeetingsApplyThreshold.shared
+    private var applyAbove: Double { threshold.percent ?? 70 }
+    @AppStorage(MeetingsPreferences.Transcript.echoAbove.key) private var echoAbove = MeetingsPreferences.Transcript.defaultEchoAbove
     @State private var probing = false
     @State private var spotChecking = false
     /// The Items tab's question group: "Spot check" opens that tab on the group it prepared.
@@ -73,7 +75,7 @@ struct TranscriptBlocksPane: View {
     /// The lines as the pane shows them at the threshold (I14). A suggested name at or above it reads as the name; under
     /// it, or while an open question asks who said the line (I9), it reads as the guess `[name: NN %]`. Everything else
     /// the engine sent stays: the speaking indicator (I1), its own `[unclear …]` marks, the times and the words.
-    static func shownLines(_ entries: [TranscriptLine], applyAbove: Int) -> [TranscriptLine] {
+    static func shownLines(_ entries: [TranscriptLine], applyAbove: Double) -> [TranscriptLine] {
         entries.map { entry in
             guard let confidence = entry.confidence, entry.band != "confirmed", let name = entry.suggestedSpeaker else { return entry }
             let guess = entry.questioned == true || confidence * 100 < Double(applyAbove)
@@ -163,7 +165,8 @@ struct TranscriptBlocksPane: View {
             }
             staged
         }
-        .onAppear { detail.ensureComments() }
+        .onAppear { detail.ensureComments(); if detail.rows.value == nil { detail.loadRows() } }
+        .task { await threshold.load() }
     }
 
     // MARK: Blocks
@@ -174,6 +177,7 @@ struct TranscriptBlocksPane: View {
                                                  items: detail.record.value?.items ?? [],
                                                  comments: detail.comments.value?.comments ?? [])
         return TranscriptBlock.build(from: filteredEntries, durationSec: durationSec, marks: marks,
+                                     evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [], echoAbove: echoAbove,
                                      breakAfterGapSec: MeetingsPreferences.Transcript.breakAfterGapSec(blockBreakSec))
     }
 
@@ -189,19 +193,26 @@ struct TranscriptBlocksPane: View {
     @ViewBuilder
     private var header: some View {
         WrapLayout(spacing: 8, lineSpacing: 6) {
-            Picker("Apply above", selection: $applyAbove) {
-                ForEach([50, 60, 70, 80, 90], id: \.self) { value in Text("\(value) %").tag(value) }
-            }.frame(width: 140)
-            .accessibilityIdentifier("meetings.transcript.threshold")
+            if let saved = threshold.percent {
+                Picker("Apply above", selection: Binding(get: { saved }, set: { value in Task { await threshold.set(value) } })) {
+                    ForEach(Array(Set([0, 50, 60, 70, 80, 90, 100, saved])).sorted(), id: \.self) { value in Text("\(value.formatted(.number.precision(.fractionLength(0...2)))) %").tag(value) }
+                }.frame(width: 160).disabled(threshold.busy)
+                .accessibilityIdentifier("meetings.transcript.threshold")
+            } else { Text("Reading the threshold…").font(.caption) }
+            if let error = threshold.failure {
+                FailureInline(FailureReport.toolsCall(error, outcome: "The threshold was not saved or read.", action: "Read or save the transcript threshold"), form: .compact) {
+                    Task { await threshold.load() }
+                }
+            }
             Button("Probe") { probing.toggle() }
                 .popover(isPresented: $probing) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach([50, 60, 70, 80, 90], id: \.self) { value in
                             // The same count as the line beside the picker, so the two never disagree at one value.
-                            let bands = BandCount(Self.shownLines(entries, applyAbove: value))
+                            let bands = BandCount(Self.shownLines(entries, applyAbove: Double(value)))
                             let questions = ListenTranscriptQuality.probe(entries, percent: value).questions
                             Button("\(value) %: \(bands.words), \(Plural.count(questions, "long-stretch question"))") {
-                                applyAbove = value
+                                Task { await threshold.set(Double(value)) }
                                 probing = false
                             }
                         }
@@ -256,8 +267,8 @@ struct TranscriptBlocksPane: View {
         let words = BandCount(filteredEntries).words
         return Text(verbatim: words)
             .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-            .instantTooltip("Lines with a suggested speaker at \(applyAbove) %: shown as the name, as a guess with its percent, or still unclear")
-            .accessibilityLabel("Lines at \(applyAbove) %: \(words)")
+            .instantTooltip("Lines with a suggested speaker at \(applyAbove.formatted(.number.precision(.fractionLength(0...2)))) %: shown as the name, as a guess with its percent, or still unclear")
+            .accessibilityLabel("Lines at \(applyAbove.formatted(.number.precision(.fractionLength(0...2)))) %: \(words)")
     }
 
     /// "Spot check" (I11 b): asks random lines of the band again by ear in the Items tab, and the share the answers
@@ -342,6 +353,12 @@ struct TranscriptBlocksPane: View {
                 let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
                 if let match = detail.record.value?.evidence?.voice?.lines[String(sourceIndex)] {
                     ListenVoiceScores(match: match)
+                }
+                if let acoustic = detail.rows.value?.lineEvidence?.first(where: { $0.index == sourceIndex }) {
+                    ForEach(acoustic.acousticText, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(.secondary) }
+                    if let echo = acoustic.echoText {
+                        Label(echo, systemImage: "speaker.wave.2").font(.system(size: 11)).foregroundStyle(.pink)
+                    }
                 }
             }
             SelectionPopover(

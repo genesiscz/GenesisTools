@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import GenesisToolsMeetings
@@ -18,6 +19,92 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
 
     private func items(_ json: String) throws -> [MeetingItem] {
         try JSONDecoder().decode([MeetingItem].self, from: Data(json.utf8))
+    }
+
+    func testX10EngineThresholdMigratesOnlyAnUnsetValueAndRestoresAfterFailure() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "MeetingsTranscriptRowsTests.\(UUID().uuidString)"))
+        defaults.set(80, forKey: MeetingsApplyThreshold.legacyKey)
+        var saved = 0.7
+        var writes = 0
+        var refuses = false
+        let model = MeetingsApplyThreshold(defaults: defaults, read: {
+            .init(path: "fixture", value: .object(["global": .object(["suggest": .object(["applyAbove": .number(saved)])])]))
+        }, write: { next, expected in
+            XCTAssertEqual(expected, saved)
+            if refuses { saved = 0.6; throw MeetingsService.Unavailable(reason: "refused") }
+            writes += 1; saved = next; return saved
+        })
+        model.stored = { _ in .object([:]) }
+        await model.load()
+        XCTAssertEqual(model.percent, 80)
+        XCTAssertNil(defaults.object(forKey: MeetingsApplyThreshold.legacyKey))
+        await model.load()
+        XCTAssertEqual(writes, 1, "migration writes once")
+        refuses = true
+        await model.set(90)
+        XCTAssertEqual(model.percent, 60, "a refusal returns the control to the saved engine value")
+        XCTAssertNotNil(model.failure)
+        await model.load(clearFailure: false)
+        XCTAssertNotNil(model.failure, "a background refresh cannot dismiss a refused write")
+        defaults.set(90, forKey: MeetingsApplyThreshold.legacyKey)
+        model.stored = { _ in .object(["global": .object(["suggest": .object(["applyAbove": .number(0.6)])])]) }
+        await model.load()
+        XCTAssertEqual(model.percent, 60, "a saved engine value wins over the legacy window preference")
+        XCTAssertEqual(writes, 1)
+        XCTAssertNil(model.failure)
+        let row = SidePanelCatalog.thresholdRow(model)
+        XCTAssertEqual(row.store, .engine(path: MeetingsApplyThreshold.path))
+        XCTAssertEqual(row.value, .number(60))
+        XCTAssertFalse(SidePanelCatalog.windowSections(defaults).flatMap(\.rows).contains { $0.id == MeetingsApplyThreshold.legacyKey })
+        defaults.set(90, forKey: MeetingsApplyThreshold.legacyKey)
+        let snapshot = MeetingsApplyThreshold(defaults: defaults, migrates: false, read: model.read, write: model.write)
+        await snapshot.load()
+        XCTAssertEqual(defaults.integer(forKey: MeetingsApplyThreshold.legacyKey), 90, "a picture never migrates live preferences")
+        defaults.removeObject(forKey: MeetingsApplyThreshold.legacyKey)
+    }
+
+    func testT12SkippedSwapNamesTheSwapAndUsesSourceIndexes() throws {
+        let swaps = try items("""
+        [{"id":"i1","kind":"speaker-range","status":"suggested","fromSec":5,"toSec":30,"speaker":"Alice Example"}]
+        """)
+        var source = line("Bob Example", at: 10)
+        source.sourceIndex = 42
+        let evidence = WindowLineEvidence(index: 42, startSec: 10, endSec: 12, swapSkippedBy: ["i1"])
+        let marks = TranscriptBlock.build(from: [source], evidence: [evidence], items: swaps)[0].lines[0].evidenceMarks
+        XCTAssertEqual(marks.map(\.kind), [.swapSkipped])
+        XCTAssertEqual(marks[0].text, "Skipped by swap to Alice Example at 00:05 to 00:30")
+        var rejected = swaps; rejected[0].status = "rejected"
+        XCTAssertTrue(TranscriptEvidenceMark.build(evidence, items: rejected, echoAbove: 70).isEmpty)
+    }
+
+    func testX6NoRemotePresenceHasItsOwnCauseAndMark() {
+        let unknown = WindowLineEvidence(index: 0, startSec: 0, endSec: 1)
+        XCTAssertTrue(TranscriptEvidenceMark.build(unknown, items: [], echoAbove: 70).isEmpty)
+        var absent = unknown; absent.noRemotePresent = true
+        let mark = TranscriptEvidenceMark.build(absent, items: [], echoAbove: 70)[0]
+        XCTAssertEqual(mark.kind, .noRemotePresent)
+        XCTAssertEqual(mark.text, "No remote person was in the call at this time")
+    }
+
+    func testX17AcousticMeasurementsStayOptionalAndEchoGateIsConfigurable() throws {
+        let old = try JSONDecoder().decode(ReviewRows.self, from: Data(#"{"meeting":"fixture","rows":[],"hidden":{"lowPriority":0,"minPriority":0}}"#.utf8))
+        XCTAssertNil(old.lineEvidence)
+        let evidence = WindowLineEvidence(index: 0, startSec: 0, endSec: 1, micShare: 0.4, callRms: 0.0123, echoOfCall: 0.8, acousticQuality: "linear-estimate")
+        XCTAssertEqual(evidence.acousticText, ["Microphone share: 40 %", "Call level (RMS): 0.0123", "Linear acoustic estimate"])
+        XCTAssertEqual(evidence.echoText, "Echo of call: 80 % of microphone power")
+        XCTAssertNil(WindowLineEvidence(index: 0, startSec: 0, endSec: 1).echoText)
+        XCTAssertTrue(WindowLineEvidence(index: 0, startSec: 0, endSec: 1).acousticText.isEmpty)
+        XCTAssertEqual(TranscriptEvidenceMark.build(evidence, items: [], echoAbove: 70).map(\.kind), [.callEcho])
+        XCTAssertTrue(TranscriptEvidenceMark.build(evidence, items: [], echoAbove: 90).isEmpty)
+        XCTAssertTrue(TranscriptEvidenceMark.build(evidence, items: [], echoAbove: 0).isEmpty)
+        let kinds: [TranscriptLineMark] = [.swapSkipped, .noRemotePresent, .callEcho]
+        XCTAssertEqual(Set(kinds.map { TranscriptEvidenceMark(kind: $0, text: "").symbol }).count, 3)
+        for kind in kinds { XCTAssertNotNil(NSImage(systemSymbolName: TranscriptEvidenceMark(kind: kind, text: "").symbol, accessibilityDescription: nil)) }
+        let enriched = try JSONDecoder().decode(ReviewRows.self, from: Data(#"{"meeting":"fixture","rows":[],"hidden":{"lowPriority":0,"minPriority":0},"attendanceWarning":"Not available","lineEvidence":[{"index":42,"startSec":10,"endSec":12,"callRms":0}],"questionDetails":[{"id":"q1","decidedLines":[{"index":42,"speaker":"Alice Example","text":"Words"}],"impact":{"lines":1,"words":1,"sameDoubtLines":1},"raisedLines":[]}]}"#.utf8))
+        XCTAssertEqual(enriched.attendanceWarning, "Not available")
+        XCTAssertEqual(enriched.questionDetails?.first?.decidedLines.first?.index, 42)
+        XCTAssertEqual(enriched.lineEvidence?.first?.acousticText, ["Call level (RMS): 0.0000"], "a measured zero is different from a missing value")
+        XCTAssertEqual(Set(kinds.map { TranscriptEvidenceMark(kind: $0, text: "").color }).count, 3)
     }
 
     /// C1, C2, T7, T8: a line under an open suggestion is rebuilt with the name, and keeps its indicator.

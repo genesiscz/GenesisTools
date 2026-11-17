@@ -397,7 +397,7 @@ enum SidePanelCatalog {
                          choices: [SidePanelChoice(value: .text("spoken"), title: "Most spoken"),
                                    SidePanelChoice(value: .text("transcript"), title: "Transcript")],
                          value: .text(MeetingsPreferences.speakerOrder(defaults).rawValue), defaultValue: .text("spoken")),
-            row(Transcript.applyAbove, value: Transcript.applyAbove.value(defaults)),
+            row(Transcript.echoAbove, value: Transcript.echoAbove.value(defaults)),
             row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),
@@ -451,13 +451,15 @@ enum SidePanelCatalog {
 
     /// The engine's clip and tone, from `config.read global.playback.listen` (null or missing keys read as defaults),
     /// with the named tones `presets` holds. `fileExists` checks a saved sound file (one stat per draw).
-    static func engineSection(listen: JSONValue, presets: TonePresetList = .loading,
+    @MainActor static func engineSection(listen: JSONValue, presets: TonePresetList = .loading,
                               fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> SidePanelSection {
         func number(_ path: [String]) -> Double? { if case .number(let value) = listen.at(path) { return value } else { return nil } }
         func flag(_ path: [String]) -> Bool? { if case .bool(let value) = listen.at(path) { return value } else { return nil } }
         func text(_ path: [String]) -> String? { if case .string(let value) = listen.at(path) { return value } else { return nil } }
         let toneOn = "\(listenPath).tone.enabled"
         let setting = toneSetting(listen.at(["tone", "sound"]))
+        let threshold = MeetingsApplyThreshold.shared
+        let thresholdRows = threshold.percent != nil || threshold.failure != nil ? [thresholdRow(threshold)] : []
         return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
             SidePanelRow(store: .engine(path: toneOn), title: "Tone",
                          detail: "A short tone just before the asked spot, in the window and the terminal.",
@@ -479,7 +481,17 @@ enum SidePanelCatalog {
                       detail: "A longer item or speaker turn plays only its first part, this long.",
                       choices: [15, 30, 60, 120], value: number(["longestClipSec"]) ?? 30, defaultValue: 30,
                       store: .engine(path: "\(listenPath).longestClipSec")),
-        ], footnote: "Applies from the next clip. The clip that plays keeps its sound.")
+        ] + thresholdRows, footnote: thresholdRows.isEmpty ? "Applies from the next clip. The clip that plays keeps its sound."
+            : "The threshold updates the transcript immediately. Clip and tone changes apply from the next clip.")
+    }
+
+    @MainActor static func thresholdRow(_ threshold: MeetingsApplyThreshold) -> SidePanelRow {
+        SidePanelRow(store: .engine(path: MeetingsApplyThreshold.path), title: "Apply suggestions above",
+            detail: "One threshold for the engine and the transcript. Lower confidence voices keep a percentage mark.",
+            choices: Array(Set([0, 50, 60, 70, 80, 90, 100] + [threshold.percent].compactMap { $0 })).sorted().map {
+                SidePanelChoice(value: .number($0), title: "\($0.formatted(.number.precision(.fractionLength(0...2)))) %", available: !threshold.busy && threshold.percent != nil)
+            }, value: threshold.percent.map { .number($0) } ?? .text("Reading…"), defaultValue: .number(70),
+            problem: threshold.failure == nil ? nil : "The threshold was not saved or read. The control keeps its saved value; try again.")
     }
 
     /// The pads before and after the asked spot (config version 5, decision 9). Neither has a default: the first
@@ -635,6 +647,10 @@ enum SidePanelCatalog {
     static func applyEngine(_ value: SidePanelValue, for row: SidePanelRow,
                             chooseFile: @escaping @MainActor (String?) async -> String? = { await ToneFileChooser.choose(near: $0) },
                             write: @escaping @MainActor (JSONValue?) -> Void) {
+        if row.id == MeetingsApplyThreshold.path, case .number(let percent) = value {
+            Task { await MeetingsApplyThreshold.shared.set(percent) }
+            return
+        }
         switch enginePick(value, for: row) {
         case .set(let json): write(json)
         case .unset: write(nil)
