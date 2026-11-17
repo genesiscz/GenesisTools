@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
+import { taskWorkingDir } from "./config";
 import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskArgv, taskPath } from "./runner";
 import type { DaemonTask } from "./types";
 
@@ -94,6 +95,31 @@ describe("runTask", () => {
         expect(result.exitCode).toBeNull();
         expect(TASK_SIGTERM_GRACE_MS).toBeGreaterThan(TASK_SIGTERM_CLEANUP_MS);
         expect(elapsedMs).toBeLessThan(timeoutMs + TASK_SIGTERM_GRACE_MS);
+    });
+
+    // The vault refuses to remember or auto-allow a bun whose working folder changed after it started, and the
+    // home folder changes every few seconds, so a task must start in a folder nothing writes into.
+    it.skipIf(skip.onWindows)("starts every task in the daemon's own empty working folder", async () => {
+        const logsDir = makeTempDir();
+        const task: DaemonTask = {
+            name: "cwd-task",
+            command: "pwd -P",
+            every: "every 1 minute",
+            retries: 0,
+            enabled: true,
+        };
+
+        const result = await runTask(task, 1, logsDir);
+
+        const stdout = readFileSync(result.logFile, "utf-8")
+            .trim()
+            .split("\n")
+            .map((line) => SafeJSON.parse(line, { strict: true }) as { type: string; data?: string })
+            .filter((record) => record.type === "stdout")
+            .map((record) => record.data);
+        expect(result.exitCode).toBe(0);
+        expect(stdout).toEqual([realpathSync(taskWorkingDir())]);
+        expect(readdirSync(taskWorkingDir())).toEqual([]);
     });
 });
 

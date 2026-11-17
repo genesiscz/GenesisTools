@@ -5,6 +5,7 @@ import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { taskWorkingDir } from "./config";
 import { taskLogDirName } from "./run-log-name";
 import type { DaemonTask, RunContext, RunResult, TaskPriority } from "./types";
 
@@ -165,7 +166,10 @@ export async function runTask(
     // it, killing the Bun.spawn child only reaps `sh`; a runaway grandchild
     // survives, holds the stdout pipe open, and hangs the result forever.
     const inherited = env.getProcessEnv();
+    const cwd = taskWorkingDir();
+    mkdirSync(cwd, { recursive: true });
     const proc = Bun.spawn(argv, {
+        cwd,
         env: { ...inherited, PATH: taskPath(inherited.PATH) },
         stdout: "pipe",
         stderr: "pipe",
