@@ -87,6 +87,12 @@ const recorderStateSchema = z.object({
     bytes: z.number(),
     lastFrameAt: z.string().optional(),
     warning: z.string().optional(),
+    sound: z
+        .discriminatedUnion("path", [
+            z.object({ path: z.literal("session"), sources: z.array(z.enum(["mic", "system"])) }),
+            z.object({ path: z.literal("pieces"), since: z.string().optional(), reason: z.string().optional() }),
+        ])
+        .optional(),
     stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
 });
 export type RecorderState = z.infer<typeof recorderStateSchema>;

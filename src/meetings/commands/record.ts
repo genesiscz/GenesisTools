@@ -497,6 +497,18 @@ async function status(opts: { json?: boolean }): Promise<void> {
     ui.dim(
         `${live?.frames ?? state.frames} frames, ${formatBytes(state.bytes)}${state.lastFrameAt ? `, last at ${localTime(state.lastFrameAt)}` : ""}`
     );
+    const sound = state.sound;
+
+    if (sound?.path === "session") {
+        ui.dim(`Sound: continuous session (${sound.sources.join(", ")})`);
+    } else if (sound?.since && sound.reason) {
+        ui.dim(
+            `Sound: inside the screen pieces since ${localTime(sound.since).slice(-5)}, the continuous session stopped: ${sound.reason}`
+        );
+    } else if (sound) {
+        ui.dim("Sound: inside the screen pieces (the setting)");
+    }
+
     const framesDir = join(store.folder(state.meetingId), "frames");
 
     if (existsSync(framesDir)) {

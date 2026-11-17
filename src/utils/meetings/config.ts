@@ -85,6 +85,11 @@ const nativeRecorderSchema = z.object({
     audio: z
         .object({
             sources: z.array(z.enum(AUDIO_SOURCES)).default(["mic", "system"]),
+            /**
+             * `pieces`: sound inside screen pieces, missing up to 5 seconds every 30 seconds;
+             * `session`: one more native process, with 60-second sound files.
+             */
+            mode: z.enum(["pieces", "session"]).default("pieces"),
             /** The microphone's device UID (`ax-tool audio-devices`); unset is the system default input. */
             micDevice: z.string().optional(),
         })

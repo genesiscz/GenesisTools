@@ -192,6 +192,7 @@ export interface RecorderControlsConfig {
 }
 
 export interface RecorderHooks {
+    onSoundPath?: (sound: RecordingSoundPath) => void;
     /** A closed continuous sound file has been kept in the recording's audio ledger. */
     onAudioSegment?: (segment: AudioSegment) => void;
     onAudioWarning?: (warning: string) => void;
@@ -282,6 +283,8 @@ export interface RecorderConfig<S> {
     settings: RecorderSettings;
     /** The sound it records; a recorder without sound records none. */
     audio: AudioState;
+    /** Unset preserves the shared core's continuous session behavior; Meetings passes its own setting. */
+    audioMode?: "pieces" | "session";
     /** SIGTERM and SIGINT stop the recording while its captures run (a recorder process of its own). */
     stopOnSignals?: boolean;
     /** Which displays it records, and what the display calls do. */
@@ -316,6 +319,10 @@ export function defineRecorderConfig<S>(definition: RecorderDefinition<S>): Reco
     return definition;
 }
 
+export type RecordingSoundPath =
+    | { path: "session"; sources: AudioSource[] }
+    | { path: "pieces"; since?: string; reason?: string };
+
 export class FrameRecording<S = unknown> extends RecorderControl {
     readonly kind: string;
     readonly methods: readonly RecorderMethod[];
@@ -347,6 +354,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private startingSound?: Promise<void>;
     private readonly soundAbort = new AbortController();
     private readonly soundNotes: string[] = [];
+    private currentSoundPath: RecordingSoundPath = { path: "pieces" };
     private readonly marked: RecordingMarker[] = [];
     protected readonly config: RecorderConfig<S>;
 
@@ -526,6 +534,10 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     /** The sound it records now (a copy). */
     get audio(): AudioState {
         return { ...this.sound, muted: { ...this.sound.muted } };
+    }
+
+    get soundPath(): RecordingSoundPath {
+        return structuredClone(this.currentSoundPath);
     }
 
     /** The markers this recording took, in the order they were added. */
@@ -888,6 +900,12 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return;
         }
 
+        this.config.hooks.onSoundPath?.(this.currentSoundPath);
+
+        if (this.config.audioMode === "pieces") {
+            return;
+        }
+
         let refused = false;
         if (recordsAudioSession(recorder)) {
             const started = await this.startSoundSession(recorder);
@@ -897,7 +915,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
         if (!this.soundSession) {
             if (!refused) {
-                this.soundWarning("continuous sound is unavailable; sound stays in the frame pieces");
+                this.fallBackSound("the native recorder has no audio-record command");
             }
 
             return;
@@ -906,6 +924,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         this.soundAbort.signal.throwIfAborted();
 
         this.sound = { ...this.sound, sources: [...this.soundSession.sources] };
+        this.currentSoundPath = { path: "session", sources: [...this.sound.sources] };
+        this.config.hooks.onSoundPath?.(this.currentSoundPath);
 
         for (const source of this.sound.sources) {
             if (this.sound.muted[source]) {
@@ -945,10 +965,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                     }
 
                     log.warn({ error }, "the continuous sound session stopped");
-                    this.soundWarning(
-                        `continuous sound stopped (${error.message}); sound goes back into the frame pieces`
-                    );
                     this.soundSession = undefined;
+                    this.fallBackSound(error.message);
                 },
             });
             running = session !== undefined;
@@ -959,11 +977,23 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             }
 
             log.warn({ error }, "the continuous sound session did not start");
-            this.soundWarning(
-                `continuous sound did not start (${error instanceof Error ? error.message : String(error)}); sound stays in the frame pieces`
-            );
+            this.fallBackSound(errorText(error));
             return { session: undefined, refused: true };
         }
+    }
+
+    private fallBackSound(reason: string): void {
+        if (this.currentSoundPath.path === "pieces" && this.currentSoundPath.reason) {
+            return;
+        }
+
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        this.currentSoundPath = { path: "pieces", since: now.toISOString(), reason };
+        this.config.hooks.onSoundPath?.(this.currentSoundPath);
+        this.soundWarning(
+            `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; up to 5 seconds are missing every 30 seconds.`
+        );
     }
 
     private soundWarning(warning: string): void {

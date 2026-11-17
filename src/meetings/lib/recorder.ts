@@ -65,6 +65,7 @@ function meetingRecorderConfig(run: MeetingRun) {
             },
             settings: run.settings,
             audio: run.audio,
+            audioMode: run.audioMode,
             stopOnSignals: true,
             displays: run.displays,
             keptFrames: () => state.frames,
@@ -107,6 +108,10 @@ function meetingRecorderConfig(run: MeetingRun) {
             hooks: {
                 onAudioSegment: (segment) => run.keptSound(segment),
                 onAudioWarning: (warning) => run.note(warning),
+                onSoundPath: (sound) => {
+                    state.sound = sound;
+                    run.saveState();
+                },
                 beforeLoop: () => run.begin(recording),
                 afterLoop: () => {
                     run.salvageTracks(run.pieceDir);

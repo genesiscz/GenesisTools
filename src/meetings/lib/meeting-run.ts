@@ -50,6 +50,7 @@ export class MeetingRun {
     readonly pieceDir: string;
     readonly settings: RecorderSettings;
     readonly audio: AudioState;
+    readonly audioMode: "pieces" | "session";
     readonly nativeKeys: NativeKeys;
     readonly state: RecorderState;
     readonly notes: string[] = [];
@@ -86,6 +87,7 @@ export class MeetingRun {
         this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
+        this.audioMode = audioConfig?.mode ?? "pieces";
         this.settings = {
             activeFps: capture.activeFps,
             idleFps: capture.idleFps,

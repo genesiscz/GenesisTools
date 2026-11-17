@@ -38,6 +38,29 @@ function store(): MeetingsConfigStore {
 }
 
 describe("meetings config", () => {
+    test("native sound mode defaults to pieces, accepts session and refuses other values without changing the file", async () => {
+        expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("pieces");
+        const config = store();
+        const setMode = (mode: string) =>
+            config.update((raw) => {
+                raw.global = { capture: { recorders: { native: { audio: { mode } } } } };
+            });
+        await setMode("session");
+        expect((await new MeetingsConfigStore(config.storage).read()).global.capture.recorders.native.audio.mode).toBe(
+            "session"
+        );
+        expect(SafeJSON.parse(fs.readFileSync(config.path, "utf8"))).toMatchObject({
+            global: { capture: { recorders: { native: { audio: { mode: "session" } } } } },
+        });
+        const before = fs.readFileSync(config.path, "utf8");
+        await expect(setMode("other")).rejects.toThrow(/pieces.*session/);
+        expect(fs.readFileSync(config.path, "utf8")).toBe(before);
+        await setMode("pieces");
+        expect((await new MeetingsConfigStore(config.storage).read()).global.capture.recorders.native.audio.mode).toBe(
+            "pieces"
+        );
+    });
+
     test("reading legacy settings migrates in memory without rewriting the config file", async () => {
         const config = store();
         mkdirSync(dirname(config.path), { recursive: true });
@@ -94,7 +117,9 @@ describe("meetings config", () => {
         expect(config.global.suggest.questionCap).toBe(12);
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
-        expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: ["mic", "system"] } });
+        expect(recorderSettings(config.global.capture)).toEqual({
+            audio: { sources: ["mic", "system"], mode: "pieces" },
+        });
     });
 
     test("capture.ocr: an old file gains the tile default; explicit read choices are kept", () => {
