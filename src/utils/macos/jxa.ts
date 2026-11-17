@@ -31,8 +31,10 @@ export async function runJxaAsync(script: string, timeoutMs = 15_000): Promise<s
     refuseHostEffectInTest("runJxaAsync", "Fake the script result; do not drive a real application.");
     const result = await boundedCommand({ command: ["osascript", "-l", "JavaScript", "-e", script], timeoutMs });
 
-    if (result.status !== 0) {
-        throw new Error(`JXA error: ${result.stderr.trim() || result.error?.message || "unknown error"}`);
+    // A recorded error (the output budget, a broken stream, the deadline) fails the run even when osascript exited 0:
+    // its stdout is then partial.
+    if (result.status !== 0 || result.error) {
+        throw new Error(`JXA error: ${result.error?.message || result.stderr.trim() || "unknown error"}`);
     }
 
     return result.stdout.trim();
