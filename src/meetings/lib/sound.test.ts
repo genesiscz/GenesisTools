@@ -8,6 +8,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { callRecorder } from "@genesiscz/utils/screen-recorder/live";
 import { NativeFrameRecorder } from "@genesiscz/utils/screen-recorder/native";
 import {
+    type AudioTrack,
     CaptureError,
     type CaptureRequest,
     type CaptureResult,
@@ -72,12 +73,19 @@ class GrantRecorder extends FrameRecorder {
 
         const frame = join(request.outDir, "keep-0001.png");
         await Bun.write(frame, "png");
-        const tracks = [];
+        const tracks: AudioTrack[] = [];
 
         for (const source of request.audio?.sources ?? []) {
             const path = join(request.outDir, `audio-${source}.m4a`);
             await Bun.write(path, "m4a");
-            tracks.push({ source, path, durationMs: 30_000, startOffsetMs: -240, mutedSpans: [] });
+            tracks.push({
+                source,
+                path,
+                durationMs: 30_000,
+                startOffsetMs: -240,
+                mutedSpans: [],
+                lostSpans: [[100, 1750]],
+            });
         }
 
         this.stop();
@@ -140,7 +148,7 @@ const recording = () => {
 };
 
 describe("the recorder keeps the meeting's sound", () => {
-    test.each(["--fixture-audio-three", "--fixture-no-mic-grant"])(
+    test.each(["--fixture-audio-three", "--fixture-no-mic-grant", "--fixture-audio-loss"])(
         "native session %s keeps rows, counts files, and salvages an interrupted segment",
         async (mode) => {
             const store = new MeetingStore(new Storage("meetings-session-recorder"));
@@ -202,12 +210,18 @@ describe("the recorder keeps the meeting's sound", () => {
                 },
             });
             const kept = readAudioRows(folder);
-            const expectedFiles = mode === "--fixture-audio-three" ? 6 : 1;
+            const expectedFiles = mode === "--fixture-audio-three" ? 6 : mode === "--fixture-audio-loss" ? 2 : 1;
             expect(kept.filter((row) => row.kept === "normal")).toHaveLength(expectedFiles);
             expect(kept.filter((row) => row.kept === "salvaged")).toEqual([
                 expect.objectContaining({ source: "system" }),
             ]);
             expect(kept.every((row) => existsSync(join(folder, row.file)))).toBe(true);
+            if (mode === "--fixture-audio-loss") {
+                expect(kept.filter((row) => row.kept === "normal").map((row) => row.lostSpans)).toEqual([
+                    [[100, 1750]],
+                    [[100, 1750]],
+                ]);
+            }
             expect(recorder.requests.every((request) => request.audio === undefined)).toBe(true);
             expect(existsSync(join(folder, ".piece"))).toBe(false);
             expect(store.read(created.id)?.recording?.audio).toMatchObject({ files: expectedFiles });
@@ -232,6 +246,7 @@ describe("the recorder keeps the meeting's sound", () => {
 
         expect(system).toMatchObject({ at: "2026-11-03T12:00:10.000Z", zeroAt: "2026-11-03T12:00:09.760Z" });
         expect(system?.kept).toBeUndefined();
+        expect(system?.lostSpans).toEqual([[100, 1750]]);
     });
 
     test("a file left in the piece folder is in the folder audio with a salvaged row after begin()", async () => {

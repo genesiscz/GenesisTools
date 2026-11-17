@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { AudioSession, audioSegmentSchema } from "./audio-session";
+import { type AudioSegment, AudioSession, audioSegmentSchema } from "./audio-session";
 import type { AudioSource } from "./control";
 
 const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
@@ -15,7 +15,7 @@ const rows = (dir: string) =>
         .trim()
         .split("\n")
         .map((line) => audioSegmentSchema.parse(SafeJSON.parse(line, { strict: true })));
-const start = (dir: string, mode?: string, onSegment?: () => void) =>
+const start = (dir: string, mode?: string, onSegment?: (segment: AudioSegment) => void) =>
     AudioSession.start({
         folder: dir,
         outDir: join(dir, ".piece", "sound"),
@@ -26,6 +26,19 @@ const start = (dir: string, mode?: string, onSegment?: () => void) =>
     });
 
 describe("continuous sound over the fake tool", () => {
+    test("lost spans survive the fake tool, callback and reopened ledger; older rows still parse", async () => {
+        const dir = folder();
+        const delivered: AudioSegment[] = [];
+        const session = await start(dir, "--fixture-audio-loss", (segment) => delivered.push(segment));
+        await session.stop();
+        expect(rows(dir).map((row) => row.lostSpans)).toEqual([[[100, 1750]], [[100, 1750]]]);
+        expect(delivered.map((row) => row.lostSpans)).toEqual([[[100, 1750]], [[100, 1750]]]);
+        const oldDir = folder();
+        const old = await start(oldDir);
+        await old.stop();
+        expect(rows(oldDir).every((row) => row.lostSpans === undefined)).toBe(true);
+    });
+
     test("three closed segments per source have no gap, and survive reopening the ledger", async () => {
         const dir = folder();
         const complete = Promise.withResolvers<void>();
