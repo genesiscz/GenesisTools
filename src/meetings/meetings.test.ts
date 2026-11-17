@@ -6305,7 +6305,7 @@ describe("suggest: words said on purpose", () => {
         expect(terms.every((item) => item.proposed === undefined)).toBe(true);
     });
 
-    test("two unknown names first heard in one line are one question; lowercase unknown words are never asked (R2-MC1)", () => {
+    test("two unknown names first heard in one line are one question; lowercase unknown words are asked only in the group words", () => {
         const named: SourceMeeting = {
             ...meeting,
             transcript: [
@@ -6330,14 +6330,17 @@ describe("suggest: words said on purpose", () => {
             now: meeting.start,
             questionBudget: 12,
         };
-        const questions = suggestItems(options).filter((item) => item.kind === "question");
+        // The second name of the line is not a second budget question; it is asked in the group words.
+        const questions = suggestItems(options).flatMap((item) => (item.kind === "question" ? [item] : []));
 
-        expect(questions.map((item) => item.kind === "question" && Math.round(item.fromSec))).toEqual([40]);
-        expect(
-            suggestItems({ ...options, meeting: slangMeeting, wordCheck: words(unknown) }).filter(
-                (item) => item.kind === "question"
-            )
-        ).toEqual([]);
+        expect(questions.filter((item) => item.group !== "words").map((item) => Math.round(item.fromSec))).toEqual([
+            40,
+        ]);
+        const slang = suggestItems({ ...options, meeting: slangMeeting, wordCheck: words(unknown) }).flatMap((item) =>
+            item.kind === "question" ? [item] : []
+        );
+        expect(slang.every((item) => item.group === "words")).toBe(true);
+        expect(slang.map((item) => item.heard).sort()).toEqual(["kvapímu", "zrelajzujem"]);
     });
 
     test("the family and the English root rule", () => {
@@ -6349,6 +6352,122 @@ describe("suggest: words said on purpose", () => {
             "mobilce",
             "mobilkou",
         ]);
+    });
+
+    test("a repeated unknown word is a question of the group words, most heard first, outside the question budget", () => {
+        const repeated: SourceMeeting = {
+            ...meeting,
+            transcript: [
+                line("Alice Example", 0, "Ten zorb a zorb-fe poběží zítra.", 1),
+                line("Carol Example", 20, "Tam zorb-fe a zorb-fe držíme v repu, zorbbe taky.", 2),
+                line("Alice Example", 40, "A zorb-fe je hotový, zorbbe ne.", 1),
+                line("Carol Example", 60, "Jednou jsme řekli kvapímu.", 2),
+            ],
+        };
+        const heard = ["zorb", "zorb-fe", "zorbbe", "kvapímu"];
+        const ordinary = new Set(
+            repeated.transcript
+                .flatMap((entry) => entry.text.toLowerCase().split(/[^\p{L}-]+/u))
+                .filter((word) => !heard.includes(word))
+        );
+        const wordCheck: WordCheck = {
+            provider: "fake",
+            language: "cs",
+            verdict: (word) =>
+                ordinary.has(word.toLowerCase()) ? { class: "dictionary", count: 9 } : { class: "unknown", count: 0 },
+            dispose: () => undefined,
+        };
+        const items = suggestItems({
+            record,
+            meeting: repeated,
+            rules: ["terms"],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            wordCheck,
+            now: meeting.start,
+            questionBudget: 0,
+        });
+        const asked = items.flatMap((item) => (item.kind === "question" ? [item] : []));
+
+        // "zorb" (1 time) and its family stay hidden; a form heard 2 times or more is asked, whatever its family.
+        expect(asked.map((item) => [item.group, item.heard, item.evidence?.occurrences])).toEqual([
+            ["words", "zorb-fe", 4],
+            ["words", "zorbbe", 2],
+        ]);
+        expect(items.flatMap((item) => (item.kind === "term" ? [item.heard] : [])).sort()).toEqual([
+            "kvapímu",
+            "zorb-fe",
+            "zorbbe",
+        ]);
+        expect(asked.every((item) => item.decides.length === 1)).toBe(true);
+    });
+
+    test("a word question marks nothing in the transcript and comes after the other questions", () => {
+        const asked = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    heard: "zorbbe",
+                    atSec: 40,
+                    confidence: 0.3,
+                    rules: [MeetingRule.UnknownWord],
+                    evidence: { occurrences: 9 },
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 1",
+                    fromSec: 60,
+                    toSec: 80,
+                    confidence: 0.3,
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i3",
+                    kind: "question",
+                    status: "suggested",
+                    about: "term",
+                    group: "words",
+                    fromSec: 40,
+                    toSec: 44,
+                    question: 'What is "zorbbe"? It is heard 9 times.',
+                    heard: "zorbbe",
+                    choices: [],
+                    decides: ["i1"],
+                    priority: 9,
+                    rules: [MeetingRule.UnknownWord],
+                    evidence: { occurrences: 9 },
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i4",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 60,
+                    toSec: 80,
+                    question: "Who speaks?",
+                    choices: ["Alice Example", "Carol Example"],
+                    decides: ["i2"],
+                    priority: 0.1,
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+            ],
+        });
+
+        expect(openQuestions(asked).map((question) => question.id)).toEqual(["i4", "i3"]);
+        const corrections = correctionsOf(asked, meetingsConfigSchema.parse({}), {
+            withSuggested: true,
+            format: "txt",
+        });
+        expect(corrections.unclear?.passages.some((passage) => passage.heard === "zorbbe")).toBe(false);
     });
 
     test("a keep entry retires the suggested items of its word family and the questions that only they decide", () => {

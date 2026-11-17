@@ -88,6 +88,11 @@ function unclearPassages(
     // Questions first: a word is marked once, and a question's choices say more than a low term's own guess.
     return [
         ...open.flatMap((question): UnclearPassage[] => {
+            // A repeated word is often right as heard: a mark on each of them made the transcript unreadable (R2-MC1).
+            if (question.group === "words") {
+                return [];
+            }
+
             const decided = record.items.filter((item) => question.decides.includes(item.id));
 
             if (question.heard) {

@@ -1,4 +1,4 @@
-import { ITEM_STATUSES, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
+import { ITEM_STATUSES, QUESTION_GROUPS, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { momentTargetSchema } from "./moment-schema";
 
@@ -129,7 +129,9 @@ export const reviewRowSchema = z.object({
     confidence: z.number().optional(),
     priority: z.number().optional(),
     reach: z.number().nonnegative().optional(),
-    group: z.enum(["rules", "spot-check", "long-stretch"]).optional(),
+    group: z.enum(QUESTION_GROUPS).optional(),
+    /** A question of the group `words`: how many times the word is heard, so how many places one answer fixes. */
+    occurrences: z.number().int().positive().optional(),
     guess: z.boolean().optional(),
     comment: z.string().optional(),
     /** The one-line text `items` prints. */

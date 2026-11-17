@@ -44,7 +44,15 @@ import { indicatorFacts } from "./indicator-facts";
 import { uncertainSharedCallRanges } from "./listen-quality";
 import { type LocalSpeech, localSpeechLines } from "./local-speech";
 import { selectQuestions } from "./question-select";
-import { DEFAULT_LISTEN_BELOW, questionFor, questionKey, questionRank } from "./questions";
+import {
+    DEFAULT_LISTEN_BELOW,
+    DEFAULT_WORD_MIN_OCCURRENCES,
+    heardTimes,
+    questionFor,
+    questionKey,
+    questionRank,
+    wordQuestions,
+} from "./questions";
 import { assessIndicator } from "./speaker-indicator";
 import {
     addPolish,
@@ -582,6 +590,8 @@ export function settledTermItems(options: {
     record: MeetingRecord;
     dictionary: Pick<ResolvedDictionary, "entries">;
     known?: (word: string) => boolean;
+    /** A form heard this often is asked in the group `words`, never retired as said on purpose (default 2). */
+    minOccurrences?: number;
 }): Map<string, string> {
     const { record } = options;
     const keep = dictionaryKeeps(options.dictionary);
@@ -603,6 +613,7 @@ export function settledTermItems(options: {
         } else if (
             item.rules.includes(MeetingRule.UnknownWord) &&
             onPurpose.has(heard) &&
+            heardTimes(item) < (options.minOccurrences ?? DEFAULT_WORD_MIN_OCCURRENCES) &&
             !strongMeetingCandidate(item.evidence)
         ) {
             settled.set(item.id, `"${item.heard}" is said on purpose (a word family or an English root)`);
@@ -623,7 +634,9 @@ export function settledTermItems(options: {
     return settled;
 }
 
-function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] {
+function termItems(
+    options: TermSources & { wordCheck?: WordCheck; wordQuestions?: { minOccurrences: number } }
+): NewItem[] {
     const { meeting, dictionary, wordCheck } = options;
     const vocab = termVocabulary(options);
     // A word the dictionary keeps, or already replaces (a fix, a term's spoken form), needs no item and no question.
@@ -641,7 +654,9 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
               skip: new Set([...keep, ...suspects.map((suspect) => suspect.heard.toLowerCase())]),
           })
         : [];
-    // A keep entry covers the forms of its word ("mokovaný" keeps "mokovanejm" too), and slang is said on purpose.
+    // A keep entry covers the forms of its word ("mokovaný" keeps "mokovanejm" too), and slang is said on purpose,
+    // unless the form itself repeats: then it is asked in the group `words` (W5: two forms can be two terms).
+    const minOccurrences = options.wordQuestions?.minOccurrences ?? DEFAULT_WORD_MIN_OCCURRENCES;
     const keptFamilies = new Set([...keep].map(wordFamily));
     const onPurpose = spokenOnPurpose(
         heardUnknown.map((word) => word.heard),
@@ -650,7 +665,8 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const unknown = heardUnknown.filter(
         (word) =>
             (word.candidates.some((candidate) => candidate.source === "meeting" && candidate.confidence >= 80) ||
-                !onPurpose.has(word.heard.toLowerCase())) &&
+                !onPurpose.has(word.heard.toLowerCase()) ||
+                word.occurrences >= minOccurrences) &&
             !keptFamilies.has(wordFamily(word.heard))
     );
     log.debug(
@@ -1969,6 +1985,8 @@ export function suggestItems(options: {
     points?: SummaryPoint[];
     /** At most this many questions, speakers and terms together (`global.suggest.questionCap`). */
     questionBudget?: number;
+    /** A word form heard this often is a question of the group `words`, outside the budget (`global.suggest.words`). */
+    wordQuestions?: { minOccurrences: number };
     /** No question under this priority (`playback.listen.minPriority`). */
     minPriority?: number;
     /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
@@ -2352,7 +2370,9 @@ export function suggestItems(options: {
 
     // One budget for speakers and terms together, for the meeting and not per run: a question still open counts, so a
     // second suggest asks nothing new until some are answered (MC4: a second run added 11, 23 open of a cap of 12).
-    const open = record.items.filter((item) => item.kind === "question" && item.status === "suggested").length;
+    const open = record.items.filter(
+        (item) => item.kind === "question" && item.status === "suggested" && item.group !== "words"
+    ).length;
     const budget = Math.max(0, (options.questionBudget ?? Number.POSITIVE_INFINITY) - open);
     const wordLines = new Set<number>();
     const worth = selectQuestions(candidates, taken)
@@ -2384,6 +2404,22 @@ export function suggestItems(options: {
         const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
         taken.push(asked);
         fresh.push(asked);
+    }
+
+    // Every repeated unknown word no question decides yet: after the budgeted ones, most heard first (M3).
+    if (options.rules.includes("terms")) {
+        const minOccurrences = options.wordQuestions?.minOccurrences ?? DEFAULT_WORD_MIN_OCCURRENCES;
+
+        for (const question of wordQuestions(taken, context, minOccurrences)) {
+            if (known.has(questionKey(question))) {
+                continue;
+            }
+
+            known.add(questionKey(question));
+            const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
+            taken.push(asked);
+            fresh.push(asked);
+        }
     }
 
     return fresh;
