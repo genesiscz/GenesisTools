@@ -14,10 +14,13 @@ const { log } = logger.scoped("t3code:thread");
  * terminal pins again with no host, so it no longer names the thread. A pinned T3 thread that T3 Code's state does not
  * list (an older T3 Code, an unreadable database) still counts. Undefined for a session no T3 thread runs.
  */
-export async function t3ThreadOfSession(
-    sessionId: string,
-    homeDir: string = t3Home(env.getProcessEnv())
-): Promise<string | undefined> {
+export async function t3ThreadOfSession({
+    sessionId,
+    homeDir = t3Home(env.getProcessEnv()),
+}: {
+    sessionId: string;
+    homeDir?: string;
+}): Promise<string | undefined> {
     const pin = (await loadPins({ readOnly: true })).get(sessionId);
     const held = t3ThreadHolding({ thread: t3SessionThreads(homeDir).get(sessionId), pin });
 
@@ -43,7 +46,7 @@ export async function openT3ThreadOfSession({
     activate?: boolean;
     homeDir?: string;
 }): Promise<T3ThreadOpen | undefined> {
-    const threadId = await t3ThreadOfSession(sessionId, homeDir);
+    const threadId = await t3ThreadOfSession({ sessionId, homeDir });
     if (!threadId) {
         return undefined;
     }
