@@ -4,7 +4,7 @@ import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { applyVoices, listVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
+import { applyVoices, listProjectVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
 import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
 import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
 
@@ -15,7 +15,7 @@ export function voicesHandlers(
 ): RpcHandlers<{ methods: typeof VOICES_METHODS }, import("./handlers").MeetingsCallContext> {
     const access = { store, linkedSource: deps.linkedSource, config: deps.config };
     return {
-        "voices.list": (params) => listVoices({ ...access, ...params }),
+        "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voices.preview": (params) => previewVoices({ ...access, ...params }),
         "voices.sample": (params) => voiceSample({ ...access, ...params }),
         "voices.apply": async (params, context) => {

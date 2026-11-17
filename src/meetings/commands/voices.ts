@@ -10,7 +10,7 @@ import { fail } from "../lib/shared";
 import {
     addVoiceSample,
     applyVoices,
-    listVoices,
+    listProjectVoices,
     planVoiceRemoval,
     previewVoices,
     removeVoice,
@@ -44,7 +44,7 @@ async function projectFor(options: VoiceOptions, person: string): Promise<string
     }
     const projects = [
         ...new Set(
-            (await listVoices({ store: new MeetingStore() })).people
+            (await listProjectVoices({ store: new MeetingStore() })).people
                 .filter((row) => row.person === person && row.samples.length)
                 .map((row) => row.project)
         ),
@@ -68,7 +68,7 @@ export function registerVoicesCommand(program: Command): void {
         .option("--json", "print structured people, samples and meetings")
         .action((opts: VoiceOptions) =>
             guarded(async () => {
-                const result = await listVoices({ store: new MeetingStore(), project: opts.project });
+                const result = await listProjectVoices({ store: new MeetingStore(), project: opts.project });
                 if (opts.json) {
                     out.result(SafeJSON.stringify(result));
                     return;
