@@ -21,9 +21,11 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private var paused = false
     private var closed = false
     var failed: ((String) -> Void)?
+    private let emit: ((Data) -> Void)?
 
-    init(directory: URL, seconds: Double) {
+    init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil) {
         self.directory = directory
+        self.emit = emit
         segmentSeconds = seconds
         hostTime = CMClockGetTime(CMClockGetHostTimeClock())
         epoch = Date()
@@ -44,6 +46,11 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         } else {
             return
         }
+        append(buffer, source: source)
+    }
+
+    /// Called on `queue`; tests supply PCM buffers without constructing a stream or opening a device.
+    func append(_ buffer: CMSampleBuffer, source: CaptureAudioSource) {
         guard !closed, !paused, buffer.isValid, CMSampleBufferDataIsReady(buffer),
               let format = CMSampleBufferGetFormatDescription(buffer),
               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
@@ -123,7 +130,11 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                 var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
                 data.append(0x0a)
                 outputLock.lock()
-                FileHandle.standardOutput.write(data)
+                if let emit {
+                    emit(data)
+                } else {
+                    FileHandle.standardOutput.write(data)
+                }
                 outputLock.unlock()
             } catch {
                 failed?("could not encode the \(source.rawValue) segment: \(error.localizedDescription)")
@@ -150,8 +161,9 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             closed = true
             for source in Array(tracks.keys) { retire(source) }
         }
+        let finishing = self.finishing
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            DispatchQueue.global(qos: .utility).async { [self] in
+            DispatchQueue.global(qos: .utility).async {
                 if finishing.wait(timeout: .now() + 15) == .timedOut {
                     continuation.resume(throwing: NSError(domain: "ax-tool", code: 75,
                         userInfo: [NSLocalizedDescriptionKey: "audio segments did not finish within 15s"]))
@@ -172,6 +184,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
     private var muted: [String: Bool] = ["mic": false, "system": false]
     private var paused = false
     private var stopping = false
+    private var failed = false
     private var signals: [DispatchSourceSignal] = []
 
     init(audio: SegmentedAudio, sources: [CaptureAudioSource], configuration: SCStreamConfiguration) {
@@ -268,10 +281,11 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
     }
 
     func stop(failed: Bool = false) {
+        self.failed = self.failed || failed
         guard !stopping else { return }
         stopping = true
-        Task {
-            var exitCode: Int32 = failed ? 1 : 0
+        Task { @MainActor in
+            var exitCode: Int32 = 0
             do {
                 if let stream { try await stream.stopCapture() }
             } catch {
@@ -284,7 +298,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
                 CaptureEvents.error("failed", error.localizedDescription)
                 exitCode = 1
             }
-            exit(exitCode)
+            exit(self.failed ? 1 : exitCode)
         }
     }
 }
