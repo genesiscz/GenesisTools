@@ -23,6 +23,8 @@ export interface WorkContext {
     now?: () => string;
     random?: () => string;
     stamp?: ContextStamp;
+    /** A strong inferred handoff of the preflight context (P4); `spot` uses it only when no claim names one. */
+    inferred?: { during: string; evidence: string };
 }
 
 export interface WriteData {
@@ -70,6 +72,7 @@ export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEn
         lineage: await lineageOf(ctx),
         ...(request !== undefined ? { request } : {}),
         ...(ctx.stamp !== undefined ? { stamp: ctx.stamp } : {}),
+        ...(ctx.inferred !== undefined ? { inferred: ctx.inferred } : {}),
     };
 }
 
