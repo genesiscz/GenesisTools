@@ -200,6 +200,7 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
     const transcript = await opened.meeting();
     const lines: Record<string, VoiceMatch> = {};
     const energy = await opened.energy();
+    const groups = new Map<0 | 1, Array<{ index: number; fromSec: number; toSec: number }>>();
     for (const line of lineEvidence(
         transcript.transcript,
         evidence ?? { segments: [], speaking: [] },
@@ -216,21 +217,31 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
             continue;
         }
         const channel = share <= 0.35 ? (layout === "left-mic" ? 1 : 0) : layout === "left-mic" ? 0 : 1;
-        const [embedded] = await embedVoiceLines({
+        const spans = groups.get(channel) ?? [];
+        spans.push({ index: line.index, fromSec: line.startSec, toSec: line.endSec });
+        groups.set(channel, spans);
+    }
+    for (const [channel, spans] of groups) {
+        spans.sort((a, b) => a.fromSec - b.fromSec);
+        const embeddings = await embedVoiceLines({
             audioPath,
-            spans: [{ index: line.index, fromSec: line.startSec, toSec: line.endSec }],
-            channels: [{ channel, track: share <= 0.35 ? "isolated-call" : "raw-mic" }],
+            spans,
+            channels: [{ channel, track: channel === (layout === "left-mic" ? 0 : 1) ? "raw-mic" : "isolated-call" }],
+            cachePath: join(folder, "voice-lines.json"),
         });
-        const voice = embedded?.channels[0];
-        lines[`${line.startSec}:${line.endSec}`] =
-            voice?.quality === "ready"
-                ? scoreVoice({ model: voice.model, embedding: voice.embedding, samples })
-                : {
-                      model: samples[0]!.model,
-                      quality: "unknown",
-                      candidates: [],
-                      reason: voice?.quality === "unknown" ? voice.reason : "no embedding",
-                  };
+        for (const [index, embedded] of embeddings.entries()) {
+            const voice = embedded.channels[0];
+            const span = spans[index]!;
+            lines[`${span.fromSec}:${span.toSec}`] =
+                voice?.quality === "ready"
+                    ? scoreVoice({ model: voice.model, embedding: voice.embedding, samples })
+                    : {
+                          model: samples[0]!.model,
+                          quality: "unknown",
+                          candidates: [],
+                          reason: voice?.quality === "unknown" ? voice.reason : "no embedding",
+                      };
+        }
     }
     if (Bun.hash(readFileSync(enrolmentFile)).toString() !== enrolment || recordingFingerprint(audioPath) !== source) {
         throw new Error(

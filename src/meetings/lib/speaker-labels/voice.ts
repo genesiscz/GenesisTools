@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines } from "@genesiscz/utils/meetings/voice";
@@ -8,7 +9,9 @@ import { nameByVoice, type VoiceLine } from "../voice-names";
 import type { LabelContext, SpeakerLabeler } from "./types";
 
 /** Batches spans on the same file/channel while retaining transcript-clock times on the resulting line. */
-export async function embedSeatLines(context: Pick<LabelContext, "lines" | "sound">): Promise<VoiceLine[]> {
+export async function embedSeatLines(
+    context: Pick<LabelContext, "lines" | "sound"> & { cachePath?: string }
+): Promise<VoiceLine[]> {
     const groups = new Map<
         string,
         {
@@ -37,6 +40,7 @@ export async function embedSeatLines(context: Pick<LabelContext, "lines" | "soun
         group.lines.sort((a, b) => a.slice.fileFromSec - b.slice.fileFromSec);
         const embeddings = await embedVoiceLines({
             audioPath: group.path,
+            cachePath: context.cachePath,
             spans: group.lines.map(({ line, slice }) => ({
                 index: line.index,
                 fromSec: slice.fileFromSec,
@@ -86,7 +90,15 @@ export function voiceLabeler(options: {
                 ...options.settings,
                 store,
                 attended: context.attended,
-                lines: await embedSeatLines({ lines: context.lines, sound }),
+                lines: await embedSeatLines({
+                    lines: context.lines,
+                    sound,
+                    cachePath: join(
+                        options.opened.store.folder(options.opened.record.id),
+                        "evidence",
+                        "voice-lines.json"
+                    ),
+                }),
             });
         },
     };

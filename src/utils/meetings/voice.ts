@@ -5,8 +5,10 @@ import { ArtifactStore } from "@genesiscz/utils/ai/local/artifacts";
 import { EMBEDDING_MODEL } from "@genesiscz/utils/ai/local/runtimes/sherpa/models";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
+import { VoiceLineCache, voiceLineCachePath } from "./voice-line-cache";
 
 export const voiceSampleSchema = z.object({
     person: z.string().min(1),
@@ -89,7 +91,7 @@ export function localVoiceBackend(): { model: string; extractor: Extractor } {
         model,
         extractor: new sherpa.SpeakerEmbeddingExtractor({
             model: EMBEDDING_MODEL.file,
-            numThreads: 2,
+            numThreads: 1,
             provider: "cpu",
             debug: false,
         }),
@@ -213,21 +215,45 @@ export async function embedVoiceLines(options: {
     audioPath: string;
     spans: readonly { index: number; fromSec: number; toSec: number }[];
     channels: readonly { channel: 0 | 1; track: VoiceEmbeddingProvenance["track"] }[];
+    cachePath?: string;
 }): Promise<LineEmbedding[]> {
     const stat = statSync(options.audioPath);
     const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
     const result: LineEmbedding[] = [];
     const windows = new Map<number, { fromSec: number; toSec: number; samples: Float32Array }>();
+    let cache: VoiceLineCache | undefined;
+    let backend: ReturnType<typeof localVoiceBackend> | undefined;
+    let backendError: unknown;
+    if (options.spans.length && options.channels.length) {
+        try {
+            backend = localVoiceBackend();
+            cache = new VoiceLineCache({
+                source,
+                model: backend.model,
+                cachePath: options.cachePath ?? (await voiceLineCachePath(options.audioPath)),
+            });
+        } catch (error) {
+            backendError = error;
+            logger.debug({ error }, "Voice backend unavailable; line identities remain unknown");
+        }
+    }
     for (const span of options.spans) {
         const channels: ChannelEmbedding[] = [];
         for (const channel of options.channels) {
             const provenance = { source, ...channel, fromSec: span.fromSec, toSec: span.toSec };
+            const cached = cache?.get(provenance);
+            if (cached) {
+                channels.push({ ...provenance, ...cached });
+                continue;
+            }
             try {
                 const duration = span.toSec - span.fromSec;
                 if (duration < 1.5 || duration > 60) {
                     throw new VoiceUnavailableError("Voice line needs 1.5 to 60 seconds of speech");
                 }
-                const backend = localVoiceBackend();
+                if (!backend) {
+                    throw backendError;
+                }
                 let window = windows.get(channel.channel);
                 if (!window || span.fromSec < window.fromSec || span.toSec > window.toSec) {
                     const fromSec = span.fromSec;
@@ -249,15 +275,18 @@ export async function embedVoiceLines(options: {
                 );
                 const embedding = embeddingOf(samples, backend);
                 channels.push({ ...provenance, ...embedding, quality: "ready" });
+                cache?.set(provenance, { ...embedding, quality: "ready" });
             } catch (error) {
-                channels.push({
-                    ...provenance,
+                const unknown = {
                     quality: "unknown",
                     reason: error instanceof Error ? error.message : String(error),
-                });
+                } as const;
+                channels.push({ ...provenance, ...unknown });
+                cache?.set(provenance, unknown);
             }
         }
         result.push({ index: span.index, channels });
     }
+    cache?.save();
     return result;
 }
