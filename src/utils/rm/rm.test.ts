@@ -322,7 +322,7 @@ describe("presets", () => {
         expect(verdictOf(join(base, "work", "loose", "node_modules"))).toEqual({ kind: "ask", rule: "default" });
     });
 
-    test("automatic presets retain permanent meeting source audio under a custom home and through ancestors", async () => {
+    test("automatic presets retain meeting source audio and recorded sound under a custom home and through ancestors", async () => {
         const customHome = dir("permanent-audio-home");
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: customHome }, () => {
             const root = toolDataDir("meetings");
@@ -334,15 +334,14 @@ describe("presets", () => {
             const kept = file(join(source, "digest.ogg"), "permanent source fixture");
             const named = { id: "custom-source", description: "fixture", names: ["source-audio", "audio"] };
             const ancestors = [root, meeting, source, dirname(root)];
-            expect(scanPresets(root, [named]).map((match) => match.path)).toEqual([capture]);
+            // The recorded sound is kept for ever while capture.audioRetentionDays is unset, like the source audio.
+            expect(scanPresets(root, [named]).map((match) => match.path)).toEqual([]);
             expect(matchPreset(source, [named])).toBeNull();
-            expect(matchPreset(capture, [named])?.id).toBe("custom-source");
+            expect(matchPreset(capture, [named])).toBeNull();
             const alias = join(dir("permanent-audio-alias"), "meetings");
             symlinkSync(root, alias);
             expect(matchPreset(join(alias, "2026-11-01_10-00-planning", "source-audio"), [named])).toBeNull();
-            expect(scanPresets(alias, [named]).map((match) => match.path)).toEqual([
-                join(alias, "2026-11-01_10-00-planning", "audio"),
-            ]);
+            expect(scanPresets(alias, [named]).map((match) => match.path)).toEqual([]);
             expect(matchPreset(kept, [{ ...named, names: ["*.ogg"] }])).toBeNull();
             for (const candidate of ancestors) {
                 const broad = { id: "custom-broad", description: "fixture", names: [], within: dirname(candidate) };

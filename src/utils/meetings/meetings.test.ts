@@ -94,7 +94,7 @@ describe("meetings config", () => {
         expect(config.global.suggest.questionCap).toBe(12);
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
-        expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: [] } });
+        expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: ["mic", "system"] } });
     });
 
     test("capture.ocr: an old file gains the tile default; explicit read choices are kept", () => {
@@ -211,7 +211,7 @@ describe("meetings config", () => {
         });
         expect(config.global.capture.audioRetentionDays).toBeUndefined();
         expect(config.global.playback.tracks).toBe("best");
-        expect(config.global.capture.recorders.native.audio.sources).toEqual([]);
+        expect(config.global.capture.recorders.native.audio.sources).toEqual(["mic", "system"]);
 
         const set = meetingsConfigSchema.parse({
             global: {

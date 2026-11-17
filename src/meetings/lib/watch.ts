@@ -582,7 +582,12 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
         const config = await new MeetingsConfigStore().read();
         const recorder = readRecorderState(store);
         const skip = recorder.running ? recorder.state?.meetingId : undefined;
-        const result = pruneCapturesDaily(store, { days: config.global.capture.retentionDays, skip });
+        const audioDays = config.global.capture.audioRetentionDays;
+        const result = pruneCapturesDaily(store, {
+            days: config.global.capture.retentionDays,
+            skip,
+            ...(audioDays !== undefined ? { audioDays } : {}),
+        });
 
         if (result && result.plans.length > 0) {
             log.info(
