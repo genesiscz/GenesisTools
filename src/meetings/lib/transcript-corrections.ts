@@ -328,11 +328,16 @@ export function correctTranscript(options: {
     const speakerRanges = record.items.filter(
         (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
     );
-    const covers = (item: { fromSec: number; toSec: number; label: string }, atSec: number | undefined) =>
+    const covers = (
+        item: { fromSec: number; toSec: number; label: string },
+        { atSec, sourceIndex }: { atSec: number | undefined; sourceIndex: number | undefined }
+    ) =>
         atSec !== undefined &&
         atSec >= item.fromSec &&
         atSec <= item.toSec &&
-        sources.labelsAt.get(atSec)?.has(item.label) === true;
+        (sourceIndex !== undefined
+            ? transcript[sourceIndex].speaker === item.label
+            : sources.labelsAt.get(atSec)?.has(item.label) === true);
     // Only a question still open about a voice leaves a line's speaker uncertain; an answered one or a term question
     // does not.
     const speakerQuestions = openQuestions(record).filter((question) => question.about === "speaker");
@@ -348,7 +353,7 @@ export function correctTranscript(options: {
                     : rawEntry;
             const atSec = entry.startSec;
             const finding = speakerRanges.findLast(
-                (item) => item.status === "confirmed" && item.voices && covers(item, atSec)
+                (item) => item.status === "confirmed" && item.voices && covers(item, { atSec, sourceIndex })
             );
             if (finding?.voices) {
                 // The segments count the words of the one line the answer split, the line the range starts on.
@@ -357,7 +362,9 @@ export function correctTranscript(options: {
                 }
                 return [{ ...entry, speaker: `[${unclearLabel}: ${finding.voices.join(" + ")}]` }];
             }
-            const proposals = speakerRanges.filter((item) => item.status !== "rejected" && covers(item, atSec));
+            const proposals = speakerRanges.filter(
+                (item) => item.status !== "rejected" && covers(item, { atSec, sourceIndex })
+            );
             const proposal = proposals.findLast((item) => item.status === "confirmed") ?? proposals.at(-1);
             const confidence = proposal?.confidence;
             const guess = entry.speaker.includes(" %]");

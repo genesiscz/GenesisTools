@@ -759,6 +759,66 @@ test("only an open speaker question marks its lines questioned", () => {
     expect(questioned({ about: "term", heard: "Jak", status: "suggested" })).toBeUndefined();
 });
 
+test("speaker metadata uses each source line's own range when two lines start in one second", () => {
+    const source: TranscriptEntry[] = [
+        { id: "l1", speaker: "Voice A", startSec: 10, text: "The glimble is ready." },
+        { id: "l2", speaker: "Voice B", startSec: 10, text: "The flomble is ready." },
+    ];
+    const record = meetingRecordSchema.parse({
+        ...base,
+        items: [
+            item({
+                id: "i1",
+                kind: "speaker-range",
+                status: "suggested",
+                label: "Voice A",
+                fromSec: 10,
+                toSec: 10,
+                speaker: "Alice Example",
+                confidence: 0.6,
+            }),
+            item({
+                id: "i2",
+                kind: "speaker-range",
+                status: "suggested",
+                label: "Voice B",
+                fromSec: 10,
+                toSec: 10,
+                speaker: "Bob Example",
+                confidence: 0.8,
+            }),
+        ],
+    });
+    const { entries } = correctTranscript({
+        record,
+        transcript: source,
+        config,
+        format: "json",
+        withSuggested: true,
+        applyAbove: 0.7,
+        dictionary: false,
+    });
+
+    expect(entries).toMatchObject([
+        {
+            id: "l1",
+            speaker: "[Alice Example: 60 %]",
+            confidence: 0.6,
+            suggestedSpeaker: "Alice Example",
+            band: "guess",
+            guess: true,
+        },
+        {
+            id: "l2",
+            speaker: "Bob Example",
+            confidence: 0.8,
+            suggestedSpeaker: "Bob Example",
+            band: "applied",
+            guess: false,
+        },
+    ]);
+});
+
 test("a multi-voice split cuts only its own source line, with distinct ids, words and times", () => {
     const timed = (location: number, length: number, startSec: number) => ({
         range: { location, length },
