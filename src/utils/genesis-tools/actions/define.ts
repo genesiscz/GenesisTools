@@ -71,6 +71,7 @@ export interface AppDoor {
 }
 
 export interface AreaStateView {
+    report(key: string, value: StateValue): Promise<void>;
     get<T = unknown>(key: string): StateValue<T> | undefined;
 }
 

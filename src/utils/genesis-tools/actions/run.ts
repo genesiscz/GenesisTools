@@ -167,7 +167,10 @@ function contextFor(params: {
         args: params.args,
         config: params.config,
         areaConfig: deps.config.resolve(areaName),
-        state: { get: (key) => deps.state.get(areaName, key) },
+        state: {
+            get: (key) => deps.state.get(areaName, key),
+            report: (key, value) => deps.state.report(areaName, key, value),
+        },
         facts: deps.facts,
         service: null,
         pass: (reason): Pass => ({ pass: true, reason }),

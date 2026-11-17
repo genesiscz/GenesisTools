@@ -298,3 +298,18 @@ describe("the app surface generator", () => {
         expect(renderAppSurface(readAppSurfaceInput())).toBe(committed);
     });
 });
+
+test("app.hello reports methods to the injected state, and app.rpc returns the reply", async () => {
+    const state = memoryStateStore();
+    const value = { protocol: 1, bundleId: "example.fixture", version: "1", build: "fixture", methods: ["rpc.hello"] };
+    const dir = mkdtempSync(join(tmpdir(), "gt-app-actions-"));
+    const injected = deps({
+        state,
+        config: createConfigStore({ registry: AREAS, file: join(dir, "config.json") }),
+        app: { rpc: async <T>() => ({ ok: true, result: value as T }) },
+    });
+    expect((await runAction(AREAS, "app.hello", {}, injected)).status).toBe("ran");
+    expect(state.get("app", "rpcMethods")?.value).toEqual(["rpc.hello"]);
+    const reply = await runAction(AREAS, "app.rpc", { method: "rpc.hello" }, injected);
+    expect(reply.status === "ran" && reply.value).toEqual(value);
+});
