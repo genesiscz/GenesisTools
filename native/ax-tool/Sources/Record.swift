@@ -207,7 +207,7 @@ private var privateRecorderRoot: URL {
 /// (`RecorderExecutable` has the measurements). In the clone it returns no warning and removes the
 /// clone at exit. When no clone can be made the recording runs from the shared path, and the
 /// returned warning says that another recorder stopping can now end it.
-private func runFromPrivateRecorderCopy() -> [String] {
+func runFromPrivateRecorderCopy() -> [String] {
     if let copy = ProcessInfo.processInfo.environment[RecorderExecutable.environmentKey] {
         unsetenv(RecorderExecutable.environmentKey)
         privateRecorderCopy = URL(fileURLWithPath: copy)

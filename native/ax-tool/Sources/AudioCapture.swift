@@ -112,7 +112,7 @@ private func sampleBufferPeak(_ buffer: CMSampleBuffer) -> Float {
 }
 
 /// The same audio timing and format, all samples zero: muting keeps the timeline instead of leaving a gap.
-private func silentCopy(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
+func silentCopy(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
     guard let format = CMSampleBufferGetFormatDescription(buffer), let data = CMSampleBufferGetDataBuffer(buffer) else { return nil }
     let length = CMBlockBufferGetDataLength(data)
     var block: CMBlockBuffer?
@@ -150,13 +150,15 @@ func audioChannelCount(_ source: CaptureAudioSource) -> Int {
 }
 
 /// One audio source: its movie track, its optional `.m4a` sidecar, the mute state and the measurements.
-private final class AudioTrack {
+final class AudioTrack {
     let source: CaptureAudioSource
     let movieInput: AVAssetWriterInput?
     let sidecarURL: URL?
     private var sidecar: AVAssetWriter?
     private var sidecarInput: AVAssetWriterInput?
     private var sidecarStartFailed = false
+    /// Only continuous sessions fragment open files, so an interrupted segment remains recoverable.
+    var fragmentInterval: CMTime?
     var muted = false
     var peak: Float = 0
     var first: CMTime?
@@ -179,6 +181,9 @@ private final class AudioTrack {
         if sidecar == nil {
             do {
                 let writer = try AVAssetWriter(outputURL: sidecarURL, fileType: .m4a)
+                if let fragmentInterval {
+                    writer.movieFragmentInterval = fragmentInterval
+                }
                 let input = AVAssetWriterInput(mediaType: .audio, outputSettings: aacSettings(channels: audioChannelCount(source)))
                 input.expectsMediaDataInRealTime = true
                 writer.add(input)
