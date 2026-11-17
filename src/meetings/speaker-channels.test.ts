@@ -355,9 +355,11 @@ describe("shared indicator and departure APIs", () => {
         expect(assessment.candidates.map((person) => person.name)).toContain("Carol Example");
         expect(assessment.ignored.has(20)).toBe(false);
         expect(assessment.ignored.has(70)).toBe(true);
+        // Failed reads between two good reads: the indicator is unknown there, never a repeated light (W3, I21).
         const gaps = lines.map((line) => ({
             ...line,
             speaking: line.index > 41 && line.index < 99 ? {} : line.speaking,
+            ...(line.index > 41 && line.index < 99 ? { speakingUnknown: true } : {}),
         }));
         expect(assessIndicator({ lines: gaps, selfName: USER }).ignored.size).toBe(0);
     });
