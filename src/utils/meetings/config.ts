@@ -78,10 +78,13 @@ const nativeRecorderSchema = z.object({
     heartbeatSec: z.number().positive().optional(),
     /** The most megabytes of frames one capture writes. */
     maxMb: z.number().positive().optional(),
-    /** Sound beside the frames, as `.m4a` files in the meeting's `audio/`: off by default (the source records it). */
+    /**
+     * Sound beside the frames, as `.m4a` files in the meeting's `audio/`: the microphone and the system sound by
+     * default, so every meeting keeps its own sound; without a microphone grant the recording keeps the system sound.
+     */
     audio: z
         .object({
-            sources: z.array(z.enum(AUDIO_SOURCES)).default([]),
+            sources: z.array(z.enum(AUDIO_SOURCES)).default(["mic", "system"]),
             /** The microphone's device UID (`ax-tool audio-devices`); unset is the system default input. */
             micDevice: z.string().optional(),
         })
@@ -131,8 +134,8 @@ const captureSchema = z.object({
     /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
     resolutionCap: z.number().int().min(640).max(8192).default(2880),
     /**
-     * The watcher moves a meeting's frames, OCR and recorded sound (`frames/`, `ocr.jsonl`, `audio/`, `audio.jsonl`) to the
-     * trash this many days after its newest capture file; the meeting record stays.
+     * The watcher moves a meeting's frames and OCR (`frames/`, `frames.jsonl`, `ocr.jsonl`) to the trash this many
+     * days after its newest capture file; the meeting record stays. The recorded sound follows `audioRetentionDays`.
      */
     retentionDays: z.number().int().positive().default(30),
     /**
