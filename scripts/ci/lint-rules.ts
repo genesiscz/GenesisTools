@@ -43,6 +43,7 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { APP_CHECK_RATCHET } from "./app-check-ratchet";
 import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
@@ -869,6 +870,31 @@ export function execCallWithoutDeadline(node: SgNode): boolean {
 }
 
 const RULES: Rule[] = [
+    {
+        name: "no-hand-rolled-app-check",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: { rule: { kind: "call_expression" } },
+        onlyIn: /^src\//,
+        allowedIn: /^src\/utils\/(?:genesis-tools\/|macos\/(?:genesis-app(?:-rpc)?|xcode)\.ts$)/,
+        allowedCounts: APP_CHECK_RATCHET,
+        message:
+            "Declare an action need or fix instead of checking the app in a caller. Existing sites are in scripts/ci/app-check-ratchet.ts and may only shrink.",
+        test: (_text, node) => {
+            const fn = node.field("function")?.text() ?? "";
+            if (
+                /^(?:isGenesisAppBundleInstalled|installedGenesisAppLauncher|isGenesisAppRpcAvailable|appCannotAnswer|genesisAppBuildHint)$/.test(
+                    fn
+                )
+            ) {
+                return true;
+            }
+            return (
+                /(?:^|\.)(?:existsSync|exists)$/.test(fn) &&
+                /genesisAppBundlePath\s*\(/.test(node.field("arguments")?.text() ?? "")
+            );
+        },
+    },
     {
         name: "no-exec-without-deadline",
         severity: "error",
@@ -2437,6 +2463,7 @@ export function withinCountRatchets(
  * Established exemption lists are also compared with the base before scoping.
  */
 const RATCHET_INPUTS = [
+    "scripts/ci/app-check-ratchet.ts",
     "scripts/ci/agent-context-ratchet.ts",
     "scripts/ci/exec-deadline-ratchet.ts",
     "scripts/ci/harness-ratchet.ts",
