@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -123,39 +123,21 @@ describe("cross-project store access", () => {
 });
 describe("a store whose project root is unrecorded", () => {
     it("names the id as unrecorded instead of printing a blank path", async () => {
-        const owner = join(SANDBOX, "owner-project");
-        const todo = await TodoStore.forProject(owner).add({ title: "orphan" });
-        const projectsDir = join(SANDBOX, ".genesis-tools", "todo", "projects");
-
-        // Strip every trace of the owning root: no meta.json, and a todo that
-        // carries no context of its own — the shape an import can leave behind.
-        for (const entry of readdirSync(projectsDir)) {
-            const dir = join(projectsDir, entry);
-            if (!readdirSync(dir).includes("todos.json")) {
-                continue;
-            }
-
-            const stored = SafeJSON.parse(readFileSync(join(dir, "todos.json"), "utf-8")) as Array<
-                Record<string, unknown>
-            >;
-
-            if (!stored.some((t) => t.id === todo.id)) {
-                continue;
-            }
-
-            writeFileSync(
-                join(dir, "todos.json"),
-                SafeJSON.stringify(
-                    stored.map((t) => {
-                        const { context: _context, ...rest } = t;
-                        return rest;
-                    }),
-                    null,
-                    2
-                )
-            );
-            rmSync(join(dir, "meta.json"), { force: true });
-        }
+        // Since the work store holds the todos, an unrecorded root comes only from an old todos.json whose folder
+        // lost its meta.json and whose todo carries no context: the shape an import can leave behind.
+        const dir = join(SANDBOX, ".genesis-tools", "todo", "projects", "0123456789ab");
+        mkdirSync(dir, { recursive: true });
+        const todo = {
+            id: "todo_orphan01",
+            title: "orphan",
+            status: "todo",
+            priority: "medium",
+            tags: [],
+            attachments: [],
+            links: [],
+            reminders: [],
+        };
+        writeFileSync(join(dir, "todos.json"), SafeJSON.stringify([todo], null, 2));
 
         const report = await reportMissingTodo(todo.id, join(SANDBOX, "other-project"));
 
