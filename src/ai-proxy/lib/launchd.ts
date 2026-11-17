@@ -15,6 +15,7 @@
  */
 import { join } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
 import {
     bootoutLaunchd,
     defaultPlistLabel,
@@ -47,7 +48,7 @@ export function isAiProxyLaunchdInstalled(): boolean {
 export function buildAiProxyLaunchdOptions(port: number): LaunchdInstallOptions {
     return {
         label: AI_PROXY_LAUNCHD_LABEL,
-        command: ["bun", "run", proxyEntryPath(), "serve", "--port", String(port)],
+        command: ["bun", launcherConfigFlag(), "run", proxyEntryPath(), "serve", "--port", String(port)],
         cwd: toolsRoot(),
         // HOME and a launchd-safe PATH come from resolveCommandForLaunchd. These
         // three only fix the encoding: a launchd agent inherits no shell profile,
