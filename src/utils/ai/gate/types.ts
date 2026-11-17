@@ -106,6 +106,20 @@ export interface VaultGrant {
     method: string;
 }
 
+/**
+ * A vault-key approval for a whole agent session, written by the same window into `vault-session-grants.json`: the
+ * agent's process (its pid and kernel start time, microseconds since 1970) and every process it starts, until `until`.
+ * The app also ends one when that process exits. `sessionId` and `title` are what the window showed.
+ */
+export interface VaultSessionGrant {
+    anchor: { harness: string; pid: number; startedAt: number };
+    sessionId?: string | null;
+    title?: string | null;
+    grantedAt: number;
+    until: number;
+    method: string;
+}
+
 export interface GateGrant {
     key: string;
     clientName: string;

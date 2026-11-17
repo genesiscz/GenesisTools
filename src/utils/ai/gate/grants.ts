@@ -10,7 +10,7 @@ import { redactCredentialFields } from "@genesiscz/utils/security/vault-purpose"
 import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import type { ClientIdentity, GateGrant, GateProvider, TokenKind, VaultGrant } from "./types";
+import type { ClientIdentity, GateGrant, GateProvider, TokenKind, VaultGrant, VaultSessionGrant } from "./types";
 
 const { log } = logger.scoped("ai-gate");
 
@@ -165,9 +165,21 @@ export function listVaultGrants(now = Date.now()): VaultGrant[] {
     return readVaultGrants().filter((grant) => grant.until === null || grant.until > now);
 }
 
-/** Drop vault-key approvals by tool name or key; `"*"` drops every one. The app writes this file by atomic rename. */
-export async function revokeVaultGrants(selector: string): Promise<number> {
-    const path = vaultGrantsPath();
+/**
+ * Rewrites a grants file the app owns, under the lock the app takes for it (`<path>.lock`), keeping what `keep`
+ * accepts. A file that does not parse is moved aside by `readJsonFileForUpdateSync` and starts empty.
+ */
+async function removeAppGrants<File extends { version: 1; grants: unknown[] }, Grant>({
+    path,
+    accepts,
+    grantsOf,
+    keep,
+}: {
+    path: string;
+    accepts: (value: unknown) => value is File;
+    grantsOf: (file: File) => Grant[];
+    keep: (grant: Grant) => boolean;
+}): Promise<number> {
     let removed = 0;
 
     if (!existsSync(path)) {
@@ -177,11 +189,9 @@ export async function revokeVaultGrants(selector: string): Promise<number> {
     await withFileLock(
         `${path}.lock`,
         async () => {
-            const existing = readJsonFileForUpdateSync(path, { accepts: isVaultGrantsFile });
-            const grants = existing.state === "ok" ? normalizedVaultGrants(existing.value.grants) : [];
-            const kept = grants.filter(
-                (grant) => selector !== "*" && grant.key !== selector && grant.tool !== selector
-            );
+            const existing = readJsonFileForUpdateSync(path, { accepts });
+            const grants = existing.state === "ok" ? grantsOf(existing.value) : [];
+            const kept = grants.filter(keep);
             removed = grants.length - kept.length;
             atomicWriteFileSync(path, `${SafeJSON.stringify({ version: 1, grants: kept }, null, 2)}\n`, {
                 mode: 0o600,
@@ -191,6 +201,68 @@ export async function revokeVaultGrants(selector: string): Promise<number> {
     );
 
     return removed;
+}
+
+/** Drop vault-key approvals by tool name or key; `"*"` drops every one. The app writes this file by atomic rename. */
+export async function revokeVaultGrants(selector: string): Promise<number> {
+    return removeAppGrants({
+        path: vaultGrantsPath(),
+        accepts: isVaultGrantsFile,
+        grantsOf: (file) => normalizedVaultGrants(file.grants),
+        keep: (grant) => selector !== "*" && grant.key !== selector && grant.tool !== selector,
+    });
+}
+
+export function vaultSessionGrantsPath(): string {
+    return join(gateDir(), "vault-session-grants.json");
+}
+
+interface VaultSessionGrantsFile {
+    version: 1;
+    grants: VaultSessionGrant[];
+}
+
+function isVaultSessionGrant(value: unknown): value is VaultSessionGrant {
+    return (
+        isJsonObject(value) &&
+        isJsonObject(value.anchor) &&
+        typeof value.anchor.pid === "number" &&
+        typeof value.anchor.startedAt === "number" &&
+        typeof value.until === "number"
+    );
+}
+
+function isVaultSessionGrantsFile(value: unknown): value is VaultSessionGrantsFile {
+    return (
+        isJsonObject(value) &&
+        value.version === 1 &&
+        Array.isArray(value.grants) &&
+        value.grants.every(isVaultSessionGrant)
+    );
+}
+
+/**
+ * Whole-session vault-key approvals whose time has not ended. The app also ends one when its agent process exits,
+ * which this list does not check: a row here can belong to a process that is gone.
+ */
+export function listVaultSessionGrants(now = Date.now()): VaultSessionGrant[] {
+    const path = vaultSessionGrantsPath();
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    const parsed = parseJSON<unknown>(readFileSync(path, "utf8"));
+    return isVaultSessionGrantsFile(parsed) ? parsed.grants.filter((grant) => grant.until > now) : [];
+}
+
+/** Drop session approvals by the session id or the agent's pid; `"*"` drops every one. */
+export async function revokeVaultSessionGrants(selector: string): Promise<number> {
+    return removeAppGrants({
+        path: vaultSessionGrantsPath(),
+        accepts: isVaultSessionGrantsFile,
+        grantsOf: (file) => file.grants,
+        keep: (grant) => selector !== "*" && grant.sessionId !== selector && String(grant.anchor.pid) !== selector,
+    });
 }
 
 /** Drop grants by client key or client name; `"*"` drops every grant. Returns how many went. */
