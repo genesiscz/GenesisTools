@@ -119,7 +119,20 @@ if (args[0] === "audio-record") {
         }
     };
     const state = () => print({ event: "state", state: paused ? "paused" : "recording", sources, muted }, "stderr");
+    if (fixtureMode === "--fixture-audio-session-dies-at-start") {
+        // As the real tool did on 2026-11-17: an error on the first captured buffer, before it was ready.
+        print({ event: "error", message: "could not split system audio at the segment boundary" }, "stderr");
+        process.exit(1);
+    }
+
     state();
+    if (fixtureMode === "--fixture-audio-session-dies-later") {
+        setTimeout(() => {
+            print({ event: "error", message: "the system writer stopped accepting samples" }, "stderr");
+            process.exit(1);
+        }, 150);
+    }
+
     if (fixtureMode === "--fixture-audio-loss") {
         emitSegment(60_000);
     }
