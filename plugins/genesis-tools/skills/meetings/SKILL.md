@@ -140,7 +140,9 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    the original project and do not ask for project assignment again. A normal duplicate retains items and copied
    journal tokens with `copiedFrom`; its Undo changes only the copy. An older journal naming another meeting is
    refused: use a clean copy or resolve that incompatibility explicitly before Undo.
-2. `tools meetings suggest <meeting> --attendance teams`. Attendance uses the linked source's title and
+2. `tools meetings suggest <meeting> --attendance teams`. The meeting needs its project first: without one, `suggest`
+   exits 1 with the `tools meetings set <meeting> --project <name>` command (a terminal shows the project picker
+   instead). Attendance uses the linked source's title and
    transcript clock, including for a renamed copy. Unavailable platform attendance warns, skips E2 and saves the
    other suggestions. A missing or ambiguous Teams chat lists cached candidate titles and IDs; last-message
    proximity does not prove a chat belongs to this call. Select a known chat with `--attendance-id <threadId>`,
@@ -176,6 +178,15 @@ The Meetings window loads suggestions once; its threshold and Probe controls fil
 open. `listen --long-stretch-words 50` prepares the long-stretch group; `--group rules|spot-check|long-stretch|all`
 selects a group. Long stretches split on channel voice-feature changes before naming. The group is retained in rows
 JSON. A sample result measures the share changed among answered sample lines, not a known meeting error rate.
+
+`listen --group words` asks the repeated unknown words: one question per word form heard
+`global.suggest.words.minOccurrences` times or more (default 2), the most heard first, outside the question budget
+and unmarked in the transcript. One answer fixes every place the form is heard (an answer equal to the heard word
+keeps it as heard), and the open word questions whose heard word starts with it get the derived spelling as first
+choice. The dictionary is never changed silently: a terminal asks yes or no at once (Enter is no); every other door
+leaves one dictionary question (`add` or `do not add`) in the same group for the user. `--answer … --learn add`
+writes the entry with the answer and `--learn none` keeps it out; an agent may not answer `add`, so relay the user's
+own yes. The Undo of the answer (`reopen --token`) takes the entry back while it is unchanged.
 
 Several voices takes ordered people. A confirmed line can keep word-indexed segments and render separate turns.
 Unmatched prose remains a comment. The people picker matches accents and name order. Playback pauses while typing;
