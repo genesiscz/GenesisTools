@@ -39,6 +39,9 @@ the user meets, not code style.
    background so the user's pointer and windows are never touched: [references/live-testing.md](references/live-testing.md).
 3. **Walk the checklist** for every view you touch: [references/checklist.md](references/checklist.md), with the
    passes of [references/audit.md](references/audit.md) over your own diff.
+   The checklist covers the views of the requested change. A defect you see in another view is not yours to fix
+   in this change: file it with `tools work spot "<title>" --type bug --where <file:line> --user-sees "<what the
+   user sees>"`, and go on. A wider audit is a request of its own.
 4. **Verify motion with instruments**, not with one screenshot: [references/motion.md](references/motion.md).
    Window frames from the window server, transition callbacks from the app, and only then a recording.
 5. **Evidence in annotated pairs** ([references/screenshots.md](references/screenshots.md): same size and scale,
