@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -103,5 +103,18 @@ describe("continuous sound over the fake tool", () => {
             expect(session).toBeInstanceOf(Error);
         }
         expect(existsSync(join(dir, ".piece", "sound", "audio-000001-system.m4a"))).toBe(true);
+    });
+
+    test("a ledger write failure leaves the closed file where recovery can salvage it", async () => {
+        const dir = folder();
+        mkdirSync(join(dir, "audio.jsonl"));
+        const session = await start(dir, "--fixture-audio-three").catch((error: unknown) => error);
+        if (session instanceof AudioSession) {
+            await expect(session.stop()).rejects.toThrow();
+        } else {
+            expect(session).toBeInstanceOf(Error);
+        }
+        expect(existsSync(join(dir, ".piece", "sound", "audio-000001-mic.m4a"))).toBe(true);
+        expect(readdirSync(join(dir, "audio"))).toEqual([]);
     });
 });
