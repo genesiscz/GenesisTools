@@ -251,6 +251,16 @@ tools ai gate revoke <tool>                        # forget remembered "Always" 
   speaker, `tools cc` and the Codex daemon. Only the `--config=<file>` form works: Bun 1.4.2 runs the argument after
   a bare `--config` as the program. Without the flag, the window says "Extra code may be loaded (bunfig.toml preload
   (started without --config=, …))" and the approval holds once.
+- An agent's own scripts (`bun /tmp/cc/<project>/<session>/run-arm.ts` from a Claude session) are such programs: on
+  2026-11-17 one Claude session asked six times in four minutes for one scratch script. When a process named `claude`,
+  `codex` or `grok` is among the caller's parents, the window also offers "This session for 1 hour" and "This session
+  for 8 hours" (`Sources/Host/VaultSessionGrant.swift`). That approval names the nearest such process by its pid and
+  its kernel start time, so a reused pid is another process, and it covers every process below it, a once-only one
+  included, until its time or until the agent process exits. A process outside that tree still asks. The cost: while
+  it lasts, any code the agent runs, a prompt-injected command included, reads the vault with no window. A T3 Codex
+  app-server runs several threads in one process, so its approval covers all of them; the window's details name the
+  process. `tools ai gate grants` lists them (`vault-session-grants.json`), and `tools ai gate revoke <session id |
+  agent pid>` or `--all` ends them.
 - Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
   the key, and for these commands that decision is made once, here.
 
@@ -631,7 +641,7 @@ here.
 |------|------|
 | `~/.genesis-tools/ai/config.json` | accounts, defaults, aliases |
 | `~/.genesis-tools/security/vault.json` | the encrypted credential vault |
-| `~/.genesis-tools/ai/gate/` | `grants.json`, `vault-grants.json`, `vault-auto-allow.json`, `audit.jsonl` |
+| `~/.genesis-tools/ai/gate/` | `grants.json`, `vault-grants.json`, `vault-session-grants.json`, `vault-auto-allow.json`, `audit.jsonl` |
 | `~/.genesis-tools/ai/statusline/` | `config.json` and the installed `run.ts` |
 | `~/.genesis-tools/ai/usage-sessions.json` | the cached `usage sessions --json` answer |
 | `~/.genesis-tools/ai-usage/cache/` | the last poll's snapshots, poll gates, daemon heartbeat |

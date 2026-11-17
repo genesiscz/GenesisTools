@@ -665,6 +665,11 @@ enum VaultGrants {
     /// claim arbiter is a directory with the suffix below; hold it while creating the PID record and updating.
     /// Never steal here: TypeScript owns stale recovery; an unavailable lock makes this allow once-only.
     static func store(_ grant: VaultGrant, now: Int64, to path: String = path, timeout: TimeInterval = 10) async -> Bool {
+        await withLock(path, timeout: timeout) { save(remember(grant, now: now, in: load(from: path)), to: path) }
+    }
+
+    /// Runs `update` while holding `<path>.lock`, the lock `tools ai gate revoke` takes for the same file.
+    static func withLock(_ path: String, timeout: TimeInterval = 10, _ update: () -> Bool) async -> Bool {
         let lockPath = path + ".lock"
         do {
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
@@ -680,7 +685,7 @@ enum VaultGrants {
                     defer { close(fd); unlink(lockPath) }
                     let pid = Data("\(getpid())\n".utf8)
                     guard pid.withUnsafeBytes({ Darwin.write(fd, $0.baseAddress, $0.count) }) == pid.count else { return false }
-                    return save(remember(grant, now: now, in: load(from: path)), to: path)
+                    return update()
                 }
                 guard errno == EEXIST else { return false }
             } else if errno != EEXIST { return false }
@@ -690,7 +695,7 @@ enum VaultGrants {
     }
 
     @discardableResult
-    static func save(_ file: VaultGrantsFile, to path: String = path) -> Bool {
+    static func save<File: Encodable>(_ file: File, to path: String = path) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(file) else { return false }
@@ -761,6 +766,20 @@ struct VaultWindowContent {
         ApprovalRemember(seconds: nil, title: "Always for this program"),
     ]
 
+    /// The whole agent session that started the caller (`VaultSessionGrant`), offered whenever one did.
+    static let sessionChoices = [
+        ApprovalRemember(seconds: 3_600, title: "This session for 1 hour"),
+        ApprovalRemember(seconds: 8 * 3_600, title: "This session for 8 hours"),
+    ]
+
+    /// The program choices when the program may be remembered, then the session choices when an agent session started
+    /// it. A single choice shows no picker, and the window says why it holds once.
+    static func choices(rememberable: Bool, anchor: VaultSessionAnchor?) -> [ApprovalRemember] {
+        let program = rememberable ? rememberChoices : Array(rememberChoices.prefix(1))
+        let all = program + (anchor == nil ? [] : sessionChoices)
+        return all.count > 1 ? all : []
+    }
+
     static let footnote = "The vault key unlocks every secret GenesisTools stores (AI account tokens and API keys), so an allowed program can read all of them."
 
     static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {
@@ -790,7 +809,7 @@ struct VaultWindowContent {
     }
 
     static func build(_ params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
-                      home: String = NSHomeDirectory()) -> VaultWindowContent {
+                      anchor: VaultSessionAnchor? = nil, home: String = NSHomeDirectory()) -> VaultWindowContent {
         let tool = caller.toolName ?? params.tool
         let starter = caller.ancestors.last.map { "None: started by \($0.command)" } ?? "None: started by launchd"
         var facts = [ApprovalFact("Session", session.summary ?? starter)]
@@ -831,6 +850,10 @@ struct VaultWindowContent {
             details.append(ApprovalFact("cmux tab", tab, monospaced: true))
         }
 
+        if let anchor {
+            details.append(ApprovalFact("“This session”", "\(anchor.label) and every program it starts"))
+        }
+
         let injected = caller.injected
         let asked = GateCredentialRedactor.text(params.purpose).trimmingCharacters(in: .whitespacesAndNewlines)
         let line = GateCredentialRedactor.text(params.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -841,7 +864,8 @@ struct VaultWindowContent {
             command: onlyRuns ? line : nil,
             facts: facts,
             details: details,
-            warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). It can only be allowed once.",
+            warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). "
+                + (anchor == nil ? "It can only be allowed once." : "This program can only be allowed once, or with its whole session."),
             onceOnlyReason: caller.onceOnlyReason)
     }
 }
@@ -1045,6 +1069,14 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
+    let lineage = VaultProcess.lineage(of: caller.pid)
+    let anchor = VaultSessionAnchor.nearest(in: lineage)
+    let sessionGrant = { (at: Int64) in VaultSessionGrants.live(lineage: lineage, now: at, in: VaultSessionGrants.load()) }
+    if let grant = sessionGrant(now) {
+        vaultAudit("session-allowed", params: params, caller: caller, session: session, detail: "session approval: \(grant.anchor.label)")
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session)
+    }
+
     // The caller waits 180 s in all (VAULT_UNLOCK_TIMEOUT_MS); a window of its own needs at least 20 s of that.
     let windowSeconds = 170.0
     let shortestWindow = 20.0
@@ -1061,8 +1093,14 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
+    if lock.waited > 0, let grant = sessionGrant(Int64(Date().timeIntervalSince1970 * 1_000)) {
+        vaultAudit("session-allowed", params: params, caller: caller, session: session, detail: "session approval: \(grant.anchor.label)")
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session)
+    }
+
     let deadlineSeconds = windowSeconds - lock.waited
-    let content = VaultWindowContent.build(params, caller: caller, session: session)
+    let content = VaultWindowContent.build(params, caller: caller, session: session, anchor: anchor)
+    let choices = VaultWindowContent.choices(rememberable: rememberable, anchor: anchor)
     // A host that stops a slow child kills its whole process group: T3 Code gives a provider probe 10 to 20 s, and the
     // window closed with it before anyone could answer. In a group of its own the window stays, and an allow it
     // remembers serves the program's next start. The key itself never reaches a caller that is gone
@@ -1076,7 +1114,7 @@ func unlockVault(_ params: VaultUnlockParams) {
         let model = ApprovalDialogModel(
             title: content.title, purpose: content.purpose, command: content.command, symbol: "key.fill", facts: content.facts,
             details: content.details, warning: content.warning, footnote: VaultWindowContent.footnote,
-            rememberChoices: rememberable ? VaultWindowContent.rememberChoices : [],
+            rememberChoices: choices,
             rememberNote: content.onceOnlyReason.map { "Only once: \($0)" },
             allowTitle: "Use password…",
             deadline: Date().addingTimeInterval(deadlineSeconds), identifier: "vault-unlock", verifier: verifier,
@@ -1096,7 +1134,7 @@ func unlockVault(_ params: VaultUnlockParams) {
             guard !callerGone, !model.answered else { return }
             callerGone = true
             callerExit.cancel()
-            guard rememberable else {
+            guard !choices.isEmpty else {
                 deadline.cancel()
                 vaultPresenter.close()
                 vaultAudit("denied", params: params, caller: caller, session: session, detail: "the caller exited before an answer")
@@ -1127,6 +1165,18 @@ func unlockVault(_ params: VaultUnlockParams) {
                 vaultDeny("the caller exited before an answer")
             }
             Task { @MainActor in
+                if let choice, let anchor, let seconds = choice.seconds, VaultWindowContent.sessionChoices.contains(choice) {
+                    let at = Int64(Date().timeIntervalSince1970 * 1_000)
+                    let grant = VaultSessionGrant(anchor: anchor, sessionId: session.sessionId, title: session.title,
+                                                  grantedAt: at, until: at + Int64(seconds) * 1_000, method: method)
+                    let stored = await VaultSessionGrants.store(grant, now: at)
+                    if !stored { logClick("vault.unlock could not remember the session approval: grant lock or write failed") }
+                    vaultAudit("allowed", params: params, caller: caller, session: session,
+                               detail: "method: \(method); remembered: \(stored ? "session \(seconds / 3_600) h, \(anchor.label)" : "once")")
+                    logClick("vault.unlock decision=allow tool=\(tool) method=\(method) session=\(anchor.label)")
+                    emitVaultKey(remembered: false, params: params, caller: caller, session: session)
+                }
+
                 let forever = rememberable && choice != nil && choice?.seconds == nil
                 var stored = false
                 if rememberable, remember != 0 || forever {
