@@ -44,6 +44,8 @@ export interface AudioTrack {
     path?: string;
     durationMs: number;
     peakDbfs?: number;
+    /** The file's second 0 relative to `CaptureResult.startedAtMs`, from ax-tool's `startMs`. Absent from an older ax-tool. */
+    startOffsetMs?: number;
     /** `[fromMs, toMs]` on the audio file's timeline while the source was muted. */
     mutedSpans: Array<[number, number]>;
     /** What went wrong with this track (its sidecar did not start or finish); a track without `path` lost its sound. */

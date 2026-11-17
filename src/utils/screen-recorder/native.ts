@@ -8,6 +8,7 @@ import { AUDIO_SOURCES, type AudioDevices, type AudioSource } from "./control";
 import { mainDisplay, outputScaleFor, parseDisplayList } from "./displays";
 import { runCaptureProcess } from "./process";
 import {
+    type AudioTrack,
     CAPTURE_ENDINGS,
     CAPTURE_TIMEOUT_GRACE_MS,
     type CapturedFrame,
@@ -65,10 +66,31 @@ const nativeTrack = z.object({
     path: z.string().optional(),
     durationMs: z.number().default(0),
     peakDbfs: z.number().nullable().optional(),
+    /** The track's first sample relative to the first frame (`timestampMs` 0); negative when the sound started first. */
+    startMs: z.number().optional(),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
     /** Why the track's sidecar failed or lost sound (a full disk, a failed writer); it then has no `path`. */
     warnings: z.array(z.string()).default([]),
 });
+type NativeTrack = z.infer<typeof nativeTrack>;
+
+function audioTrackOf(track: NativeTrack): AudioTrack {
+    return {
+        source: track.source,
+        ...(track.path ? { path: track.path } : {}),
+        durationMs: track.durationMs,
+        ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
+        ...(track.startMs !== undefined ? { startOffsetMs: track.startMs } : {}),
+        mutedSpans: track.mutedSpans,
+        ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
+    };
+}
+
+/** One track of ax-tool's capture result, as the recorder hands it on; throws on a row of an unknown shape. */
+export function parseNativeTrack(raw: unknown): AudioTrack {
+    return audioTrackOf(nativeTrack.parse(raw));
+}
+
 const nativeResult = z.object({
     data: z.object({
         frames: z.array(nativeFrame).default([]),
@@ -683,18 +705,7 @@ export class NativeFrameRecorder extends FrameRecorder {
                 frames: kept,
                 ...(ending ? { endedEarly: ending } : {}),
                 ...(stats ? { stats } : {}),
-                ...(tracks
-                    ? {
-                          tracks: tracks.map((track) => ({
-                              source: track.source,
-                              ...(track.path ? { path: track.path } : {}),
-                              durationMs: track.durationMs,
-                              ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
-                              mutedSpans: track.mutedSpans,
-                              ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
-                          })),
-                      }
-                    : {}),
+                ...(tracks ? { tracks: tracks.map(audioTrackOf) } : {}),
             };
         }
 
