@@ -1,0 +1,430 @@
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { basename, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { nanoid } from "nanoid";
+import { captureContext } from "./context";
+import { parseReminders } from "./reminders";
+import type { AddTodoInput, ProjectMeta, Todo, TodoFilters } from "./types";
+
+/**
+ * Agents fire many `tools todo add` calls at once, and each one is a separate
+ * process. The default 5s budget is sized for a single config edit; a burst of
+ * parallel adds queues on a 50ms poll, so a wide fan-out needs more room than
+ * that. The work inside the lock is one read plus two atomic writes, so a wait
+ * this long only ever means "many writers", never "slow writer".
+ */
+const STORE_LOCK_TIMEOUT_MS = 30_000;
+
+export function projectHash(projectRoot: string): string {
+    return createHash("sha256").update(projectRoot).digest("hex").slice(0, 12);
+}
+
+export function defaultStorageRoot(): string {
+    return genesisToolsDir("todo");
+}
+
+export function applyFilters(todos: Todo[], filters: TodoFilters): Todo[] {
+    let result = todos;
+
+    if (filters.status?.length) {
+        result = result.filter((t) => filters.status!.includes(t.status));
+    }
+
+    if (filters.priority?.length) {
+        result = result.filter((t) => filters.priority!.includes(t.priority));
+    }
+
+    if (filters.tags?.length) {
+        result = result.filter((t) => t.tags.some((tag) => filters.tags!.includes(tag)));
+    }
+
+    if (filters.sessionId) {
+        result = result.filter((t) => t.sessionId === filters.sessionId);
+    }
+
+    if (filters.search) {
+        const q = filters.search.toLowerCase();
+        result = result.filter(
+            (t) =>
+                t.title.toLowerCase().includes(q) ||
+                t.description?.toLowerCase().includes(q) ||
+                t.inlineContent?.toLowerCase().includes(q) ||
+                t.tags.some((tag) => tag.toLowerCase().includes(q))
+        );
+    }
+
+    return result;
+}
+
+/**
+ * The todo store before the work store: one `todos.json` per project root. Since P5 of the work-items build it is only
+ * the source of the one import and the archive; `TodoStore` (store.ts) writes the work store.
+ */
+export class FileTodoStore {
+    private projectRoot: string;
+    private projectDir: string;
+    private todosPath: string;
+    private metaPath: string;
+    private attachmentsDir: string;
+    private lockPath: string;
+
+    private constructor(projectRoot: string, storageRoot: string) {
+        this.projectRoot = projectRoot;
+        const hash = projectHash(projectRoot);
+        this.projectDir = join(storageRoot, "projects", hash);
+        this.todosPath = join(this.projectDir, "todos.json");
+        this.metaPath = join(this.projectDir, "meta.json");
+        this.attachmentsDir = join(this.projectDir, "attachments");
+        this.lockPath = join(this.projectDir, "todos.json.lock");
+    }
+
+    static forProject(projectRoot: string, options?: { storageRoot?: string }): FileTodoStore {
+        return new FileTodoStore(projectRoot, options?.storageRoot ?? defaultStorageRoot());
+    }
+
+    private ensureDir(): void {
+        if (!existsSync(this.projectDir)) {
+            mkdirSync(this.projectDir, { recursive: true });
+        }
+    }
+
+    private async readTodos(): Promise<Todo[]> {
+        if (!existsSync(this.todosPath)) {
+            return [];
+        }
+
+        const content = await Bun.file(this.todosPath).text();
+        return SafeJSON.parse(content) as Todo[];
+    }
+
+    private writeTodos(todos: Todo[]): void {
+        this.ensureDir();
+        atomicWriteFileSync(this.todosPath, SafeJSON.stringify(todos, null, 2));
+    }
+
+    private writeMeta(todos: Todo[]): void {
+        const meta: ProjectMeta = {
+            projectRoot: this.projectRoot,
+            name: basename(this.projectRoot),
+            lastAccessed: new Date().toISOString(),
+            todoCount: todos.length,
+        };
+
+        atomicWriteFileSync(this.metaPath, SafeJSON.stringify(meta, null, 2));
+    }
+
+    /** The project this store is bound to — commands print it when an id lives elsewhere. */
+    getProjectRoot(): string {
+        return this.projectRoot;
+    }
+
+    /**
+     * The ONE read-modify-write path. Every mutation re-reads the file under an
+     * exclusive lock, so a writer never persists a list it read before another
+     * writer's commit. Anything slow (git context capture, attachment copies,
+     * markdown reads) must happen BEFORE the call, so the critical section stays
+     * one read and two atomic writes.
+     */
+    private async mutate<T>(apply: (todos: Todo[]) => { todos: Todo[]; result: T }): Promise<T> {
+        this.ensureDir();
+
+        return withFileLock(
+            this.lockPath,
+            async () => {
+                const current = await this.readTodos();
+                const { todos, result } = apply(current);
+                this.writeTodos(todos);
+                this.writeMeta(todos);
+
+                return result;
+            },
+            STORE_LOCK_TIMEOUT_MS
+        );
+    }
+
+    async add(input: AddTodoInput): Promise<Todo> {
+        const id = `todo_${nanoid(8)}`;
+        const context = await captureContext({ projectRoot: this.projectRoot });
+        const reminders = parseReminders(input.reminders ?? []);
+        const links = input.links ?? [];
+
+        let inlineContent: string | undefined;
+
+        if (input.mdFile) {
+            inlineContent = await Bun.file(input.mdFile).text();
+        }
+
+        const attachments: Todo["attachments"] = [];
+
+        if (input.attachFiles?.length) {
+            const todoAttachDir = join(this.attachmentsDir, id);
+            mkdirSync(todoAttachDir, { recursive: true });
+
+            for (const filePath of input.attachFiles) {
+                const filename = basename(filePath);
+                const storedPath = join(todoAttachDir, filename);
+                copyFileSync(filePath, storedPath);
+                attachments.push({ originalPath: filePath, storedPath, filename });
+            }
+        }
+
+        const todo: Todo = {
+            id,
+            title: input.title,
+            description: input.description,
+            status: "todo",
+            priority: input.priority ?? "medium",
+            tags: input.tags ?? [],
+            attachments,
+            inlineContent,
+            context,
+            sessionId: input.sessionId,
+            links,
+            reminders,
+            at: input.at,
+        };
+
+        await this.mutate((todos) => ({ todos: [...todos, todo], result: undefined }));
+
+        return todo;
+    }
+
+    async list(filters?: TodoFilters): Promise<Todo[]> {
+        const todos = await this.readTodos();
+
+        if (!filters) {
+            return todos;
+        }
+
+        return applyFilters(todos, filters);
+    }
+
+    async get(id: string): Promise<Todo | null> {
+        const todos = await this.readTodos();
+        return todos.find((t) => t.id === id) ?? null;
+    }
+
+    /**
+     * Serialize the native side effect for one todo without holding the JSON store lock.
+     * The callback reloads and persists through the ordinary store methods while this
+     * separate lock prevents another process from creating the same EventKit object.
+     */
+    async withSyncLock<T>(todoId: string, fn: () => Promise<T>): Promise<T> {
+        this.ensureDir();
+        const syncLockPath = join(this.projectDir, `sync-${createHash("sha256").update(todoId).digest("hex")}.lock`);
+
+        return withFileLock(syncLockPath, fn, STORE_LOCK_TIMEOUT_MS);
+    }
+
+    /**
+     * Patch a todo from the row as it is AT WRITE TIME, inside the lock.
+     *
+     * `update` takes a patch built before the lock was taken, which is fine for
+     * a field the caller owns outright. A caller that spent seconds in a
+     * platform call first (EventKit) must not write a whole array it derived
+     * from a snapshot, or it silently drops what another writer added while it
+     * waited. `derive` sees the current row instead.
+     *
+     * `derive` runs while the lock is held, so it must be a pure computation on
+     * the row it is given. It must never call back into the store: the lock is
+     * not re-entrant, so a nested mutation waits on its own holder and fails
+     * with `LockTimeoutError` after the full budget.
+     */
+    async updateWith(id: string, derive: (current: Todo) => Partial<Todo>): Promise<Todo> {
+        return this.mutate((todos) => {
+            const index = todos.findIndex((t) => t.id === id);
+
+            if (index === -1) {
+                throw new Error(`Todo not found: ${id}`);
+            }
+
+            const existing = todos[index];
+            const patch = derive(existing);
+            const updated: Todo = {
+                ...existing,
+                ...patch,
+                id: existing.id,
+                context: {
+                    ...existing.context,
+                    ...patch.context,
+                    updatedAt: new Date().toISOString(),
+                },
+            };
+
+            const next = [...todos];
+            next[index] = updated;
+
+            return { todos: next, result: updated };
+        });
+    }
+
+    async update(id: string, patch: Partial<Todo>): Promise<Todo> {
+        return this.updateWith(id, () => patch);
+    }
+
+    async remove(id: string): Promise<boolean> {
+        const removed = await this.mutate((todos) => {
+            const filtered = todos.filter((t) => t.id !== id);
+
+            if (filtered.length === todos.length) {
+                return { todos, result: false };
+            }
+
+            return { todos: filtered, result: true };
+        });
+
+        if (!removed) {
+            return false;
+        }
+
+        const todoAttachDir = join(this.attachmentsDir, id);
+
+        if (existsSync(todoAttachDir)) {
+            rmSync(todoAttachDir, { recursive: true, force: true });
+        }
+
+        return true;
+    }
+
+    async complete(id: string, note?: string): Promise<Todo> {
+        return this.update(id, {
+            status: "done",
+            completedAt: new Date().toISOString(),
+            completionNote: note,
+        });
+    }
+
+    async search(query: string): Promise<Todo[]> {
+        const todos = await this.readTodos();
+        return applyFilters(todos, { search: query });
+    }
+
+    async bulkImport(incoming: Todo[]): Promise<number> {
+        return this.mutate((todos) => {
+            const existingIds = new Set(todos.map((t) => t.id));
+            const toImport = incoming.filter((t) => !existingIds.has(t.id));
+
+            if (toImport.length === 0) {
+                return { todos, result: 0 };
+            }
+
+            return { todos: [...todos, ...toImport], result: toImport.length };
+        });
+    }
+
+    static async listAllProjects(storageRoot?: string): Promise<ProjectMeta[]> {
+        const root = storageRoot ?? defaultStorageRoot();
+        const projectsDir = join(root, "projects");
+
+        if (!existsSync(projectsDir)) {
+            return [];
+        }
+
+        const entries = readdirSync(projectsDir, { withFileTypes: true });
+        const projects: ProjectMeta[] = [];
+
+        for (const entry of entries) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+
+            const metaPath = join(projectsDir, entry.name, "meta.json");
+
+            if (!existsSync(metaPath)) {
+                continue;
+            }
+
+            const content = await Bun.file(metaPath).text();
+            projects.push(SafeJSON.parse(content) as ProjectMeta);
+        }
+
+        return projects;
+    }
+
+    /**
+     * Locate a todo by id across EVERY project store.
+     *
+     * The store directory is a hash of the project root, so an id created under
+     * one project is simply absent from another cwd. Commands use this to name
+     * the project that holds the id, instead of printing a bare "Todo not found"
+     * that reads as "this id does not exist".
+     */
+    static async findTodo(id: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
+        const root = storageRoot ?? defaultStorageRoot();
+        const projectsDir = join(root, "projects");
+
+        if (!existsSync(projectsDir)) {
+            return null;
+        }
+
+        for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+
+            const todosPath = join(projectsDir, entry.name, "todos.json");
+
+            if (!existsSync(todosPath)) {
+                continue;
+            }
+
+            const todos = SafeJSON.parse(await Bun.file(todosPath).text()) as Todo[];
+            const todo = todos.find((t) => t.id === id);
+
+            if (!todo) {
+                continue;
+            }
+
+            const metaPath = join(projectsDir, entry.name, "meta.json");
+            let projectRoot = todo.context?.projectRoot ?? "";
+
+            if (existsSync(metaPath)) {
+                const meta = SafeJSON.parse(await Bun.file(metaPath).text()) as ProjectMeta;
+                projectRoot = meta.projectRoot;
+            }
+
+            return { todo, projectRoot };
+        }
+
+        return null;
+    }
+
+    static async listAll(filters?: TodoFilters, storageRoot?: string): Promise<Todo[]> {
+        const root = storageRoot ?? defaultStorageRoot();
+        const projectsDir = join(root, "projects");
+
+        if (!existsSync(projectsDir)) {
+            return [];
+        }
+
+        const entries = readdirSync(projectsDir, { withFileTypes: true });
+        const allTodos: Todo[] = [];
+
+        for (const entry of entries) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+
+            const todosPath = join(projectsDir, entry.name, "todos.json");
+
+            if (!existsSync(todosPath)) {
+                continue;
+            }
+
+            const content = await Bun.file(todosPath).text();
+            const todos = SafeJSON.parse(content) as Todo[];
+
+            if (filters) {
+                allTodos.push(...applyFilters(todos, filters));
+            } else {
+                allTodos.push(...todos);
+            }
+        }
+
+        return allTodos;
+    }
+}
