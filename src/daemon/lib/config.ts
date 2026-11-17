@@ -42,6 +42,16 @@ export function getPidFile(): string {
     return join(resolveBaseDir(), "daemon.pid");
 }
 
+/**
+ * The working folder of every task: an empty folder nothing writes into. GenesisTools.app refuses to remember, or to
+ * auto-allow, a vault-key request from a bun process whose working folder changed after it started, because a
+ * self-deleting bunfig.toml preload looks exactly like that (`untrustedBunfigPreloads` in VaultUnlock.swift). The home
+ * folder changes every few seconds, so in it 24 of 1771 usage polls (2026-11-16..17) put up a Touch ID window.
+ */
+export function taskWorkingDir(): string {
+    return join(resolveBaseDir(), "task-cwd");
+}
+
 export async function ensureStorage(): Promise<void> {
     await getStorage().ensureDirs();
     mkdirSync(getLogsBaseDir(), { recursive: true });
