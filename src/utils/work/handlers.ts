@@ -426,7 +426,7 @@ export const workHandlers: WorkHandlers = {
                     state: "pending",
                     updatedTs: sync.deps.now(),
                 },
-                push: { pushed: 0, held: 0, failed: 0, cursor: -1 },
+                push: { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 },
             });
         }
 

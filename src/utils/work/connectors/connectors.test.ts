@@ -161,6 +161,20 @@ describe("the sync consumer", () => {
     });
 });
 
+describe("drift in the other direction", () => {
+    test("a local edit of a fact the outside owns is not pushed and marks the pairing drift", async () => {
+        fake.remote.set("R-5", { remoteKey: "R-5", title: "made outside", state: "open" });
+        const made = await pullRemote(deps(), "fake", ["R-5"]);
+        const id = made.made[0];
+        await runSyncOnce(deps());
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "renamed here" });
+        const report = await runSyncOnce(deps());
+        expect(report.drift).toBe(1);
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "drift" });
+        expect(selectPairings(db, { item: id })[0].note).toContain("title");
+    });
+});
+
 describe("the connector config", () => {
     test("a later layer wins key by key; settings and push merge; an unnamed connector is null", () => {
         const { config } = connectorConfigOf(
