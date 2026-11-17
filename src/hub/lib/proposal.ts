@@ -8,7 +8,7 @@ import { xxhash } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBundlePath, isGenesisAppBundleInstalled } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Storage } from "@genesiscz/utils/storage";
@@ -646,7 +646,7 @@ export function proposalMarkdown(proposal: ReviewProposal): string {
 export function hubStatus(): { available: boolean; bundlePath: string; reason?: string } {
     const bundlePath = genesisAppBundlePath();
 
-    if (!existsSync(bundlePath)) {
+    if (!isGenesisAppBundleInstalled(bundlePath)) {
         return {
             available: false,
             bundlePath,

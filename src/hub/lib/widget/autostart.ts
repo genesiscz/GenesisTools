@@ -1,8 +1,7 @@
-import { existsSync } from "node:fs";
 import { readManifest } from "@app/macos/lib/permissions/app";
 import { installedParts } from "@app/macos/lib/permissions/parts";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBundlePath, isGenesisAppBundleInstalled } from "@genesiscz/utils/macos/genesis-app";
 import { findProcesses } from "@genesiscz/utils/process/processes";
 import { readWidgetState } from "./storage";
 
@@ -28,7 +27,7 @@ const defaultDeps: WidgetAutostartDeps = {
     showWidget: async () => (await readWidgetState()).preferences.showWidget,
     bundle: () => {
         const bundle = genesisAppBundlePath();
-        return existsSync(bundle) ? bundle : null;
+        return isGenesisAppBundleInstalled(bundle) ? bundle : null;
     },
     widgetBuilt: () => installedParts(readManifest()).includes("widget"),
     widgetRunning: () => findProcesses({ command: WIDGET_PROCESS }).length > 0,
