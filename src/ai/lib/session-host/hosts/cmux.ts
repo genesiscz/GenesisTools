@@ -94,8 +94,8 @@ function actionsFor(state: { live: boolean | null; unreachable?: string }): Sess
     };
 }
 
-/** First non-empty stderr line, without the CLI's status glyph. */
-function firstLine(stderr: string): string {
+/** Why the CLI refused: its first non-empty stderr line, without its status glyph. */
+function cliReason(stderr: string): string {
     const line = stderr
         .split("\n")
         .map((part) => part.trim())
@@ -119,7 +119,7 @@ async function focus(sessionId: string, deps: CmuxHostDeps): Promise<SessionHost
         return { ok: true, detail: "Raised the session's cmux pane." };
     }
 
-    return { ok: false, reason: result.stderr ? firstLine(result.stderr) : "No cmux pane holds this session." };
+    return { ok: false, reason: result.stderr ? cliReason(result.stderr) : "No cmux pane holds this session." };
 }
 
 async function send(sessionId: string, text: string, deps: CmuxHostDeps): Promise<SessionHostActResult> {
@@ -130,14 +130,14 @@ async function send(sessionId: string, text: string, deps: CmuxHostDeps): Promis
         case "typed":
             return { ok: true, detail: `Typed "${text}" into the session's cmux pane.` };
         case "refused":
-            return { ok: false, reason: receipt.reason ?? firstLine(result.stderr) };
+            return { ok: false, reason: receipt.reason ?? cliReason(result.stderr) };
         case "unconfirmed":
             return {
                 ok: false,
                 reason: `cmux did not confirm the text arrived${receipt.reason ? `: ${receipt.reason}` : ""}.`,
             };
         case "unreadable":
-            return { ok: false, reason: firstLine(result.stderr) };
+            return { ok: false, reason: cliReason(result.stderr) };
     }
 }
 
