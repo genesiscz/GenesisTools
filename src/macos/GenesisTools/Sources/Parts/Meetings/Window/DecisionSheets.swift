@@ -148,13 +148,18 @@ struct ReachList: View {
                 Label("\(Plural.count(lines, "line")) of the transcript", systemImage: "text.alignleft").font(.system(size: 12.5))
             }
             ForEach(pending.reach.spelling == nil ? pending.reach.dictionary.filter(\.teaches) : [], id: \.self) { entry in
-                Label("The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
-                      + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : ""),
+                Label(Self.dictionaryWords(entry),
                       systemImage: "character.book.closed")
                     .font(.system(size: 12.5))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func dictionaryWords(_ entry: DecisionReach.Dictionary) -> String {
+        if entry.adds == true { return "Adds “\(entry.heard)” → “\(entry.fixed)” to the \(entry.project ?? "meeting") dictionary now" }
+        return "The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
+            + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : "")
     }
 
     /// "It also closes Q12, about the same span: …"; a question no row names is counted, never shown by its id.
@@ -180,23 +185,24 @@ private struct SpellingReachChoices: View {
     @Binding var selected: Set<Int>
     @Binding var teachDictionary: Bool
     let detail: MeetingDetailModel
+    var readOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !spelling.occurrences.isEmpty {
-                HStack {
+                if !readOnly { HStack {
                     Text("Apply spelling to \(selected.count) of \(spelling.occurrences.count) lines").font(.headline)
                     Spacer()
                     Button("All") { selected = Set(spelling.occurrences.map(\.line)) }
                     Button("Only this line") { selected = Set(spelling.occurrences.filter(\.primary).map(\.line)) }
                         .disabled(!spelling.occurrences.contains(where: \.primary))
-                }
+                } }
                 ForEach(spelling.occurrences) { line in
                     HStack(alignment: .top, spacing: 8) {
-                        Toggle("Include line at \(MeetingsFormat.clock(line.atSec))", isOn: Binding(
+                        if !readOnly { Toggle("Include line at \(MeetingsFormat.clock(line.atSec))", isOn: Binding(
                             get: { selected.contains(line.line) },
                             set: { if $0 { selected.insert(line.line) } else if !line.primary { selected.remove(line.line) } }))
-                            .labelsHidden().toggleStyle(.checkbox).disabled(line.primary)
+                            .labelsHidden().toggleStyle(.checkbox).disabled(line.primary) }
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 if let player = detail.window?.player {
@@ -211,10 +217,28 @@ private struct SpellingReachChoices: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Divider()
+            if !readOnly { Divider()
             Toggle("Use this correction for dictionary suggestions", isOn: $teachDictionary).toggleStyle(.checkbox)
                 .help("Keep this off when the spelling is specific to these lines")
+            }
         }
+    }
+}
+
+struct WordOccurrencesSheet: View {
+    let spelling: DecisionReach.Spelling
+    let detail: MeetingDetailModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("This also affects").font(.headline)
+            FittedScroll(maxHeight: 360) {
+                SpellingReachChoices(spelling: spelling, selected: .constant([]), teachDictionary: .constant(false),
+                                     detail: detail, readOnly: true)
+            }
+            HStack { Spacer(); Button("Done", action: close).keyboardShortcut(.defaultAction) }
+        }.padding(18).frame(width: 480).closesOnEscape(close)
     }
 }
 

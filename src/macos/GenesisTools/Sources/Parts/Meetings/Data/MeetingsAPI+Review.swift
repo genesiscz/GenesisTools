@@ -353,6 +353,7 @@ struct DecisionReach: Decodable, Equatable {
         let fixed: String
         let seenBefore: Int
         let teaches: Bool
+        var adds: Bool? = nil
     }
 
     let items: [Item]
@@ -742,6 +743,7 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     let confidence: Double?
     let priority: Double?
     var group: String? = nil
+    var occurrences: Int? = nil
     var reach: Double? = nil
     var comment: String? = nil
     /// The one-line text `items` prints.

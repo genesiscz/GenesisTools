@@ -51,7 +51,56 @@ enum ItemsFilter: String, CaseIterable {
     }
 }
 
+struct RepeatedWordRow: View {
+    let row: ReviewRow
+    let item: MeetingItem
+    let detail: MeetingDetailModel
+    @State private var places: DecisionReach.Spelling?
+    @State private var readingPlaces = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(verbatim: "“\(item.heard ?? row.what)”").font(.headline)
+                Button { openPlaces() } label: {
+                    Text(verbatim: "\(row.occurrences ?? 1)×").monospacedDigit()
+                }.buttonStyle(.genHoverPlain()).disabled(readingPlaces)
+                    .instantTooltip("Show every place this word is heard")
+                    .accessibilityLabel("\(row.occurrences ?? 1) occurrences")
+                Spacer(minLength: 0)
+            }
+            ReviewRowView(row: row, detail: detail, player: detail.window?.player)
+        }
+        .padding(.vertical, 8).liveRow(selected: detail.selectedRow == row.id)
+        .sheet(isPresented: Binding(get: { places != nil }, set: { if !$0 { places = nil } })) {
+            if let places { WordOccurrencesSheet(spelling: places, detail: detail) { self.places = nil } }
+        }
+    }
+
+    private func openPlaces() {
+        guard let term = item.decides?.first ?? item.dictionaryTarget else { return }
+        readingPlaces = true
+        Task {
+            defer { readingPlaces = false }
+            do {
+                let plan = try await MeetingDetailModel.planDecision(meeting: detail.id,
+                    action: .respell(term, to: item.heard ?? row.answer ?? ""), reason: nil, service: detail.service)
+                places = plan?.reach.spelling
+            } catch { detail.notices.push(.meetingsFailure(error) { openPlaces() }) }
+        }
+    }
+}
+
 struct ItemsTab: View {
+    static let questionGroups = [(id: "rules", title: "Rules"), (id: "spot-check", title: "Spot check"),
+                                 (id: "long-stretch", title: "Long stretches"), (id: "words", title: "Repeated words")]
+
+    static func wordRows(_ rows: [ReviewRow], items: [MeetingItem]) -> [ReviewRow] {
+        let attached = Set(items.filter { $0.group == "words" && $0.about == "term" }
+            .compactMap { $0.dictionaryQuestion(in: items)?.id })
+        return rows.filter { !attached.contains($0.id) }
+    }
+
     @Bindable var detail: MeetingDetailModel
     @FocusState private var focused: Bool
 
@@ -101,9 +150,10 @@ struct ItemsTab: View {
         let visible = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
                                                    decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
                                                    keeping: detail.heldFolds)
-        let shown = kind.rows(visible).filter { questionGroup == "all" || ($0.group ?? "rules") == questionGroup }
-        let ids = shown.map(\.id)
         let items = detail.record.value?.items ?? []
+        let grouped = Self.wordRows(visible.filter { $0.group != "words" } + rows.rows.filter { $0.group == "words" }, items: items)
+        let shown = kind.rows(grouped).filter { questionGroup == "all" || ($0.group ?? "rules") == questionGroup }
+        let ids = shown.map(\.id)
         // The bar above the list says how many rows wait when it shows; the list's own title says it when it does not.
         let barShows = BulkConfirmBar.shows(items)
         return ScrollViewReader { proxy in
@@ -139,12 +189,16 @@ struct ItemsTab: View {
                             }
                         }
                     }
-                    Picker("Question group", selection: $questionGroup) {
-                        Text("All").tag("all")
-                        ForEach(["rules", "spot-check", "long-stretch"], id: \.self) { group in
-                            Text("\(group) (\(rows.rows.filter { ($0.group ?? "rules") == group && $0.isQuestion }.count))").tag(group)
+                    WrapLayout(spacing: 6, lineSpacing: 4) {
+                        Button("All") { questionGroup = "all" }.buttonStyle(.genHoverPlain())
+                        ForEach(Self.questionGroups, id: \.id) { group in
+                            let count = grouped.filter { ($0.group ?? "rules") == group.id && $0.isQuestion }.count
+                            Button { questionGroup = group.id } label: {
+                                Badge("\(group.title) (\(count))", color: KitHue.ask.ink,
+                                      look: questionGroup == group.id ? .filled : .tag)
+                            }.buttonStyle(.genHoverPlain()).accessibilityAddTraits(questionGroup == group.id ? .isSelected : [])
                         }
-                    }.pickerStyle(.segmented)
+                    }.padding(.horizontal, 16)
                     if !barShows {
                         ItemsHeader(text: Self.waitingWords(open: open))
                     }
@@ -164,6 +218,10 @@ struct ItemsTab: View {
                         // meanwhile (its one use), so typing in an editor does not re-run this list.
                         let busy = detail.busyItems.contains(row.id)
                         let meanwhile = detail.decidedMeanwhile[row.id]
+                        Group {
+                        if row.group == "words", let item = items.first(where: { $0.id == row.id }) {
+                            RepeatedWordRow(row: row, item: item, detail: detail)
+                        } else {
                         ReviewRowView(row: row, detail: detail, player: player,
                                       play: player.map { MomentPlay.of($0, meeting: detail.id, targets: ReviewRowView.targets(row)) } ?? .none,
                                       selected: detail.selectedRow == row.id, editing: detail.editingRow == row.id, busy: busy,
@@ -177,6 +235,8 @@ struct ItemsTab: View {
                                           focused = true
                                       })
                             .equatable()
+                        }
+                        }
                             // G33: a row this window just answered keeps its open height until the reader scrolls, so
                             // the next row does not move up under the eye.
                             .frame(minHeight: detail.heldFolds.contains(row.id) ? layout.heights[row.id] : nil, alignment: .top)
