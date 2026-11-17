@@ -1,12 +1,15 @@
-import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive } from "@genesiscz/utils/cli";
-import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
+import {
+    DIALOG_SYSTEM,
+    type DialogSystem,
+    SYSTEM_DIALOG_PROGRAMS,
+    showSystemDialog,
+} from "@genesiscz/utils/genesis-tools/areas/person/system-dialog";
 import { logger, out } from "@genesiscz/utils/logger";
 import { appCannotAnswer, type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
-import { appleScriptString } from "@genesiscz/utils/macos/jxa";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type RmApproval, rmConfigPath } from "./config";
 import type { FolderStats, ItemGit } from "./item-facts";
@@ -230,9 +233,8 @@ export const ROOT_PERSON_CHECK_REFUSAL =
 
 const MAX_DIALOG_LINES = 15;
 
-/** The dialog programs `PERSON_DIALOGS` looks for, for the line that says none was found. */
-const DIALOG_PROGRAMS =
-    "osascript on macOS, zenity or kdialog on Linux, PowerShell on Windows, each from its system folder only";
+/** The title of the dialog on every platform. */
+const DIALOG_TITLE = "Confirm deletion";
 
 /** How long the typed code waits for the sizes before it asks without the rest. */
 export const TYPED_SIZES_WAIT_MS = 30_000;
@@ -294,221 +296,6 @@ async function askTyped(prompt: ApprovalPrompt): Promise<boolean> {
     }
 }
 
-/** The title of the dialog on every platform. */
-const DIALOG_TITLE = "Confirm deletion";
-
-/** A dialog gives up after this long; the process is killed 10 s later if its program does not. */
-const DIALOG_GIVE_UP_S = 600;
-
-export interface DialogResult {
-    exitCode: number | null;
-    stdout: string;
-}
-
-/** What a person dialog needs from the system. Tests pass a fake, so no dialog opens in a test. */
-export interface DialogSystem {
-    /** Whether `path` is a program only an administrator could have put there (`isTrustedDialogProgram`). */
-    trusted: (path: string) => boolean;
-    /** Runs `argv` with only the variables of `environment` until it exits; its exit code and stdout. */
-    run: (argv: string[], environment: Record<string, string>) => DialogResult;
-    /** A graphical session a window can open on (Linux: DISPLAY or WAYLAND_DISPLAY is set). */
-    hasDisplay: () => boolean;
-}
-
-/** One platform's dialog, with Approve and Cancel and Cancel as the default button. */
-export interface PersonDialog {
-    /** The argv that shows `body`, or null when no trusted program for it is installed. */
-    command: (body: string, system: DialogSystem) => string[] | null;
-    /** Only an explicit Approve: a cancel, a timeout or a failed program is a no. */
-    approved: (result: DialogResult) => boolean;
-    /** The PATH the program runs with: the platform's system folders, never the caller's PATH. */
-    searchPath: string;
-}
-
-/**
- * Where each dialog program may live: system folders only an administrator can write to. A dialog program is never
- * looked up on PATH: an agent can put its own folder first on PATH with a `zenity` (or `osascript`) that exits 0,
- * and its Approve would count as a person's. The Windows paths are fixed as well, since `SystemRoot` is a variable
- * an agent can set too.
- */
-export const DIALOG_PROGRAM_PATHS = {
-    osascript: ["/usr/bin/osascript"],
-    zenity: ["/usr/bin/zenity", "/bin/zenity"],
-    kdialog: ["/usr/bin/kdialog", "/bin/kdialog"],
-    powershell: [
-        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-    ],
-} as const satisfies Record<string, readonly string[]>;
-
-/**
- * A dialog program only an administrator could have put there: a regular file owned by root that neither its group
- * nor others may write (a symlink counts as the file it points to, and only root could place the link). Windows
- * reports no owner in `stat`: there the fixed paths under the Windows and Program Files folders, which only an
- * administrator may write, are the whole check.
- */
-export function isTrustedDialogProgram(path: string, platform: NodeJS.Platform = process.platform): boolean {
-    try {
-        const stat = statSync(path, { throwIfNoEntry: false });
-
-        if (!stat?.isFile()) {
-            return false;
-        }
-
-        return platform === "win32" || (stat.uid === 0 && (stat.mode & 0o022) === 0);
-    } catch (error) {
-        logger.debug({ path, error }, "rm: cannot read a dialog program");
-        return false;
-    }
-}
-
-function trustedProgram(system: DialogSystem, paths: readonly string[]): string | null {
-    return paths.find((path) => system.trusted(path)) ?? null;
-}
-
-/**
- * The variables a dialog program gets besides PATH: the session's display and message bus, the user's home and
- * language, and what Windows needs to start a program. Everything else stays behind: LD_PRELOAD, GTK_MODULES or a
- * PATH with the agent's folder first would run the agent's code inside the trusted program.
- */
-const DIALOG_ENV_KEYS = [
-    "DISPLAY",
-    "WAYLAND_DISPLAY",
-    "XAUTHORITY",
-    "XDG_RUNTIME_DIR",
-    "DBUS_SESSION_BUS_ADDRESS",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "TMPDIR",
-    "LANG",
-    "LC_ALL",
-    "LC_MESSAGES",
-    "SystemRoot",
-    "SystemDrive",
-    "windir",
-    "USERPROFILE",
-    "TEMP",
-    "TMP",
-] as const;
-
-/** The whole environment a dialog program starts with: `DIALOG_ENV_KEYS` that are set, and `searchPath` as PATH. */
-export function dialogEnvironment(searchPath: string): Record<string, string> {
-    const environment: Record<string, string> = { PATH: searchPath };
-
-    for (const key of DIALOG_ENV_KEYS) {
-        const value = env.get(key);
-
-        if (value !== undefined) {
-            environment[key] = value;
-        }
-    }
-
-    return environment;
-}
-
-const MAC_DIALOG: PersonDialog = {
-    command: (body, system) => {
-        const osascript = trustedProgram(system, DIALOG_PROGRAM_PATHS.osascript);
-        const script =
-            `display dialog ${appleScriptString(body)} with title "${DIALOG_TITLE}" ` +
-            `buttons {"Cancel", "Approve"} default button "Cancel" cancel button "Cancel" with icon caution giving up after ${DIALOG_GIVE_UP_S}`;
-        return osascript ? [osascript, "-e", script] : null;
-    },
-    approved: ({ exitCode, stdout }) =>
-        exitCode === 0 && stdout.includes("button returned:Approve") && !stdout.includes("gave up:true"),
-    searchPath: "/usr/bin:/bin",
-};
-
-/** zenity (GNOME and most desktops), else kdialog (KDE). Both exit 0 only for Approve. */
-const LINUX_DIALOG: PersonDialog = {
-    command: (body, system) => {
-        if (!system.hasDisplay()) {
-            return null;
-        }
-
-        const zenity = trustedProgram(system, DIALOG_PROGRAM_PATHS.zenity);
-
-        if (zenity) {
-            // --no-markup: a path with < or & is shown as it is, not read as Pango markup.
-            return [
-                zenity,
-                "--question",
-                `--title=${DIALOG_TITLE}`,
-                `--text=${body}`,
-                "--no-markup",
-                "--ok-label=Approve",
-                "--cancel-label=Cancel",
-                "--default-cancel",
-                `--timeout=${DIALOG_GIVE_UP_S}`,
-                "--width=640",
-            ];
-        }
-
-        const kdialog = trustedProgram(system, DIALOG_PROGRAM_PATHS.kdialog);
-        return kdialog
-            ? [
-                  kdialog,
-                  "--title",
-                  DIALOG_TITLE,
-                  "--warningyesno",
-                  body,
-                  "--yes-label",
-                  "Approve",
-                  "--no-label",
-                  "Cancel",
-              ]
-            : null;
-    },
-    approved: ({ exitCode }) => exitCode === 0,
-    searchPath: "/usr/bin:/bin",
-};
-
-/**
- * A Windows Forms message box through PowerShell, No as the default button. The text goes in as base64, so a path
- * with quotes or `$` is never read as PowerShell.
- */
-const WINDOWS_DIALOG: PersonDialog = {
-    command: (body, system) => {
-        const powershell = trustedProgram(system, DIALOG_PROGRAM_PATHS.powershell);
-
-        if (!powershell) {
-            return null;
-        }
-
-        const text = Buffer.from(`${body}\n\nYes approves.`, "utf8").toString("base64");
-        const script = [
-            "Add-Type -AssemblyName System.Windows.Forms",
-            `$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${text}'))`,
-            `[System.Windows.Forms.MessageBox]::Show($text, '${DIALOG_TITLE}', 'YesNo', 'Warning', 'Button2', 'DefaultDesktopOnly')`,
-        ].join("; ");
-        return [powershell, "-NoProfile", "-Command", script];
-    },
-    approved: ({ exitCode, stdout }) => exitCode === 0 && stdout.trim() === "Yes",
-    searchPath: "C:\\Windows\\System32;C:\\Windows",
-};
-
-/** The dialog each platform asks a person with; a platform missing here has none, and `confirmByPerson` refuses. */
-export const PERSON_DIALOGS: Partial<Record<NodeJS.Platform, PersonDialog>> = {
-    darwin: MAC_DIALOG,
-    linux: LINUX_DIALOG,
-    win32: WINDOWS_DIALOG,
-};
-
-const DIALOG_SYSTEM: DialogSystem = {
-    trusted: (path) => isTrustedDialogProgram(path),
-    run: (argv, environment) => {
-        const proc = Bun.spawnSync(argv, {
-            env: environment,
-            stdout: "pipe",
-            stderr: "pipe",
-            timeout: (DIALOG_GIVE_UP_S + 10) * 1000,
-        });
-        return { exitCode: proc.exitCode, stdout: new TextDecoder().decode(proc.stdout) };
-    },
-    hasDisplay: () => env.device.hasGraphicalDisplay(),
-};
-
 /**
  * Shows every line of `prompt` in the platform's dialog (`confirmByPerson` never sends more than MAX_DIALOG_LINES):
  * true for Approve, false for anything else, null when the platform has no dialog program.
@@ -518,20 +305,11 @@ export function showPersonDialog(
     platform: NodeJS.Platform = process.platform,
     system: DialogSystem = DIALOG_SYSTEM
 ): boolean | null {
-    const dialog = PERSON_DIALOGS[platform];
-    const argv = dialog?.command(`${prompt.title}\n\n${prompt.lines.join("\n")}`, system) ?? null;
-
-    if (!dialog || !argv) {
-        logger.debug({ platform }, "rm: no dialog program to ask a person with");
-        return null;
-    }
-
-    const result = system.run(argv, dialogEnvironment(dialog.searchPath));
-    logger.debug(
-        { program: argv[0], exitCode: result.exitCode, answer: result.stdout.trim() },
-        "rm: approval dialog answered"
+    return showSystemDialog(
+        { title: DIALOG_TITLE, body: `${prompt.title}\n\n${prompt.lines.join("\n")}` },
+        platform,
+        system
     );
-    return dialog.approved(result);
 }
 
 /** A person reads the window and touches the sensor; the app gives up at 170 s and says why. */
@@ -872,7 +650,7 @@ export async function confirmByPerson(
         return {
             approved: false,
             via: "none",
-            detail: `no dialog program on ${deps.platform} can ask a person (${DIALOG_PROGRAMS}), and nothing else proves a person answered; to accept a typed code on a terminal, set "approval": "code" in ${rmConfigPath()} yourself`,
+            detail: `no dialog program on ${deps.platform} can ask a person (${SYSTEM_DIALOG_PROGRAMS}), and nothing else proves a person answered; to accept a typed code on a terminal, set "approval": "code" in ${rmConfigPath()} yourself`,
         };
     }
 

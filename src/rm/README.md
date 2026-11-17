@@ -289,7 +289,7 @@ agent, else the dialog). `tools rm config set approval code` asks the person the
 window ends without an answer (a rebuild of the app replaced it), `tools rm` asks the app once more instead of
 putting up the dialog as a second prompt.
 
-The dialog is one entry per platform in `PERSON_DIALOGS` (`src/utils/rm/approval.ts`), each with Cancel (or No) as
+The dialog is one entry per platform in `PERSON_DIALOGS` (`src/utils/genesis-tools/areas/person/system-dialog.ts`), each with Cancel (or No) as
 the default button: `osascript` on macOS; `zenity --question`, else `kdialog --warningyesno`, on Linux with a display
 (`DISPLAY` or `WAYLAND_DISPLAY`); a Windows Forms message box through `powershell -NoProfile -Command` on Windows
 (the text goes in as base64, so a path is never read as PowerShell). Each program comes from its system folder only
