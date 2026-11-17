@@ -337,6 +337,7 @@ export const decisionReachSchema = z.object({
             fixed: z.string(),
             seenBefore: z.number().int().nonnegative(),
             teaches: z.boolean(),
+            adds: z.literal(true).optional(),
         })
     ),
     /**
