@@ -62,7 +62,8 @@ final class RequestPresenter {
         let deadline = DispatchWorkItem { MainActor.assumeIsolated { finish(.value4, "The window wait ended; the request stays open.") } }
         timeout = deadline
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0.001, params.deadlineSeconds ?? 120), execute: deadline)
-        panel.present(model)
+        // The person area owns notice sound/repetition; generic approval reminders would post a second notice.
+        panel.present(model, reminders: false)
         if params.takesFocus ?? true { NSApp.activate(ignoringOtherApps: true) }
     }
 }

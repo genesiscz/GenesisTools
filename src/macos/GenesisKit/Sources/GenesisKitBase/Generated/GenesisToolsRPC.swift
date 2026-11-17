@@ -49,6 +49,23 @@ public struct AppHelloResultOption0Value: Codable, Sendable {
         self.`build` = `build`
         self.`methods` = `methods`
     }
+    private enum CodingKeys: String, CodingKey { case `protocol`; case `bundleId`; case `version`; case `build`; case `methods` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`protocol` = try box.decode(Double.self, forKey: .`protocol`)
+        self.`bundleId` = try box.decode(String.self, forKey: .`bundleId`)
+        self.`version` = try box.decode(String.self, forKey: .`version`)
+        self.`build` = try box.decode(String.self, forKey: .`build`)
+        self.`methods` = try box.decode([String].self, forKey: .`methods`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`protocol`, forKey: .`protocol`)
+        try box.encode(`bundleId`, forKey: .`bundleId`)
+        try box.encode(`version`, forKey: .`version`)
+        try box.encode(`build`, forKey: .`build`)
+        try box.encode(`methods`, forKey: .`methods`)
+    }
 }
 
 public struct AppHelloResultOption0SkippedItemFix: Codable, Sendable {
@@ -57,6 +74,17 @@ public struct AppHelloResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -71,6 +99,21 @@ public struct AppHelloResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(AppHelloResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct AppHelloResultOption0: Codable, Sendable {
@@ -83,6 +126,21 @@ public struct AppHelloResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(AppHelloResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(AppHelloResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([AppHelloResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -97,6 +155,17 @@ public struct AppHelloResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct AppHelloResultOption1SkippedItem: Codable, Sendable {
@@ -110,6 +179,21 @@ public struct AppHelloResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(AppHelloResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct AppHelloResultOption1: Codable, Sendable {
@@ -120,6 +204,19 @@ public struct AppHelloResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(AppHelloResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([AppHelloResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -161,6 +258,17 @@ public struct AppRpcParams: Codable, Sendable {
         self.`method` = `method`
         self.`params` = `params`
     }
+    private enum CodingKeys: String, CodingKey { case `method`; case `params` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`method` = try box.decode(AppRpcParamsMethod.self, forKey: .`method`)
+        self.`params` = try box.decodeIfPresent([String: GenesisToolsJSON].self, forKey: .`params`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`params`, forKey: .`params`)
+    }
 }
 
 public enum AppRpcResultOption0Status: String, Codable, Sendable {
@@ -173,6 +281,17 @@ public struct AppRpcResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -187,6 +306,21 @@ public struct AppRpcResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(AppRpcResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct AppRpcResultOption0: Codable, Sendable {
@@ -199,6 +333,21 @@ public struct AppRpcResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(AppRpcResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`skipped` = try box.decode([AppRpcResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -213,6 +362,17 @@ public struct AppRpcResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct AppRpcResultOption1SkippedItem: Codable, Sendable {
@@ -226,6 +386,21 @@ public struct AppRpcResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(AppRpcResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct AppRpcResultOption1: Codable, Sendable {
@@ -236,6 +411,19 @@ public struct AppRpcResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(AppRpcResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([AppRpcResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -270,6 +458,15 @@ public struct AppBuildParams: Codable, Sendable {
     public init(`part`: AppBuildParamsPart? = nil) {
         self.`part` = `part`
     }
+    private enum CodingKeys: String, CodingKey { case `part` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`part` = try box.decodeIfPresent(AppBuildParamsPart.self, forKey: .`part`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`part`, forKey: .`part`)
+    }
 }
 
 public enum AppBuildResultOption0Status: String, Codable, Sendable {
@@ -303,6 +500,17 @@ public struct AppBuildResultOption0Value: Codable, Sendable {
         self.`built` = `built`
         self.`part` = `part`
     }
+    private enum CodingKeys: String, CodingKey { case `built`; case `part` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`built` = try box.decode(AppBuildResultOption0ValueBuilt.self, forKey: .`built`)
+        self.`part` = try box.decode(AppBuildResultOption0ValuePart?.self, forKey: .`part`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`built`, forKey: .`built`)
+        try box.encode(`part`, forKey: .`part`)
+    }
 }
 
 public struct AppBuildResultOption0SkippedItemFix: Codable, Sendable {
@@ -311,6 +519,17 @@ public struct AppBuildResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -325,6 +544,21 @@ public struct AppBuildResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(AppBuildResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct AppBuildResultOption0: Codable, Sendable {
@@ -337,6 +571,21 @@ public struct AppBuildResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(AppBuildResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(AppBuildResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([AppBuildResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -351,6 +600,17 @@ public struct AppBuildResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct AppBuildResultOption1SkippedItem: Codable, Sendable {
@@ -364,6 +624,21 @@ public struct AppBuildResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(AppBuildResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct AppBuildResultOption1: Codable, Sendable {
@@ -374,6 +649,19 @@ public struct AppBuildResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(AppBuildResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([AppBuildResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -414,6 +702,19 @@ public struct WindowsOpenParams: Codable, Sendable {
         self.`args` = `args`
         self.`activate` = `activate`
     }
+    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`window` = try box.decode(WindowsOpenParamsWindow.self, forKey: .`window`)
+        self.`args` = try box.decodeIfPresent([String].self, forKey: .`args`)
+        self.`activate` = try box.decodeIfPresent(Bool.self, forKey: .`activate`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`window`, forKey: .`window`)
+        try box.encodeIfPresent(`args`, forKey: .`args`)
+        try box.encodeIfPresent(`activate`, forKey: .`activate`)
+    }
 }
 
 public enum WindowsOpenResultOption0Status: String, Codable, Sendable {
@@ -449,6 +750,17 @@ public struct WindowsOpenResultOption0Value: Codable, Sendable {
         self.`window` = `window`
         self.`opened` = `opened`
     }
+    private enum CodingKeys: String, CodingKey { case `window`; case `opened` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`window` = try box.decode(WindowsOpenResultOption0ValueWindow.self, forKey: .`window`)
+        self.`opened` = try box.decode(WindowsOpenResultOption0ValueOpened.self, forKey: .`opened`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`window`, forKey: .`window`)
+        try box.encode(`opened`, forKey: .`opened`)
+    }
 }
 
 public struct WindowsOpenResultOption0SkippedItemFix: Codable, Sendable {
@@ -457,6 +769,17 @@ public struct WindowsOpenResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -471,6 +794,21 @@ public struct WindowsOpenResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(WindowsOpenResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct WindowsOpenResultOption0: Codable, Sendable {
@@ -483,6 +821,21 @@ public struct WindowsOpenResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(WindowsOpenResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(WindowsOpenResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([WindowsOpenResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -497,6 +850,17 @@ public struct WindowsOpenResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct WindowsOpenResultOption1SkippedItem: Codable, Sendable {
@@ -510,6 +874,21 @@ public struct WindowsOpenResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(WindowsOpenResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct WindowsOpenResultOption1: Codable, Sendable {
@@ -520,6 +899,19 @@ public struct WindowsOpenResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(WindowsOpenResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([WindowsOpenResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -553,6 +945,21 @@ public struct PersonAskParams: Codable, Sendable {
         self.`id` = `id`
         self.`title` = `title`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -601,6 +1008,35 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonAskResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonAskResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonAskResultOption0SkippedItemFix: Codable, Sendable {
@@ -609,6 +1045,17 @@ public struct PersonAskResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -623,6 +1070,21 @@ public struct PersonAskResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonAskResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonAskResultOption0: Codable, Sendable {
@@ -635,6 +1097,21 @@ public struct PersonAskResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonAskResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonAskResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonAskResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -649,6 +1126,17 @@ public struct PersonAskResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonAskResultOption1SkippedItem: Codable, Sendable {
@@ -662,6 +1150,21 @@ public struct PersonAskResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonAskResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonAskResultOption1: Codable, Sendable {
@@ -672,6 +1175,19 @@ public struct PersonAskResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonAskResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonAskResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -705,6 +1221,21 @@ public struct PersonConfirmParams: Codable, Sendable {
         self.`id` = `id`
         self.`title` = `title`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonConfirmParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -753,6 +1284,35 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonConfirmResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonConfirmResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonConfirmResultOption0SkippedItemFix: Codable, Sendable {
@@ -761,6 +1321,17 @@ public struct PersonConfirmResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -775,6 +1346,21 @@ public struct PersonConfirmResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonConfirmResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonConfirmResultOption0: Codable, Sendable {
@@ -787,6 +1373,21 @@ public struct PersonConfirmResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonConfirmResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonConfirmResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonConfirmResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -801,6 +1402,17 @@ public struct PersonConfirmResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonConfirmResultOption1SkippedItem: Codable, Sendable {
@@ -814,6 +1426,21 @@ public struct PersonConfirmResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonConfirmResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonConfirmResultOption1: Codable, Sendable {
@@ -824,6 +1451,19 @@ public struct PersonConfirmResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonConfirmResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonConfirmResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -851,6 +1491,19 @@ public struct PersonNoticeParams: Codable, Sendable {
         self.`id` = `id`
         self.`title` = `title`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `title`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -899,6 +1552,35 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonNoticeResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonNoticeResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonNoticeResultOption0SkippedItemFix: Codable, Sendable {
@@ -907,6 +1589,17 @@ public struct PersonNoticeResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -921,6 +1614,21 @@ public struct PersonNoticeResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonNoticeResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonNoticeResultOption0: Codable, Sendable {
@@ -933,6 +1641,21 @@ public struct PersonNoticeResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonNoticeResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonNoticeResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonNoticeResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -947,6 +1670,17 @@ public struct PersonNoticeResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonNoticeResultOption1SkippedItem: Codable, Sendable {
@@ -960,6 +1694,21 @@ public struct PersonNoticeResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonNoticeResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonNoticeResultOption1: Codable, Sendable {
@@ -970,6 +1719,19 @@ public struct PersonNoticeResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonNoticeResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonNoticeResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1009,6 +1771,27 @@ public struct PersonShowWindowParams: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonShowWindowParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -1057,6 +1840,35 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonShowWindowResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonShowWindowResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonShowWindowResultOption0SkippedItemFix: Codable, Sendable {
@@ -1065,6 +1877,17 @@ public struct PersonShowWindowResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1079,6 +1902,21 @@ public struct PersonShowWindowResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonShowWindowResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonShowWindowResultOption0: Codable, Sendable {
@@ -1091,6 +1929,21 @@ public struct PersonShowWindowResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonShowWindowResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonShowWindowResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonShowWindowResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1105,6 +1958,17 @@ public struct PersonShowWindowResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonShowWindowResultOption1SkippedItem: Codable, Sendable {
@@ -1118,6 +1982,21 @@ public struct PersonShowWindowResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonShowWindowResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonShowWindowResultOption1: Codable, Sendable {
@@ -1128,6 +2007,19 @@ public struct PersonShowWindowResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonShowWindowResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonShowWindowResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1167,6 +2059,27 @@ public struct PersonNotifyThenAskParams: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonNotifyThenAskParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -1215,6 +2128,35 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonNotifyThenAskResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonNotifyThenAskResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonNotifyThenAskResultOption0SkippedItemFix: Codable, Sendable {
@@ -1223,6 +2165,17 @@ public struct PersonNotifyThenAskResultOption0SkippedItemFix: Codable, Sendable 
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1237,6 +2190,21 @@ public struct PersonNotifyThenAskResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonNotifyThenAskResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonNotifyThenAskResultOption0: Codable, Sendable {
@@ -1249,6 +2217,21 @@ public struct PersonNotifyThenAskResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonNotifyThenAskResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonNotifyThenAskResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonNotifyThenAskResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1263,6 +2246,17 @@ public struct PersonNotifyThenAskResultOption1SkippedItemFix: Codable, Sendable 
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonNotifyThenAskResultOption1SkippedItem: Codable, Sendable {
@@ -1276,6 +2270,21 @@ public struct PersonNotifyThenAskResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonNotifyThenAskResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonNotifyThenAskResultOption1: Codable, Sendable {
@@ -1286,6 +2295,19 @@ public struct PersonNotifyThenAskResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonNotifyThenAskResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonNotifyThenAskResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1325,6 +2347,27 @@ public struct PersonAskNowParams: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskNowParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -1373,6 +2416,35 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonAskNowResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonAskNowResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonAskNowResultOption0SkippedItemFix: Codable, Sendable {
@@ -1381,6 +2453,17 @@ public struct PersonAskNowResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1395,6 +2478,21 @@ public struct PersonAskNowResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonAskNowResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonAskNowResultOption0: Codable, Sendable {
@@ -1407,6 +2505,21 @@ public struct PersonAskNowResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonAskNowResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonAskNowResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonAskNowResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1421,6 +2534,17 @@ public struct PersonAskNowResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonAskNowResultOption1SkippedItem: Codable, Sendable {
@@ -1434,6 +2558,21 @@ public struct PersonAskNowResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonAskNowResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonAskNowResultOption1: Codable, Sendable {
@@ -1444,6 +2583,19 @@ public struct PersonAskNowResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonAskNowResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonAskNowResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1483,6 +2635,27 @@ public struct PersonAskElseNotifyParams: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PersonAskElseNotifyParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -1531,6 +2704,35 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(PersonAskElseNotifyResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(PersonAskElseNotifyResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct PersonAskElseNotifyResultOption0SkippedItemFix: Codable, Sendable {
@@ -1539,6 +2741,17 @@ public struct PersonAskElseNotifyResultOption0SkippedItemFix: Codable, Sendable 
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1553,6 +2766,21 @@ public struct PersonAskElseNotifyResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonAskElseNotifyResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonAskElseNotifyResultOption0: Codable, Sendable {
@@ -1565,6 +2793,21 @@ public struct PersonAskElseNotifyResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonAskElseNotifyResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PersonAskElseNotifyResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PersonAskElseNotifyResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1579,6 +2822,17 @@ public struct PersonAskElseNotifyResultOption1SkippedItemFix: Codable, Sendable 
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PersonAskElseNotifyResultOption1SkippedItem: Codable, Sendable {
@@ -1592,6 +2846,21 @@ public struct PersonAskElseNotifyResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PersonAskElseNotifyResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PersonAskElseNotifyResultOption1: Codable, Sendable {
@@ -1602,6 +2871,19 @@ public struct PersonAskElseNotifyResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PersonAskElseNotifyResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PersonAskElseNotifyResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1641,6 +2923,27 @@ public struct TerminalPromptParams: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(TerminalPromptParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -1689,6 +2992,35 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(TerminalPromptResultOption0ValueStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(TerminalPromptResultOption0ValueMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct TerminalPromptResultOption0SkippedItemFix: Codable, Sendable {
@@ -1697,6 +3029,17 @@ public struct TerminalPromptResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1711,6 +3054,21 @@ public struct TerminalPromptResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(TerminalPromptResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct TerminalPromptResultOption0: Codable, Sendable {
@@ -1723,6 +3081,21 @@ public struct TerminalPromptResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(TerminalPromptResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(TerminalPromptResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([TerminalPromptResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1737,6 +3110,17 @@ public struct TerminalPromptResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct TerminalPromptResultOption1SkippedItem: Codable, Sendable {
@@ -1750,6 +3134,21 @@ public struct TerminalPromptResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(TerminalPromptResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct TerminalPromptResultOption1: Codable, Sendable {
@@ -1760,6 +3159,19 @@ public struct TerminalPromptResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(TerminalPromptResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([TerminalPromptResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1784,6 +3196,15 @@ public struct TerminalRunVisiblyParams: Codable, Sendable {
     public init(`argv`: [String]) {
         self.`argv` = `argv`
     }
+    private enum CodingKeys: String, CodingKey { case `argv` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`argv` = try box.decode([String].self, forKey: .`argv`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`argv`, forKey: .`argv`)
+    }
 }
 
 public enum TerminalRunVisiblyResultOption0Status: String, Codable, Sendable {
@@ -1805,6 +3226,15 @@ public struct TerminalRunVisiblyResultOption0Value: Codable, Sendable {
     public init(`opened`: TerminalRunVisiblyResultOption0ValueOpened) {
         self.`opened` = `opened`
     }
+    private enum CodingKeys: String, CodingKey { case `opened` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`opened` = try box.decode(TerminalRunVisiblyResultOption0ValueOpened.self, forKey: .`opened`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`opened`, forKey: .`opened`)
+    }
 }
 
 public struct TerminalRunVisiblyResultOption0SkippedItemFix: Codable, Sendable {
@@ -1813,6 +3243,17 @@ public struct TerminalRunVisiblyResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1827,6 +3268,21 @@ public struct TerminalRunVisiblyResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(TerminalRunVisiblyResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct TerminalRunVisiblyResultOption0: Codable, Sendable {
@@ -1839,6 +3295,21 @@ public struct TerminalRunVisiblyResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(TerminalRunVisiblyResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(TerminalRunVisiblyResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([TerminalRunVisiblyResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1853,6 +3324,17 @@ public struct TerminalRunVisiblyResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct TerminalRunVisiblyResultOption1SkippedItem: Codable, Sendable {
@@ -1866,6 +3348,21 @@ public struct TerminalRunVisiblyResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(TerminalRunVisiblyResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct TerminalRunVisiblyResultOption1: Codable, Sendable {
@@ -1876,6 +3373,19 @@ public struct TerminalRunVisiblyResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(TerminalRunVisiblyResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([TerminalRunVisiblyResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -1900,6 +3410,15 @@ public struct PermissionsOpenTerminalRequestParams: Codable, Sendable {
     public init(`argv`: [String]) {
         self.`argv` = `argv`
     }
+    private enum CodingKeys: String, CodingKey { case `argv` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`argv` = try box.decode([String].self, forKey: .`argv`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`argv`, forKey: .`argv`)
+    }
 }
 
 public enum PermissionsOpenTerminalRequestResultOption0Status: String, Codable, Sendable {
@@ -1921,6 +3440,15 @@ public struct PermissionsOpenTerminalRequestResultOption0Value: Codable, Sendabl
     public init(`opened`: PermissionsOpenTerminalRequestResultOption0ValueOpened) {
         self.`opened` = `opened`
     }
+    private enum CodingKeys: String, CodingKey { case `opened` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`opened` = try box.decode(PermissionsOpenTerminalRequestResultOption0ValueOpened.self, forKey: .`opened`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`opened`, forKey: .`opened`)
+    }
 }
 
 public struct PermissionsOpenTerminalRequestResultOption0SkippedItemFix: Codable, Sendable {
@@ -1929,6 +3457,17 @@ public struct PermissionsOpenTerminalRequestResultOption0SkippedItemFix: Codable
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -1943,6 +3482,21 @@ public struct PermissionsOpenTerminalRequestResultOption0SkippedItem: Codable, S
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PermissionsOpenTerminalRequestResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PermissionsOpenTerminalRequestResultOption0: Codable, Sendable {
@@ -1955,6 +3509,21 @@ public struct PermissionsOpenTerminalRequestResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PermissionsOpenTerminalRequestResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PermissionsOpenTerminalRequestResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PermissionsOpenTerminalRequestResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -1969,6 +3538,17 @@ public struct PermissionsOpenTerminalRequestResultOption1SkippedItemFix: Codable
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PermissionsOpenTerminalRequestResultOption1SkippedItem: Codable, Sendable {
@@ -1982,6 +3562,21 @@ public struct PermissionsOpenTerminalRequestResultOption1SkippedItem: Codable, S
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PermissionsOpenTerminalRequestResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PermissionsOpenTerminalRequestResultOption1: Codable, Sendable {
@@ -1992,6 +3587,19 @@ public struct PermissionsOpenTerminalRequestResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PermissionsOpenTerminalRequestResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PermissionsOpenTerminalRequestResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -2034,6 +3642,15 @@ public struct PermissionsStatusParams: Codable, Sendable {
     public init(`kind`: PermissionsStatusParamsKind) {
         self.`kind` = `kind`
     }
+    private enum CodingKeys: String, CodingKey { case `kind` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PermissionsStatusParamsKind.self, forKey: .`kind`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+    }
 }
 
 public enum PermissionsStatusResultOption0Status: String, Codable, Sendable {
@@ -2065,6 +3682,17 @@ public struct PermissionsStatusResultOption0Value: Codable, Sendable {
         self.`kind` = `kind`
         self.`status` = `status`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `status` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PermissionsStatusResultOption0ValueKind.self, forKey: .`kind`)
+        self.`status` = try box.decode(String.self, forKey: .`status`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`status`, forKey: .`status`)
+    }
 }
 
 public struct PermissionsStatusResultOption0SkippedItemFix: Codable, Sendable {
@@ -2073,6 +3701,17 @@ public struct PermissionsStatusResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -2087,6 +3726,21 @@ public struct PermissionsStatusResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PermissionsStatusResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PermissionsStatusResultOption0: Codable, Sendable {
@@ -2099,6 +3753,21 @@ public struct PermissionsStatusResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PermissionsStatusResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PermissionsStatusResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PermissionsStatusResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -2113,6 +3782,17 @@ public struct PermissionsStatusResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PermissionsStatusResultOption1SkippedItem: Codable, Sendable {
@@ -2126,6 +3806,21 @@ public struct PermissionsStatusResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PermissionsStatusResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PermissionsStatusResultOption1: Codable, Sendable {
@@ -2136,6 +3831,19 @@ public struct PermissionsStatusResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PermissionsStatusResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PermissionsStatusResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -2180,6 +3888,17 @@ public struct PermissionsRequireParams: Codable, Sendable {
         self.`kind` = `kind`
         self.`reason` = `reason`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PermissionsRequireParamsKind.self, forKey: .`kind`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
+    }
 }
 
 public enum PermissionsRequireResultOption0Status: String, Codable, Sendable {
@@ -2211,6 +3930,17 @@ public struct PermissionsRequireResultOption0Value: Codable, Sendable {
         self.`kind` = `kind`
         self.`status` = `status`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `status` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(PermissionsRequireResultOption0ValueKind.self, forKey: .`kind`)
+        self.`status` = try box.decode(String.self, forKey: .`status`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`status`, forKey: .`status`)
+    }
 }
 
 public struct PermissionsRequireResultOption0SkippedItemFix: Codable, Sendable {
@@ -2219,6 +3949,17 @@ public struct PermissionsRequireResultOption0SkippedItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -2233,6 +3974,21 @@ public struct PermissionsRequireResultOption0SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PermissionsRequireResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PermissionsRequireResultOption0: Codable, Sendable {
@@ -2245,6 +4001,21 @@ public struct PermissionsRequireResultOption0: Codable, Sendable {
         self.`via` = `via`
         self.`value` = `value`
         self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PermissionsRequireResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(PermissionsRequireResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([PermissionsRequireResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
     }
 }
 
@@ -2259,6 +4030,17 @@ public struct PermissionsRequireResultOption1SkippedItemFix: Codable, Sendable {
         self.`command` = `command`
         self.`sentence` = `sentence`
     }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
 }
 
 public struct PermissionsRequireResultOption1SkippedItem: Codable, Sendable {
@@ -2272,6 +4054,21 @@ public struct PermissionsRequireResultOption1SkippedItem: Codable, Sendable {
         self.`reason` = `reason`
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(PermissionsRequireResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct PermissionsRequireResultOption1: Codable, Sendable {
@@ -2282,6 +4079,19 @@ public struct PermissionsRequireResultOption1: Codable, Sendable {
         self.`status` = `status`
         self.`skipped` = `skipped`
         self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(PermissionsRequireResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([PermissionsRequireResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
     }
 }
 
@@ -2318,6 +4128,17 @@ public struct HelloParams: Codable, Sendable {
         self.`methods` = `methods`
         self.`caller` = `caller`
     }
+    private enum CodingKeys: String, CodingKey { case `methods`; case `caller` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`methods` = try box.decodeIfPresent([HelloParamsMethodsItem].self, forKey: .`methods`)
+        self.`caller` = try box.decodeIfPresent(HelloParamsCaller.self, forKey: .`caller`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`methods`, forKey: .`methods`)
+        try box.encodeIfPresent(`caller`, forKey: .`caller`)
+    }
 }
 
 public enum HelloResultProtocol: Double, Codable, Sendable { case value0 = 1 }
@@ -2328,6 +4149,17 @@ public struct HelloResult: Codable, Sendable {
     public init(`protocol`: HelloResultProtocol, `methods`: [String]) {
         self.`protocol` = `protocol`
         self.`methods` = `methods`
+    }
+    private enum CodingKeys: String, CodingKey { case `protocol`; case `methods` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`protocol` = try box.decode(HelloResultProtocol.self, forKey: .`protocol`)
+        self.`methods` = try box.decode([String].self, forKey: .`methods`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`protocol`, forKey: .`protocol`)
+        try box.encode(`methods`, forKey: .`methods`)
     }
 }
 
@@ -2340,6 +4172,19 @@ public struct ActionsExplainParams: Codable, Sendable {
         self.`fresh` = `fresh`
         self.`args` = `args`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `fresh`; case `args` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`fresh` = try box.decodeIfPresent(Bool.self, forKey: .`fresh`)
+        self.`args` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`args`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encodeIfPresent(`fresh`, forKey: .`fresh`)
+        try box.encodeIfPresent(`args`, forKey: .`args`)
+    }
 }
 
 public struct ActionsExplainResultWaysItemNeedsItemFix: Codable, Sendable {
@@ -2348,6 +4193,17 @@ public struct ActionsExplainResultWaysItemNeedsItemFix: Codable, Sendable {
     public init(`command`: String, `sentence`: String) {
         self.`command` = `command`
         self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
     }
 }
 
@@ -2371,6 +4227,25 @@ public struct ActionsExplainResultWaysItemNeedsItem: Codable, Sendable {
         self.`fix` = `fix`
         self.`from` = `from`
     }
+    private enum CodingKeys: String, CodingKey { case `need`; case `ok`; case `code`; case `reason`; case `fix`; case `from` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`need` = try box.decode(String.self, forKey: .`need`)
+        self.`ok` = try box.decode(Bool.self, forKey: .`ok`)
+        self.`code` = try box.decodeIfPresent(String.self, forKey: .`code`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
+        self.`fix` = try box.decodeIfPresent(ActionsExplainResultWaysItemNeedsItemFix.self, forKey: .`fix`)
+        self.`from` = try box.decode(ActionsExplainResultWaysItemNeedsItemFrom.self, forKey: .`from`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`need`, forKey: .`need`)
+        try box.encode(`ok`, forKey: .`ok`)
+        try box.encodeIfPresent(`code`, forKey: .`code`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`fix`, forKey: .`fix`)
+        try box.encode(`from`, forKey: .`from`)
+    }
 }
 
 public struct ActionsExplainResultWaysItem: Codable, Sendable {
@@ -2381,6 +4256,19 @@ public struct ActionsExplainResultWaysItem: Codable, Sendable {
         self.`way` = `way`
         self.`needsKnown` = `needsKnown`
         self.`needs` = `needs`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `needsKnown`; case `needs` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`needsKnown` = try box.decode(Bool.self, forKey: .`needsKnown`)
+        self.`needs` = try box.decode([ActionsExplainResultWaysItemNeedsItem].self, forKey: .`needs`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`needsKnown`, forKey: .`needsKnown`)
+        try box.encode(`needs`, forKey: .`needs`)
     }
 }
 
@@ -2397,12 +4285,38 @@ public struct ActionsExplainResult: Codable, Sendable {
         self.`first` = `first`
         self.`config` = `config`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `summary`; case `ways`; case `first`; case `config` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`summary` = try box.decode(String.self, forKey: .`summary`)
+        self.`ways` = try box.decode([ActionsExplainResultWaysItem].self, forKey: .`ways`)
+        self.`first` = try box.decode(String?.self, forKey: .`first`)
+        self.`config` = try box.decode([String: GenesisToolsJSON].self, forKey: .`config`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`summary`, forKey: .`summary`)
+        try box.encode(`ways`, forKey: .`ways`)
+        try box.encode(`first`, forKey: .`first`)
+        try box.encode(`config`, forKey: .`config`)
+    }
 }
 
 public struct ConfigGetParams: Codable, Sendable {
     public var `path`: String
     public init(`path`: String) {
         self.`path` = `path`
+    }
+    private enum CodingKeys: String, CodingKey { case `path` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`path` = try box.decode(String.self, forKey: .`path`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`path`, forKey: .`path`)
     }
 }
 
@@ -2412,6 +4326,17 @@ public struct ConfigSetParams: Codable, Sendable {
     public init(`path`: String, `value`: GenesisToolsJSON) {
         self.`path` = `path`
         self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `path`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`path` = try box.decode(String.self, forKey: .`path`)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`path`, forKey: .`path`)
+        try box.encode(`value`, forKey: .`value`)
     }
 }
 
@@ -2430,12 +4355,30 @@ public struct ConfigSetResult: Codable, Sendable {
     public init(`changed`: ConfigSetResultChanged) {
         self.`changed` = `changed`
     }
+    private enum CodingKeys: String, CodingKey { case `changed` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`changed` = try box.decode(ConfigSetResultChanged.self, forKey: .`changed`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`changed`, forKey: .`changed`)
+    }
 }
 
 public struct ConfigUnsetParams: Codable, Sendable {
     public var `path`: String
     public init(`path`: String) {
         self.`path` = `path`
+    }
+    private enum CodingKeys: String, CodingKey { case `path` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`path` = try box.decode(String.self, forKey: .`path`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`path`, forKey: .`path`)
     }
 }
 
@@ -2453,6 +4396,15 @@ public struct ConfigUnsetResult: Codable, Sendable {
     public var `changed`: ConfigUnsetResultChanged
     public init(`changed`: ConfigUnsetResultChanged) {
         self.`changed` = `changed`
+    }
+    private enum CodingKeys: String, CodingKey { case `changed` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`changed` = try box.decode(ConfigUnsetResultChanged.self, forKey: .`changed`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`changed`, forKey: .`changed`)
     }
 }
 
@@ -2475,6 +4427,23 @@ public struct StateReportParamsValue: Codable, Sendable {
         self.`build` = `build`
         self.`stale` = `stale`
     }
+    private enum CodingKeys: String, CodingKey { case `value`; case `at`; case `source`; case `build`; case `stale` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`source` = try box.decode(StateReportParamsValueSource.self, forKey: .`source`)
+        self.`build` = try box.decodeIfPresent(String.self, forKey: .`build`)
+        self.`stale` = try box.decodeIfPresent(Bool.self, forKey: .`stale`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`source`, forKey: .`source`)
+        try box.encodeIfPresent(`build`, forKey: .`build`)
+        try box.encodeIfPresent(`stale`, forKey: .`stale`)
+    }
 }
 
 public struct StateReportParams: Codable, Sendable {
@@ -2485,6 +4454,19 @@ public struct StateReportParams: Codable, Sendable {
         self.`area` = `area`
         self.`key` = `key`
         self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `area`; case `key`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`area` = try box.decode(String.self, forKey: .`area`)
+        self.`key` = try box.decode(String.self, forKey: .`key`)
+        self.`value` = try box.decode(StateReportParamsValue.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`area`, forKey: .`area`)
+        try box.encode(`key`, forKey: .`key`)
+        try box.encode(`value`, forKey: .`value`)
     }
 }
 
@@ -2503,6 +4485,15 @@ public struct StateReportResult: Codable, Sendable {
     public init(`reported`: StateReportResultReported) {
         self.`reported` = `reported`
     }
+    private enum CodingKeys: String, CodingKey { case `reported` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`reported` = try box.decode(StateReportResultReported.self, forKey: .`reported`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`reported`, forKey: .`reported`)
+    }
 }
 
 public enum RequestsPostParamsInputKind: String, Codable, Sendable {
@@ -2520,6 +4511,21 @@ public struct RequestsPostParamsInput: Codable, Sendable {
         self.`title` = `title`
         self.`reason` = `reason`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostParamsInputKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+    }
 }
 
 public struct RequestsPostParams: Codable, Sendable {
@@ -2528,6 +4534,17 @@ public struct RequestsPostParams: Codable, Sendable {
     public init(`input`: RequestsPostParamsInput, `timeoutMs`: Int? = nil) {
         self.`input` = `input`
         self.`timeoutMs` = `timeoutMs`
+    }
+    private enum CodingKeys: String, CodingKey { case `input`; case `timeoutMs` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`input` = try box.decode(RequestsPostParamsInput.self, forKey: .`input`)
+        self.`timeoutMs` = try box.decodeIfPresent(Int.self, forKey: .`timeoutMs`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`input`, forKey: .`input`)
+        try box.encodeIfPresent(`timeoutMs`, forKey: .`timeoutMs`)
     }
 }
 
@@ -2551,6 +4568,27 @@ public struct RequestsPostResultRequest: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostResultRequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -2591,6 +4629,27 @@ public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsPostResultEventsItemOption0RequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
+    }
 }
 
 public struct RequestsPostResultEventsItemOption0Asker: Codable, Sendable {
@@ -2604,6 +4663,21 @@ public struct RequestsPostResultEventsItemOption0Asker: Codable, Sendable {
         self.`project` = `project`
         self.`branch` = `branch`
     }
+    private enum CodingKeys: String, CodingKey { case `agent`; case `session`; case `project`; case `branch` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`agent` = try box.decodeIfPresent(String.self, forKey: .`agent`)
+        self.`session` = try box.decodeIfPresent(String.self, forKey: .`session`)
+        self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+        self.`branch` = try box.decodeIfPresent(String.self, forKey: .`branch`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`agent`, forKey: .`agent`)
+        try box.encodeIfPresent(`session`, forKey: .`session`)
+        try box.encodeIfPresent(`project`, forKey: .`project`)
+        try box.encodeIfPresent(`branch`, forKey: .`branch`)
+    }
 }
 
 public struct RequestsPostResultEventsItemOption0: Codable, Sendable {
@@ -2616,6 +4690,21 @@ public struct RequestsPostResultEventsItemOption0: Codable, Sendable {
         self.`at` = `at`
         self.`request` = `request`
         self.`asker` = `asker`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `request`; case `asker` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption0Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`request` = try box.decode(RequestsPostResultEventsItemOption0Request.self, forKey: .`request`)
+        self.`asker` = try box.decode(RequestsPostResultEventsItemOption0Asker?.self, forKey: .`asker`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`asker`, forKey: .`asker`)
     }
 }
 
@@ -2639,6 +4728,21 @@ public struct RequestsPostResultEventsItemOption1: Codable, Sendable {
         self.`at` = `at`
         self.`channel` = `channel`
         self.`noticeId` = `noticeId`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `channel`; case `noticeId` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption1Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`channel` = try box.decode(RequestsPostResultEventsItemOption1Channel.self, forKey: .`channel`)
+        self.`noticeId` = try box.decode(String?.self, forKey: .`noticeId`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`channel`, forKey: .`channel`)
+        try box.encode(`noticeId`, forKey: .`noticeId`)
     }
 }
 
@@ -2666,6 +4770,23 @@ public struct RequestsPostResultEventsItemOption2: Codable, Sendable {
         self.`elevation` = `elevation`
         self.`method` = `method`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption2Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
+        self.`method` = try box.decode(RequestsPostResultEventsItemOption2Method.self, forKey: .`method`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`elevation`, forKey: .`elevation`)
+        try box.encode(`method`, forKey: .`method`)
+    }
 }
 
 public enum RequestsPostResultEventsItemOption3Type: String, Codable, Sendable {
@@ -2682,6 +4803,21 @@ public struct RequestsPostResultEventsItemOption3: Codable, Sendable {
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption3Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`note` = try box.decode(String?.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`note`, forKey: .`note`)
     }
 }
 
@@ -2705,6 +4841,21 @@ public struct RequestsPostResultEventsItemOption4: Codable, Sendable {
         self.`runnerPid` = `runnerPid`
         self.`where` = `where`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `runnerPid`; case `where` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption4Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`runnerPid` = try box.decode(Int.self, forKey: .`runnerPid`)
+        self.`where` = try box.decode(RequestsPostResultEventsItemOption4Where.self, forKey: .`where`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`runnerPid`, forKey: .`runnerPid`)
+        try box.encode(`where`, forKey: .`where`)
+    }
 }
 
 public enum RequestsPostResultEventsItemOption5Type: String, Codable, Sendable {
@@ -2724,6 +4875,23 @@ public struct RequestsPostResultEventsItemOption5: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption5Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`exitCode`, forKey: .`exitCode`)
+        try box.encode(`outputTail`, forKey: .`outputTail`)
+        try box.encode(`verified`, forKey: .`verified`)
+    }
 }
 
 public enum RequestsPostResultEventsItemOption6Type: String, Codable, Sendable {
@@ -2739,6 +4907,19 @@ public struct RequestsPostResultEventsItemOption6: Codable, Sendable {
         self.`at` = `at`
         self.`reason` = `reason`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption6Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
+    }
 }
 
 public enum RequestsPostResultEventsItemOption7Type: String, Codable, Sendable {
@@ -2753,6 +4934,19 @@ public struct RequestsPostResultEventsItemOption7: Codable, Sendable {
         self.`type` = `type`
         self.`at` = `at`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsPostResultEventsItemOption7Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -2831,6 +5025,35 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestsPostResultOutcomeStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestsPostResultOutcomeMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct RequestsPostResult: Codable, Sendable {
@@ -2846,12 +5069,38 @@ public struct RequestsPostResult: Codable, Sendable {
         self.`events` = `events`
         self.`outcome` = `outcome`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `request`; case `state`; case `events`; case `outcome` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`request` = try box.decode(RequestsPostResultRequest.self, forKey: .`request`)
+        self.`state` = try box.decode(RequestsPostResultState.self, forKey: .`state`)
+        self.`events` = try box.decode([RequestsPostResultEventsItem].self, forKey: .`events`)
+        self.`outcome` = try box.decode(RequestsPostResultOutcome.self, forKey: .`outcome`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encode(`events`, forKey: .`events`)
+        try box.encode(`outcome`, forKey: .`outcome`)
+    }
 }
 
 public struct RequestsGetParams: Codable, Sendable {
     public var `id`: String
     public init(`id`: String) {
         self.`id` = `id`
+    }
+    private enum CodingKeys: String, CodingKey { case `id` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
     }
 }
 
@@ -2875,6 +5124,27 @@ public struct RequestsGetResultRequest: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsGetResultRequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -2915,6 +5185,27 @@ public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsGetResultEventsItemOption0RequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
+    }
 }
 
 public struct RequestsGetResultEventsItemOption0Asker: Codable, Sendable {
@@ -2928,6 +5219,21 @@ public struct RequestsGetResultEventsItemOption0Asker: Codable, Sendable {
         self.`project` = `project`
         self.`branch` = `branch`
     }
+    private enum CodingKeys: String, CodingKey { case `agent`; case `session`; case `project`; case `branch` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`agent` = try box.decodeIfPresent(String.self, forKey: .`agent`)
+        self.`session` = try box.decodeIfPresent(String.self, forKey: .`session`)
+        self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+        self.`branch` = try box.decodeIfPresent(String.self, forKey: .`branch`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`agent`, forKey: .`agent`)
+        try box.encodeIfPresent(`session`, forKey: .`session`)
+        try box.encodeIfPresent(`project`, forKey: .`project`)
+        try box.encodeIfPresent(`branch`, forKey: .`branch`)
+    }
 }
 
 public struct RequestsGetResultEventsItemOption0: Codable, Sendable {
@@ -2940,6 +5246,21 @@ public struct RequestsGetResultEventsItemOption0: Codable, Sendable {
         self.`at` = `at`
         self.`request` = `request`
         self.`asker` = `asker`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `request`; case `asker` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption0Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`request` = try box.decode(RequestsGetResultEventsItemOption0Request.self, forKey: .`request`)
+        self.`asker` = try box.decode(RequestsGetResultEventsItemOption0Asker?.self, forKey: .`asker`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`asker`, forKey: .`asker`)
     }
 }
 
@@ -2963,6 +5284,21 @@ public struct RequestsGetResultEventsItemOption1: Codable, Sendable {
         self.`at` = `at`
         self.`channel` = `channel`
         self.`noticeId` = `noticeId`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `channel`; case `noticeId` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption1Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`channel` = try box.decode(RequestsGetResultEventsItemOption1Channel.self, forKey: .`channel`)
+        self.`noticeId` = try box.decode(String?.self, forKey: .`noticeId`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`channel`, forKey: .`channel`)
+        try box.encode(`noticeId`, forKey: .`noticeId`)
     }
 }
 
@@ -2990,6 +5326,23 @@ public struct RequestsGetResultEventsItemOption2: Codable, Sendable {
         self.`elevation` = `elevation`
         self.`method` = `method`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption2Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
+        self.`method` = try box.decode(RequestsGetResultEventsItemOption2Method.self, forKey: .`method`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`elevation`, forKey: .`elevation`)
+        try box.encode(`method`, forKey: .`method`)
+    }
 }
 
 public enum RequestsGetResultEventsItemOption3Type: String, Codable, Sendable {
@@ -3006,6 +5359,21 @@ public struct RequestsGetResultEventsItemOption3: Codable, Sendable {
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption3Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`note` = try box.decode(String?.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`note`, forKey: .`note`)
     }
 }
 
@@ -3029,6 +5397,21 @@ public struct RequestsGetResultEventsItemOption4: Codable, Sendable {
         self.`runnerPid` = `runnerPid`
         self.`where` = `where`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `runnerPid`; case `where` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption4Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`runnerPid` = try box.decode(Int.self, forKey: .`runnerPid`)
+        self.`where` = try box.decode(RequestsGetResultEventsItemOption4Where.self, forKey: .`where`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`runnerPid`, forKey: .`runnerPid`)
+        try box.encode(`where`, forKey: .`where`)
+    }
 }
 
 public enum RequestsGetResultEventsItemOption5Type: String, Codable, Sendable {
@@ -3048,6 +5431,23 @@ public struct RequestsGetResultEventsItemOption5: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption5Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`exitCode`, forKey: .`exitCode`)
+        try box.encode(`outputTail`, forKey: .`outputTail`)
+        try box.encode(`verified`, forKey: .`verified`)
+    }
 }
 
 public enum RequestsGetResultEventsItemOption6Type: String, Codable, Sendable {
@@ -3063,6 +5463,19 @@ public struct RequestsGetResultEventsItemOption6: Codable, Sendable {
         self.`at` = `at`
         self.`reason` = `reason`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption6Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
+    }
 }
 
 public enum RequestsGetResultEventsItemOption7Type: String, Codable, Sendable {
@@ -3077,6 +5490,19 @@ public struct RequestsGetResultEventsItemOption7: Codable, Sendable {
         self.`type` = `type`
         self.`at` = `at`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsGetResultEventsItemOption7Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -3155,6 +5581,35 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestsGetResultOutcomeStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestsGetResultOutcomeMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct RequestsGetResult: Codable, Sendable {
@@ -3170,12 +5625,38 @@ public struct RequestsGetResult: Codable, Sendable {
         self.`events` = `events`
         self.`outcome` = `outcome`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `request`; case `state`; case `events`; case `outcome` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`request` = try box.decode(RequestsGetResultRequest.self, forKey: .`request`)
+        self.`state` = try box.decode(RequestsGetResultState.self, forKey: .`state`)
+        self.`events` = try box.decode([RequestsGetResultEventsItem].self, forKey: .`events`)
+        self.`outcome` = try box.decode(RequestsGetResultOutcome.self, forKey: .`outcome`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encode(`events`, forKey: .`events`)
+        try box.encode(`outcome`, forKey: .`outcome`)
+    }
 }
 
 public struct RequestsListParams: Codable, Sendable {
     public var `limit`: Int?
     public init(`limit`: Int? = nil) {
         self.`limit` = `limit`
+    }
+    private enum CodingKeys: String, CodingKey { case `limit` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`limit` = try box.decodeIfPresent(Int.self, forKey: .`limit`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`limit`, forKey: .`limit`)
     }
 }
 
@@ -3199,6 +5680,27 @@ public struct RequestsListResultItemRequest: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsListResultItemRequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -3239,6 +5741,27 @@ public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable 
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestsListResultItemEventsItemOption0RequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
+    }
 }
 
 public struct RequestsListResultItemEventsItemOption0Asker: Codable, Sendable {
@@ -3252,6 +5775,21 @@ public struct RequestsListResultItemEventsItemOption0Asker: Codable, Sendable {
         self.`project` = `project`
         self.`branch` = `branch`
     }
+    private enum CodingKeys: String, CodingKey { case `agent`; case `session`; case `project`; case `branch` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`agent` = try box.decodeIfPresent(String.self, forKey: .`agent`)
+        self.`session` = try box.decodeIfPresent(String.self, forKey: .`session`)
+        self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+        self.`branch` = try box.decodeIfPresent(String.self, forKey: .`branch`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`agent`, forKey: .`agent`)
+        try box.encodeIfPresent(`session`, forKey: .`session`)
+        try box.encodeIfPresent(`project`, forKey: .`project`)
+        try box.encodeIfPresent(`branch`, forKey: .`branch`)
+    }
 }
 
 public struct RequestsListResultItemEventsItemOption0: Codable, Sendable {
@@ -3264,6 +5802,21 @@ public struct RequestsListResultItemEventsItemOption0: Codable, Sendable {
         self.`at` = `at`
         self.`request` = `request`
         self.`asker` = `asker`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `request`; case `asker` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption0Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`request` = try box.decode(RequestsListResultItemEventsItemOption0Request.self, forKey: .`request`)
+        self.`asker` = try box.decode(RequestsListResultItemEventsItemOption0Asker?.self, forKey: .`asker`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`asker`, forKey: .`asker`)
     }
 }
 
@@ -3287,6 +5840,21 @@ public struct RequestsListResultItemEventsItemOption1: Codable, Sendable {
         self.`at` = `at`
         self.`channel` = `channel`
         self.`noticeId` = `noticeId`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `channel`; case `noticeId` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption1Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`channel` = try box.decode(RequestsListResultItemEventsItemOption1Channel.self, forKey: .`channel`)
+        self.`noticeId` = try box.decode(String?.self, forKey: .`noticeId`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`channel`, forKey: .`channel`)
+        try box.encode(`noticeId`, forKey: .`noticeId`)
     }
 }
 
@@ -3314,6 +5882,23 @@ public struct RequestsListResultItemEventsItemOption2: Codable, Sendable {
         self.`elevation` = `elevation`
         self.`method` = `method`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption2Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
+        self.`method` = try box.decode(RequestsListResultItemEventsItemOption2Method.self, forKey: .`method`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`elevation`, forKey: .`elevation`)
+        try box.encode(`method`, forKey: .`method`)
+    }
 }
 
 public enum RequestsListResultItemEventsItemOption3Type: String, Codable, Sendable {
@@ -3330,6 +5915,21 @@ public struct RequestsListResultItemEventsItemOption3: Codable, Sendable {
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption3Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`note` = try box.decode(String?.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`note`, forKey: .`note`)
     }
 }
 
@@ -3353,6 +5953,21 @@ public struct RequestsListResultItemEventsItemOption4: Codable, Sendable {
         self.`runnerPid` = `runnerPid`
         self.`where` = `where`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `runnerPid`; case `where` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption4Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`runnerPid` = try box.decode(Int.self, forKey: .`runnerPid`)
+        self.`where` = try box.decode(RequestsListResultItemEventsItemOption4Where.self, forKey: .`where`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`runnerPid`, forKey: .`runnerPid`)
+        try box.encode(`where`, forKey: .`where`)
+    }
 }
 
 public enum RequestsListResultItemEventsItemOption5Type: String, Codable, Sendable {
@@ -3372,6 +5987,23 @@ public struct RequestsListResultItemEventsItemOption5: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption5Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`exitCode`, forKey: .`exitCode`)
+        try box.encode(`outputTail`, forKey: .`outputTail`)
+        try box.encode(`verified`, forKey: .`verified`)
+    }
 }
 
 public enum RequestsListResultItemEventsItemOption6Type: String, Codable, Sendable {
@@ -3387,6 +6019,19 @@ public struct RequestsListResultItemEventsItemOption6: Codable, Sendable {
         self.`at` = `at`
         self.`reason` = `reason`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption6Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
+    }
 }
 
 public enum RequestsListResultItemEventsItemOption7Type: String, Codable, Sendable {
@@ -3401,6 +6046,19 @@ public struct RequestsListResultItemEventsItemOption7: Codable, Sendable {
         self.`type` = `type`
         self.`at` = `at`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestsListResultItemEventsItemOption7Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -3479,6 +6137,35 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestsListResultItemOutcomeStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestsListResultItemOutcomeMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct RequestsListResultItem: Codable, Sendable {
@@ -3493,6 +6180,23 @@ public struct RequestsListResultItem: Codable, Sendable {
         self.`state` = `state`
         self.`events` = `events`
         self.`outcome` = `outcome`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `request`; case `state`; case `events`; case `outcome` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`request` = try box.decode(RequestsListResultItemRequest.self, forKey: .`request`)
+        self.`state` = try box.decode(RequestsListResultItemState.self, forKey: .`state`)
+        self.`events` = try box.decode([RequestsListResultItemEventsItem].self, forKey: .`events`)
+        self.`outcome` = try box.decode(RequestsListResultItemOutcome.self, forKey: .`outcome`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encode(`events`, forKey: .`events`)
+        try box.encode(`outcome`, forKey: .`outcome`)
     }
 }
 
@@ -3509,6 +6213,19 @@ public struct RequestsAnswerParams: Codable, Sendable {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestsAnswerParamsStatus.self, forKey: .`status`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -3553,12 +6270,50 @@ public struct RequestsAnswerResult: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestsAnswerResultStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestsAnswerResultMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct RequestsWithdrawParams: Codable, Sendable {
     public var `id`: String
     public init(`id`: String) {
         self.`id` = `id`
+    }
+    private enum CodingKeys: String, CodingKey { case `id` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
     }
 }
 
@@ -3603,6 +6358,35 @@ public struct RequestsWithdrawResult: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestsWithdrawResultStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestsWithdrawResultMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public enum RequestPresentParamsKind: String, Codable, Sendable {
@@ -3625,6 +6409,27 @@ public struct RequestPresentParams: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestPresentParamsKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -3669,6 +6474,35 @@ public struct RequestPresentResult: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestPresentResultStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestPresentResultMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public enum RequestChangedEventRequestKind: String, Codable, Sendable {
@@ -3691,6 +6525,27 @@ public struct RequestChangedEventRequest: Codable, Sendable {
         self.`createdAt` = `createdAt`
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestChangedEventRequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -3731,6 +6586,27 @@ public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
         self.`deadlineSeconds` = `deadlineSeconds`
         self.`takesFocus` = `takesFocus`
     }
+    private enum CodingKeys: String, CodingKey { case `kind`; case `id`; case `title`; case `reason`; case `createdAt`; case `deadlineSeconds`; case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`kind` = try box.decode(RequestChangedEventEventsItemOption0RequestKind.self, forKey: .`kind`)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`title` = try box.decode(String.self, forKey: .`title`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`createdAt` = try box.decode(String.self, forKey: .`createdAt`)
+        self.`deadlineSeconds` = try box.decodeIfPresent(Double.self, forKey: .`deadlineSeconds`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`kind`, forKey: .`kind`)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`title`, forKey: .`title`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`createdAt`, forKey: .`createdAt`)
+        try box.encodeIfPresent(`deadlineSeconds`, forKey: .`deadlineSeconds`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
+    }
 }
 
 public struct RequestChangedEventEventsItemOption0Asker: Codable, Sendable {
@@ -3744,6 +6620,21 @@ public struct RequestChangedEventEventsItemOption0Asker: Codable, Sendable {
         self.`project` = `project`
         self.`branch` = `branch`
     }
+    private enum CodingKeys: String, CodingKey { case `agent`; case `session`; case `project`; case `branch` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`agent` = try box.decodeIfPresent(String.self, forKey: .`agent`)
+        self.`session` = try box.decodeIfPresent(String.self, forKey: .`session`)
+        self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+        self.`branch` = try box.decodeIfPresent(String.self, forKey: .`branch`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`agent`, forKey: .`agent`)
+        try box.encodeIfPresent(`session`, forKey: .`session`)
+        try box.encodeIfPresent(`project`, forKey: .`project`)
+        try box.encodeIfPresent(`branch`, forKey: .`branch`)
+    }
 }
 
 public struct RequestChangedEventEventsItemOption0: Codable, Sendable {
@@ -3756,6 +6647,21 @@ public struct RequestChangedEventEventsItemOption0: Codable, Sendable {
         self.`at` = `at`
         self.`request` = `request`
         self.`asker` = `asker`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `request`; case `asker` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption0Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`request` = try box.decode(RequestChangedEventEventsItemOption0Request.self, forKey: .`request`)
+        self.`asker` = try box.decode(RequestChangedEventEventsItemOption0Asker?.self, forKey: .`asker`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`asker`, forKey: .`asker`)
     }
 }
 
@@ -3779,6 +6685,21 @@ public struct RequestChangedEventEventsItemOption1: Codable, Sendable {
         self.`at` = `at`
         self.`channel` = `channel`
         self.`noticeId` = `noticeId`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `channel`; case `noticeId` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption1Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`channel` = try box.decode(RequestChangedEventEventsItemOption1Channel.self, forKey: .`channel`)
+        self.`noticeId` = try box.decode(String?.self, forKey: .`noticeId`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`channel`, forKey: .`channel`)
+        try box.encode(`noticeId`, forKey: .`noticeId`)
     }
 }
 
@@ -3806,6 +6727,23 @@ public struct RequestChangedEventEventsItemOption2: Codable, Sendable {
         self.`elevation` = `elevation`
         self.`method` = `method`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `elevation`; case `method` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption2Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`elevation` = try box.decode(String?.self, forKey: .`elevation`)
+        self.`method` = try box.decode(RequestChangedEventEventsItemOption2Method.self, forKey: .`method`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`elevation`, forKey: .`elevation`)
+        try box.encode(`method`, forKey: .`method`)
+    }
 }
 
 public enum RequestChangedEventEventsItemOption3Type: String, Codable, Sendable {
@@ -3822,6 +6760,21 @@ public struct RequestChangedEventEventsItemOption3: Codable, Sendable {
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption3Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`note` = try box.decode(String?.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`note`, forKey: .`note`)
     }
 }
 
@@ -3845,6 +6798,21 @@ public struct RequestChangedEventEventsItemOption4: Codable, Sendable {
         self.`runnerPid` = `runnerPid`
         self.`where` = `where`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `runnerPid`; case `where` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption4Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`runnerPid` = try box.decode(Int.self, forKey: .`runnerPid`)
+        self.`where` = try box.decode(RequestChangedEventEventsItemOption4Where.self, forKey: .`where`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`runnerPid`, forKey: .`runnerPid`)
+        try box.encode(`where`, forKey: .`where`)
+    }
 }
 
 public enum RequestChangedEventEventsItemOption5Type: String, Codable, Sendable {
@@ -3864,6 +6832,23 @@ public struct RequestChangedEventEventsItemOption5: Codable, Sendable {
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption5Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`exitCode`, forKey: .`exitCode`)
+        try box.encode(`outputTail`, forKey: .`outputTail`)
+        try box.encode(`verified`, forKey: .`verified`)
+    }
 }
 
 public enum RequestChangedEventEventsItemOption6Type: String, Codable, Sendable {
@@ -3879,6 +6864,19 @@ public struct RequestChangedEventEventsItemOption6: Codable, Sendable {
         self.`at` = `at`
         self.`reason` = `reason`
     }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption6Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
+    }
 }
 
 public enum RequestChangedEventEventsItemOption7Type: String, Codable, Sendable {
@@ -3893,6 +6891,19 @@ public struct RequestChangedEventEventsItemOption7: Codable, Sendable {
         self.`type` = `type`
         self.`at` = `at`
         self.`reason` = `reason`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `reason` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(RequestChangedEventEventsItemOption7Type.self, forKey: .`type`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`reason`, forKey: .`reason`)
     }
 }
 
@@ -3971,6 +6982,35 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
         self.`verified` = `verified`
         self.`manual` = `manual`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason`; case `method`; case `via`; case `elevation`; case `note`; case `exitCode`; case `outputTail`; case `verified`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`status` = try box.decode(RequestChangedEventOutcomeStatus.self, forKey: .`status`)
+        self.`reason` = try box.decode(String?.self, forKey: .`reason`)
+        self.`method` = try box.decodeIfPresent(RequestChangedEventOutcomeMethod.self, forKey: .`method`)
+        self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
+        self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+        self.`exitCode` = try box.decodeIfPresent(Int.self, forKey: .`exitCode`)
+        self.`outputTail` = try box.decodeIfPresent(String.self, forKey: .`outputTail`)
+        self.`verified` = try box.decodeIfPresent(Bool.self, forKey: .`verified`)
+        self.`manual` = try box.decodeIfPresent(String.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`method`, forKey: .`method`)
+        try box.encodeIfPresent(`via`, forKey: .`via`)
+        try box.encodeIfPresent(`elevation`, forKey: .`elevation`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`exitCode`, forKey: .`exitCode`)
+        try box.encodeIfPresent(`outputTail`, forKey: .`outputTail`)
+        try box.encodeIfPresent(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`manual`, forKey: .`manual`)
+    }
 }
 
 public struct RequestChangedEvent: Codable, Sendable {
@@ -3986,6 +7026,23 @@ public struct RequestChangedEvent: Codable, Sendable {
         self.`events` = `events`
         self.`outcome` = `outcome`
     }
+    private enum CodingKeys: String, CodingKey { case `id`; case `request`; case `state`; case `events`; case `outcome` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`request` = try box.decode(RequestChangedEventRequest.self, forKey: .`request`)
+        self.`state` = try box.decode(RequestChangedEventState.self, forKey: .`state`)
+        self.`events` = try box.decode([RequestChangedEventEventsItem].self, forKey: .`events`)
+        self.`outcome` = try box.decode(RequestChangedEventOutcome.self, forKey: .`outcome`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encode(`request`, forKey: .`request`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encode(`events`, forKey: .`events`)
+        try box.encode(`outcome`, forKey: .`outcome`)
+    }
 }
 
 public struct ConfigChangedEvent: Codable, Sendable {
@@ -3994,6 +7051,17 @@ public struct ConfigChangedEvent: Codable, Sendable {
     public init(`path`: String, `value`: GenesisToolsJSON? = nil) {
         self.`path` = `path`
         self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `path`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`path` = try box.decode(String.self, forKey: .`path`)
+        self.`value` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`path`, forKey: .`path`)
+        try box.encodeIfPresent(`value`, forKey: .`value`)
     }
 }
 
@@ -4016,6 +7084,23 @@ public struct StateChangedEventValue: Codable, Sendable {
         self.`build` = `build`
         self.`stale` = `stale`
     }
+    private enum CodingKeys: String, CodingKey { case `value`; case `at`; case `source`; case `build`; case `stale` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`at` = try box.decode(String.self, forKey: .`at`)
+        self.`source` = try box.decode(StateChangedEventValueSource.self, forKey: .`source`)
+        self.`build` = try box.decodeIfPresent(String.self, forKey: .`build`)
+        self.`stale` = try box.decodeIfPresent(Bool.self, forKey: .`stale`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`at`, forKey: .`at`)
+        try box.encode(`source`, forKey: .`source`)
+        try box.encodeIfPresent(`build`, forKey: .`build`)
+        try box.encodeIfPresent(`stale`, forKey: .`stale`)
+    }
 }
 
 public struct StateChangedEvent: Codable, Sendable {
@@ -4026,6 +7111,19 @@ public struct StateChangedEvent: Codable, Sendable {
         self.`area` = `area`
         self.`key` = `key`
         self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `area`; case `key`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`area` = try box.decode(String.self, forKey: .`area`)
+        self.`key` = try box.decode(String.self, forKey: .`key`)
+        self.`value` = try box.decode(StateChangedEventValue?.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`area`, forKey: .`area`)
+        try box.encode(`key`, forKey: .`key`)
+        try box.encode(`value`, forKey: .`value`)
     }
 }
 
@@ -4040,6 +7138,15 @@ public struct ConfigWindowsArea: Codable, Sendable {
     public init(`fix`: ConfigWindowsAreaFix? = nil) {
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`fix` = try box.decodeIfPresent(ConfigWindowsAreaFix.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`fix`, forKey: .`fix`)
+    }
 }
 
 public enum ConfigWindowsOpenFix: String, Codable, Sendable {
@@ -4053,6 +7160,15 @@ public struct ConfigWindowsOpen: Codable, Sendable {
     public init(`fix`: ConfigWindowsOpenFix? = nil) {
         self.`fix` = `fix`
     }
+    private enum CodingKeys: String, CodingKey { case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`fix` = try box.decodeIfPresent(ConfigWindowsOpenFix.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`fix`, forKey: .`fix`)
+    }
 }
 
 public struct ConfigPersonAreaNotification: Codable, Sendable {
@@ -4062,12 +7178,32 @@ public struct ConfigPersonAreaNotification: Codable, Sendable {
         self.`sound` = `sound`
         self.`repeatAfterMinutes` = `repeatAfterMinutes`
     }
+    private enum CodingKeys: String, CodingKey { case `sound`; case `repeatAfterMinutes` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`sound` = try box.decodeIfPresent(String.self, forKey: .`sound`)
+        self.`repeatAfterMinutes` = try box.decodeIfPresent(Double.self, forKey: .`repeatAfterMinutes`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`sound`, forKey: .`sound`)
+        try box.encodeIfPresent(`repeatAfterMinutes`, forKey: .`repeatAfterMinutes`)
+    }
 }
 
 public struct ConfigPersonAreaDialog: Codable, Sendable {
     public var `takesFocus`: Bool?
     public init(`takesFocus`: Bool? = nil) {
         self.`takesFocus` = `takesFocus`
+    }
+    private enum CodingKeys: String, CodingKey { case `takesFocus` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
@@ -4077,6 +7213,17 @@ public struct ConfigPersonArea: Codable, Sendable {
     public init(`notification`: ConfigPersonAreaNotification? = nil, `dialog`: ConfigPersonAreaDialog? = nil) {
         self.`notification` = `notification`
         self.`dialog` = `dialog`
+    }
+    private enum CodingKeys: String, CodingKey { case `notification`; case `dialog` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`notification` = try box.decodeIfPresent(ConfigPersonAreaNotification.self, forKey: .`notification`)
+        self.`dialog` = try box.decodeIfPresent(ConfigPersonAreaDialog.self, forKey: .`dialog`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`notification`, forKey: .`notification`)
+        try box.encodeIfPresent(`dialog`, forKey: .`dialog`)
     }
 }
 
@@ -4091,6 +7238,15 @@ public struct ConfigPersonAsk: Codable, Sendable {
     public init(`delivery`: ConfigPersonAskDelivery? = nil) {
         self.`delivery` = `delivery`
     }
+    private enum CodingKeys: String, CodingKey { case `delivery` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`delivery` = try box.decodeIfPresent(ConfigPersonAskDelivery.self, forKey: .`delivery`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`delivery`, forKey: .`delivery`)
+    }
 }
 
 public enum ConfigPersonConfirmDelivery: String, Codable, Sendable {
@@ -4104,6 +7260,15 @@ public struct ConfigPersonConfirm: Codable, Sendable {
     public init(`delivery`: ConfigPersonConfirmDelivery? = nil) {
         self.`delivery` = `delivery`
     }
+    private enum CodingKeys: String, CodingKey { case `delivery` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`delivery` = try box.decodeIfPresent(ConfigPersonConfirmDelivery.self, forKey: .`delivery`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`delivery`, forKey: .`delivery`)
+    }
 }
 
 public enum ConfigPersonNoticeDelivery: String, Codable, Sendable {
@@ -4116,6 +7281,15 @@ public struct ConfigPersonNotice: Codable, Sendable {
     public var `delivery`: ConfigPersonNoticeDelivery?
     public init(`delivery`: ConfigPersonNoticeDelivery? = nil) {
         self.`delivery` = `delivery`
+    }
+    private enum CodingKeys: String, CodingKey { case `delivery` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`delivery` = try box.decodeIfPresent(ConfigPersonNoticeDelivery.self, forKey: .`delivery`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`delivery`, forKey: .`delivery`)
     }
 }
 

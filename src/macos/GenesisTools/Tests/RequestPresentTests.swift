@@ -30,6 +30,14 @@ final class RequestPresentTests: XCTestCase {
         XCTAssertThrowsError(try GenesisToolsRPC.validateFixture(method: "config.set", params: params, result: Data("{\"changed\":false}".utf8)))
     }
 
+    func testRequiredNullableReasonSurvivesSwiftEncoding() throws {
+        let result = RequestPresentResult(id: "fixture", status: .value0, reason: nil)
+        let data = try JSONEncoder().encode(result)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertTrue(object["reason"] is NSNull, "required nullable fields must encode an explicit null")
+        XCTAssertThrowsError(try JSONDecoder().decode(RequestPresentResult.self, from: Data("{\"id\":\"fixture\",\"status\":\"done\"}".utf8)))
+    }
+
     func testNoticeWordsAndAnswersUseTheSharedApprovalModel() throws {
         let request = try Self.request()
         let model = RequestWindowContent.build(request)

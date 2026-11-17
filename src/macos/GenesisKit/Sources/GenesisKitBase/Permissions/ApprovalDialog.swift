@@ -859,7 +859,7 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
 
     public override init() {}
 
-    public func present(_ model: ApprovalDialogModel) {
+    public func present(_ model: ApprovalDialogModel, reminders: Bool = true) {
         if NSApp == nil { _ = NSApplication.shared }
         let controller = NSHostingController(rootView: ApprovalDialogView(model: model).titlebarZone())
         // No safe area for the hidden title bar: with it, `.ignoresSafeArea()` drew the view from the top, but the
@@ -893,10 +893,13 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
         self.model = model
         panel.orderFrontRegardless()
         model.shownAt = Date()
-        let reminder = ApprovalReminder(model: model) { [weak self] in self?.bringForward() }
         self.reminder?.stop()
-        self.reminder = reminder
-        reminder.start()
+        self.reminder = nil
+        if reminders {
+            let reminder = ApprovalReminder(model: model) { [weak self] in self?.bringForward() }
+            self.reminder = reminder
+            reminder.start()
+        }
     }
 
     public func close() {
