@@ -7,7 +7,10 @@ import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import type { Command } from "commander";
 
 export function registerRequestCommand(program: Command): void {
-    const request = program.command("request").description("Inspect, present or withdraw a person request");
+    const request = program
+        .command("request")
+        .description("Inspect, present or withdraw a person request")
+        .option("--json", "print JSON");
     request.command("list").action(async () => {
         const remote = await callRunningService("requests.list", {});
         out.result(remote.called ? remote.value : createRequestJournal().list().slice(-100));

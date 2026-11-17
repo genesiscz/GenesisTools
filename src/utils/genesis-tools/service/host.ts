@@ -151,7 +151,13 @@ export async function startGenesisToolsService(
                 const result = await runAction(AREAS, "person.notifyThenAsk", view.request, deps, {
                     timeoutMs: 15_000,
                 });
-                if (result.status === "ran") {
+                if (
+                    result.status === "ran" &&
+                    typeof result.value === "object" &&
+                    result.value !== null &&
+                    "status" in result.value &&
+                    result.value.status === "pending"
+                ) {
                     journal.append(view.id, {
                         type: "delivered",
                         at: new Date().toISOString(),

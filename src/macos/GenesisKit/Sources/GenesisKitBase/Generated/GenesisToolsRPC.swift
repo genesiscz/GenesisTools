@@ -587,7 +587,8 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -598,6 +599,7 @@ public struct PersonAskResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -737,7 +739,8 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonConfirmResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonConfirmResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonConfirmResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonConfirmResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -748,6 +751,7 @@ public struct PersonConfirmResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -881,7 +885,8 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonNoticeResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNoticeResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonNoticeResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNoticeResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -892,6 +897,7 @@ public struct PersonNoticeResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -1037,7 +1043,8 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonShowWindowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonShowWindowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonShowWindowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonShowWindowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1048,6 +1055,7 @@ public struct PersonShowWindowResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -1193,7 +1201,8 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonNotifyThenAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNotifyThenAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonNotifyThenAskResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonNotifyThenAskResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1204,6 +1213,7 @@ public struct PersonNotifyThenAskResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -1349,7 +1359,8 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonAskNowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskNowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonAskNowResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskNowResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1360,6 +1371,7 @@ public struct PersonAskNowResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -1505,7 +1517,8 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: PersonAskElseNotifyResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskElseNotifyResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: PersonAskElseNotifyResultOption0ValueStatus, `reason`: String? = nil, `method`: PersonAskElseNotifyResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1516,6 +1529,7 @@ public struct PersonAskElseNotifyResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -1661,7 +1675,8 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: TerminalPromptResultOption0ValueStatus, `reason`: String? = nil, `method`: TerminalPromptResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: TerminalPromptResultOption0ValueStatus, `reason`: String? = nil, `method`: TerminalPromptResultOption0ValueMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -1672,6 +1687,7 @@ public struct TerminalPromptResultOption0Value: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -2577,12 +2593,25 @@ public struct RequestsPostResultEventsItemOption0Request: Codable, Sendable {
     }
 }
 
+public struct RequestsPostResultEventsItemOption0Asker: Codable, Sendable {
+    public var `agent`: String?
+    public var `session`: String?
+    public var `project`: String?
+    public var `branch`: String?
+    public init(`agent`: String? = nil, `session`: String? = nil, `project`: String? = nil, `branch`: String? = nil) {
+        self.`agent` = `agent`
+        self.`session` = `session`
+        self.`project` = `project`
+        self.`branch` = `branch`
+    }
+}
+
 public struct RequestsPostResultEventsItemOption0: Codable, Sendable {
     public var `type`: RequestsPostResultEventsItemOption0Type
     public var `at`: String
     public var `request`: RequestsPostResultEventsItemOption0Request
-    public var `asker`: String?
-    public init(`type`: RequestsPostResultEventsItemOption0Type, `at`: String, `request`: RequestsPostResultEventsItemOption0Request, `asker`: String? = nil) {
+    public var `asker`: RequestsPostResultEventsItemOption0Asker?
+    public init(`type`: RequestsPostResultEventsItemOption0Type, `at`: String, `request`: RequestsPostResultEventsItemOption0Request, `asker`: RequestsPostResultEventsItemOption0Asker? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`request` = `request`
@@ -2788,7 +2817,8 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestsPostResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsPostResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestsPostResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsPostResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -2799,6 +2829,7 @@ public struct RequestsPostResultOutcome: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -2886,12 +2917,25 @@ public struct RequestsGetResultEventsItemOption0Request: Codable, Sendable {
     }
 }
 
+public struct RequestsGetResultEventsItemOption0Asker: Codable, Sendable {
+    public var `agent`: String?
+    public var `session`: String?
+    public var `project`: String?
+    public var `branch`: String?
+    public init(`agent`: String? = nil, `session`: String? = nil, `project`: String? = nil, `branch`: String? = nil) {
+        self.`agent` = `agent`
+        self.`session` = `session`
+        self.`project` = `project`
+        self.`branch` = `branch`
+    }
+}
+
 public struct RequestsGetResultEventsItemOption0: Codable, Sendable {
     public var `type`: RequestsGetResultEventsItemOption0Type
     public var `at`: String
     public var `request`: RequestsGetResultEventsItemOption0Request
-    public var `asker`: String?
-    public init(`type`: RequestsGetResultEventsItemOption0Type, `at`: String, `request`: RequestsGetResultEventsItemOption0Request, `asker`: String? = nil) {
+    public var `asker`: RequestsGetResultEventsItemOption0Asker?
+    public init(`type`: RequestsGetResultEventsItemOption0Type, `at`: String, `request`: RequestsGetResultEventsItemOption0Request, `asker`: RequestsGetResultEventsItemOption0Asker? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`request` = `request`
@@ -3097,7 +3141,8 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestsGetResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsGetResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestsGetResultOutcomeStatus, `reason`: String? = nil, `method`: RequestsGetResultOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3108,6 +3153,7 @@ public struct RequestsGetResultOutcome: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -3195,12 +3241,25 @@ public struct RequestsListResultItemEventsItemOption0Request: Codable, Sendable 
     }
 }
 
+public struct RequestsListResultItemEventsItemOption0Asker: Codable, Sendable {
+    public var `agent`: String?
+    public var `session`: String?
+    public var `project`: String?
+    public var `branch`: String?
+    public init(`agent`: String? = nil, `session`: String? = nil, `project`: String? = nil, `branch`: String? = nil) {
+        self.`agent` = `agent`
+        self.`session` = `session`
+        self.`project` = `project`
+        self.`branch` = `branch`
+    }
+}
+
 public struct RequestsListResultItemEventsItemOption0: Codable, Sendable {
     public var `type`: RequestsListResultItemEventsItemOption0Type
     public var `at`: String
     public var `request`: RequestsListResultItemEventsItemOption0Request
-    public var `asker`: String?
-    public init(`type`: RequestsListResultItemEventsItemOption0Type, `at`: String, `request`: RequestsListResultItemEventsItemOption0Request, `asker`: String? = nil) {
+    public var `asker`: RequestsListResultItemEventsItemOption0Asker?
+    public init(`type`: RequestsListResultItemEventsItemOption0Type, `at`: String, `request`: RequestsListResultItemEventsItemOption0Request, `asker`: RequestsListResultItemEventsItemOption0Asker? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`request` = `request`
@@ -3406,7 +3465,8 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestsListResultItemOutcomeStatus, `reason`: String? = nil, `method`: RequestsListResultItemOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestsListResultItemOutcomeStatus, `reason`: String? = nil, `method`: RequestsListResultItemOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3417,6 +3477,7 @@ public struct RequestsListResultItemOutcome: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -3478,7 +3539,8 @@ public struct RequestsAnswerResult: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestsAnswerResultStatus, `reason`: String? = nil, `method`: RequestsAnswerResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestsAnswerResultStatus, `reason`: String? = nil, `method`: RequestsAnswerResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3489,6 +3551,7 @@ public struct RequestsAnswerResult: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -3526,7 +3589,8 @@ public struct RequestsWithdrawResult: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestsWithdrawResultStatus, `reason`: String? = nil, `method`: RequestsWithdrawResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestsWithdrawResultStatus, `reason`: String? = nil, `method`: RequestsWithdrawResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3537,6 +3601,7 @@ public struct RequestsWithdrawResult: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -3590,7 +3655,8 @@ public struct RequestPresentResult: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestPresentResultStatus, `reason`: String? = nil, `method`: RequestPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestPresentResultStatus, `reason`: String? = nil, `method`: RequestPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3601,6 +3667,7 @@ public struct RequestPresentResult: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 
@@ -3666,12 +3733,25 @@ public struct RequestChangedEventEventsItemOption0Request: Codable, Sendable {
     }
 }
 
+public struct RequestChangedEventEventsItemOption0Asker: Codable, Sendable {
+    public var `agent`: String?
+    public var `session`: String?
+    public var `project`: String?
+    public var `branch`: String?
+    public init(`agent`: String? = nil, `session`: String? = nil, `project`: String? = nil, `branch`: String? = nil) {
+        self.`agent` = `agent`
+        self.`session` = `session`
+        self.`project` = `project`
+        self.`branch` = `branch`
+    }
+}
+
 public struct RequestChangedEventEventsItemOption0: Codable, Sendable {
     public var `type`: RequestChangedEventEventsItemOption0Type
     public var `at`: String
     public var `request`: RequestChangedEventEventsItemOption0Request
-    public var `asker`: String?
-    public init(`type`: RequestChangedEventEventsItemOption0Type, `at`: String, `request`: RequestChangedEventEventsItemOption0Request, `asker`: String? = nil) {
+    public var `asker`: RequestChangedEventEventsItemOption0Asker?
+    public init(`type`: RequestChangedEventEventsItemOption0Type, `at`: String, `request`: RequestChangedEventEventsItemOption0Request, `asker`: RequestChangedEventEventsItemOption0Asker? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`request` = `request`
@@ -3877,7 +3957,8 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
     public var `exitCode`: Int?
     public var `outputTail`: String?
     public var `verified`: Bool?
-    public init(`id`: String, `status`: RequestChangedEventOutcomeStatus, `reason`: String? = nil, `method`: RequestChangedEventOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil) {
+    public var `manual`: String?
+    public init(`id`: String, `status`: RequestChangedEventOutcomeStatus, `reason`: String? = nil, `method`: RequestChangedEventOutcomeMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -3888,6 +3969,7 @@ public struct RequestChangedEventOutcome: Codable, Sendable {
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`manual` = `manual`
     }
 }
 

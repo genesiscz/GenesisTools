@@ -81,7 +81,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -107,7 +108,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -132,7 +134,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -161,7 +164,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -190,7 +194,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -219,7 +224,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -248,7 +254,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -277,7 +284,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       },
       "skipped": []
     }
@@ -448,7 +456,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       }
     }
   },
@@ -480,7 +489,8 @@
         "note": "fixture",
         "exitCode": -9007199254740991,
         "outputTail": "fixture",
-        "verified": true
+        "verified": true,
+        "manual": "fixture"
       }
     }
   },
@@ -508,7 +518,8 @@
       "note": "fixture",
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
-      "verified": true
+      "verified": true,
+      "manual": "fixture"
     }
   },
   {
@@ -526,7 +537,8 @@
       "note": "fixture",
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
-      "verified": true
+      "verified": true,
+      "manual": "fixture"
     }
   },
   {
@@ -550,7 +562,8 @@
       "note": "fixture",
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
-      "verified": true
+      "verified": true,
+      "manual": "fixture"
     }
   }
 ]
