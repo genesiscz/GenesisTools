@@ -64,16 +64,84 @@ struct TranscriptBlocksPane: View {
     /// The one transcript threshold (the Transcript tab picks the service's preview by it too).
     @AppStorage(MeetingsPreferences.Transcript.applyAbove.key) private var applyAbove = MeetingsPreferences.Transcript.applyAbove.defaultValue
     @State private var probing = false
+    @State private var spotChecking = false
+    /// The Items tab's question group: "Spot check" opens that tab on the group it prepared.
+    @AppStorage("meetings.rows.questionGroup") private var questionGroup = "all"
 
-    private var filteredEntries: [TranscriptLine] {
+    private var filteredEntries: [TranscriptLine] { Self.shownLines(entries, applyAbove: applyAbove) }
+
+    /// The lines as the pane shows them at the threshold (I14). A suggested name at or above it reads as the name; under
+    /// it, or while an open question asks who said the line (I9), it reads as the guess `[name: NN %]`. Everything else
+    /// the engine sent stays: the speaking indicator (I1), its own `[unclear …]` marks, the times and the words.
+    static func shownLines(_ entries: [TranscriptLine], applyAbove: Int) -> [TranscriptLine] {
         entries.map { entry in
-            guard let confidence = entry.confidence, entry.band != "confirmed" else { return entry }
-            guard let name = entry.suggestedSpeaker else { return entry }
-            return TranscriptLine(id: entry.id, startSec: entry.startSec,
-                                  speaker: confidence * 100 >= Double(applyAbove) ? name : "[\(name): \(Int((confidence * 100).rounded())) %]",
+            guard let confidence = entry.confidence, entry.band != "confirmed", let name = entry.suggestedSpeaker else { return entry }
+            let guess = entry.questioned == true || confidence * 100 < Double(applyAbove)
+            return TranscriptLine(indicator: entry.indicator, id: entry.id, startSec: entry.startSec,
+                                  speaker: guess ? "[\(name): \(Int((confidence * 100).rounded())) %]" : name,
                                   text: entry.text, endSec: entry.endSec, words: entry.words,
-                                  confidence: confidence, suggestedSpeaker: name, sourceIndex: entry.sourceIndex, questioned: entry.questioned, guess: confidence * 100 < Double(applyAbove), band: entry.band)
+                                  confidence: confidence, suggestedSpeaker: name, sourceIndex: entry.sourceIndex,
+                                  questioned: entry.questioned, guess: guess, band: guess ? "guess" : "applied")
         }
+    }
+
+    /// The lines with a suggestion, by how the pane shows them (I14): a name, a guess with its percent, or still open
+    /// (the engine's `[unclear …]` mark). Lines no suggestion covers are not counted.
+    struct BandCount: Equatable {
+        var applied = 0, guesses = 0, open = 0
+
+        init(applied: Int = 0, guesses: Int = 0, open: Int = 0) {
+            self.applied = applied; self.guesses = guesses; self.open = open
+        }
+
+        init(_ shown: [TranscriptLine]) {
+            for line in shown where line.band != nil {
+                if line.guess == true { guesses += 1 } else if line.speaker.hasPrefix("[") { open += 1 } else { applied += 1 }
+            }
+        }
+
+        var words: String { "\(applied) applied · \(Plural.count(guesses, "guess", "guesses")) · \(open) open" }
+    }
+
+    /// The spot check answered so far (I11 b): the confirmed spot-check questions and how many changed the speaker the
+    /// rules had put there. Nil before the first answer.
+    static func spotCheckRate(_ items: [MeetingItem]) -> (changed: Int, checked: Int)? {
+        let checked = items.filter { $0.group == "spot-check" && $0.status == "confirmed" }
+        guard !checked.isEmpty else { return nil }
+        let changed = checked.filter { item in
+            if case .string(let original)? = item.evidence?["originalSpeaker"] { return item.answer != original }
+            return false
+        }.count
+        return (changed, checked.count)
+    }
+
+    /// The one speaker range whose rule set this line's name (T3), picked as the engine picks it
+    /// (`correctTranscript`): the ranges over the line's start that are not rejected, a confirmed one first, else the
+    /// last. The line's own suggestion (its name and confidence) rules out a range of another voice there.
+    static func namingRange(of line: TranscriptLine, in items: [MeetingItem]) -> MeetingItem? {
+        guard line.band != nil, let at = line.startSec else { return nil }
+        let ranges = items.filter { item in
+            item.kind == "speaker-range" && item.status != "rejected"
+                && (item.fromSec ?? .infinity) <= at && at <= (item.toSec ?? -.infinity)
+                && (line.suggestedSpeaker == nil || item.speaker == line.suggestedSpeaker)
+                && (line.confidence == nil || item.confidence == line.confidence)
+        }
+        return ranges.last { $0.status == "confirmed" } ?? ranges.last
+    }
+
+    /// What the line popover says about the selected lines: the range that named each one with its rules, and what the
+    /// speaking indicator showed on it. One sentence per range, however many of its lines are selected.
+    static func lineEvidence(_ lines: [TranscriptLine], items: [MeetingItem]) -> [String] {
+        var seen = Set<String>()
+        var texts: [String] = []
+        for line in lines {
+            if let range = namingRange(of: line, in: items), let evidence = range.speakerEvidenceText {
+                let span = "\(MeetingsFormat.clock(range.fromSec ?? 0)) to \(MeetingsFormat.clock(range.toSec ?? 0))"
+                texts.append("Named by the speaker range \(span) · \(evidence)")
+            }
+            if let indicator = line.indicator { texts.append("Speaking indicator: \(indicator.shownText)") }
+        }
+        return texts.filter { seen.insert($0).inserted }
     }
 
     var body: some View {
@@ -129,14 +197,18 @@ struct TranscriptBlocksPane: View {
                 .popover(isPresented: $probing) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach([50, 60, 70, 80, 90], id: \.self) { value in
-                            let probe = ListenTranscriptQuality.probe(entries, percent: value)
-                            Button("\(value) %: \(probe.applied) applied, \(probe.guesses) guesses, \(probe.open) open, \(probe.questions) long-stretch questions") {
+                            // The same count as the line beside the picker, so the two never disagree at one value.
+                            let bands = BandCount(Self.shownLines(entries, applyAbove: value))
+                            let questions = ListenTranscriptQuality.probe(entries, percent: value).questions
+                            Button("\(value) %: \(bands.words), \(Plural.count(questions, "long-stretch question"))") {
                                 applyAbove = value
                                 probing = false
                             }
                         }
                     }.padding()
                 }
+            bandLine
+            spotCheck
             if showsHeader {
                 Text("Transcript").font(.system(size: 12, weight: .semibold))
             }
@@ -177,6 +249,46 @@ struct TranscriptBlocksPane: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, showsHeader || headerField != nil ? 8 : 5)
+    }
+
+    /// The line count per band at the threshold (I14), always beside the picker.
+    private var bandLine: some View {
+        let words = BandCount(filteredEntries).words
+        return Text(verbatim: words)
+            .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+            .instantTooltip("Lines with a suggested speaker at \(applyAbove) %: shown as the name, as a guess with its percent, or still unclear")
+            .accessibilityLabel("Lines at \(applyAbove) %: \(words)")
+    }
+
+    /// "Spot check" (I11 b): asks random lines of the band again by ear in the Items tab, and the share the answers
+    /// changed so far stands beside the band count.
+    @ViewBuilder
+    private var spotCheck: some View {
+        if spotChecking {
+            ProgressView().controlSize(.small).accessibilityLabel("Preparing the spot check")
+        } else {
+            GhostButton("Spot check", symbol: "checklist", tooltip: "Ask 20 random lines again by ear, in the Items tab",
+                        identifier: "meetings.transcript.spotcheck", action: startSpotCheck)
+        }
+        if let rate = Self.spotCheckRate(detail.record.value?.items ?? []) {
+            let percent = Int((100 * Double(rate.changed) / Double(rate.checked)).rounded())
+            Text(verbatim: "Spot check: \(rate.changed) of \(rate.checked) changed (\(percent) %)")
+                .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    private func startSpotCheck() {
+        spotChecking = true
+        Task {
+            defer { spotChecking = false }
+            do {
+                try await detail.prepareListenQuality("spot-check")
+                questionGroup = "spot-check"
+                detail.show(.items)
+            } catch {
+                detail.window?.notices.push(.meetingsFailure(error, retry: { startSpotCheck() }))
+            }
+        }
     }
 
     private var timingOptions: some View {
@@ -224,6 +336,7 @@ struct TranscriptBlocksPane: View {
 
     private func popover(_ blocks: [TranscriptBlock]) -> AnyView {
         guard let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
+        let shown = filteredEntries
         return AnyView(VStack(alignment: .leading, spacing: 8) {
             ForEach(selectedLines) { line in
                 let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
@@ -248,9 +361,8 @@ struct TranscriptBlocksPane: View {
                 detail.saveSelectionClip(selection, length: length) { clearSelection() }
             },
             savingClip: detail.isBusy("clip.save"),
-            speakerEvidence: (detail.record.value?.items ?? []).filter { item in
-                item.kind == "speaker-range" && (item.toSec ?? 0) >= chosen.from.atSec && (item.fromSec ?? 0) <= chosen.to.atSec
-            }.compactMap(\.speakerEvidenceText),
+            speakerEvidence: Self.lineEvidence(selectedLines.compactMap { shown.indices.contains($0.index) ? shown[$0.index] : nil },
+                                               items: detail.record.value?.items ?? []),
             close: { clearSelection() })
         })
     }
