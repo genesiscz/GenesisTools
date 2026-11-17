@@ -19,6 +19,17 @@ enum PersonPickerAddRule: String, CaseIterable {
 
 /// Text helpers the picker and the Contacts view share.
 enum PeopleText {
+    static func questionPeople(_ people: [KnownPerson], choices: [String], query: String, hideAbsent: Bool) -> [KnownPerson] {
+        let words = fold(query).split(whereSeparator: \.isWhitespace)
+        var preferred = choices.compactMap { name -> KnownPerson? in
+            guard words.allSatisfy({ fold(name).contains($0) }) else { return nil }
+            return people.first { isExactMatch($0, name) }
+                ?? KnownPerson(id: "choice:\(personKey(name))", name: name, sources: [.meetings], rank: .present)
+        }
+        preferred += people.filter { person in !preferred.contains { isExactMatch($0, person.name) } }
+        return hideAbsent ? preferred.filter { $0.rank == .present } : preferred
+    }
+
     /// Case and accents folded, spaces trimmed: how the directory compares names (`nameKey`).
     static func fold(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -99,6 +110,8 @@ struct PersonPicker: View {
     var addRule: PersonPickerAddRule = .noExactMatch
     /// The most rows drawn before the list scrolls.
     var visibleRows: Int = 6
+    var preferredNames: [String] = []
+    var restrictToPresent = false
     /// A person the user clicked or picked with Return.
     let pick: (KnownPerson) -> Void
     /// "Add 'X' as new speaker": omitted when this picker can only select existing people.
@@ -109,16 +122,16 @@ struct PersonPicker: View {
     var grantContacts: (() -> Void)?
 
     @State private var highlighted: Int?
+    @State private var showEverybody = false
+    @State private var shownPeople: [KnownPerson] = []
     @FocusState private var searchFocused: Bool
 
     static let rowHeight: CGFloat = 40
 
-    var newName: String? {
-        guard addNew != nil else { return nil }
-        return PeopleText.newName(query, people: people, rule: addRule)
-    }
+    @State private(set) var newName: String?
     /// The rows Up and Down move through: the people, then the add row.
-    private var rowCount: Int { people.count + (newName == nil ? 0 : 1) }
+    private var offersEverybody: Bool { restrictToPresent && !showEverybody }
+    private var rowCount: Int { shownPeople.count + (newName == nil ? 0 : 1) + (offersEverybody ? 1 : 0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -151,6 +164,17 @@ struct PersonPicker: View {
         .frame(width: 300)
         .onChange(of: query) { _, _ in highlighted = nil }
         .onAppear { searchFocused = true }
+        .onChange(of: people, initial: true) { _, _ in updatePeople() }
+        .onChange(of: preferredNames) { _, _ in updatePeople() }
+        .onChange(of: query) { _, _ in updatePeople() }
+        .onChange(of: showEverybody) { _, _ in updatePeople() }
+        .onChange(of: restrictToPresent) { _, _ in updatePeople() }
+        .onChange(of: addRule) { _, _ in updatePeople() }
+    }
+
+    private func updatePeople() {
+        shownPeople = PeopleText.questionPeople(people, choices: preferredNames, query: query, hideAbsent: restrictToPresent && !showEverybody)
+        newName = addNew == nil ? nil : PeopleText.newName(query, people: people, rule: addRule)
     }
 
     private var searchField: some View {
@@ -184,12 +208,19 @@ struct PersonPicker: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(people.enumerated()), id: \.element.id) { index, person in
-                            PersonPickerRow(person: person, highlighted: highlighted == index) { pick(person) }
+                        ForEach(Array(shownPeople.enumerated()), id: \.element.id) { index, person in
+                            PersonPickerRow(person: person, highlighted: highlighted == index, use: !query.isEmpty) { pick(person) }
                                 .id(index)
                         }
                         if let newName {
-                            addRow(newName).id(people.count)
+                            addRow(newName).id(shownPeople.count)
+                        }
+                        if offersEverybody {
+                            Button("Show everybody") { showEverybody = true; highlighted = nil }
+                                .buttonStyle(.genHoverRow()).frame(height: Self.rowHeight)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == rowCount - 1 ? KitTheme.accent.opacity(0.18) : .clear))
+                                .instantTooltip("Include people who were outside the call at this time")
+                                .id(rowCount - 1)
                         }
                     }
                     .padding(4)
@@ -216,7 +247,7 @@ struct PersonPicker: View {
             .padding(.horizontal, 8)
             .frame(height: Self.rowHeight)
             .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == people.count ? KitTheme.accent.opacity(0.18) : .clear))
+            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == shownPeople.count ? KitTheme.accent.opacity(0.18) : .clear))
         }
         .buttonStyle(.genHoverRow())
         .accessibilityLabel("Add \(name) as new speaker")
@@ -236,8 +267,10 @@ struct PersonPicker: View {
     /// row offered; it never picks the first person by itself (nothing is preselected).
     private func submit() {
         if let row = highlighted {
-            if row < people.count { pick(people[row]) } else if let newName { addNew?(newName) }
-        } else if people.isEmpty, let newName {
+            if row < shownPeople.count { pick(shownPeople[row]) }
+            else if offersEverybody && row == rowCount - 1 { showEverybody = true; highlighted = nil }
+            else if let newName { addNew?(newName) }
+        } else if shownPeople.isEmpty, let newName {
             addNew?(newName)
         }
     }
@@ -247,6 +280,7 @@ struct PersonPicker: View {
 struct PersonPickerRow: View {
     let person: KnownPerson
     var highlighted = false
+    var use = false
     let action: () -> Void
 
     var body: some View {
@@ -256,7 +290,7 @@ struct PersonPickerRow: View {
                 PersonAvatarView(person: person)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
-                        Text(person.name)
+                        Text(use ? "Use \(person.name)" : person.name)
                             .font(.system(size: 13, weight: .medium))
                             .lineLimit(1)
                         if person.isSelf {
@@ -278,10 +312,36 @@ struct PersonPickerRow: View {
         }
         .buttonStyle(.genHoverRow())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([person.name, person.isSelf ? "you" : nil, PeopleText.address(person), person.rank.title]
+        .accessibilityLabel([use ? "Use \(person.name)" : person.name, person.isSelf ? "you" : nil, PeopleText.address(person), person.rank.title]
             .compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(highlighted ? [.isButton, .isSelected] : .isButton)
         .accessibilityIdentifier("meetings.personPicker.row.\(person.id)")
+    }
+}
+
+/// The row's person choices precede the directory's meeting and earlier people.
+struct QuestionPersonPicker: View {
+    let row: ReviewRow
+    let detail: MeetingDetailModel
+    @Binding var name: String
+    var cancel: () -> Void = {}
+    let confirm: (String) -> Void
+    @State private var search: PeopleSearch?
+    @State private var preferredNames: [String] = []
+
+    var body: some View {
+        PersonPicker(people: search?.people ?? [], query: $name, sources: search?.sources ?? [],
+            title: "Whose voice is this", addRule: MeetingsPreferences.People.offerNew.value(),
+            preferredNames: preferredNames,
+            restrictToPresent: row.startSec != nil,
+            pick: { confirm($0.name) }, addNew: confirm, cancel: cancel,
+            grantContacts: detail.window.map { window in { window.people.grantContacts() } })
+            .onAppear { let next = detail.peopleSearch(atSec: row.startSec); search = next; next.ask(name, after: .zero) }
+            .onChange(of: name) { _, now in search?.ask(now) }
+            .onDisappear { search?.cancel() }
+            .onChange(of: row.choices, initial: true) { _, choices in
+                preferredNames = choices.filter { $0.action.kind == "answer" && ["earlier", "suggested", "presumed", "candidate"].contains($0.role) }.map(\.value)
+            }
     }
 }
 

@@ -617,11 +617,17 @@ struct DictionaryShow: Decodable, Equatable {
 }
 
 struct PhraseTest: Decodable, Equatable {
+    struct Line: Decodable, Equatable {
+        let index: Int
+        let startSec, endSec: Double?
+        let speaker, before, after: String
+    }
     struct Suggestion: Decodable, Equatable, Hashable { let heard: String; let value: String; let score: Double }
     let phrase: String
     let text: String
     let fired: [DictionaryEntry]
     let suggestions: [Suggestion]
+    var lines: [Line]? = nil
 }
 
 // MARK: - A decision (`tools meetings confirm|reject <id> <items> --json`)

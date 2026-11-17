@@ -72,11 +72,12 @@ struct ReviewRowView: View, Equatable {
     }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 6) {
             if row.isOpen || editing || meanwhile != nil || held || changing {
                 open
             } else {
                 folded
+                if row.isQuestion { QuestionEvidence(row: row, detail: detail, expanded: false) }
             }
         }
         .padding(.vertical, 4)
@@ -110,6 +111,7 @@ struct ReviewRowView: View, Equatable {
                 }
             }
             .opacity(row.isOpen || editing ? 1 : 0.6)
+            if row.isQuestion { QuestionEvidence(row: row, detail: detail, expanded: true) }
             if let meanwhile {
                 HStack(spacing: 8) {
                     Label("Decided meanwhile by \(MeetingsWords.actor(meanwhile.actor)): \(MeetingsWords.entryAction(meanwhile, label: detail.rowName))",
@@ -172,9 +174,6 @@ struct ReviewRowView: View, Equatable {
                 Text(verbatim: "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))")
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
-            if let reach = row.reach, row.isQuestion {
-                Text("Affects \(Int(reach)) ranges").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
             if let player, let span = playingSpan() {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
                 PlayingBarSlot(span: span, player: player, meeting: detail.id)
@@ -222,7 +221,7 @@ struct ReviewRowView: View, Equatable {
             }
         case .said(let text, let speaker, let context):
             // The line above already names the speaker: the same name before the quote said it twice.
-            bullet("quote.opening", saidText(text, speaker: speaker == Self.who(row) ? nil : speaker, context: context))
+            if !row.isQuestion { bullet("quote.opening", saidText(text, speaker: speaker == Self.who(row) ? nil : speaker, context: context)) }
         case .when:
             EmptyView() // the header's MomentButton is the row's time (R13)
         case .asks(let pieces):
@@ -801,7 +800,7 @@ private struct RowEditor: View {
                     .onExitCommand { detail.closeEditor() }
                     .accessibilityLabel("\(ReviewRowView.editWord(row.edit)) for \(row.label)")
                     .popover(isPresented: $picking, arrowEdge: .bottom) {
-                        SpeakerNamePopover(name: draft, atSec: row.startSec) { name in
+                        QuestionPersonPicker(row: row, detail: detail, name: draft, cancel: { picking = false }) { name in
                             picking = false
                             detail.decide(row, row.isQuestion ? .answer(row.id, name) : .confirm([row.id], speaker: name))
                         }
@@ -859,6 +858,58 @@ private struct RowEditor: View {
         case "person": return "Who it is"
         default: return "Search or own comment:"
         }
+    }
+}
+
+/// Reads the extra evidence separately, keeping the value row's equality independent of the whole rows reply.
+private struct QuestionEvidence: View {
+    let row: ReviewRow
+    let detail: MeetingDetailModel
+    let expanded: Bool
+
+    var body: some View {
+        Group {
+            if let evidence = detail.rows.value?.questionDetailsByID[row.id] {
+                QuestionLines(evidence: evidence, expanded: expanded, answered: !row.isOpen) { line in
+                    if let start = line.startSec { detail.window?.player.play(.time(start), in: detail.id, from: .row) }
+                }
+            } else if expanded {
+                ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
+                    if case .said(let text, _, _) = part { Text(verbatim: text).font(.system(size: 12)).italic() }
+                }
+            }
+        }
+        .onChange(of: row.decision?.token, initial: true) { _, _ in
+            if (row.decision?.question == row.id || row.decision?.question == row.label),
+               detail.rows.value?.needsQuestionDetails(for: row) == true { detail.readRows(quiet: true) }
+        }
+    }
+}
+
+struct QuestionLines: View {
+    let evidence: QuestionDetails
+    let expanded: Bool
+    let answered: Bool
+    var play: (QuestionDetails.Line) -> Void = { _ in }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if expanded {
+                Text("Decides \(Plural.count(evidence.impact.lines, "line")), \(Plural.count(evidence.impact.words, "word")); same doubt on \(Plural.count(evidence.impact.sameDoubtLines, "line"))")
+                    .foregroundStyle(.secondary)
+                ForEach(evidence.decidedLines, id: \.index) { line in
+                    HStack(alignment: .top, spacing: 6) {
+                        if let start = line.startSec {
+                            GhostButton(MeetingsFormat.clock(start), symbol: "play.fill", tooltip: "Play this source line") { play(line) }
+                        }
+                        Text(verbatim: "\(line.speaker): \(line.text)").textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if answered, let raised = evidence.raisedLines {
+                Text("Raised confidence on \(Plural.count(raised.count, "line"))").foregroundStyle(.secondary)
+            }
+        }.font(.system(size: 12))
     }
 }
 

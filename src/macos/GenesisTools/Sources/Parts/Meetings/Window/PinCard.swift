@@ -16,6 +16,8 @@ struct PinCard: View {
     var onShowSource: (RowSource) -> Void = { _ in }
     /// The words for a row this one settles ("Speaker range 1:45:15–1:53:22"), by its id; nil when it is not known.
     var reference: (String) -> String? = { _ in nil }
+    @Environment(\.meetingDetail) private var detail
+    private var evidence: QuestionDetails? { detail?.rows.value?.questionDetailsByID[row.id] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -41,6 +43,13 @@ struct PinCard: View {
             }
             ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
                 partView(part)
+            }
+            if row.isQuestion, let evidence {
+                FittedScroll(maxHeight: 260, initialHeight: 260) {
+                    QuestionLines(evidence: evidence, expanded: true, answered: !row.isOpen) { line in
+                        if let start = line.startSec, let detail { detail.window?.player.play(.time(start), in: detail.id, from: .row) }
+                    }
+                }
             }
             if !Self.shownChoices(row).isEmpty { choices }
             if !shownSources.isEmpty { sources }
@@ -84,7 +93,7 @@ struct PinCard: View {
         switch part {
         case .who(let text):
             if row.isQuestion || !ReviewRowView.whoRepeatsTitle(text, title: row.what, when: row.whenText) { line("Who", text) }
-        case .said(let text, let speaker, _):
+        case .said(let text, let speaker, _) where evidence == nil:
             VStack(alignment: .leading, spacing: 2) {
                 if let speaker { Text(verbatim: speaker).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary) }
                 Text(verbatim: text).italic()
@@ -93,6 +102,7 @@ struct PinCard: View {
             }
             .padding(.leading, 9)
             .overlay(alignment: .leading) { Rectangle().fill(Color.purple.opacity(0.6)).frame(width: 2) }
+        case .said: EmptyView()
         case .when:
             EmptyView()
         case .asks(let pieces):
