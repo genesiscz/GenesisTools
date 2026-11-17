@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     createWidgetTask,
     editWidgetTask,
@@ -18,7 +18,8 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
-import { openWorkDb } from "@genesiscz/utils/work/store/db";
+import { listItems } from "@genesiscz/utils/work/read";
+import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
 import { setNoticeDeps } from "../notices/notices";
@@ -38,6 +39,7 @@ import { DeliveryUnknownError } from "./deliver";
 import { livePaneTargets } from "./deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "./delivery-text";
 import { decisionPayload, validateQuestionItems } from "./items";
+import { decisionFiles } from "./paths";
 import {
     decisionLine,
     decisionQuestion,
@@ -68,6 +70,7 @@ import {
     recordChatAnswers,
     reopenEmptyDraft,
     repairDecisionLog,
+    storedTodoRows,
     updateDecision,
     updateDecisions,
     updateTodo,
@@ -1960,6 +1963,56 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             const { sourcePath: _a, sourceStamp: _b, ...log } = fromLog;
             const { sourcePath: _c, sourceStamp: _d, ...stored } = fromStore;
             expect(stored).toEqual(log);
+        }
+    });
+
+    test("the default log keeps its to-do rows in the work store: a post, a move, the numbering, an old row moved over", async () => {
+        const files = decisionFiles();
+        const session = `p9-switch-${Date.now()}`;
+        mkdirSync(dirname(files.file), { recursive: true });
+        // A to-do row written by the old code still sits in the log.
+        const old: DecisionRecord = {
+            ...fixture().row,
+            id: `t_1_${session}`,
+            sessionId: session,
+            number: 1,
+            state: "open",
+        };
+        appendFileSync(files.file, `${SafeJSON.stringify(old)}\n`);
+        expect(readDecisions(files.file).filter((r) => r.sessionId === session)).toHaveLength(1);
+
+        const next = await createTodo({
+            ...files,
+            todo: { title: "Second step", sessionId: session, provider: "claude" },
+        });
+        expect(next).toMatchObject({ number: 2, sessionId: session });
+        const logged = () =>
+            readFileSync(files.file, "utf8")
+                .split("\n")
+                .filter((line) => line.includes(session));
+        // The new row went to the store only, and the old row stays in the log until the log's next rewrite.
+        expect(logged()).toHaveLength(1);
+        expect(
+            storedTodoRows()
+                .filter((r) => r.sessionId === session)
+                .map((r) => r.number)
+        ).toEqual([2]);
+
+        const done = await updateTodo({ ...files, id: old.id, state: "implemented", expected: expected(old) });
+        expect(done.state).toBe("implemented");
+        expect(logged()).toHaveLength(0);
+        const rows = readDecisions(files.file).filter((r) => r.sessionId === session);
+        expect(rows.map((r) => [r.number, r.state]).sort()).toEqual([
+            [1, "implemented"],
+            [2, "open"],
+        ]);
+        const db = openWorkDb(workDbPath());
+
+        try {
+            const items = listItems(db, { tag: "session-todo", states: ["done"] });
+            expect(items.ok && items.rows.some((r) => r.title === old.title)).toBe(true);
+        } finally {
+            db.close();
         }
     });
 

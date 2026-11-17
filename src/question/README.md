@@ -668,7 +668,7 @@ moves to `$GENESIS_TOOLS_HOME/.genesis-tools/question/`:
 | `log/<date>.jsonl` | The Q→A log, one day file, append-only (`QUESTION_LOG_BASE` moves it) |
 | `qa.db` | SQLite: the read model over the log, and the pending forms (`qa_pending`) |
 | `pending/<date>.jsonl` | Form lifecycle events; the dashboard tails them |
-| `decisions/decisions.jsonl` | The decision and todo log |
+| `decisions/decisions.jsonl` | The decision log. The numbered to-do items live in the work store (`~/.genesis-tools/work/work.db`, an item of type `task` with the tag `session-todo` each); every read of the log merges them back, and a rewrite moves an older to-do row out of the file |
 | `decisions/events.jsonl` | Its event log |
 | `assets/` | Images from `{{image}}` tokens and item attachments, named by content hash |
 | `config.json` | The settings (`QUESTION_CONFIG_PATH` moves it) |

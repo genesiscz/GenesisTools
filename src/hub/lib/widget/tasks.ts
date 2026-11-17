@@ -1,19 +1,18 @@
 import { existsSync, statSync } from "node:fs";
 import { canonicalAgent } from "@app/handoff/targeting";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { DECISION_STATES } from "@app/question/lib/decisions/schema";
 import {
     createTodo,
     type DecisionRecord,
     kindOf,
     readDecisions,
     reviseTodo,
+    storedTodoRows,
     type TodoUpdateSnapshot,
     updateTodo,
 } from "@app/question/lib/decisions/store";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import { readSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
 import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import type { WidgetCard } from "./snapshot";
@@ -266,10 +265,6 @@ export function listWidgetTasks({
 
 const storeCache = new Map<string, { stamp: string; tasks: WidgetTask[] }>();
 
-function isDecisionState(value: string): value is DecisionRecord["state"] {
-    return (DECISION_STATES as readonly string[]).includes(value);
-}
-
 /**
  * The to-do items as the work store holds them; null when the store has none yet (before the first import), so the
  * caller reads the decision log as before. One indexed query; the result is cached by the store's last change.
@@ -290,9 +285,11 @@ function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[] } | 
                 return cached.tasks.length > 0 ? cached : null;
             }
 
-            const { rows, stamp } = prof.measure("tasks-read-store", () => readSessionTodos(db));
-            const tasks = rows.flatMap((row) =>
-                isDecisionState(row.state) ? [widgetTask({ ...row, state: row.state })] : []
+            const stamp = head;
+            const tasks = prof.measure("tasks-read-store", () =>
+                storedTodoRows(path)
+                    .filter((row) => kindOf(row) === "todo")
+                    .map(widgetTask)
             );
             storeCache.set(path, { stamp, tasks });
             logger.debug({ path, count: tasks.length }, "Widget task metadata read from the work store");
