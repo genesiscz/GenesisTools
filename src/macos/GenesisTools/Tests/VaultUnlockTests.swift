@@ -509,6 +509,61 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertFalse(other.injected.isEmpty)
     }
 
+    func testTheWrappersOwnConfigIsNotExtraCodeAndAnyOtherConfigIs() {
+        // `tools claude embed` as the tools wrapper starts it since 2026-11-17.
+        let embed = caller(arguments: ["gt-claude", "--config=/repo/src/utils/bun/launcher.bunfig.toml",
+                                       "--preload", "/repo/src/utils/bun/preload-solid-scoped.ts",
+                                       "--preload", "/repo/src/utils/search/stores/sqlite-vec-preload.ts",
+                                       "/repo/src/claude/index.ts", "embed"])
+        XCTAssertEqual(embed.script, "/repo/src/claude/index.ts")
+        XCTAssertEqual(embed.injected, [])
+        XCTAssertNil(embed.onceOnlyReason)
+
+        let foreign = caller(arguments: ["gt-claude", "--config=/other/src/utils/bun/launcher.bunfig.toml", "/repo/src/claude/index.ts"])
+        XCTAssertEqual(foreign.onceOnlyReason, "extra code may be loaded")
+
+        // Bun 1.4.2 runs the argument after a bare `--config` as the program, so that file is the script.
+        let bare = caller(arguments: ["gt-claude", "--config", "/tmp/evil.js", "/repo/src/claude/index.ts"])
+        XCTAssertEqual(bare.script, "/tmp/evil.js")
+        XCTAssertEqual(bare.onceOnlyReason, "extra code may be loaded")
+    }
+
+    func testAConfigFlagReplacesTheWorkingFoldersBunfig() throws {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
+        let home = root + "/home", work = root + "/work", checkout = root + "/checkout"
+        for folder in [home, work, checkout] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "preload = [\"./evil.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
+        let config = checkout + "/launcher.bunfig.toml"
+        try "# no preload\n".write(toFile: config, atomically: true, encoding: .utf8)
+
+        let after = Date().addingTimeInterval(60)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after),
+                       ["bunfig.toml preload ./evil.ts"], "without the flag Bun reads the working folder's file")
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after,
+                                                           config: config), [])
+
+        // The working folder changing after the start no longer matters; the config file changing does.
+        let before = Date().addingTimeInterval(-60)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: before,
+                                                           config: config),
+                       ["bunfig.toml preload (\(config) changed after the process started)"])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after,
+                                                           config: checkout + "/missing.toml").isEmpty, "a missing config fails closed")
+
+        // Bun resolves a relative entry of the config file against the working folder, not the file's folder.
+        try "preload = [\"./p.ts\"]\n".write(toFile: config, atomically: true, encoding: .utf8)
+        let workEntry: Set<String> = [((work + "/p.ts") as NSString).standardizingPath]
+        let checkoutEntry: Set<String> = [((checkout + "/p.ts") as NSString).standardizingPath]
+        let later = Date().addingTimeInterval(120)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: workEntry,
+                                                           startedAt: later, config: config), [])
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: checkoutEntry,
+                                                           startedAt: later, config: config), ["bunfig.toml preload ./p.ts"])
+    }
+
     func testARememberedApprovalCoversOnlyTheSameExecutableAndScriptUntilItEnds() {
         let grant = VaultGrant(key: "k", tool: "claude", executable: "/bin/gt-claude", script: "/repo/src/claude/index.ts",
                                grantedAt: 1_000, until: 2_000, method: "touch-id")

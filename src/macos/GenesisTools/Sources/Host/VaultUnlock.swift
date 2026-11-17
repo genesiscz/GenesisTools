@@ -55,8 +55,10 @@ struct VaultCaller {
     private static let scriptExtensions = [".ts", ".tsx", ".js", ".mjs", ".cjs"]
 
     /// Interpreter flags whose value is the next argument (`--preload <file>`): that value is not the script.
+    /// `--config` is not one: Bun 1.4.2 takes its file only as `--config=<file>`, and `bun --config x.js y.ts` runs
+    /// x.js as the program (measured 2026-11-17).
     private static let valueFlags: Set<String> = [
-        "--preload", "-r", "--require", "--import", "--loader", "--config", "--cwd", "--env-file",
+        "--preload", "-r", "--require", "--import", "--loader", "--cwd", "--env-file",
     ]
 
     /// The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
@@ -66,6 +68,11 @@ struct VaultCaller {
         "src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts",
         "src/utils/bun/preload-orphan-watchdog.ts",
     ]
+
+    /// The bunfig.toml the `tools` wrapper passes as `--config=<checkout>/<this>`, relative to the checkout the script
+    /// is in. With it Bun reads no bunfig.toml of the working folder (2026-11-17: `tools claude embed` in a GenesisTools
+    /// worktree loaded that worktree's preloads too, and every T3 session start could only be allowed once).
+    static let ownConfig = "src/utils/bun/launcher.bunfig.toml"
 
     private var supportsRunSubcommand: Bool {
         let name = executable.map { ($0 as NSString).lastPathComponent.lowercased() } ?? ""
@@ -178,8 +185,12 @@ struct VaultCaller {
         // A checkout's own preloads are part of the program; any other preload, or any other loading flag, is not.
         let checkout = script.flatMap { path in path.range(of: "/src/", options: .backwards).map { String(path[..<$0.lowerBound]) } }
         let own = Set(Self.ownPreloads.compactMap { relative in checkout.map { root in "\(root)/\(relative)" } })
+        let ownConfig = checkout.map { root in "\(root)/\(Self.ownConfig)" }
         let foreign = leadingFlags.filter { flag in
-            !(flag.flag == "--preload" && flag.value.map { value in own.contains((value as NSString).standardizingPath) } == true)
+            let value = flag.value.map { value in (value as NSString).standardizingPath }
+            if flag.flag == "--preload", let value, own.contains(value) { return false }
+            if flag.flag == "--config", let value, value == ownConfig { return false }
+            return true
         }
         if !foreign.isEmpty {
             let shown = foreign.map { flag in flag.value.map { value in "\(flag.flag) \(value)" } ?? flag.flag }
@@ -190,9 +201,11 @@ struct VaultCaller {
         // `~/.bunfig.toml` and `$XDG_CONFIG_HOME/.bunfig.toml`. Neither an argument nor a variable names it.
         if let executable, VaultGrants.runtime(of: executable) == "bun" {
             let startedAt = identity.map { Date(timeIntervalSince1970: TimeInterval($0.startSeconds) + TimeInterval($0.startMicroseconds) / 1_000_000) }
+            // Bun reads the last `--config=` file instead of the working folder's; any other one is foreign above.
+            let config = leadingFlags.last { flag in flag.flag == "--config" }?.value
             found += Self.untrustedBunfigPreloads(cwd: cwd, home: NSHomeDirectory(),
                                                   xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own,
-                                                  startedAt: startedAt)
+                                                  startedAt: startedAt, config: config)
         }
 
         return found
@@ -205,10 +218,18 @@ struct VaultCaller {
     /// The files are read now, not at the start: a preload of an untrusted bunfig.toml can delete its own file before
     /// the key is asked for. So the working folder counts as changed, and fails closed, when its bunfig.toml (or, with
     /// none, the folder itself) changed after the process started: the state that was read then can no longer be shown.
+    ///
+    /// With `config` (the file of a `--config=<file>` flag) Bun reads that file instead of the working folder's, and
+    /// resolves its relative entries against the working folder (measured on Bun 1.4.2, 2026-11-17). Then that file is
+    /// the one watched, and a change of the working folder no longer matters.
     static func untrustedBunfigPreloads(cwd: String?, home: String, xdgConfigHome: String?, own: Set<String>,
-                                        startedAt: Date?, fileManager: FileManager = .default) -> [String] {
+                                        startedAt: Date?, config: String? = nil,
+                                        fileManager: FileManager = .default) -> [String] {
+        let config = config.flatMap { path in path.isEmpty ? nil : path }
         var files: [(path: String, base: String)] = []
-        if let cwd, !cwd.isEmpty { files.append(((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd)) }
+        if let cwd, !cwd.isEmpty {
+            files.append(config.map { path in (path, cwd) } ?? ((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd))
+        }
         files.append(((home as NSString).appendingPathComponent(".bunfig.toml"), home))
         if let xdgConfigHome, !xdgConfigHome.isEmpty {
             files.append(((xdgConfigHome as NSString).appendingPathComponent(".bunfig.toml"), xdgConfigHome))
@@ -217,7 +238,7 @@ struct VaultCaller {
         var found: [String] = cwd == nil ? ["bunfig.toml preload (the working folder is not known)"] : []
         if let cwd, !cwd.isEmpty {
             let file = (cwd as NSString).appendingPathComponent("bunfig.toml")
-            let watched = fileManager.fileExists(atPath: file) ? file : cwd
+            let watched = config ?? (fileManager.fileExists(atPath: file) ? file : cwd)
             if let startedAt {
                 if let changed = Self.changeTime(of: watched), changed >= startedAt {
                     found.append("bunfig.toml preload (\(watched) changed after the process started)")
