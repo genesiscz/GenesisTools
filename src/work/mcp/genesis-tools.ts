@@ -59,6 +59,11 @@ async function answer(
 
     try {
         const reply = await callWork(method, params, opened.session);
+
+        if (reply.ok && !read && call.dryRun !== true) {
+            await opened.afterWrite();
+        }
+
         // `callWork` answers unknown data, so the formatter of this method is widened to match.
         const formatter = workFormatters(view)[method] as Formatter<unknown>;
         return replyToToolAnswer(reply, formatter, mcpDoor);

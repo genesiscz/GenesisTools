@@ -101,6 +101,10 @@ export async function runMethod(
         const formatter = formatters[method] as Formatter<unknown>;
         emitAs(reply, formatter, formatFlags(extra));
 
+        if (reply.ok && !read && extra.dryRun !== true) {
+            await opened.afterWrite();
+        }
+
         // The sync is a feed consumer: it runs after the commit, in its own process, so a write never waits for the
         // network (P5 decision 4). The connector methods push themselves.
         if (
