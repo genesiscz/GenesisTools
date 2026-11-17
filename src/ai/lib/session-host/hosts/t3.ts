@@ -6,7 +6,7 @@ import { sendT3ThreadMessage, t3CliPath } from "@genesiscz/utils/t3code/thread-c
 import { t3Home } from "@genesiscz/utils/t3code/thread-env";
 import {
     openT3DesktopLink,
-    readT3ThreadPlace,
+    readT3ThreadPlaces,
     type T3ThreadPlace,
     t3AppInstalled,
     t3EnvironmentId,
@@ -33,9 +33,11 @@ export interface T3HostDeps {
     home: () => string;
     threads: (home: string) => ReadonlyMap<string, T3SessionThread>;
     pins: () => Promise<ReadonlyMap<string, Pick<SessionPin, "host">>>;
-    place: (threadId: string, home: string) => T3ThreadPlace | undefined;
+    /** Every asked thread's place in one read; a thread the state database does not know is absent. */
+    places: (threadIds: readonly string[], home: string) => ReadonlyMap<string, T3ThreadPlace>;
     environmentId: (home: string) => string | undefined;
-    appInstalled: () => boolean;
+    /** A Launch Services lookup (an osascript start): asked once per describe or act, never per session. */
+    appInstalled: () => Promise<boolean>;
     cliInstalled: () => boolean;
     open: typeof openT3DesktopLink;
     send: typeof sendT3ThreadMessage;
@@ -45,7 +47,7 @@ const LIVE_DEPS: T3HostDeps = {
     home: () => t3Home(env.getProcessEnv()),
     threads: (home) => t3SessionThreads(home),
     pins: () => loadPins({ readOnly: true }),
-    place: readT3ThreadPlace,
+    places: readT3ThreadPlaces,
     environmentId: t3EnvironmentId,
     appInstalled: t3AppInstalled,
     cliInstalled: () => t3CliPath() !== undefined,
@@ -57,6 +59,16 @@ interface HeldThread {
     threadId: string;
     place: T3ThreadPlace | undefined;
     link: string | undefined;
+}
+
+/** What this Mac has installed, read once for a whole describe (or one act), so N sessions cost one lookup. */
+interface T3Installed {
+    app: boolean;
+    cli: boolean;
+}
+
+async function installed(deps: T3HostDeps): Promise<T3Installed> {
+    return { app: await deps.appInstalled(), cli: deps.cliInstalled() };
 }
 
 function note(held: HeldThread): string {
@@ -71,18 +83,18 @@ function note(held: HeldThread): string {
     return held.place?.live ? "A turn runs in its T3 Code thread" : "Waiting in its T3 Code thread";
 }
 
-function actions(held: HeldThread, deps: T3HostDeps): SessionHostView["actions"] {
+function actions(held: HeldThread, has: T3Installed): SessionHostView["actions"] {
     const gone = held.place?.deleted ? "The T3 Code thread was deleted." : undefined;
     const focus: SessionHostActionState = gone
         ? { enabled: false, reason: gone }
-        : !deps.appInstalled()
+        : !has.app
           ? { enabled: false, reason: "T3 Code is not installed on this Mac." }
           : !held.link
             ? { enabled: false, reason: "T3 Code has no environment id here, so the thread has no link." }
             : { enabled: true, tip: "Open the thread in T3 Code" };
     const wake: SessionHostActionState = gone
         ? { enabled: false, reason: gone }
-        : !deps.cliInstalled()
+        : !has.cli
           ? { enabled: false, reason: "The t3 command is not installed, so nothing can send to the thread." }
           : { enabled: true, tip: "Send a poke as the thread's next message (it starts a turn)" };
 
@@ -105,19 +117,28 @@ export function createT3SessionHost(deps: T3HostDeps = LIVE_DEPS): SessionHostAd
         }
 
         const pins = await deps.pins();
-        const environmentId = deps.environmentId(home);
+        const holding = new Map<string, string>();
 
         for (const sessionId of sessionIds) {
             const thread = t3ThreadHolding({ thread: threads.get(sessionId), pin: pins.get(sessionId) });
 
-            if (!thread) {
-                continue;
+            if (thread) {
+                holding.set(sessionId, thread.threadId);
             }
+        }
 
+        if (holding.size === 0) {
+            return held;
+        }
+
+        const environmentId = deps.environmentId(home);
+        const places = deps.places([...holding.values()], home);
+
+        for (const [sessionId, threadId] of holding) {
             held.set(sessionId, {
-                threadId: thread.threadId,
-                place: deps.place(thread.threadId, home),
-                link: environmentId ? t3ThreadDesktopLink({ environmentId, threadId: thread.threadId }) : undefined,
+                threadId,
+                place: places.get(threadId),
+                link: environmentId ? t3ThreadDesktopLink({ environmentId, threadId }) : undefined,
             });
         }
 
@@ -131,15 +152,22 @@ export function createT3SessionHost(deps: T3HostDeps = LIVE_DEPS): SessionHostAd
 
         async describe(sessionIds) {
             const views = new Map<string, SessionHostView>();
+            const held = await heldThreads(sessionIds);
 
-            for (const [sessionId, held] of await heldThreads(sessionIds)) {
+            if (held.size === 0) {
+                return views;
+            }
+
+            const has = await installed(deps);
+
+            for (const [sessionId, thread] of held) {
                 views.set(sessionId, {
                     kind: "t3",
                     place: PLACE,
-                    label: held.place?.title || held.threadId,
-                    live: held.place ? held.place.live : null,
-                    note: note(held),
-                    actions: actions(held, deps),
+                    label: thread.place?.title || thread.threadId,
+                    live: thread.place ? thread.place.live : null,
+                    note: note(thread),
+                    actions: actions(thread, has),
                 });
             }
 
@@ -153,7 +181,8 @@ export function createT3SessionHost(deps: T3HostDeps = LIVE_DEPS): SessionHostAd
                 return { ok: false, reason: "No T3 Code thread holds this session any more." };
             }
 
-            const state = actions(held, deps)[action];
+            // Read again for the click: the app may have been installed or removed since the window's describe.
+            const state = actions(held, await installed(deps))[action];
 
             if (!state.enabled) {
                 return { ok: false, reason: state.reason };

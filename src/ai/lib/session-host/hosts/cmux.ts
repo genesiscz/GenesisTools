@@ -40,7 +40,11 @@ interface LivePane {
     tab: string;
 }
 
-/** Each live surface's session, by full id and by the 8-character id a restored tab's title carries. */
+/**
+ * Each live surface's session, by full id, or by the 8-character id a restored tab's title carries when the journal
+ * names no session for the surface. A reused tab keeps the old session's marker in its title, so a hint beside a known
+ * session would claim a session that left the tab.
+ */
 function livePanes(tree: AgentCmuxTree): Map<string, LivePane> {
     const panes = new Map<string, LivePane>();
 
@@ -52,9 +56,7 @@ function livePanes(tree: AgentCmuxTree): Map<string, LivePane> {
 
                     if (surface.sessionId) {
                         panes.set(surface.sessionId.toLowerCase(), live);
-                    }
-
-                    if (surface.sessionHint && !panes.has(surface.sessionHint)) {
+                    } else if (surface.sessionHint && !panes.has(surface.sessionHint)) {
                         panes.set(surface.sessionHint, live);
                     }
                 }
@@ -150,8 +152,9 @@ export function createCmuxSessionHost(deps: CmuxHostDeps = LIVE_DEPS): SessionHo
         place: PLACE,
 
         async describe(sessionIds) {
+            // The journal keys sessions lowercased (`loadAllSessionCmuxRefs`), as the live panes are.
             const refs = deps.refs();
-            const recorded = sessionIds.filter((id) => refs.has(id));
+            const recorded = sessionIds.filter((id) => refs.has(id.toLowerCase()));
             const tree = await deps.tree();
             const live = tree.available ? livePanes(tree) : new Map<string, LivePane>();
             const views = new Map<string, SessionHostView>();
@@ -159,7 +162,7 @@ export function createCmuxSessionHost(deps: CmuxHostDeps = LIVE_DEPS): SessionHo
             for (const sessionId of sessionIds) {
                 const key = sessionId.toLowerCase();
                 const pane = live.get(key) ?? live.get(key.slice(0, 8));
-                const journal = refs.get(sessionId);
+                const journal = refs.get(key);
 
                 if (pane) {
                     views.set(sessionId, {

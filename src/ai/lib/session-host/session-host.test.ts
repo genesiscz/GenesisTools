@@ -1,12 +1,17 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCmuxTree } from "@genesiscz/utils/cmux/agent-tree";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readT3ThreadPlace, t3EnvironmentId, t3ThreadDesktopLink } from "@genesiscz/utils/t3code/thread-place";
+import {
+    readT3ThreadPlace,
+    readT3ThreadPlaces,
+    t3EnvironmentId,
+    t3ThreadDesktopLink,
+} from "@genesiscz/utils/t3code/thread-place";
 import { type CmuxHostDeps, createCmuxSessionHost } from "./hosts/cmux";
 import { createT3SessionHost, type T3HostDeps } from "./hosts/t3";
 import { actOnSessionHost, describeSessionHosts, noHostReason, type SessionHostTable } from "./registry";
@@ -24,9 +29,15 @@ function t3Deps(overrides: Partial<T3HostDeps> = {}): T3HostDeps & { opened: str
         home: () => "/fixture/t3",
         threads: () => new Map([["codex-session-1", { threadId: THREAD, parent: null }]]),
         pins: async () => new Map(),
-        place: (threadId) => ({ threadId, title: "Fixture thread", archived: false, deleted: false, live: false }),
+        places: (threadIds) =>
+            new Map(
+                threadIds.map((threadId) => [
+                    threadId,
+                    { threadId, title: "Fixture thread", archived: false, deleted: false, live: false },
+                ])
+            ),
         environmentId: () => ENV_ID,
-        appInstalled: () => true,
+        appInstalled: async () => true,
         cliInstalled: () => true,
         open: async ({ link }) => {
             opened.push(link);
@@ -151,14 +162,22 @@ describe("the T3 Code host", () => {
 
     test("a deleted thread, a missing app or a missing environment id disables Focus with the reason", async () => {
         const deleted = createT3SessionHost(
-            t3Deps({ place: (threadId) => ({ threadId, title: null, archived: false, deleted: true, live: false }) })
+            t3Deps({
+                places: (threadIds) =>
+                    new Map(
+                        threadIds.map((threadId) => [
+                            threadId,
+                            { threadId, title: null, archived: false, deleted: true, live: false },
+                        ])
+                    ),
+            })
         );
         const view = (await deleted.describe(["codex-session-1"])).get("codex-session-1");
         expect(view?.label).toBe(THREAD);
         expect(view?.actions.focus).toEqual({ enabled: false, reason: "The T3 Code thread was deleted." });
         expect(view?.actions.wake.enabled).toBe(false);
 
-        const noApp = createT3SessionHost(t3Deps({ appInstalled: () => false }));
+        const noApp = createT3SessionHost(t3Deps({ appInstalled: async () => false }));
         expect((await noApp.describe(["codex-session-1"])).get("codex-session-1")?.actions.focus).toEqual({
             enabled: false,
             reason: "T3 Code is not installed on this Mac.",
@@ -166,6 +185,37 @@ describe("the T3 Code host", () => {
 
         const noEnv = createT3SessionHost(t3Deps({ environmentId: () => undefined }));
         expect((await noEnv.describe(["codex-session-1"])).get("codex-session-1")?.actions.focus.enabled).toBe(false);
+    });
+
+    test("a describe of many sessions reads the places and asks for the app once; each act asks again", async () => {
+        const asked = { app: 0, places: [] as string[][] };
+        const deps = t3Deps({
+            threads: () =>
+                new Map([
+                    ["codex-session-1", { threadId: "thread-1", parent: null }],
+                    ["codex-session-2", { threadId: "thread-2", parent: null }],
+                    ["codex-session-3", { threadId: "thread-3", parent: null }],
+                ]),
+            places: (threadIds) => {
+                asked.places.push([...threadIds]);
+                return new Map();
+            },
+            appInstalled: async () => {
+                asked.app += 1;
+                return true;
+            },
+        });
+        const host = createT3SessionHost(deps);
+
+        const views = await host.describe(["codex-session-1", "codex-session-2", "codex-session-3", "other"]);
+        expect(views.size).toBe(3);
+        expect(asked).toEqual({ app: 1, places: [["thread-1", "thread-2", "thread-3"]] });
+
+        expect((await host.act("focus", "codex-session-2")).ok).toBe(true);
+        expect(asked.app).toBe(2);
+
+        expect((await host.describe(["other"])).size).toBe(0);
+        expect(asked.app).toBe(2);
     });
 });
 
@@ -184,6 +234,30 @@ describe("the cmux host", () => {
             reason: "No live cmux pane holds this session.",
         });
         expect(views.has("nowhere")).toBe(false);
+    });
+
+    test("a reused tab whose title still names an older session holds only the session the journal places there", async () => {
+        const host = createCmuxSessionHost(
+            cmuxDeps({
+                tree: async () =>
+                    cmuxTree([{ sessionId: "bbbbbbbb-new-session", hint: "aaaaaaaa", title: "old · aaaaaaaa" }]),
+                refs: () => new Map(),
+            })
+        );
+        const views = await host.describe(["aaaaaaaa-old-session", "bbbbbbbb-new-session"]);
+
+        expect(views.has("aaaaaaaa-old-session")).toBe(false);
+        expect(views.get("bbbbbbbb-new-session")?.live).toBe(true);
+    });
+
+    test("an upper-case id finds its journal record, which the journal keys lower case", async () => {
+        const id = "cccccccc-dddd-4eee-8fff-000000000001";
+        const host = createCmuxSessionHost(
+            cmuxDeps({ tree: async () => cmuxTree([]), refs: () => new Map([[id, journal(id)]]) })
+        );
+        const views = await host.describe([id.toUpperCase()]);
+
+        expect(views.get(id.toUpperCase())).toMatchObject({ label: "workspace:3 · surface:9", live: false });
     });
 
     test("an unreachable cmux disables every action with its error", async () => {
@@ -291,8 +365,17 @@ describe("the host table", () => {
 });
 
 describe("T3 Code's state", () => {
+    let home: string;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "gt-t3-place-"));
+    });
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
+
     test("a thread's title, deletion and live run come from the state database; the link encodes the thread id", () => {
-        const home = mkdtempSync(join(tmpdir(), "gt-t3-place-"));
         mkdirSync(join(home, "userdata"));
         writeFileSync(join(home, "userdata", "environment-id"), `${ENV_ID}\n`);
         const db = new Database(join(home, "userdata", "statev2.sqlite"));
@@ -318,6 +401,10 @@ describe("T3 Code's state", () => {
         expect(readT3ThreadPlace("done", home)).toMatchObject({ archived: true, live: false });
         expect(readT3ThreadPlace("unknown", home)).toBeUndefined();
         expect(readT3ThreadPlace("busy", join(home, "missing"))).toBeUndefined();
+        const both = readT3ThreadPlaces(["busy", "done", "unknown"], home);
+        expect([...both.keys()].sort()).toEqual(["busy", "done"]);
+        expect(both.get("busy")?.live).toBe(true);
+        expect(readT3ThreadPlaces([], home).size).toBe(0);
         expect(t3EnvironmentId(home)).toBe(ENV_ID);
         expect(t3EnvironmentId(join(home, "missing"))).toBeUndefined();
         expect(t3ThreadDesktopLink({ environmentId: ENV_ID, threadId: "mcp:launch:a/b" })).toBe(

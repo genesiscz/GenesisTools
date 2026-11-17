@@ -80,10 +80,14 @@ public struct CmuxTree: Codable, Equatable, Sendable {
             sessionHint = try c.decodeIfPresent(String.self, forKey: .sessionHint)
         }
 
-        /// Whether the surface holds `sessionId` (by full id, or by its 8-character hint).
+        /// Whether the surface holds `sessionId`: by full id, or by its 8-character hint when the journal names no
+        /// session here (a reused tab's title still carries the session that left it).
         public func holds(_ sessionId: String) -> Bool {
             let key = sessionId.lowercased()
-            return self.sessionId?.lowercased() == key || sessionHint?.lowercased() == String(key.prefix(8))
+            if let own = self.sessionId {
+                return own.lowercased() == key
+            }
+            return sessionHint?.lowercased() == String(key.prefix(8))
         }
     }
 
@@ -239,15 +243,18 @@ public struct CmuxTree: Codable, Equatable, Sendable {
         return nil
     }
 
-    /// Every session id and 8-character hint in the tree, lowercased.
+    /// Every session id in the tree, and the 8-character hint of each surface with no known session, lowercased.
     public var liveSessionKeys: Set<String> {
         var keys = Set<String>()
         for window in windows {
             for workspace in window.workspaces {
                 for pane in workspace.panes {
                     for surface in pane.surfaces {
-                        if let id = surface.sessionId { keys.insert(id.lowercased()) }
-                        if let hint = surface.sessionHint { keys.insert(hint.lowercased()) }
+                        if let id = surface.sessionId {
+                            keys.insert(id.lowercased())
+                        } else if let hint = surface.sessionHint {
+                            keys.insert(hint.lowercased())
+                        }
                     }
                 }
             }

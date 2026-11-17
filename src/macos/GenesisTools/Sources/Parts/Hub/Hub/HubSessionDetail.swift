@@ -90,6 +90,8 @@ struct HubSessionDetailHost: View {
     /// Where the session lives (a cmux pane, a T3 Code thread), from GenesisTools' host table
     /// (`tools ai session-host describe`, a hub server door). nil until it answers: the journal's cmux place stands in.
     @State private var hostAnswer: SessionHostAnswer?
+    /// The banner's report of a host lookup that failed, so the next lookup that answers clears exactly that notice.
+    @State private var hostLookupFailure: FailureReport?
     /// The banner's failure (a refresh or an earlier page that did not load) with its Try again, set and cleared as one.
     @State private var bannerFailure: (report: FailureReport, retry: @MainActor () -> Void)?
     /// The report of an earlier-page failure the banner shows, so a retry that loads the page clears that notice and
@@ -203,8 +205,11 @@ struct HubSessionDetailHost: View {
                 Task { await jump(toTurn: index, rowId: rowId) }
             }
         }
-        .task(id: agentChild ? "" : session.sessionId) {
-            hostAnswer = nil
+        // Read again when the journal records a new pane for the session (a resume, a moved tab), not only on open.
+        .task(id: agentChild ? "" : hostKey) {
+            if agentChild || hostAnswer?.sessionId != session.sessionId {
+                hostAnswer = nil
+            }
             guard !agentChild else { return }
             await loadHost()
         }
@@ -391,6 +396,10 @@ struct HubSessionDetailHost: View {
             }
             // An established window keeps its start, 0 included: a nil offset asks for the latest turns, which
             // drops the earlier ones on screen once more turns arrived than the limit leaves room for.
+            // The reload asks where the session lives again: a pane opened or cmux came back since the last answer.
+            if !agentChild {
+                Task { await loadHost() }
+            }
             Task {
                 let row = session
                 await load(offset: turns.isEmpty ? nil : windowStart, limit: TranscriptPaging.refreshLimit(loaded: turns.count), throughEnd: true)
@@ -464,34 +473,71 @@ struct HubSessionDetailHost: View {
         TranscriptBus.post(TranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
     }
 
-    /// Asks GenesisTools where the session lives. A failure keeps the last answer and is logged: an older `tools` without
-    /// `ai session-host` leaves the journal's cmux place in charge.
+    /// What the host lookup follows besides the session: the journal's record of its pane, which a resume rewrites.
+    private var hostKey: String {
+        "\(session.sessionId)|\(session.cmux?.surfaceId ?? "")|\(session.cmux?.at ?? 0)"
+    }
+
+    /// Asks GenesisTools where the session lives. A failure keeps the last answer and shows in the banner with its
+    /// Try again; an older `tools` without `ai session-host` is no failure: the journal's cmux place stays in charge.
     private func loadHost() async {
         let id = session.sessionId
+        let ledger = ToolsCallLedger()
         do {
-            let answers = try await SessionHostClient(bridge: HubSource.bridge).describe([id])
+            let answers = try await ledger.record { try await SessionHostClient(bridge: HubSource.bridge).describe([id]) }
             guard !Task.isCancelled, id == session.sessionId else { return }
             hostAnswer = answers.first
+            if let failed = hostLookupFailure {
+                if bannerFailure?.report == failed { bannerFailure = nil }
+                hostLookupFailure = nil
+            }
+        } catch SessionHostClientError.unsupported {
+            HubPerf.log("session.host \(id.prefix(8)): this tools has no ai session-host, the journal's pane stands")
         } catch {
+            guard !Task.isCancelled, id == session.sessionId else { return }
             HubPerf.log("session.host \(id.prefix(8)) failed: \(error.localizedDescription)")
+            let report = FailureReport.toolsCall(error, outcome: "Where the session runs did not load", action: "Find the session's cmux pane or T3 Code thread",
+                                                 call: ledger.failed, title: "Session host did not load", area: "hub",
+                                                 expected: "The header shows where the session runs, with its Focus, Wake and Keepalive.")
+            showHostFailure(report, lookup: true, retry: { Task { await loadHost() } })
         }
     }
 
-    /// Focus, Wake or Keepalive through the session's host; a refusal shows in the banner, then the host is read again
-    /// (a Wake that started a T3 turn shows it).
+    /// Focus, Wake or Keepalive through the session's host, then the host is read again (a Wake that started a T3 turn
+    /// shows it). A refusal is the host's own sentence and shows as it is; a call that failed shows its report.
     private func act(_ action: SessionHostAction) {
         let id = session.sessionId
+        let name = action.rawValue.capitalized
         HubPerf.log("session.\(action.rawValue) \(id.prefix(8))")
         Task {
+            let ledger = ToolsCallLedger()
             do {
-                let result = try await SessionHostClient(bridge: HubSource.bridge).act(action, sessionId: id)
+                let result = try await ledger.record { try await SessionHostClient(bridge: HubSource.bridge).act(action, sessionId: id) }
                 if !result.ok, id == session.sessionId {
-                    banner = "\(action.rawValue.capitalized) failed: \(result.reason ?? "no reason given")"
+                    banner = "\(name) failed: \(result.reason ?? "no reason given")"
                 }
             } catch {
-                banner = "\(action.rawValue.capitalized) failed: \(error.localizedDescription)"
+                if id == session.sessionId {
+                    let report = FailureReport.toolsCall(error, outcome: "\(name) did not run", action: "\(name) the session where it runs",
+                                                         call: ledger.failed, title: "\(name) failed", area: "hub")
+                    showHostFailure(report, lookup: false, retry: { act(action) })
+                }
             }
             await loadHost()
+        }
+    }
+
+    /// A failed host call in the banner with its Try again; the details' log (app-perf.log lines) follows off the main
+    /// thread. A lookup's report is kept, so the next lookup that answers clears it; an action's stays until dismissed.
+    private func showHostFailure(_ report: FailureReport, lookup: Bool, retry: @escaping @MainActor () -> Void) {
+        let id = session.sessionId
+        showFailure(report, first: false, retry: retry)
+        if lookup { hostLookupFailure = report }
+        Task {
+            let full = await report.addingCallLog()
+            guard id == session.sessionId, bannerFailure?.report == report else { return }
+            showFailure(full, first: false, retry: retry)
+            if lookup { hostLookupFailure = full }
         }
     }
 
@@ -539,8 +585,11 @@ struct HubSessionDetailHost: View {
                 )
             }
             guard id == loadID else { return }
-            // A new window replaces whatever an older load or page reported.
-            bannerFailure = nil
+            // A new window replaces whatever an older load or page reported. A failed host lookup is no part of the
+            // window: its notice stays until a lookup answers.
+            if bannerFailure?.report != hostLookupFailure {
+                bannerFailure = nil
+            }
             earlierFailure = nil
             envelope = fetched
             turns = fetched.turns
