@@ -6,6 +6,7 @@ import { getAudioInfo } from "@genesiscz/utils/audio/probe";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { signalProcessTree } from "@genesiscz/utils/process/processes";
 import { z } from "zod";
 import { AUDIO_SOURCES, type AudioSource } from "./control";
@@ -32,7 +33,48 @@ export type AudioSegment = z.infer<typeof audioSegmentSchema>;
 
 const segmentStartedSchema = audioSegmentSchema.pick({ file: true, source: true, zeroAt: true }).extend({
     event: z.literal("segment-started"),
+    primingFrames: z.number().int().nonnegative().optional(),
 });
+
+const packetPrimingSchema = z.object({
+    packets: z
+        .array(
+            z.object({
+                side_data_list: z
+                    .array(z.object({ skip_samples: z.number().int().nonnegative().optional() }))
+                    .optional(),
+            })
+        )
+        .nonempty(),
+});
+
+/** A finalized file already tells the decoder to skip priming; an interrupted fragment does not. */
+async function decoderPrimingFrames(file: string): Promise<number> {
+    const probe = await boundedCommand({
+        command: [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-read_intervals",
+            "%+#1",
+            "-show_packets",
+            "-show_entries",
+            "packet_side_data=skip_samples",
+            "-of",
+            "json",
+            file,
+        ],
+        timeoutMs: 2_000,
+        maxBufferBytes: 16_384,
+    });
+    if (probe.status !== 0) {
+        throw new Error(`could not read AAC priming: ${probe.stderr.trim()}`);
+    }
+    const packet = packetPrimingSchema.parse(SafeJSON.parse(probe.stdout, { strict: true })).packets[0];
+    return packet.side_data_list?.reduce((frames, side) => Math.max(frames, side.skip_samples ?? 0), 0) ?? 0;
+}
 
 /** Recovery reads the sample clock saved beside the open file, even after the supervisor itself was killed. */
 export async function salvagedAudioTiming(file: string): Promise<{
@@ -41,10 +83,13 @@ export async function salvagedAudioTiming(file: string): Promise<{
     durationMs: number;
     clockGuess?: "file-times";
     durationGuess?: "file-times";
+    primingFrames?: number;
+    primingGuess?: "unavailable";
 }> {
     const stat = statSync(file);
     const startMs = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
     let zeroAt: string | undefined;
+    let encoderPriming: number | undefined;
     try {
         const started = segmentStartedSchema.parse(
             SafeJSON.parse(readFileSync(`${file}.json`, "utf8"), { strict: true })
@@ -53,16 +98,35 @@ export async function salvagedAudioTiming(file: string): Promise<{
             throw new Error("the saved sample clock belongs to another segment");
         }
         zeroAt = started.zeroAt;
+        encoderPriming = started.primingFrames;
     } catch (error) {
         log.debug({ file, error }, "no saved sample clock; recovery uses the file's times");
     }
     const info = await getAudioInfo(file, { timeoutMs: 2_000 });
     const decoded = Number.isFinite(info.duration) && info.duration > 0;
+    const at = zeroAt ?? new Date(startMs).toISOString();
+    let primingFrames: number | undefined;
+    let primingGuess: "unavailable" | undefined;
+    if (zeroAt && info.format === "aac") {
+        if (encoderPriming !== undefined && info.sampleRate && info.sampleRate > 0) {
+            try {
+                primingFrames = Math.max(0, encoderPriming - (await decoderPrimingFrames(file)));
+                zeroAt = new Date(Date.parse(zeroAt) - (primingFrames * 1000) / info.sampleRate).toISOString();
+            } catch (error) {
+                log.warn({ file, error }, "could not correct the salvaged AAC clock for encoder priming");
+                primingGuess = "unavailable";
+            }
+        } else {
+            primingGuess = "unavailable";
+        }
+    }
     return {
-        at: zeroAt ?? new Date(startMs).toISOString(),
+        at,
         ...(zeroAt ? { zeroAt } : { clockGuess: "file-times" }),
         durationMs: Math.max(0, Math.round(decoded ? info.duration * 1000 : stat.mtimeMs - startMs)),
         ...(!decoded ? { durationGuess: "file-times" } : {}),
+        ...(primingFrames !== undefined ? { primingFrames } : {}),
+        ...(primingGuess ? { primingGuess } : {}),
     };
 }
 
@@ -143,12 +207,12 @@ export class AudioSession {
         const output = this.lines(this.proc.stdout, (line) => this.segment(line));
         const events = this.lines(this.proc.stderr, (line) => this.event(line));
         this.done = this.proc.exited.then(async (code) => {
-            await withTimeout(Promise.all([output, events]), 2_000, new Error("audio pipes did not close")).catch(
-                (error: unknown) => this.fail(error)
-            );
             if (code !== 0 || !this.stopping) {
                 this.fail(new Error(`audio-record exited ${code}${this.stopping ? "" : " before stop"}`));
             }
+            await withTimeout(Promise.all([output, events]), 2_000, new Error("audio pipes did not close")).catch(
+                (error: unknown) => this.fail(error)
+            );
             this.ready.reject(this.failure ?? new Error("audio-record ended before readiness"));
             this.pending?.reject(this.failure ?? new Error("audio-record stopped"));
         });

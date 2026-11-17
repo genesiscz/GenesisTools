@@ -222,8 +222,23 @@ final class AudioSessionTests: XCTestCase {
         XCTAssertEqual(started["file"] as? String, "audio-000001-mic.m4a")
         XCTAssertEqual(started["source"] as? String, "mic")
         XCTAssertEqual(started["zeroAt"] as? String, "2023-11-14T22:13:20.700Z")
+        XCTAssertEqual(started["primingFrames"] as? Int, 2112)
         try await audio.finish()
         let closed = try XCTUnwrap(closedRows(lines).first)
         XCTAssertEqual(closed["zeroAt"] as? String, started["zeroAt"] as? String)
+    }
+
+    func testEncoderReportsPrimingInFramesAtEachSampleRate() throws {
+        for rate in [32_000.0, 44_100.0, 48_000.0] {
+            for channels in [1, 2] {
+                var settings = aacSettings(channels: channels)
+                settings[AVSampleRateKey] = rate
+                let frames = try XCTUnwrap(sessionEncoderPrimingFrames(settings: settings))
+                XCTAssertEqual(frames, 2112)
+                if rate == 44_100 {
+                    XCTAssertEqual(Double(frames) / rate, 0.047891156, accuracy: 0.000000001)
+                }
+            }
+        }
     }
 }

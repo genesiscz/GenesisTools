@@ -140,6 +140,15 @@ if (args[0] === "audio-record") {
     }
 
     state();
+    if (fixtureMode === "--fixture-audio-exit-open-pipes") {
+        // A descendant can keep the pipes open after the process exits. Its lifetime is bounded, not polled.
+        Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 1500)"], {
+            stdin: "ignore",
+            stdout: "inherit",
+            stderr: "inherit",
+        });
+        setTimeout(() => process.exit(1), 150);
+    }
     if (fixtureMode === "--fixture-audio-session-dies-later" || (restartCase && !restarted)) {
         setTimeout(() => {
             print({ event: "error", message: "the system writer stopped accepting samples" }, "stderr");
