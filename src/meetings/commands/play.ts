@@ -54,7 +54,7 @@ export async function playSoundSlice(options: {
     slice: SoundSlice;
     player?: string;
     detached?: boolean;
-}): Promise<{ pid: number }> {
+}): Promise<{ pid: number; player: (typeof LISTEN_PLAYERS)[number] }> {
     const listen = (await new MeetingsConfigStore().read()).global.playback.listen;
     const requested = options.player === undefined ? undefined : LISTEN_PLAYERS.find((id) => id === options.player);
     if (options.player !== undefined && !requested) {
@@ -83,8 +83,11 @@ export async function playSoundSlice(options: {
         "wav",
         "pipe:1",
     ];
-    const pipeline =
+    const decodePipeline =
         'decoder_length="$1"; shift; decoder_argv=("${@:1:decoder_length}"); shift "$decoder_length"; "${decoder_argv[@]}" | "$@"';
+    const pipeline = options.detached
+        ? `trap 'trap - TERM INT EXIT; kill -TERM 0' TERM INT EXIT; ${decodePipeline} & wait "$!"`
+        : decodePipeline;
     const child = Bun.spawn(
         [
             "/bin/bash",
@@ -107,14 +110,14 @@ export async function playSoundSlice(options: {
     );
     if (options.detached) {
         child.unref();
-        return { pid: child.pid };
+        return { pid: child.pid, player: player.id };
     }
     const errors = child.stderr ? new Response(child.stderr).text() : Promise.resolve("");
     const [code, stderr] = await Promise.all([child.exited, errors]);
     if (code !== 0) {
         throw new Error(`Sound playback failed (exit ${code}): ${stderr.trim()}`);
     }
-    return { pid: child.pid };
+    return { pid: child.pid, player: player.id };
 }
 
 export async function playbackSlice(options: {
@@ -516,15 +519,24 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
             ...("target" in what && what.target.kind === "range" ? { toSec: what.target.toSec } : {}),
             ...(track ? { track } : {}),
         });
+        const selectedPlayer = opts.player ?? pickPlayer(playback.player, MEETING_PLAYERS)?.id;
+        let started: Awaited<ReturnType<typeof playSoundSlice>> | undefined;
         if (opts.start !== false) {
-            await playSoundSlice({
+            started = await playSoundSlice({
                 slice,
-                player: opts.player ?? pickPlayer(playback.player, MEETING_PLAYERS)?.id,
+                player: selectedPlayer,
                 detached: true,
             });
         }
+        const shown = {
+            ...slice,
+            audioPath: slice.path,
+            startSec: slice.fileFromSec,
+            player: selectedPlayer,
+            ...started,
+        };
         opts.json
-            ? out.result(SafeJSON.stringify(slice, null, 2))
+            ? out.result(SafeJSON.stringify(shown, null, 2))
             : ui.ok(
                   `${opts.start === false ? "Would play" : "Played"} ${record.id} on ${slice.track} from file second ${slice.fileFromSec} at source rate.`
               );
@@ -594,7 +606,7 @@ export function registerPlayCommand(program: Command): void {
         )
         .option(
             "--json",
-            "print { audioPath, startSec, player, pid } for --at alone; for a Moment the Moment, with path, player and pid when made"
+            "print the track, path, channel and file seconds, plus audioPath/startSec/player and pid when started; for a Moment the Moment with path, player and pid when made"
         )
         .option("--no-start", "resolve and start nothing (no sound); plan without cutting, including with --clip")
         .action((meeting: string, time: string | undefined, opts: PlayOptions) => {
