@@ -94,6 +94,7 @@ public final class ApprovalDialogModel: ObservableObject {
     public let rememberNote: String?
     public let allowTitle: String
     public let deadline: Date?
+    public let deadlineLabel: String
     public let identifier: String
     /// The paths a destructive request names, as rows with their icons and open buttons (the rm window). Empty for a
     /// request that has only facts. `refresh` replaces them when a size arrives after the window opened.
@@ -147,7 +148,7 @@ public final class ApprovalDialogModel: ObservableObject {
                 allowTitle: String, deadline: Date?, identifier: String, items: [ApprovalItem] = [],
                 verifier: ApprovalVerifier? = nil, links: [ApprovalLink] = [], summary: String? = nil,
                 disposals: [ApprovalChoice] = [], hint: String? = nil, selectable: Bool = false,
-                touchIDWaitsForClick: Bool = false) {
+                touchIDWaitsForClick: Bool = false, deadlineLabel: String = "Denies itself in ") {
         self.title = title
         self.purpose = purpose
         self.command = command
@@ -160,6 +161,7 @@ public final class ApprovalDialogModel: ObservableObject {
         self.rememberNote = rememberNote
         self.allowTitle = allowTitle
         self.deadline = deadline
+        self.deadlineLabel = deadlineLabel
         self.identifier = identifier
         self.items = items
         self.verifier = verifier
@@ -529,7 +531,7 @@ public struct ApprovalDialogView: View {
     private var buttons: some View {
         HStack(spacing: 8) {
             if let deadline = model.deadline {
-                (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+                (Text(model.deadlineLabel) + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
@@ -600,7 +602,7 @@ struct ApprovalVerifyFooter: View {
     @ViewBuilder
     private var countdown: some View {
         if let deadline = model.deadline {
-            (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+            (Text(model.deadlineLabel) + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

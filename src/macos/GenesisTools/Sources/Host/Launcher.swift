@@ -161,7 +161,8 @@ func waitAndExit(_ pid: pid_t, run: LauncherFailures.Run? = nil) -> Never {
 /// event loop). A window face, a link relay and a link router (`GenesisTools https://…`) set their own type.
 func marksBackgroundHelper(_ arguments: [String]) -> Bool {
     guard let first = arguments.first, first.hasPrefix("--"), first != "--window" else { return false }
-    return AppParts.partOfFace[first] == nil
+    // A face with a window of its own (the request window, `--requests`) is a real app face, not a helper.
+    return AppParts.partOfFace[first] == nil && AppFaces.face(firstArgument: first)?.window != true
 }
 
 @MainActor
