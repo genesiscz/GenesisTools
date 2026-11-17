@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { toRpcTable } from "@genesiscz/utils/api-descriptor";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -18,7 +19,9 @@ import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { addVoicePrint, readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import * as serviceHost from "@genesiscz/utils/rpc/service-host";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
@@ -49,6 +52,7 @@ import {
     subscribeParamsSchema,
     subscribeResultSchema,
     UNSUBSCRIBE,
+    VOICES_METHODS,
 } from "./api";
 import {
     InProcessMeetingsClient,
@@ -62,6 +66,7 @@ import { MeetingsFolderWatch } from "./folder-watch";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
 import { testDictionaryPhrase } from "./library-handlers";
 import { previewTone } from "./moment-handlers";
+import { voicesHandlers } from "./people-handlers";
 import { readRows } from "./reads-handlers";
 import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
@@ -236,6 +241,77 @@ function scratchStore(): {
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
+
+test("voice descriptors validate the shared handlers: lists and removal previews write nothing; removal retires suggested names", async () => {
+    const { store, linkedSource } = scratchStore();
+    const record = await store.create(
+        { title: "Voices", start: "2026-11-01T10:00:00Z", createdBy: "new", project: "service-voice-fixture" },
+        { command: "new", change: "fixture" }
+    );
+    await store.update(record.id, { command: "new", change: "fixture" }, (current) => {
+        current.items = [
+            {
+                id: "i1",
+                kind: "speaker-range",
+                fromSec: 1,
+                toSec: 4,
+                label: "Speaker 1",
+                speaker: "Alice Example",
+                status: "suggested",
+                rules: [MeetingRule.VoiceEmbedding],
+                suggestedAt: "2026-11-01T10:00:00Z",
+            },
+        ];
+    });
+    addVoicePrint(
+        record.project!,
+        "Alice Example",
+        {
+            meeting: record.id,
+            sourceSha: "fixture",
+            seat: "mic",
+            track: "source-mic",
+            fromSec: 1,
+            toSec: 4,
+            embedding: [1, 0],
+            confirmedAt: "2026-11-01T10:00:00Z",
+        },
+        "fixture-model"
+    );
+    const table = toRpcTable({ methods: VOICES_METHODS }, voicesHandlers(store, { linkedSource }));
+    const context = {
+        hello: () => ({
+            protocol: MEETINGS_PROTOCOL,
+            code: "fixture",
+            methods: [],
+            events: [],
+            version: "fixture",
+        }),
+    };
+    const before = readFileSync(store.path(record.id));
+    const listed = await table.call("voices.list", { project: record.project }, context);
+    expect(VOICES_METHODS[0].result.parse(listed).people[0]).toMatchObject({
+        person: "Alice Example",
+        samples: [{ sample: 1, track: "source-mic" }],
+    });
+    const plan = await table.call(
+        "voices.remove",
+        { project: record.project, person: "Alice Example", preview: true },
+        context
+    );
+    expect(plan).toMatchObject({ removed: 1, affected: [{ meeting: record.id, item: "i1" }] });
+    expect(readVoiceStore(record.project!).people["Alice Example"]?.samples).toHaveLength(1);
+    expect(readFileSync(store.path(record.id))).toEqual(before);
+    await expect(
+        table.call("voices.sample", { project: record.project, person: "Alice Example", sample: 0 }, context)
+    ).rejects.toThrow();
+    await table.call("voices.remove", { project: record.project, person: "Alice Example" }, context);
+    expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual([]);
+    expect(readVoiceStore(record.project!).people["Alice Example"]).toBeUndefined();
+    for (const name of ["voices.list", "voices.preview", "voices.sample"]) {
+        expect(VOICES_METHODS.find((method) => method.name === name)?.effect).toBe("read");
+    }
+});
 
 async function questionRowsFixture() {
     const fixture = scratchStore();

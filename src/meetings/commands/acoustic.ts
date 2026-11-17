@@ -38,7 +38,10 @@ export function registerAcousticCommands(program: Command): void {
                 );
             });
     }
-    const voice = program.command("voice").description("Confirmed enrolment and local CAM++ speaker scoring");
+}
+
+/** The old voice subcommands remain on the canonical voices tree, including its voice alias. */
+export function registerLegacyVoiceCommands(voice: Command): void {
     voice
         .command("collect <meeting>")
         .description("Explicitly collect identity evidence from enrolled voices")

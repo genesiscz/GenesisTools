@@ -7,7 +7,8 @@ import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
  */
 export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["audio"], load: async () => (await import("./commands/audio")).registerAudioCommands },
-    { names: ["acoustic", "voice"], load: async () => (await import("./commands/acoustic")).registerAcousticCommands },
+    { names: ["acoustic"], load: async () => (await import("./commands/acoustic")).registerAcousticCommands },
+    { names: ["voices", "voice"], load: async () => (await import("./commands/voices")).registerVoicesCommand },
     {
         names: ["new", "list", "ls", "show", "revisions", "set", "link", "merge", "duplicate", "context"],
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,
