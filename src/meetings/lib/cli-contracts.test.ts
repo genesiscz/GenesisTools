@@ -23,6 +23,7 @@ import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { planMoment } from "./moment";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
+import { decisionReachSchema } from "./service/api";
 import { InProcessMeetingsClient } from "./service/client";
 import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
@@ -56,6 +57,16 @@ test("service comment refusals keep their code in human and JSON errors", () => 
     expect(SafeJSON.parse(errorJSON(error), { strict: true })).toMatchObject({
         error: { data: { code: "already-read" } },
     });
+});
+
+test("decision reach preserves a dictionary addition for the window", () => {
+    const reach = {
+        items: [],
+        dictionary: [
+            { project: "demo", heard: "flimbit", fixed: "Flimbit", seenBefore: 0, teaches: false, adds: true as const },
+        ],
+    };
+    expect(decisionReachSchema.parse(reach)).toEqual(reach);
 });
 
 test("listen --spot-check prepares through the Meetings service, which caps the sample count", async () => {
