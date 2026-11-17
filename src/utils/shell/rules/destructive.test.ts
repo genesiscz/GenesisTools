@@ -165,4 +165,36 @@ describe("stopped-job-wake", () => {
     it.each(passed)("passes %j", (command) => {
         expect(ids(command)).toEqual([]);
     });
+
+    it("blocks SIGCONT to a pid that the same command also ends: TERM then CONT, one pid at a time", () => {
+        const command = "for p in 12700 12687; do kill -TERM $p && kill -CONT $p; done; sleep 2";
+        const v = only(command, WAKE);
+
+        expect(v?.matched).toBe("kill -CONT $p");
+        expect(v?.index).toBe(command.indexOf("kill -CONT"));
+        expect(v?.detail).toBe("SIGCONT to $p, which this command also sends a terminating signal");
+    });
+
+    const endedPids = [
+        "kill 12; kill -CONT 12",
+        "kill -INT 5 && kill -s CONT 5",
+        "kill -HUP 7 8; kill -SIGCONT 8",
+        "kill -CONT 9; kill -TERM 9",
+    ];
+
+    it.each(endedPids)("blocks %j", (command) => {
+        expect(ids(command)).toEqual([WAKE]);
+    });
+
+    // A pure resume stays allowed: an agent resumed a process a debugger had left stopped (2026-11).
+    const resumes = [
+        "pkill -x lldb; kill 96414; kill -CONT 41193; ps -o pid,state -p 41193",
+        "kill -STOP 5; kill -CONT 5",
+        "kill -KILL 5; kill -CONT 5",
+        "kill -TERM 6; kill -CONT 7",
+    ];
+
+    it.each(resumes)("passes %j", (command) => {
+        expect(ids(command)).toEqual([]);
+    });
 });

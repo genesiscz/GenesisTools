@@ -2,7 +2,7 @@
 
 import { constants } from "node:os";
 import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize, wordsFrom } from "../scan";
-import type { ShellMatch, ShellRule } from "./types";
+import type { ShellMatch, ShellRule, ShellScan } from "./types";
 
 /** Docker global options that consume the next token, in their separate-value spelling. */
 const DOCKER_GLOBAL_WITH_VALUE = new Set([
@@ -104,9 +104,56 @@ export const dockerVolumeDestroy: ShellRule = {
 /** `kill`'s options that take the signal as the next word. */
 const KILL_SIGNAL_OPTIONS = new Set(["-s", "-n", "--signal"]);
 
-/** SIGCONT by name, in any case, with or without `SIG`, or by this platform's number (19 on macOS, 18 on Linux). */
-function isContSignal(signal: string): boolean {
-    return signal.toUpperCase().replace(/^SIG/, "") === "CONT" || signal === String(constants.signals.SIGCONT);
+/** True when `signal` is one of `names`, by name in any case, with or without `SIG`, or by this platform's number. */
+function isSignal(signal: string, names: readonly (keyof typeof constants.signals)[]): boolean {
+    const name = signal.toUpperCase().replace(/^SIG/, "");
+    return names.some((n) => name === n.slice(3) || signal === String(constants.signals[n]));
+}
+
+/** The signals that end a process once it runs again. SIGKILL is not one: it ends a stopped process at once. */
+const ENDING_SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"] as const;
+
+interface KillCall {
+    signal: string;
+    targets: string[];
+    /** Offset of the `kill` word in the original command. */
+    start: number;
+    /** The whole call in the original command. */
+    matched: string;
+}
+
+/** Every `kill` call of the command, in order, with its words as the shell splits them. */
+function killCalls(scan: ShellScan): KillCall[] {
+    const calls: KillCall[] = [];
+
+    for (const statements of scan.units) {
+        for (const statement of statements) {
+            if (!statement.text.includes("kill")) {
+                continue;
+            }
+
+            for (const element of splitPipeline(statement)) {
+                const tokens = tokenize(element);
+                const cmd = commandTokenIndex(tokens, scan.command);
+
+                if (cmd === -1 || commandWord(tokens[cmd].text) !== "kill") {
+                    continue;
+                }
+
+                const start = tokens[cmd].start;
+                // The scan blanks quotes, so `-"$g"` tokenizes as `-` and `$g`; the shell's own words keep it whole.
+                const { signal, targets } = killArguments(wordsFrom(scan, start).words.slice(1));
+                calls.push({
+                    signal,
+                    targets: targets.filter((target) => target !== "--"),
+                    start,
+                    matched: originalSlice(scan, start, element.start + element.text.length),
+                });
+            }
+        }
+    }
+
+    return calls.sort((a, b) => a.start - b.start);
 }
 
 /** The signal and the targets of `kill`'s arguments; no signal option means SIGTERM. */
@@ -124,11 +171,14 @@ function killArguments(args: readonly string[]): { signal: string; targets: stri
     return { signal: "TERM", targets: [...args] };
 }
 
-// kill -CONT -<pgid>, in every spelling of the signal: the end of the usual "TERM, then CONT" way to stop a job.
+// kill -CONT to a process group, or to a pid the same command also sends TERM: the end of the usual "TERM, then
+// CONT" way to stop a job. A plain resume of one pid stays allowed (a process a debugger left stopped).
 export const stoppedJobWake: ShellRule = {
     id: "stopped-job-wake",
     kind: "destructive",
-    title: "kill -CONT to a process group wakes a stopped job, which then rewrites the tty a live TUI may use",
+    title:
+        "kill -CONT to a process group, or to a pid this command also sends TERM, wakes a stopped job, which " +
+        "then rewrites the tty a live TUI may use",
     severity: "block",
     why:
         "SIGCONT lets a stopped (Ctrl-Z) job run again on its old tty, where a live TUI such as Claude may run now. " +
@@ -145,36 +195,33 @@ export const stoppedJobWake: ShellRule = {
         "Claude, and salon's input on ttys003 arrived as `xt/exit` and `^[[117;5u`. 2026-10-30: the same codes " +
         "in another pane after its stopped launcher was killed.",
     detect(scan): ShellMatch | null {
-        for (const statements of scan.units) {
-            for (const statement of statements) {
-                if (!statement.text.includes("kill")) {
-                    continue;
-                }
+        const calls = killCalls(scan);
+        const ended = new Set(
+            calls.filter((call) => isSignal(call.signal, ENDING_SIGNALS)).flatMap((call) => call.targets)
+        );
 
-                for (const element of splitPipeline(statement)) {
-                    const tokens = tokenize(element);
-                    const cmd = commandTokenIndex(tokens, scan.command);
+        for (const call of calls) {
+            if (!isSignal(call.signal, ["SIGCONT"])) {
+                continue;
+            }
 
-                    if (cmd === -1 || commandWord(tokens[cmd].text) !== "kill") {
-                        continue;
-                    }
+            const groups = call.targets.filter((target) => target.startsWith("-"));
+            const pids = call.targets.filter((target) => !target.startsWith("-") && ended.has(target));
 
-                    // The words as the shell splits them: the scan blanks quotes, so `-"$g"` tokenizes as `-` and `$g`.
-                    const { signal, targets } = killArguments(wordsFrom(scan, tokens[cmd].start).words.slice(1));
-                    const groups = targets.filter((target) => target.startsWith("-") && target !== "--");
+            if (groups.length > 0) {
+                return {
+                    matched: call.matched,
+                    index: call.start,
+                    detail: `SIGCONT to the process group ${groups.join(", ")}`,
+                };
+            }
 
-                    if (!isContSignal(signal) || groups.length === 0) {
-                        continue;
-                    }
-
-                    const start = tokens[cmd].start;
-
-                    return {
-                        matched: originalSlice(scan, start, element.start + element.text.length),
-                        index: start,
-                        detail: `SIGCONT to the process group ${groups.join(", ")}`,
-                    };
-                }
+            if (pids.length > 0) {
+                return {
+                    matched: call.matched,
+                    index: call.start,
+                    detail: `SIGCONT to ${pids.join(", ")}, which this command also sends a terminating signal`,
+                };
             }
         }
 
