@@ -26,7 +26,7 @@ export function speakerLabelRule(id: SpeakerLabelerId): MeetingRule {
 }
 
 /** Seat ownership wins; a stranger veto wins over ownership; otherwise a named proposal wins over a refusal. */
-export function mergeLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLabel[]>): LineLabel[] {
+export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLabel[]>): LineLabel[] {
     const byLine = new Map<number, LineLabel[]>();
 
     for (const labels of byLabeler.values()) {
@@ -112,5 +112,5 @@ export async function proposeSpeakerLabels(
         byLabeler.set(id, await (await LABELERS[id](opened, settings)).propose(context));
     }
 
-    return mergeLabels(byLabeler);
+    return mergeLineLabels(byLabeler);
 }
