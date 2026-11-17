@@ -18,6 +18,7 @@ import {
 } from "@genesiscz/utils/transcribe/doc-match";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import {
     PRESENCE_TOLERANCE_SEC,
     type Presence,
@@ -54,6 +55,8 @@ import {
     wordQuestions,
 } from "./questions";
 import { assessIndicator } from "./speaker-indicator";
+import { speakerLabelRule } from "./speaker-labels";
+import type { LineLabel } from "./speaker-labels/types";
 import {
     addPolish,
     anchorScores,
@@ -1963,6 +1966,115 @@ function agreeing(first: NewItem, second: NewItem): NewItem {
     };
 }
 
+/** Reconcile line proposals here, where the old rules already meet; labelers never create or save items. */
+function labeledItems(options: {
+    labels: LineLabel[];
+    found: NewItem[];
+    record: MeetingRecord;
+    meeting: SourceMeeting;
+}): NewItem[] {
+    const { record, meeting } = options;
+    const spans = new TranscriptLines(meeting.transcript);
+    const proposed = new Map<number, NewItem>();
+    const covers = (item: NewItem, label: string, at: number) =>
+        item.kind === "speaker-range" && item.label === label && item.fromSec <= at && item.toSec >= at;
+
+    for (const label of options.labels) {
+        const entry = meeting.transcript[label.index];
+        const at = entry?.startSec;
+
+        if (!entry || at === undefined || !label.person) {
+            continue;
+        }
+
+        if (
+            record.items.some((item) => item.status === "confirmed" && covers(item, entry.speaker, at)) ||
+            record.speakers.assignments?.some(
+                (item) => item.label === entry.speaker && item.fromSec <= at && item.toSec >= at
+            )
+        ) {
+            continue;
+        }
+
+        let item: NewItem = {
+            kind: "speaker-range",
+            status: "suggested",
+            label: entry.speaker,
+            fromSec: at,
+            toSec: at,
+            speaker: label.person,
+            confidence: label.score ?? CONFIDENCE.attendance,
+            rules: [speakerLabelRule(label.labeler)],
+            evidence: {
+                labeler: label.labeler,
+                reason: label.reason,
+                seat: label.seat,
+                transcriptLine: label.index,
+                endSec: spans.end(label.index),
+                ...(label.score === undefined ? {} : { score: label.score }),
+                ...(label.next ? { next: label.next } : {}),
+            },
+        };
+        const older = [...options.found, ...record.items.filter((one) => one.status === "suggested")].filter((one) =>
+            covers(one, entry.speaker, at)
+        );
+        const rivals: string[] = [];
+
+        for (const old of older) {
+            if (old.kind !== "speaker-range") {
+                continue;
+            }
+
+            if (old.speaker && !sameName(old.speaker, label.person)) {
+                rivals.push(old.speaker);
+            } else if (old.speaker) {
+                item = agreeing(item, old);
+            }
+        }
+
+        if (rivals.length > 0 && item.kind === "speaker-range") {
+            item = {
+                ...item,
+                speaker: undefined,
+                candidates: [label.person, ...rivals].filter(
+                    (person, index, names) => names.findIndex((other) => sameName(person, other)) === index
+                ),
+                rules: [...new Set([...item.rules, ...older.flatMap((old) => old.rules)])],
+                evidence: { ...item.evidence, labelConflict: true, listen: true },
+            };
+        }
+
+        proposed.set(label.index, item);
+    }
+
+    const retained = options.found.flatMap((item): NewItem[] => {
+        if (item.kind !== "speaker-range") {
+            return [item];
+        }
+
+        const lines = meeting.transcript.flatMap((entry, index) =>
+            entry.startSec !== undefined && covers(item, entry.speaker, entry.startSec)
+                ? [{ index, at: entry.startSec }]
+                : []
+        );
+
+        if (!lines.some((line) => proposed.has(line.index))) {
+            return [item];
+        }
+
+        // Only the covered lines are replaced. The rest of a coarse old range keeps its rule and person.
+        return lines
+            .filter((line) => !proposed.has(line.index))
+            .map((line) => ({
+                ...item,
+                fromSec: line.at,
+                toSec: line.at,
+                evidence: { ...item.evidence, transcriptLine: line.index },
+            }));
+    });
+    return [...retained, ...proposed.values()];
+}
+
 /**
  * New suggestions for a meeting from its source transcript. An item the record already holds (in any status) is not
  * suggested again, so a rejected one stays rejected.
@@ -1979,6 +2091,7 @@ export function suggestItems(options: {
     /** The microphone channel's share of the audio energy over a time range (R2.1), when the audio is at hand. */
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voice?: LineVoice[];
+    labels?: LineLabel[];
     /** Items under this confidence become questions to answer by ear, when they matter (default 0.6). */
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
@@ -2301,6 +2414,14 @@ export function suggestItems(options: {
 
     found.splice(0, found.length, ...found.map(unlabeled.restore));
 
+    if (options.labels?.length && (options.rules.includes("speakers") || options.rules.includes("evidence"))) {
+        found.splice(
+            0,
+            found.length,
+            ...labeledItems({ labels: options.labels, found, record, meeting: options.meeting })
+        );
+    }
+
     if (options.rules.includes("terms")) {
         found.push(...termItems(options));
     }
@@ -2351,7 +2472,17 @@ export function suggestItems(options: {
     const askedItems = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
     const candidates = taken
         .filter((item) => !askedItems.has(item.id))
-        .flatMap((item) => questionFor(item, context) ?? []);
+        .flatMap((item) => {
+            // A disagreement about identity needs an answer even on a short line or against the attendance list.
+            const conflict = item.evidence?.labelConflict === true;
+            const question = questionFor(
+                item,
+                conflict ? { ...context, transcript: [], presence: undefined } : context
+            );
+            return question
+                ? [{ ...question, evidence: { ...question.evidence, ...(conflict ? { labelConflict: true } : {}) } }]
+                : [];
+        });
 
     // Keep the same evidence identity on unasked ranges, so a later answer can improve the whole compatible group.
     const signatureQuestions = taken.flatMap(
@@ -2375,7 +2506,16 @@ export function suggestItems(options: {
     ).length;
     const budget = Math.max(0, (options.questionBudget ?? Number.POSITIVE_INFINITY) - open);
     const wordLines = new Set<number>();
-    const worth = selectQuestions(candidates, taken)
+    const worth = [
+        ...selectQuestions(
+            candidates.filter((question) => question.evidence?.labelConflict === true),
+            []
+        ),
+        ...selectQuestions(
+            candidates.filter((question) => question.evidence?.labelConflict !== true),
+            taken
+        ),
+    ]
         .filter((question) => (question.priority ?? 0) >= (options.minPriority ?? 0))
         .sort((a, b) => questionRank(b) - questionRank(a))
         .filter((question) => {

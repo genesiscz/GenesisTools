@@ -13,6 +13,7 @@ import { addQualityQuestions } from "./listen-quality";
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { errorText } from "./shared";
+import { proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import { anchoredMeetingVoices } from "./voice";
@@ -210,6 +211,10 @@ export async function runSuggest(options: {
         evidence,
         energyMicShare: share,
         voice,
+        labels:
+            rules.includes("speakers") || rules.includes("evidence")
+                ? await proposeSpeakerLabels(opened, config.global.speakerLabels)
+                : undefined,
         listenBelow: config.global.suggest.listenBelow,
         questionBudget: config.global.suggest.questionCap,
         minPriority: config.global.playback.listen.minPriority,
