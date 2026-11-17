@@ -31,7 +31,13 @@ public struct SessionDetailInfo: Equatable {
     public var cacheNote: String?
     public var cacheCold = false
     /// true: a live cmux pane holds the session. nil: not known (or not a cmux provider).
+    /// Read only while `host` and `hostMissing` are both nil: the hub still passes this alone.
     public var inPane: Bool?
+    /// Where the session lives (a cmux pane, a T3 Code thread), from GenesisTools' host table. Takes over the
+    /// sidebar row and the Focus, Wake and Keepalive tooltips from `inPane`.
+    public var host: SessionHostPlace?
+    /// Set when GenesisTools found no host: the sentence that says so ("No T3 Code thread or cmux pane …").
+    public var hostMissing: String?
     public var startedAt: Date?
     public var lastActivityAt: Date?
     public var contextTokens: Int?
@@ -77,6 +83,8 @@ public struct SessionDetailInfo: Equatable {
         cacheNote: String? = nil,
         cacheCold: Bool = false,
         inPane: Bool? = nil,
+        host: SessionHostPlace? = nil,
+        hostMissing: String? = nil,
         startedAt: Date? = nil,
         lastActivityAt: Date? = nil,
         contextTokens: Int? = nil,
@@ -105,6 +113,8 @@ public struct SessionDetailInfo: Equatable {
         self.cacheNote = cacheNote
         self.cacheCold = cacheCold
         self.inPane = inPane
+        self.host = host
+        self.hostMissing = hostMissing
         self.startedAt = startedAt
         self.lastActivityAt = lastActivityAt
         self.contextTokens = contextTokens
@@ -436,7 +446,7 @@ public struct SessionDetailHeader: View {
                 .buttonStyle(.genHoverPlain())
                 .disabled(actions.openTerminal == nil && actions.focus == nil)
                 .fixedSize()
-                .instantTooltip(info.livenessNote + ((actions.openTerminal ?? actions.focus) == nil ? "" : " · click to raise its terminal pane"))
+                .instantTooltip(info.livenessNote + ((actions.openTerminal ?? actions.focus) == nil ? "" : " · click to \(info.host.map { "open its \($0.place)" } ?? "raise its terminal pane")"))
                 .accessibilityIdentifier("session-details-status")
                 if let model = info.model, !model.isEmpty {
                     Button { actions.copy(model) } label: { SessionPill(text: model) }
@@ -838,7 +848,26 @@ public struct SessionDetailSidebar<Extra: View>: View {
                         .foregroundStyle(info.cacheCold ? SessionPalette.dim : SessionPalette.secondary)
                 }
             }
-            if let inPane = info.inPane {
+            if let host = info.host {
+                // The host's own row: where the session lives, named by the host (a pane, a thread title).
+                row(symbol: host.symbol, dot: nil, tip: "\(host.note) · \(host.actions.focus.help)", action: actions.openTerminal ?? actions.focus) {
+                    Text(verbatim: host.label)
+                        .foregroundStyle(host.live == true ? SessionPalette.green : SessionPalette.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(verbatim: host.place)
+                        .foregroundStyle(SessionPalette.dim)
+                        .lineLimit(1)
+                        .layoutPriority(-1)
+                }
+                .accessibilityIdentifier("session-details-host")
+            } else if let missing = info.hostMissing {
+                row(symbol: "questionmark.square.dashed", dot: nil, tip: missing, action: actions.openTerminal) {
+                    Text("No host")
+                        .foregroundStyle(SessionPalette.dim)
+                }
+                .accessibilityIdentifier("session-details-host")
+            } else if let inPane = info.inPane {
                 row(symbol: "rectangle.split.2x1", dot: nil, tip: inPane ? "Raise the pane" : "Choose a pane to resume in", action: actions.openTerminal ?? actions.focus) {
                     Text(inPane ? "Open in a cmux pane" : "No cmux pane")
                         .foregroundStyle(inPane ? SessionPalette.green : SessionPalette.dim)
@@ -962,6 +991,9 @@ public struct SessionDetailSidebar<Extra: View>: View {
         } else if let action {
             Button(action: action) { body }
                 .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 6))
+        } else if let tip {
+            // A row that does nothing still says why (the missing-host sentence).
+            body.instantTooltip(tip)
         } else {
             body
         }
@@ -1146,17 +1178,36 @@ public struct SessionDetailSidebar<Extra: View>: View {
 
     private var actionBar: some View {
         HStack(spacing: 6) {
-            SessionActionButton(title: "Focus", symbol: "scope", tip: "Raise the live cmux pane", action: actions.focus)
+            SessionActionButton(title: "Focus", symbol: "scope", tip: tip(\.focus, "Raise the live cmux pane"), action: actions.focus)
                 .accessibilityIdentifier("session-details-focus")
-            SessionActionButton(title: "Wake", symbol: "alarm", tip: "Type a poke into the pane", action: actions.wake)
+            SessionActionButton(title: "Wake", symbol: "alarm", tip: tip(\.wake, "Type a poke into the pane"), action: actions.wake)
                 .accessibilityIdentifier("session-details-wake")
-            SessionActionButton(title: "Keepalive", symbol: "bolt.heart", tip: "Send /keepalive to the pane", action: actions.keepalive)
+            SessionActionButton(title: "Keepalive", symbol: "bolt.heart", tip: tip(\.keepalive, "Send /keepalive to the pane"), action: actions.keepalive)
                 .accessibilityIdentifier("session-details-keepalive")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
     }
+
+    /// A button's tooltip: the host's tip or its reason for being off, the missing-host sentence, or the cmux wording
+    /// a host that passes only `inPane` (the hub) still gets.
+    private func tip(_ action: KeyPath<SessionHostPlace.Actions, SessionHostPlace.ActionState>, _ cmux: String) -> SessionActionTip {
+        if let host = info.host {
+            let state = host.actions[keyPath: action]
+            return SessionActionTip(enabled: state.tip ?? cmux, disabled: state.reason ?? "")
+        }
+        if let missing = info.hostMissing {
+            return SessionActionTip(enabled: cmux, disabled: missing)
+        }
+        return SessionActionTip(enabled: cmux, disabled: "\(cmux) (needs a live cmux pane)")
+    }
+}
+
+/// What a session action button says on hover: `enabled` while it acts, `disabled` (the reason) while it cannot.
+struct SessionActionTip: Equatable {
+    var enabled: String
+    var disabled: String
 }
 
 private struct FileTouchRow: View {
@@ -1213,7 +1264,7 @@ private struct FileTouchRow: View {
 private struct SessionActionButton: View {
     let title: String
     let symbol: String
-    let tip: String
+    let tip: SessionActionTip
     let action: (() -> Void)?
 
     var body: some View {
@@ -1234,6 +1285,6 @@ private struct SessionActionButton: View {
         }
         .buttonStyle(.genHoverPlain())
         .disabled(action == nil)
-        .instantTooltip(action == nil ? "\(tip) (needs a live cmux pane)" : tip)
+        .instantTooltip(action == nil ? tip.disabled : tip.enabled)
     }
 }
