@@ -195,7 +195,10 @@ describe("the recorder keeps the meeting's sound", () => {
             const state = await runRecorder({
                 store,
                 meetingId: created.id,
-                capture: meetingsConfigSchema.parse({}).global.capture,
+                // The continuous session is a setting; the default records the sound inside the pieces.
+                capture: meetingsConfigSchema.parse({
+                    global: { capture: { recorders: { native: { audio: { mode: "session" } } } } },
+                }).global.capture,
                 audio: ["mic", "system"],
                 deps: {
                     recorder,
