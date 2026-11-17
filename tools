@@ -253,11 +253,23 @@ async function executeTool(scriptId, scriptArgs) {
     // `new Database()`. preload-solid-scoped.ts scopes the opentui JSX
     // transform; sqlite-vec-preload.ts swaps in extension-capable SQLite so
     // sqlite-vec can load. Bun looks for bunfig.toml relative to cwd, and we
-    // keep cwd at the user's shell, so both preloads are passed explicitly.
+    // keep cwd at the user's shell, so both preloads are passed explicitly,
+    // and `--config=` names an empty bunfig so the shell folder's bunfig.toml
+    // loads nothing into the tool (only the `=` form works: Bun 1.4.2 runs the
+    // next argument of a bare `--config` as the program).
     const solidPreload = join(workspaceRoot, "src/utils/bun/preload-solid-scoped.ts");
     const sqliteVecPreload = join(workspaceRoot, "src/utils/search/stores/sqlite-vec-preload.ts");
+    const launcherConfig = join(workspaceRoot, "src/utils/bun/launcher.bunfig.toml");
     const exitCode = await runWithReinstallGuard(
-        ["--preload", solidPreload, "--preload", sqliteVecPreload, targetScript, ...scriptArgs],
+        [
+            `--config=${launcherConfig}`,
+            "--preload",
+            solidPreload,
+            "--preload",
+            sqliteVecPreload,
+            targetScript,
+            ...scriptArgs,
+        ],
         workspaceRoot,
         namedBunExecPath(scriptId),
         scriptId
@@ -380,7 +392,8 @@ async function spawnAndCaptureStderr(
             stdio: ["inherit", "inherit", "pipe"],
             // cwd stays at the user's shell so tools resolving `.claude/...`
             // via process.cwd() keep working. Bunfig's preload is forwarded
-            // via the explicit --preload flag in executeTool().
+            // via the explicit --preload flag in executeTool(), and its
+            // --config= keeps this folder's bunfig.toml out.
             // execPath is a gt-<tool> hardlink of this already-running
             // interpreter (namedBunExecPath), never PATH "bun": a signed
             // parent (Genesis.app, cmux) + `/usr/bin/env bun` is SIGKILL'd by
