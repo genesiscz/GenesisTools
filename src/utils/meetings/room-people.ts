@@ -110,7 +110,7 @@ export async function editMeetingPerson(options: {
                     ...(prior?.self || (options.selfName && sameName(options.selfName, name)) ? { self: true } : {}),
                     from: [...new Set([...(prior?.from ?? []), "user"])],
                     firstSeenSec: Math.min(prior?.firstSeenSec ?? fromSec, fromSec),
-                    stays: [{ fromSec, toSec: toSec!, source: "hand", confidence: 1 }],
+                    stays: [{ fromSec, toSec: toSec!, source: "hand", leaveSource: "hand", confidence: 1 }],
                 });
                 stays.push({ name, fromSec, toSec: toSec!, joinedAtExact: true, leftAtExact: true });
                 if (atMic) {
