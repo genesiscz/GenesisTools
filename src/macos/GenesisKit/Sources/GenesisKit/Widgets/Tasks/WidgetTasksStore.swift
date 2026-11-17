@@ -61,6 +61,10 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     public var tasks: [WidgetTask] { displayedKey == queryKey ? snapshot?.tasks ?? [] : [] }
+    /// The work store's counts of the projects the filter shows, the ones with something to count.
+    public var workCounts: [WidgetWorkCount] {
+        (snapshot?.work ?? []).filter { (project.isEmpty || $0.project == project) && !$0.summary.isEmpty }
+    }
     public var activeCount: Int { snapshot?.activeCount ?? 0 }
     public var isMutating: Bool { !mutatingIDs.isEmpty }
     public var projects: [String] { snapshot?.projects ?? [] }

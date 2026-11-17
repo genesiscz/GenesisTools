@@ -123,6 +123,25 @@ struct WidgetTaskSnapshot: Codable, Equatable, Sendable {
     var sourceStamp: String
     var projects: [String]
     var sessions: [Session]
+    /// Per project, from the work store: items spotted, items reopened, outside changes held. Absent before the store.
+    var work: [WidgetWorkCount]? = nil
+}
+
+/// One project's counts of the work store (work-items P8): what waits for a look, shown under the Tasks header.
+public struct WidgetWorkCount: Codable, Equatable, Sendable, Identifiable {
+    public var project: String
+    public var spotted: Int
+    public var reopened: Int
+    public var held: Int
+    public var id: String { project }
+
+    /// "7 spotted · 1 reopened", the counts that are not zero; empty when all three are.
+    public var summary: String {
+        [(spotted, "spotted"), (reopened, "reopened"), (held, "held")]
+            .filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)" }
+            .joined(separator: " · ")
+    }
 }
 
 struct WidgetTaskUpdate: Codable, Sendable {

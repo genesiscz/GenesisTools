@@ -24,6 +24,7 @@ struct WidgetTasksModuleView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     header
+                    workLine
                     if presentation == .expanded {
                         WidgetTaskComposer(store: store)
                         filters
@@ -50,6 +51,25 @@ struct WidgetTasksModuleView: View {
             Text("\(store.activeCount) active").font(.system(size: 10)).foregroundStyle(.secondary)
             IconButton(systemName: "arrow.clockwise", tooltip: "Refresh tasks") { store.refresh(force: true) }
                 .accessibilityLabel("Refresh tasks")
+        }
+    }
+
+    /// The work store's counts (P8): one quiet line per project with items spotted, reopened or held.
+    @ViewBuilder private var workLine: some View {
+        let counts = store.workCounts
+        if !counts.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(counts) { count in
+                    HStack(spacing: 6) {
+                        Image(systemName: "tray.full").foregroundStyle(.secondary).imageScale(.small)
+                        Text(count.project).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                        Text(count.summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(count.project): \(count.summary)")
+                }
+            }
+            .accessibilityIdentifier("tasks-work-counts")
         }
     }
 

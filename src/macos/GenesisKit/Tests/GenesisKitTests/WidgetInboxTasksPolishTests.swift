@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import GenesisKitFixtures
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
@@ -44,6 +45,57 @@ final class WidgetTasksPolishTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(store.isMutating || store.isLoading || store.isCreating, "store did not settle in time")
+    }
+
+    /// Work-items P8: the snapshot's counts per project show under the header, follow the project filter, and a
+    /// project with nothing to count is left out.
+    func testTheWorkCountsShowUnderTheHeaderAndFollowTheProjectFilter() async throws {
+        let first = task()
+        var snap = WidgetTaskSnapshot(tasks: [first], total: 1, activeCount: 1, truncated: false,
+            sourcePath: "/fixture/work/work.db-wal", sourceStamp: "store:1", projects: ["Fixture", "Other"],
+            sessions: [.init(id: "codex:fixture", title: "Fixture session")])
+        snap.work = [
+            .init(project: "Fixture", spotted: 7, reopened: 1, held: 0),
+            .init(project: "Other", spotted: 2, reopened: 0, held: 3),
+            .init(project: "Quiet", spotted: 0, reopened: 0, held: 0),
+        ]
+        let data = try JSONEncoder().encode(snap)
+        let store = WidgetTasksStore(request: { _ in data })
+        store.refresh(force: true)
+        await settled(store)
+        XCTAssertEqual(store.workCounts.map(\.project), ["Fixture", "Other"])
+        XCTAssertEqual(store.workCounts.first?.summary, "7 spotted · 1 reopened")
+
+        let all = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 432),
+                                  name: "widget-tasks-work-counts")
+        XCTAssertTrue(all.contains("7 spotted"), all)
+        XCTAssertTrue(all.contains("2 spotted"), all)
+        XCTAssertFalse(all.contains("Quiet"), all)
+
+        store.project = "Other"
+        await settled(store)
+        XCTAssertEqual(store.workCounts.map(\.project), ["Other"])
+
+        // A snapshot from before the store (no `work` key) decodes and shows no line.
+        let old = Data(#"{"tasks":[],"total":0,"activeCount":0,"truncated":false,"sourcePath":"/x","sourceStamp":"s","projects":[],"sessions":[]}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(WidgetTaskSnapshot.self, from: old).work)
+    }
+
+    private func renderTasks<V: View>(_ view: V, name: String) throws -> String {
+        let renderer = ImageRenderer(content: view.padding(10).background(Color.black).environment(\.colorScheme, .dark))
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        if let folder = ProcessInfo.processInfo.environment["TASKS_SNAPSHOT_DIR"] {
+            let url = URL(fileURLWithPath: folder).appendingPathComponent("\(name).png")
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, image, nil)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
     func testATickShowsAtOnceRunsBesideAnotherAndStaysVisibleWithUndo() async throws {
