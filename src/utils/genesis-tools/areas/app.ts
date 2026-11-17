@@ -1,6 +1,6 @@
 import { defineAction, defineArea } from "@genesiscz/utils/genesis-tools/actions/define";
 import { appBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
-import { APP_PART_IDS } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { APP_PART_IDS, APP_RPC_METHODS } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import { Need } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { z } from "zod";
 
@@ -30,7 +30,26 @@ export const app = defineArea({
                         return ctx.pass(`rpc.hello failed: ${reply.error.code}: ${reply.error.message}`);
                     }
 
-                    return helloResult.parse(reply.result);
+                    const value = helloResult.parse(reply.result);
+                    await ctx.state.report("rpcMethods", {
+                        value: value.methods,
+                        at: new Date().toISOString(),
+                        source: "app",
+                        ...(ctx.facts.appManifest() ? { build: ctx.facts.appManifest()!.buildId } : {}),
+                    });
+                    return value;
+                },
+            },
+        }),
+        rpc: defineAction({
+            summary: "Call a typed method of GenesisTools.app",
+            args: z.object({ method: z.enum(APP_RPC_METHODS), params: z.record(z.string(), z.unknown()).optional() }),
+            result: z.unknown(),
+            native: {
+                needs: (args) => [Need.platform.darwin, Need.app.installed, Need.app.rpc(args.method)],
+                run: async (ctx) => {
+                    const reply = await ctx.app.rpc(ctx.args.method, ctx.args.params);
+                    return reply.ok ? reply.result : ctx.pass(`${reply.error.code}: ${reply.error.message}`);
                 },
             },
         }),
