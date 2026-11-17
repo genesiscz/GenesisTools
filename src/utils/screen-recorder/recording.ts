@@ -909,6 +909,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return;
         }
 
+        this.soundAbort.signal.throwIfAborted();
+
         this.sound = { ...this.sound, sources: [...this.soundSession.sources] };
 
         for (const source of this.sound.sources) {
@@ -950,7 +952,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             await this.capturePieces();
         } catch (error) {
             log.debug({ error, id: this.config.live.id }, "the recording's capture loop ended on an error");
-            hooks.onError?.(error);
+            if (!(this.stopRequested && error instanceof Error && error.name === "AbortError")) {
+                hooks.onError?.(error);
+            }
         } finally {
             try {
                 await this.soundSession?.stop();

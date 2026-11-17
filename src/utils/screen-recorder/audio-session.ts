@@ -11,6 +11,7 @@ import { AUDIO_SOURCES, type AudioSource } from "./control";
 import { CaptureError, type CaptureRequest, type FrameRecorder } from "./types";
 
 const { log } = logger.scoped("screen-recorder-audio-session");
+const nativeFailure = z.object({ ok: z.literal(false), error: z.string(), code: z.string().optional() });
 const READY_MS = 30_000;
 const CONTROL_MS = 5_000;
 const STOP_MS = 20_000;
@@ -131,10 +132,13 @@ export class AudioSession {
             options.signal?.throwIfAborted();
             return session;
         } catch (error) {
-            session.fail(error);
+            if (!options.signal?.aborted) {
+                session.fail(error);
+            }
             await session
                 .stop()
                 .catch((stopError: unknown) => log.debug({ stopError }, "failed audio startup cleaned up"));
+            options.signal?.throwIfAborted();
             throw error;
         }
     }
@@ -165,7 +169,16 @@ export class AudioSession {
     }
 
     private segment(line: string): void {
-        const row = audioSegmentSchema.parse(SafeJSON.parse(line, { strict: true }));
+        const raw: unknown = SafeJSON.parse(line, { strict: true });
+        const failure = nativeFailure.safeParse(raw);
+        if (failure.success) {
+            throw new CaptureError(
+                failure.data.code === "no-permission" ? "no-permission" : "failed",
+                failure.data.error
+            );
+        }
+
+        const row = audioSegmentSchema.parse(raw);
         if (
             basename(row.file) !== row.file ||
             !/^audio-\d+-(mic|system)\.m4a$/.test(row.file) ||
@@ -176,7 +189,13 @@ export class AudioSession {
         const file = `audio/${this.prefix}-${row.file}`;
         renameSync(join(this.options.outDir, row.file), join(this.options.folder, file));
         const kept = { ...row, file };
-        appendFileSync(join(this.options.folder, "audio.jsonl"), `${SafeJSON.stringify(kept)}\n`);
+        try {
+            appendFileSync(join(this.options.folder, "audio.jsonl"), `${SafeJSON.stringify(kept)}\n`);
+        } catch (error) {
+            // Put it back where crash recovery looks, before the piece folder is cleared.
+            renameSync(join(this.options.folder, file), join(this.options.outDir, row.file));
+            throw error;
+        }
         this.segments += 1;
         this.options.onSegment?.(kept);
     }
@@ -236,7 +255,11 @@ export class AudioSession {
             const answer = Promise.withResolvers<void>();
             this.pending = { accepts, resolve: () => answer.resolve(), reject: answer.reject };
             try {
-                await this.write(command);
+                await withTimeout(
+                    this.write(command),
+                    CONTROL_MS,
+                    new CaptureError("timeout", "audio control pipe blocked")
+                );
                 await withTimeout(
                     answer.promise,
                     CONTROL_MS,
@@ -286,12 +309,15 @@ export class AudioSession {
         this.stopping ??= Promise.resolve().then(async () => {
             this.options.signal?.removeEventListener("abort", this.abort);
             try {
-                if (this.proc.exitCode === null) {
-                    await this.write({ cmd: "stop" }).catch((error: unknown) =>
-                        log.debug({ error }, "audio stdin already closed before stop")
-                    );
-                }
-                await withTimeout(this.done, STOP_MS, new Error("audio-record did not stop within 20s"));
+                const stopped = async () => {
+                    if (this.proc.exitCode === null) {
+                        await this.write({ cmd: "stop" }).catch((error: unknown) =>
+                            log.debug({ error }, "audio stdin already closed before stop")
+                        );
+                    }
+                    await this.done;
+                };
+                await withTimeout(stopped(), STOP_MS, new Error("audio-record did not stop within 20s"));
             } catch (error) {
                 this.fail(error);
                 signalProcessTree(this.proc.pid, { signal: "SIGKILL", includeSelf: true });
@@ -299,9 +325,11 @@ export class AudioSession {
                     (killError: unknown) => log.warn({ killError }, "audio process cleanup timed out")
                 );
             } finally {
-                await Promise.resolve(this.proc.stdin.end()).catch((error: unknown) =>
-                    log.debug({ error }, "audio stdin closed")
-                );
+                await withTimeout(
+                    Promise.resolve(this.proc.stdin.end()),
+                    2_000,
+                    new Error("audio stdin did not close")
+                ).catch((error: unknown) => log.debug({ error }, "audio stdin closed"));
             }
             if (this.failure) {
                 throw this.failure;
