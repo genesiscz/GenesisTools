@@ -114,6 +114,11 @@ export interface DecisionRecord {
     draft?: string;
     /** The user's unsent pick: option letters, several allowed (`"ac"`). Consumed with `draft`. */
     draftOption?: string;
+    /**
+     * When the unsent pick or note last changed (the stage), set by the store. A comment or another update moves
+     * `updatedTs`, not this, so a staged row says when it was staged. Absent on rows staged before 2026-11-17.
+     */
+    draftedTs?: string;
     /** Harvested from a reply: the text that led to the block, and the text under its options. */
     context?: string;
     notes?: string;
@@ -190,6 +195,7 @@ const VERSIONED_KEYS = [
     "transclusions",
     "draft",
     "draftOption",
+    "draftedTs",
     // Parallel to `options`, and the text around a harvested block: they go with the old version.
     "rationales",
     "context",
@@ -231,6 +237,7 @@ export function reopenEmptyDraft<Row extends DecisionRecord>(row: Row): Row {
     const reopened: Row = { ...row, state: "open" };
     delete reopened.draft;
     delete reopened.draftOption;
+    delete reopened.draftedTs;
     return reopened;
 }
 
@@ -959,10 +966,20 @@ function patched(
         }
     }
 
+    // The stage time moves only when the staged pick or note changes: a comment, a state move or the same pick again
+    // leaves it, so the widget's "Staged · 3m ago" is the stage and not the decision's last write.
+    const stagedBefore = `${row.draftOption ?? ""}\u0000${row.draft ?? ""}`;
+    if (!next.draftOption && !next.draft?.trim()) {
+        delete next.draftedTs;
+    } else if (stagedBefore !== `${next.draftOption ?? ""}\u0000${next.draft ?? ""}`) {
+        next.draftedTs = ts;
+    }
+
     // The answer consumes the draft: a sent decision must not still show an unsent pick.
     if (patch.state === "answered" || patch.state === "dismissed" || patch.state === "superseded" || recorded) {
         delete next.draft;
         delete next.draftOption;
+        delete next.draftedTs;
     }
 
     // Whichever surface cleared the last staged pick or note, the row is plain `open` again.

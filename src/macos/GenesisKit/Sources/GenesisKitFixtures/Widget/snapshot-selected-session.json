@@ -172,7 +172,8 @@
                         "revision": 1,
                         "updatedAt": 1767268200000,
                         "draftOption": "ab",
-                        "draft": "Start with these two."
+                        "draft": "Start with these two.",
+                        "draftedAt": 1767268200000
                     },
                     {
                         "id": "decision:d_1_fixture",
@@ -266,7 +267,8 @@
                 "revision": 1,
                 "updatedAt": 1767268200000,
                 "draftOption": "ab",
-                "draft": "Start with these two."
+                "draft": "Start with these two.",
+                "draftedAt": 1767268200000
             }
         ],
         "pendingDecisionIDs": [
@@ -601,7 +603,8 @@
             "refs": [],
             "read": true,
             "draftOption": "ab",
-            "draft": "Start with these two."
+            "draft": "Start with these two.",
+            "draftedAt": 1767268200000
         },
         {
             "id": "answer:qa_answer_fixture",

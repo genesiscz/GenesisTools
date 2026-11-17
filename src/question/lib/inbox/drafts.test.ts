@@ -82,6 +82,34 @@ describe("draftDecision", () => {
         expect(readDecisions(file)).toHaveLength(1);
     });
 
+    test("the stage time moves with the pick or note, never with a comment, and leaves with the draft", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ prompt: "Keep?", options: ["keep", "drop"] }],
+        });
+        const deps = { file, events, block: async () => block() };
+
+        const picked = await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        const stagedAt = picked?.draftedTs;
+        expect(stagedAt).toBeString();
+
+        await Bun.sleep(5);
+        const [commented] = await updateDecisions(file, events, { updates: [{ id: picked?.id ?? "", comment: "x" }] });
+        expect(commented?.draftedTs).toBe(stagedAt);
+        expect(commented?.updatedTs).not.toBe(stagedAt);
+        const same = await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        expect(same?.draftedTs).toBe(stagedAt);
+
+        const noted = await draftDecision({ session: "s", number: 1, text: "with a caveat" }, deps);
+        expect(noted?.draftedTs).toBe(noted?.updatedTs);
+        expect(noted?.draftedTs).not.toBe(stagedAt);
+
+        const cleared = await draftDecision({ session: "s", number: 1, option: "", text: "" }, deps);
+        expect(cleared).toMatchObject({ state: "open" });
+        expect(cleared?.draftedTs).toBeUndefined();
+    });
+
     test("a letter past the options is refused before any write", async () => {
         const { file, events } = scratch();
         await postDecisions(file, events, {

@@ -71,19 +71,28 @@ function timeOf(value: string | null | undefined): number {
     return Number.isFinite(at) ? at : 0;
 }
 
-/** The unsent pick and note of a `drafted` decision, each only when present. */
-function stagedOf(row: { state: string; draftOption?: string; draft?: string }): {
+/**
+ * The unsent pick and note of a `drafted` decision, each only when present, and when they were staged: the store's
+ * `draftedTs`, else the row's last write for a row staged before the store kept a stage time.
+ */
+function stagedOf(row: Pick<DecisionRecord, "state" | "draftOption" | "draft" | "draftedTs" | "updatedTs">): {
     draftOption?: string;
     draft?: string;
+    draftedAt?: number;
 } {
     if (row.state !== "drafted") {
         return {};
     }
 
-    return {
+    const staged = {
         ...(row.draftOption ? { draftOption: row.draftOption } : {}),
         ...(row.draft?.trim() ? { draft: row.draft } : {}),
     };
+    if (!staged.draftOption && !staged.draft) {
+        return staged;
+    }
+
+    return { ...staged, draftedAt: timeOf(row.draftedTs ?? row.updatedTs) };
 }
 
 export interface WidgetSession {
@@ -153,6 +162,8 @@ export interface WidgetCard {
      */
     draftOption?: string;
     draft?: string;
+    /** Decision cards: when the unsent pick or note was staged (epoch ms); a comment or another write does not move it. */
+    draftedAt?: number;
     /** Decision cards: every comment, oldest first (a supersede reason, progress notes). */
     comments?: string[];
     /** Decision cards: who stored the answer, the user in an inbox (`inbox`) or an agent copying a chat answer. */
@@ -356,6 +367,8 @@ export interface WidgetInboxItem {
     /** A decision's unsent pick and note (`drafted`); see `WidgetCard.draftOption`. */
     draftOption?: string;
     draft?: string;
+    /** When the pick or note was staged (epoch ms); see `WidgetCard.draftedAt`. */
+    draftedAt?: number;
     /** A decision answered outside the widget (`answeredElsewhere`): the chosen letters, the answer and who stored it. */
     option?: string;
     answer?: string;
