@@ -4,6 +4,15 @@ import Foundation
 import ScreenCaptureKit
 import SnapshotSupport
 
+func sessionEncoderPrimingFrames(settings: [String: Any]) -> UInt32? {
+    guard let output = AVAudioFormat(settings: settings),
+          let input = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: output.sampleRate,
+                                    channels: output.channelCount, interleaved: false),
+          let converter = AVAudioConverter(from: input, to: output) else { return nil }
+    if let bitRate = settings[AVEncoderBitRateKey] as? Int { converter.bitRate = bitRate }
+    return converter.primeInfo.leadingFrames
+}
+
 /// Audio is delivered on one serial queue. Retired writers finish on another queue, so rotation never
 /// holds up the next segment's samples. Capture timestamps, including missing samples, rotate files.
 @available(macOS 13.0, *)
@@ -17,6 +26,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private let hostTime: CMTime
     private var tracks: [CaptureAudioSource: AudioTrack] = [:]
     private var announced: Set<CaptureAudioSource> = []
+    private var encoderPriming: [CaptureAudioSource: UInt32] = [:]
     private var sequence: [CaptureAudioSource: Int] = [:]
     private var retiredEnd: [CaptureAudioSource: CMTime] = [:]
     private var muted: [CaptureAudioSource: Bool] = [:]
@@ -122,8 +132,13 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             }
             if track.fileTimeline.durationMs > 0, !announced.contains(source), let url = track.sidecarURL {
                 announced.insert(source)
-                writeRow(["event": "segment-started", "file": url.lastPathComponent,
-                    "source": source.rawValue, "zeroAt": wallTime(track.first ?? time)])
+                var row: [String: Any] = ["event": "segment-started", "file": url.lastPathComponent,
+                    "source": source.rawValue, "zeroAt": wallTime(track.first ?? time)]
+                if encoderPriming[source] == nil {
+                    encoderPriming[source] = sessionEncoderPrimingFrames(settings: aacSettings(channels: audioChannelCount(source)))
+                }
+                if let frames = encoderPriming[source] { row["primingFrames"] = frames }
+                writeRow(row)
             }
             let end = CMTimeAdd(time, CMTime(seconds: Double(length) / rate, preferredTimescale: 1_000_000_000))
             if track.end == nil || CMTimeCompare(end, track.end!) > 0 { track.end = end }
