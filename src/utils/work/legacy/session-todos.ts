@@ -39,10 +39,11 @@ export interface SessionTodoRow {
     worktreePath?: string | null;
     createdTs?: string;
     updatedTs: string;
+    revision?: number;
 }
 
-/** What the pointer keeps: the row without its text, so the widget can show the task as it does today. */
-export type SessionTodoMeta = Omit<SessionTodoRow, "prompt" | "title" | "state">;
+/** What the pointer keeps: the row without its text and state, so the widget can show the task as it does today. */
+export type SessionTodoMeta = Omit<SessionTodoRow, "prompt" | "state">;
 
 /** The states of the log mapped to item states (list 2 of the detail file). */
 const STATE_OF: Record<string, ItemState> = {
@@ -55,6 +56,32 @@ const STATE_OF: Record<string, ItemState> = {
 
 export function sessionTodoState(state: string): ItemState {
     return STATE_OF[state] ?? "open";
+}
+
+/** The state of the log an item state stands for; the inverse of {@link sessionTodoState} on the four to-do states. */
+export function sessionTodoLogState(state: ItemState): string {
+    return state === "active"
+        ? "acknowledged"
+        : state === "done"
+          ? "implemented"
+          : state === "dropped"
+            ? "dismissed"
+            : "open";
+}
+
+/** The to-do rows as the store holds them: the pointer's fields, the item's text and state, newest change first. */
+export function readSessionTodos(db: Database): { rows: SessionTodoRow[]; stamp: string } {
+    const stamp = String((db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0);
+    const rows = db
+        .query<{ meta: string | null; body: string | null; state: ItemState }, [string]>(
+            "SELECT p.meta AS meta, i.body AS body, i.state AS state FROM pointers p JOIN items i ON i.id = p.item WHERE p.kind = ?"
+        )
+        .all(SESSION_TODO_POINTER)
+        .flatMap((r) => {
+            const meta = r.meta === null ? null : (SafeJSON.parse(r.meta) as SessionTodoMeta);
+            return meta === null ? [] : [{ ...meta, prompt: r.body ?? "", state: sessionTodoLogState(r.state) }];
+        });
+    return { rows, stamp };
 }
 
 export function sessionTodoKey(row: Pick<SessionTodoRow, "sessionId" | "number">): string {
@@ -83,7 +110,7 @@ function actorOf(row: SessionTodoRow): Actor {
 }
 
 function metaOf(row: SessionTodoRow): SessionTodoMeta {
-    const { prompt: _prompt, title: _title, state: _state, ...meta } = row;
+    const { prompt: _prompt, state: _state, ...meta } = row;
     return meta;
 }
 
