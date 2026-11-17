@@ -107,6 +107,13 @@ export async function embedVoice(options: {
     }
     const backend = localVoiceBackend();
     const samples = await toFloat32AudioWindow(options.audioPath, options);
+    return embeddingOf(samples, backend);
+}
+
+function embeddingOf(
+    samples: Float32Array,
+    backend: ReturnType<typeof localVoiceBackend>
+): { model: string; embedding: number[] } {
     const rms = Math.sqrt(samples.reduce((sum, n) => sum + n * n, 0) / Math.max(1, samples.length));
     if (rms < 0.002) {
         throw new VoiceUnavailableError("Voice sample is quiet; identity remains unknown");
@@ -210,17 +217,37 @@ export async function embedVoiceLines(options: {
     const stat = statSync(options.audioPath);
     const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
     const result: LineEmbedding[] = [];
+    const windows = new Map<number, { fromSec: number; toSec: number; samples: Float32Array }>();
     for (const span of options.spans) {
         const channels: ChannelEmbedding[] = [];
         for (const channel of options.channels) {
             const provenance = { source, ...channel, fromSec: span.fromSec, toSec: span.toSec };
             try {
-                const embedding = await embedVoice({
-                    audioPath: options.audioPath,
-                    channel: channel.channel,
-                    fromSec: span.fromSec,
-                    toSec: span.toSec,
-                });
+                const duration = span.toSec - span.fromSec;
+                if (duration < 1.5 || duration > 60) {
+                    throw new VoiceUnavailableError("Voice line needs 1.5 to 60 seconds of speech");
+                }
+                const backend = localVoiceBackend();
+                let window = windows.get(channel.channel);
+                if (!window || span.fromSec < window.fromSec || span.toSec > window.toSec) {
+                    const fromSec = span.fromSec;
+                    const toSec = fromSec + 60;
+                    window = {
+                        fromSec,
+                        toSec,
+                        samples: await toFloat32AudioWindow(options.audioPath, {
+                            fromSec,
+                            toSec,
+                            channel: channel.channel,
+                        }),
+                    };
+                    windows.set(channel.channel, window);
+                }
+                const samples = window.samples.slice(
+                    Math.round((span.fromSec - window.fromSec) * 16000),
+                    Math.round((span.toSec - window.fromSec) * 16000)
+                );
+                const embedding = embeddingOf(samples, backend);
                 channels.push({ ...provenance, ...embedding, quality: "ready" });
             } catch (error) {
                 channels.push({

@@ -1,4 +1,5 @@
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { CorrectionsApplied } from "@genesiscz/utils/transcribe/apply";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 
@@ -20,7 +21,11 @@ export function itemWhat(item: MeetingItem, options: { width?: number } = {}): s
     }
     if (item.kind === "speaker-range") {
         const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
-        return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}`;
+        const score = item.evidence?.score;
+        const voice = item.rules.includes(MeetingRule.VoiceEmbedding)
+            ? ` by voice${typeof score === "number" ? ` ${score.toFixed(2)}` : ""}`
+            : "";
+        return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}${voice}`;
     }
 
     if (item.kind === "join") {

@@ -7,9 +7,18 @@ import type { LabelContext, LineLabel, SpeakerLabeler, SpeakerLabelerId } from "
 import { SPEAKER_LABELER_IDS } from "./types";
 
 // The synchronous rule lets the pure item writer use the same registry without loading a labeler's dependencies.
-type LabelerLoader = (() => Promise<SpeakerLabeler>) & Pick<SpeakerLabeler, "rule">;
+type LabelerLoader = ((
+    opened: OpenedMeeting,
+    settings: MeetingsConfig["global"]["speakerLabels"]
+) => Promise<SpeakerLabeler>) &
+    Pick<SpeakerLabeler, "rule">;
 const LABELERS: Record<SpeakerLabelerId, LabelerLoader> = {
     seat: Object.assign(async () => (await import("./seat")).seatLabeler, { rule: MeetingRule.Attendance }),
+    voice: Object.assign(
+        async (opened: OpenedMeeting, settings: MeetingsConfig["global"]["speakerLabels"]) =>
+            (await import("./voice")).voiceLabeler({ opened, settings: settings.voice }),
+        { rule: MeetingRule.VoiceEmbedding }
+    ),
 };
 
 export function speakerLabelRule(id: SpeakerLabelerId): MeetingRule {
@@ -100,7 +109,7 @@ export async function proposeSpeakerLabels(
     const byLabeler = new Map<SpeakerLabelerId, LineLabel[]>();
 
     for (const id of enabled) {
-        byLabeler.set(id, await (await LABELERS[id]()).propose(context));
+        byLabeler.set(id, await (await LABELERS[id](opened, settings)).propose(context));
     }
 
     return mergeLabels(byLabeler);

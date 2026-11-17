@@ -1,7 +1,7 @@
 import type { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { MeetingSound, Seat } from "../sound";
 
-export const SPEAKER_LABELER_IDS = ["seat"] as const;
+export const SPEAKER_LABELER_IDS = ["seat", "voice"] as const;
 export type SpeakerLabelerId = (typeof SPEAKER_LABELER_IDS)[number];
 
 export interface LineLabel {
