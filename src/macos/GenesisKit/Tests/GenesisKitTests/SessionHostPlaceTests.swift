@@ -40,4 +40,38 @@ final class SessionHostPlaceTests: XCTestCase {
         XCTAssertNil(answers[3].host)
         XCTAssertEqual(answers[3].reason, "No T3 Code thread or cmux pane holds this session.")
     }
+
+    func testTheClientAsksTheCLIAndReadsARefusalAsAnAnswer() async throws {
+        let payload = self.payload
+        let calls = CallLog()
+        let client = SessionHostClient { args, _ in
+            await calls.add(args)
+            if args[1] == "describe" {
+                return ToolsRunResult(stdout: payload, stderr: "", exitCode: 0, wallMs: 1)
+            }
+            return ToolsRunResult(stdout: #"{"ok": false, "reason": "No live cmux pane holds this session.", "host": null}"#,
+                                  stderr: "", exitCode: 1, wallMs: 1)
+        }
+
+        let answers = try await client.describe(["codex-1", "none-1"])
+        XCTAssertEqual(answers.count, 4)
+        let refused = try await client.act(.wake, sessionId: "claude-1")
+        XCTAssertEqual(refused, SessionHostActResult(ok: false, reason: "No live cmux pane holds this session."))
+        let logged = await calls.all
+        XCTAssertEqual(logged, [
+            ["session-host", "describe", "codex-1", "none-1", "--json"],
+            ["session-host", "wake", "claude-1", "--json"],
+        ])
+
+        let silent = SessionHostClient { _, _ in
+            ToolsRunResult(stdout: "", stderr: "[profile:x] 3ms\n✘ No cmux pane matches \"x\".\n  Searched 6 panes.", exitCode: 1, wallMs: 1)
+        }
+        let unread = try await silent.act(.focus, sessionId: "x")
+        XCTAssertEqual(unread, SessionHostActResult(ok: false, reason: "No cmux pane matches \"x\"."))
+    }
+}
+
+private actor CallLog {
+    private(set) var all: [[String]] = []
+    func add(_ args: [String]) { all.append(args) }
 }
