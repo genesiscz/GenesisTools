@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
-import { CpuSpinAnalyzer, type CpuTimeSample, processOwner, spinningProcesses } from "@app/doctor/analyzers/cpu-spin";
+import { CpuSpinAnalyzer } from "@app/doctor/analyzers/cpu-spin";
 import { analysisDirFor } from "@app/doctor/lib/paths";
 import type { AnalyzerContext } from "@app/doctor/lib/types";
+import { type CpuTimeSample, processOwner, spinningProcesses } from "@genesiscz/utils/process/cpu-spin";
 import { parseCpuTime } from "@genesiscz/utils/process/ps";
 
 const PS_LINE = /^\s*(\d+)\s+(\S+)\s+(.*)$/;

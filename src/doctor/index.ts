@@ -2,11 +2,7 @@
 
 import { homedir } from "node:os";
 import { createDoctorAnalyzers } from "@app/doctor/analyzers";
-import {
-    CPU_SPIN_ANALYZER_ID,
-    CpuSpinAnalyzer,
-    DEFAULT_CPU_SPIN_THRESHOLD_PERCENT,
-} from "@app/doctor/analyzers/cpu-spin";
+import { CPU_SPIN_ANALYZER_ID, CpuSpinAnalyzer } from "@app/doctor/analyzers/cpu-spin";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { wipeCache } from "@app/doctor/lib/cache";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
@@ -18,6 +14,7 @@ import { runStats } from "@app/doctor/ui/stats";
 import { runTui } from "@app/doctor/ui/tui";
 import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
+import { DEFAULT_CPU_SPIN_THRESHOLD_PERCENT } from "@genesiscz/utils/process/cpu-spin";
 import { Command } from "commander";
 
 interface RootOpts {
