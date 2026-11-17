@@ -19,10 +19,10 @@ import {
     type Connector,
     type ConnectorContext,
     DEFAULT_LABEL_TEMPLATE,
-    labelFor,
     originFor,
     type Pairing,
     type PushIntent,
+    pairingLabelFor,
     type RemoteItem,
     SYNCED_FACTS,
     type SyncedFact,
@@ -187,7 +187,11 @@ async function pushItems(
 
             const machine = deps.machinePrefix;
             const labels = [item.id, ...containersOf(db, item.id)].map((target) =>
-                labelFor(config.labelTemplate || DEFAULT_LABEL_TEMPLATE, { machine, project: item.project, id: target })
+                pairingLabelFor(config.labelTemplate || DEFAULT_LABEL_TEMPLATE, {
+                    machine,
+                    project: item.project,
+                    id: target,
+                })
             );
             intents.push({ item, pairing, labels });
         }
