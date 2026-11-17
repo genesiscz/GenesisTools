@@ -1,0 +1,189 @@
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import * as converter from "@genesiscz/utils/audio/converter";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { z } from "zod";
+import { MeetingStore } from "./record";
+import * as voice from "./voice";
+
+const spies: Array<{ mockRestore(): void }> = [];
+let fixtureIndex = 0;
+afterEach(() => {
+    for (const spy of spies.splice(0)) {
+        spy.mockRestore();
+    }
+});
+
+async function fixture() {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: `Voice cache fixture ${fixtureIndex++}`, start: "2026-01-01T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "cache fixture" }
+    );
+    const folder = store.folder(record.id);
+    mkdirSync(join(folder, "source-audio"), { recursive: true });
+    const audioPath = join(folder, "source-audio", "fixture.pcm");
+    writeFileSync(audioPath, "invented audio");
+    const samples = new Float32Array(60 * 16000).fill(0.03);
+    samples.fill(0, 2 * 16000, 4 * 16000);
+    samples.fill(0.04, 5 * 16000, 7 * 16000);
+    const compute = mock(() => new Float32Array([1, 0]));
+    const decode = spyOn(converter, "toFloat32AudioWindow").mockResolvedValue(samples);
+    let model = "fixture-model";
+    let speech = true;
+    const backend = spyOn(voice, "localVoiceBackend").mockImplementation(() => ({
+        model,
+        extractor: {
+            createStream: () => ({
+                acceptWaveform: ({ samples: input }) => {
+                    speech = input[0] !== samples[5 * 16000];
+                },
+                inputFinished: () => undefined,
+            }),
+            isReady: () => speech,
+            compute,
+        },
+    }));
+    spies.push(decode, backend);
+    const options = {
+        audioPath,
+        spans: [{ index: 0, fromSec: 0, toSec: 2 }],
+        channels: [{ channel: 0 as const, track: "raw-mic" as const }],
+    };
+    return {
+        store,
+        record,
+        options,
+        compute,
+        decode,
+        cachePath: join(folder, "evidence", "voice-lines.json"),
+        changeModel: () => {
+            model = "fixture-model-2";
+        },
+    };
+}
+
+test("a reopened line cache reuses every ready, quiet, short and speechless span without decoding or extraction", async () => {
+    const f = await fixture();
+    const options = {
+        ...f.options,
+        spans: [
+            { index: 0, fromSec: 0, toSec: 1 },
+            { index: 1, fromSec: 0, toSec: 2 },
+            { index: 2, fromSec: 2, toSec: 4 },
+            { index: 3, fromSec: 5, toSec: 7 },
+        ],
+    };
+    const first = await voice.embedVoiceLines(options);
+    expect(first.map((line) => line.channels[0]?.quality)).toEqual(["unknown", "ready", "unknown", "unknown"]);
+    expect(f.compute).toHaveBeenCalledTimes(1);
+    expect(f.decode).toHaveBeenCalledTimes(1);
+    const disk = z
+        .object({ version: z.literal(1), entries: z.record(z.string(), z.unknown()) })
+        .parse(SafeJSON.parse(readFileSync(f.cachePath, "utf8")));
+    expect(disk.version).toBe(1);
+    expect(Object.keys(disk.entries)).toHaveLength(4);
+    f.compute.mockClear();
+    f.decode.mockClear();
+    expect(await voice.embedVoiceLines(options)).toEqual(first);
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(f.decode).not.toHaveBeenCalled();
+    const reindexed = await voice.embedVoiceLines({ ...options, spans: [{ index: 42, fromSec: 0, toSec: 2 }] });
+    expect(reindexed).toEqual([{ ...first[1]!, index: 42 }]);
+    expect(f.compute).not.toHaveBeenCalled();
+});
+
+test("a copied meeting keeps embeddings in its own folder when its retained source is elsewhere", async () => {
+    const f = await fixture();
+    const external = join(f.store.root, "..", `external-voice-fixture-${fixtureIndex}.pcm`);
+    writeFileSync(external, "invented audio");
+    await f.store.update(f.record.id, { command: "test", change: "external source fixture" }, (record) => {
+        record.audio = {
+            sources: {
+                fixture: {
+                    sourceMeetingId: "fixture-source",
+                    path: external,
+                    sha256: "a".repeat(64),
+                    bytes: 14,
+                    savedAt: "2026-01-01T10:00:00Z",
+                },
+            },
+        };
+    });
+    const options = { ...f.options, audioPath: external };
+    const first = await voice.embedVoiceLines(options);
+    expect(readFileSync(f.cachePath, "utf8")).toContain("fixture-model");
+    f.compute.mockClear();
+    f.decode.mockClear();
+    expect(await voice.embedVoiceLines(options)).toEqual(first);
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(f.decode).not.toHaveBeenCalled();
+});
+
+test("each channel decodes a shared 60 second window once for several lines", async () => {
+    const f = await fixture();
+    await voice.embedVoiceLines({
+        ...f.options,
+        spans: [
+            { index: 0, fromSec: 0, toSec: 2 },
+            { index: 1, fromSec: 10, toSec: 12 },
+            { index: 2, fromSec: 59, toSec: 61 },
+            { index: 3, fromSec: 62, toSec: 64 },
+        ],
+        channels: [
+            { channel: 0, track: "raw-mic" },
+            { channel: 1, track: "isolated-call" },
+        ],
+    });
+    expect(f.compute).toHaveBeenCalledTimes(8);
+    expect(f.decode).toHaveBeenCalledTimes(4);
+});
+
+test("a changed source mtime misses even when the bytes and span stay the same", async () => {
+    const f = await fixture();
+    await voice.embedVoiceLines(f.options);
+    const stat = statSync(f.options.audioPath);
+    utimesSync(f.options.audioPath, stat.atime, new Date(stat.mtimeMs + 1000));
+    await voice.embedVoiceLines(f.options);
+    expect(f.compute).toHaveBeenCalledTimes(2);
+    expect(f.decode).toHaveBeenCalledTimes(2);
+});
+
+test("model, source size and path, channel, track and millisecond span are distinct cache inputs", async () => {
+    const f = await fixture();
+    await voice.embedVoiceLines(f.options);
+    await voice.embedVoiceLines({ ...f.options, channels: [{ channel: 1, track: "raw-mic" }] });
+    await voice.embedVoiceLines({ ...f.options, channels: [{ channel: 0, track: "clean-mic" }] });
+    await voice.embedVoiceLines({ ...f.options, spans: [{ index: 0, fromSec: 0, toSec: 1.999 }] });
+    f.changeModel();
+    await voice.embedVoiceLines(f.options);
+    const stat = statSync(f.options.audioPath);
+    writeFileSync(f.options.audioPath, "invented audio with more bytes");
+    utimesSync(f.options.audioPath, stat.atime, stat.mtime);
+    await voice.embedVoiceLines(f.options);
+    const otherPath = join(f.options.audioPath, "..", "other.pcm");
+    writeFileSync(otherPath, "invented audio with more bytes");
+    utimesSync(otherPath, stat.atime, stat.mtime);
+    await voice.embedVoiceLines({ ...f.options, audioPath: otherPath });
+    expect(f.compute).toHaveBeenCalledTimes(7);
+});
+
+test.each(["{broken", '{"version":1,"entries":{"bad":{"quality":"ready","embedding":[]}}}'])(
+    "a corrupt cache is a logged miss and is replaced by readable results: %s",
+    async (broken) => {
+        const f = await fixture();
+        const debug = spyOn(logger, "debug");
+        spies.push(debug);
+        mkdirSync(join(f.cachePath, ".."), { recursive: true });
+        writeFileSync(f.cachePath, broken);
+        const result = await voice.embedVoiceLines(f.options);
+        expect(result[0]?.channels[0]?.quality).toBe("ready");
+        expect(f.compute).toHaveBeenCalledTimes(1);
+        expect(debug).toHaveBeenCalled();
+        f.compute.mockClear();
+        expect(await voice.embedVoiceLines(f.options)).toEqual(result);
+        expect(f.compute).not.toHaveBeenCalled();
+    }
+);
