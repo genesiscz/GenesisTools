@@ -47,11 +47,13 @@ describe("CAS fold idempotency (§8.9a)", () => {
         const db2 = openHandoffModel(env.dbPath);
 
         try {
-            const prev = (
-                db1.query("SELECT byte_offset FROM handoff_ingest_offsets WHERE file = ?").get(file) as {
-                    byte_offset: number;
-                }
-            ).byte_offset;
+            // Since P6 the store holds the post before the log copy, so no fold may have read this file yet.
+            const prev =
+                (
+                    db1.query("SELECT byte_offset FROM handoff_ingest_offsets WHERE file = ?").get(file) as {
+                        byte_offset: number;
+                    } | null
+                )?.byte_offset ?? 0;
 
             // Process 1 folds the batch first.
             catchUpHandoffs(db1, env.base);
@@ -347,6 +349,30 @@ describe("handoff_events read-model (G1/G3)", () => {
             for (const row of after) {
                 expect(row.payload.includes('"editId"')).toBe(false);
             }
+        } finally {
+            db.close();
+        }
+    });
+});
+
+describe("the work store writes first (P6)", () => {
+    test("a write lands in the store before the log copy; the copy folds nothing twice; a rebuild from the log agrees", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
+        const id = posted.handoff.id;
+        executeHandoffActions({ id, actions: [{ action: "add_tasks", tasks: [{ text: "two" }] }] }, env.depsFor(A));
+
+        const db = openHandoffModel(env.dbPath);
+
+        try {
+            expect(getHandoffById(db, id)?.tasks.map((t) => t.id)).toEqual(["t1", "t2"]);
+            // The log copy of the same events must not add the auto-id task a second time.
+            catchUpHandoffs(db, env.base);
+            expect(getHandoffById(db, id)?.tasks.map((t) => t.id)).toEqual(["t1", "t2"]);
+            expect(db.query("SELECT COUNT(*) AS n FROM items WHERE id LIKE ?").get(`${id}%`)).toEqual({ n: 3 });
+
+            rebuildHandoffModel(db, env.base);
+            expect(getHandoffById(db, id)?.tasks.map((t) => t.text)).toEqual(["one", "two"]);
         } finally {
             db.close();
         }

@@ -120,4 +120,12 @@ export const WORK_MIGRATIONS: Migration[] = [
             db.run("CREATE VIRTUAL TABLE items_fts USING fts5(id UNINDEXED, title, body)");
         },
     },
+    {
+        id: "2026-11-work-v2-handoff-meta",
+        description:
+            "the work store's own handoff table becomes handoff_meta; the name handoffs is the legacy view's (P6)",
+        apply(db) {
+            db.run("ALTER TABLE handoffs RENAME TO handoff_meta");
+        },
+    },
 ];

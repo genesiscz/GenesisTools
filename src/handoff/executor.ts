@@ -1,21 +1,17 @@
 import type { Database } from "bun:sqlite";
-import { dirname, join } from "node:path";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
-import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
 import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches, targetMatchesSession } from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
-import { appendHandoffEvents } from "./log-store";
 import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
 import { resolveHandoffProject } from "./project-ref";
 import {
     catchUpHandoffs,
+    commitHandoffEvents,
     findHandoffsByName,
     getEventOutcome,
     getHandoffById,
@@ -51,11 +47,6 @@ import type {
 const log = logger.child({ component: "handoff:executor" });
 
 export interface HandoffDeps {
-    /**
-     * The work store that shadows this handoff store. Default: beside `dbPath` when a test or a sandbox sets one,
-     * else `~/.genesis-tools/work/work.db`. `null` turns the shadow off.
-     */
-    workDbPath?: string | null;
     /** Log + attachment store base dir override (tests). */
     base?: string;
     /** qa.db path override (tests). */
@@ -116,50 +107,6 @@ function withDb<T>(deps: HandoffDeps, fn: (db: Database) => T): T {
         return fn(db);
     } finally {
         db.close();
-    }
-}
-
-function workDbFor(deps: HandoffDeps): string | null {
-    if (deps.workDbPath !== undefined) {
-        return deps.workDbPath;
-    }
-
-    return deps.dbPath !== undefined ? join(dirname(deps.dbPath), "work.db") : workDbPath();
-}
-
-/**
- * Shadow mode of the work store: after each append, bring the touched handoffs into it. A failure here never fails
- * the handoff write; `tools work migrate backfill` repairs what it missed, and `tools work doctor --parity` names it.
- */
-function shadowIntoWork(db: Database, deps: HandoffDeps, events: readonly HandoffEvent[]): void {
-    const path = workDbFor(deps);
-
-    if (path === null || events.length === 0) {
-        return;
-    }
-
-    const ids = [...new Set(events.map((event) => event.id))];
-
-    try {
-        withWorkDb(path, (work) => {
-            for (const id of ids) {
-                const handoff = getHandoffById(db, id);
-
-                if (handoff === null) {
-                    continue;
-                }
-
-                const refs = events
-                    .filter((event) => event.id === id)
-                    .map((event) => ({ event, outcome: getEventOutcome(db, event.uid) }));
-                ingestLegacyHandoff(work, handoff, refs);
-            }
-        });
-    } catch (error) {
-        log.warn(
-            { err: error, ids },
-            `work shadow: the ingest failed; ${toolCommand("work", "migrate", "backfill")} repairs it`
-        );
     }
 }
 
@@ -455,11 +402,9 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         event.project = named.project;
     }
 
-    appendHandoffEvents([event], deps.base);
-
     return withDb(deps, (db) => {
         catchUpHandoffs(db, deps.base);
-        shadowIntoWork(db, deps, [event]);
+        commitHandoffEvents(db, [event], deps.base);
         const handoff = getHandoffById(db, event.id);
 
         if (handoff === null) {
@@ -587,7 +532,9 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         );
     }
 
-    const sections = input.include !== undefined ? parseIncludeSections(input.include) : null;
+    const parsed = input.include !== undefined ? parseIncludeSections(input.include) : null;
+    // include ["full"] is the old whole shape, the same as no include at all.
+    const sections = parsed?.includes("full") ? null : parsed;
     const by = buildBy(deps);
 
     return withDb(deps, (db) => {
@@ -634,9 +581,7 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         }
 
         if (events.length > 0) {
-            appendHandoffEvents(events, deps.base);
-            catchUpHandoffs(db, deps.base);
-            shadowIntoWork(db, deps, events);
+            commitHandoffEvents(db, events, deps.base);
         }
 
         const handoff = getHandoffById(db, id);
@@ -677,6 +622,12 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
 
         const info = [...extraInfo, ...stateInfo(handoff, by)];
         const warnings = recipient.warnings.length > 0 ? { warnings: recipient.warnings } : {};
+
+        if (sections?.includes("rows") && !sections.includes("tasks")) {
+            info.push(
+                'Compact view: include ["description"] adds the body, ["tasks"] the proofs, ["full"] the whole handoff.'
+            );
+        }
 
         if (sections !== null && isEventsOnlyInclude(sections)) {
             const { events: publicEvents } = listHandoffEvents({ db, handoffId: id });
@@ -1019,9 +970,7 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
         const events = pending.flatMap((p) => [...(p.preEvents ?? []), ...(p.event !== undefined ? [p.event] : [])]);
 
         if (events.length > 0) {
-            appendHandoffEvents(events, deps.base);
-            catchUpHandoffs(db, deps.base);
-            shadowIntoWork(db, deps, events);
+            commitHandoffEvents(db, events, deps.base);
         }
 
         const handoff = getHandoffById(db, id);
@@ -1557,9 +1506,7 @@ export function attachHandoffBytes(input: AttachBytesInput, deps: HandoffDeps = 
             ...(input.taskId !== undefined && input.taskId.length > 0 ? { taskId: input.taskId } : {}),
             ...(input.note !== undefined && input.note.length > 0 ? { note: input.note } : {}),
         };
-        appendHandoffEvents([event], deps.base);
-        catchUpHandoffs(db, deps.base);
-        shadowIntoWork(db, deps, [event]);
+        commitHandoffEvents(db, [event], deps.base);
         const outcome = getEventOutcome(db, event.uid);
 
         if (outcome !== null && !outcome.applied) {

@@ -1,19 +1,23 @@
-import { Database } from "bun:sqlite";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import type { Database } from "bun:sqlite";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
+import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { applyHandoffEvent } from "./fold";
-import { handoffLogDir } from "./log-store";
+import { appendHandoffEvents, handoffLogDir } from "./log-store";
 import type { FoldOutcome, Handoff, HandoffEvent, HandoffPublicEvent } from "./types";
 
 const log = logger.child({ component: "handoff:read-model" });
 
-/** Same db the /qa dashboard opens — handoffs ARE the QA family (spec §6.2). */
+/**
+ * The handoff tables live in the work store since P6 of the work-items spec; before that they lived in the question
+ * store (`question/qa.db`), which still holds the old copy, never written again.
+ */
 export function handoffDbPath(): string {
-    return genesisToolsDir("question", "qa.db");
+    return workDbPath();
 }
 
 function ensureColumn(db: Database, table: string, column: string, ddl: string): void {
@@ -102,9 +106,7 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
 
 export function openHandoffModel(dbPath?: string): Database {
     const path = dbPath ?? handoffDbPath();
-    mkdirSync(dirname(path), { recursive: true });
-    const db = new Database(path);
-    db.exec("PRAGMA journal_mode = WAL;");
+    const db = openWorkDb(path);
     db.exec("PRAGMA busy_timeout = 5000;");
     const { eventsTableCreated } = createTables(db);
 
@@ -509,12 +511,6 @@ export interface ApplyBatchInput {
 export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base }: ApplyBatchInput): boolean {
     const getOff = db.prepare("SELECT byte_offset FROM handoff_ingest_offsets WHERE file = ?");
     const setOff = db.prepare("INSERT OR REPLACE INTO handoff_ingest_offsets (file, byte_offset) VALUES (?, ?)");
-    const putOutcome = db.prepare(
-        "INSERT OR REPLACE INTO handoff_event_results (uid, handoff_id, ev, ok, error, extra, ts) VALUES (?,?,?,?,?,?,?)"
-    );
-    const putEvent = db.prepare(
-        "INSERT OR IGNORE INTO handoff_events (uid, handoff_id, ts, ev, payload) VALUES (?,?,?,?,?)"
-    );
     let applied = false;
 
     const tx = db.transaction(() => {
@@ -526,65 +522,7 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
             return;
         }
 
-        const states = new Map<string, Handoff | null>();
-
-        for (const event of events) {
-            if (!states.has(event.id)) {
-                states.set(event.id, getHandoffById(db, event.id));
-            }
-
-            const previous = states.get(event.id) ?? null;
-            const { state, outcome } = applyHandoffEvent(previous, event, { base });
-            states.set(event.id, state);
-            const publicEvent =
-                event.ev === "modify_handoff" && event.project !== undefined
-                    ? { ...event, fromProject: previous?.project ?? null }
-                    : event;
-
-            if (event.ev === "post" && !outcome.applied) {
-                log.error({ id: event.id, file }, "duplicate handoff post id — first wins, event skipped");
-            }
-
-            const extra: Partial<FoldOutcome> = {};
-
-            if (outcome.info !== undefined) {
-                extra.info = outcome.info;
-            }
-
-            if (outcome.noop !== undefined) {
-                extra.noop = outcome.noop;
-            }
-
-            if (outcome.assignedTaskIds !== undefined) {
-                extra.assignedTaskIds = outcome.assignedTaskIds;
-            }
-
-            putOutcome.run(
-                event.uid,
-                event.id,
-                event.ev,
-                outcome.applied ? 1 : 0,
-                outcome.error ?? null,
-                Object.keys(extra).length > 0 ? SafeJSON.stringify(extra, { strict: true }) : null,
-                event.ts
-            );
-
-            // editId stripped at insert — never stored in handoff_events (G3).
-            putEvent.run(
-                event.uid,
-                event.id,
-                event.ts,
-                event.ev,
-                SafeJSON.stringify(toPublicEvent(publicEvent), { strict: true })
-            );
-        }
-
-        for (const state of states.values()) {
-            if (state !== null) {
-                upsertHandoff(db, state);
-            }
-        }
-
+        foldEvents(db, events, base, file);
         setOff.run(file, prevOffset + consumed);
         applied = true;
     });
@@ -595,6 +533,132 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
     }
 
     return applied;
+}
+
+/**
+ * Folds events into the tables of the caller's transaction: each event's outcome and public copy, then the folded
+ * handoffs. An event whose uid is already stored is skipped: since the work store commits an event first and copies
+ * it into the log after (P6), the log carries events the store already folded. In the work store the fold also brings
+ * the items up to date (the ingest of the shadow mode, now in the same transaction).
+ */
+export function foldEvents(
+    db: Database,
+    events: readonly HandoffEvent[],
+    base?: string,
+    file?: string
+): Map<string, FoldOutcome> {
+    const putOutcome = db.prepare(
+        "INSERT OR REPLACE INTO handoff_event_results (uid, handoff_id, ev, ok, error, extra, ts) VALUES (?,?,?,?,?,?,?)"
+    );
+    const putEvent = db.prepare(
+        "INSERT OR IGNORE INTO handoff_events (uid, handoff_id, ts, ev, payload) VALUES (?,?,?,?,?)"
+    );
+    const states = new Map<string, Handoff | null>();
+    const outcomes = new Map<string, FoldOutcome>();
+    const folded: { event: HandoffEvent; outcome: FoldOutcome }[] = [];
+
+    for (const event of events) {
+        if (getEventOutcome(db, event.uid) !== null) {
+            continue;
+        }
+
+        if (!states.has(event.id)) {
+            states.set(event.id, getHandoffById(db, event.id));
+        }
+
+        const previous = states.get(event.id) ?? null;
+        const { state, outcome } = applyHandoffEvent(previous, event, { base });
+        states.set(event.id, state);
+        outcomes.set(event.uid, outcome);
+        folded.push({ event, outcome });
+        const publicEvent =
+            event.ev === "modify_handoff" && event.project !== undefined
+                ? { ...event, fromProject: previous?.project ?? null }
+                : event;
+
+        if (event.ev === "post" && !outcome.applied) {
+            log.error({ id: event.id, file }, "duplicate handoff post id — first wins, event skipped");
+        }
+
+        const extra: Partial<FoldOutcome> = {};
+
+        if (outcome.info !== undefined) {
+            extra.info = outcome.info;
+        }
+
+        if (outcome.noop !== undefined) {
+            extra.noop = outcome.noop;
+        }
+
+        if (outcome.assignedTaskIds !== undefined) {
+            extra.assignedTaskIds = outcome.assignedTaskIds;
+        }
+
+        putOutcome.run(
+            event.uid,
+            event.id,
+            event.ev,
+            outcome.applied ? 1 : 0,
+            outcome.error ?? null,
+            Object.keys(extra).length > 0 ? SafeJSON.stringify(extra, { strict: true }) : null,
+            event.ts
+        );
+
+        // editId stripped at insert — never stored in handoff_events (G3).
+        putEvent.run(
+            event.uid,
+            event.id,
+            event.ts,
+            event.ev,
+            SafeJSON.stringify(toPublicEvent(publicEvent), { strict: true })
+        );
+    }
+
+    for (const state of states.values()) {
+        if (state !== null) {
+            upsertHandoff(db, state);
+        }
+    }
+
+    if (tableExists(db, "items")) {
+        for (const [id, state] of states) {
+            if (state !== null) {
+                ingestLegacyHandoff(
+                    db,
+                    state,
+                    folded.filter((f) => f.event.id === id)
+                );
+            }
+        }
+    }
+
+    return outcomes;
+}
+
+/**
+ * The write of the switch (P6): the store folds and keeps the events first, in one transaction, then copies them into
+ * the old log, so a rollback to the old code loses nothing (D14 b, for 14 days). A failed copy is logged.
+ */
+export function commitHandoffEvents(
+    db: Database,
+    events: readonly HandoffEvent[],
+    base?: string
+): Map<string, FoldOutcome> {
+    let outcomes = new Map<string, FoldOutcome>();
+    db.transaction(() => {
+        outcomes = foldEvents(db, events, base);
+    })();
+
+    try {
+        appendHandoffEvents([...events], base);
+    } catch (error) {
+        log.warn(
+            { err: error, events: events.length },
+            "handoff: the copy into the old log failed; the work store holds the events"
+        );
+    }
+
+    return outcomes;
 }
 
 /** Drop + full re-fold (§6.1 rule 6). Also clears + refills handoff_events (G1). */

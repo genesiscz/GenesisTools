@@ -1,9 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { dirname, join } from "node:path";
 import { executeHandoffActions, getHandoff, type HandoffDeps, postHandoff } from "@app/handoff/executor";
 import { byFor, freshEnv, type TestEnv } from "@app/handoff/test-utils";
-import { ingestLegacyHandoff, parityOf } from "@genesiscz/utils/work/legacy/shadow";
+import { parityOf } from "@genesiscz/utils/work/legacy/shadow";
 import type { Actor } from "@genesiscz/utils/work/model/item";
 import type { SessionDelivery } from "@genesiscz/utils/work/ports";
 import { listItems, showItem } from "@genesiscz/utils/work/read";
@@ -59,7 +58,7 @@ function parity(): string[] {
 beforeEach(() => {
     env = freshEnv();
     deps = env.depsFor(byFor("sess-a", "session a"));
-    db = openWorkDb(join(dirname(env.dbPath), "work.db"));
+    db = openWorkDb(env.dbPath);
 });
 
 afterEach(() => {
@@ -71,8 +70,8 @@ async function spot(title: string): Promise<string> {
     return reply.ok ? reply.data.items[0].id : "";
 }
 
-describe("shadow mode", () => {
-    test("the executor's hook brings a post and a tick into the store; parity holds", () => {
+describe("one store (P6)", () => {
+    test("a post and a tick fold the handoff and its items in one write; parity holds", () => {
         const posted = postHandoff({ title: "h", tasks: [{ text: "one" }, { text: "two" }] }, deps);
         const id = posted.handoff.id;
         executeHandoffActions(
@@ -94,29 +93,13 @@ describe("shadow mode", () => {
         expect(parity()).toEqual([]);
     });
 
-    test("handoff --from gives one handoff and keeps two items, also when the hook never ran", async () => {
+    test("handoff --from gives one handoff and keeps two items", async () => {
         const a = await spot("first");
         const b = await spot("second");
-        // The hook is off for the old store's write: the process "died" before its store write.
-        const reply = await write(ctx({ ...deps, workDbPath: null }), {
-            verb: "handoff",
-            title: "follow-up",
-            from: [a, b],
-        });
+        const reply = await write(ctx(), { verb: "handoff", title: "follow-up", from: [a, b] });
         expect(reply.ok).toBe(true);
         const handoff = reply.ok ? (reply.data.handoff ?? "") : "";
         expect(handoff).toMatch(/^h_/);
-        expect(parity().length).toBeGreaterThan(0);
-
-        const source = openLegacySource({ catchUp: true, dbPath: env.dbPath, base: env.base });
-
-        try {
-            for (const h of source.handoffs()) {
-                ingestLegacyHandoff(db, h, source.events(h.id));
-            }
-        } finally {
-            source.close();
-        }
 
         const work = listItems(db, { types: ["bug", "task"] });
         expect(work.ok && work.rows.map((r) => r.ref).sort()).toEqual([a, b].sort());

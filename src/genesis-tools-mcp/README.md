@@ -69,7 +69,7 @@ Every tool belongs to a capability. Unset, a host gets every capability except t
 - `usage`: `usage_limits`, `usage_series`, `usage_forecast`, `usage_advise`.
 - `alza` (opt-in): `alza_*`, 43 tools.
 - `waze` (opt-in): `waze_*`, 15 tools.
-- `work` (opt-in): `work_*`, 6 tools.
+- `work`: `work_*`, 6 tools.
 
 `inbox_send` is registered only on a Mac with the native inbox, whatever the capability list says (see
 [Native inbox](#native-inbox)).
@@ -217,10 +217,9 @@ tool added there appears here with no edit to this server.
   every report along a trip, route, jams, departure times, exports, history, hotspots and `waze_doctor`. It is opt-in
   because it drives the user's real Brave over CDP, in one background live-map tab. See
   [`../waze/README.md`](../waze/README.md).
-- `work` (`src/work/mcp/genesis-tools.ts`, opt-in). The work store: `work_context`, `work_list`, `work_show`,
-  `work_spot`, `work_reopen`, and `work_write { method, params }` for every other write. It is opt-in until the owner
-  turns it on at a quiet time, because a new tool in the default list costs every running session one full cache
-  miss. See [`../work/README.md`](../work/README.md).
+- `work` (`src/work/mcp/genesis-tools.ts`). The work store: `work_context`, `work_list`, `work_show`,
+  `work_spot`, `work_reopen`, and `work_write { method, params }` for every other write. It is on by default since
+  the store holds the handoffs. See [`../work/README.md`](../work/README.md).
 
 ## How it works
 
