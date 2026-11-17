@@ -100,12 +100,17 @@ export function renderSwiftSchema(schema: WireSchema, name: string, declarations
             }
             const fields = Object.entries(schema.properties ?? {}).map(([key, value]) => ({
                 key,
+                required: (schema.required ?? []).includes(key),
                 type: (schema.required ?? []).includes(key)
                     ? renderSwiftSchema(value, `${name}${title(key)}`, declarations, owner)
                     : optional(renderSwiftSchema(value, `${name}${title(key)}`, declarations, owner)),
             }));
+            const coding =
+                fields.length === 0
+                    ? ""
+                    : `\n    private enum CodingKeys: String, CodingKey { ${fields.map((f) => `case \`${f.key}\``).join("; ")} }\n    public init(from decoder: Decoder) throws {\n        let box = try decoder.container(keyedBy: CodingKeys.self)\n${fields.map((f) => `        self.\`${f.key}\` = try box.${f.required ? `decode(${f.type}.self` : `decodeIfPresent(${f.type.slice(0, -1)}.self`}, forKey: .\`${f.key}\`)`).join("\n")}\n    }\n    public func encode(to encoder: Encoder) throws {\n        var box = encoder.container(keyedBy: CodingKeys.self)\n${fields.map((f) => `        try box.${f.required ? "encode" : "encodeIfPresent"}(\`${f.key}\`, forKey: .\`${f.key}\`)`).join("\n")}\n    }`;
             declarations.push(
-                `public struct ${name}: Codable, Sendable {\n${fields.map((f) => `    public var \`${f.key}\`: ${f.type}`).join("\n")}\n    public init(${fields.map((f) => `\`${f.key}\`: ${f.type}${f.type.endsWith("?") ? " = nil" : ""}`).join(", ")}) {\n${fields.map((f) => `        self.\`${f.key}\` = \`${f.key}\``).join("\n")}\n    }\n}`
+                `public struct ${name}: Codable, Sendable {\n${fields.map((f) => `    public var \`${f.key}\`: ${f.type}`).join("\n")}\n    public init(${fields.map((f) => `\`${f.key}\`: ${f.type}${f.type.endsWith("?") ? " = nil" : ""}`).join(", ")}) {\n${fields.map((f) => `        self.\`${f.key}\` = \`${f.key}\``).join("\n")}\n    }${coding}\n}`
             );
             return name;
         }
