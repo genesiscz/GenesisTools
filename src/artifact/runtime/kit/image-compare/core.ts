@@ -1,0 +1,469 @@
+import { clusterMask, DEFAULT_REGION_OPTIONS } from "@genesiscz/utils/image/regions";
+import pixelmatch from "pixelmatch";
+
+/**
+ * The pure half of ImageCompare: image validation, padding to a common size, the pixel diff, and the slider and
+ * zoom-pan math. No React and no DOM, so the tests run it directly and a page can reuse it on its own pixels.
+ */
+
+/** The diff colour: a pink that reads on light and dark underlays (the look of a design-against-build pixel diff). */
+export const IMAGE_DIFF_COLOR = "#ff2d95";
+const IMAGE_DIFF_RGB: [number, number, number] = [0xff, 0x2d, 0x95];
+
+/** pixelmatch's colour threshold the kit starts with (a common default for screenshot diffs); 0 is strict, 1 accepts anything. */
+export const DEFAULT_DIFF_THRESHOLD = 0.15;
+export const DIFF_THRESHOLD_MIN = 0.01;
+export const DIFF_THRESHOLD_MAX = 0.5;
+
+export interface CompareSize {
+    width: number;
+    height: number;
+}
+
+export interface CompareRect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+/** Decoded pixels, 4 bytes per pixel in RGBA order, row after row. */
+export interface RgbaImage extends CompareSize {
+    data: Uint8ClampedArray;
+}
+
+/** One changed area, in pixels of the common canvas. */
+export interface CompareRegion extends CompareRect {
+    /** Changed pixels inside the box. */
+    pixels: number;
+}
+
+export interface ImageDiff {
+    /** The common canvas: the larger width and the larger height of the two images. */
+    size: CompareSize;
+    /** RGBA overlay of the canvas size: IMAGE_DIFF_COLOR where a pixel differs, transparent everywhere else. */
+    overlay: Uint8ClampedArray<ArrayBuffer>;
+    changed: number;
+    total: number;
+    regions: CompareRegion[];
+}
+
+// ─── Images ───
+
+/** One side of a comparison as the author passes it. */
+export interface ImageCompareSide {
+    src: string;
+    /** Shown on the stage and in the controls. Default: "Before" or "After". */
+    label?: string;
+    /** Default: the label. */
+    alt?: string;
+}
+
+/** One entry of `images`; the label is required because there is no before/after to name it. */
+export interface ImageCompareItem {
+    src: string;
+    label: string;
+    alt?: string;
+}
+
+export interface ResolvedCompareImage {
+    src: string;
+    label: string;
+    alt: string;
+}
+
+/** The most images ImageCompare shows; more `images` are refused until A and B can be picked from them. */
+export const MAX_COMPARE_IMAGES = 2;
+
+/** The images of a comparison from its props, or a thrown error that says which prop shape is wrong. */
+export function resolveCompareImages({
+    before,
+    after,
+    images,
+}: {
+    before?: ImageCompareSide;
+    after?: ImageCompareSide;
+    images?: ImageCompareItem[];
+}): ResolvedCompareImage[] {
+    if (images !== undefined && (before !== undefined || after !== undefined)) {
+        throw new Error("ImageCompare takes `before` and `after`, or `images`, not both.");
+    }
+
+    if (images !== undefined) {
+        if (images.length < 2) {
+            throw new Error(`ImageCompare needs at least two \`images\`; it got ${images.length}.`);
+        }
+
+        if (images.length > MAX_COMPARE_IMAGES) {
+            throw new Error(
+                `ImageCompare shows ${MAX_COMPARE_IMAGES} images; it got ${images.length}. Pass two \`images\` (or \`before\` and \`after\`).`
+            );
+        }
+
+        return images.map((image) => ({ src: image.src, label: image.label, alt: image.alt ?? image.label }));
+    }
+
+    if (before === undefined || after === undefined) {
+        throw new Error("ImageCompare needs `before` and `after`, or `images` with at least two entries.");
+    }
+
+    return [side(before, "Before"), side(after, "After")];
+}
+
+function side(image: ImageCompareSide, fallback: string): ResolvedCompareImage {
+    const label = image.label ?? fallback;
+
+    return { src: image.src, label, alt: image.alt ?? label };
+}
+
+/** "Sizes differ: Before 1280 x 900, After 1280 x 1100", or undefined when the sizes match. */
+export function sizesDifferText(
+    a: CompareSize & { label: string },
+    b: CompareSize & { label: string }
+): string | undefined {
+    if (a.width === b.width && a.height === b.height) {
+        return undefined;
+    }
+
+    return `Sizes differ: ${a.label} ${a.width} x ${a.height}, ${b.label} ${b.width} x ${b.height}`;
+}
+
+// ─── Pixels ───
+
+/** The canvas both images share: the larger width and the larger height. */
+export function commonSize(a: CompareSize, b: CompareSize): CompareSize {
+    return { width: Math.max(a.width, b.width), height: Math.max(a.height, b.height) };
+}
+
+/** The image drawn top-left on a transparent canvas of `size`; the same object when it already has that size. */
+export function padImage(image: RgbaImage, size: CompareSize): RgbaImage {
+    if (image.width === size.width && image.height === size.height) {
+        return image;
+    }
+
+    const data = new Uint8ClampedArray(size.width * size.height * 4);
+    const rowBytes = Math.min(image.width, size.width) * 4;
+
+    for (let y = 0; y < Math.min(image.height, size.height); y++) {
+        const from = y * image.width * 4;
+        data.set(image.data.subarray(from, from + rowBytes), y * size.width * 4);
+    }
+
+    return { width: size.width, height: size.height, data };
+}
+
+/** Both images padded to their common size, so pixelmatch can compare them. */
+export function padToCommonSize(a: RgbaImage, b: RgbaImage): { a: RgbaImage; b: RgbaImage; size: CompareSize } {
+    const size = commonSize(a, b);
+
+    return { a: padImage(a, size), b: padImage(b, size), size };
+}
+
+/**
+ * pixelmatch over the two images on their common canvas. A pixel inside one image and outside the other counts as
+ * changed whatever pixelmatch says, since transparent padding against a white page would otherwise read as equal.
+ * Anti-aliased pixels are not changes (pixelmatch's default). Regions come from the same clustering
+ * `tools control compare-screenshot` uses.
+ */
+export function diffImages({ a, b, threshold }: { a: RgbaImage; b: RgbaImage; threshold: number }): ImageDiff {
+    const padded = padToCommonSize(a, b);
+    const { width, height } = padded.size;
+    const overlay = new Uint8ClampedArray(width * height * 4);
+    let changed = pixelmatch(padded.a.data, padded.b.data, overlay, width, height, {
+        threshold,
+        diffMask: true,
+        diffColor: IMAGE_DIFF_RGB,
+    });
+    changed += markOutside({ overlay, size: padded.size, a, b });
+    const regions = changed === 0 ? [] : clusterMask({ mask: overlay, width, height, ...DEFAULT_REGION_OPTIONS });
+
+    return { size: padded.size, overlay, changed, total: width * height, regions };
+}
+
+/** Paints every pixel that lies inside exactly one of the two images; returns how many were not painted before. */
+function markOutside({
+    overlay,
+    size,
+    a,
+    b,
+}: {
+    overlay: Uint8ClampedArray;
+    size: CompareSize;
+    a: CompareSize;
+    b: CompareSize;
+}): number {
+    let added = 0;
+
+    for (let y = 0; y < size.height; y++) {
+        const aEnd = y < a.height ? a.width : 0;
+        const bEnd = y < b.height ? b.width : 0;
+        const rowStart = y * size.width;
+
+        for (let x = Math.min(aEnd, bEnd); x < Math.max(aEnd, bEnd); x++) {
+            const at = (rowStart + x) * 4;
+
+            if (overlay[at + 3] !== 0) {
+                continue;
+            }
+
+            overlay[at] = IMAGE_DIFF_RGB[0];
+            overlay[at + 1] = IMAGE_DIFF_RGB[1];
+            overlay[at + 2] = IMAGE_DIFF_RGB[2];
+            overlay[at + 3] = 255;
+            added++;
+        }
+    }
+
+    return added;
+}
+
+/** "1.24% of pixels differ (31,452)", or "No pixels differ". */
+export function diffSummary(diff: Pick<ImageDiff, "changed" | "total">): string {
+    if (diff.changed === 0) {
+        return "No pixels differ";
+    }
+
+    const share = (diff.changed / diff.total) * 100;
+    const percent = share < 0.01 ? "<0.01" : share >= 10 ? share.toFixed(1) : share.toFixed(2);
+
+    return `${percent}% of pixels differ (${diff.changed.toLocaleString("en-US")})`;
+}
+
+// ─── Slider ───
+
+export function clampPercent(value: number): number {
+    return Math.min(100, Math.max(0, value));
+}
+
+/** The slider position after a key, or undefined when the key does not move it. Shift makes a step 10% instead of 2%. */
+export function sliderKeyPercent({
+    key,
+    shift,
+    value,
+}: {
+    key: string;
+    shift: boolean;
+    value: number;
+}): number | undefined {
+    const step = shift ? 10 : 2;
+
+    if (key === "ArrowLeft" || key === "ArrowDown") {
+        return clampPercent(value - step);
+    }
+
+    if (key === "ArrowRight" || key === "ArrowUp") {
+        return clampPercent(value + step);
+    }
+
+    if (key === "Home") {
+        return 0;
+    }
+
+    if (key === "End") {
+        return 100;
+    }
+
+    return undefined;
+}
+
+/** The slider position under a pointer, as a percentage of the stage width. */
+export function percentAt({ clientX, left, width }: { clientX: number; left: number; width: number }): number {
+    if (width <= 0) {
+        return 50;
+    }
+
+    return clampPercent(((clientX - left) / width) * 100);
+}
+
+// ─── Zoom and pan ───
+
+/** What every pane of a comparison shows: a scale and the canvas point at the pane centre. */
+export interface CompareView {
+    /** Screen pixels per image pixel; null is the first view: the whole canvas, centred across, top edge at the top. */
+    scale: number | null;
+    cx: number;
+    cy: number;
+}
+
+/** A pane's resolved placement: the canvas is drawn at (x, y) in pane pixels, scaled by `scale`. */
+export interface ViewTransform {
+    scale: number;
+    x: number;
+    y: number;
+}
+
+export const FIT_VIEW: CompareView = { scale: null, cx: 0, cy: 0 };
+export const ZOOM_MIN = 0.05;
+export const ZOOM_MAX = 32;
+/** One press of a zoom button. */
+export const ZOOM_STEP = 1.25;
+
+/** The scale that shows the whole canvas; never above 1, so a small image keeps its real pixels. */
+export function fitScale(pane: CompareSize, canvas: CompareSize): number {
+    if (pane.width <= 0 || pane.height <= 0 || canvas.width <= 0 || canvas.height <= 0) {
+        return 1;
+    }
+
+    return Math.min(1, pane.width / canvas.width, pane.height / canvas.height);
+}
+
+/** The pane height for a canvas: its height at the width the pane fits it to, capped at `maxHeight`. */
+export function paneHeight({
+    canvas,
+    width,
+    maxHeight,
+}: {
+    canvas: CompareSize;
+    width: number;
+    maxHeight: number;
+}): number {
+    if (canvas.width <= 0 || width <= 0) {
+        return Math.min(maxHeight, canvas.height);
+    }
+
+    // Rounded up, so a pane never ends a fraction of a pixel short of the image it fits.
+    return Math.max(1, Math.ceil(Math.min(maxHeight, canvas.height * Math.min(1, width / canvas.width))));
+}
+
+function clampScale(scale: number): number {
+    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
+}
+
+/**
+ * Keeps the canvas covering the pane on an axis where it is larger. Where it is smaller it sits like the first view:
+ * centred across, top edge at the top.
+ */
+function clampCentre(view: CompareView, pane: CompareSize, canvas: CompareSize): CompareView {
+    if (view.scale === null) {
+        return view;
+    }
+
+    const halfW = pane.width / (2 * view.scale);
+    const halfH = pane.height / (2 * view.scale);
+    const cx = canvas.width <= 2 * halfW ? canvas.width / 2 : Math.min(canvas.width - halfW, Math.max(halfW, view.cx));
+    const cy = canvas.height <= 2 * halfH ? halfH : Math.min(canvas.height - halfH, Math.max(halfH, view.cy));
+
+    return { scale: view.scale, cx, cy };
+}
+
+export function resolveView(view: CompareView, pane: CompareSize, canvas: CompareSize): ViewTransform {
+    if (view.scale === null) {
+        const scale = fitScale(pane, canvas);
+
+        return { scale, x: (pane.width - canvas.width * scale) / 2, y: 0 };
+    }
+
+    return {
+        scale: view.scale,
+        x: pane.width / 2 - view.cx * view.scale,
+        y: pane.height / 2 - view.cy * view.scale,
+    };
+}
+
+/** Zooms by `factor` keeping the canvas point under `point` (pane pixels) where it is. */
+export function zoomViewAt({
+    view,
+    pane,
+    canvas,
+    factor,
+    point,
+}: {
+    view: CompareView;
+    pane: CompareSize;
+    canvas: CompareSize;
+    factor: number;
+    point: { x: number; y: number };
+}): CompareView {
+    const now = resolveView(view, pane, canvas);
+    const scale = clampScale(now.scale * factor);
+    const px = (point.x - now.x) / now.scale;
+    const py = (point.y - now.y) / now.scale;
+    const x = point.x - px * scale;
+    const y = point.y - py * scale;
+
+    return clampCentre({ scale, cx: (pane.width / 2 - x) / scale, cy: (pane.height / 2 - y) / scale }, pane, canvas);
+}
+
+/** Zooms by `factor` around the pane centre (the zoom buttons). */
+export function zoomViewBy({
+    view,
+    pane,
+    canvas,
+    factor,
+}: {
+    view: CompareView;
+    pane: CompareSize;
+    canvas: CompareSize;
+    factor: number;
+}): CompareView {
+    return zoomViewAt({ view, pane, canvas, factor, point: { x: pane.width / 2, y: pane.height / 2 } });
+}
+
+/** Real pixels (scale 1). The row at the top of the pane stays there, so 100% from the first view keeps the top edge. */
+export function actualSizeView(view: CompareView, pane: CompareSize, canvas: CompareSize): CompareView {
+    const now = resolveView(view, pane, canvas);
+
+    return zoomViewAt({ view, pane, canvas, factor: 1 / now.scale, point: { x: pane.width / 2, y: 0 } });
+}
+
+/** Moves the canvas by (dx, dy) pane pixels, as a drag does. */
+export function panView({
+    view,
+    pane,
+    canvas,
+    dx,
+    dy,
+}: {
+    view: CompareView;
+    pane: CompareSize;
+    canvas: CompareSize;
+    dx: number;
+    dy: number;
+}): CompareView {
+    const now = resolveView(view, pane, canvas);
+    const cx = (pane.width / 2 - now.x) / now.scale - dx / now.scale;
+    const cy = (pane.height / 2 - now.y) / now.scale - dy / now.scale;
+
+    return clampCentre({ scale: now.scale, cx, cy }, pane, canvas);
+}
+
+/** True when the canvas at this view is larger than the pane on some axis, so a drag has something to move. */
+export function canPan(view: CompareView, pane: CompareSize, canvas: CompareSize): boolean {
+    const { scale } = resolveView(view, pane, canvas);
+
+    return canvas.width * scale > pane.width + 0.5 || canvas.height * scale > pane.height + 0.5;
+}
+
+/** The view that shows `rect` whole with `padding` pane pixels around it, at no more than 8x. */
+export function viewForRect({
+    rect,
+    pane,
+    canvas,
+    padding = 24,
+}: {
+    rect: CompareRect;
+    pane: CompareSize;
+    canvas: CompareSize;
+    padding?: number;
+}): CompareView {
+    const scale = clampScale(
+        Math.min(8, (pane.width - 2 * padding) / Math.max(1, rect.w), (pane.height - 2 * padding) / Math.max(1, rect.h))
+    );
+
+    return clampCentre({ scale, cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2 }, pane, canvas);
+}
+
+// ─── Region marks ───
+
+/** Screen pixels from a region box edge to the outer edge of its outline (2 px offset plus the 3 px active line). */
+export const REGION_OUTLINE_REACH = 5;
+/** Screen height of a region's number label. */
+export const REGION_LABEL_HEIGHT = 16;
+
+/**
+ * Where a region's number goes so it never covers the region's own pixels: outside the outline above the box, or
+ * below it when the box is too close to the top of the image for the label to fit above.
+ */
+export function regionLabelSide(region: CompareRect, scale: number): "above" | "below" {
+    return region.y * scale >= REGION_LABEL_HEIGHT + REGION_OUTLINE_REACH ? "above" : "below";
+}

@@ -56,6 +56,13 @@ const KIT_FILES = [
     "uml-diagram.tsx",
     "model-browser.tsx",
     "property-grid.tsx",
+    // A component with a folder lists its public modules by path; its index.ts only re-exports them.
+    "image-compare/core.ts",
+    "image-compare/load.ts",
+    "image-compare/context.tsx",
+    "image-compare/stage.tsx",
+    "image-compare/registry.ts",
+    "image-compare/image-compare.tsx",
     "index.ts",
 ];
 

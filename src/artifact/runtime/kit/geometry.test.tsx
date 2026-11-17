@@ -1,5 +1,22 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { contrastRatio } from "./color";
+import {
+    actualSizeView,
+    type CompareSize,
+    diffImages,
+    diffSummary,
+    FIT_VIEW,
+    padImage,
+    paneHeight,
+    percentAt,
+    type RgbaImage,
+    regionLabelSide,
+    resolveCompareImages,
+    resolveView,
+    sliderKeyPercent,
+    viewForRect,
+    zoomViewAt,
+} from "./image-compare/core";
 import { type DiagramLayer, LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ModelBrowser } from "./model-browser";
 import { PropertyGrid } from "./property-grid";
@@ -551,5 +568,176 @@ describe("filled visualization contrast", () => {
         } finally {
             await dom.unmount();
         }
+    });
+});
+
+/** A solid image of one colour, optionally with a block of another. */
+function solid({
+    width,
+    height,
+    rgb,
+    block,
+}: {
+    width: number;
+    height: number;
+    rgb: [number, number, number];
+    block?: { x: number; y: number; w: number; h: number; rgb: [number, number, number] };
+}): RgbaImage {
+    const data = new Uint8ClampedArray(width * height * 4);
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const inBlock = block && x >= block.x && x < block.x + block.w && y >= block.y && y < block.y + block.h;
+            const [r, g, b] = inBlock ? block.rgb : rgb;
+            data.set([r, g, b, 255], (y * width + x) * 4);
+        }
+    }
+
+    return { width, height, data };
+}
+
+describe("image compare core", () => {
+    const WHITE: [number, number, number] = [255, 255, 255];
+    const NAVY: [number, number, number] = [20, 30, 120];
+
+    test("the diff counts a changed block, paints it pink and boxes it as one region", () => {
+        const a = solid({ width: 40, height: 30, rgb: WHITE });
+        const b = solid({ width: 40, height: 30, rgb: WHITE, block: { x: 10, y: 8, w: 6, h: 5, rgb: NAVY } });
+        const diff = diffImages({ a, b, threshold: 0.15 });
+
+        expect(diff.changed).toBe(30);
+        expect(diff.total).toBe(1200);
+        expect(diff.regions).toEqual([{ x: 10, y: 8, w: 6, h: 5, pixels: 30 }]);
+        expect([...diff.overlay.slice((8 * 40 + 10) * 4, (8 * 40 + 10) * 4 + 4)]).toEqual([255, 45, 149, 255]);
+        expect(diff.overlay[3]).toBe(0);
+        expect(diffSummary(diff)).toBe("2.50% of pixels differ (30)");
+        expect(diffSummary(diffImages({ a, b: a, threshold: 0.15 }))).toBe("No pixels differ");
+    });
+
+    test("different sizes share the larger canvas top-left, and pixels inside only one image count as changed", () => {
+        const wide = solid({ width: 3, height: 1, rgb: WHITE });
+        const padded = padImage(wide, { width: 3, height: 3 });
+
+        expect([...padded.data.slice(0, 12)]).toEqual([...wide.data]);
+        expect([...padded.data.slice(12)].every((byte) => byte === 0)).toBe(true);
+
+        // White on a white page would read as equal; the rows only one image has are still a change.
+        const tall = solid({ width: 1, height: 3, rgb: WHITE });
+        const diff = diffImages({ a: wide, b: tall, threshold: 0.15 });
+
+        expect(diff.size).toEqual({ width: 3, height: 3 });
+        expect(diff.changed).toBe(4);
+    });
+
+    test("ImageCompare takes before and after or two images, and refuses anything else", () => {
+        expect(resolveCompareImages({ before: { src: "a.png" }, after: { src: "b.png", alt: "New" } })).toEqual([
+            { src: "a.png", label: "Before", alt: "Before" },
+            { src: "b.png", label: "After", alt: "New" },
+        ]);
+        expect(() => resolveCompareImages({ before: { src: "a.png" } })).toThrow("needs `before` and `after`");
+        expect(() =>
+            resolveCompareImages({ before: { src: "a.png" }, images: [{ src: "a.png", label: "A" }] })
+        ).toThrow("not both");
+        expect(() => resolveCompareImages({ images: [{ src: "a.png", label: "A" }] })).toThrow("at least two");
+        expect(() =>
+            resolveCompareImages({
+                images: [
+                    { src: "a.png", label: "A" },
+                    { src: "b.png", label: "B" },
+                    { src: "c.png", label: "C" },
+                ],
+            })
+        ).toThrow("got 3");
+    });
+
+    test("the slider moves 2% per arrow, 10% with Shift, jumps with Home and End, and stays in 0 to 100", () => {
+        expect(sliderKeyPercent({ key: "ArrowLeft", shift: false, value: 50 })).toBe(48);
+        expect(sliderKeyPercent({ key: "ArrowRight", shift: true, value: 50 })).toBe(60);
+        expect(sliderKeyPercent({ key: "ArrowLeft", shift: true, value: 4 })).toBe(0);
+        expect(sliderKeyPercent({ key: "Home", shift: false, value: 50 })).toBe(0);
+        expect(sliderKeyPercent({ key: "End", shift: false, value: 50 })).toBe(100);
+        expect(sliderKeyPercent({ key: "a", shift: false, value: 50 })).toBeUndefined();
+        expect(percentAt({ clientX: 150, left: 100, width: 200 })).toBe(25);
+        expect(percentAt({ clientX: 400, left: 100, width: 200 })).toBe(100);
+    });
+
+    test("zoom keeps the point under the pointer, and a region view centres the region", () => {
+        const pane = { width: 400, height: 300 };
+        const canvas = { width: 1600, height: 1200 };
+        const fit = resolveView({ scale: null, cx: 0, cy: 0 }, pane, canvas);
+
+        expect(fit).toEqual({ scale: 0.25, x: 0, y: 0 });
+
+        const point = { x: 100, y: 75 };
+        const zoomed = resolveView(
+            zoomViewAt({ view: { scale: null, cx: 0, cy: 0 }, pane, canvas, factor: 2, point }),
+            pane,
+            canvas
+        );
+        // Canvas point (400, 300) sat under the pointer before the zoom and still does.
+        expect(zoomed.scale).toBe(0.5);
+        expect(point.x - 400 * zoomed.scale).toBeCloseTo(zoomed.x);
+        expect(point.y - 300 * zoomed.scale).toBeCloseTo(zoomed.y);
+
+        const region = viewForRect({ rect: { x: 800, y: 600, w: 88, h: 38 }, pane, canvas });
+        expect(region).toEqual({ scale: 4, cx: 844, cy: 619 });
+    });
+
+    /** The first view of a canvas in a pane of this width, as ComparePane sizes it. */
+    function firstView(canvas: CompareSize, width: number, maxHeight = 640) {
+        const pane = { width, height: paneHeight({ canvas, width, maxHeight }) };
+
+        return { pane, view: resolveView(FIT_VIEW, pane, canvas) };
+    }
+
+    function expectWhole(canvas: CompareSize, { pane, view }: ReturnType<typeof firstView>): void {
+        expect(view.scale).toBeLessThanOrEqual(1);
+        expect(view.y).toBe(0);
+        expect(view.x).toBeGreaterThanOrEqual(0);
+        expect(view.x + canvas.width * view.scale).toBeLessThanOrEqual(pane.width + 1e-9);
+        expect(canvas.height * view.scale).toBeLessThanOrEqual(pane.height + 1e-9);
+        // Centred across: the same space on both sides.
+        expect(view.x).toBeCloseTo((pane.width - canvas.width * view.scale) / 2);
+    }
+
+    test("the first view shows the whole image, never above 100%, centred across with its top edge at the top", () => {
+        // A 610 px screenshot in a 1250 px stage (slider, blink, fade, diff) and in a half-width side-by-side pane.
+        const small = { width: 610, height: 900 };
+        const wide = firstView(small, 1250);
+        expect(wide.pane.height).toBe(640);
+        expectWhole(small, wide);
+        expectWhole(small, firstView(small, 617));
+        expectWhole({ width: 610, height: 400 }, firstView({ width: 610, height: 400 }, 1250));
+        expect(firstView({ width: 610, height: 400 }, 1250).view).toEqual({ scale: 1, x: 320, y: 0 });
+
+        // A 1280 x 2000 page in a short stage, full width and side by side.
+        const tall = { width: 1280, height: 2000 };
+        const short = firstView(tall, 1250, 520);
+        expect(short.view.scale).toBe(0.26);
+        expectWhole(tall, short);
+        expectWhole(tall, firstView(tall, 617, 520));
+
+        // A pane taller than the fitted image still puts the image at the top.
+        expectWhole(tall, {
+            pane: { width: 400, height: 900 },
+            view: resolveView(FIT_VIEW, { width: 400, height: 900 }, tall),
+        });
+    });
+
+    test("100% from the first view keeps the top edge at the top and stays centred across when it fits", () => {
+        const tall = { width: 1280, height: 2000 };
+        const pane = { width: 1250, height: 640 };
+        const actual = resolveView(actualSizeView(FIT_VIEW, pane, tall), pane, tall);
+        expect(actual).toEqual({ scale: 1, x: -15, y: 0 });
+
+        const small = { width: 610, height: 900 };
+        expect(resolveView(actualSizeView(FIT_VIEW, pane, small), pane, small)).toEqual({ scale: 1, x: 320, y: 0 });
+    });
+
+    test("a region number goes above its box, or below it when the box is too close to the top of the image", () => {
+        expect(regionLabelSide({ x: 10, y: 40, w: 20, h: 10 }, 1)).toBe("above");
+        expect(regionLabelSide({ x: 10, y: 0, w: 20, h: 10 }, 1)).toBe("below");
+        // 40 image pixels are only 10 screen pixels at 25%: too little room for the label.
+        expect(regionLabelSide({ x: 10, y: 40, w: 20, h: 10 }, 0.25)).toBe("below");
     });
 });

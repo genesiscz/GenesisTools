@@ -28,6 +28,8 @@ describe("kit API declaration", () => {
             "Wizard(",
             "EditableTable(",
             "ChangeLedger(",
+            // A component in a subfolder lists its modules by path.
+            "ImageCompare(",
         ]) {
             expect(dts).toContain(name);
         }
@@ -45,7 +47,7 @@ describe("kit API declaration", () => {
 
         const artifactDir = join(REPO_ROOT, "src", "artifact");
 
-        for (const sub of ["lib", join("runtime", "kit")]) {
+        for (const sub of ["lib", join("runtime", "kit"), join("runtime", "kit", "image-compare")]) {
             const strays = readdirSync(join(artifactDir, sub)).filter((f) => f.endsWith(".d.ts"));
             expect({ sub, strays }).toEqual({ sub, strays: [] });
         }

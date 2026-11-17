@@ -287,6 +287,15 @@ bodies render as markdown.
 - Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/- counts). `beforeValue` and
   `afterValue` accept JSON values and sort nested object keys, preserving array order. Split context rows use
   each file's own line number, and `wrap` uses normal break opportunities.
+- Compare images: `ImageCompare` takes `before`/`after` (or two `images`) and switches between side by side, a
+  slider (`role="slider"`, arrows and Home/End), blink (click or Space; an auto flip that reduced motion turns off),
+  fade and a pixel diff. The diff runs pixelmatch in the browser on both images padded top-left to a common size,
+  paints changed pixels pink (`IMAGE_DIFF_COLOR`), boxes the changed regions with the same clustering as
+  `tools control compare-screenshot` (`src/utils/image/regions.ts`), and steps the zoom from region to region. Every
+  mode shares one zoom and pan (buttons, Ctrl or Cmd with the wheel at the pointer, drag). `ImageCompareProvider`
+  plus `ImageCompareModeSwitch` set the mode and threshold of every comparison on a page; a comparison where the
+  user picked its own mode keeps it until "Follow page". The diff needs images from the page's origin, data: URLs
+  or CORS headers; the other modes work with any image. Demo: `src/artifact/gallery/image-compare.tsx`.
 - Structure: `TreeView` + `treeFromPaths` (file trees; `variant="ascii"` prints a command tree with ├─ guides,
   per-group badge columns and one comment column, `color` inherited), `Steps` (status stepper), `Compare` (A vs B
   columns), `KeyValue` (definition grid), `MappingList` (old name to new name: `arrow` rows with a note, or

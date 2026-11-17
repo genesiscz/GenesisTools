@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parsePatch } from "diff";
-import { act, useState } from "react";
+import { act, type ReactNode, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
 import { SERIES_COLOR } from "./charts";
 import { contrastRatio, parseCssColor, readableInlineInk, readableTextOn } from "./color";
@@ -11,6 +11,7 @@ import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { type EditableColumn, type EditableRow, EditableTable, editableCellError, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
+import { ImageCompare, ImageCompareModeSwitch, ImageCompareProvider } from "./image-compare";
 import { LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
 import { MD_BODY_CLASS, MD_DOCUMENT_CLASS, Md, MdViewer } from "./md";
@@ -2938,4 +2939,209 @@ describe("design pages", () => {
             }
         }
     });
+});
+
+// ─── ImageCompare ───
+
+/** An <img> stand-in for jsdom: "fake://WxH/name" loads with that natural size, anything else fails. */
+class FakeImage {
+    crossOrigin = "";
+    decoding = "";
+    naturalWidth = 0;
+    naturalHeight = 0;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    #src = "";
+
+    get src(): string {
+        return this.#src;
+    }
+
+    set src(value: string) {
+        this.#src = value;
+        const size = /^fake:\/\/(\d+)x(\d+)\//.exec(value);
+        setTimeout(() => {
+            if (!size) {
+                this.onerror?.();
+                return;
+            }
+
+            this.naturalWidth = Number(size[1]);
+            this.naturalHeight = Number(size[2]);
+            this.onload?.();
+        }, 0);
+    }
+}
+
+/** White pixels; a name with "changed" adds an 8 x 6 navy block at (12, 30). */
+function fakePixels(src: string, width: number, height: number): Uint8ClampedArray {
+    const data = new Uint8ClampedArray(width * height * 4).fill(255);
+
+    if (src.includes("changed")) {
+        for (let y = 30; y < 36; y++) {
+            for (let x = 12; x < 20; x++) {
+                data.set([20, 30, 120, 255], (y * width + x) * 4);
+            }
+        }
+    }
+
+    return data;
+}
+
+class FakeImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+
+    constructor(data: Uint8ClampedArray, width: number, height: number) {
+        this.data = data;
+        this.width = width;
+        this.height = height;
+    }
+}
+
+/** jsdom has neither image decoding nor a 2D canvas; these stand-ins let the real diff path run. */
+async function mountImageCompare(node: ReactNode) {
+    const dom = await mountDom(null);
+    const saved = { Image: globalThis.Image, ImageData: globalThis.ImageData };
+    Object.assign(globalThis, { Image: FakeImage, ImageData: FakeImageData });
+    Object.assign(dom.window, { Image: FakeImage });
+    // Every pane is 600 px wide, so fit and the zoom buttons have a size to work with.
+    Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+        configurable: true,
+        value() {
+            let source = "";
+
+            return {
+                drawImage(image: { src: string }) {
+                    source = image.src;
+                },
+                getImageData(_x: number, _y: number, width: number, height: number) {
+                    return { data: fakePixels(source, width, height) };
+                },
+                putImageData() {},
+            };
+        },
+    });
+    await dom.render(node);
+    await settleFor(20);
+
+    const text = (scope: Element = dom.container) => scope.textContent ?? "";
+    const radio = (label: string, scope: ParentNode = dom.container) =>
+        [...scope.querySelectorAll('[role="radio"]')].find((element) => element.textContent === label);
+    const button = (label: string, scope: ParentNode = dom.container) =>
+        [...scope.querySelectorAll("button")].find(
+            (element) => element.getAttribute("aria-label") === label || element.textContent === label
+        );
+    const restore = async () => {
+        await dom.unmount();
+        Object.assign(globalThis, saved);
+    };
+
+    return { dom, text, radio, button, restore };
+}
+
+async function settleFor(ms: number): Promise<void> {
+    await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+}
+
+describe("ImageCompare", () => {
+    test("every mode renders, the slider keys move the handle, Space flips Blink and the diff boxes its region", async () => {
+        const { dom, text, radio, button, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://120x80/plain-a" }}
+                after={{ src: "fake://120x90/changed-a" }}
+                caption="A *caption*"
+            />
+        );
+
+        try {
+            expect(text()).toContain("Sizes differ: Before 120 x 80, After 120 x 90");
+            expect(dom.container.querySelectorAll('[role="radio"]').length).toBe(5);
+            expect(dom.container.querySelectorAll("img").length).toBe(2);
+            expect(dom.container.querySelector("figcaption em")?.textContent).toBe("caption");
+
+            await dom.click(radio("Slider"));
+            const slider = () => dom.container.querySelector('[role="slider"]');
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("50");
+            await dom.press(slider(), "ArrowRight");
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("52");
+            await dom.fire(
+                slider(),
+                new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true })
+            );
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("42");
+            await dom.press(slider(), "Home");
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("0");
+
+            await dom.click(radio("Blink"));
+            expect(text()).toContain("A: Before");
+            await dom.press(dom.container.querySelector('[role="group"][tabindex="0"]'), " ");
+            expect(text()).toContain("B: After");
+
+            await dom.click(radio("Fade"));
+            expect(dom.container.querySelector('input[type="range"]')).not.toBeNull();
+            expect(text()).toContain("After opacity");
+
+            await dom.click(radio("Diff"));
+            await settleFor(400);
+            // 48 block pixels plus the 10 rows only After has (120 x 10).
+            expect(text()).toContain("11.6% of pixels differ (1,248)");
+            const boxes = [...dom.container.querySelectorAll("[data-region]")];
+            expect(boxes.map((box) => box.getAttribute("title"))).toEqual([
+                "Region 1: 48 changed pixels",
+                "Region 2: 1,200 changed pixels",
+            ]);
+            // The label carries the number only.
+            expect(boxes.map((box) => box.textContent)).toEqual(["1", "2"]);
+            await dom.click(button("Next region"));
+            expect(text()).toContain("Region 1 of 2");
+            // The region view zooms in; Fit returns to the first view, and a zoom step from there is 125%.
+            expect(text()).not.toContain("-100%+");
+            await dom.click(button("Fit"));
+            expect(text()).toContain("-100%+");
+            await dom.click(button("Zoom in"));
+            expect(text()).toContain("-125%+");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the page switch drives every comparison until one picks its own mode, and Follow page returns it", async () => {
+        const { dom, radio, button, text, restore } = await mountImageCompare(
+            <ImageCompareProvider storageKey="kit-test.image-compare">
+                <ImageCompareModeSwitch />
+                <ImageCompare before={{ src: "fake://60x40/plain-b" }} after={{ src: "fake://60x40/plain-c" }} />
+                <ImageCompare before={{ src: "fake://60x40/plain-d" }} after={{ src: "fake://60x40/plain-e" }} />
+            </ImageCompareProvider>
+        );
+
+        try {
+            const figures = () => [...dom.container.querySelectorAll("figure")];
+            const pageSwitch = dom.container.querySelector('[role="radiogroup"]') ?? dom.container;
+
+            await dom.click(radio("Slider", pageSwitch));
+            expect(dom.container.querySelectorAll('[role="slider"]').length).toBe(2);
+
+            await dom.click(radio("Blink", figures()[0]));
+            expect(text(figures()[0])).toContain("Follow page");
+            await dom.click(radio("Fade", pageSwitch));
+            expect(text(figures()[0])).toContain("A: Before");
+            expect(text(figures()[1])).toContain("After opacity");
+
+            await dom.click(button("Follow page", figures()[0]));
+            expect(text(figures()[0])).toContain("After opacity");
+            expect(text(figures()[0])).not.toContain("Follow page");
+
+            // The page threshold shows only for a pixel mode.
+            expect(text(pageSwitch.parentElement?.parentElement ?? dom.container)).not.toContain("Threshold");
+            await dom.click(radio("Diff", pageSwitch));
+            expect(text(pageSwitch.parentElement?.parentElement ?? dom.container)).toContain("Threshold");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
 });
