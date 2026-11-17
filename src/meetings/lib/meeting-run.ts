@@ -268,6 +268,7 @@ export class MeetingRun {
                 at: at.toISOString(),
                 durationMs: track.durationMs,
                 mutedSpans: track.mutedSpans,
+                ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
                 ...(track.startOffsetMs !== undefined
                     ? { zeroAt: new Date(result.startedAtMs + track.startOffsetMs).toISOString() }
                     : {}),

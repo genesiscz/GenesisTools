@@ -267,6 +267,8 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
 
         expect(parseNativeTrack({ ...row, startMs: -240 })).toMatchObject({ startOffsetMs: -240 });
         expect(parseNativeTrack(row)).not.toHaveProperty("startOffsetMs");
+        expect(parseNativeTrack({ ...row, lostSpans: [[100, 1750]] })).toMatchObject({ lostSpans: [[100, 1750]] });
+        expect(parseNativeTrack(row)).not.toHaveProperty("lostSpans");
     });
 
     test("replacing a pending display switch clears its deadline and completes the replacement", async () => {

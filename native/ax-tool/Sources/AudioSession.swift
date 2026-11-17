@@ -5,7 +5,7 @@ import ScreenCaptureKit
 import SnapshotSupport
 
 /// Audio is delivered on one serial queue. Retired writers finish on another queue, so rotation never
-/// holds up the next segment's samples. No timer rotates files: the accepted sample count does.
+/// holds up the next segment's samples. Capture timestamps, including missing samples, rotate files.
 @available(macOS 13.0, *)
 final class SegmentedAudio: NSObject, SCStreamOutput {
     let queue = DispatchQueue(label: "ax-tool.audio-session.samples", qos: .userInitiated)
@@ -17,18 +17,20 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private let hostTime: CMTime
     private var tracks: [CaptureAudioSource: AudioTrack] = [:]
     private var sequence: [CaptureAudioSource: Int] = [:]
+    private var retiredEnd: [CaptureAudioSource: CMTime] = [:]
     private var muted: [CaptureAudioSource: Bool] = [:]
     private var paused = false
     private var closed = false
     var failed: ((String) -> Void)?
     private let emit: ((Data) -> Void)?
 
-    init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil) {
+    init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil,
+         clock: (host: CMTime, wall: Date)? = nil) {
         self.directory = directory
         self.emit = emit
         segmentSeconds = seconds
-        hostTime = CMClockGetTime(CMClockGetHostTimeClock())
-        epoch = Date()
+        hostTime = clock?.host ?? CMClockGetTime(CMClockGetHostTimeClock())
+        epoch = clock?.wall ?? Date()
     }
 
     private func wallTime(_ time: CMTime) -> String {
@@ -58,6 +60,10 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         let rate = description.mSampleRate
         let count = CMSampleBufferGetNumSamples(buffer)
         var offset = 0
+        if let end = retiredEnd[source] {
+            let overlap = CMTimeGetSeconds(CMTimeSubtract(end, CMSampleBufferGetPresentationTimeStamp(buffer)))
+            if overlap > 0.005 { offset = min(count, Int((overlap * rate).rounded())) }
+        }
         while offset < count && !closed {
             let time = CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer), CMTime(seconds: Double(offset) / rate, preferredTimescale: 1_000_000_000))
             let track: AudioTrack
@@ -72,7 +78,8 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                 track.first = time
                 tracks[source] = track
             }
-            let remaining = max(1, Int(((segmentSeconds - track.fileTimeline.seconds) * rate).rounded()))
+            let elapsed = CMTimeGetSeconds(CMTimeSubtract(time, track.first ?? time))
+            let remaining = max(1, Int(((segmentSeconds - max(elapsed, track.fileTimeline.seconds)) * rate).rounded()))
             let length = min(count - offset, remaining)
             var part: CMSampleBuffer?
             guard CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
@@ -92,15 +99,15 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             } else {
                 samples = part
             }
-            let before = track.fileTimeline.seconds
             track.appendSidecar(samples, at: time)
-            guard track.fileTimeline.seconds > before else {
+            guard !track.sidecarFailed else {
                 fail(track.failures.last ?? "the \(source.rawValue) writer stopped accepting samples")
                 return
             }
-            track.end = CMTimeAdd(time, CMTime(seconds: Double(length) / rate, preferredTimescale: 1_000_000_000))
+            let end = CMTimeAdd(time, CMTime(seconds: Double(length) / rate, preferredTimescale: 1_000_000_000))
+            if track.end == nil || CMTimeCompare(end, track.end!) > 0 { track.end = end }
             offset += length
-            if track.fileTimeline.seconds >= segmentSeconds - 0.5 / rate {
+            if CMTimeGetSeconds(CMTimeSubtract(track.end ?? end, track.first ?? time)) >= segmentSeconds - 0.5 / rate {
                 retire(source)
             }
         }
@@ -114,6 +121,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
 
     private func retire(_ source: CaptureAudioSource) {
         guard let track = tracks.removeValue(forKey: source), let first = track.first else { return }
+        retiredEnd[source] = track.end
         let zeroAt = wallTime(first)
         finishing.enter()
         DispatchQueue.global(qos: .utility).async { [self] in
@@ -125,7 +133,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             }
             let row: [String: Any] = ["file": url.lastPathComponent, "source": source.rawValue,
                 "at": zeroAt, "zeroAt": zeroAt, "durationMs": track.fileTimeline.durationMs,
-                "mutedSpans": track.fileTimeline.mutedSpans, "kept": "normal"]
+                "mutedSpans": track.fileTimeline.mutedSpans, "lostSpans": track.lostSpans, "kept": "normal"]
             do {
                 var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
                 data.append(0x0a)

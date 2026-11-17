@@ -105,12 +105,24 @@ if (args[0] === "audio-record") {
             const file = `audio-${String(sequence).padStart(6, "0")}-${source}.m4a`;
             writeFileSync(join(outDir, file), "invented sound");
             const at = new Date(start + (sequence - 1) * 60_000).toISOString();
-            print({ file, source, at, zeroAt: at, durationMs, mutedSpans: spans[source], kept: "normal" });
+            print({
+                file,
+                source,
+                at,
+                zeroAt: at,
+                durationMs,
+                mutedSpans: spans[source],
+                kept: "normal",
+                ...(fixtureMode === "--fixture-audio-loss" ? { lostSpans: [[100, 1750]] } : {}),
+            });
             spans[source] = [];
         }
     };
     const state = () => print({ event: "state", state: paused ? "paused" : "recording", sources, muted }, "stderr");
     state();
+    if (fixtureMode === "--fixture-audio-loss") {
+        emitSegment(60_000);
+    }
     if (fixtureMode === "--fixture-audio-three") {
         for (let segment = 0; segment < 3; segment++) {
             emitSegment(60_000);
@@ -139,7 +151,14 @@ if (args[0] === "audio-record") {
         for (const line of lines.filter(Boolean)) {
             const command = commandSchema.parse(SafeJSON.parse(line, { strict: true }));
             appendFileSync(join(outDir, "commands.jsonl"), `${SafeJSON.stringify(command)}\n`);
-            if (!paused && !(fixtureMode === "--fixture-audio-three" && command.cmd === "stop" && position === 0)) {
+            if (
+                !paused &&
+                !(
+                    (fixtureMode === "--fixture-audio-three" || fixtureMode === "--fixture-audio-loss") &&
+                    command.cmd === "stop" &&
+                    position === 0
+                )
+            ) {
                 for (const source of sources) {
                     if (muted[source]) {
                         spans[source].push([position, position + 15_000]);
@@ -219,7 +238,13 @@ const finish = (cancelled: boolean) => {
             : (value("--audio")?.split(",") ?? []).map((source) => {
                   const path = join(outDir, `audio-${source}.m4a`);
                   writeFileSync(path, "invented piece sound");
-                  return { source, path, durationMs: 1000, mutedSpans: [] };
+                  return {
+                      source,
+                      path,
+                      durationMs: 1000,
+                      mutedSpans: [],
+                      ...(fixtureMode === "--fixture-audio-loss" ? { lostSpans: [[100, 750]] } : {}),
+                  };
               });
     print({
         ok: true,

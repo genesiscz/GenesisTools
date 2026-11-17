@@ -23,6 +23,7 @@ export const audioSegmentSchema = z.object({
     at: z.iso.datetime(),
     durationMs: z.number().finite().nonnegative(),
     mutedSpans: z.array(z.tuple([z.number().nonnegative(), z.number().nonnegative()])),
+    lostSpans: z.array(z.tuple([z.number().nonnegative(), z.number().nonnegative()])).optional(),
     zeroAt: z.iso.datetime(),
     kept: z.literal("normal"),
 });

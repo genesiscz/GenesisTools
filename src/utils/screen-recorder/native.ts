@@ -71,6 +71,7 @@ const nativeTrack = z.object({
     /** The track's first sample relative to the first frame (`timestampMs` 0); negative when the sound started first. */
     startMs: z.number().optional(),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
+    lostSpans: z.array(z.tuple([z.number(), z.number()])).optional(),
     /** Why the track's sidecar failed or lost sound (a full disk, a failed writer); it then has no `path`. */
     warnings: z.array(z.string()).default([]),
 });
@@ -84,6 +85,7 @@ function audioTrackOf(track: NativeTrack): AudioTrack {
         ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
         ...(track.startMs !== undefined ? { startOffsetMs: track.startMs } : {}),
         mutedSpans: track.mutedSpans,
+        ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
         ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
     };
 }

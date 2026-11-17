@@ -112,9 +112,11 @@ private func sampleBufferPeak(_ buffer: CMSampleBuffer) -> Float {
 }
 
 /// The same audio timing and format, all samples zero: muting keeps the timeline instead of leaving a gap.
-func silentCopy(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
+func silentCopy(_ buffer: CMSampleBuffer, samples: Int? = nil, at: CMTime? = nil) -> CMSampleBuffer? {
     guard let format = CMSampleBufferGetFormatDescription(buffer), let data = CMSampleBufferGetDataBuffer(buffer) else { return nil }
-    let length = CMBlockBufferGetDataLength(data)
+    let count = CMSampleBufferGetNumSamples(buffer)
+    guard count > 0 else { return nil }
+    let length = CMBlockBufferGetDataLength(data) / count * (samples ?? count)
     var block: CMBlockBuffer?
     guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: length,
                                              blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
@@ -126,7 +128,7 @@ func silentCopy(_ buffer: CMSampleBuffer) -> CMSampleBuffer? {
     var out: CMSampleBuffer?
     guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
         allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format,
-        sampleCount: CMSampleBufferGetNumSamples(buffer), presentationTimeStamp: CMSampleBufferGetPresentationTimeStamp(buffer),
+        sampleCount: samples ?? count, presentationTimeStamp: at ?? CMSampleBufferGetPresentationTimeStamp(buffer),
         packetDescriptions: nil, sampleBufferOut: &out) == noErr else { return nil }
     return out
 }
@@ -169,6 +171,17 @@ final class AudioTrack {
     /// Muted stretches as host-clock start and end.
     var mutedSpans: [(start: CMTime, end: CMTime?)] = []
     var fileTimeline = AudioFileTimeline()
+    private var expected: CMTime?
+    private var sidecarEnd: CMTime?
+    private var silenceTemplate: CMSampleBuffer?
+    private var losses: [(start: Double, end: Double)] = []
+    // The writer operations are replaceable so refusal is reproducible with generated PCM, without a device.
+    var sidecarReady: (AVAssetWriterInput) -> Bool = { $0.isReadyForMoreMediaData }
+    var sidecarAppend: (AVAssetWriterInput, CMSampleBuffer) -> Bool = { $0.append($1) }
+    var sidecarFailed: Bool { sidecarStartFailed || sidecar?.status == .failed }
+    var lostSpans: [[Int]] {
+        losses.map { [Int(($0.start * 1000).rounded()), Int(($0.end * 1000).rounded())] }
+    }
 
     init(source: CaptureAudioSource, movieInput: AVAssetWriterInput?, sidecarURL: URL?) {
         self.source = source
@@ -177,7 +190,15 @@ final class AudioTrack {
     }
 
     func appendSidecar(_ buffer: CMSampleBuffer, at time: CMTime) {
-        guard let sidecarURL, !sidecarStartFailed else { return }
+        guard let sidecarURL, !sidecarStartFailed,
+              let format = CMSampleBufferGetFormatDescription(buffer),
+              let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+              description.mSampleRate > 0 else { return }
+        let rate = description.mSampleRate
+        let count = CMSampleBufferGetNumSamples(buffer)
+        let bufferEnd = CMTimeAdd(time, CMTime(seconds: Double(count) / rate, preferredTimescale: 1_000_000_000))
+        if sidecarEnd == nil || CMTimeCompare(bufferEnd, sidecarEnd!) > 0 { sidecarEnd = bufferEnd }
+        silenceTemplate = buffer
         if sidecar == nil {
             do {
                 let writer = try AVAssetWriter(outputURL: sidecarURL, fileType: .m4a)
@@ -193,33 +214,90 @@ final class AudioTrack {
                 writer.startSession(atSourceTime: time)
                 sidecar = writer
                 sidecarInput = input
+                expected = time
             } catch {
                 sidecarStartFailed = true
                 failures.append("the \(source.rawValue) sidecar could not start: \(error.localizedDescription)")
                 return
             }
         }
-        guard let sidecarInput, sidecarInput.isReadyForMoreMediaData else { return }
-        if sidecarInput.append(buffer) {
-            if let format = CMSampleBufferGetFormatDescription(buffer),
-               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee {
-                fileTimeline.append(sampleCount: CMSampleBufferGetNumSamples(buffer), sampleRate: description.mSampleRate,
-                                    muted: muted)
-            }
-        } else {
+        guard let expected else { return }
+        let delta = CMTimeGetSeconds(CMTimeSubtract(time, expected))
+        if delta > 0.005, !fillSidecar(to: time, using: buffer, rate: rate) { return }
+        var samples = buffer
+        if delta < -0.005 {
+            let skip = min(count, Int((-delta * rate).rounded()))
+            guard skip < count else { return }
+            var trimmed: CMSampleBuffer?
+            guard CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
+                sampleRange: CFRange(location: skip, length: count - skip), sampleBufferOut: &trimmed) == noErr,
+                  let trimmed else { return }
+            samples = trimmed
+        }
+        _ = writeSidecar(samples, rate: rate, lost: false)
+    }
+
+    /// Returns only after the entire missing interval was written. Refusal leaves `expected` at the last success.
+    private func fillSidecar(to time: CMTime, using buffer: CMSampleBuffer, rate: Double) -> Bool {
+        while let expected {
+            let missing = Int((CMTimeGetSeconds(CMTimeSubtract(time, expected)) * rate).rounded())
+            if missing <= 0 { return true }
+            // Bound allocation even after a long capture stall; no waiting or queue of captured buffers.
+            guard let silence = silentCopy(buffer, samples: min(missing, Int(rate)), at: expected),
+                  writeSidecar(silence, rate: rate, lost: true) else { return false }
+        }
+        return false
+    }
+
+    private func writeSidecar(_ buffer: CMSampleBuffer, rate: Double, lost: Bool) -> Bool {
+        guard let sidecarInput, sidecarReady(sidecarInput), let expected else { return false }
+        var timing = CMSampleTimingInfo(duration: CMTime(seconds: 1 / rate, preferredTimescale: 1_000_000_000),
+                                        presentationTimeStamp: expected, decodeTimeStamp: .invalid)
+        var timed: CMSampleBuffer?
+        guard CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
+            sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleBufferOut: &timed) == noErr,
+              let timed else { return false }
+        guard sidecarAppend(sidecarInput, timed) else {
             // An earlier movie warning must not hide the sidecar's own failure; repeats of it are dropped.
             let category = "the \(source.rawValue) sidecar refused audio:"
             appendCaptureFailure("\(category) \(sidecar?.error?.localizedDescription ?? "no error reported")",
                                  category: category, to: &failures)
+            return false
         }
+        let start = fileTimeline.seconds
+        let count = CMSampleBufferGetNumSamples(buffer)
+        fileTimeline.append(sampleCount: count, sampleRate: rate, muted: !lost && muted)
+        self.expected = CMTimeAdd(expected, CMTime(seconds: Double(count) / rate, preferredTimescale: 1_000_000_000))
+        if lost {
+            if let last = losses.last, abs(last.end - start) < 0.5 / rate {
+                losses[losses.count - 1].end = fileTimeline.seconds
+            } else {
+                losses.append((start, fileTimeline.seconds))
+            }
+        }
+        return true
     }
 
     func finishSidecar() {
         guard let sidecar, let sidecarInput else { return }
-        if let end {
-            sidecar.endSession(atSourceTime: end)
+        // Also preserve a refused final buffer; no later capture callback is needed to reveal this loss.
+        let drained = DispatchSemaphore(value: 0)
+        sidecarInput.requestMediaDataWhenReady(on: DispatchQueue(label: "ax-tool.audio-sidecar.finish")) { [self] in
+            if let end = sidecarEnd, let buffer = silenceTemplate,
+               let format = CMSampleBufferGetFormatDescription(buffer),
+               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+               !fillSidecar(to: end, using: buffer, rate: description.mSampleRate), sidecar.status == .writing {
+                return
+            }
+            if let expected { sidecar.endSession(atSourceTime: expected) }
+            sidecarInput.markAsFinished()
+            drained.signal()
         }
-        sidecarInput.markAsFinished()
+        guard drained.wait(timeout: .now() + 10) == .success else {
+            sidecar.cancelWriting()
+            failures.append("the \(source.rawValue) sidecar could not preserve its final samples within 10s")
+            return
+        }
         let done = DispatchSemaphore(value: 0)
         sidecar.finishWriting { done.signal() }
         if done.wait(timeout: .now() + 10) == .timedOut || sidecar.status != .completed {
@@ -355,6 +433,7 @@ final class NativeAudio: NSObject, SCStreamOutput {
                 if track.sidecarWritten, let url = track.sidecarURL {
                     row["durationMs"] = track.fileTimeline.durationMs
                     row["mutedSpans"] = track.fileTimeline.mutedSpans
+                    row["lostSpans"] = track.lostSpans
                     row["file"] = url.lastPathComponent
                     row["path"] = url.path
                 }
