@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { Pairing } from "../connectors/types";
 import type { Change, ChangeKind, ChangeOrigin, ContextStamp } from "../model/change";
 import type { Actor, Claim, Item, ItemFields, ItemId, Pointer, Reference, WorkerStamp } from "../model/item";
 import { asItemId } from "../model/item";
@@ -232,4 +233,52 @@ export function selectClaims(db: Database, where: { item?: string; sessionIds?: 
 
 export function toItemIds(values: string[]): ItemId[] {
     return values.map(asItemId);
+}
+
+interface PairingRow {
+    item: string;
+    connector: string;
+    remote_key: string;
+    born: string;
+    origin: string;
+    state: string;
+    updated_ts: string;
+}
+
+export function selectPairings(
+    db: Database,
+    where: { item?: string; connector?: string; state?: string } = {}
+): Pairing[] {
+    const clauses: string[] = [];
+    const params: string[] = [];
+
+    for (const [column, value] of [
+        ["item", where.item],
+        ["connector", where.connector],
+        ["state", where.state],
+    ] as const) {
+        if (value !== undefined) {
+            clauses.push(`${column} = ?`);
+            params.push(value);
+        }
+    }
+
+    return db
+        .query<PairingRow, string[]>(
+            `SELECT * FROM pairings${clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""} ORDER BY updated_ts`
+        )
+        .all(...params)
+        .map((row) => {
+            const origin = parse<{ facts: Pairing["origin"]; note?: string }>(row.origin);
+            return {
+                item: asItemId(row.item),
+                connector: row.connector,
+                remoteKey: row.remote_key,
+                born: row.born as Pairing["born"],
+                origin: origin.facts,
+                state: row.state as Pairing["state"],
+                updatedTs: row.updated_ts,
+                ...(origin.note !== undefined ? { note: origin.note } : {}),
+            };
+        });
 }

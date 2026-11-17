@@ -1,3 +1,4 @@
+import type { Pairing } from "../connectors/types";
 import type { DeliveryReceipt } from "../ports";
 import type { ItemFields, Pointer } from "./item";
 import type { ItemState, ItemType, LogResult, RefKind, Severity } from "./vocab";
@@ -69,6 +70,9 @@ export interface DeliveredPayload {
 }
 
 export interface PairedPayload {
+    pairing: Pairing;
+}
+
+export interface UnpairedPayload {
     connector: string;
-    remoteKey: string;
 }
