@@ -13,7 +13,7 @@ import {
 import { isCodexDaemonPid } from "@app/codex/lib/spawn";
 import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { type GrokLeaderClient, leaderSocketsFor, sendToGrokLeader } from "@app/grok/lib/leader";
-import { canonicalAgent } from "@app/handoff/targeting";
+import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import {
     enqueueSessionMessage,
     findKeyedSessionMessage,

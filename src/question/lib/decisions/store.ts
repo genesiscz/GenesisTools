@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { CallerHost } from "@genesiscz/utils/agent/identity/types";
+import { canonicalAgent, runtimeAgentName } from "@genesiscz/utils/agent/recipient";
 import { type AgentRuntimeContext, callerCwd } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";

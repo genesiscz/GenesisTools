@@ -1,4 +1,4 @@
-import { canonicalAgent } from "@app/handoff/targeting";
+import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import type { DeliveryResult } from "./deliver";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
