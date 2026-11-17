@@ -217,6 +217,7 @@ export async function runSuggest(options: {
         wordCheck,
         sourceLabels: languageSettings(config).render,
         restatedIdentifiers: config.global.suggest.restatedIdentifiers,
+        wordQuestions: { minOccurrences: config.global.suggest.words.minOccurrences },
         ...(rules.includes("speakers") || rules.includes("evidence")
             ? { samePerson: await directorySamePerson({ store, config, meeting: record.id }) }
             : {}),
@@ -230,7 +231,12 @@ export async function runSuggest(options: {
         await store.update(record.id, { command: "suggest", change: "suggest findings and questions" }, (current) => {
             // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
             const settled = rules.includes("terms")
-                ? settledTermItems({ record: current, dictionary: inputs.dictionary, known })
+                ? settledTermItems({
+                      record: current,
+                      dictionary: inputs.dictionary,
+                      known,
+                      minOccurrences: config.global.suggest.words.minOccurrences,
+                  })
                 : new Map<string, string>();
 
             for (const item of current.items) {
@@ -247,7 +253,9 @@ export async function runSuggest(options: {
             fresh = suggestItems({ ...inputs, record: current });
             current.items.push(...fresh);
             // The long-stretch questions are evidence questions, and they share the meeting's one question budget.
-            const open = current.items.filter((item) => item.kind === "question" && item.status === "suggested");
+            const open = current.items.filter(
+                (item) => item.kind === "question" && item.status === "suggested" && item.group !== "words"
+            );
             const room = Math.max(0, config.global.suggest.questionCap - open.length);
 
             if (rules.includes("evidence") && room > 0) {
