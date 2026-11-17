@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { PinHost } from "@genesiscz/utils/agent-sessions/pins";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -89,4 +90,27 @@ export function t3SessionThreads(homeDir: string = t3Home(env.getProcessEnv())):
             db?.close();
         }
     });
+}
+
+/**
+ * The T3 Code thread that holds a session now, by T3 Code's record and the session's newest pin. A newest pin that
+ * names no host wins: the session was resumed in a terminal and no longer runs in T3. A pin that names another host or
+ * another thread wins too. With no pin (a Codex session T3 starts writes none), T3 Code's record decides.
+ */
+export function t3ThreadHolding({
+    thread,
+    pin,
+}: {
+    thread: T3SessionThread | undefined;
+    pin: { host?: PinHost } | undefined;
+}): T3SessionThread | undefined {
+    if (!thread || (pin && !pin.host)) {
+        return undefined;
+    }
+
+    if (pin?.host && (pin.host.kind !== "t3" || (pin.host.id !== undefined && pin.host.id !== thread.threadId))) {
+        return undefined;
+    }
+
+    return thread;
 }
