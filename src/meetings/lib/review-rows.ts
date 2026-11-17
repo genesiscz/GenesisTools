@@ -740,7 +740,12 @@ function rowOrder(a: MeetingItem, b: MeetingItem): number {
     }
 
     if (a.kind === "question" && b.kind === "question") {
-        const byPriority = askedRank(b) - askedRank(a);
+        // As `openQuestions` asks them: the group `words` after every other group, the most heard word first, so a
+        // spelling that fixes the most places leads.
+        const aWords = a.group === "words" ? 1 : 0;
+        const bWords = b.group === "words" ? 1 : 0;
+        const byPriority =
+            aWords - bWords || (aWords === 1 ? heardTimes(b) - heardTimes(a) : askedRank(b) - askedRank(a));
 
         if (byPriority !== 0) {
             return byPriority;
