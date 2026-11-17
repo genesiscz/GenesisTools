@@ -81,7 +81,8 @@ function median(values: number[]): number | undefined {
     return sorted[Math.floor(sorted.length / 2)];
 }
 
-function localTime(ms: number): string {
+/** The time of day with milliseconds; the shared `localTime` gives a date to the minute. */
+function clockWithMs(ms: number): string {
     return new Date(ms).toLocaleTimeString("en-GB", {
         hour: "2-digit",
         minute: "2-digit",
@@ -105,7 +106,7 @@ function gapRows(rows: readonly AudioRow[]): GapRow[] {
             result.push({
                 source,
                 file: row.file,
-                zero: `${localTime(zero)}${row.zeroAt ? "" : " (at)"}`,
+                zero: `${clockWithMs(zero)}${row.zeroAt ? "" : " (at)"}`,
                 durationSec: row.durationMs / 1000,
                 ...(previousEnd !== undefined ? { gapMs: Math.round(zero - previousEnd) } : {}),
                 kept: row.kept ?? "normal",
