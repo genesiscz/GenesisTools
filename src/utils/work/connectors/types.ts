@@ -79,7 +79,7 @@ export interface Connector<S = unknown> {
 }
 
 /** `gt/pm/{machine}{project}/{id}`: what a person in the tracker sees, and how a lost pairing is found again. */
-export function labelFor(template: string, values: { machine: string; project: string; id: string }): string {
+export function pairingLabelFor(template: string, values: { machine: string; project: string; id: string }): string {
     return template
         .replace("{machine}", values.machine)
         .replace("{project}", values.project)
