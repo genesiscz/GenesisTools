@@ -9,7 +9,7 @@ import { OpenedMeeting } from "../opened-meeting";
 import { suggestItems } from "../suggest";
 import { runSuggest } from "../suggest-run";
 import { correctTranscript } from "../transcript-corrections";
-import { mergeLabels, proposeSpeakerLabels } from "./index";
+import { mergeLineLabels, proposeSpeakerLabels } from "./index";
 import { seatLabeler } from "./seat";
 import type { LabelContext, LineLabel } from "./types";
 
@@ -222,9 +222,9 @@ describe("seat labeler", () => {
             reason: "seat-of-one",
         };
         const named: LineLabel = { ...owned, person: "Bob Example", reason: "named", score: 0.8 };
-        expect(mergeLabels(new Map([["seat", [named, owned]]]))).toEqual([owned]);
+        expect(mergeLineLabels(new Map([["seat", [named, owned]]]))).toEqual([owned]);
         const veto: LineLabel = { ...owned, person: undefined, reason: "not-the-seat-person", score: 0.2 };
-        expect(mergeLabels(new Map([["seat", [owned, veto]]]))).toEqual([veto]);
+        expect(mergeLineLabels(new Map([["seat", [owned, veto]]]))).toEqual([veto]);
     });
 });
 

@@ -13,7 +13,7 @@ import { formatTable } from "@genesiscz/utils/table";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { meetingSound } from "../../../src/meetings/lib/sound";
-import { mergeLabels } from "../../../src/meetings/lib/speaker-labels";
+import { mergeLineLabels } from "../../../src/meetings/lib/speaker-labels";
 import { seatLabeler } from "../../../src/meetings/lib/speaker-labels/seat";
 import type { LabelContext, LineLabel } from "../../../src/meetings/lib/speaker-labels/types";
 import { embedSeatLines } from "../../../src/meetings/lib/speaker-labels/voice";
@@ -216,7 +216,7 @@ const context: LabelContext = {
     project: "benchmark",
     sound: { tracks: [], slice: () => undefined },
 };
-const merged = mergeLabels(
+const merged = mergeLineLabels(
     new Map([
         ["voice", labels],
         ["seat", await seatLabeler.propose(context)],

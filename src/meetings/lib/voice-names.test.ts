@@ -13,7 +13,7 @@ import { itemWhat } from "./item-text";
 import { OpenedMeeting } from "./opened-meeting";
 import * as soundModule from "./sound";
 import { meetingSound } from "./sound";
-import { mergeLabels, speakerLabelRule } from "./speaker-labels";
+import { mergeLineLabels, speakerLabelRule } from "./speaker-labels";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
 import { nameByVoice, type VoiceLine } from "./voice-names";
@@ -140,7 +140,7 @@ test("one prototype needs loneScore; two prototypes need score and margin", () =
 test("a stranger on a seat of one vetoes its owner, and never supplies a different name", () => {
     const [veto] = name({ attended: [alice], lines: [line([0, 1])] });
     expect(veto?.reason).toBe("not-the-seat-person");
-    const merged = mergeLabels(
+    const merged = mergeLineLabels(
         new Map([
             ["seat", [{ labeler: "seat", index: 0, seat: "mic", person: alice.person, reason: "seat-of-one" }]],
             ["voice", [veto!]],
