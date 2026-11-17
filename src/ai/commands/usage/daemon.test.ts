@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInterval } from "@app/daemon/lib/interval";
 import type { RegisterTaskOptions } from "@app/daemon/lib/register";
+import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
 import {
     type DaemonRegistry,
     LEGACY_USAGE_TASK_NAME,
@@ -175,6 +176,8 @@ describe("the registered command survives paths with spaces", () => {
         const argv = await argvFrom(registeredWith[0].command);
         expect(argv.at(-1)).toBe(script);
         expect(argv.at(-2)).toBe("run");
+        // GenesisTools.app auto-allows the poll only with the checkout's empty bunfig (decision 61, 2026-11-17).
+        expect(argv.at(-3)).toBe(launcherConfigFlag());
     });
 
     test("a script path holding shell metacharacters is not interpreted", async () => {

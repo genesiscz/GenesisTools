@@ -8,6 +8,7 @@ import { ai } from "@genesiscz/utils/ai/tasks/facade";
 import { Synthesizer } from "@genesiscz/utils/ai/tasks/Synthesizer";
 import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
 import { playBuffer } from "@genesiscz/utils/audio/playback";
+import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
 import { runTool } from "@genesiscz/utils/cli";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -485,13 +486,16 @@ interface EffectiveSettings {
  * child reports its outcome to.
  */
 function spawnDetachedSpeaker(callId: string): void {
-    const child = Bun.spawn([process.execPath, import.meta.path, ...process.argv.slice(2), "--wait"], {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-        detached: true,
-        env: { ...env.getProcessEnv(), GENESIS_SAY_CALL_ID: callId },
-    });
+    const child = Bun.spawn(
+        [process.execPath, launcherConfigFlag(), import.meta.path, ...process.argv.slice(2), "--wait"],
+        {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+            detached: true,
+            env: { ...env.getProcessEnv(), GENESIS_SAY_CALL_ID: callId },
+        }
+    );
 
     child.unref();
 }
