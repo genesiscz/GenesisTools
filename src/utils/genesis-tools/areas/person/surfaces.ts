@@ -101,7 +101,8 @@ export async function notifyViaChannels(ctx: RequestContext): Promise<RequestOut
     refuseHostEffectInTest("request notification channels", "Inject notification channels in tests.");
     const { dispatchNotification, notificationsConfig, CHANNEL_NAMES } = await import("@genesiscz/utils/notifications");
     const channels = await notificationsConfig.getChannels("genesis-tools");
-    if (!CHANNEL_NAMES.some((name) => channels[name].enabled)) {
+    const { unconfiguredChannel } = await import("@genesiscz/utils/notifications/dispatch");
+    if (!CHANNEL_NAMES.some((name) => channels[name].enabled && !unconfiguredChannel(name, channels))) {
         return ctx.pass("No notification channel is enabled.");
     }
     const posted = await dispatchNotification({
@@ -118,7 +119,7 @@ export async function notifyViaChannels(ctx: RequestContext): Promise<RequestOut
               status: "pending",
               reason: "The request was handed to the configured notification channels.",
           }
-        : ctx.pass("Notification delivery failed.");
+        : { id: ctx.args.id, status: "pending", reason: "Some notification channels failed; the request stays open." };
 }
 
 export async function printRequest(ctx: RequestContext): Promise<RequestOutcome | Pass> {
@@ -131,5 +132,6 @@ export async function printRequest(ctx: RequestContext): Promise<RequestOutcome 
         id: ctx.args.id,
         status: "unreachable",
         reason: `No person surface answered. Open the request with ${manual}`,
+        manual,
     };
 }

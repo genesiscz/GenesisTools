@@ -232,3 +232,62 @@ test("a timed-out request action returns pending and keeps its posted request op
     expect(journal.get(input.id)?.state).toBe("waiting");
     expect(shown).toBe(1);
 });
+
+test("request identity cannot cross journal files, and posted metadata is structured", async () => {
+    const journal = createRequestJournal({ dir: scratch(), now });
+    const posted = await journal.post({ input });
+    expect(() =>
+        journal.append("another", {
+            type: "posted",
+            at: now().toISOString(),
+            request: posted.request,
+            asker: { agent: "fixture", session: "fixture" },
+        })
+    ).toThrow("different request id");
+    expect(
+        requestEventSchema.safeParse({
+            type: "posted",
+            at: now().toISOString(),
+            request: posted.request,
+            asker: { agent: "fixture" },
+        }).success
+    ).toBe(true);
+    expect(
+        requestEventSchema.safeParse({
+            type: "posted",
+            at: now().toISOString(),
+            request: posted.request,
+            asker: "unstructured",
+        }).success
+    ).toBe(false);
+});
+
+test("the service stays for an open request and exits on the idle check once it is withdrawn", async () => {
+    const dir = scratch();
+    const start = await startGenesisToolsService({ dir, idleMs: 1, checkEveryMs: 100 });
+    if (start.status !== "started") {
+        throw new Error("fixture service did not start");
+    }
+    let stopped = false;
+    void start.host.stopped.then(() => {
+        stopped = true;
+    });
+    const journal = start.deps.service!.journal;
+    await journal.post({ input });
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(stopped).toBe(false);
+        await journal.withdraw(input.id);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const deadline = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("idle exit did not arrive")), 1500);
+            });
+            expect(await Promise.race([start.host.stopped, deadline])).toBe("idle");
+        } finally {
+            clearTimeout(timer);
+        }
+    } finally {
+        start.host.stop("test complete");
+    }
+});

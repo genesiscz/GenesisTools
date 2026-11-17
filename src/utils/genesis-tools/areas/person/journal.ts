@@ -10,8 +10,15 @@ import { type NoticeInput, type RequestOutcome, requestOutcomeSchema, requestSch
 
 const at = z.string().datetime();
 const via = z.string();
+export const askerSchema = z.object({
+    agent: z.string().optional(),
+    session: z.string().optional(),
+    project: z.string().optional(),
+    branch: z.string().optional(),
+});
+export type Asker = z.infer<typeof askerSchema>;
 export const requestEventSchema = z.discriminatedUnion("type", [
-    z.object({ type: z.literal("posted"), at, request: requestSchema, asker: z.string().nullable() }),
+    z.object({ type: z.literal("posted"), at, request: requestSchema, asker: askerSchema.nullable() }),
     z.object({
         type: z.literal("delivered"),
         at,
@@ -174,6 +181,10 @@ export function createRequestJournal(
     }
     function read(id: string): RequestView | null {
         const all = events(id);
+        const first = all.find((event) => event.type === "posted");
+        if (first?.type === "posted" && first.request.id !== id) {
+            throw new Error("The journal belongs to another request");
+        }
         const started = all.findLast((event) => event.type === "started");
         return stateOf(all, options.alive ?? ((pid) => isProcessAliveSince(pid, started ? Date.parse(started.at) : 0)));
     }
@@ -221,6 +232,9 @@ export function createRequestJournal(
                           return view ? [view] : [];
                       }),
         append: (id, event) => {
+            if (event.type === "posted" && event.request.id !== id) {
+                throw new Error("Cannot append a different request id");
+            }
             mkdirSync(dir, { recursive: true, mode: 0o700 });
             // A leading newline separates any torn tail. Existing bytes are never edited.
             appendFileSync(fileOf(id), `\n${SafeJSON.stringify(requestEventSchema.parse(event))}\n`, { mode: 0o600 });

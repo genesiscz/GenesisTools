@@ -31,6 +31,7 @@ export const requestOutcomeSchema = z.object({
     exitCode: z.number().int().nullable().optional(),
     outputTail: z.string().optional(),
     verified: z.boolean().nullable().optional(),
+    manual: z.string().optional(),
 });
 export type RequestOutcome = z.infer<typeof requestOutcomeSchema>;
 export const requestConfigSchema = z.object({ delivery: deliverySchema.default(Delivery.askNow) });
