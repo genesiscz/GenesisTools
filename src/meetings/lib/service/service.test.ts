@@ -759,7 +759,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         ]);
         const reopened = new MeetingStore(store.storage).resolve(REVIEW.id)!;
         expect(reopened.participants.find((person) => person.name === "Eli Example")?.stays).toEqual([
-            { fromSec: 60, toSec: 120, source: "hand", confidence: 1 },
+            { fromSec: 60, toSec: 120, source: "hand", leaveSource: "hand", confidence: 1 },
         ]);
         expect(reopened.attendance?.people).toContainEqual({
             name: "Eli Example",
