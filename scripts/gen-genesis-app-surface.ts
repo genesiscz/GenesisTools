@@ -10,7 +10,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { APP_PARTS, type AppPart, HOST_WINDOW_FACE } from "@app/macos/lib/permissions/parts";
+import { APP_PARTS, type AppPart, HOST_FACES, HOST_WINDOW_FACE } from "@app/macos/lib/permissions/parts";
 import {
     parseSwiftRpcMethods,
     RPC_METHODS_SWIFT_FILE,
@@ -25,6 +25,7 @@ export interface AppSurfaceInput {
     rpcMethods: readonly string[];
     parts: readonly Pick<AppPart, "id" | "faces">[];
     hostFace: { flag: string; window: boolean };
+    hostFaces?: readonly { flag: string; window: boolean }[];
 }
 
 function literal(value: string): string {
@@ -47,7 +48,7 @@ export function renderAppSurface(input: AppSurfaceInput): string {
         ...input.parts.flatMap((part) =>
             part.faces.map((face) => ({ flag: face.flag, part: part.id, window: face.window }))
         ),
-        { flag: input.hostFace.flag, part: null, window: input.hostFace.window },
+        ...(input.hostFaces ?? [input.hostFace]).map((face) => ({ flag: face.flag, part: null, window: face.window })),
     ];
     const faceRows = faces.map(
         (face) =>
@@ -79,7 +80,12 @@ export function renderAppSurface(input: AppSurfaceInput): string {
 
 export function readAppSurfaceInput(): AppSurfaceInput {
     const swift = readFileSync(join(APP_PACKAGE_DIR, RPC_METHODS_SWIFT_FILE), "utf8");
-    return { rpcMethods: parseSwiftRpcMethods(swift), parts: APP_PARTS, hostFace: HOST_WINDOW_FACE };
+    return {
+        rpcMethods: parseSwiftRpcMethods(swift),
+        parts: APP_PARTS,
+        hostFace: HOST_WINDOW_FACE,
+        hostFaces: HOST_FACES,
+    };
 }
 
 if (import.meta.main) {

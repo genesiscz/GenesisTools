@@ -32,7 +32,7 @@ enum LinkRelay {
     /// re-run, so only an explicit window request runs itself again.
     static func mayRunAgain(_ arguments: [String]) -> Bool {
         let first = arguments.first ?? ""
-        return first == "--hub" || first == "--review" || first == "--window"
+        return first == "--hub" || first == "--review" || first == "--window" || first == "--requests"
     }
 
     /// Another process holds the relay lock. Asks the kernel, not a pid file.

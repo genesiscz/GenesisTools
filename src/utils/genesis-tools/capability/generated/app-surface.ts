@@ -13,6 +13,7 @@ export const APP_RPC_METHODS = [
     "gate.approve",
     "vault.unlock",
     "rm.approve",
+    "request.present",
 ] as const;
 export type AppRpcMethod = (typeof APP_RPC_METHODS)[number];
 
@@ -30,5 +31,6 @@ export const APP_FACES = {
     "--recorder": { part: "recorder", window: false },
     "--meetings": { part: "meetings", window: true },
     "--window": { part: null, window: true },
+    "--requests": { part: null, window: true },
 } as const satisfies Record<string, { part: AppPartId | null; window: boolean }>;
 export type AppFaceFlag = keyof typeof APP_FACES;
