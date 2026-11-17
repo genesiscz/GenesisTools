@@ -197,4 +197,49 @@ describe("stopped-job-wake", () => {
     it.each(resumes)("passes %j", (command) => {
         expect(ids(command)).toEqual([]);
     });
+
+    it("blocks pkill -CONT, which wakes every stopped process whose name matches", () => {
+        const command = "ps -t ttys006; pkill -CONT -f gt-cc";
+        const v = only(command, WAKE);
+
+        expect(v?.matched).toBe("pkill -CONT -f gt-cc");
+        expect(v?.index).toBe(command.indexOf("pkill"));
+        expect(v?.detail).toBe(
+            "SIGCONT by name (pkill) wakes every stopped process that matches; resume one process with kill -CONT <pid>"
+        );
+    });
+
+    const byName = [
+        "pkill -SIGCONT claude",
+        "pkill -cont -t ttys006",
+        `pkill -${CONT_NUMBER} claude`,
+        "pkill --signal CONT node",
+        "pkill --signal=CONT node",
+        "sudo pkill -CONT -g 1234",
+        "killall -CONT claude",
+        "killall --signal SIGCONT claude",
+        "/usr/bin/killall -cont bun",
+    ];
+
+    it.each(byName)("blocks %j", (command) => {
+        expect(ids(command)).toEqual([WAKE]);
+    });
+
+    it("reads killall -s as the signal only on Linux; on macOS it is a dry run", () => {
+        expect(ids("killall -s CONT claude")).toEqual(process.platform === "linux" ? [WAKE] : []);
+    });
+
+    const otherByName = [
+        "pkill -TERM claude",
+        "pkill -x lldb",
+        "pkill -f 'kill -CONT -1'",
+        "killall Finder",
+        "killall -HUP Dock",
+        "pkill -CONTINUE x",
+        "pgrep -l claude",
+    ];
+
+    it.each(otherByName)("passes %j", (command) => {
+        expect(ids(command)).toEqual([]);
+    });
 });
