@@ -45,17 +45,33 @@ function remember<T>(cache: Map<string, T>, key: string, value: T, max: number):
     }
 }
 
-function loadImage(src: string, crossOrigin: boolean): Promise<HTMLImageElement | null> {
+/** A response that has not finished by then counts as failed, so a hung server never leaves "Loading" forever. */
+const IMAGE_LOAD_DEADLINE_MS = 30_000;
+
+type ImageLoad = { ok: true; image: HTMLImageElement } | { ok: false; timedOut: boolean };
+
+function loadImage(src: string, crossOrigin: boolean): Promise<ImageLoad> {
     return new Promise((resolve) => {
         const image = new Image();
+        const settle = (result: ImageLoad): void => {
+            window.clearTimeout(deadline);
+            image.onload = null;
+            image.onerror = null;
+            resolve(result);
+        };
+        const deadline = window.setTimeout(() => {
+            settle({ ok: false, timedOut: true });
+            // An empty src stops the download; the handlers are gone, so its error event goes nowhere.
+            image.src = "";
+        }, IMAGE_LOAD_DEADLINE_MS);
 
         if (crossOrigin) {
             image.crossOrigin = "anonymous";
         }
 
         image.decoding = "async";
-        image.onload = () => resolve(image);
-        image.onerror = () => resolve(null);
+        image.onload = () => settle({ ok: true, image });
+        image.onerror = () => settle({ ok: false, timedOut: false });
         image.src = src;
     });
 }
@@ -80,8 +96,8 @@ export function loadImageSize(src: string): Promise<CompareSize | null> {
         return cached;
     }
 
-    const pending = loadImage(src, false).then((image) =>
-        image ? { width: image.naturalWidth, height: image.naturalHeight } : null
+    const pending = loadImage(src, false).then((load) =>
+        load.ok ? { width: load.image.naturalWidth, height: load.image.naturalHeight } : null
     );
     remember(sizeCache, src, pending, MAX_PIXEL_ENTRIES * 4);
 
@@ -110,14 +126,24 @@ export function loadImagePixels(src: string): Promise<PixelLoad> {
 async function decodePixels(src: string): Promise<PixelLoad> {
     // crossOrigin makes the browser ask for CORS, so a server without the header fails the load instead of
     // tainting the canvas later.
-    const image = await loadImage(src, true);
+    const load = await loadImage(src, true);
 
-    if (!image) {
+    if (!load.ok) {
+        if (load.timedOut) {
+            const seconds = IMAGE_LOAD_DEADLINE_MS / 1000;
+
+            return {
+                ok: false,
+                error: { kind: "load", message: `The image did not load in ${seconds} s: ${src.slice(0, 120)}` },
+            };
+        }
+
         return isCrossOrigin(src)
             ? { ok: false, error: { kind: "cors", message: CORS_MESSAGE } }
             : { ok: false, error: { kind: "load", message: `The image did not load: ${src.slice(0, 120)}` } };
     }
 
+    const { image } = load;
     const width = image.naturalWidth;
     const height = image.naturalHeight;
     const canvas = document.createElement("canvas");

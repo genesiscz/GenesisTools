@@ -6,6 +6,8 @@ import {
     ComparePane,
     type CompareStageProps,
     choiceSetting,
+    numberSetting,
+    RangeControl,
     StageImage,
     ToggleControl,
     ViewLayer,
@@ -13,9 +15,17 @@ import {
 
 const SHOWING = "blink.showing";
 const AUTO = "blink.auto";
+const INTERVAL = "blink.interval";
 const SIDES = ["a", "b"] as const;
-/** The auto flip interval: long enough to read a label, short enough to see a change pop. */
+/** The default auto flip interval: long enough to read a label, short enough to see a change pop. */
 const BLINK_MS = 700;
+const BLINK_MS_MIN = 200;
+const BLINK_MS_MAX = 3000;
+
+/** The auto flip interval the user set on this comparison, in ms. */
+function blinkInterval(props: CompareStageProps): number {
+    return Math.min(BLINK_MS_MAX, Math.max(BLINK_MS_MIN, numberSetting(props.settings, INTERVAL, BLINK_MS)));
+}
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
 function subscribeMotion(listener: () => void): () => void {
@@ -47,6 +57,7 @@ function BlinkStage(props: CompareStageProps) {
     const showing = choiceSetting(props.settings, SHOWING, SIDES, "a");
     const auto = boolSetting(props.settings, AUTO, false) && !reduced;
     const shown = showing === "a" ? props.a : props.b;
+    const interval = blinkInterval(props);
     const { setSetting } = props;
 
     useEffect(() => {
@@ -54,10 +65,10 @@ function BlinkStage(props: CompareStageProps) {
             return;
         }
 
-        const timer = window.setTimeout(() => setSetting(SHOWING, showing === "a" ? "b" : "a"), BLINK_MS);
+        const timer = window.setTimeout(() => setSetting(SHOWING, showing === "a" ? "b" : "a"), interval);
 
         return () => window.clearTimeout(timer);
-    }, [auto, showing, setSetting]);
+    }, [auto, showing, setSetting, interval]);
 
     return (
         <ComparePane
@@ -94,8 +105,17 @@ function BlinkControls(props: CompareStageProps) {
                 label="Auto"
                 checked={boolSetting(props.settings, AUTO, false) && !reduced}
                 disabled={reduced}
-                hint={reduced ? "off while the system asks for reduced motion" : `every ${BLINK_MS} ms`}
+                hint={reduced ? "off while the system asks for reduced motion" : undefined}
                 onChange={(checked) => props.setSetting(AUTO, checked)}
+            />
+            <RangeControl
+                label="Interval"
+                min={BLINK_MS_MIN}
+                max={BLINK_MS_MAX}
+                step={100}
+                value={blinkInterval(props)}
+                onChange={(value) => props.setSetting(INTERVAL, value)}
+                format={(value) => `${value} ms`}
             />
         </>
     );

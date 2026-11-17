@@ -33,7 +33,7 @@ import {
 import { matchRoute } from "./router";
 import { moveItem, type SortableItem, SortableList, type SortableMove } from "./sortable";
 import { asciiTreeRows, Compare, JsonView, MappingList, Steps, TreeView, treeFromPaths } from "./structure";
-import { mountDom } from "./test-dom";
+import { type DomHarness, mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
 import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, SegmentBar, Sparkline, sparklinePath } from "./viz";
@@ -2944,7 +2944,10 @@ describe("design pages", () => {
 
 // ─── ImageCompare ───
 
-/** An <img> stand-in for jsdom: "fake://WxH/name" loads with that natural size, anything else fails. */
+/**
+ * An <img> stand-in for jsdom: "fake://WxH/name" loads with that natural size, "stall://" never answers (a response
+ * that hangs), anything else fails.
+ */
 class FakeImage {
     crossOrigin = "";
     decoding = "";
@@ -2960,6 +2963,11 @@ class FakeImage {
 
     set src(value: string) {
         this.#src = value;
+
+        if (value.startsWith("stall://")) {
+            return;
+        }
+
         const size = /^fake:\/\/(\d+)x(\d+)\//.exec(value);
         setTimeout(() => {
             if (!size) {
@@ -3025,10 +3033,15 @@ class FakeImageData {
     }
 }
 
-/** jsdom has neither image decoding nor a 2D canvas; these stand-ins let the real diff path run. */
-async function mountImageCompare(node: ReactNode) {
+/**
+ * jsdom has neither image decoding nor a 2D canvas; these stand-ins let the real diff path run. `prepare` runs on the
+ * fresh window before the first render (stored picks, theme tokens, shorter timers); `painted` holds every pixel
+ * buffer a canvas received, newest last.
+ */
+async function mountImageCompare(node: ReactNode, prepare?: (window: DomHarness["window"]) => void) {
     const dom = await mountDom(null);
     const saved = { Image: globalThis.Image, ImageData: globalThis.ImageData };
+    const painted: FakeImageData[] = [];
     Object.assign(globalThis, { Image: FakeImage, ImageData: FakeImageData });
     Object.assign(dom.window, { Image: FakeImage });
     // Every pane is 600 px wide, so fit and the zoom buttons have a size to work with.
@@ -3045,10 +3058,13 @@ async function mountImageCompare(node: ReactNode) {
                 getImageData(_x: number, _y: number, width: number, height: number) {
                     return { data: fakePixels(source, width, height) };
                 },
-                putImageData() {},
+                putImageData(data: FakeImageData) {
+                    painted.push(data);
+                },
             };
         },
     });
+    prepare?.(dom.window);
     await dom.render(node);
     await settleFor(20);
 
@@ -3064,7 +3080,7 @@ async function mountImageCompare(node: ReactNode) {
         Object.assign(globalThis, saved);
     };
 
-    return { dom, text, radio, button, restore };
+    return { dom, text, radio, button, restore, painted };
 }
 
 async function settleFor(ms: number): Promise<void> {
@@ -3352,6 +3368,151 @@ describe("ImageCompare", () => {
             expect(text()).not.toContain("Updating for the new settings");
         } finally {
             await restore();
+        }
+    }, 20_000);
+
+    test("a new id or page storage key reads that comparison's or that page's saved picks at once", async () => {
+        const checked = (scope: ParentNode) => scope.querySelector('[role="radio"][aria-checked="true"]')?.textContent;
+        const pair = { before: { src: "fake://40x30/plain-m" }, after: { src: "fake://40x30/plain-n" } };
+
+        function ItemSwitcher() {
+            const [id, setId] = useState("kit-item-one");
+
+            return (
+                <>
+                    <button type="button" onClick={() => setId("kit-item-two")}>
+                        Next item
+                    </button>
+                    <ImageCompare id={id} {...pair} />
+                </>
+            );
+        }
+
+        const item = await mountImageCompare(<ItemSwitcher />, (window) => {
+            window.localStorage.setItem("artifact.image-compare:item:kit-item-two:mode", "fade");
+        });
+
+        try {
+            expect(checked(item.dom.container)).toBe("Side by side");
+            await item.dom.click(item.radio("Blink"));
+            await item.dom.click(item.button("Next item"));
+            expect(checked(item.dom.container)).toBe("Fade");
+            await item.dom.click(item.radio("Slider"));
+            const stored = item.dom.window.localStorage;
+            expect(stored.getItem("artifact.image-compare:item:kit-item-one:mode")).toBe("blink");
+            expect(stored.getItem("artifact.image-compare:item:kit-item-two:mode")).toBe("slider");
+        } finally {
+            await item.restore();
+        }
+
+        function PageSwitcher() {
+            const [storageKey, setStorageKey] = useState("kit-test.page-one");
+
+            return (
+                <>
+                    <button type="button" onClick={() => setStorageKey("kit-test.page-two")}>
+                        Next page
+                    </button>
+                    <ImageCompareProvider storageKey={storageKey}>
+                        <ImageCompareModeSwitch />
+                        <ImageCompare {...pair} />
+                    </ImageCompareProvider>
+                </>
+            );
+        }
+
+        const page = await mountImageCompare(<PageSwitcher />, (window) => {
+            window.localStorage.setItem("kit-test.page-two:mode", "blink");
+        });
+
+        try {
+            const pageSwitch = () => page.dom.container.querySelector('[role="radiogroup"]') ?? page.dom.container;
+            await page.dom.click(page.radio("Fade", pageSwitch()));
+            await page.dom.click(page.button("Next page"));
+            expect(checked(pageSwitch())).toBe("Blink");
+            expect(page.text()).toContain("A: Before");
+            expect(page.dom.window.localStorage.getItem("kit-test.page-one:mode")).toBe("fade");
+        } finally {
+            await page.restore();
+        }
+    }, 20_000);
+
+    test("an image whose response hangs fails at the load deadline instead of loading forever", async () => {
+        const { text, restore } = await mountImageCompare(
+            <ImageCompare before={{ src: "fake://40x30/plain-s" }} after={{ src: "stall://hangs" }} />,
+            (window) => {
+                // The deadline is long on a page; here every timer of the window is capped, so the test does not wait.
+                const original = window.setTimeout.bind(window);
+                Object.assign(window, {
+                    setTimeout: (handler: () => void, ms = 0) => original(handler, Math.min(ms, 30)),
+                });
+            }
+        );
+
+        try {
+            expect(text()).toContain("Loading the images...");
+            await settleFor(80);
+            expect(text()).toContain("The image did not load: After.");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the automatic blink flips at the interval the user sets", async () => {
+        const { dom, text, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://40x30/plain-k" }}
+                after={{ src: "fake://40x30/plain-l" }}
+                defaultMode="blink"
+            />
+        );
+
+        try {
+            const control = (name: string) =>
+                [...dom.container.querySelectorAll("label")]
+                    .find((label) => label.textContent?.startsWith(name))
+                    ?.querySelector("input");
+            expect(control("Interval")?.value).toBe("700");
+            await dom.type(control("Interval"), "200");
+            await dom.click(control("Auto"));
+            expect(text()).toContain("A: Before");
+            await settleFor(300);
+            expect(text()).toContain("B: After");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a heat map made under one theme is never shown with another theme's ramp", async () => {
+        const pair = { before: { src: "fake://40x40/plain-t" }, after: { src: "fake://40x40/changed-t" } };
+        const theme = (rgb: string) => (window: DomHarness["window"]) => {
+            for (const token of ["--info", "--ok", "--warn", "--err"]) {
+                window.document.documentElement.style.setProperty(token, rgb);
+            }
+        };
+        /** The colour the last painted map gave the changed block at (12, 30). */
+        const block = (painted: FakeImageData[]) => {
+            const at = (30 * 40 + 12) * 4;
+
+            return [...(painted.at(-1)?.data.slice(at, at + 3) ?? [])];
+        };
+
+        const light = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, theme("rgb(200, 10, 30)"));
+
+        try {
+            await settlePixels();
+            expect(block(light.painted)).toEqual([200, 10, 30]);
+        } finally {
+            await light.restore();
+        }
+
+        const dark = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, theme("rgb(10, 200, 30)"));
+
+        try {
+            await settlePixels();
+            expect(block(dark.painted)).toEqual([10, 200, 30]);
+        } finally {
+            await dark.restore();
         }
     }, 20_000);
 });

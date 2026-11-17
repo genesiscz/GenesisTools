@@ -143,8 +143,11 @@ function resolvedStops(): Rgb[] {
 
 function useHeat(props: CompareStageProps): { result: IdleResult<HeatMap>; shift: Shift } {
     const shift = appliedShift(props);
-    // The ramp uses resolved theme colours, so a light or dark flip draws it again.
-    const scheme = useColorSchemeTick();
+    // A light or dark flip renders again, and the key carries the resolved ramp: the tick restarts at 0 on every
+    // mount, so a key built from it gave a later comparison a map cached under another theme.
+    useColorSchemeTick();
+    const stops = resolvedStops();
+    const ramp = stops.map(({ r, g, b }) => `${r},${g},${b}`).join(" ");
     const group = `${props.a.src}\n${props.b.src}`;
     const pair = props.pixels.status === "ready" ? props.pixels.pair : null;
     const result = useIdleCompute({
@@ -152,8 +155,8 @@ function useHeat(props: CompareStageProps): { result: IdleResult<HeatMap>; shift
         group,
         job: pair
             ? {
-                  key: `${group}\n${shift.dx},${shift.dy}\n${scheme}`,
-                  compute: () => heatMap({ a: pair.a, b: pair.b, shift, stops: resolvedStops() }),
+                  key: `${group}\n${shift.dx},${shift.dy}\n${ramp}`,
+                  compute: () => heatMap({ a: pair.a, b: pair.b, shift, stops }),
               }
             : null,
     });

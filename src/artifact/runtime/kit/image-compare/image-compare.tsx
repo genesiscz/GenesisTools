@@ -2,7 +2,13 @@ import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, use
 import { Button, Field, Select } from "../forms";
 import { MdInline } from "../md";
 import { SegmentedControl } from "../primitives";
-import { IMAGE_COMPARE_STORAGE_KEY, parseStoredThreshold, readStored, useImageCompare, writeStored } from "./context";
+import {
+    IMAGE_COMPARE_STORAGE_KEY,
+    parseStoredThreshold,
+    useImageCompare,
+    useStoredValue,
+    writeStored,
+} from "./context";
 import {
     actualSizeView,
     type CompareRect,
@@ -172,9 +178,14 @@ export function ImageCompare({
     checkModeId(defaultMode, "defaultMode");
     const page = useImageCompare();
     const itemKey = id === undefined ? undefined : `${page?.storageKey ?? IMAGE_COMPARE_STORAGE_KEY}:item:${id}`;
-    const [ownMode, setOwnMode] = useState(() => (itemKey ? readStored(`${itemKey}:mode`) : undefined));
-    const [ownThreshold, setOwnThreshold] = useState(() =>
-        itemKey ? parseStoredThreshold(readStored(`${itemKey}:threshold`)) : undefined
+    // Keyed by the id, so a new id brings that comparison's own picks in the same render.
+    const [ownMode, setOwnMode] = useStoredValue(
+        itemKey === undefined ? undefined : `${itemKey}:mode`,
+        (stored) => stored
+    );
+    const [ownThreshold, setOwnThreshold] = useStoredValue(
+        itemKey === undefined ? undefined : `${itemKey}:threshold`,
+        parseStoredThreshold
     );
     const mode = pickMode(allowed, [ownMode, page?.pickedMode, defaultMode, page?.defaultMode, DEFAULT_COMPARE_MODE]);
     const effectiveThreshold = clampThreshold(ownThreshold ?? page?.threshold ?? threshold ?? DEFAULT_DIFF_THRESHOLD);

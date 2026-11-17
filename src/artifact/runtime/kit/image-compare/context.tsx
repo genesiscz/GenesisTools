@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
 import { DIFF_THRESHOLD_MAX, DIFF_THRESHOLD_MIN } from "./core";
 import { checkModeId, DEFAULT_COMPARE_MODE } from "./registry";
 
@@ -61,6 +61,28 @@ export function writeStored(key: string, value: string | undefined): void {
     }
 }
 
+/**
+ * A value saved under `key` (parsed from nothing when the key is undefined). A new key is read in the render that
+ * brings it, so a comparison or a page never shows the previous key's choice, not even for one frame. The setter
+ * changes the state only; the caller writes the storage.
+ */
+export function useStoredValue<T>(
+    key: string | undefined,
+    parse: (stored: string | undefined) => T
+): [T, (value: T) => void] {
+    const [state, setState] = useState(() => ({ key, value: parse(key === undefined ? undefined : readStored(key)) }));
+    let current = state;
+
+    if (current.key !== key) {
+        current = { key, value: parse(key === undefined ? undefined : readStored(key)) };
+        setState(current);
+    }
+
+    const set = useCallback((value: T) => setState({ key, value }), [key]);
+
+    return [current.value, set];
+}
+
 /** A stored threshold, or undefined when nothing valid is stored. */
 export function parseStoredThreshold(value: string | undefined): number | undefined {
     const parsed = value === undefined ? Number.NaN : Number(value);
@@ -76,8 +98,8 @@ export function ImageCompareProvider({
     checkModeId(defaultMode, "defaultMode");
     const modeKey = `${storageKey}:mode`;
     const thresholdKey = `${storageKey}:threshold`;
-    const [pickedMode, setPickedMode] = useState(() => readStored(modeKey));
-    const [threshold, setPageThreshold] = useState(() => parseStoredThreshold(readStored(thresholdKey)));
+    const [pickedMode, setPickedMode] = useStoredValue(modeKey, (stored) => stored);
+    const [threshold, setPageThreshold] = useStoredValue(thresholdKey, parseStoredThreshold);
 
     const value = useMemo<ImageComparePage>(
         () => ({
@@ -94,7 +116,7 @@ export function ImageCompareProvider({
                 writeStored(thresholdKey, String(next));
             },
         }),
-        [storageKey, defaultMode, pickedMode, threshold, modeKey, thresholdKey]
+        [storageKey, defaultMode, pickedMode, threshold, modeKey, thresholdKey, setPickedMode, setPageThreshold]
     );
 
     return <ImageCompareContext.Provider value={value}>{children}</ImageCompareContext.Provider>;
