@@ -1,6 +1,6 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
 import { logger } from "@genesiscz/utils/logger";
-import type { MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
     MEETINGS_STATE_CODES,
@@ -18,6 +18,7 @@ import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evi
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
+import { projectRequired } from "../project";
 import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
 import { preservedSourceAudio } from "../source-audio";
@@ -228,6 +229,12 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.suggest": async (params, context) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
+            const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
+            const required = projectRequired(record, config);
+            if (required) {
+                throw refusal("project-required", required);
+            }
+
             const { runSuggest } = await import("../suggest-run");
             const result = await runSuggest({
                 store,
