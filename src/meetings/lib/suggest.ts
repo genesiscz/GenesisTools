@@ -1976,14 +1976,15 @@ function labeledItems(options: {
     const { record, meeting } = options;
     const spans = new TranscriptLines(meeting.transcript);
     const proposed = new Map<number, NewItem>();
+    const strangers = new Map<number, { owner: string; stretch: number }>();
     const covers = (item: NewItem, label: string, at: number) =>
         item.kind === "speaker-range" && item.label === label && item.fromSec <= at && item.toSec >= at;
 
-    for (const label of options.labels) {
+    for (const label of [...options.labels].sort((a, b) => a.index - b.index)) {
         const entry = meeting.transcript[label.index];
         const at = entry?.startSec;
 
-        if (!entry || at === undefined || !label.person) {
+        if (!entry || at === undefined) {
             continue;
         }
 
@@ -1993,6 +1994,44 @@ function labeledItems(options: {
                 (item) => item.label === entry.speaker && item.fromSec <= at && item.toSec >= at
             )
         ) {
+            continue;
+        }
+
+        if (label.reason === "not-the-seat-person") {
+            const owner =
+                label.next?.person ??
+                (label.seat === "mic"
+                    ? (record.seats?.room[0] ?? record.participants.find((person) => person.self)?.name)
+                    : record.seats?.remote[0]?.name);
+            if (!owner) {
+                continue;
+            }
+            const previous = strangers.get(label.index - 1);
+            const stretch = previous?.owner === owner ? previous.stretch : label.index;
+            strangers.set(label.index, { owner, stretch });
+            proposed.set(label.index, {
+                kind: "speaker-range",
+                status: "suggested",
+                label: entry.speaker,
+                fromSec: at,
+                toSec: at,
+                confidence: label.score,
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: {
+                    reason: label.reason,
+                    seat: label.seat,
+                    score: label.score,
+                    seatPerson: owner,
+                    strangerStretch: stretch,
+                    transcriptLine: label.index,
+                    endSec: spans.end(label.index),
+                    listen: true,
+                },
+            });
+            continue;
+        }
+
+        if (!label.person) {
             continue;
         }
 
@@ -2047,7 +2086,22 @@ function labeledItems(options: {
         proposed.set(label.index, item);
     }
 
-    const retained = options.found.flatMap((item): NewItem[] => {
+    const replaced = record.items.filter(
+        (item) =>
+            item.kind === "speaker-range" &&
+            item.status === "suggested" &&
+            item.evidence?.reason !== "not-the-seat-person" &&
+            [...strangers.keys()].some((index) => {
+                const entry = meeting.transcript[index];
+                return entry.startSec !== undefined && covers(item, entry.speaker, entry.startSec);
+            })
+    );
+    const previous = replaced.map((item) => ({ ...item, evidence: { ...item.evidence } }));
+    for (const item of replaced) {
+        item.status = "rejected";
+        item.evidence = { ...item.evidence, retired: "not-the-seat-person" };
+    }
+    const retained = [...options.found, ...previous].flatMap((item): NewItem[] => {
         if (item.kind !== "speaker-range") {
             return [item];
         }
@@ -2195,6 +2249,7 @@ export function suggestItems(options: {
               lines: departureLines,
               selfName: selfNameForDeparture,
               presence: options.presence,
+              labels: options.labels,
               ignoredIndicator: assessIndicator({
                   lines: departureLines,
                   selfName: selfNameForDeparture,
@@ -2470,8 +2525,46 @@ export function suggestItems(options: {
         points: options.points ?? [],
     };
     const askedItems = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
+    const strangerGroups = new Map<number, Extract<MeetingItem, { kind: "speaker-range" }>[]>();
+    for (const item of taken) {
+        const stretch = item.evidence?.strangerStretch;
+        if (
+            item.kind !== "speaker-range" ||
+            item.status !== "suggested" ||
+            askedItems.has(item.id) ||
+            typeof stretch !== "number"
+        ) {
+            continue;
+        }
+        const group = strangerGroups.get(stretch) ?? [];
+        group.push(item);
+        strangerGroups.set(stretch, group);
+    }
+    const strangerQuestions = [...strangerGroups.values()].map((ranges) => {
+        const owner = ranges[0]!.evidence?.seatPerson;
+        const choices = [typeof owner === "string" ? owner : "", ...context.candidates].filter(
+            (name, index, names) => name && names.findIndex((other) => sameName(name, other)) === index
+        );
+        return {
+            kind: "question" as const,
+            status: "suggested" as const,
+            about: "speaker" as const,
+            group: "rules" as const,
+            fromSec: Math.min(...ranges.map((range) => range.fromSec)),
+            toSec: Math.max(
+                ...ranges.map((range) =>
+                    typeof range.evidence?.endSec === "number" ? range.evidence.endSec : range.toSec
+                )
+            ),
+            question: `This does not sound like ${owner}. Who is speaking?`,
+            choices,
+            decides: ranges.map((range) => range.id),
+            rules: [MeetingRule.VoiceEmbedding],
+            evidence: { reason: "not-the-seat-person", seatPerson: owner },
+        };
+    });
     const candidates = taken
-        .filter((item) => !askedItems.has(item.id))
+        .filter((item) => !askedItems.has(item.id) && item.evidence?.strangerStretch === undefined)
         .flatMap((item) => {
             // A disagreement about identity needs an answer even on a short line or against the attendance list.
             const conflict = item.evidence?.labelConflict === true;
@@ -2485,9 +2578,9 @@ export function suggestItems(options: {
         });
 
     // Keep the same evidence identity on unasked ranges, so a later answer can improve the whole compatible group.
-    const signatureQuestions = taken.flatMap(
-        (item) => questionFor(item, { ...context, listenBelow: Math.max(0.7, context.listenBelow) }) ?? []
-    );
+    const signatureQuestions = taken
+        .filter((item) => item.evidence?.strangerStretch === undefined)
+        .flatMap((item) => questionFor(item, { ...context, listenBelow: Math.max(0.7, context.listenBelow) }) ?? []);
     for (const question of signatureQuestions) {
         if (question.about !== "speaker" || !question.signature) {
             continue;
@@ -2535,7 +2628,7 @@ export function suggestItems(options: {
         })
         .slice(0, budget);
 
-    for (const question of worth) {
+    for (const question of [...strangerQuestions, ...worth]) {
         if (known.has(questionKey(question))) {
             continue;
         }

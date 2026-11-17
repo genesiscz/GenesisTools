@@ -521,7 +521,7 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
         }
 
         parts.push(whenPart(item));
-        parts.push({ kind: "asks", pieces: askedPieces(item) });
+        parts.push({ kind: "asks", pieces: askedPieces(view ? { ...item, question: view.question } : item) });
 
         if (item.decides.length > 0) {
             const n = item.decides.length;

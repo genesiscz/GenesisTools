@@ -5,10 +5,14 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
+import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
 import { OpenedMeeting } from "../opened-meeting";
+import { questionView } from "../questions";
+import { reviewRow } from "../review-rows";
 import { suggestItems } from "../suggest";
 import { runSuggest } from "../suggest-run";
 import { correctTranscript } from "../transcript-corrections";
+import * as labelers from "./index";
 import { mergeLineLabels, proposeSpeakerLabels } from "./index";
 import { seatLabeler } from "./seat";
 import type { LabelContext, LineLabel } from "./types";
@@ -229,6 +233,209 @@ describe("seat labeler", () => {
 });
 
 describe("speaker-label integration", () => {
+    test("a stranger stretch asks once, withdraws old seat proposals, and preserves confirmed lines after reopen", async () => {
+        const { store, record, meeting, config } = await runnerFixture({
+            participants: [
+                { name: "Alice Example", self: true, from: ["fixture"] },
+                { name: "Bob Example", from: ["fixture"] },
+            ],
+            seats: { room: ["Alice Example"], remote: [{ name: "Bob Example" }] },
+        });
+        meeting.transcript = [0, 10, 20, 30].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "Yes." }));
+        await store.update(record.id, { command: "fixture", change: "old proposals" }, (current) => {
+            current.items.push(
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    fromSec: 0,
+                    toSec: 30,
+                    speaker: "Alice Example",
+                    confidence: 0.95,
+                    status: "suggested",
+                    rules: [MeetingRule.Attendance],
+                    suggestedAt: START,
+                },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    fromSec: 20,
+                    toSec: 20,
+                    speaker: "Bob Example",
+                    confidence: 1,
+                    status: "confirmed",
+                    rules: [],
+                    suggestedAt: START,
+                }
+            );
+        });
+        const labels: LineLabel[] = [0, 1, 2].map((index) => ({
+            labeler: "voice",
+            index,
+            seat: "mic",
+            reason: "not-the-seat-person",
+            score: 0.2,
+            next: { person: "Alice Example", score: 0.2 },
+        }));
+        spies.push(spyOn(labelers, "proposeSpeakerLabels").mockResolvedValue(labels));
+        const confirmed = structuredClone(store.read(record.id)!.items.find((item) => item.id === "i2"));
+        const first = await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        expect(first.retired).toContain("i1");
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        const asked = reopened.items.filter((item) => item.kind === "question");
+        expect(asked).toHaveLength(1);
+        expect(asked[0]).toMatchObject({
+            about: "speaker",
+            status: "suggested",
+            fromSec: 0,
+            toSec: 20,
+            question: "This does not sound like Alice Example. Who is speaking?",
+            choices: ["Alice Example", "Bob Example"],
+        });
+        const ranges = reopened.items.filter((item) => asked[0]!.decides.includes(item.id));
+        expect(ranges).toHaveLength(2);
+        expect(ranges.every((item) => item.kind === "speaker-range" && !item.speaker)).toBe(true);
+        expect(reopened.items.find((item) => item.id === "i2")).toEqual(confirmed);
+        const corrected = correctTranscript({
+            record: reopened,
+            transcript: meeting.transcript,
+            config,
+            format: "txt",
+            withSuggested: true,
+        });
+        expect(
+            corrected.entries
+                .slice(0, 2)
+                .every((entry) => entry.speaker !== "Alice Example" && entry.speaker !== "Bob Example")
+        ).toBe(true);
+        expect(corrected.entries[2]?.speaker).toBe("Bob Example");
+        expect(corrected.entries[3]?.speaker).toBe("Alice Example");
+        const second = await runSuggest({ store, record: reopened, rules: ["speakers"] });
+        expect(second.fresh).toEqual([]);
+        expect(second.retired).toEqual([]);
+        expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(reopened.items);
+    });
+
+    test("a voice goodbye reaches the departure reason in the suggestion pass", async () => {
+        const { record, meeting } = await runnerFixture({
+            participants: [{ name: "Alice Example", self: true, from: ["fixture"] }],
+        });
+        meeting.transcript = [
+            { speaker: "Speaker 1", startSec: 0, text: "Goodbye, I have to go now." },
+            { speaker: "Speaker 1", startSec: 60, text: "We continue our discussion." },
+        ];
+        const fresh = suggestItems({
+            record,
+            meeting,
+            rules: ["speakers"],
+            now: START,
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            evidence: { segments: [{ startSec: 0, endSec: 70, channel: "system" }], speaking: [], files: [] },
+            presence: ["Bob Example", "Carol Example"].map((name) => ({
+                name,
+                fromSec: 0,
+                toSec: 100,
+                leftAtExact: false,
+            })),
+            labels: [{ labeler: "voice", index: 0, seat: "call", person: "Bob Example", score: 0.81, reason: "named" }],
+        });
+        expect(
+            fresh.some(
+                (item) =>
+                    item.evidence?.departure &&
+                    typeof item.evidence.departure === "object" &&
+                    "reason" in item.evidence.departure &&
+                    item.evidence.departure.reason === "voice"
+            )
+        ).toBe(true);
+    });
+
+    test("voice names carry their source and score through transcript, rows and listen; human names do not", async () => {
+        const { record, meeting, config } = await runnerFixture();
+        meeting.transcript = [0, 10].map((startSec) => ({
+            speaker: "Speaker 1",
+            startSec,
+            text: "We should decide what to do next.",
+        }));
+        const fresh = suggestItems({
+            record,
+            meeting,
+            rules: ["speakers"],
+            now: START,
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            labels: [0, 1].map((index) => ({
+                labeler: "voice",
+                index,
+                seat: "call",
+                person: "Bob Example",
+                score: 0.81,
+                reason: "named",
+            })),
+        });
+        record.items.push(...fresh);
+        const corrected = correctTranscript({
+            record,
+            transcript: meeting.transcript,
+            config,
+            format: "txt",
+            withSuggested: true,
+        });
+        expect(corrected.entries[0]).toMatchObject({ nameSource: "voice", nameScore: 0.81 });
+        expect(transcriptTextLines(groupTurns(corrected.entries), true).join("\n")).toContain("by voice 0.81");
+        expect(transcriptMarkdown(groupTurns(corrected.entries), true)).toContain("by voice 0.81");
+        const range = record.items.find((item) => item.kind === "speaker-range")!;
+        expect(reviewRow(record, range).what).toContain("by voice 0.81");
+        const question = {
+            id: "i90",
+            kind: "question" as const,
+            about: "speaker" as const,
+            status: "suggested" as const,
+            fromSec: 0,
+            toSec: 10,
+            question: "Who speaks?",
+            choices: ["Bob Example", "Alice Example"],
+            decides: [range.id],
+            rules: [],
+            suggestedAt: START,
+        };
+        record.items.push(question);
+        expect(questionView(record, question, corrected.entries, 240).question).toContain("by voice 0.81");
+        expect(reviewRow(record, question, corrected.entries).parts).toContainEqual(
+            expect.objectContaining({
+                kind: "asks",
+                pieces: expect.arrayContaining([
+                    expect.objectContaining({ text: expect.stringContaining("by voice 0.81") }),
+                ]),
+            })
+        );
+        range.status = "confirmed";
+        const human = correctTranscript({
+            record,
+            transcript: meeting.transcript,
+            config,
+            format: "txt",
+            withSuggested: true,
+        });
+        expect(human.entries[0]?.nameSource).toBeUndefined();
+        expect(
+            correctTranscript({ record, transcript: meeting.transcript, config, format: "txt" }).entries[1]?.nameSource
+        ).toBeUndefined();
+        record.speakers.assignments = [
+            { id: "a1", label: "Speaker 1", fromSec: 10.2, toSec: 10.2, person: "Carol Example", at: START },
+        ];
+        const assigned = correctTranscript({
+            record,
+            transcript: meeting.transcript,
+            config,
+            format: "txt",
+            withSuggested: true,
+        });
+        expect(assigned.entries[1]?.nameSource).toBeUndefined();
+    });
+
     test("the registry reads channels and seat attendance, respects seat times, and honors disabled labelers", async () => {
         const { opened, meeting, config } = await runnerFixture({
             seats: { room: ["Alice Example"], remote: [{ name: "Bob Example", fromSec: 15 }] },
