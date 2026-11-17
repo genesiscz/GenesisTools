@@ -51,6 +51,17 @@ export type MeetingCreator = (typeof MEETING_CREATORS)[number];
 
 const isoTime = z.string().min(1);
 
+const staySourceSchema = z.enum([
+    "attendance",
+    "indicator",
+    "platform-roster",
+    "greeting",
+    "goodbye",
+    "silence",
+    "phone",
+    "hand",
+]);
+
 const participantSchema = z.object({
     name: z.string().min(1),
     self: z.boolean().optional(),
@@ -60,16 +71,8 @@ const participantSchema = z.object({
             z.object({
                 fromSec: z.number().nonnegative(),
                 toSec: z.number().nonnegative().optional(),
-                source: z.enum([
-                    "attendance",
-                    "indicator",
-                    "platform-roster",
-                    "greeting",
-                    "goodbye",
-                    "silence",
-                    "phone",
-                    "hand",
-                ]),
+                source: staySourceSchema,
+                leaveSource: staySourceSchema.optional(),
                 confidence: z.number().min(0).max(1).optional(),
             })
         )
