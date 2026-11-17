@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 
@@ -24,6 +25,33 @@ export const GENESIS_MARKDOWN_BUNDLE_ID = "dev.foltyn.genesis.markdown";
 /** Build manifest and prompt stamps; the bundle itself lives in ~/Applications. */
 export function genesisAppDir(): string {
     return genesisToolsDir("app");
+}
+
+/** A rule of the app's Swift that callers must know about before they rely on it (app.ts `APP_ACCEPTS` says each). */
+export type AppCapability = "launcher-config";
+
+/**
+ * Whether the installed GenesisTools.app accepts `capability`, from the manifest its build wrote: `undefined` when no
+ * build is installed (or the manifest is unreadable), `false` when the build predates the capability. Any worktree
+ * can replace the install with its own build, while `tools` runs the main checkout, so a caller asks before it sends
+ * something an older build refuses (2026-11-18 00:24: a worktree build without the `--config=` rule replaced the
+ * install, and every `tools` start could only be allowed once).
+ */
+export function installedAppAccepts(capability: AppCapability): boolean | undefined {
+    const path = join(genesisAppDir(), "manifest.json");
+
+    try {
+        const manifest: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+
+        if (typeof manifest !== "object" || manifest === null) {
+            return undefined;
+        }
+
+        const accepts = "accepts" in manifest ? manifest.accepts : undefined;
+        return Array.isArray(accepts) && accepts.includes(capability);
+    } catch {
+        return undefined;
+    }
 }
 
 /** The installed bundle, in the app home (`env.tools.getAppHome()`), never in a GENESIS_TOOLS_HOME sandbox. */

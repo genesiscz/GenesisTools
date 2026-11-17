@@ -6,10 +6,13 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
+import { launcherConfigArgs, launcherConfigFlag, launcherConfigForSavedCommand } from "../bun/launcher-config";
+import { shellCommandLine } from "../shell/quote";
 import {
     describeResponsibleIdentity,
     GENESIS_APP_BUNDLE_ID,
     genesisAppLauncher,
+    installedAppAccepts,
     isRunningUnderGenesisApp,
     responsibleIdentity,
     wrapWithGenesisApp,
@@ -328,6 +331,46 @@ describe("nativeInboxState", () => {
             expect(writeNativeInboxStateFile(installed, path)).toBe(false);
             expect(writeNativeInboxStateFile(none, path)).toBe(true);
             expect(SafeJSON.parse(readFileSync(path, "utf8")).installed).toBe(false);
+        });
+    });
+});
+
+// 2026-11-18 00:24: a worktree's build without the `--config=` rule replaced the install, and every `tools` start
+// from the main checkout could only be allowed once. Callers now ask the installed build's manifest first.
+describe("what the installed app accepts", () => {
+    async function withManifest(manifest: object | undefined, run: () => void): Promise<void> {
+        const home = mkdtempSync(join(tmpdir(), "gt-app-accepts-"));
+
+        if (manifest) {
+            mkdirSync(join(home, ".genesis-tools", "app"), { recursive: true });
+            writeFileSync(join(home, ".genesis-tools", "app", "manifest.json"), SafeJSON.stringify(manifest));
+        }
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, run);
+    }
+
+    const saved = shellCommandLine(["/opt/bun", launcherConfigFlag(), "run", "/repo/poll daemon.ts"]);
+
+    it("an older build gets no --config=, from a direct start or a saved daemon command", async () => {
+        await withManifest({ builtAt: "2026-11-17T23:24:33Z", parts: ["hub"] }, () => {
+            expect(installedAppAccepts("launcher-config")).toBe(false);
+            expect(launcherConfigArgs()).toEqual([]);
+            expect(launcherConfigForSavedCommand(saved)).toBe(
+                shellCommandLine(["/opt/bun", "run", "/repo/poll daemon.ts"])
+            );
+        });
+    });
+
+    it("a build that accepts it, or no build at all, keeps the flag", async () => {
+        await withManifest({ accepts: ["launcher-config"] }, () => {
+            expect(installedAppAccepts("launcher-config")).toBe(true);
+            expect(launcherConfigArgs()).toEqual([launcherConfigFlag()]);
+            expect(launcherConfigForSavedCommand(saved)).toBe(saved);
+        });
+
+        await withManifest(undefined, () => {
+            expect(installedAppAccepts("launcher-config")).toBeUndefined();
+            expect(launcherConfigArgs()).toEqual([launcherConfigFlag()]);
         });
     });
 });

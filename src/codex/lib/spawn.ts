@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { assignedSessionId } from "@genesiscz/utils/agent/host";
-import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
+import { launcherConfigArgs } from "@genesiscz/utils/bun/launcher-config";
 import { env } from "@genesiscz/utils/env";
 import { type CheckoutKind, checkoutKindSync } from "@genesiscz/utils/git/worktree";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -383,7 +383,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpa
     const proc = (() => {
         try {
             return Bun.spawn({
-                cmd: [process.execPath, launcherConfigFlag(), daemonEntry, "--name", options.name],
+                cmd: [process.execPath, ...launcherConfigArgs(), daemonEntry, "--name", options.name],
                 cwd,
                 env: {
                     ...env.getProcessEnv(),

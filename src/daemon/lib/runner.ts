@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
+import { launcherConfigForSavedCommand } from "@genesiscz/utils/bun/launcher-config";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -153,7 +154,7 @@ export async function runTask(
         ...(context.scheduledFor ? { scheduledFor: context.scheduledFor.toISOString() } : {}),
     });
 
-    const argv = taskArgv(task.command, context.priority);
+    const argv = taskArgv(launcherConfigForSavedCommand(task.command), context.priority);
     logger.info(
         { task: task.name, attempt, timeoutMs, logFile, reason: context.reason, priority: context.priority },
         "[daemon] spawning task process"
