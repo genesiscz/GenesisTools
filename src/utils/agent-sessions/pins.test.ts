@@ -258,9 +258,10 @@ describe("the T3 Code thread of a session", () => {
     });
 
     test("a Codex session T3 Code runs is found in T3 Code's state, with no pin at all", async () => {
-        const home = await mkdtemp(join(tmpdir(), "gt-t3-codex-"));
-        await mkdir(join(home, "userdata"));
-        const db = new Database(join(home, "userdata", "statev2.sqlite"));
+        // Under the suite's own temporary home, which afterEach removes even when an assertion fails.
+        const t3 = join(home, "t3-home");
+        await mkdir(join(t3, "userdata"), { recursive: true });
+        const db = new Database(join(t3, "userdata", "statev2.sqlite"));
         db.exec("CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, payload_json TEXT)");
         db.exec("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT)");
         db.query("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?)").run(
@@ -270,10 +271,10 @@ describe("the T3 Code thread of a session", () => {
         db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run("mcp:launch:codex-thread", "{}");
         db.close();
 
-        expect(await t3ThreadOfSession("codex-session", home)).toBe("mcp:launch:codex-thread");
+        expect(await t3ThreadOfSession("codex-session", t3)).toBe("mcp:launch:codex-thread");
         // The same session resumed later in a terminal pins again with no host: T3 Code no longer runs it.
         await recordPin(pin({ sessionId: "codex-session", provider: "codex", at: 4_000 }));
-        expect(await t3ThreadOfSession("codex-session", home)).toBeUndefined();
+        expect(await t3ThreadOfSession("codex-session", t3)).toBeUndefined();
     });
 
     test("the desktop link keeps the thread id percent-encoded as T3 Code prints it", () => {
