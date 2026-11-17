@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { appPathForBundleId } from "@genesiscz/utils/macos/launch-services";
+import { appPathForBundleIdAsync } from "@genesiscz/utils/macos/launch-services";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -32,6 +32,7 @@ export interface T3ThreadPlace {
 }
 
 interface PlaceRow {
+    threadId: string;
     title: string | null;
     archivedAt: string | null;
     deletedAt: string | null;
@@ -64,16 +65,22 @@ export function t3ThreadDesktopLink({ environmentId, threadId }: { environmentId
 }
 
 /**
- * One thread's title, archive and delete marks, and whether a run is live, from T3 Code's state database. Opened
- * read-only with `query_only` and a busy budget, never immutable (the server writes it live, in WAL mode). A missing
- * file, a lock, a changed schema or an unknown thread answer undefined, logged, never a guess.
+ * Each thread's title, archive and delete marks, and whether a run is live, from T3 Code's state database, in one
+ * open and one query for the whole list. Opened read-only with `query_only` and a busy budget, never immutable (the
+ * server writes it live, in WAL mode). A missing file, a lock or a changed schema answer an empty map, logged; an
+ * unknown thread is absent. Never a guess.
  */
-export function readT3ThreadPlace(threadId: string, homeDir: string): T3ThreadPlace | undefined {
+export function readT3ThreadPlaces(threadIds: readonly string[], homeDir: string): Map<string, T3ThreadPlace> {
     const path = join(homeDir, "userdata", "statev2.sqlite");
+    const places = new Map<string, T3ThreadPlace>();
+
+    if (threadIds.length === 0) {
+        return places;
+    }
 
     if (!existsSync(path)) {
-        log.debug({ path }, "t3code: no T3 Code state database for the thread place");
-        return undefined;
+        log.debug({ path }, "t3code: no T3 Code state database for the thread places");
+        return places;
     }
 
     return prof.measure("t3code.threadPlace", () => {
@@ -84,42 +91,58 @@ export function readT3ThreadPlace(threadId: string, homeDir: string): T3ThreadPl
             db.exec(`PRAGMA busy_timeout = ${LOOKUP_BUDGET_MS}`);
             db.exec("PRAGMA query_only = ON");
             const states = LIVE_RUN_STATES.map(() => "?").join(", ");
-            const row = db
+            const wanted = [...new Set(threadIds)];
+            const rows = db
                 .query<PlaceRow, string[]>(
-                    `SELECT json_extract(t.payload_json, '$.title') AS title,
+                    `SELECT t.thread_id AS threadId,
+                            json_extract(t.payload_json, '$.title') AS title,
                             json_extract(t.payload_json, '$.archivedAt') AS archivedAt,
                             json_extract(t.payload_json, '$.deletedAt') AS deletedAt,
                             EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r
                                      WHERE r.thread_id = t.thread_id AND r.status IN (${states})) AS live
                        FROM orchestration_v2_projection_threads t
-                      WHERE t.thread_id = ?`
+                      WHERE t.thread_id IN (${wanted.map(() => "?").join(", ")})`
                 )
-                .get(...LIVE_RUN_STATES, threadId);
+                .all(...LIVE_RUN_STATES, ...wanted);
 
-            if (!row) {
-                log.debug({ path, threadId }, "t3code: the state database does not know the thread");
-                return undefined;
+            for (const row of rows) {
+                places.set(row.threadId, {
+                    threadId: row.threadId,
+                    title: row.title || null,
+                    archived: Boolean(row.archivedAt),
+                    deleted: Boolean(row.deletedAt),
+                    live: row.live === 1,
+                });
             }
 
-            return {
-                threadId,
-                title: row.title || null,
-                archived: Boolean(row.archivedAt),
-                deleted: Boolean(row.deletedAt),
-                live: row.live === 1,
-            };
+            if (places.size < wanted.length) {
+                log.debug(
+                    { path, asked: wanted.length, known: places.size },
+                    "t3code: the state database does not know every thread"
+                );
+            }
+
+            return places;
         } catch (error) {
-            log.debug({ error, path, threadId }, "t3code: the thread place lookup failed");
-            return undefined;
+            log.debug({ error, path, threads: threadIds.length }, "t3code: the thread place lookup failed");
+            return new Map();
         } finally {
             db?.close();
         }
     });
 }
 
-/** Whether the T3 Code desktop app is installed here (Launch Services, the lookup `open -b` uses). */
-export function t3AppInstalled(): boolean {
-    return appPathForBundleId(T3_APP_BUNDLE_ID) !== null;
+/** One thread's place (`readT3ThreadPlaces` for a single id): undefined when the database does not know it. */
+export function readT3ThreadPlace(threadId: string, homeDir: string): T3ThreadPlace | undefined {
+    return readT3ThreadPlaces([threadId], homeDir).get(threadId);
+}
+
+/**
+ * Whether the T3 Code desktop app is installed here (Launch Services, the lookup `open -b` uses). Asynchronous: the
+ * hub server answers it on its event loop, and the lookup is an osascript start.
+ */
+export async function t3AppInstalled(): Promise<boolean> {
+    return (await appPathForBundleIdAsync(T3_APP_BUNDLE_ID)) !== null;
 }
 
 export type T3AppOpen = { opened: true } | { opened: false; reason: string };
