@@ -544,7 +544,9 @@ describe("toolsets", () => {
             "browser.open": "reversible · user",
             "browser.navigate": "reversible · user",
             "browser.close": "destructive · user",
+            "work.pair": "reversible · user",
             "work.reopen": "reversible · user",
+            "work.sync": "reversible · user",
         });
     });
 

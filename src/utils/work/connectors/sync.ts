@@ -76,7 +76,7 @@ const CONNECTOR_ACTOR = (id: string): Actor => ({
     commitSha: null,
 });
 
-function writePairing(db: Database, deps: SyncDeps, pairing: Pairing): void {
+function writePairing(db: Database, deps: Pick<SyncDeps, "now">, pairing: Pairing): void {
     applyChange(db, {
         v: 1,
         ts: deps.now(),
@@ -428,6 +428,48 @@ export async function pullRemote(
     });
 
     return report;
+}
+
+/** `pair <ref> <connector> <key>`: one more pairing row on a local item; the next push brings the label outside. */
+export function pairItem(
+    deps: Pick<SyncDeps, "db" | "now">,
+    item: ItemId,
+    connector: string,
+    remoteKey: string,
+    state: Pairing["state"] = "pending"
+): Pairing {
+    const pairing: Pairing = {
+        item,
+        connector,
+        remoteKey,
+        born: "local",
+        origin: originFor("local"),
+        state,
+        updatedTs: deps.now(),
+    };
+    inTransaction(deps.db, () => writePairing(deps.db, deps, pairing));
+    return pairing;
+}
+
+/** `unpair <ref> <connector>`: the pairing row goes; nothing changes outside. */
+export function unpairItem(deps: Pick<SyncDeps, "db" | "now">, item: ItemId, connector: string): boolean {
+    const had = selectPairings(deps.db, { item, connector }).length > 0;
+
+    if (had) {
+        inTransaction(deps.db, () =>
+            applyChange(deps.db, {
+                v: 1,
+                ts: deps.now(),
+                item,
+                actor: CONNECTOR_ACTOR(connector),
+                kind: "unpaired",
+                payload: { connector },
+                origin: { via: "connector", id: connector },
+            })
+        );
+    }
+
+    return had;
 }
 
 export { asItemId };

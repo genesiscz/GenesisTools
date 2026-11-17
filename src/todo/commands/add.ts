@@ -185,6 +185,10 @@ export function createAddCommand(): Command {
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
                 const result = await syncTodo({ store, todo, target, calendarName: opts.calendar });
+                if (result.reminders?.ok) {
+                    // The store keeps the pairing too, so the reminders connector and the sync see it (work-items P5).
+                    await store.recordPairing(todo.id, "reminders", result.reminders.id);
+                }
                 report = buildSyncReport(result, todo.id);
                 todo = (await store.get(todo.id)) ?? todo;
             }

@@ -316,6 +316,29 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
                 return lines;
             },
         }),
+        pair: defineFormatter<WorkResults["pair"]>({
+            text: (d) => [
+                `${d.pairing.item}  ${d.pairing.connector}  ${d.pairing.remoteKey}`,
+                `push: ${d.push.pushed} pushed, ${d.push.held} held, ${d.push.failed} failed`,
+            ],
+        }),
+        unpair: defineFormatter<WorkResults["unpair"]>({
+            text: (d) => [d.removed ? "pairing removed" : "no such pairing"],
+        }),
+        pull: defineFormatter<WorkResults["pull"]>({
+            text: (d) => [
+                `made ${d.made.length}${d.made.length > 0 ? `: ${d.made.join(", ")}` : ""}`,
+                `updated ${d.updated.length}${d.updated.length > 0 ? `: ${d.updated.join(", ")}` : ""}`,
+                `drift ${d.drift.length}${d.drift.length > 0 ? `: ${d.drift.join(", ")}` : ""}`,
+            ],
+        }),
+        sync: defineFormatter<WorkResults["sync"]>({
+            text: (d) => [
+                d.skipped !== undefined
+                    ? `skipped: ${d.skipped} (another runner holds the lease)`
+                    : `${d.pushed} pushed, ${d.held} held, ${d.failed} failed`,
+            ],
+        }),
         batch: defineFormatter<Reply<unknown>[]>({
             text: (replies) => replies.map((r, i) => `${i + 1}. ${r.verb}: ${r.ok ? "ok" : "failed"}`),
         }),

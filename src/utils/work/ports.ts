@@ -1,7 +1,9 @@
 /**
  * What the work package needs from tool code. `src/work/adapters/` implements these; the package imports no `@app/*`.
  */
+import type { SyncDeps } from "./connectors/sync";
 import type { WorkerStamp } from "./model/item";
+import type { RuleLayerInput } from "./rules/resolve";
 
 export interface DeliveryReceipt {
     outcome: "delivered" | "queued" | "nobody-alive" | "unknown";
@@ -63,4 +65,12 @@ export interface LegacyHandoffs {
 export interface LineageResolver {
     /** Session ids of the caller's lead (a T3 parent thread's session, for one). Empty when none is known. */
     leadSessions(input: { sessionId: string | null; parentThreadId: string | null }): Promise<string[]>;
+}
+
+/**
+ * The connector table and its config, as the sync needs them for one project. The tool side owns the table (a new
+ * connector is one folder there); the library runs the pairings, the push and the pull through it.
+ */
+export interface ConnectorPort {
+    syncDeps(project: string, layers: readonly RuleLayerInput[]): SyncDeps;
 }

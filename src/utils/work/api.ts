@@ -228,6 +228,50 @@ export const workMethods = {
         reaches: ["user"],
         doc: "Reopen a done or dropped item and tell its worker, with a delivery receipt.",
     }),
+    pair: defineMethod({
+        name: "pair",
+        params: z.object({
+            ref,
+            connector: z.string().min(1).describe("a connector id: reminders, tracker"),
+            key: z.string().min(1).describe("the outside item's key"),
+        }),
+        result: z.unknown(),
+        resultName: `${reply}, data: { pairing, push: { pushed, held, failed } }`,
+        effect: "reversible",
+        reaches: ["user"],
+        doc: "Pair a local item with an outside one; the label is pushed at once. Nothing moves.",
+    }),
+    unpair: defineMethod({
+        name: "unpair",
+        params: z.object({ ref, connector: z.string().min(1) }),
+        result: z.unknown(),
+        resultName: `${reply}, data: { removed }`,
+        effect: "reversible",
+        doc: "Remove the pairing of an item with one connector; the outside item stays as it is.",
+    }),
+    pull: defineMethod({
+        name: "pull",
+        params: z.object({
+            connector: z.string().min(1),
+            keys: z.array(z.string().min(1)).min(1).describe("outside keys, comma-separated on the CLI"),
+            project: z.string().optional().describe("the project a new item goes into; default the current one"),
+        }),
+        result: z.unknown(),
+        resultName: `${reply}, data: { made, updated, drift }`,
+        effect: "reversible",
+        doc: "Read outside items: an unknown one becomes a local item born outside, a known one brings its facts.",
+    }),
+    sync: defineMethod({
+        name: "sync",
+        params: z.object({
+            release: z.string().optional().describe("push this item's held change now"),
+        }),
+        result: z.unknown(),
+        resultName: `${reply}, data: { pushed, held, failed, skipped?, cursor }`,
+        effect: "reversible",
+        reaches: ["user"],
+        doc: "One pass of the sync consumer under its lease, or --release <ref> for a held change.",
+    }),
     handoff: defineMethod({
         name: "handoff",
         params: z.object({
@@ -286,4 +330,7 @@ export const WORK_CLI_POSITIONAL: Partial<Record<WorkMethodName, readonly string
     log: ["ref"],
     reopen: ["ref"],
     handoff: ["title"],
+    pair: ["ref", "connector", "key"],
+    unpair: ["ref", "connector"],
+    pull: ["connector", "keys"],
 };

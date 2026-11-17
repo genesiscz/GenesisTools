@@ -1,11 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
+import { callWork, type WorkSession } from "../handlers";
 import type { Actor, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
 import { type WorkContext, write } from "../service";
 import { openWorkDb } from "../store/db";
 import { selectItem, selectPairings } from "../store/rows";
+import { connectorConfigOf } from "./config";
 import { type ConnectorConfig, pullRemote, releaseHeld, runSyncOnce, type SyncDeps } from "./sync";
 import type { Connector, PushIntent, RemoteItem } from "./types";
 
@@ -102,7 +104,7 @@ afterEach(() => {
     db.close();
 });
 
-async function spot(sessionId: string, type: "bug" | "epic", title = "x"): Promise<ItemId> {
+async function spot(sessionId: string, type: "bug" | "epic" | "task", title = "x"): Promise<ItemId> {
     const reply = await write(ctx(sessionId), { verb: "spot", title, type, fields: {} });
     return reply.ok ? reply.data.items[0].id : asItemId("none");
 }
@@ -156,5 +158,68 @@ describe("the sync consumer", () => {
         expect(selectItem(db, local)?.title).toBe("renamed outside");
         expect(selectItem(db, local)?.state).toBe("open");
         expect(selectPairings(db, { item: local })[0]).toMatchObject({ state: "drift" });
+    });
+});
+
+describe("the connector config", () => {
+    test("a later layer wins key by key; settings and push merge; an unnamed connector is null", () => {
+        const { config } = connectorConfigOf(
+            [
+                { layer: "config.global", rules: { connectors: { fake: { enabled: true, settings: { a: 1 } } } } },
+                {
+                    layer: "config.project",
+                    rules: {
+                        connectors: { fake: { settings: { b: 2 }, createTypes: ["bug"], push: { bug: ["owner"] } } },
+                    },
+                },
+            ],
+            "fake"
+        );
+        expect(config?.enabled).toBe(true);
+        expect(config?.settings).toEqual({ a: 1, b: 2 });
+        expect(config?.createTypes).toEqual(["bug"]);
+        expect(config?.push("bug")).toEqual(["owner"]);
+        expect(config?.push("task")).toBeUndefined();
+        expect(connectorConfigOf([], "fake").config).toBeNull();
+    });
+});
+
+describe("the connector methods", () => {
+    function session(withPort: boolean): WorkSession {
+        const base = ctx("s1");
+        return {
+            ctx: withPort ? { ...base, ports: { ...base.ports, connectors: { syncDeps: () => deps() } } } : base,
+            call: {},
+            alive: async () => null,
+            context: async () => {
+                throw new Error("not used");
+            },
+        };
+    }
+
+    test("pair records the pairing and pushes the label at once; unpair removes it; sync runs one pass", async () => {
+        const id = await spot("s1", "task");
+        const paired = await callWork("pair", { ref: id, connector: "fake", key: "R-77" }, session(true));
+        expect(paired.ok).toBe(true);
+        expect(fake.pushed.map((p) => p.labels)).toEqual([[`gt/pm/m-App/${id}`]]);
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ remoteKey: "R-77", state: "in-sync" });
+
+        const sync = await callWork("sync", {}, session(true));
+        expect(sync.ok && sync.data).toMatchObject({ failed: 0 });
+
+        const removed = await callWork("unpair", { ref: id, connector: "fake" }, session(true));
+        expect(removed.ok && removed.data).toEqual({ removed: true });
+        expect(selectPairings(db, { item: id })).toHaveLength(0);
+    });
+
+    test("a door with no connectors, an unknown connector and an unknown item are refused", async () => {
+        const id = await spot("s1", "task");
+        const none = await callWork("sync", {}, session(false));
+        expect(none.ok ? "" : none.diagnostics[0].code).toBe("CONNECTORS_MISSING");
+        const unknown = await callWork("pull", { connector: "nope", keys: ["1"] }, session(true));
+        expect(unknown.ok ? "" : unknown.diagnostics[0].code).toBe("UNKNOWN_CONNECTOR");
+        const missing = await callWork("pair", { ref: "w_missing0", connector: "fake", key: "1" }, session(true));
+        expect(missing.ok ? "" : missing.diagnostics[0].code).toBe("NOT_FOUND");
+        expect(id).toMatch(/^w_/);
     });
 });
