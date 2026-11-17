@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { endianness, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -27,7 +27,14 @@ export async function toFloat32Audio(input: Buffer | string): Promise<Float32Arr
 /** Decode a short source-clock window directly into memory, without temporary audio files. */
 export async function toFloat32AudioWindow(
     inputPath: string,
-    options: { fromSec: number; toSec: number; tracks?: number; channel?: 0 | 1; signal?: AbortSignal }
+    options: {
+        fromSec: number;
+        toSec: number;
+        tracks?: number;
+        channel?: 0 | 1;
+        signal?: AbortSignal;
+        decoderThreads?: number;
+    }
 ): Promise<Float32Array> {
     const duration = options.toSec - options.fromSec;
     const tracks = options.tracks ?? 1;
@@ -42,6 +49,12 @@ export async function toFloat32AudioWindow(
         tracks > 64
     ) {
         throw new RangeError("Audio window needs a nonnegative start, at most 60 seconds and 1–64 tracks");
+    }
+    if (
+        options.decoderThreads !== undefined &&
+        (!Number.isInteger(options.decoderThreads) || options.decoderThreads < 1)
+    ) {
+        throw new RangeError("Decoder threads must be a positive integer");
     }
     options.signal?.throwIfAborted();
     const filters = Array.from({ length: tracks }, (_, index) => `[0:a:${index}]${CONTAINER_CLOCK_FILTER}[a${index}]`);
@@ -58,10 +71,14 @@ export async function toFloat32AudioWindow(
             "-nostdin",
             "-ss",
             String(options.fromSec),
+            ...(options.decoderThreads === undefined ? [] : ["-threads", String(options.decoderThreads)]),
             "-i",
             inputPath,
             "-filter_complex",
             filters.join(";"),
+            ...(options.decoderThreads === undefined
+                ? []
+                : ["-filter_complex_threads", String(options.decoderThreads)]),
             "-map",
             "[out]",
             "-t",
@@ -104,6 +121,9 @@ export async function toFloat32AudioWindow(
     options.signal?.throwIfAborted();
     if (code !== 0 || bytes.byteLength % 4 !== 0) {
         throw new Error(`Audio window decode failed (exit ${code}): ${stderr.slice(-1500)}`);
+    }
+    if (endianness() === "LE") {
+        return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
     }
     const samples = new Float32Array(bytes.byteLength / 4);
     for (let index = 0; index < samples.length; index++) {
