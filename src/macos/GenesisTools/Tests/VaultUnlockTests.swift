@@ -528,6 +528,63 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(bare.onceOnlyReason, "extra code may be loaded")
     }
 
+    // Decision 61 (2026-11-17): a preload of the working folder's bunfig.toml can delete its file and move to a quiet
+    // folder before the key is asked for. Read at that moment, the process showed no extra code at all.
+    func testABunfigPreloadThatDeletesItselfAndMovesAwayIsStillExtraCode() throws {
+        let bun = NSHomeDirectory() + "/.bun/bin/bun"
+        guard FileManager.default.isExecutableFile(atPath: bun) else { throw XCTSkip("no bun at \(bun)") }
+        let root = ((NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-move-\(UUID().uuidString)") as NSString)
+            .resolvingSymlinksInPath
+        let work = root + "/work", quiet = root + "/quiet", checkout = root + "/checkout"
+        for folder in [work, quiet, checkout + "/src/probe", checkout + "/src/utils/bun"] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let script = checkout + "/src/probe/index.ts"
+        try "await Bun.write(process.argv[2], \"\");\nawait Bun.sleep(15_000);\n"
+            .write(toFile: script, atomically: true, encoding: .utf8)
+        try "import { unlinkSync } from \"node:fs\";\nunlinkSync(\"bunfig.toml\");\nprocess.chdir(\"\(quiet)\");\n"
+            .write(toFile: work + "/hide.ts", atomically: true, encoding: .utf8)
+        let config = checkout + "/" + VaultCaller.ownConfig
+        try "# no preload\n".write(toFile: config, atomically: true, encoding: .utf8)
+
+        func start(_ flags: [String], started: String) throws -> Process {
+            try "preload = [\"./hide.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: bun)
+            process.arguments = flags + [script, started]
+            process.currentDirectoryURL = URL(fileURLWithPath: work)
+            // Only these two, so no inherited NODE_OPTIONS or BUN_OPTIONS of the test run counts as extra code.
+            process.environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin"]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let deadline = Date().addingTimeInterval(15)
+            while !FileManager.default.fileExists(atPath: started), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: started), "bun never started the script")
+            return process
+        }
+
+        let hidden = try start([], started: root + "/started-hidden")
+        defer { hidden.terminate() }
+        let moved = VaultProcess.caller(hidden.processIdentifier)
+        XCTAssertEqual(moved.cwd.map { ($0 as NSString).resolvingSymlinksInPath }, quiet, "the preload moved the process")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work + "/bunfig.toml"), "the preload deleted its file")
+        XCTAssertEqual(moved.injected, [VaultCaller.noConfigFinding])
+        XCTAssertEqual(moved.onceOnlyReason, "extra code may be loaded")
+
+        // With the checkout's own --config= Bun never reads the folder's bunfig.toml, so nothing moved or hid.
+        let pinned = try start(["--config=\(config)"], started: root + "/started-pinned")
+        defer { pinned.terminate() }
+        let clean = VaultProcess.caller(pinned.processIdentifier)
+        XCTAssertEqual(clean.cwd.map { ($0 as NSString).resolvingSymlinksInPath }, work)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: work + "/bunfig.toml"), "the folder's preload never ran")
+        XCTAssertEqual(clean.injected, [])
+        XCTAssertNil(clean.onceOnlyReason)
+    }
+
     func testAConfigFlagReplacesTheWorkingFoldersBunfig() throws {
         let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
         let home = root + "/home", work = root + "/work", checkout = root + "/checkout"

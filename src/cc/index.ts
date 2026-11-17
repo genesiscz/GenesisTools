@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
+import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
 import { out } from "@genesiscz/utils/logger";
 
 const SUBCOMMANDS = new Set([
@@ -45,11 +46,12 @@ if (firstArg === "--readme") {
     process.exit(0);
 }
 
+const bun = ["bun", launcherConfigFlag(), "run", claude];
 const cmd = SUBCOMMANDS.has(firstArg ?? "")
-    ? ["bun", "run", claude, ...args]
+    ? [...bun, ...args]
     : SMART_ALIASES.has(firstArg ?? "")
-      ? ["bun", "run", claude, "start", ...args]
-      : ["bun", "run", claude, "resume", ...args];
+      ? [...bun, "start", ...args]
+      : [...bun, "resume", ...args];
 
 const proc = Bun.spawn({
     cmd,

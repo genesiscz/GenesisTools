@@ -242,6 +242,15 @@ tools ai gate revoke <tool>                        # forget remembered "Always" 
 - A remembered approval ("Always for this program") is for the runtime and the script. Bun and every hard link of it
   are one runtime: the kernel names a running hard link by the path that was looked up last, so a path compare asked
   again for a program that was already approved (2026-11-10).
+- A bun program skips the window (a remembered approval, the command list or the daemon list) only when it was started
+  with `--config=<checkout>/src/utils/bun/launcher.bunfig.toml`, an empty bunfig. Without that flag, Bun runs the
+  `preload` list of the working folder's bunfig.toml, and such a preload can delete its file and change folder before
+  the key is asked for, so the request looks clean (decision 61, 2026-11-17; a real-process test in
+  `VaultUnlockTests` shows it). The `tools` wrapper passes the flag to every tool, and a GenesisTools process that
+  starts bun itself passes `launcherConfigFlag()` (`src/utils/bun/launcher-config.ts`): the usage poll task, the `say`
+  speaker, `tools cc` and the Codex daemon. Only the `--config=<file>` form works: Bun 1.4.2 runs the argument after
+  a bare `--config` as the program. Without the flag, the window says "Extra code may be loaded (bunfig.toml preload
+  (started without --config=, …))" and the approval holds once.
 - Why: DECISION 57 c (2026-11-10). The command never prints the key; the window's job is to decide which program holds
   the key, and for these commands that decision is made once, here.
 

@@ -74,6 +74,9 @@ struct VaultCaller {
     /// worktree loaded that worktree's preloads too, and every T3 session start could only be allowed once).
     static let ownConfig = "src/utils/bun/launcher.bunfig.toml"
 
+    /// What a bun request started without any `--config=` shows as its extra code.
+    static let noConfigFinding = "bunfig.toml preload (started without --config=, so a preload of its folder can hide itself)"
+
     private var supportsRunSubcommand: Bool {
         let name = executable.map { ($0 as NSString).lastPathComponent.lowercased() } ?? ""
         return ["bun", "deno"].contains(name) || name.hasPrefix("gt-")
@@ -203,6 +206,10 @@ struct VaultCaller {
             let startedAt = identity.map { Date(timeIntervalSince1970: TimeInterval($0.startSeconds) + TimeInterval($0.startMicroseconds) / 1_000_000) }
             // Bun reads the last `--config=` file instead of the working folder's; any other one is foreign above.
             let config = leadingFlags.last { flag in flag.flag == "--config" }?.value
+            // Without one, what the folder held at the start is unknown: a preload of its bunfig.toml can delete the
+            // file and `chdir` to a quiet folder before it asks, and the folder read here is the one it moved to
+            // (decision 61, 2026-11-17). The tools wrapper and GenesisTools' own respawns pass the checkout's file.
+            if config == nil { found.append(Self.noConfigFinding) }
             found += Self.untrustedBunfigPreloads(cwd: cwd, home: NSHomeDirectory(),
                                                   xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own,
                                                   startedAt: startedAt, config: config)
