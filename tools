@@ -13,6 +13,7 @@ import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { refreshInstallRecord } from "@genesiscz/utils/install-record";
+import { launcherConfigArgs } from "@genesiscz/utils/bun/launcher-config";
 import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { diagnose } from "./scripts/test-deps";
@@ -259,10 +260,9 @@ async function executeTool(scriptId, scriptArgs) {
     // next argument of a bare `--config` as the program).
     const solidPreload = join(workspaceRoot, "src/utils/bun/preload-solid-scoped.ts");
     const sqliteVecPreload = join(workspaceRoot, "src/utils/search/stores/sqlite-vec-preload.ts");
-    const launcherConfig = join(workspaceRoot, "src/utils/bun/launcher.bunfig.toml");
     const exitCode = await runWithReinstallGuard(
         [
-            `--config=${launcherConfig}`,
+            ...launcherConfigArgs(join(workspaceRoot, "src/utils/bun/launcher.bunfig.toml")),
             "--preload",
             solidPreload,
             "--preload",

@@ -58,6 +58,13 @@ reopened by a worktree build carried that build's `node_modules/.bin` PATH and i
 moved every face onto it. A face whose environment the kernel withholds stays closed, and the build output says so
 ("did not reopen the … face").
 
+**🛑 Any worktree's `bun run app` replaces the install, while `tools` always runs the main checkout.** So a caller never
+sends what an older build refuses: a Swift rule that callers rely on gets a name in `APP_ACCEPTS`
+(`src/macos/lib/permissions/app.ts`), written into the manifest, and the caller asks `installedAppAccepts(<name>)`
+(`src/utils/macos/genesis-app.ts`) first. 2026-11-18 00:24: a worktree build without the `--config=` rule replaced the
+install, and every `tools claude embed`, `tools codex embed`, `tools say` and the usage poll showed a once-only vault
+window until the main checkout's build went back in (`launcherConfigArgs`, `launcherConfigForSavedCommand`).
+
 **Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
 `<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
 (`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,

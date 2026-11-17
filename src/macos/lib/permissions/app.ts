@@ -24,6 +24,7 @@ import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    type AppCapability,
     GENESIS_APP_BUNDLE_ID,
     GENESIS_APP_NAME,
     genesisAppBundlePath,
@@ -166,7 +167,18 @@ export interface AppManifest extends AppSourceInfo {
     teamId?: string;
     /** The optional parts this build links (parts.ts). Absent in builds from before parts existed: every part. */
     parts?: string[];
+    /** What this build's Swift accepts from the processes it starts (`APP_ACCEPTS`). Absent before 2026-11-18. */
+    accepts?: AppCapability[];
 }
+
+/**
+ * Every caller-visible rule the Swift of THIS checkout has, by name. Callers read the installed build's list
+ * (`installedAppAccepts`) and send nothing an older build would refuse: a build from any worktree replaces the
+ * install, while `tools` always runs the main checkout. Add a name in the commit that teaches the Swift the rule.
+ * - `launcher-config`: a bun caller's `--config=<checkout>/src/utils/bun/launcher.bunfig.toml` is the checkout's own
+ *   (VaultUnlock.swift `ownConfig`), and a bun caller without any `--config=` can only be allowed once.
+ */
+export const APP_ACCEPTS: readonly AppCapability[] = ["launcher-config"];
 
 export interface SignatureInfo {
     /** "adhoc" or the certificate authority line */
@@ -1544,6 +1556,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         signedWithHash,
         teamId: signature.teamId,
         parts: [...parts],
+        accepts: [...APP_ACCEPTS],
     };
     await Bun.write(join(staging, "manifest.json"), `${SafeJSON.stringify(manifest, null, 2)}\n`);
 
