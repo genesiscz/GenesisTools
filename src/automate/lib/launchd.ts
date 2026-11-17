@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
 import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import {
     installLaunchd as installAgent,
@@ -23,7 +24,7 @@ export function automateLaunchdOptions(): LaunchdInstallOptions {
 
     return {
         label: LABEL,
-        command: [bunPath, "run", resolve(import.meta.dir, "daemon.ts")],
+        command: [bunPath, launcherConfigFlag(), "run", resolve(import.meta.dir, "daemon.ts")],
         cwd: homedir(),
         logPaths: { stdout: DAEMON_STDOUT_LOG, stderr: DAEMON_STDERR_LOG },
         processType: "Background",
