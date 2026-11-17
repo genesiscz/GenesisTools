@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -254,6 +255,25 @@ describe("the T3 Code thread of a session", () => {
         await recordPin(pin({ sessionId: "s2", host: { kind: "t3" }, at: 3_000 }));
         expect(await t3ThreadOfSession("s2")).toBeUndefined();
         expect(await t3ThreadOfSession("never-pinned")).toBeUndefined();
+    });
+
+    test("a Codex session T3 Code runs is found in T3 Code's state, with no pin at all", async () => {
+        const home = await mkdtemp(join(tmpdir(), "gt-t3-codex-"));
+        await mkdir(join(home, "userdata"));
+        const db = new Database(join(home, "userdata", "statev2.sqlite"));
+        db.exec("CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, payload_json TEXT)");
+        db.exec("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT)");
+        db.query("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?)").run(
+            "mcp:launch:codex-thread",
+            SafeJSON.stringify({ nativeThreadRef: { nativeId: "codex-session" } })
+        );
+        db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run("mcp:launch:codex-thread", "{}");
+        db.close();
+
+        expect(await t3ThreadOfSession("codex-session", home)).toBe("mcp:launch:codex-thread");
+        // The same session resumed later in a terminal pins again with no host: T3 Code no longer runs it.
+        await recordPin(pin({ sessionId: "codex-session", provider: "codex", at: 4_000 }));
+        expect(await t3ThreadOfSession("codex-session", home)).toBeUndefined();
     });
 
     test("the desktop link keeps the thread id percent-encoded as T3 Code prints it", () => {
