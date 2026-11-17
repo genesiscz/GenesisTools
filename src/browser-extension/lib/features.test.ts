@@ -159,6 +159,21 @@ describe("parseForgeUrl", () => {
         expect(parseForgeUrl("javascript:alert(1)")).toBeNull();
     });
 
+    it("keeps the sha of a commit page, and of a GitHub PR commit page", () => {
+        expect(parseForgeUrl("https://gitlab.internal.example/group/app/-/commit/7B8F8C38")).toMatchObject({
+            view: "commit",
+            commit: "7b8f8c38",
+        });
+        expect(parseForgeUrl("https://github.com/o/r/pull/12/commits/0a1b2c3d4e")).toMatchObject({
+            view: "pr",
+            number: 12,
+            commit: "0a1b2c3d4e",
+        });
+        const history = parseForgeUrl("https://github.com/o/r/commits/main");
+        expect(history).toMatchObject({ view: "commit" });
+        expect(history?.commit).toBeUndefined();
+    });
+
     it("the route page's target is the encoded URL the bypass rule and the host see", () => {
         expect(targetFromHash("#https://links.example.test/a%20b")).toBe("https://links.example.test/a%20b");
         expect(targetFromHash("#https://links.example.test/a b?q=1")).toBe("https://links.example.test/a%20b?q=1");
@@ -330,6 +345,37 @@ describe("open in GenesisTools", () => {
         const { deps, calls } = fakeDeps();
         await openInHub(deps, { url: "https://gitlab.internal.example/group/app", branch: "feat/login" });
         expect(calls.hub).toEqual([{ mode: "worktrees", worktree }]);
+    });
+
+    describe("a commit page", () => {
+        const commitPage = "https://gitlab.internal.example/group/app/-/commit/7b8f8c38";
+        const answer = (codes: Record<string, number[]>) => {
+            const left = Object.fromEntries(Object.entries(codes).map(([verb, list]) => [verb, [...list]]));
+            return (argv: string[]) => ({ code: left[argv[3]]?.shift() ?? 1, stdout: "", stderr: "" });
+        };
+
+        it("opens that commit in the checkout's Worktrees diff", async () => {
+            const { deps, calls } = fakeDeps({ run: answer({ "cat-file": [0] }) });
+            const result = await openInHub(deps, { url: commitPage });
+            expect(calls.hub).toEqual([{ commit: "7b8f8c38", repo: root }]);
+            expect(result.detail).toBe(`Asked GenesisTools to show commit 7b8f8c38 in ${root}`);
+            expect(calls.run.map((call) => call.argv[3])).toEqual(["cat-file"]);
+        });
+
+        it("fetches origin once when the checkout lacks the commit", async () => {
+            const { deps, calls } = fakeDeps({ run: answer({ "cat-file": [1, 0], fetch: [0] }) });
+            const result = await openInHub(deps, { url: commitPage });
+            expect(calls.run.map((call) => call.argv[3])).toEqual(["cat-file", "fetch", "cat-file"]);
+            expect(calls.hub).toEqual([{ commit: "7b8f8c38", repo: root }]);
+            expect(result.detail).toContain("(fetched from origin first)");
+        });
+
+        it("opens the worktree and says why when even a fetch does not bring the commit", async () => {
+            const { deps, calls } = fakeDeps({ run: answer({ "cat-file": [1, 1], fetch: [0] }) });
+            const result = await openInHub(deps, { url: commitPage });
+            expect(calls.hub).toEqual([{ mode: "worktrees", worktree: root }]);
+            expect(result.detail).toContain("commit 7b8f8c38 is not in it, even after git fetch origin");
+        });
     });
 
     it("never reaches the hub for a project with no local checkout", async () => {
