@@ -142,6 +142,8 @@ struct WidgetOptionLabel: View {
     var rationale: String? = nil
     /// The decision takes any set of its options: a check box that is ticked while `picked`.
     var multiple = false
+    /// The word beside a picked option: "Staged", or where its send is ("Sending", "Sent"; `WidgetStagePhase.word`).
+    var pickedWord = "Staged"
 
     static let cornerRadius: CGFloat = 8
     /// Where the option's text starts inside the row: the padding, the 20 pt badge and the gap after it. A line that
@@ -177,7 +179,7 @@ struct WidgetOptionLabel: View {
             Spacer(minLength: 0)
             // A set's ticked box already says it; the word stays for a one-letter pick.
             if picked && !multiple {
-                Text("Staged").font(.system(size: 11, weight: .semibold))
+                Text(pickedWord).font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(SessionPalette.blue).padding(.top, 2)
             }
             // Green, because orange already means "waits for you" on the same card.
@@ -218,7 +220,8 @@ struct WidgetItemOptionButton: View {
             chosen()
         } label: {
             WidgetOptionLabel(badge: letter, text: text, picked: picked, recommended: recommended, focused: focused,
-                              multiple: multiple)
+                              multiple: multiple,
+                              pickedWord: model.stagePhase(item.sourceId, draftedAt: item.draftedAt).word)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         .disabled(model.sendingDecisionIDs.contains(item.sourceId) || model.dialogSendingIDs.contains(item.sourceId))

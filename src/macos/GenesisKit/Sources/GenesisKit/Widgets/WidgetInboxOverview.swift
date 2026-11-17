@@ -281,11 +281,12 @@ struct WidgetInboxOverview: View {
         .id(item.id)
     }
 
-    private func stagedLine(_ item: WidgetInboxItem) -> String? {
+    private func stagedLine(_ item: WidgetInboxItem) -> WidgetStageLine? {
         let option = model.shownStagedOption(item.sourceId, stored: item.draftOption)
         let note = model.shownStagedNote(item.sourceId, item.draft)
         guard item.kind == "decision", item.needsAnswer, option != nil || note != nil else { return nil }
-        return WidgetStagedText.line(item, option: option)
+        return WidgetStageLine(phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
+                               pick: WidgetStagedText.line(item, option: option))
     }
 
     /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
@@ -392,8 +393,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
     /// Under its session header: the row does not repeat the session.
     let grouped: Bool
     let sessionTitle: String?
-    /// The staged pick or note of a waiting decision, read from the model by the parent.
-    let stagedLine: String?
+    /// The staged pick or note of a waiting decision with where its send is, read from the model by the parent.
+    let stagedLine: WidgetStageLine?
     let toggle: () -> Void
 
     static func == (a: WidgetInboxOverviewRow, b: WidgetInboxOverviewRow) -> Bool {
@@ -413,8 +414,10 @@ struct WidgetInboxOverviewRow: View, Equatable {
     }
 
     private var labels: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Circle().fill(item.needsAnswer ? Color.orange : SessionPalette.blue)
+        // A decision being sent or sent no longer waits for an answer, though the snapshot still says so for a moment.
+        let waiting = item.needsAnswer && !(stagedLine?.phase.onItsWay ?? false)
+        return HStack(alignment: .top, spacing: 9) {
+            Circle().fill(waiting ? Color.orange : SessionPalette.blue)
                 .frame(width: 7, height: 7).padding(.top, 5)
             Image(systemName: LiveWidgetView.kindSymbol(item.kind)).font(.system(size: 11))
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
@@ -425,11 +428,10 @@ struct WidgetInboxOverviewRow: View, Equatable {
                     WidgetAskedInLine(askedIn)
                 }
                 if let stagedLine {
-                    Text("Staged: " + stagedLine).font(.system(size: 11)).foregroundStyle(SessionPalette.blue)
-                        .lineLimit(1)
+                    stagedLine
                 }
                 HStack(spacing: 4) {
-                    Text(WidgetInboxOverview.kindLabel(item))
+                    Text(waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision")
                     Text("·")
                     // Under its session header the row does not repeat the session.
                     if !grouped {
@@ -437,7 +439,7 @@ struct WidgetInboxOverviewRow: View, Equatable {
                         Text("·")
                     }
                     LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                }.font(.system(size: 11)).foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.secondary)
+                }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
             }
             Spacer(minLength: 4)
             if let count = item.count, count > 1 {

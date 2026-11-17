@@ -15,16 +15,112 @@ enum WidgetStagedText {
     }
 }
 
+/// Where a staged decision is on its way to its session, as every list that shows it says it. The model decides it
+/// (`WidgetModel.stagePhase`) from the send that runs and the hub's answer, never from a timer.
+public enum WidgetStagePhase: Equatable, Sendable {
+    /// Waiting for a Send. `since`: when the pick or note was staged (seconds since 1970), nil from an older hub.
+    /// `unsent`: why the last send did not take it.
+    case staged(since: TimeInterval?, unsent: String?)
+    /// Its send runs now.
+    case sending
+    /// The hub delivered it at `at`; shown until a snapshot no longer lists it as staged.
+    case sent(at: TimeInterval)
+    /// The hub stored the answer at `at`, but no receiver took it (`reason`): it goes with the session's next prompt.
+    case waiting(at: TimeInterval, reason: String)
+
+    /// The word before the pick.
+    public var label: String {
+        switch self {
+        case .staged: return "Staged"
+        case .sending: return "Sending"
+        case .sent: return "Sent"
+        case .waiting: return "Waiting for its session"
+        }
+    }
+
+    /// The one word an option's badge and the staged reminder say: "Staged", "Sending", "Sent", "Waiting".
+    public var word: String {
+        if case .waiting = self { return "Waiting" }
+        return label
+    }
+
+    /// The time the line's age counts from; none while the send runs.
+    public var since: TimeInterval? {
+        switch self {
+        case .staged(let since, _): return since
+        case .sending: return nil
+        case .sent(let at), .waiting(let at, _): return at
+        }
+    }
+
+    /// The sentence under the line: why the last send did not take it, or why the answer waits.
+    public var reason: String? {
+        switch self {
+        case .staged(_, let unsent): return unsent.map { "Not sent: " + $0 }
+        case .waiting(_, let reason): return reason
+        case .sending, .sent: return nil
+        }
+    }
+
+    /// The send took it: it no longer waits for a Send or an answer here.
+    public var onItsWay: Bool {
+        if case .staged = self { return false }
+        return true
+    }
+
+    var color: Color {
+        switch self {
+        case .staged, .sending: return SessionPalette.blue
+        case .sent: return SessionPalette.green
+        case .waiting: return .orange
+        }
+    }
+}
+
+/// A staged decision's state line, one look on every list: "Staged: a) Back both up · just now", "Sending: …",
+/// "Sent: … · just now", "Waiting for its session: …", and under it why the last send did not take it. The age
+/// counts from the stage (or the hub's answer), not from the ask (Martin, 2026-11-17: "it shouldn't show staged 3m
+/// ago since I staged it just now").
+struct WidgetStageLine: View, Equatable {
+    let phase: WidgetStagePhase
+    /// The pick or note, as `WidgetStagedText.line` words it.
+    let pick: String
+    var lineLimit: Int? = 1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(phase.label + ": " + pick).lineLimit(lineLimit)
+                if let since = phase.since {
+                    Text("·")
+                    LiveAgo(date: Date(timeIntervalSince1970: since), style: .brief)
+                }
+            }
+            .foregroundStyle(phase.color)
+            if let reason = phase.reason {
+                Text(reason).foregroundStyle(.orange).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .font(.system(size: 11))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 extension WidgetModel {
     /// The pick a view draws as staged: none while a discard of it waits for its Undo note (`heldDecisionIDs`), so a
-    /// discarded decision does not still read "Staged" elsewhere for those seconds.
+    /// discarded decision does not still read "Staged" elsewhere for those seconds; the pick a send took while the
+    /// hub's answer waits for a snapshot to agree (`sentDecisions`).
     func shownStagedOption(_ sourceId: String, stored: String?) -> String? {
-        heldDecisionIDs.contains(sourceId) ? nil : stagedOption(sourceId, stored: stored)
+        guard !heldDecisionIDs.contains(sourceId) else { return nil }
+        if let sent = sentDecisions[sourceId], sendTookNewest(sourceId) { return sent.option }
+        return stagedOption(sourceId, stored: stored)
     }
 
     /// The staged note a view draws, with the same rule.
     func shownStagedNote(_ sourceId: String, _ draft: String?) -> String? {
-        heldDecisionIDs.contains(sourceId) ? nil : draft
+        guard !heldDecisionIDs.contains(sourceId) else { return nil }
+        if let sent = sentDecisions[sourceId], sendTookNewest(sourceId) { return sent.note }
+        return draft
     }
 
     /// Whether a view draws the decision as staged: its pick or its note, here or in the snapshot, with the same rule.
@@ -56,30 +152,41 @@ struct WidgetStagedChip: View {
         return total + " (" + parts.joined(separator: ", ") + ")"
     }
 
+    /// What the chip says once every staged decision is on its way: "Sending 3 decisions…", then "3 decisions sent".
+    static func onTheirWay(sending: Int, sent: Int) -> String {
+        sending > 0 ? "Sending " + Plural.count(sending + sent, "decision") + "…"
+                    : Plural.count(sent, "decision") + " sent"
+    }
+
     var body: some View {
-        let here = model.sessionStaged.count
-        let all = model.stagedItems.count
-        if all > 0 {
+        // The count and Send take only the decisions no send took yet; one being sent or sent says so instead.
+        let toSend = model.stagedToSend
+        let here = toSend.filter { $0.key == model.selectedKey }
+        let all = model.stagedItems
+        if !all.isEmpty {
             HStack(spacing: 8) {
-                Image(systemName: "tray.and.arrow.up").font(.system(size: 11)).foregroundStyle(SessionPalette.blue)
-                Text(Self.summary(model.stagedItems, here: model.selectedKey) { model.session(forKey: $0)?.title })
+                Image(systemName: toSend.isEmpty ? "paperplane" : "tray.and.arrow.up").font(.system(size: 11))
+                    .foregroundStyle(SessionPalette.blue)
+                Text(toSend.isEmpty
+                    ? Self.onTheirWay(sending: all.filter { model.sendingDecisionIDs.contains($0.sourceId) }.count,
+                                      sent: all.filter { model.sentDecisions[$0.sourceId] != nil }.count)
+                    : Self.summary(toSend, here: model.selectedKey) { model.session(forKey: $0)?.title })
                     .font(.system(size: 11, weight: .medium)).lineLimit(2)
                 Spacer(minLength: 4)
                 // Send skips the review: the same decisions Review and send would list, all of them checked.
-                let ready = here > 0 ? model.sessionStaged : model.stagedItems
-                let sending = ready.allSatisfy { model.sendingDecisionIDs.contains($0.sourceId) }
-                Button(sending ? "Sending…" : "Send") {
+                let ready = here.isEmpty ? toSend : here
+                Button("Send") {
                     model.sendStaged(ready.map(\.sourceId), known: ready)
                 }
                 .buttonStyle(.genHover(accent: SessionPalette.blue)).font(.system(size: 11, weight: .semibold))
-                .disabled(sending)
+                .disabled(ready.isEmpty)
                 .accessibilityIdentifier("widget.staged.send")
-                .instantTooltip(here > 0 && here < all
-                    ? "Sends the \(Plural.count(here, "decision")) staged here now, without the review"
+                .instantTooltip(!here.isEmpty && here.count < toSend.count
+                    ? "Sends the \(Plural.count(here.count, "decision")) staged here now, without the review"
                     : "Sends the staged decisions now, without the review, one message per session")
                 Button("Review and send") {
                     GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                        model.stagedView = here > 0 ? "session" : "all"
+                        model.stagedView = model.sessionStaged.isEmpty ? "all" : "session"
                     }
                 }
                 .buttonStyle(.genHover(accent: SessionPalette.blue)).font(.system(size: 11, weight: .semibold))
@@ -108,7 +215,10 @@ struct WidgetStagedList: View {
 
     private var scopeAll: Bool { model.stagedView == "all" || model.sessionStaged.isEmpty }
     private var items: [WidgetInboxItem] { scopeAll ? model.stagedItems : model.sessionStaged }
-    private var chosen: [WidgetInboxItem] { items.filter { !skipped.contains($0.sourceId) } }
+    /// The checked decisions no send took yet: one being sent or sent shows its state and is not sent again.
+    private var chosen: [WidgetInboxItem] {
+        items.filter { !skipped.contains($0.sourceId) && !model.isOnItsWay($0.sourceId) }
+    }
 
     var body: some View {
         let items = items
@@ -141,13 +251,22 @@ struct WidgetStagedList: View {
                                 .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                         }
                         ForEach(group.items, id: \.sourceId) { item in
-                            WidgetStagedDecisionRow(model: model, item: item, openIDs: $openIDs, checked: Binding(
-                                get: { !skipped.contains(item.sourceId) },
-                                set: { if $0 { skipped.remove(item.sourceId) } else { skipped.insert(item.sourceId) } }))
+                            WidgetStagedDecisionRow(model: model, item: item, openIDs: $openIDs,
+                                checked: model.isOnItsWay(item.sourceId) ? nil : Binding(
+                                    get: { !skipped.contains(item.sourceId) },
+                                    set: { checked in
+                                        if checked {
+                                            skipped.remove(item.sourceId)
+                                        } else {
+                                            skipped.insert(item.sourceId)
+                                        }
+                                    }))
                         }
                     }
                 }
-                Text(chosen.isEmpty ? "Nothing is checked." : WidgetModel.stagedSummary(chosen))
+                let nothingLeft = items.allSatisfy { model.isOnItsWay($0.sourceId) }
+                Text(!chosen.isEmpty ? WidgetModel.stagedSummary(chosen)
+                    : nothingLeft ? "Nothing is left to send." : "Nothing is checked.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     Button("Send \(chosen.count) now") {
@@ -303,8 +422,10 @@ struct WidgetStagedDecisionRow: View {
                     HStack(alignment: .top, spacing: 6) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title).font(.system(size: 12, weight: .medium)).lineLimit(open ? nil : 2)
-                            Text(WidgetStagedText.line(item, option: model.shownStagedOption(item.sourceId, stored: item.draftOption)))
-                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(open ? nil : 2)
+                            WidgetStageLine(phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
+                                            pick: WidgetStagedText.line(item, option: model.shownStagedOption(
+                                                item.sourceId, stored: item.draftOption)),
+                                            lineLimit: open ? nil : 2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)

@@ -150,10 +150,35 @@ public struct WidgetDecisionSendOutcome {
     public var waiting: [(session: String, title: String, reason: String, detail: String?, later: Bool)] = []
     /// The hub's own words for each session whose send threw, as "<title>: <error>".
     public var failures: [String] = []
+    /// The sessions a live receiver took the answers of, and the hub's error for each session whose send threw.
+    public var deliveredSessions: Set<String> = []
+    public var failedSessions: [String: String] = [:]
+    /// Whether the hub listed its sessions; an answer without the list is read by its counts.
+    public var listsSessions = false
+
+    /// What the hub did with one session's answers, for the state each of its decisions shows.
+    public enum SessionResult: Equatable, Sendable {
+        case delivered
+        /// Stored as answered, but no receiver took it: it goes with the session's next prompt, for `reason`.
+        case waiting(reason: String)
+        /// The send threw: the decisions stay staged, for `reason` (the hub's words).
+        case failed(reason: String)
+        /// The hub sent nothing for it (it was no longer staged there).
+        case skipped
+    }
 
     public var queuedSessions: Set<String> { Set(waiting.map(\.session)) }
     /// Every answer reached a live receiver.
     public var delivered: Bool { waiting.isEmpty && failed == 0 && queued == 0 }
+
+    /// What the hub did with the answers of `session` (its id). An answer that lists no sessions says it for the whole
+    /// send: delivered when every answer went out, else nothing per session.
+    public func result(forSession session: String) -> SessionResult {
+        if let error = failedSessions[session] { return .failed(reason: error) }
+        if let entry = waiting.first(where: { $0.session == session }) { return .waiting(reason: entry.reason) }
+        if deliveredSessions.contains(session) { return .delivered }
+        return !listsSessions && delivered ? .delivered : .skipped
+    }
     /// The hub's raw reasons, one line per session, for Details and the log; nil when it gave none.
     public var details: String? {
         let lines = waiting.compactMap { entry in entry.detail.map { "\(entry.title): \($0)" } } + failures
@@ -166,14 +191,20 @@ public struct WidgetDecisionSendOutcome {
         if case .number(let value) = fields["queued"] { queued = Int(value) }
         if case .number(let value) = fields["failed"] { failed = Int(value) }
         guard case .array(let sessions) = fields["sessions"] else { return }
+        listsSessions = true
         for case .object(let entry) in sessions {
             guard case .string(let session) = entry["session"] else { continue }
             let title = titles[session] ?? "the session"
             if case .string(let error) = entry["error"], !error.isEmpty {
                 failures.append("\(title): \(error)")
+                failedSessions[session] = error
                 continue
             }
-            guard case .object(let answer) = entry["result"], answer["delivered"] != .bool(true) else { continue }
+            guard case .object(let answer) = entry["result"] else { continue }
+            guard answer["delivered"] != .bool(true) else {
+                deliveredSessions.insert(session)
+                continue
+            }
             var detail: String?
             if case .string(let text) = answer["detail"], !text.isEmpty { detail = text }
             let later = entry["deliversLater"].map { $0 == .bool(true) } ?? true
