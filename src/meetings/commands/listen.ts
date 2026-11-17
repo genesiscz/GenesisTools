@@ -13,7 +13,12 @@ import {
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
 import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
-import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type DecisionActor,
+    type MeetingRecord,
+    MeetingStore,
+    QUESTION_GROUPS,
+} from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -25,6 +30,7 @@ import { prepareFindings } from "../lib/add-findings";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import { MeetingComments } from "../lib/comments";
+import type { JournalEntry } from "../lib/decision-actions";
 import { callerActor } from "../lib/decision-journal";
 import type { Finding } from "../lib/findings";
 import { personKey, personPresent } from "../lib/listen-answers";
@@ -49,7 +55,9 @@ import { GivenAnswerAdapter } from "../lib/listen-session-answer";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import {
     answerVocabulary,
+    DICTIONARY_CHOICES,
     type HeardContext,
+    heardTimes,
     NONE_OF_THESE,
     openQuestions,
     type QuestionItem,
@@ -59,7 +67,7 @@ import {
 } from "../lib/questions";
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, resolveEnum, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -443,6 +451,7 @@ interface ListenOptions {
     longStretchWords?: string;
     group?: string;
     applyAbove?: string;
+    learn?: string | boolean;
 }
 
 /** `--clip-out <dir>`: the questions' clips as files. No sound, no terminal and no round, so nothing is changed (MC22). */
@@ -493,8 +502,76 @@ class TerminalAdapter implements ListenAdapter {
         }
     ) {}
 
+    /** The dictionary questions of the last answer, asked before anything else (the owner's answer to M5). */
+    private offered: Promise<void> = Promise.resolve();
+
+    /** Waits for the dictionary question of the round's last answer. */
+    async settled(): Promise<void> {
+        await this.offered;
+    }
+
+    /** Asks yes or no at once (Enter is no) for each dictionary question the answer left; a yes adds the word. */
+    private async offerDictionary(label: string): Promise<void> {
+        const { store, meeting } = this.deps;
+        const record = store.read(meeting.id);
+        const answered = record?.items.find((item) => item.id === questionIdOf(record, label));
+
+        if (!record || answered?.kind !== "question") {
+            return;
+        }
+
+        const terms = new Set(answered.decides);
+        const asks = record.items.filter(
+            (item) =>
+                item.kind === "question" &&
+                item.about === "dictionary" &&
+                item.status === "suggested" &&
+                terms.has(String(item.evidence?.item))
+        );
+
+        for (const ask of asks) {
+            if (ask.kind !== "question") {
+                continue;
+            }
+
+            const yes = await p.confirm({ message: ask.question, initialValue: false, cancel: "back" });
+
+            if (p.isCancel(yes)) {
+                ui.dim(`  ${questionLabel(record, ask.id)} stays open: ${TOOL} listen ${meeting.id} --group words`);
+                return;
+            }
+
+            const client = await openMeetingsClient({ role: "listen" });
+
+            try {
+                const result = await client.call("decision.apply", {
+                    meeting: meeting.id,
+                    action: { kind: "answer", question: ask.id, answer: yes ? "add" : "do not add" },
+                });
+                const said = result.warnings?.length ? ` (${result.warnings.join("; ")})` : "";
+                ui.dim(
+                    yes
+                        ? `  added to the ${record.project} dictionary${said} · undo: ${TOOL} reopen ${meeting.id} --token ${result.entry?.token ?? "?"}`
+                        : `  not added to the ${record.project} dictionary`
+                );
+            } finally {
+                client.close();
+            }
+        }
+    }
+
     async ask(asked: AskedQuestion): Promise<ListenOutcome> {
+        await this.offered;
         const { store, meeting, transcript, listen } = this.deps;
+
+        // The dictionary question was answered at once, after its word.
+        if (
+            asked.question.about === "dictionary" &&
+            store.read(meeting.id)?.items.find((item) => item.id === asked.question.id)?.status !== "suggested"
+        ) {
+            return "skip";
+        }
+
         const question =
             asked.question.about === "speaker"
                 ? {
@@ -517,9 +594,21 @@ class TerminalAdapter implements ListenAdapter {
             ...plan,
         });
         const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
+        const words = question.group === "words" && question.about === "term";
         const priority =
-            (view.priority === undefined ? "" : ` · priority ${view.priority}`) +
-            (typeof question.evidence?.reach === "number" ? ` · affects ${question.evidence.reach} ranges` : "");
+            (view.priority === undefined || question.group === "words" ? "" : ` · priority ${view.priority}`) +
+            (words
+                ? ` · heard ${heardTimes(question)} times`
+                : typeof question.evidence?.reach === "number"
+                  ? ` · affects ${question.evidence.reach} ranges`
+                  : "");
+
+        if (words) {
+            ui.dim(
+                `An answer fixes all ${heardTimes(question)}. Then you choose whether the ${asked.record.project ?? "project"} dictionary gets the word.`
+            );
+        }
+
         return await ask({
             question,
             clip,
@@ -539,6 +628,7 @@ class TerminalAdapter implements ListenAdapter {
     }
 
     async confirmLeave(): Promise<boolean> {
+        await this.offered;
         const leave = await p.select({
             cancel: "back",
             message: "Leave this round? The answers are saved; the next listen goes on from here.",
@@ -554,11 +644,22 @@ class TerminalAdapter implements ListenAdapter {
         const { meeting } = this.deps;
 
         if (note.kind === "decided") {
+            const record = this.deps.store.read(meeting.id);
+            const decided = record?.items.find((item) => record && item.id === questionIdOf(record, note.label));
+            const fixed =
+                decided?.kind === "question" && decided.group === "words" && decided.about === "term"
+                    ? ` · ${heardTimes(decided)} places fixed`
+                    : "";
             ui.ok(
                 note.outcome === "skip"
                     ? `${note.label} skipped`
-                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}\n`
+                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}${note.outcome.answer ? fixed : ""}\n`
             );
+
+            if (note.outcome !== "skip" && note.outcome.answer) {
+                const label = note.label;
+                this.offered = this.offered.then(() => this.offerDictionary(label));
+            }
 
             if (note.settled.length > 0) {
                 ui.dim(`  the same answer settled ${note.settled.length} more: ${note.settled.join(" ")}`);
@@ -722,8 +823,8 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
     const group = opts.group ?? (opts.spotCheck ? "spot-check" : opts.longStretchWords ? "long-stretch" : "all");
-    if (!["all", "rules", "spot-check", "long-stretch"].includes(group)) {
-        fail("--group must be rules, spot-check, long-stretch or all");
+    if (![...QUESTION_GROUPS, "all"].includes(group)) {
+        fail(`--group must be ${QUESTION_GROUPS.join(", ")} or all`);
         return;
     }
     if (opts.spotCheck || opts.longStretchWords) {
@@ -782,7 +883,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             : openQuestions(meeting)
                   .filter((question) => (question.group ?? "rules") === group)
                   .map((question) => question.id);
-    for (const name of ["rules", "spot-check", "long-stretch"]) {
+    for (const name of QUESTION_GROUPS) {
         ui.dim(name + ": " + openQuestions(meeting).filter((question) => (question.group ?? "rules") === name).length);
     }
     if (opts.subscribeAnswers) {
@@ -793,6 +894,20 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     if (opts.answer !== undefined && !opts.clipOut) {
         if (!opts.item) {
             fail("--answer needs --item <Q12>: it answers one question.");
+            return;
+        }
+
+        const learn =
+            opts.learn === undefined
+                ? undefined
+                : await resolveEnum({
+                      value: opts.learn,
+                      values: LEARN_MODES,
+                      flag: "--learn",
+                      subcommand: ["listen"],
+                  });
+
+        if (opts.learn !== undefined && !learn) {
             return;
         }
 
@@ -807,6 +922,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     ...(opts.comment ? { comment: opts.comment } : {}),
                     ...(opts.except ? { except: opts.except } : {}),
                     ...(opts.replaces ? { replaces: opts.replaces } : {}),
+                    ...(learn ? { learn } : {}),
                 },
                 ...(opts.reason ? { reason: opts.reason } : {}),
             });
@@ -815,10 +931,16 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             } else if (opts.json) {
                 out.result(SafeJSON.stringify(result.entry, null, 2));
             } else {
-                const answered = result.entry.changes.find((change) => change.after?.kind === "question")?.after;
+                const answered = result.entry.changes.find(
+                    (change) => change.after?.kind === "question" && change.before !== undefined
+                )?.after;
                 ui.ok(
-                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}\n`
+                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}${answered?.kind === "question" ? wordOutcome(meeting, answered, result.entry) : ""}\n`
                 );
+                ui.dim(`  undo: ${TOOL} reopen ${meeting.id} --token ${result.entry.token}`);
+            }
+            for (const warning of result.warnings ?? []) {
+                ui.warn(warning);
             }
         } catch (error) {
             fail(error);
@@ -965,6 +1087,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         try {
             await session.run();
+
+            // The dictionary question of the round's last answer is asked before the round's result.
+            if (chosen.adapter instanceof TerminalAdapter) {
+                await chosen.adapter.settled();
+            }
+
             if (opts.spotCheck) {
                 const roundIds = new Set(selected ?? session.applied().flatMap((entry) => entry.decided));
                 const sample =
@@ -1025,6 +1153,35 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 }
 
+const LEARN_MODES = ["add", "none"] as const;
+
+/**
+ * What an answer to a word did, after its answer: the places it fixed and what the dictionary got, or the dictionary
+ * question it left for a person.
+ */
+function wordOutcome(meeting: MeetingRecord, answered: QuestionItem, entry: JournalEntry): string {
+    if (answered.group !== "words" || answered.about === "dictionary") {
+        return answered.about === "dictionary" && entry.dictionary?.some((change) => change.after)
+            ? ` · added to the ${meeting.project} dictionary`
+            : "";
+    }
+
+    const added = entry.dictionary?.find((change) => change.after)?.after;
+    const asked = entry.changes.find(
+        (change) =>
+            change.before === undefined && change.after?.kind === "question" && change.after.about === "dictionary"
+    )?.after;
+    const kept = answered.answer?.toLowerCase() === answered.heard?.toLowerCase();
+    return (
+        ` · ${heardTimes(answered)} places ${kept ? "kept as heard" : "fixed"}` +
+        (added
+            ? ` · added to the ${meeting.project} dictionary`
+            : asked
+              ? ` · the ${meeting.project} dictionary question waits: ${questionLabel(meeting, asked.id)} (${DICTIONARY_CHOICES.join(" | ")})`
+              : "")
+    );
+}
+
 export function registerListenCommand(program: Command): void {
     program
         .command("listen")
@@ -1048,8 +1205,15 @@ export function registerListenCommand(program: Command): void {
             "prepare selected quality questions without playing audio or starting a listening round"
         )
         .option("--long-stretch-words <n>", "ask every guess stretch of this many words or more")
-        .option("--group <group>", "rules, spot-check, long-stretch or all")
+        .option(
+            "--group <group>",
+            `${QUESTION_GROUPS.join(", ")} or all (words: repeated unknown words, most heard first)`
+        )
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
+        .option(
+            "--learn [mode]",
+            `with --answer on a word: add puts the answer into the project dictionary now (a person's choice), none keeps it out; absent, a dictionary question waits (${LEARN_MODES.join(" | ")})`
+        )
         .option("--comment <text>", "with --answer: a note kept on the question")
         .option("--except <items...>", "with --answer: leave these item ids or question numbers out")
         .option("--replaces <token>", "with --answer: replace this earlier answer in one decision")
