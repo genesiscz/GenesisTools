@@ -48,6 +48,8 @@ export interface ImageDiff {
     regions: CompareRegion[];
     /** The shift of B the diff was computed with; the overlay and the regions are placed for it. */
     shift: Shift;
+    /** Pixels inside only one image because the sizes differ (see `coverageRects`); each counts as changed. */
+    sizeOnly: number;
 }
 
 // ─── Images ───
@@ -186,6 +188,55 @@ export function overlapRect(a: CompareSize, b: CompareSize, shift: Shift): Compa
     };
 }
 
+/** Where A, B, and B at A's size lie on a pair's canvas. */
+export interface CoverageRects {
+    a: CompareRect;
+    b: CompareRect;
+    /** B as if it had A's size, at B's place: everything a pure move of the page would cover. */
+    bAtSizeOfA: CompareRect;
+}
+
+/**
+ * The rects that decide which pixel outside the overlap is a change. A pixel inside exactly one image counts as
+ * changed when B and B at A's size disagree about it: then the sizes put it there, not the move. The strips a move
+ * uncovers (A's rows that B pushed out, B's rows that came in) are where B and B at A's size agree, so they stay
+ * out. Unshifted, B at A's size is A itself, and every pixel inside only one image counts.
+ */
+export function coverageRects(a: CompareSize, b: CompareSize, shift: Shift): CoverageRects {
+    return {
+        a: { x: 0, y: 0, w: a.width, h: a.height },
+        b: { x: -shift.dx, y: -shift.dy, w: b.width, h: b.height },
+        bAtSizeOfA: { x: -shift.dx, y: -shift.dy, w: a.width, h: a.height },
+    };
+}
+
+export function insideRect(rect: CompareRect, x: number, y: number): boolean {
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+/** True for a pixel inside exactly one image because the sizes differ (see `coverageRects`). */
+export function isSizeChange(rects: CoverageRects, x: number, y: number): boolean {
+    const inB = insideRect(rects.b, x, y);
+
+    return insideRect(rects.a, x, y) !== inB && inB !== insideRect(rects.bAtSizeOfA, x, y);
+}
+
+/**
+ * What a pixel mode's share counts, to follow its numbers: nothing to add for an unshifted pair (the whole canvas),
+ * the overlap for an aligned pair, and the overlap plus the pixels only one image has when the sizes differ too.
+ */
+export function comparedAreaText({ shift, sizeOnly }: { shift: Shift; sizeOnly: number }): string {
+    if (shift.dx === 0 && shift.dy === 0) {
+        return "";
+    }
+
+    if (sizeOnly === 0) {
+        return " on the aligned pair, where both overlap,";
+    }
+
+    return ` on the aligned pair: where both overlap, plus the ${sizeOnly.toLocaleString("en-US")} pixels only one image has because the sizes differ,`;
+}
+
 /** The pixels of `rect` (inside the image) as an image of their own. */
 function cropImage(image: RgbaImage, rect: CompareRect): RgbaImage {
     const data = new Uint8ClampedArray(rect.w * rect.h * 4);
@@ -204,9 +255,10 @@ function cropImage(image: RgbaImage, rect: CompareRect): RgbaImage {
  * Unshifted, the whole canvas is compared, and a pixel inside one image and outside the other counts as changed
  * whatever pixelmatch says, since transparent padding against a white page would otherwise read as equal.
  *
- * Shifted, only the overlap is compared and counted (`total` is its area). The rows and columns the move uncovers
- * belong to the shift, which is reported as one finding; counted as changes they framed the image and merged every
- * real change into one region the size of the page.
+ * Shifted, the overlap is compared, and the pixels only one image has because the sizes differ count as changed
+ * (`sizeOnly`, see `coverageRects`); `total` is the overlap plus those. The rows and columns the move uncovers belong
+ * to the shift, which is reported as one finding; counted as changes they framed the image and merged every real
+ * change into one region the size of the page.
  *
  * Anti-aliased pixels are not changes (pixelmatch's default). Regions come from the same clustering
  * `tools control compare-screenshot` uses.
@@ -227,19 +279,13 @@ export function diffImages({
     const overlay = new Uint8ClampedArray(width * height * 4);
     const options = { threshold, diffMask: true, diffColor: IMAGE_DIFF_RGB };
     let changed: number;
-    let total: number;
+    let compared: number;
 
     if (shift.dx === 0 && shift.dy === 0) {
         const placedA = placeImage(a, size);
         const placedB = placeImage(b, size);
         changed = pixelmatch(placedA.data, placedB.data, overlay, width, height, options);
-        changed += markOutside({
-            overlay,
-            size,
-            a: { x: 0, y: 0, w: a.width, h: a.height },
-            b: { x: 0, y: 0, w: b.width, h: b.height },
-        });
-        total = width * height;
+        compared = width * height;
     } else {
         const area = overlapRect(a, b, shift);
         const part = new Uint8ClampedArray(area.w * area.h * 4);
@@ -259,12 +305,16 @@ export function diffImages({
             overlay.set(part.subarray(y * area.w * 4, (y + 1) * area.w * 4), ((area.y + y) * width + area.x) * 4);
         }
 
-        total = area.w * area.h;
+        compared = area.w * area.h;
     }
 
+    const marks = markSizeChanges({ overlay, size, rects: coverageRects(a, b, shift) });
+    changed += marks.added;
+    // Unshifted, the whole canvas was compared already; shifted, the size pixels come on top of the overlap.
+    const total = shift.dx === 0 && shift.dy === 0 ? compared : compared + marks.sizeOnly;
     const regions = changed === 0 ? [] : clusterMask({ mask: overlay, width, height, ...DEFAULT_REGION_OPTIONS });
 
-    return { size, overlay, changed, total, regions, shift };
+    return { size, overlay, changed, total, regions, shift, sizeOnly: marks.sizeOnly };
 }
 
 type Span = [number, number];
@@ -314,25 +364,32 @@ export function outsideOneSpans({
     return exclusiveSpans(rowSpan(a, y, width), rowSpan(b, y, width));
 }
 
-/** Paints every pixel that lies inside exactly one of the two images; returns how many were not painted before. */
-function markOutside({
+/**
+ * Paints every pixel inside only one image because the sizes differ (`coverageRects`). Returns how many there are
+ * and how many of them were not painted before.
+ */
+function markSizeChanges({
     overlay,
     size,
-    a,
-    b,
+    rects,
 }: {
     overlay: Uint8ClampedArray;
     size: CompareSize;
-    a: CompareRect;
-    b: CompareRect;
-}): number {
+    rects: CoverageRects;
+}): { sizeOnly: number; added: number } {
+    let sizeOnly = 0;
     let added = 0;
 
     for (let y = 0; y < size.height; y++) {
         const rowStart = y * size.width;
 
-        for (const [start, end] of outsideOneSpans({ a, b, y, width: size.width })) {
+        for (const [start, end] of outsideOneSpans({ a: rects.a, b: rects.b, y, width: size.width })) {
             for (let x = start; x < end; x++) {
+                if (!isSizeChange(rects, x, y)) {
+                    continue;
+                }
+
+                sizeOnly++;
                 const at = (rowStart + x) * 4;
 
                 if (overlay[at + 3] !== 0) {
@@ -348,13 +405,18 @@ function markOutside({
         }
     }
 
-    return added;
+    return { sizeOnly, added };
 }
 
 // ─── Alignment ───
 
-/** How far the alignment looks for a shift on each axis, in pixels. */
-export const ALIGN_WINDOW = 32;
+/**
+ * How far the alignment looks for a shift on each axis, in pixels (ImageCompare's `alignWindow` default). A taller
+ * banner moves a page by more than 32 px. Measured in Bun 1.4.2 on a 1280 x 2000 text page moved by (3, 48), 15
+ * interleaved rounds: the estimate's median is 36.7 ms at 32 px (which finds a wrong shift), 37.2 ms at 64 px and
+ * 37.2 ms at 128 px, so the default is the largest value under 100 ms.
+ */
+export const ALIGN_WINDOW = 128;
 /** How many of the best profile offsets per axis are tried as a shift. */
 const PROFILE_CANDIDATES = 3;
 /** The winner (a shift, or no shift) must leave at most this share of the runner-up's mean luminance difference. */
@@ -792,15 +854,70 @@ export function viewForRect({
 
 // ─── Region marks ───
 
-/** Screen pixels from a region box edge to the outer edge of its outline (2 px offset plus the 3 px active line). */
-export const REGION_OUTLINE_REACH = 5;
-/** Screen height of a region's number label. */
-export const REGION_LABEL_HEIGHT = 16;
+/** Height of a region number in the gutter beside the stage, in screen pixels. */
+export const GUTTER_LABEL_HEIGHT = 16;
+/** Space between two numbers in the gutter. */
+const GUTTER_LABEL_GAP = 2;
+
+/** A region's number in the gutter, and where its leader line meets the box. */
+export interface GutterLabel {
+    /** The region's index in the diff's list. */
+    index: number;
+    /** Pane y of the number's top edge; the gutter starts at the pane's top. */
+    top: number;
+    /** Pane point the leader ends at: the box's right edge, half way down the part of the box in view. */
+    anchor: { x: number; y: number };
+}
 
 /**
- * Where a region's number goes so it never covers the region's own pixels: outside the outline above the box, or
- * below it when the box is too close to the top of the image for the label to fit above.
+ * Where each region's number goes in the gutter at the right of the stage, so no number ever covers an image pixel:
+ * level with its box where there is room, in box order from the top, at least one number's height apart, and inside
+ * the pane's height. A box out of view gets no number.
  */
-export function regionLabelSide(region: CompareRect, scale: number): "above" | "below" {
-    return region.y * scale >= REGION_LABEL_HEIGHT + REGION_OUTLINE_REACH ? "above" : "below";
+export function gutterLabels({
+    regions,
+    transform,
+    pane,
+}: {
+    regions: CompareRect[];
+    transform: ViewTransform;
+    pane: CompareSize;
+}): GutterLabel[] {
+    const labels = regions
+        .map((region, index) => {
+            const top = transform.y + region.y * transform.scale;
+            const left = transform.x + region.x * transform.scale;
+
+            return {
+                index,
+                top,
+                bottom: top + region.h * transform.scale,
+                left,
+                right: left + region.w * transform.scale,
+            };
+        })
+        .filter((box) => box.bottom > 0 && box.top < pane.height && box.right > 0 && box.left < pane.width)
+        .map((box): GutterLabel => {
+            const y = (Math.max(0, box.top) + Math.min(pane.height, box.bottom)) / 2;
+
+            return {
+                index: box.index,
+                top: y - GUTTER_LABEL_HEIGHT / 2,
+                anchor: { x: Math.min(pane.width, box.right), y },
+            };
+        })
+        .sort((p, q) => p.anchor.y - q.anchor.y || p.index - q.index);
+    const step = GUTTER_LABEL_HEIGHT + GUTTER_LABEL_GAP;
+
+    // Down the gutter: each number below the one before. Then up from the bottom: back inside the pane.
+    for (let i = 0; i < labels.length; i++) {
+        labels[i].top = Math.max(labels[i].top, 0, i > 0 ? labels[i - 1].top + step : 0);
+    }
+
+    for (let i = labels.length - 1; i >= 0; i--) {
+        const floor = i < labels.length - 1 ? labels[i + 1].top - step : pane.height - GUTTER_LABEL_HEIGHT;
+        labels[i].top = Math.max(0, Math.min(labels[i].top, floor));
+    }
+
+    return labels;
 }

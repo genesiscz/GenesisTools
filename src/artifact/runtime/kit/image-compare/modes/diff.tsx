@@ -5,15 +5,16 @@ import { Button } from "../../forms";
 import { Collapse, SegmentedControl } from "../../primitives";
 import {
     type CompareRegion,
+    comparedAreaText,
     DIFF_THRESHOLD_MAX,
     DIFF_THRESHOLD_MIN,
     diffImages,
     diffSummary,
+    GUTTER_LABEL_HEIGHT,
+    gutterLabels,
     IMAGE_DIFF_COLOR,
     type ImageDiff,
-    REGION_OUTLINE_REACH,
     type RgbaImage,
-    regionLabelSide,
     type Shift,
 } from "../core";
 import { createIdleCache } from "../load";
@@ -26,7 +27,6 @@ import {
     type CompareStageProps,
     choiceSetting,
     type IdleResult,
-    isAligned,
     numberSetting,
     PixelNotice,
     RangeControl,
@@ -34,6 +34,7 @@ import {
     StaleNote,
     ToggleControl,
     useIdleCompute,
+    usePaneSize,
     useViewTransform,
     ViewLayer,
 } from "../stage";
@@ -41,7 +42,10 @@ import {
 const UNDERLAY = "diff.underlay";
 const REGIONS = "diff.regions";
 const REGION = "diff.region";
+const UNDERLAY_OPACITY = "diff.underlayOpacity";
 const UNDERLAYS = ["after", "before", "mask"] as const;
+/** Width of the gutter at the right of the stage that holds the region numbers. */
+const GUTTER_WIDTH = 32;
 const REGION_INK = readableTextOn(IMAGE_DIFF_COLOR);
 /** A diff of a large pair holds a canvas-sized overlay, so only the latest few stay. */
 const diffCache = createIdleCache<ImageDiff>(6);
@@ -89,49 +93,87 @@ function DiffCanvas({ diff }: { diff: ImageDiff }) {
     );
 }
 
-/**
- * Region outlines that keep their screen size at any zoom. The number sits outside the outline, above the box, or
- * below it when the box is too close to the top of the image, so it never covers the box's own changed pixels.
- */
+/** Region outlines that keep their screen size at any zoom. Their numbers are in the gutter, never on the image. */
 function RegionBoxes({ regions, active }: { regions: CompareRegion[]; active: number }) {
     const { scale } = useViewTransform();
-    const reach = REGION_OUTLINE_REACH / scale;
 
-    return regions.map((region, index) => {
-        const above = regionLabelSide(region, scale) === "above";
+    return regions.map((region, index) => (
+        <div
+            key={`${region.x}-${region.y}-${region.w}-${region.h}`}
+            data-region={index + 1}
+            title={`Region ${index + 1}: ${region.pixels.toLocaleString("en-US")} changed pixels`}
+            className="pointer-events-auto absolute"
+            style={{
+                left: region.x,
+                top: region.y,
+                width: region.w,
+                height: region.h,
+                outline: `${(index === active ? 3 : 2) / scale}px solid ${IMAGE_DIFF_COLOR}`,
+                outlineOffset: 2 / scale,
+                boxShadow: `0 0 0 ${3 / scale}px color-mix(in srgb, var(--bg) 70%, transparent)`,
+            }}
+        />
+    ));
+}
 
-        return (
-            <div
-                key={`${region.x}-${region.y}-${region.w}-${region.h}`}
-                data-region={index + 1}
-                title={`Region ${index + 1}: ${region.pixels.toLocaleString("en-US")} changed pixels`}
-                className="pointer-events-auto absolute"
-                style={{
-                    left: region.x,
-                    top: region.y,
-                    width: region.w,
-                    height: region.h,
-                    outline: `${(index === active ? 3 : 2) / scale}px solid ${IMAGE_DIFF_COLOR}`,
-                    outlineOffset: 2 / scale,
-                    boxShadow: `0 0 0 ${3 / scale}px color-mix(in srgb, var(--bg) 70%, transparent)`,
-                }}
+/**
+ * The region numbers in the gutter at the right of the stage, each with a thin leader line to its box, so a number
+ * never covers an image pixel. The gutter's origin is the pane's outer top-right corner; the pane has a 1 px border.
+ */
+function RegionGutter({ regions, active }: { regions: CompareRegion[]; active: number }) {
+    const transform = useViewTransform();
+    const pane = usePaneSize();
+    const labels = gutterLabels({ regions, transform, pane });
+    const outerWidth = pane.width + 2;
+
+    return (
+        <>
+            <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute top-0 overflow-visible"
+                style={{ left: -outerWidth, width: outerWidth + GUTTER_WIDTH, height: pane.height + 2 }}
             >
-                {/* Scale first, then lift by the label's own height, so it ends at the outline at any zoom. */}
+                {labels.map((label) => (
+                    <line
+                        key={label.index}
+                        data-region-leader={label.index + 1}
+                        x1={label.anchor.x + 1}
+                        y1={label.anchor.y + 1}
+                        x2={outerWidth + 4}
+                        y2={label.top + 1 + GUTTER_LABEL_HEIGHT / 2}
+                        stroke={IMAGE_DIFF_COLOR}
+                        strokeWidth={label.index === active ? 2 : 1}
+                        strokeOpacity={0.85}
+                    />
+                ))}
+            </svg>
+            {labels.map((label) => (
                 <span
-                    className="absolute origin-top-left whitespace-nowrap rounded-sm px-1 font-mono text-[11px] font-semibold leading-4"
+                    key={label.index}
+                    data-region-label={label.index + 1}
+                    className="absolute left-1 whitespace-nowrap rounded-sm px-1 text-center font-mono text-[11px] font-semibold leading-4"
                     style={{
-                        left: -reach,
-                        top: above ? -reach : region.h + reach,
+                        top: label.top + 1,
+                        height: GUTTER_LABEL_HEIGHT,
                         background: IMAGE_DIFF_COLOR,
                         color: REGION_INK,
-                        transform: above ? `scale(${1 / scale}) translate(0, -100%)` : `scale(${1 / scale})`,
+                        outline: label.index === active ? `2px solid ${IMAGE_DIFF_COLOR}` : undefined,
+                        outlineOffset: 1,
                     }}
                 >
-                    {index + 1}
+                    {label.index + 1}
                 </span>
-            </div>
-        );
-    });
+            ))}
+        </>
+    );
+}
+
+/** The underlay's opacity: this comparison's own pick, else the page's `diffUnderlayOpacity`. */
+function underlayOpacity(props: CompareStageProps): number {
+    return Math.min(
+        1,
+        Math.max(0, numberSetting(props.settings, UNDERLAY_OPACITY, props.defaults.diff.underlayOpacity))
+    );
 }
 
 function goToRegion(props: CompareStageProps, regions: CompareRegion[], index: number): void {
@@ -211,13 +253,16 @@ function DiffStage(props: CompareStageProps) {
                 label={`Pixel diff of ${props.a.label} and ${props.b.label}`}
                 canvas={diff?.size}
                 caption={shown ? `Diff over ${shown.label}` : "Diff mask"}
+                side={diff && showRegions ? <RegionGutter regions={diff.regions} active={active} /> : null}
+                sideWidth={GUTTER_WIDTH}
             >
                 <ViewLayer>
                     {shown ? (
                         <StageImage
                             image={shown}
                             at={shown === props.b ? { x: -shift.dx, y: -shift.dy } : undefined}
-                            className="opacity-40 grayscale"
+                            className="grayscale"
+                            opacity={underlayOpacity(props)}
                         />
                     ) : null}
                     {diff ? <DiffCanvas diff={diff} /> : null}
@@ -258,11 +303,13 @@ function downloadDiff({
     diff,
     underlay,
     at,
+    opacity,
     name,
 }: {
     diff: ImageDiff;
     underlay: RgbaImage | undefined;
     at: { x: number; y: number };
+    opacity: number;
     name: string;
 }): Promise<boolean> {
     const canvas = document.createElement("canvas");
@@ -279,7 +326,7 @@ function downloadDiff({
 
     if (underlay) {
         context.filter = "grayscale(1)";
-        context.globalAlpha = 0.4;
+        context.globalAlpha = opacity;
         context.drawImage(imageCanvas(underlay), at.x, at.y);
         context.filter = "none";
         context.globalAlpha = 1;
@@ -337,6 +384,7 @@ function DiffControls(props: CompareStageProps) {
             diff,
             underlay: underlay === "after" ? pair.b : underlay === "before" ? pair.a : undefined,
             at: underlay === "after" ? { x: -diff.shift.dx, y: -diff.shift.dy } : { x: 0, y: 0 },
+            opacity: underlayOpacity(props),
             name: `diff-${fileSlug(props.a.label)}-${fileSlug(props.b.label)}.png`,
         }).then((ok) => setDownloadFailed(!ok));
     };
@@ -361,6 +409,15 @@ function DiffControls(props: CompareStageProps) {
                 ]}
                 value={underlay}
                 onChange={(value) => props.setSetting(UNDERLAY, value)}
+            />
+            <RangeControl
+                label="Underlay opacity"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(underlayOpacity(props) * 100)}
+                onChange={(value) => props.setSetting(UNDERLAY_OPACITY, value / 100)}
+                format={(value) => `${value}%`}
             />
             <ToggleControl
                 label="Regions"
@@ -395,7 +452,7 @@ function DiffControls(props: CompareStageProps) {
                 {diff && result.status === "ready" ? (
                     <>
                         <span className="font-medium text-ink">{diffSummary(diff)}</span>
-                        {`${isAligned(diff.shift) ? " on the aligned pair, where both overlap," : ""} in ${Math.round(result.ms)} ms`}
+                        {`${comparedAreaText(diff)} in ${Math.round(result.ms)} ms`}
                         {stale ? <StaleNote /> : null}
                     </>
                 ) : props.pixels.status === "error" ? null : (

@@ -1,4 +1,4 @@
-import { type CompareSize, estimateShift, type RgbaImage, type Shift } from "./core";
+import { ALIGN_WINDOW, type CompareSize, estimateShift, type RgbaImage, type Shift } from "./core";
 
 /**
  * The browser half of the pixels: an image URL to its natural size, to RGBA pixels (an <img> and a canvas), a cached
@@ -179,9 +179,20 @@ function whenIdle(timeout: number): Promise<void> {
     });
 }
 
-/** Both images decoded and the shift of B against A estimated, cached per pair. A failed load is not cached. */
-export function loadPixelPair(a: string, b: string): Promise<PixelPairResult> {
-    const key = `${a}\n${b}`;
+/**
+ * Both images decoded and the shift of B against A estimated within `alignWindow` px either way, cached per pair and
+ * window. A failed load is not cached.
+ */
+export function loadPixelPair({
+    a,
+    b,
+    alignWindow = ALIGN_WINDOW,
+}: {
+    a: string;
+    b: string;
+    alignWindow?: number;
+}): Promise<PixelPairResult> {
+    const key = `${a}\n${b}\n${alignWindow}`;
     const cached = pairCache.get(key);
 
     if (cached) {
@@ -203,7 +214,11 @@ export function loadPixelPair(a: string, b: string): Promise<PixelPairResult> {
 
         return {
             ok: true,
-            pair: { a: pixelsA.image, b: pixelsB.image, shift: estimateShift(pixelsA.image, pixelsB.image) },
+            pair: {
+                a: pixelsA.image,
+                b: pixelsB.image,
+                shift: estimateShift(pixelsA.image, pixelsB.image, alignWindow),
+            },
         };
     })();
     remember(pairCache, key, pending, MAX_PIXEL_ENTRIES / 2);

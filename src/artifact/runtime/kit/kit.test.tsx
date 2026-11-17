@@ -3146,8 +3146,11 @@ describe("ImageCompare", () => {
                 "Region 1: 48 changed pixels",
                 "Region 2: 1,200 changed pixels",
             ]);
-            // The label carries the number only.
-            expect(boxes.map((box) => box.textContent)).toEqual(["1", "2"]);
+            // The numbers sit in the gutter beside the stage, never on the image; the boxes carry none.
+            expect(boxes.map((box) => box.textContent)).toEqual(["", ""]);
+            const numbers = [...dom.container.querySelectorAll("[data-region-label]")];
+            expect(numbers.map((label) => label.textContent)).toEqual(["1", "2"]);
+            expect(dom.container.querySelectorAll("[data-region-leader]").length).toBe(2);
             await dom.click(button("Next region"));
             expect(text()).toContain("Region 1 of 2");
             // The region view zooms in; Fit returns to the first view, and a zoom step from there is 125%.
@@ -3478,6 +3481,86 @@ describe("ImageCompare", () => {
             expect(text()).toContain("A: Before");
             await settleFor(300);
             expect(text()).toContain("B: After");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the A and B picks of a comparison with an id survive a reload, and a pick that is gone falls back", async () => {
+        const picksKey = "artifact.image-compare:item:kit-picks:picks";
+        const image = (name: string, label: string) => ({ src: `fake://80x60/plain-${name}`, label });
+        const three = [image("p1", "First"), image("p2", "Second"), image("p3", "Third")];
+        const selects = (scope: ParentNode) => [...scope.querySelectorAll("select")].map((select) => select.value);
+        let saved: string | null = null;
+
+        const first = await mountImageCompare(<ImageCompare id="kit-picks" images={three} />);
+
+        try {
+            await first.dom.press(first.dom.container.querySelector('[role="group"]'), "]");
+            expect(selects(first.dom.container)).toEqual(["0", "2"]);
+            saved = first.dom.window.localStorage.getItem(picksKey);
+            expect(saved).not.toBeNull();
+        } finally {
+            await first.restore();
+        }
+
+        // A reload: a fresh window with the same storage.
+        const keep = (window: DomHarness["window"]) => window.localStorage.setItem(picksKey, saved ?? "");
+        const reload = await mountImageCompare(<ImageCompare id="kit-picks" images={three} />, keep);
+
+        try {
+            expect(selects(reload.dom.container)).toEqual(["0", "2"]);
+        } finally {
+            await reload.restore();
+        }
+
+        // "Third" is no longer among the images: the first two.
+        const changed = [three[0], three[1], image("p4", "Fourth")];
+        const gone = await mountImageCompare(<ImageCompare id="kit-picks" images={changed} />, keep);
+
+        try {
+            expect(selects(gone.dom.container)).toEqual(["0", "1"]);
+        } finally {
+            await gone.restore();
+        }
+
+        // Without an id nothing is saved.
+        const anonymous = await mountImageCompare(<ImageCompare images={three} />);
+
+        try {
+            await anonymous.dom.press(anonymous.dom.container.querySelector('[role="group"]'), "]");
+            expect(selects(anonymous.dom.container)).toEqual(["0", "2"]);
+            expect(anonymous.dom.window.localStorage.length).toBe(0);
+        } finally {
+            await anonymous.restore();
+        }
+    }, 20_000);
+
+    test("the blink interval and the diff underlay opacity start at the props and change on the comparison", async () => {
+        const { dom, radio, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://60x40/plain-u" }}
+                after={{ src: "fake://60x40/changed-u" }}
+                defaultMode="blink"
+                blinkInterval={1200}
+                diffUnderlayOpacity={0.25}
+            />
+        );
+
+        try {
+            const control = (name: string) =>
+                [...dom.container.querySelectorAll("label")]
+                    .find((label) => label.textContent?.startsWith(name))
+                    ?.querySelector("input");
+            const underlay = () => dom.container.querySelector<HTMLImageElement>('[role="group"][tabindex="0"] img');
+            expect(control("Interval")?.value).toBe("1200");
+
+            await dom.click(radio("Diff"));
+            await settlePixels();
+            expect(control("Underlay opacity")?.value).toBe("25");
+            expect(underlay()?.style.opacity).toBe("0.25");
+            await dom.type(control("Underlay opacity"), "60");
+            expect(underlay()?.style.opacity).toBe("0.6");
         } finally {
             await restore();
         }

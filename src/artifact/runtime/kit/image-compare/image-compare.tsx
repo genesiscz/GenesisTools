@@ -10,6 +10,7 @@ import {
     writeStored,
 } from "./context";
 import {
+    ALIGN_WINDOW,
     actualSizeView,
     type CompareRect,
     type CompareSize,
@@ -23,6 +24,7 @@ import {
     fitScale,
     type ImageCompareItem,
     type ImageCompareSide,
+    type ResolvedCompareImage,
     resolveCompareImages,
     sizesDifferText,
     viewForRect,
@@ -39,7 +41,7 @@ import type {
     CompareStageProps,
     PixelState,
 } from "./stage";
-import { RangeControl } from "./stage";
+import { COMPARE_MODE_DEFAULTS, RangeControl } from "./stage";
 
 export interface ImageCompareProps {
     /** Image A. Sugar for `images[0]`. */
@@ -56,10 +58,16 @@ export interface ImageCompareProps {
     defaultMode?: string;
     /** pixelmatch colour threshold, 0 to 1 (default 0.15). The user's pick on the page or the comparison wins over it. */
     threshold?: number;
-    /** Saves this comparison's own mode and threshold under this id, so a reload keeps them. */
+    /** Saves this comparison's own mode, threshold and A and B picks under this id, so a reload keeps them. */
     id?: string;
     /** Pane height cap in px (default 640). */
     maxHeight?: number;
+    /** How far the alignment looks for a moved page, in px either way (default 128). */
+    alignWindow?: number;
+    /** Blink's automatic flip interval in ms (default 700, 200 to 3000). The Interval control on the comparison wins. */
+    blinkInterval?: number;
+    /** Opacity of Diff's grey underlay, 0 to 1 (default 0.4). The Underlay opacity control on the comparison wins. */
+    diffUnderlayOpacity?: number;
 }
 
 const PIXELS_OFF: PixelState = { status: "off" };
@@ -98,8 +106,18 @@ function useNaturalSizes(srcs: string[]): ReadonlyMap<string, CompareSize | null
  * Both decoded images and their shift estimate, for a mode that needs pixels. Off for the other modes, so nothing is
  * decoded until a pixel mode is shown.
  */
-function usePixelPair({ a, b, enabled }: { a: string; b: string; enabled: boolean }): PixelState {
-    const pair = `${a}\n${b}`;
+function usePixelPair({
+    a,
+    b,
+    enabled,
+    alignWindow,
+}: {
+    a: string;
+    b: string;
+    enabled: boolean;
+    alignWindow: number;
+}): PixelState {
+    const pair = `${a}\n${b}\n${alignWindow}`;
     const [state, setState] = useState<{ pair: string; pixels: PixelState }>();
 
     useEffect(() => {
@@ -108,7 +126,7 @@ function usePixelPair({ a, b, enabled }: { a: string; b: string; enabled: boolea
         }
 
         let live = true;
-        loadPixelPair(a, b).then((result) => {
+        loadPixelPair({ a, b, alignWindow }).then((result) => {
             if (live) {
                 setState({
                     pair,
@@ -122,7 +140,7 @@ function usePixelPair({ a, b, enabled }: { a: string; b: string; enabled: boolea
         return () => {
             live = false;
         };
-    }, [enabled, a, b, pair]);
+    }, [enabled, a, b, alignWindow, pair]);
 
     if (!enabled) {
         return PIXELS_OFF;
@@ -154,6 +172,18 @@ function clampThreshold(value: number): number {
 }
 
 /**
+ * The saved A and B picks (their labels, one per line) as indexes into `all`. A label that is no longer among the
+ * images, or both picks on one image, falls back to the first two.
+ */
+function picksFromStored(all: ResolvedCompareImage[], stored: string | undefined): { a: number; b: number } {
+    const [labelA, labelB] = stored?.split("\n") ?? [];
+    const a = all.findIndex((image) => image.label === labelA);
+    const b = all.findIndex((image) => image.label === labelB);
+
+    return a >= 0 && b >= 0 && a !== b ? { a, b } : { a: 0, b: 1 };
+}
+
+/**
  * Before and after images with a mode switch: side by side, a slider, blink, fade, a pixel diff (pink pixels, boxes
  * and a list of changed regions, a PNG download) and a colour-distance heat map, on one zoom and pan stage. A page
  * moved by a few pixels is found and aligned before the diff. Under an ImageCompareProvider it follows the page mode
@@ -169,15 +199,20 @@ export function ImageCompare({
     threshold,
     id,
     maxHeight = 640,
+    alignWindow = ALIGN_WINDOW,
+    blinkInterval = COMPARE_MODE_DEFAULTS.blink.interval,
+    diffUnderlayOpacity = COMPARE_MODE_DEFAULTS.diff.underlayOpacity,
 }: ImageCompareProps) {
     const all = resolveCompareImages({ before, after, images });
-    const [picks, setPicks] = useState({ a: 0, b: 1 });
+    const page = useImageCompare();
+    const itemKey = id === undefined ? undefined : `${page?.storageKey ?? IMAGE_COMPARE_STORAGE_KEY}:item:${id}`;
+    // Saved by label, so a pick follows its image when the list changes; without an id the picks live in state only.
+    const picksKey = itemKey === undefined ? undefined : `${itemKey}:picks`;
+    const [picks, setPicksState] = useStoredValue(picksKey, (stored) => picksFromStored(all, stored));
     const first = all[Math.min(picks.a, all.length - 1)];
     const second = all[Math.min(picks.b, all.length - 1)];
     const allowed = compareModesFor(modes);
     checkModeId(defaultMode, "defaultMode");
-    const page = useImageCompare();
-    const itemKey = id === undefined ? undefined : `${page?.storageKey ?? IMAGE_COMPARE_STORAGE_KEY}:item:${id}`;
     // Keyed by the id, so a new id brings that comparison's own picks in the same render.
     const [ownMode, setOwnMode] = useStoredValue(
         itemKey === undefined ? undefined : `${itemKey}:mode`,
@@ -201,6 +236,7 @@ export function ImageCompare({
         a: first.src,
         b: second.src,
         enabled: mode.needsPixels === true && Boolean(sizeA && sizeB),
+        alignWindow: Math.max(0, Math.round(alignWindow)),
     });
     const canvas = sizeA && sizeB ? commonSize(sizeA, sizeB) : undefined;
 
@@ -250,17 +286,22 @@ export function ImageCompare({
             setView((current) => zoomViewBy({ view: current, pane, canvas, factor }));
         }
     };
+    const setPicks = (next: { a: number; b: number }): void => {
+        setPicksState(next);
+
+        if (picksKey) {
+            writeStored(picksKey, `${all[next.a].label}\n${all[next.b].label}`);
+        }
+    };
     /** Steps B through the images, past A. */
     const stepB = (by: number): void => {
-        setPicks((current) => {
-            let next = current.b;
+        let next = picks.b;
 
-            do {
-                next = (next + by + all.length) % all.length;
-            } while (next === current.a && all.length > 1);
+        do {
+            next = (next + by + all.length) % all.length;
+        } while (next === picks.a && all.length > 1);
 
-            return { a: current.a, b: next };
-        });
+        setPicks({ a: picks.a, b: next });
     };
     const onKeys = (event: KeyboardEvent<HTMLElement>): void => {
         if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) {
@@ -326,6 +367,10 @@ export function ImageCompare({
             setThreshold: pickOwnThreshold,
             settings,
             setSetting,
+            defaults: {
+                blink: { interval: blinkInterval },
+                diff: { underlayOpacity: diffUnderlayOpacity },
+            },
         };
         const { Stage, Controls } = mode;
         const sizeNote = sizesDifferText(a, b);
@@ -357,7 +402,7 @@ export function ImageCompare({
                                 <Select
                                     options={all.map((image, index) => ({ value: String(index), label: image.label }))}
                                     value={String(side === "a" ? picks.a : picks.b)}
-                                    onChange={(value) => setPicks((current) => ({ ...current, [side]: Number(value) }))}
+                                    onChange={(value) => setPicks({ ...picks, [side]: Number(value) })}
                                 />
                             </Field>
                         </div>

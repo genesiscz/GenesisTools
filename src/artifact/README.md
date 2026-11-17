@@ -288,16 +288,23 @@ bodies render as markdown.
   `afterValue` accept JSON values and sort nested object keys, preserving array order. Split context rows use
   each file's own line number, and `wrap` uses normal break opportunities.
 - Compare images: `ImageCompare` takes `before`/`after`, or two or more `images` (A and B selects; `[` and `]` step
-  B), and switches between side by side, a slider (`role="slider"`, arrows and Home/End), blink (click or Space; an
-  auto flip that reduced motion turns off), fade, a pixel diff and a heat map. The diff runs pixelmatch in the
-  browser on both images placed top-left on one canvas, paints changed pixels pink (`IMAGE_DIFF_COLOR`), boxes the
-  changed regions with the same clustering as `tools control compare-screenshot` (`src/utils/image/regions.ts`),
-  lists them in a table whose numbers zoom to them, steps the zoom from region to region, and downloads the diff as
+  B; with an `id` the picks are saved by label, and a saved image that is gone falls back to the first two), and
+  switches between side by side, a slider (`role="slider"`, arrows and Home/End), blink (click or Space; an auto flip
+  every `blinkInterval` ms, 700 by default, with an Interval range, that reduced motion turns off), fade, a pixel diff
+  and a heat map. The diff runs pixelmatch in the
+  browser on both images placed top-left on one canvas, paints changed pixels pink (`IMAGE_DIFF_COLOR`) over a grey
+  underlay (`diffUnderlayOpacity`, 0.4 by default, with an Underlay opacity range), boxes the changed regions with
+  the same clustering as `tools control compare-screenshot` (`src/utils/image/regions.ts`), puts their numbers in a
+  gutter at the right of the stage with a thin line to each box (a number never covers an image pixel), lists them in
+  a table whose numbers zoom to them, steps the zoom from region to region, and downloads the diff as
   a PNG. Heat draws each pixel's colour distance on a ramp of the kit tones. Before both, `estimateShift` looks for
-  one whole-pixel offset of B within 32 px: the row and column projection profiles propose offsets and the pixel
+  one whole-pixel offset of B within `alignWindow` px (128 by default; the estimate of a 1280 x 2000 pair takes about
+  37 ms at 32, 64 and 128 px in Bun 1.4.2): the row and column projection profiles propose offsets and the pixel
   difference picks one, because a page's column profile is mostly text and a few real changes pull its correlation
-  down. A found shift is shown ("After is shifted by +3, +12 px") and applied while Align is on; then only the
-  overlap of the two images is compared, and the summary says "on the aligned pair, where both overlap". An
+  down. A found shift is shown ("After is shifted by +3, +12 px") and applied while Align is on; then the
+  overlap of the two images is compared, and the summary says "on the aligned pair, where both overlap". When the
+  sizes differ too, the pixels only one image has because of the sizes count as changed (the strips the move uncovered
+  do not), and the summary adds them. An
   unrelated pair gets no offset. Every mode shares one zoom and pan (buttons, Ctrl or Cmd with the wheel at the
   pointer, drag); the first view fits the image, never above 100%, centred across with its top edge at the top.
   Labels sit in a strip above each stage, never on the image.

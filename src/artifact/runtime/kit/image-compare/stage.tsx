@@ -59,6 +59,26 @@ export type CompareSettingValue = string | number | boolean;
 /** Per-comparison settings of every mode, keyed `<mode id>.<name>`, so a new mode needs no shared type. */
 export type CompareSettings = Readonly<Record<string, CompareSettingValue | undefined>>;
 
+/**
+ * Starting values of mode controls that the page sets through ImageCompare's props, nested by mode. A control on the
+ * comparison overrides its value in `settings`.
+ */
+export interface CompareModeDefaults {
+    blink: {
+        /** Auto flip interval in ms. */
+        interval: number;
+    };
+    diff: {
+        /** Opacity of the grey underlay under the pink pixels, 0 to 1. */
+        underlayOpacity: number;
+    };
+}
+
+export const COMPARE_MODE_DEFAULTS: CompareModeDefaults = {
+    blink: { interval: 700 },
+    diff: { underlayOpacity: 0.4 },
+};
+
 export interface CompareStageProps {
     /** Image A (before) and image B (after). */
     a: CompareImage;
@@ -78,6 +98,8 @@ export interface CompareStageProps {
     setThreshold: (threshold: number) => void;
     settings: CompareSettings;
     setSetting: (key: string, value: CompareSettingValue) => void;
+    /** The page's starting values for mode controls (ImageCompare's props). */
+    defaults: CompareModeDefaults;
 }
 
 export interface CompareMode {
@@ -118,14 +140,20 @@ export function choiceSetting<T extends string>(
 
 // ─── Pane and layers ───
 
-const TransformContext = createContext<{ transform: ViewTransform; canvas: CompareSize }>({
+const TransformContext = createContext<{ transform: ViewTransform; canvas: CompareSize; pane: CompareSize }>({
     transform: { scale: 1, x: 0, y: 0 },
     canvas: { width: 0, height: 0 },
+    pane: { width: 0, height: 0 },
 });
 
 /** The transform of the pane around the caller: for marks that must keep their screen size at any zoom. */
 export function useViewTransform(): ViewTransform {
     return useContext(TransformContext).transform;
+}
+
+/** The inner size of the pane around the caller (its `side` included): for marks placed in screen pixels. */
+export function usePaneSize(): CompareSize {
+    return useContext(TransformContext).pane;
 }
 
 /** A pane click that did not move the pointer further than this is a tap, not a pan. */
@@ -148,6 +176,12 @@ export interface ComparePaneProps {
      */
     caption?: ReactNode;
     captionEnd?: ReactNode;
+    /**
+     * A strip at the right of the pane, as tall as the pane (Diff's region numbers). It shares the pane's transform,
+     * so what it draws can point into the pane; `sideWidth` is its width in px.
+     */
+    side?: ReactNode;
+    sideWidth?: number;
 }
 
 /**
@@ -163,6 +197,8 @@ export function ComparePane({
     canvas,
     caption,
     captionEnd,
+    side,
+    sideWidth = 0,
 }: ComparePaneProps) {
     const stage = canvas ? { ...stageProps, canvas } : stageProps;
     const paneRef = useRef<HTMLDivElement>(null);
@@ -312,21 +348,31 @@ export function ComparePane({
                     ) : null}
                 </div>
             ) : null}
-            <TransformContext.Provider value={{ transform, canvas: stage.canvas }}>
-                <div
-                    ref={paneRef}
-                    role="group"
-                    aria-label={label}
-                    tabIndex={0}
-                    onKeyDown={onKeyDown}
-                    onPointerDown={onPointerDown}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                    onPointerCancel={onPointerUp}
-                    className={`relative box-content min-h-24 select-none overflow-hidden rounded-card border border-line bg-canvas ${cursor} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info`}
-                    style={style}
-                >
-                    {children}
+            <TransformContext.Provider value={{ transform, canvas: stage.canvas, pane }}>
+                <div className="flex">
+                    <div
+                        ref={paneRef}
+                        role="group"
+                        aria-label={label}
+                        tabIndex={0}
+                        onKeyDown={onKeyDown}
+                        onPointerDown={onPointerDown}
+                        onPointerMove={onPointerMove}
+                        onPointerUp={onPointerUp}
+                        onPointerCancel={onPointerUp}
+                        className={`relative box-content min-h-24 min-w-0 flex-1 select-none overflow-hidden rounded-card border border-line bg-canvas ${cursor} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info`}
+                        style={style}
+                    >
+                        {children}
+                    </div>
+                    {side !== undefined ? (
+                        <div
+                            className="relative shrink-0"
+                            style={{ width: sideWidth, height: width > 0 ? height : undefined }}
+                        >
+                            {side}
+                        </div>
+                    ) : null}
                 </div>
             </TransformContext.Provider>
         </div>
@@ -358,10 +404,12 @@ export function StageImage({
     image,
     className = "",
     at,
+    opacity,
 }: {
     image: CompareImage;
     className?: string;
     at?: { x: number; y: number };
+    opacity?: number;
 }) {
     const { scale } = useViewTransform();
 
@@ -379,6 +427,7 @@ export function StageImage({
                 width: image.width,
                 height: image.height,
                 imageRendering: scale > 1 ? "pixelated" : undefined,
+                opacity,
             }}
         />
     );

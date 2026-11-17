@@ -3,16 +3,18 @@ import { contrastRatio } from "./color";
 import {
     actualSizeView,
     type CompareSize,
+    comparedAreaText,
     compareKey,
     diffImages,
     diffSummary,
     estimateShift,
     FIT_VIEW,
+    GUTTER_LABEL_HEIGHT,
+    gutterLabels,
     paneHeight,
     percentAt,
     placeImage,
     type RgbaImage,
-    regionLabelSide,
     resolveCompareImages,
     resolveView,
     shiftText,
@@ -792,11 +794,31 @@ describe("image compare core", () => {
         expect(resolveView(actualSizeView(FIT_VIEW, pane, small), pane, small)).toEqual({ scale: 1, x: 320, y: 0 });
     });
 
-    test("a region number goes above its box, or below it when the box is too close to the top of the image", () => {
-        expect(regionLabelSide({ x: 10, y: 40, w: 20, h: 10 }, 1)).toBe("above");
-        expect(regionLabelSide({ x: 10, y: 0, w: 20, h: 10 }, 1)).toBe("below");
-        // 40 image pixels are only 10 screen pixels at 25%: too little room for the label.
-        expect(regionLabelSide({ x: 10, y: 40, w: 20, h: 10 }, 0.25)).toBe("below");
+    test("region numbers sit in a gutter beside the stage, in box order, apart, inside, with a leader to each box", () => {
+        const pane = { width: 400, height: 300 };
+        const transform = { scale: 1, x: 0, y: 0 };
+        const box = (x: number, y: number, h = 10) => ({ x, y, w: 20, h, pixels: 1 });
+        const regions = [box(10, 100), box(50, 102), box(90, 104), box(10, 600)];
+        const labels = gutterLabels({ regions, transform, pane });
+
+        // The fourth box is out of view, so it has no number in the gutter.
+        expect(labels.map((label) => label.index)).toEqual([0, 1, 2]);
+
+        for (let i = 1; i < labels.length; i++) {
+            expect(labels[i].top - labels[i - 1].top).toBeGreaterThanOrEqual(GUTTER_LABEL_HEIGHT);
+        }
+
+        expect(labels.every((label) => label.top >= 0 && label.top + GUTTER_LABEL_HEIGHT <= pane.height)).toBe(true);
+        // The leader ends at the box's right edge, half way down.
+        expect(labels[0].anchor).toEqual({ x: 30, y: 105 });
+
+        // A lone box gets its number level with it; a box at the bottom edge pulls its number inside the pane.
+        expect(gutterLabels({ regions: [box(10, 100)], transform, pane })[0].top).toBe(105 - GUTTER_LABEL_HEIGHT / 2);
+        expect(gutterLabels({ regions: [box(0, 296, 4)], transform, pane })[0].top).toBe(300 - GUTTER_LABEL_HEIGHT);
+
+        // Zoomed in and panned, the anchor follows the box on screen.
+        const zoomed = gutterLabels({ regions: [box(10, 100)], transform: { scale: 2, x: -20, y: -150 }, pane });
+        expect(zoomed[0].anchor).toEqual({ x: 40, y: 60 });
     });
 
     /** A text-like page: bars of seeded lengths on white, drawn moved by `shift`. */
@@ -828,14 +850,20 @@ describe("image compare core", () => {
         return { width, height, data };
     }
 
-    /** Seeded grey noise: no structure for a shift to lock onto. */
+    /**
+     * Seeded grey noise: no structure for a shift to lock onto. Each pixel is a hash of its index and the seed; one
+     * running generator per image made two seeds the same sequence from another start, which is a real raster shift
+     * that a 128 px window finds.
+     */
     function noise({ width, height, seed }: CompareSize & { seed: number }): RgbaImage {
         const data = new Uint8ClampedArray(width * height * 4);
-        let state = seed;
 
         for (let i = 0; i < width * height; i++) {
-            state = (state * 1103515245 + 12345) % 2147483648;
-            const grey = Math.floor((state / 2147483648) * 256);
+            let hash = Math.imul(i ^ Math.imul(seed, 0x9e3779b1), 0x85ebca6b);
+            hash ^= hash >>> 13;
+            hash = Math.imul(hash, 0xc2b2ae35);
+            hash ^= hash >>> 16;
+            const grey = hash & 255;
             data.set([grey, grey, grey, 255], i * 4);
         }
 
@@ -865,6 +893,67 @@ describe("image compare core", () => {
         expect(aligned.size).toEqual({ width: 220, height: 260 });
         expect({ changed: aligned.changed, total: aligned.total }).toEqual({ changed: 0, total: 217 * 248 });
         expect(diffImages({ a, b: moved, threshold: 0.15 }).changed).toBeGreaterThan(1000);
+    });
+
+    test("a shift and a taller B: the strips the shift uncovered stay out, the rows only the taller image has count", () => {
+        const a = textPage({ width: 220, height: 260, seed: 7 });
+        const shift = { dx: 3, dy: 12 };
+        // The same page 40 rows taller, moved 3 right and 12 down: 28 rows at the bottom exist only in B, as wide as
+        // the overlap (217 px). The 3 columns on the right and B's 12 rows above the page are the shift's.
+        const taller = textPage({ width: 220, height: 300, seed: 7, shift });
+        const sizeOnly = 28 * 217;
+        const diff = diffImages({ a, b: taller, threshold: 0.15, shift });
+
+        expect({ changed: diff.changed, total: diff.total, sizeOnly: diff.sizeOnly }).toEqual({
+            changed: sizeOnly,
+            total: 217 * 260 + sizeOnly,
+            sizeOnly,
+        });
+        expect(diff.regions).toEqual([{ x: 0, y: 260, w: 217, h: 28, pixels: sizeOnly }]);
+        expect(comparedAreaText(diff)).toBe(
+            " on the aligned pair: where both overlap, plus the 6,076 pixels only one image has because the sizes differ,"
+        );
+
+        const stops = [
+            { r: 0, g: 0, b: 255 },
+            { r: 255, g: 0, b: 0 },
+        ];
+        const heat = heatMap({ a, b: taller, shift, stops });
+        expect({ changed: heat.changed, total: heat.total, sizeOnly: heat.sizeOnly }).toEqual({
+            changed: sizeOnly,
+            total: 217 * 260 + sizeOnly,
+            sizeOnly,
+        });
+
+        // Equal sizes: only the shift's strips are outside the overlap, and they stay out.
+        const moved = diffImages({
+            a,
+            b: textPage({ width: 220, height: 260, seed: 7, shift }),
+            threshold: 0.15,
+            shift,
+        });
+        expect({ changed: moved.changed, sizeOnly: moved.sizeOnly }).toEqual({ changed: 0, sizeOnly: 0 });
+        expect(comparedAreaText(moved)).toBe(" on the aligned pair, where both overlap,");
+        expect(comparedAreaText(diffImages({ a, b: taller, threshold: 0.15 }))).toBe("");
+
+        // B shorter than A and moved up 5: A's rows past what B could show at A's height count, the 5 rows the move
+        // uncovered at the top do not.
+        const shorter = textPage({ width: 220, height: 240, seed: 7, shift: { dx: 0, dy: -5 } });
+        const up = diffImages({ a, b: shorter, threshold: 0.15, shift: { dx: 0, dy: -5 } });
+        expect(up.sizeOnly).toBe((260 - 245) * 220);
+    });
+
+    test("the default alignment window finds a page moved down 48 px by a taller banner", () => {
+        const a = textPage({ width: 220, height: 260, seed: 7 });
+
+        expect(estimateShift(a, textPage({ width: 220, height: 260, seed: 7, shift: { dx: 0, dy: 48 } }))).toEqual({
+            dx: 0,
+            dy: 48,
+        });
+        expect(estimateShift(a, textPage({ width: 220, height: 260, seed: 7, shift: { dx: 2, dy: -40 } }))).toEqual({
+            dx: 2,
+            dy: -40,
+        });
     });
 
     /**

@@ -149,6 +149,7 @@ function mockUrl(options: MockOptions): string {
 
 interface Samples {
     shifted: { before: string; after: string };
+    shiftedTaller: { before: string; after: string };
     light: { before: string; after: string };
     dark: { before: string; after: string };
     taller: { before: string; after: string };
@@ -174,6 +175,17 @@ function useSamples(): Samples | undefined {
                 before: mockUrl({ width: 720, height: 400, palette: LIGHT, after: false }),
                 after: mockUrl({ width: 720, height: 400, palette: LIGHT, after: true, shift: { dx: 3, dy: 12 } }),
             },
+            shiftedTaller: {
+                before: mockUrl({ width: 720, height: 400, palette: LIGHT, after: false }),
+                after: mockUrl({
+                    width: 720,
+                    height: 480,
+                    palette: LIGHT,
+                    after: true,
+                    footer: true,
+                    shift: { dx: 3, dy: 12 },
+                }),
+            },
         });
     }, []);
 
@@ -193,7 +205,7 @@ export default function ImageComparePage() {
                 <>
                     <Demo
                         title="Equal sizes"
-                        note="Every mode on one pair. In Diff, the threshold, the underlay and the region buttons sit under the switch."
+                        note="Every mode on one pair. In Diff, the threshold, the underlay and its opacity and the region buttons sit under the switch, and the region numbers sit in a gutter at the right of the stage with a thin line to each box, so no number covers an image pixel. In Blink, the Interval range sets how fast Auto flips."
                     >
                         <ImageCompare
                             before={{ src: samples.light.before }}
@@ -223,7 +235,7 @@ export default function ImageComparePage() {
                     </Demo>
                     <Demo
                         title="A shifted image"
-                        note="After is the same page moved by 3 px right and 12 px down, with a few real changes. The diff finds the shift, says so and compares the aligned pair, so only the real changes are pink; turn Align off to see the smear a moved page makes. Heat shows how far each pixel's colour moved."
+                        note="After is the same page moved by 3 px right and 12 px down, with a few real changes. The diff finds the shift, says so and compares the aligned pair, so only the real changes are pink; turn Align off to see the smear a moved page makes. Heat shows how far each pixel's colour moved. The alignment looks up to 128 px either way (alignWindow), so a page moved by a taller banner is found too. Measured in Bun 1.4.2 on an Apple M4 Max, on a 1280 x 2000 text page moved by 3 and 48 px, 15 interleaved rounds: the estimate's median is 36.7 ms with a 32 px window (which finds a wrong shift), 37.2 ms with 64 px and 37.2 ms with 128 px."
                     >
                         <ImageCompare
                             before={{ src: samples.shifted.before }}
@@ -232,16 +244,39 @@ export default function ImageComparePage() {
                         />
                     </Demo>
                     <Demo
-                        title="Three images"
-                        note="With three or more images, two selects pick A and B; with the comparison focused, [ and ] step B."
+                        title="A shifted and taller image"
+                        note="After is moved by 3 px right and 12 px down and is also 80 px taller, with a footer. After's 12 rows above the page and the 3 columns the move uncovered are the shift's, so they stay out; the 68 rows at the bottom that only After has are there because the sizes differ, so they count as changed, and the summary says so."
                     >
                         <ImageCompare
+                            before={{ src: samples.shiftedTaller.before }}
+                            after={{ src: samples.shiftedTaller.after, label: "After, moved and taller" }}
+                            defaultMode="diff"
+                        />
+                    </Demo>
+                    <Demo
+                        title="Three images"
+                        note="With three or more images, two selects pick A and B; with the comparison focused, [ and ] step B. With an id, the picks are saved, so a reload keeps them; a saved image that is gone from the list falls back to the first two."
+                    >
+                        <ImageCompare
+                            id="gallery-three-images"
                             images={[
                                 { src: samples.light.before, label: "Build 1" },
                                 { src: samples.light.after, label: "Build 2" },
                                 { src: samples.taller.after, label: "Build 3, with a footer" },
                             ]}
                             defaultMode="slider"
+                        />
+                    </Demo>
+                    <Demo
+                        title="Starting values a page sets"
+                        note="blinkInterval={1200} makes Blink's Auto flip every 1.2 s, and diffUnderlayOpacity={0.2} fades Diff's grey underlay to 20%. The Interval and Underlay opacity controls on the comparison change them for that comparison; the system's reduced-motion setting still turns Auto off."
+                    >
+                        <ImageCompare
+                            before={{ src: samples.light.before }}
+                            after={{ src: samples.light.after }}
+                            defaultMode="blink"
+                            blinkInterval={1200}
+                            diffUnderlayOpacity={0.2}
                         />
                     </Demo>
                     <Demo

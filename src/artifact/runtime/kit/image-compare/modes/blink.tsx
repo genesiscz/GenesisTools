@@ -17,14 +17,17 @@ const SHOWING = "blink.showing";
 const AUTO = "blink.auto";
 const INTERVAL = "blink.interval";
 const SIDES = ["a", "b"] as const;
-/** The default auto flip interval: long enough to read a label, short enough to see a change pop. */
-const BLINK_MS = 700;
 const BLINK_MS_MIN = 200;
 const BLINK_MS_MAX = 3000;
 
-/** The auto flip interval the user set on this comparison, in ms. */
+/**
+ * The auto flip interval in ms: this comparison's own pick, else the page's `blinkInterval` (700 ms by default: long
+ * enough to read a label, short enough to see a change pop).
+ */
 function blinkInterval(props: CompareStageProps): number {
-    return Math.min(BLINK_MS_MAX, Math.max(BLINK_MS_MIN, numberSetting(props.settings, INTERVAL, BLINK_MS)));
+    const interval = numberSetting(props.settings, INTERVAL, props.defaults.blink.interval);
+
+    return Math.min(BLINK_MS_MAX, Math.max(BLINK_MS_MIN, interval));
 }
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 

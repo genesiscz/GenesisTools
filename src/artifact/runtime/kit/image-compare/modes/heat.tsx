@@ -3,8 +3,11 @@ import { parseCssColor, type Rgb } from "../../color";
 import { resolveCssColor, useColorSchemeTick } from "../../theme";
 import {
     alignedSize,
-    type CompareRect,
     type CompareSize,
+    comparedAreaText,
+    coverageRects,
+    insideRect,
+    isSizeChange,
     overlapRect,
     placeImage,
     type RgbaImage,
@@ -49,6 +52,8 @@ interface HeatMap {
     total: number;
     /** The shift of B the map was computed with; the map is placed for it. */
     shift: Shift;
+    /** Pixels inside only one image because the sizes differ; each is the largest distance. */
+    sizeOnly: number;
 }
 
 function blend(value: number, alpha: number): number {
@@ -83,38 +88,40 @@ function rampAt(stops: Rgb[], t: number): Rgb {
     };
 }
 
-function inside(rect: CompareRect, x: number, y: number): boolean {
-    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
-}
-
 /**
  * Every pixel's colour distance on the ramp. Which image covers a pixel comes from where each image lies on the
  * canvas, never from its alpha: inside both, the distance blends both over white (a transparent pixel of an image is
- * still that image). Unshifted, a pixel inside only one image is the largest distance; on an aligned pair only the
- * overlap is drawn, as the diff compares it.
+ * still that image). A pixel inside only one image is the largest distance when the sizes put it there, and stays
+ * clear when only the move did (`coverageRects`), as the diff counts it.
  */
 export function heatMap({ a, b, shift, stops }: { a: RgbaImage; b: RgbaImage; shift: Shift; stops: Rgb[] }): HeatMap {
     const size = alignedSize(a, b, shift);
     const placedA = placeImage(a, size);
     const placedB = placeImage(b, size, { x: -shift.dx, y: -shift.dy });
-    const rectA: CompareRect = { x: 0, y: 0, w: a.width, h: a.height };
-    const rectB: CompareRect = { x: -shift.dx, y: -shift.dy, w: b.width, h: b.height };
+    const rects = coverageRects(a, b, shift);
     const aligned = shift.dx !== 0 || shift.dy !== 0;
     const area = overlapRect(a, b, shift);
     const pixels = size.width * size.height;
-    // The map covers the whole canvas; on an aligned pair the share counts the overlap only.
-    const total = aligned ? area.w * area.h : pixels;
     const data = new Uint8ClampedArray(pixels * 4);
     let changed = 0;
+    let sizeOnly = 0;
 
     for (let y = 0; y < size.height; y++) {
         for (let x = 0; x < size.width; x++) {
             const at = (y * size.width + x) * 4;
-            const inA = inside(rectA, x, y);
-            const inB = inside(rectB, x, y);
+            const inA = insideRect(rects.a, x, y);
+            const inB = insideRect(rects.b, x, y);
 
-            if ((!inA && !inB) || (aligned && inA !== inB)) {
+            if (!inA && !inB) {
                 continue;
+            }
+
+            if (inA !== inB) {
+                if (!isSizeChange(rects, x, y)) {
+                    continue;
+                }
+
+                sizeOnly++;
             }
 
             const t = inA !== inB ? 1 : colourDistance(placedA.data, placedB.data, at);
@@ -133,7 +140,10 @@ export function heatMap({ a, b, shift, stops }: { a: RgbaImage; b: RgbaImage; sh
         }
     }
 
-    return { size, data, changed, total, shift };
+    // The map covers the whole canvas; on an aligned pair the share counts the overlap and the size pixels.
+    const total = aligned ? area.w * area.h + sizeOnly : pixels;
+
+    return { size, data, changed, total, shift, sizeOnly };
 }
 
 /** The ramp's colours as the page's theme resolves them now. */
@@ -223,7 +233,9 @@ function HeatControls(props: CompareStageProps) {
                 />
                 <span>Large change</span>
                 <span>
-                    {isAligned(shift) ? "(clear: no change)" : "(clear: no change; inside only one image: largest)"}
+                    {isAligned(shift) && (heat?.sizeOnly ?? 0) === 0
+                        ? "(clear: no change)"
+                        : "(clear: no change; inside only one image: largest)"}
                 </span>
             </span>
             <AlignControl {...props} />
@@ -233,7 +245,7 @@ function HeatControls(props: CompareStageProps) {
                         <span className="font-medium text-ink">
                             {`${share >= 10 ? share.toFixed(1) : share.toFixed(2)}% of pixels changed colour`}
                         </span>
-                        {`${isAligned(shift) ? " on the aligned pair, where both overlap," : ""} in ${Math.round(result.ms)} ms`}
+                        {`${comparedAreaText(heat)} in ${Math.round(result.ms)} ms`}
                         {result.stale ? <StaleNote /> : null}
                     </>
                 ) : props.pixels.status === "error" ? null : (
