@@ -87,15 +87,21 @@ export function localVoiceBackend(): { model: string; extractor: Extractor } {
         throw new VoiceUnavailableError("Speaker model unavailable; run meetings voice prepare explicitly");
     }
     const model = `campplus:${createHash("sha256").update(readFileSync(EMBEDDING_MODEL.file)).digest("hex")}`;
-    const sherpa: Sherpa = createRequire(import.meta.url)("sherpa-onnx-node");
+    let extractor: Extractor | undefined;
     runtime = {
         model,
-        extractor: new sherpa.SpeakerEmbeddingExtractor({
-            model: EMBEDDING_MODEL.file,
-            numThreads: 1,
-            provider: "cpu",
-            debug: false,
-        }),
+        get extractor() {
+            if (!extractor) {
+                const sherpa: Sherpa = createRequire(import.meta.url)("sherpa-onnx-node");
+                extractor = new sherpa.SpeakerEmbeddingExtractor({
+                    model: EMBEDDING_MODEL.file,
+                    numThreads: 1,
+                    provider: "cpu",
+                    debug: false,
+                });
+            }
+            return extractor;
+        },
     };
     return runtime;
 }
@@ -305,14 +311,6 @@ export async function embedVoiceLines(options: {
     cachePath?: string;
     workerPrefix?: readonly string[];
 }): Promise<LineEmbedding[]> {
-    if (options.workerPrefix) {
-        return workerResultSchema.parse(
-            await runVoiceWorker({
-                request: { kind: "lines", input: voiceLineRequestSchema.parse(options) },
-                workerPrefix: options.workerPrefix,
-            })
-        );
-    }
     const stat = statSync(options.audioPath);
     const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
     const result: LineEmbedding[] = [];
@@ -332,6 +330,33 @@ export async function embedVoiceLines(options: {
             backendError = error;
             logger.debug({ error }, "Voice backend unavailable; line identities remain unknown");
         }
+    }
+    if (options.workerPrefix) {
+        const saved: LineEmbedding[] = [];
+        for (const span of options.spans) {
+            const channels: ChannelEmbedding[] = [];
+            for (const channel of options.channels) {
+                const provenance = { source, ...channel, fromSec: span.fromSec, toSec: span.toSec };
+                const hit = cache?.get(provenance);
+                if (!hit) {
+                    break;
+                }
+                channels.push({ ...provenance, ...hit });
+            }
+            if (channels.length !== options.channels.length) {
+                break;
+            }
+            saved.push({ index: span.index, channels });
+        }
+        if (saved.length === options.spans.length) {
+            return saved;
+        }
+        return workerResultSchema.parse(
+            await runVoiceWorker({
+                request: { kind: "lines", input: voiceLineRequestSchema.parse(options) },
+                workerPrefix: options.workerPrefix,
+            })
+        );
     }
     for (const span of options.spans) {
         const channels: ChannelEmbedding[] = [];
