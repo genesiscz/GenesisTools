@@ -196,6 +196,40 @@ describe("listen session", () => {
         expect(adapter.notes.at(-1)).toMatchObject({ kind: "ended", reason: "aborted" });
     });
 
+    test("an answer to a word question fills the forms that start with the same heard word", async () => {
+        const word = (heard: string, occurrences: number) => ({
+            about: "term",
+            group: "words",
+            heard,
+            choices: [],
+            priority: occurrences,
+            evidence: { occurrences },
+        });
+        const fx = await fixture([
+            term("i1", 50, { heard: "zorb", evidence: { occurrences: 5 } }),
+            term("i2", 70, { heard: "zorb-fe", evidence: { occurrences: 3 } }),
+            question("i3", { ...word("zorb", 5), fromSec: 50, toSec: 54, decides: ["i1"] }),
+            question("i4", { ...word("zorb-fe", 3), fromSec: 70, toSec: 74, decides: ["i2"] }),
+        ]);
+
+        expect(await fx.session(new ScriptedAdapter([{ answer: "sorb" }])).run()).toBe("stopped");
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "sorb" });
+        expect(fx.item("i4")).toMatchObject({
+            status: "suggested",
+            choices: ["sorb-fe"],
+            evidence: { derivedFrom: "i3" },
+        });
+
+        const token = fx.item("i3")?.decision?.token;
+        await new DecisionJournal({ store: fx.store }).revert({
+            meeting: fx.meeting.id,
+            token: token!,
+            actor: { kind: "listen" },
+        });
+        expect(fx.item("i4")).toMatchObject({ status: "suggested", choices: [] });
+        expect(fx.item("i4")?.evidence).not.toHaveProperty("derivedFrom");
+    });
+
     test("an answer decides its items, and a word answer settles the other question on the same heard words", async () => {
         const { session, item, ledger, logPath } = await fixture([
             term("i1", 50, { proposed: "ADA" }),

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -33,8 +34,10 @@ import { planFindings } from "../lib/add-findings";
 import { decideResult, decisionOf, filteredNothing, reopenResult } from "../lib/decide";
 import { decisionActionSchema } from "../lib/decision-actions";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
+import { setMeetingFields } from "../lib/meeting-fields";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
+import { missingProjectWarning, projectRequired, resolveProject } from "../lib/project";
 import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
@@ -192,12 +195,42 @@ function readRows(options: { meeting: string; all: boolean; applyAbove?: number 
     );
 }
 
+/**
+ * The project comes before suggestions (the owner's answer to M4): in a terminal the picker sets it, through the same
+ * code as `tools meetings set`; without one, or with "No project for now", the refusal names the command that sets it.
+ */
+async function withProject(store: MeetingStore, record: MeetingRecord): Promise<MeetingRecord | undefined> {
+    const config = new MeetingsConfigStore();
+    const refusal = projectRequired(record, await config.read());
+
+    if (!refusal) {
+        return record;
+    }
+
+    const picked = isInteractive() ? await resolveProject({ config }) : { how: "none" as const };
+
+    if (!picked.project) {
+        fail(refusal);
+        return undefined;
+    }
+
+    const { record: updated } = await setMeetingFields({ store, config, record, change: { project: picked.project } });
+    ui.ok(`Project ${picked.project} set on ${record.id}.`);
+    return updated;
+}
+
 async function suggest(
     ref: string,
     opts: { rules?: string; attendance?: string; attendanceId?: string; wordCheck?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
-    const record = requireMeeting(store, ref);
+    const found = requireMeeting(store, ref);
+
+    if (!found) {
+        return;
+    }
+
+    const record = await withProject(store, found);
 
     if (!record) {
         return;
@@ -728,7 +761,6 @@ function reportOutcomes(outcomes: CorrectionOutcome[]): void {
 }
 
 import { qualityLines, thresholdProbe } from "../lib/listen-quality";
-import { missingProjectWarning } from "../lib/project";
 
 async function transcript(
     ref: string,
