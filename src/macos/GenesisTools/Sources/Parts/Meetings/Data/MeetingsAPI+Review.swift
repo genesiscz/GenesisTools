@@ -791,7 +791,7 @@ struct ReviewRows: Decodable, Equatable {
 
     let meeting: String
     var rows: [ReviewRow]
-    let hidden: Hidden
+    var hidden: Hidden
     var attendanceWarning: String? = nil
     var lineEvidence: [WindowLineEvidence]? = nil
     let questionDetails: [QuestionDetails]?
@@ -917,8 +917,10 @@ struct ReviewRowsPatch: Decodable, Equatable {
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
         }
-        return ReviewRows(meeting: current.meeting, rows: rows,
-                          hidden: !conflicted && current.hidden == hidden.before ? hidden.after : current.hidden)
+        var updated = current
+        updated.rows = rows
+        if !conflicted && current.hidden == hidden.before { updated.hidden = hidden.after }
+        return updated
     }
 }
 

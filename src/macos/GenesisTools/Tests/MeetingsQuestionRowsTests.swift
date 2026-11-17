@@ -86,4 +86,25 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         let text = try rendered(QuestionLines(evidence: evidence(), expanded: false, answered: true), name: "X13-raised")
         XCTAssertTrue(text.contains("Raised confidence on 1 line"), text)
     }
+
+    func testPatchPreservesEveryOptionalRowAndEvidenceField() throws {
+        let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.8,"priority":0.9,"group":"rules","occurrences":3,"reach":0.7,"comment":"Keep the source","what":"Who?","parts":[],"choices":[],"edit":"answer","needs":"listen","sources":[],"target":{"kind":"item","id":"q"},"answer":"Earlier","decision":{"token":"earlier","actor":{"kind":"window"},"by":"you","action":"answer","reason":"Checked","question":"q","at":"2026-01-01T00:00:00Z"}}"#.utf8))
+        let hidden = ReviewRows.Hidden(lowPriority: 2, minPriority: 0.5)
+        let fields = ReviewRowsPatch.Fields.Value(title: "Example", project: "work", labels: ["sample"], speakerLabels: [:])
+        let line = WindowLineEvidence(index: 42, startSec: 10, endSec: 14, swapSkippedBy: ["rule"], noRemotePresent: false,
+            micShare: 0.5, callRms: 0.1, echoOfCall: 0.2, acousticQuality: "quiet")
+        let current = ReviewRows(meeting: "copy", rows: [row], hidden: hidden, attendanceWarning: "Attendance unavailable",
+            lineEvidence: [line], questionDetails: [evidence()])
+        var after = row; after.status = "confirmed"
+        let patch = ReviewRowsPatch(meeting: "copy", changes: [.init(id: row.id, before: row, after: after)], order: [row.id],
+            hidden: .init(before: hidden, after: hidden), fields: .init(before: fields, after: fields))
+        let updated = patch.applying(to: current, token: "next", latest: [:])
+        XCTAssertEqual(updated.rows, [after])
+        XCTAssertEqual(updated.attendanceWarning, current.attendanceWarning)
+        XCTAssertEqual(updated.lineEvidence, current.lineEvidence)
+        XCTAssertEqual(updated.questionDetails, current.questionDetails)
+        XCTAssertEqual(updated.questionDetailsByID, current.questionDetailsByID)
+        XCTAssertEqual(updated.questionDetailsTokens, current.questionDetailsTokens)
+        XCTAssertEqual(patch.applying(to: current, token: "next", latest: [row.id: "newer"]), current)
+    }
 }
