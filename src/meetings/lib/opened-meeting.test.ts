@@ -892,7 +892,7 @@ test("collect persists only a canonically identified departure and read-only pre
     await opened.collect();
     const reopened = new MeetingStore(store.storage).read(record.id)!;
     expect(reopened.participants.find((one) => one.name === "Bob Example")?.stays).toEqual([
-        { fromSec: 0, toSec: 40, source: "goodbye", confidence: 0.8 },
+        { fromSec: 0, toSec: 40, source: "platform-roster", leaveSource: "goodbye", confidence: 0.8 },
     ]);
     const before = readFileSync(store.path(record.id), "utf8");
     expect(

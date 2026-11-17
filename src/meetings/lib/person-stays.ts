@@ -5,6 +5,14 @@ import type { IdentifiedDeparture } from "./departure";
 
 type Stay = NonNullable<MeetingParticipant["stays"]>[number];
 
+/** Old records stored an inferred leave's source in the join source. */
+export function stayLeaveSource(stay: Stay): Stay["source"] | undefined {
+    return (
+        stay.leaveSource ??
+        (stay.toSec !== undefined && (stay.source === "goodbye" || stay.source === "silence") ? stay.source : undefined)
+    );
+}
+
 /** A stay a person's presence starts from; `inexactEnd` when the platform did not record the leave exactly. */
 interface BaselineStay {
     stay: Stay;
@@ -30,6 +38,7 @@ function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | un
                               fromSec: Math.max(0, stay.fromSec),
                               toSec: stay.toSec,
                               source: "attendance" as const,
+                              leaveSource: "attendance" as const,
                               confidence: 1,
                           },
                           ...(stay.leftAtExact === false ? { inexactEnd: true } : {}),
@@ -39,7 +48,14 @@ function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | un
     }
 
     if (person?.stays) {
-        return person.stays.map((stay) => ({ stay }));
+        return person.stays.map((stay) => ({
+            stay:
+                stay.toSec !== undefined &&
+                (stay.source === "hand" || stay.source === "attendance") &&
+                !stay.leaveSource
+                    ? { ...stay, leaveSource: stay.source }
+                    : stay,
+        }));
     }
 
     return person?.firstSeenSec === undefined
@@ -79,11 +95,16 @@ export function personStays(options: {
 }): PersonStays[] {
     return options.record.participants.map((person) => {
         const baseline = baselineStays(options.record, person.name) ?? [];
-        const stays: Stay[] = baseline.map(({ stay }) =>
-            options.lines && (stay.source === "goodbye" || stay.source === "silence")
-                ? { fromSec: stay.fromSec, source: "platform-roster" as const, confidence: 1 }
-                : { ...stay }
-        );
+        const stays: Stay[] = baseline.map(({ stay }) => {
+            const leaveSource = stayLeaveSource(stay);
+            return options.lines && (leaveSource === "goodbye" || leaveSource === "silence")
+                ? {
+                      fromSec: stay.fromSec,
+                      source: stay.leaveSource === undefined ? "platform-roster" : stay.source,
+                      confidence: 1,
+                  }
+                : { ...stay };
+        });
         // An open stay, or one whose end the platform only bounded (`leftAtExact: false`), may end at an inferred
         // departure before that bound; an exact attendance leave stays as recorded.
         const inexact = new Set(stays.filter((_, index) => baseline[index]?.inexactEnd));
@@ -126,7 +147,7 @@ export function personStays(options: {
             if (stay) {
                 inexact.delete(stay);
                 stay.toSec = event.atSec;
-                stay.source = "goodbye";
+                stay.leaveSource = event.reason === "attendance" ? "attendance" : "goodbye";
                 stay.confidence = event.reason === "attendance" ? 1 : 0.8;
             }
         }
@@ -155,7 +176,7 @@ export function personStays(options: {
             ) {
                 inexact.delete(stay);
                 stay.toSec = last.endSec;
-                stay.source = "silence";
+                stay.leaveSource = "silence";
                 stay.confidence = 0.5;
             }
         }

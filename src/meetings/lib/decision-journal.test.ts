@@ -39,9 +39,10 @@ import {
     uncertainSharedCallRanges,
 } from "./listen-quality";
 import { meetingFieldsChange } from "./meeting-fields";
-import { personStays, presenceOf, rosterPresence } from "./person-stays";
+import { personStays, presenceOf, rosterPresence, stayLeaveSource } from "./person-stays";
 import { rejectFilterIds } from "./reject-filter";
 import { reviewRow } from "./review-rows";
+import { meetingsMethod } from "./service/api";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
@@ -1840,7 +1841,7 @@ describe("workshop listen contracts", () => {
         const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
         expect(reopened.participants[1]).toMatchObject({
             firstSeenSec: 600,
-            stays: [{ fromSec: 600, toSec: 2400, source: "goodbye", confidence: 0.8 }],
+            stays: [{ fromSec: 600, toSec: 2400, source: "platform-roster", leaveSource: "goodbye", confidence: 0.8 }],
         });
     });
 
@@ -1862,7 +1863,9 @@ describe("workshop listen contracts", () => {
         });
         let reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
         const derived = personStays({ record: reopened, durationSec: 3000 });
-        expect(derived[0]!.stays).toEqual([{ fromSec: 550, toSec: 2405, source: "attendance", confidence: 1 }]);
+        expect(derived[0]!.stays).toEqual([
+            { fromSec: 550, toSec: 2405, source: "attendance", leaveSource: "attendance", confidence: 1 },
+        ]);
         await fx.store.update(fx.meeting.id, { command: "test", change: "persist stays" }, (record) => {
             record.participants[0]!.stays = derived[0]!.stays;
         });
@@ -1879,7 +1882,7 @@ describe("workshop listen contracts", () => {
         });
         reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
         expect(personStays({ record: reopened, durationSec: 3000 })[0]!.stays).toEqual([
-            { fromSec: 700, toSec: 2000, source: "hand", confidence: 1 },
+            { fromSec: 700, toSec: 2000, source: "hand", leaveSource: "hand", confidence: 1 },
         ]);
     });
 
@@ -2061,6 +2064,105 @@ test("speaker evidence propagation improves unasked compatible ranges and the jo
     expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
 });
 
+test.each(["goodbye", "silence"] as const)(
+    "old-shape %s stays keep their read and re-derivation behavior",
+    async (source) => {
+        const stay = { fromSec: 10, toSec: 40, source, confidence: 0.5 };
+        const fx = await fixture([], {}, { participants: [{ name: "Bob Example", from: [], stays: [stay] }] });
+        const before = readFileSync(fx.store.path(fx.meeting.id), "utf8");
+        const record = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const saved = record.participants[0]!.stays![0]!;
+        expect(saved.leaveSource).toBeUndefined();
+        expect(stayLeaveSource(saved)).toBe(source);
+        expect(personStays({ record, durationSec: 900 })[0]!.stays).toEqual([stay]);
+        expect(rosterPresence(record, 900)).toEqual([{ name: "Bob Example", self: undefined, fromSec: 10, toSec: 40 }]);
+        expect(personStays({ record, durationSec: 900, lines: [] })[0]!.stays).toEqual([
+            { fromSec: 10, source: "platform-roster", confidence: 1 },
+        ]);
+        expect(readFileSync(fx.store.path(fx.meeting.id), "utf8")).toBe(before);
+    }
+);
+
+test("leave source prefers the explicit field and only falls back for closed legacy inferred stays", () => {
+    for (const source of [
+        "attendance",
+        "indicator",
+        "platform-roster",
+        "greeting",
+        "goodbye",
+        "silence",
+        "phone",
+        "hand",
+    ] as const) {
+        expect(stayLeaveSource({ fromSec: 0, toSec: 40, source: "goodbye", leaveSource: source })).toBe(source);
+        expect(stayLeaveSource({ fromSec: 0, source })).toBeUndefined();
+        expect(stayLeaveSource({ fromSec: 0, toSec: 0, source })).toBe(
+            source === "goodbye" || source === "silence" ? source : undefined
+        );
+    }
+});
+
+test.each(["goodbye", "silence"] as const)(
+    "a %s leave preserves its join source through persistence and a second pass",
+    async (leaveSource) => {
+        const source = leaveSource === "goodbye" ? "greeting" : "indicator";
+        const fx = await fixture(
+            [],
+            {},
+            {
+                participants: [{ name: "Bob Example", from: [], stays: [{ fromSec: 0, source, confidence: 1 }] }],
+            }
+        );
+        const lines = lineEvidence([{ speaker: "Voice", startSec: 10, text: "Hello" }], {
+            segments: [],
+            speaking: [{ tSec: 10, speaking: ["Bob Example"], validUntilSec: 20 }],
+        });
+        const options = {
+            durationSec: 900,
+            lines,
+            ...(leaveSource === "goodbye"
+                ? { departures: [{ name: "Bob Example", atSec: 40, reason: "indicator" as const }] }
+                : { silenceMinutes: 10, callSilent: [{ fromSec: 15, toSec: 900 }] }),
+        };
+        const first = personStays({ record: fx.meeting, ...options })[0]!.stays;
+        expect(first).toEqual([
+            {
+                fromSec: 0,
+                toSec: leaveSource === "goodbye" ? 40 : 15,
+                source,
+                leaveSource,
+                confidence: leaveSource === "goodbye" ? 0.8 : 0.5,
+            },
+        ]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "derived stay" }, (record) => {
+            record.participants[0]!.stays = first;
+        });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.participants[0]!.stays).toEqual(first);
+        const serviceRecord = meetingsMethod("meeting.show").result.parse(reopened);
+        expect(serviceRecord.participants[0]!.stays).toEqual(first);
+        const before = readFileSync(fx.store.path(fx.meeting.id), "utf8");
+        expect(personStays({ record: reopened, ...options })[0]!.stays).toEqual(first);
+        expect(readFileSync(fx.store.path(fx.meeting.id), "utf8")).toBe(before);
+        expect(personStays({ record: reopened, durationSec: 900, lines: [] })[0]!.stays).toEqual([
+            { fromSec: 0, source, confidence: 1 },
+        ]);
+    }
+);
+
+test("a resolved attendance leave records attendance separately from the join", () => {
+    const record = meetingRecord("attendance-leave", {
+        participants: [{ name: "Bob Example", stays: [{ fromSec: 0, source: "phone" }], from: [] }],
+    });
+    expect(
+        personStays({
+            record,
+            durationSec: 900,
+            departures: [{ name: "Bob Example", atSec: 40, reason: "attendance" }],
+        })[0]!.stays
+    ).toEqual([{ fromSec: 0, toSec: 40, source: "phone", leaveSource: "attendance", confidence: 1 }]);
+});
+
 test("a resolved departure is vetoed by later valid speech, and silence needs observed quiet call coverage", () => {
     const record = meetingRecord("stays", {
         participants: [{ name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] }],
@@ -2094,7 +2196,7 @@ test("a resolved departure is vetoed by later valid speech, and silence needs ob
         silenceMinutes: 10,
         callSilent: [{ fromSec: 94, toSec: 900 }],
     })[0]!.stays[0]!;
-    expect(quiet).toMatchObject({ toSec: 95, source: "silence", confidence: 0.5 });
+    expect(quiet).toMatchObject({ toSec: 95, source: "platform-roster", leaveSource: "silence", confidence: 0.5 });
     record.participants[0]!.stays = [{ fromSec: 0, toSec: 40, source: "hand", confidence: 1 }];
     expect(personPresent(record, "Bob Example", 39.9)).toBe(true);
     expect(personPresent(record, "Bob Example", 40)).toBe(false);
@@ -2102,7 +2204,7 @@ test("a resolved departure is vetoed by later valid speech, and silence needs ob
     record.attendance = { from: "teams", people: [{ name: "Bob Example", fromSec: 0, toSec: 900 }] };
     expect(personPresent(record, "Bob Example", 100)).toBe(false);
     expect(personStays({ record, durationSec: 900 })[0]!.stays).toEqual([
-        { fromSec: 0, toSec: 40, source: "hand", confidence: 1 },
+        { fromSec: 0, toSec: 40, source: "hand", leaveSource: "hand", confidence: 1 },
     ]);
 });
 
@@ -2184,9 +2286,15 @@ test("an identified goodbye ends an attendance stay whose leave the platform did
     expect(rosterPresence(roster, 900)).toEqual([
         { name: "Bob Example", self: undefined, fromSec: 60, toSec: 900, leftAtExact: false },
     ]);
-    expect(stays(false)).toEqual([{ fromSec: 0, toSec: 300, source: "goodbye", confidence: 0.8 }]);
-    expect(stays(undefined)).toEqual([{ fromSec: 0, toSec: 600, source: "attendance", confidence: 1 }]);
-    expect(stays(true)).toEqual([{ fromSec: 0, toSec: 600, source: "attendance", confidence: 1 }]);
+    expect(stays(false)).toEqual([
+        { fromSec: 0, toSec: 300, source: "attendance", leaveSource: "goodbye", confidence: 0.8 },
+    ]);
+    expect(stays(undefined)).toEqual([
+        { fromSec: 0, toSec: 600, source: "attendance", leaveSource: "attendance", confidence: 1 },
+    ]);
+    expect(stays(true)).toEqual([
+        { fromSec: 0, toSec: 600, source: "attendance", leaveSource: "attendance", confidence: 1 },
+    ]);
 });
 
 test("presence keeps an attendance leave the platform did not record exactly as a bound, and a recorded one exact", () => {
