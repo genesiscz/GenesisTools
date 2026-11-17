@@ -4,6 +4,7 @@ import { z } from "zod";
 import { callWork, type WorkSession } from "../handlers";
 import type { Actor, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
+import { projectCounts } from "../read";
 import { type WorkContext, write } from "../service";
 import { openWorkDb } from "../store/db";
 import { selectItem, selectPairings } from "../store/rows";
@@ -235,5 +236,18 @@ describe("the connector methods", () => {
         const missing = await callWork("pair", { ref: "w_missing0", connector: "fake", key: "1" }, session(true));
         expect(missing.ok ? "" : missing.diagnostics[0].code).toBe("NOT_FOUND");
         expect(id).toMatch(/^w_/);
+    });
+});
+
+describe("the counts per project (P8)", () => {
+    test("spotted, reopened and held count per project; a project with nothing is left out", async () => {
+        await spot("s1", "bug");
+        await spot("s1", "bug");
+        const epic = await write(ctx("owner-s", "owner"), { verb: "add", title: "big", type: "epic" });
+        const id = epic.ok ? epic.data.items[0].id : asItemId("none");
+        await runSyncOnce(deps());
+        await write(ctx("other"), { verb: "comment", ref: id, text: "a note" });
+        await runSyncOnce(deps());
+        expect(projectCounts(db)).toEqual([{ project: "App", spotted: 2, reopened: 0, held: 1 }]);
     });
 });

@@ -1961,7 +1961,7 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             const fromStore = listWidgetTasks({ file: files.file, store, filters });
             expect(fromStore.sourcePath).toBe(`${store}-wal`);
             const { sourcePath: _a, sourceStamp: _b, ...log } = fromLog;
-            const { sourcePath: _c, sourceStamp: _d, ...stored } = fromStore;
+            const { sourcePath: _c, sourceStamp: _d, work: _e, ...stored } = fromStore;
             expect(stored).toEqual(log);
         }
     });

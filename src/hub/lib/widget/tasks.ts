@@ -13,6 +13,7 @@ import {
 import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { type ProjectCounts, projectCounts } from "@genesiscz/utils/work/read";
 import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import type { WidgetCard } from "./snapshot";
@@ -93,6 +94,8 @@ export interface WidgetTaskSnapshot {
     sourceStamp: string;
     projects: string[];
     sessions: { id: string; title: string }[];
+    /** Per project: items spotted, items reopened, outside changes held (work-items P8). Absent before the store. */
+    work?: ProjectCounts[];
 }
 const taskCache = new Map<string, { stamp: string; tasks: WidgetTask[] }>();
 
@@ -262,16 +265,17 @@ export function listWidgetTasks({
         // only at a checkpoint), so the store's WAL is the path to watch; a write after a checkpoint creates it again.
         sourcePath: fromStore !== null && store !== undefined ? `${store}-wal` : file,
         sourceStamp: stamp,
+        ...(fromStore !== null ? { work: fromStore.work } : {}),
     };
 }
 
-const storeCache = new Map<string, { stamp: string; tasks: WidgetTask[] }>();
+const storeCache = new Map<string, { stamp: string; tasks: WidgetTask[]; work: ProjectCounts[] }>();
 
 /**
  * The to-do items as the work store holds them; null when the store has none yet (before the first import), so the
  * caller reads the decision log as before. One indexed query; the result is cached by the store's last change.
  */
-function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[] } | null {
+function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[]; work: ProjectCounts[] } | null {
     if (!existsSync(path)) {
         return null;
     }
@@ -293,9 +297,10 @@ function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[] } | 
                     .filter((row) => kindOf(row) === "todo")
                     .map(widgetTask)
             );
-            storeCache.set(path, { stamp, tasks });
+            const work = projectCounts(db);
+            storeCache.set(path, { stamp, tasks, work });
             logger.debug({ path, count: tasks.length }, "Widget task metadata read from the work store");
-            return tasks.length > 0 ? { stamp, tasks } : null;
+            return tasks.length > 0 ? { stamp, tasks, work } : null;
         });
     } catch (error) {
         logger.warn({ err: error, path }, "Widget tasks: the work store is unreadable; reading the decision log");

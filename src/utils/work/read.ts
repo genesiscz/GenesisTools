@@ -325,3 +325,44 @@ export async function triage(db: Database, project: string | undefined, alive: L
 export function itemIds(values: string[]): ItemId[] {
     return values.map(asItemId);
 }
+
+/** What the widget counts per project (P8 decision 2): items to triage, items reopened, outside changes held. */
+export interface ProjectCounts {
+    project: string;
+    spotted: number;
+    reopened: number;
+    held: number;
+}
+
+/** One pass over the items and one over the pairings; projects with nothing to count are left out. */
+export function projectCounts(db: Database): ProjectCounts[] {
+    const byProject = new Map<string, ProjectCounts>();
+    const row = (project: string): ProjectCounts => {
+        let counts = byProject.get(project);
+
+        if (counts === undefined) {
+            counts = { project, spotted: 0, reopened: 0, held: 0 };
+            byProject.set(project, counts);
+        }
+
+        return counts;
+    };
+
+    for (const r of db
+        .query<{ project: string; spotted: number; reopened: number }, []>(
+            "SELECT project, SUM(state = 'spotted') AS spotted, SUM(state = 'reopened') AS reopened FROM items WHERE state IN ('spotted', 'reopened') GROUP BY project"
+        )
+        .all()) {
+        Object.assign(row(r.project), { spotted: r.spotted, reopened: r.reopened });
+    }
+
+    for (const r of db
+        .query<{ project: string; held: number }, []>(
+            "SELECT i.project AS project, COUNT(*) AS held FROM pairings p JOIN items i ON i.id = p.item WHERE p.state = 'held' GROUP BY i.project"
+        )
+        .all()) {
+        row(r.project).held = r.held;
+    }
+
+    return [...byProject.values()].sort((a, b) => a.project.localeCompare(b.project));
+}
