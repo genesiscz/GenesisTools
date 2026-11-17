@@ -137,6 +137,9 @@ export const transcriptLineSchema = z.object({
     words: z.array(alignedWordSchema).optional(),
     confidence: z.number().optional(),
     suggestedSpeaker: z.string().optional(),
+    /** Set only when the line's name comes from the voice model; the score is the match's cosine. */
+    nameSource: z.literal("voice").optional(),
+    nameScore: z.number().optional(),
     sourceIndex: z.number().int().nonnegative().optional(),
     questioned: z.boolean().optional(),
     guess: z.boolean().optional(),
