@@ -857,6 +857,25 @@ describe("image compare core", () => {
         const five = gutterLabels({ regions: regions.slice(0, 5), transform, pane, canvas });
         expect(five.labels.length).toBe(5);
         expect(five.more).toBeNull();
+
+        // A 300 px pane with 18 boxes in view: every number needs 322 px, so 15 numbers and "+3", the active one kept.
+        const tall = { width: 400, height: 300 };
+        const many = Array.from({ length: 18 }, (_, i) => ({ x: 10, y: i * 16, w: 20, h: 4, pixels: 1 }));
+        const crowded = gutterLabels({ regions: many, transform, pane: tall, canvas: tall, active: 17 });
+        expect(crowded.labels.length).toBe(15);
+        expect(crowded.labels.map((label) => label.index)).toContain(17);
+        expect(crowded.more).toEqual({ count: 3, top: 300 - GUTTER_LABEL_HEIGHT });
+        const crowdedTops = [...crowded.labels.map((label) => label.top), crowded.more?.top ?? Number.NaN];
+
+        for (let i = 1; i < crowdedTops.length; i++) {
+            expect(crowdedTops[i] - crowdedTops[i - 1]).toBeGreaterThanOrEqual(GUTTER_LABEL_HEIGHT);
+        }
+
+        expect(crowdedTops.every((top) => top >= 0 && top + GUTTER_LABEL_HEIGHT <= tall.height)).toBe(true);
+        // Sixteen still fit (286 px): every number, no mark.
+        const sixteen = gutterLabels({ regions: many.slice(0, 16), transform, pane: tall, canvas: tall });
+        expect(sixteen.labels.length).toBe(16);
+        expect(sixteen.more).toBeNull();
     });
 
     test("a leader leaves its box with a short tick and runs on only through the empty pane beside the image", () => {

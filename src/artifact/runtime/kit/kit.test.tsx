@@ -13,7 +13,7 @@ import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { type EditableColumn, type EditableRow, EditableTable, editableCellError, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { ImageCompare, ImageCompareModeSwitch, ImageCompareProvider } from "./image-compare";
-import { createIdleCache } from "./image-compare/load";
+import { createIdleCache, IMAGE_LOAD_DEADLINE_MS } from "./image-compare/load";
 import { LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
 import { MD_BODY_CLASS, MD_DOCUMENT_CLASS, Md, MdViewer } from "./md";
@@ -3045,12 +3045,23 @@ class FakeImageData {
     }
 }
 
+/** True once the comparison left "Loading the images...": every image has its size, or failed. */
+function imagesSettled(scope: Element): boolean {
+    return !(scope.textContent ?? "").includes("Loading the images...");
+}
+
 /**
  * jsdom has neither image decoding nor a 2D canvas; these stand-ins let the real diff path run. `prepare` runs on the
- * fresh window before the first render (stored picks, theme tokens, shorter timers); `painted` holds every pixel
- * buffer a canvas received, newest last.
+ * fresh window before the first render (stored picks, theme tokens, held timers); the mount then waits until `ready`
+ * holds (default: the images are loaded). `painted` holds every pixel buffer a canvas received, newest last.
  */
-async function mountImageCompare(node: ReactNode, prepare?: (window: DomHarness["window"]) => void) {
+async function mountImageCompare(
+    node: ReactNode,
+    {
+        prepare,
+        ready = imagesSettled,
+    }: { prepare?: (window: DomHarness["window"]) => void; ready?: (scope: Element) => boolean } = {}
+) {
     const dom = await mountDom(null);
     const saved = { Image: globalThis.Image, ImageData: globalThis.ImageData };
     const painted: FakeImageData[] = [];
@@ -3079,7 +3090,7 @@ async function mountImageCompare(node: ReactNode, prepare?: (window: DomHarness[
     });
     prepare?.(dom.window);
     await dom.render(node);
-    await settleFor(20);
+    await settleUntil(() => ready(dom.container), "the comparison to be ready");
 
     const text = (scope: Element = dom.container) => scope.textContent ?? "";
     const radio = (label: string, scope: ParentNode = dom.container) =>
@@ -3103,13 +3114,72 @@ async function settleFor(ms: number): Promise<void> {
 }
 
 /**
- * A pixel mode needs two rounds: the decoded pair renders, and only then does the mode start its diff or heat map.
- * React applies a state update when an `act` ends, so the wait is several short acts, not one long one.
+ * Flushes React in short acts until `check` holds, and fails naming `what` after `deadlineMs`. React applies a state
+ * update when an `act` ends, so each look follows a short act of its own; the wait ends on the condition, never on a
+ * guess of how long the work takes.
+ */
+async function settleUntil(check: () => boolean, what: string, deadlineMs = 5_000): Promise<void> {
+    const deadline = Date.now() + deadlineMs;
+
+    while (!check()) {
+        if (Date.now() > deadline) {
+            throw new Error(`Gave up after ${deadlineMs} ms waiting for ${what}.`);
+        }
+
+        await settleFor(10);
+    }
+}
+
+/** What a comparison shows while its images load or a pixel mode works; none of it stays once the mode is done. */
+const BUSY_TEXT = ["Loading the images...", "Reading the pixels...", "Computing the", "Updating for the new settings"];
+
+/**
+ * Waits until the comparison's pixel mode shows its result: the pair decoded, the diff or heat map computed, and none
+ * of it stale. It reads the global `document`, which `mountDom` points at the latest mounted window.
  */
 async function settlePixels(): Promise<void> {
-    for (let round = 0; round < 4; round++) {
-        await settleFor(150);
-    }
+    await settleUntil(
+        () => !BUSY_TEXT.some((busy) => (document.body.textContent ?? "").includes(busy)),
+        "the pixel mode's result"
+    );
+}
+
+/**
+ * Holds back every window timer of `ms` in `held` (its id to its handler), so the test fires it when it is ready
+ * instead of racing real time. Every other timer runs as usual, and clearing a held timer drops it.
+ */
+function holdTimers(window: DomHarness["window"], ms: number, held: Map<number, () => void>): void {
+    const setTimer = window.setTimeout.bind(window);
+    const clearTimer = window.clearTimeout.bind(window);
+    let nextId = 0;
+
+    Object.assign(window, {
+        setTimeout: (handler: () => void, delay = 0) => {
+            if (delay !== ms) {
+                return setTimer(handler, delay);
+            }
+
+            nextId -= 1;
+            held.set(nextId, handler);
+
+            return nextId;
+        },
+        clearTimeout: (id?: number) => {
+            if (id === undefined || !held.delete(id)) {
+                clearTimer(id);
+            }
+        },
+    });
+}
+
+/** Runs every held timer once inside `act`, so what it sets renders before the next assertion. */
+async function fireHeld(held: Map<number, () => void>): Promise<void> {
+    await act(async () => {
+        for (const [id, handler] of [...held]) {
+            held.delete(id);
+            handler();
+        }
+    });
 }
 
 /** Where the first pane draws its canvas (pane pixels) and at which scale, and the canvas size it draws. */
@@ -3446,8 +3516,10 @@ describe("ImageCompare", () => {
             );
         }
 
-        const item = await mountImageCompare(<ItemSwitcher />, (window) => {
-            window.localStorage.setItem("artifact.image-compare:item:kit-item-two:mode", "fade");
+        const item = await mountImageCompare(<ItemSwitcher />, {
+            prepare: (window) => {
+                window.localStorage.setItem("artifact.image-compare:item:kit-item-two:mode", "fade");
+            },
         });
 
         try {
@@ -3479,8 +3551,10 @@ describe("ImageCompare", () => {
             );
         }
 
-        const page = await mountImageCompare(<PageSwitcher />, (window) => {
-            window.localStorage.setItem("kit-test.page-two:mode", "blink");
+        const page = await mountImageCompare(<PageSwitcher />, {
+            prepare: (window) => {
+                window.localStorage.setItem("kit-test.page-two:mode", "blink");
+            },
         });
 
         try {
@@ -3496,33 +3570,40 @@ describe("ImageCompare", () => {
     }, 20_000);
 
     test("an image whose response hangs fails at the load deadline instead of loading forever", async () => {
+        // The load deadline's timers are held, so the test fires the deadline itself instead of racing it.
+        const held = new Map<number, () => void>();
         const { text, restore } = await mountImageCompare(
             <ImageCompare before={{ src: "fake://40x30/plain-s" }} after={{ src: "stall://hangs" }} />,
-            (window) => {
-                // The deadline is long on a page; here every timer of the window is capped, so the test does not wait.
-                const original = window.setTimeout.bind(window);
-                Object.assign(window, {
-                    setTimeout: (handler: () => void, ms = 0) => original(handler, Math.min(ms, 30)),
-                });
+            {
+                prepare: (window) => holdTimers(window, IMAGE_LOAD_DEADLINE_MS, held),
+                ready: (scope) => (scope.textContent ?? "").includes("Loading the images..."),
             }
         );
 
         try {
+            // Before loads and clears its deadline; After's response hangs, so only its deadline is left.
+            await settleUntil(() => held.size === 1, "Before to load");
             expect(text()).toContain("Loading the images...");
-            await settleFor(80);
+
+            await fireHeld(held);
+            await settleUntil(() => !text().includes("Loading the images..."), "the deadline to end the load");
             expect(text()).toContain("The image did not load: After.");
+            expect(text()).not.toContain("did not load: Before");
         } finally {
             await restore();
         }
     }, 20_000);
 
     test("the automatic blink flips at the interval the user sets", async () => {
+        // Timers of 200 ms are held: Auto arms one only when the interval the user set is the one it uses.
+        const held = new Map<number, () => void>();
         const { dom, text, restore } = await mountImageCompare(
             <ImageCompare
                 before={{ src: "fake://40x30/plain-k" }}
                 after={{ src: "fake://40x30/plain-l" }}
                 defaultMode="blink"
-            />
+            />,
+            { prepare: (window) => holdTimers(window, 200, held) }
         );
 
         try {
@@ -3532,9 +3613,12 @@ describe("ImageCompare", () => {
                     ?.querySelector("input");
             expect(control("Interval")?.value).toBe("700");
             await dom.type(control("Interval"), "200");
+            expect(held.size).toBe(0);
             await dom.click(control("Auto"));
             expect(text()).toContain("A: Before");
-            await settleFor(300);
+            expect(held.size).toBe(1);
+
+            await fireHeld(held);
             expect(text()).toContain("B: After");
         } finally {
             await restore();
@@ -3561,7 +3645,7 @@ describe("ImageCompare", () => {
 
         // A reload: a fresh window with the same storage.
         const keep = (window: DomHarness["window"]) => window.localStorage.setItem(picksKey, saved ?? "");
-        const reload = await mountImageCompare(<ImageCompare id="kit-picks" images={three} />, keep);
+        const reload = await mountImageCompare(<ImageCompare id="kit-picks" images={three} />, { prepare: keep });
 
         try {
             expect(selects(reload.dom.container)).toEqual(["0", "2"]);
@@ -3571,7 +3655,7 @@ describe("ImageCompare", () => {
 
         // "Third" is no longer among the images: the first two.
         const changed = [three[0], three[1], image("p4", "Fourth")];
-        const gone = await mountImageCompare(<ImageCompare id="kit-picks" images={changed} />, keep);
+        const gone = await mountImageCompare(<ImageCompare id="kit-picks" images={changed} />, { prepare: keep });
 
         try {
             expect(selects(gone.dom.container)).toEqual(["0", "1"]);
@@ -3635,7 +3719,9 @@ describe("ImageCompare", () => {
             return [...(painted.at(-1)?.data.slice(at, at + 3) ?? [])];
         };
 
-        const light = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, theme("rgb(200, 10, 30)"));
+        const light = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, {
+            prepare: theme("rgb(200, 10, 30)"),
+        });
 
         try {
             await settlePixels();
@@ -3644,7 +3730,9 @@ describe("ImageCompare", () => {
             await light.restore();
         }
 
-        const dark = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, theme("rgb(10, 200, 30)"));
+        const dark = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, {
+            prepare: theme("rgb(10, 200, 30)"),
+        });
 
         try {
             await settlePixels();
@@ -3728,6 +3816,54 @@ describe("ImageCompare", () => {
             // Third is gone: the first two, never one image on both sides.
             await dom.click(button("Two left"));
             expect(shown()).toEqual(["First", "Second"]);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("after a picked image leaves the list under the same id, stepping B saves picks that exist", async () => {
+        const image = (name: string, label: string) => ({ src: `fake://80x60/plain-${name}`, label });
+        const four = [image("s1", "First"), image("s2", "Second"), image("s3", "Third"), image("s4", "Fourth")];
+
+        function ListShrinker() {
+            const [list, setList] = useState(four);
+
+            return (
+                <>
+                    <button type="button" onClick={() => setList(four.slice(0, 3))}>
+                        Drop the fourth
+                    </button>
+                    <ImageCompare id="kit-shrink" images={list} />
+                </>
+            );
+        }
+
+        const { dom, button, restore } = await mountImageCompare(<ListShrinker />);
+        const errors: unknown[] = [];
+        dom.window.addEventListener("error", (event) => errors.push(event.error));
+
+        try {
+            const selects = () => [...dom.container.querySelectorAll("select")];
+            const choose = async (index: number, value: string) => {
+                const select = selects()[index];
+                select.value = value;
+                await dom.fire(select, new dom.window.Event("change", { bubbles: true }));
+            };
+            await choose(0, "3");
+            await choose(1, "0");
+            expect(selects().map((select) => select.value)).toEqual(["3", "0"]);
+
+            // Fourth (A) is gone: the first two.
+            await dom.click(button("Drop the fourth"));
+            expect(selects().map((select) => select.value)).toEqual(["0", "1"]);
+
+            // ] steps B past A and saves the two images the comparison shows, never a label past the list's end.
+            await dom.press(dom.container.querySelector('[role="group"]'), "]");
+            expect(errors).toEqual([]);
+            expect(selects().map((select) => select.value)).toEqual(["0", "2"]);
+            expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-shrink:picks")).toBe(
+                "First\nThird"
+            );
         } finally {
             await restore();
         }
@@ -3832,13 +3968,12 @@ describe("ImageCompare", () => {
         }
 
         // A reload: a fresh window with the same storage. The saved mode (Diff) comes back too.
-        const reload = await mountImageCompare(
-            <ImageCompare id="kit-saved" {...pair} defaultMode="blink" />,
-            (window) => {
+        const reload = await mountImageCompare(<ImageCompare id="kit-saved" {...pair} defaultMode="blink" />, {
+            prepare: (window) => {
                 window.localStorage.setItem(settingsKey, saved ?? "");
                 window.localStorage.setItem("artifact.image-compare:item:kit-saved:mode", "diff");
-            }
-        );
+            },
+        });
 
         try {
             expect(control(reload.dom.container, "Underlay opacity")?.value).toBe("60");
@@ -3870,14 +4005,16 @@ describe("ImageCompare", () => {
                 ]}
                 defaultMode="diff"
             />,
-            (window) => {
-                // The browser cannot make the PNG.
-                Object.defineProperty(window.HTMLCanvasElement.prototype, "toBlob", {
-                    configurable: true,
-                    value(done: (blob: Blob | null) => void) {
-                        done(null);
-                    },
-                });
+            {
+                prepare: (window) => {
+                    // The browser cannot make the PNG.
+                    Object.defineProperty(window.HTMLCanvasElement.prototype, "toBlob", {
+                        configurable: true,
+                        value(done: (blob: Blob | null) => void) {
+                            done(null);
+                        },
+                    });
+                },
             }
         );
 

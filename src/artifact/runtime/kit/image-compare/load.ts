@@ -45,8 +45,11 @@ function remember<T>(cache: Map<string, T>, key: string, value: T, max: number):
     }
 }
 
-/** A response that has not finished by then counts as failed, so a hung server never leaves "Loading" forever. */
-const IMAGE_LOAD_DEADLINE_MS = 30_000;
+/**
+ * A response that has not finished by then counts as failed, so a hung server never leaves "Loading" forever. Exported
+ * so a test can hold back the window timers of this length and fire the deadline itself.
+ */
+export const IMAGE_LOAD_DEADLINE_MS = 30_000;
 
 type ImageLoad = { ok: true; image: HTMLImageElement } | { ok: false; timedOut: boolean };
 
