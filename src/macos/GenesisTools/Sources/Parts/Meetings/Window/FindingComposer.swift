@@ -14,6 +14,7 @@ struct FindingComposerButton: View {
     @State private var force = false
     @State private var busy = false
     @State private var message: String?
+    @State private var failure: MeetingsCLI.Failure?
 
     var body: some View {
         Button("Add question or term…", systemImage: "plus") { showing = true }
@@ -39,6 +40,9 @@ struct FindingComposerButton: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let message { Text(verbatim: message).font(.caption).textSelection(.enabled) }
+                    if let failure {
+                        NoticePill(text: failure.sentence, more: failure.detail, tone: .error)
+                    }
                     HStack {
                         Button("Cancel") { showing = false }.keyboardShortcut(.cancelAction)
                         Spacer()
@@ -72,6 +76,7 @@ struct FindingComposerButton: View {
         action.force = force
         busy = true
         message = nil
+        failure = nil
         Task { @MainActor in
             defer { busy = false }
             do {
@@ -83,7 +88,7 @@ struct FindingComposerButton: View {
                     showing = false
                 }
             } catch {
-                message = error.localizedDescription
+                failure = asFailure(error)
             }
         }
     }

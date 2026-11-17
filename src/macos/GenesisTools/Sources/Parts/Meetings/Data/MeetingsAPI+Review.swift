@@ -794,7 +794,30 @@ struct ReviewRows: Decodable, Equatable {
     let hidden: Hidden
     var attendanceWarning: String? = nil
     var lineEvidence: [WindowLineEvidence]? = nil
-    var questionDetails: [QuestionDetails]? = nil
+    let questionDetails: [QuestionDetails]?
+    let questionDetailsByID: [String: QuestionDetails]
+    let questionDetailsTokens: [String: String]
+
+    init(meeting: String, rows: [ReviewRow], hidden: Hidden, attendanceWarning: String? = nil,
+         lineEvidence: [WindowLineEvidence]? = nil, questionDetails: [QuestionDetails]? = nil) {
+        self.meeting = meeting; self.rows = rows; self.hidden = hidden
+        self.attendanceWarning = attendanceWarning; self.lineEvidence = lineEvidence; self.questionDetails = questionDetails
+        questionDetailsByID = Dictionary(uniqueKeysWithValues: (questionDetails ?? []).map { ($0.id, $0) })
+        questionDetailsTokens = Dictionary(uniqueKeysWithValues: rows.compactMap { row in row.decision.map { (row.id, $0.token) } })
+    }
+
+    func needsQuestionDetails(for row: ReviewRow) -> Bool {
+        row.isQuestion && row.decision.map { questionDetailsByID[row.id] == nil || questionDetailsTokens[row.id] != $0.token } == true
+    }
+
+    private enum CodingKeys: String, CodingKey { case meeting, rows, hidden, attendanceWarning, lineEvidence, questionDetails }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(meeting: try values.decode(String.self, forKey: .meeting), rows: try values.decode([ReviewRow].self, forKey: .rows),
+            hidden: try values.decode(Hidden.self, forKey: .hidden), attendanceWarning: try values.decodeIfPresent(String.self, forKey: .attendanceWarning),
+            lineEvidence: try values.decodeIfPresent([WindowLineEvidence].self, forKey: .lineEvidence),
+            questionDetails: try values.decodeIfPresent([QuestionDetails].self, forKey: .questionDetails))
+    }
 }
 
 struct WindowLineEvidence: Decodable, Equatable, Hashable {
