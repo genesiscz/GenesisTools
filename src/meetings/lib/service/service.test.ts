@@ -28,6 +28,7 @@ import { Command } from "commander";
 import { z } from "zod";
 import { registerServeCommand } from "../../commands/serve";
 import { MeetingComments } from "../comments";
+import { projectRequired } from "../project";
 import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
@@ -377,6 +378,36 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 }
 
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
+    test("suggest refuses without a project before running and runs once a project is set", async () => {
+        const { client, store, config } = await ADAPTERS[kind]();
+        const suggest = await import("../suggest-run");
+        const run = spyOn(suggest, "runSuggest").mockResolvedValue({
+            fresh: [],
+            retired: [],
+            warnings: ["Fixture warning"],
+        });
+        closing.push(() => run.mockRestore());
+        const record = meetingRecordSchema.parse({ ...REVIEW, project: undefined });
+        writeFileSync(store.path(record.id), SafeJSON.stringify(record, null, 2));
+        const before = readFileSync(store.path(record.id));
+        const text = projectRequired(record, await config.read());
+        expect(text).toContain("This meeting has no project. Suggestions use the project's dictionary.");
+
+        const error = await failure(client.call("meeting.suggest", { meeting: record.id }));
+        expect(error).toBeInstanceOf(MeetingsServiceError);
+        expect(error).toMatchObject({ code: "project-required", message: text });
+        expect(run).not.toHaveBeenCalled();
+        expect(readFileSync(store.path(record.id))).toEqual(before);
+
+        writeFileSync(store.path(record.id), SafeJSON.stringify(REVIEW, null, 2));
+        expect(await client.call("meeting.suggest", { meeting: record.id })).toEqual({
+            added: 0,
+            warnings: ["Fixture warning"],
+        });
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run.mock.calls[0]?.[0].record.project).toBe(REVIEW.project);
+    });
+
     test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
         const { client, store, source } = await ADAPTERS[kind]();
         // The 0.5 and 0.7 previews apply the suggested speaker at 0.82; the 1 preview only shows it.

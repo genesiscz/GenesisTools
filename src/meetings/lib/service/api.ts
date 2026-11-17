@@ -1570,6 +1570,8 @@ export const MEETINGS_ERROR_CODES = [
     "meeting-not-found",
     /** The reference names no meeting it can read: a prefix of two meetings, a source the store cannot reach. */
     "meeting-ref",
+    /** Suggestions need a project so they can use its dictionary. */
+    "project-required",
     /** `hello` named another protocol number. */
     "protocol-mismatch",
     /** `hello` named another checkout's code, or the service's code changed since it started. */
