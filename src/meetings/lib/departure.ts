@@ -1,11 +1,12 @@
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, type SpeakerHint, sameName } from "@genesiscz/utils/transcribe/speakers";
+import type { LineLabel } from "./speaker-labels/types";
 
 export interface IdentifiedDeparture {
     name: string;
     atSec: number;
     label?: string;
-    reason: "indicator" | "attendance" | "sole-remote";
+    reason: "indicator" | "attendance" | "sole-remote" | "voice";
 }
 
 /** Resolve a goodbye independently of the diarizer label. Ambiguous identity remains unresolved. */
@@ -15,6 +16,7 @@ export function identifiedDepartures(options: {
     selfName: string;
     presence?: Presence[];
     ignoredIndicator?: Set<number>;
+    labels?: readonly LineLabel[];
 }): IdentifiedDeparture[] {
     const departures: IdentifiedDeparture[] = [];
     for (const hint of options.hints) {
@@ -49,6 +51,13 @@ export function identifiedDepartures(options: {
                 present
                     ?.filter((stay) => stay.leftAtExact !== false && Math.abs(stay.toSec - leave.atSec) <= 15)
                     .map((stay) => stay.name) ?? [];
+            const voice = options.labels?.find(
+                (label) => label.labeler === "voice" && label.index === line.index && label.reason === "named"
+            );
+            const voiceName =
+                voice?.person && (!options.presence || present?.some((stay) => sameName(stay.name, voice.person!)))
+                    ? voice.person
+                    : undefined;
             const name =
                 leaving.length === 1
                     ? leaving[0]
@@ -56,7 +65,7 @@ export function identifiedDepartures(options: {
                       ? shown[0]
                       : candidates.length === 1
                         ? candidates[0]
-                        : undefined;
+                        : voiceName;
             if (!name || sameName(name, options.selfName)) {
                 continue;
             }
@@ -64,7 +73,14 @@ export function identifiedDepartures(options: {
                 name,
                 atSec: leave.atSec,
                 ...(sameName(name, hint.label) ? { label: hint.label } : {}),
-                reason: leaving.length === 1 ? "attendance" : shown.length === 1 ? "indicator" : "sole-remote",
+                reason:
+                    leaving.length === 1
+                        ? "attendance"
+                        : shown.length === 1
+                          ? "indicator"
+                          : candidates.length === 1
+                            ? "sole-remote"
+                            : "voice",
             });
         }
     }

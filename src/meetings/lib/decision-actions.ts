@@ -5,6 +5,7 @@ import {
     speakerAssignmentSchema,
     spellingReachSchema,
 } from "@genesiscz/utils/meetings/record";
+import { voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
@@ -287,6 +288,17 @@ export const journalEntrySchema = z.object({
     corrections: z.array(correctionSchema).default([]),
     /** The dictionary entries it wrote or took back; absent when it changed none (and in entries older than it). */
     dictionary: z.array(dictionaryChangeSchema).optional(),
+    voices: z
+        .array(
+            z.object({
+                project: z.string(),
+                person: z.string(),
+                model: z.string(),
+                before: voicePrintSchema.optional(),
+                after: voicePrintSchema,
+            })
+        )
+        .optional(),
 });
 export type JournalEntry = z.infer<typeof journalEntrySchema>;
 
