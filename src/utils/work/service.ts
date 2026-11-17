@@ -4,6 +4,7 @@ import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/util
 import type { ContextStamp } from "./model/change";
 import type { Actor, Item } from "./model/item";
 import type { LegacyAction, LegacyHandoffs, LegacyWriteResult, LineageResolver, SessionDelivery } from "./ports";
+import type { ResolvedRules } from "./rules/resolve";
 import type { WorkCommand, WriteEnv } from "./store/decide";
 import { newItemId } from "./store/decide";
 import { selectItem } from "./store/rows";
@@ -25,6 +26,10 @@ export interface WorkContext {
     stamp?: ContextStamp;
     /** A strong inferred handoff of the preflight context (P4); `spot` uses it only when no claim names one. */
     inferred?: { during: string; evidence: string };
+    /** The effective rules of the project (P3). */
+    rules?: ResolvedRules;
+    /** The owner's words when an agent acts on them; the journal keeps them in the stamp. */
+    ownerSaid?: string;
 }
 
 export interface WriteData {
@@ -61,6 +66,15 @@ async function lineageOf(ctx: WorkContext): Promise<string[]> {
     return [...own, ...leads.filter((s) => !own.includes(s))];
 }
 
+function stampWithOwner(ctx: WorkContext): ContextStamp | undefined {
+    if (ctx.ownerSaid === undefined) {
+        return ctx.stamp;
+    }
+
+    const said = { path: "owner-said", value: ctx.ownerSaid, method: "given" as const, source: "--owner-said" };
+    return { facts: [...(ctx.stamp?.facts ?? []), said] };
+}
+
 export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEnv> {
     const now = ctx.now ?? (() => new Date().toISOString());
     const random = ctx.random ?? randomSuffix;
@@ -71,8 +85,10 @@ export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEn
         newId: () => newItemId(random),
         lineage: await lineageOf(ctx),
         ...(request !== undefined ? { request } : {}),
-        ...(ctx.stamp !== undefined ? { stamp: ctx.stamp } : {}),
+        ...(stampWithOwner(ctx) !== undefined ? { stamp: stampWithOwner(ctx) } : {}),
         ...(ctx.inferred !== undefined ? { inferred: ctx.inferred } : {}),
+        ...(ctx.rules !== undefined ? { rules: ctx.rules } : {}),
+        ...(ctx.ownerSaid !== undefined ? { ownerSaid: ctx.ownerSaid } : {}),
     };
 }
 

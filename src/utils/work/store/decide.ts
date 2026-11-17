@@ -7,6 +7,9 @@ import type { CreatedPayload, ItemPatch } from "../model/payloads";
 import type { ItemState, ItemType, LinkKind, LogResult, Severity } from "../model/vocab";
 import { isOpenState } from "../model/vocab";
 import type { DeliveryReceipt, LegacyAction } from "../ports";
+import { RULE_FIELDS, type RuleField, type WriteVerb } from "../rules/config";
+import { allows, DEFAULT_RULES, type ResolvedRules } from "../rules/resolve";
+import { rolesOf } from "../rules/roles";
 import type { Membership, Resolved, StoreView } from "./view";
 
 export type WorkCommand =
@@ -68,6 +71,10 @@ export interface WriteEnv {
     lineage: string[];
     /** A strong inferred handoff of the preflight context, used only when no claim names one. */
     inferred?: { during: string; evidence: string };
+    /** The effective rules of the project (P3); the built-in defaults when absent. */
+    rules?: ResolvedRules;
+    /** The owner's words when an agent acts on them (`--owner-said`); they give the role `owner`. */
+    ownerSaid?: string;
 }
 
 export type Decision =
@@ -96,13 +103,6 @@ const TRANSITIONS: Record<
     drop: { spotted: "dropped", open: "dropped", active: "dropped", reopened: "dropped" },
     reopen: { done: "reopened", dropped: "reopened" },
 };
-
-/** Built-in field rules of P1: what `spot` recommends. P3 replaces this table with the rules of the config. */
-const SPOT_RECOMMENDED: { field: keyof ItemFields; flag: string; measure: string }[] = [
-    { field: "where", flag: "--where", measure: "the file and line, or the screen, where you saw it (path:line)" },
-    { field: "why", flag: "--why", measure: "why it is wrong or why it matters, in one sentence" },
-    { field: "userSees", flag: "--user-sees", measure: "what a user sees because of it, in one sentence" },
-];
 
 function fail(code: string, message: string, field?: string): Decision {
     return { ok: false, diagnostics: [errorDiagnostic(code, message, field)], next: [] };
@@ -250,6 +250,64 @@ function pairSpot(
     };
 }
 
+const FLAG_OF: Partial<Record<RuleField, string>> = {
+    userSees: "--user-sees",
+    existedBefore: "--existed-before",
+};
+
+function flagOf(field: RuleField): string {
+    return FLAG_OF[field] ?? `--${field}`;
+}
+
+/** Checks the field rules of the project: a missing required field refuses; a missing recommended field warns. */
+function checkFields({
+    env,
+    type,
+    values,
+    id,
+    recommend,
+}: {
+    env: WriteEnv;
+    type: ItemType;
+    values: Partial<Record<RuleField, unknown>>;
+    id: ItemId;
+    recommend: boolean;
+}): { errors: Diagnostic[]; warnings: Diagnostic[]; next: NextAction[] } {
+    const rules = env.rules ?? DEFAULT_RULES;
+    const errors: Diagnostic[] = [];
+    const warnings: Diagnostic[] = [];
+    const next: NextAction[] = [];
+
+    for (const field of RULE_FIELDS) {
+        const value = values[field];
+
+        if (value !== undefined && !(typeof value === "string" && value.trim().length === 0)) {
+            continue;
+        }
+
+        const rule = rules.field(type, field).value;
+        const measure = rule.measure ? `: ${rule.measure}` : "";
+
+        if (rule.level === "required") {
+            errors.push(
+                errorDiagnostic("FIELD_REQUIRED", `${flagOf(field)} is required for a ${type}${measure}.`, field)
+            );
+        } else if (rule.level === "recommended" && recommend) {
+            warnings.push(warningDiagnostic("FIELD_RECOMMENDED", `${flagOf(field)} is recommended${measure}.`, field));
+            next.push({ do: `add ${flagOf(field)}`, call: { method: "edit", params: { ref: id, [field]: "<text>" } } });
+        }
+    }
+
+    return { errors, warnings, next };
+}
+
+function fieldValues(
+    base: { title?: string; body?: string; acceptance?: string; severity?: string; for?: string },
+    fields: ItemFields
+): Partial<Record<RuleField, unknown>> {
+    return { ...fields, ...base };
+}
+
 function decideSpot(cmd: Extract<WorkCommand, { verb: "spot" }>, view: StoreView, env: WriteEnv): Decision {
     const title = cmd.title.trim();
 
@@ -259,9 +317,15 @@ function decideSpot(cmd: Extract<WorkCommand, { verb: "spot" }>, view: StoreView
 
     const id = env.newId();
     const fields = cleanFields(cmd.fields);
+    const route = (env.rules ?? DEFAULT_RULES).routeSpotted({
+        type: cmd.type,
+        ...(cmd.severity !== undefined ? { severity: cmd.severity } : {}),
+        ...(fields.existedBefore !== undefined ? { existedBefore: fields.existedBefore } : {}),
+        ...(fields.production !== undefined ? { production: fields.production } : {}),
+    });
     const payload: CreatedPayload = {
         type: cmd.type,
-        state: "spotted",
+        state: route.accept === true ? "open" : "spotted",
         project: cmd.project ?? env.project,
         title,
         tags: [],
@@ -279,22 +343,37 @@ function decideSpot(cmd: Extract<WorkCommand, { verb: "spot" }>, view: StoreView
         changes.push({ ...base(env, id), kind: "linked", payload: { kind: "spotted-in", to: pairing.to } });
     }
 
+    // A routing rule may place the item: "current" is the item it was spotted in, another value names a parent.
+    const under =
+        route.under === "current"
+            ? pairing.to
+            : route.under !== undefined && route.under !== "inbox"
+              ? (view.resolve(route.under)?.item.id ?? null)
+              : null;
+
+    if (under !== null) {
+        changes.push({ ...base(env, id), kind: "linked", payload: { kind: "parent", to: under } });
+    }
+
     const diagnostics: Diagnostic[] = [...pairing.diagnostics];
     const next: NextAction[] = pairing.next.map((n) =>
         n.call ? { ...n, call: { method: "edit", params: { ...n.call.params, ref: id } } } : n
     );
 
-    for (const rule of SPOT_RECOMMENDED) {
-        if (fields[rule.field] === undefined) {
-            diagnostics.push(
-                warningDiagnostic("FIELD_RECOMMENDED", `${rule.flag} is recommended: ${rule.measure}.`, rule.field)
-            );
-            next.push({
-                do: `add ${rule.flag}`,
-                call: { method: "edit", params: { ref: id, [rule.field]: "<text>" } },
-            });
-        }
+    const checked = checkFields({
+        env,
+        type: cmd.type,
+        values: fieldValues({ title, ...(cmd.severity !== undefined ? { severity: cmd.severity } : {}) }, fields),
+        id,
+        recommend: true,
+    });
+
+    if (checked.errors.length > 0) {
+        return { ok: false, diagnostics: checked.errors, next: [] };
     }
+
+    diagnostics.push(...checked.warnings);
+    next.push(...checked.next);
 
     return { ok: true, changes, legacy: [], items: [id], diagnostics, next };
 }
@@ -318,6 +397,26 @@ function decideAdd(cmd: Extract<WorkCommand, { verb: "add" }>, view: StoreView, 
         ...(cmd.acceptance !== undefined ? { acceptance: cmd.acceptance } : {}),
         ...(cmd.for !== undefined ? { for: cmd.for } : {}),
     };
+    const checked = checkFields({
+        env,
+        type: cmd.type,
+        values: fieldValues(
+            {
+                title,
+                ...(cmd.body !== undefined ? { body: cmd.body } : {}),
+                ...(cmd.acceptance !== undefined ? { acceptance: cmd.acceptance } : {}),
+                ...(cmd.for !== undefined ? { for: cmd.for } : {}),
+            },
+            payload.fields
+        ),
+        id,
+        recommend: false,
+    });
+
+    if (checked.errors.length > 0) {
+        return { ok: false, diagnostics: checked.errors, next: [] };
+    }
+
     const changes: NewChange[] = [{ ...base(env, id), kind: "created", payload }];
     const legacy: LegacyAction[] = [];
 
@@ -929,8 +1028,82 @@ function decideHandoff(cmd: Extract<WorkCommand, { verb: "handoff" }>, view: Sto
     return { ok: true, changes, legacy, items, diagnostics: [], next: [] };
 }
 
+/** The role check of each write (P3): the rule of the item's type, against the roles the rows give the caller. */
+function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision | null {
+    const rules = env.rules ?? DEFAULT_RULES;
+    const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner", ownerSaid: env.ownerSaid !== undefined };
+    const check = (ref: string, verb: WriteVerb, workerMay = false): Decision | null => {
+        const resolved = view.resolve(ref);
+
+        if (resolved === null) {
+            return null;
+        }
+
+        const item = resolved.item;
+        const roles = rolesOf(view, item, ask);
+        const rule = rules.mayWrite(item.type, verb).value;
+
+        if (allows(rule, roles) || (workerMay && roles.includes("worker"))) {
+            return null;
+        }
+
+        const needs = rule === "anyone" ? "anyone" : rule.length === 0 ? "nobody" : rule.join(" or ");
+        return {
+            ok: false,
+            diagnostics: [
+                errorDiagnostic(
+                    "ROLE_REFUSED",
+                    `${verb} of ${item.id} (a ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}. When the owner asked for it, pass his words with --owner-said "<words>".`
+                ),
+            ],
+            next: [{ do: "ask the owner", ask: `May this session ${verb} ${item.id} (${item.title})?` }],
+        };
+    };
+    const first = (checks: (Decision | null)[]): Decision | null => checks.find((c) => c !== null) ?? null;
+
+    switch (command.verb) {
+        case "spot":
+        case "add":
+        case "delivered":
+            return null;
+        case "edit": {
+            const onlyDeferral =
+                command.type === undefined &&
+                command.parent === undefined &&
+                command.for === undefined &&
+                command.title === undefined;
+            return check(command.ref, "edit", onlyDeferral);
+        }
+        case "link":
+        case "unlink":
+            return check(command.ref, "reference");
+        case "accept":
+            return first(command.refs.map((ref) => check(ref, "accept")));
+        case "drop":
+            return first(command.refs.map((ref) => check(ref, "drop")));
+        case "handoff":
+            return first(
+                command.from.map((ref) => (view.resolve(ref)?.item.state === "spotted" ? check(ref, "accept") : null))
+            );
+        case "finish":
+            return check(command.ref, "finish");
+        case "log":
+            return check(command.ref, "log");
+        case "comment":
+            return check(command.ref, "comment");
+        case "reopen":
+            return check(command.ref, "reopen");
+    }
+}
+
 /** Pure. The one judge of every write: transitions, field rules, the parent rule, the routing to the old log. */
 export function decide(command: WorkCommand, view: StoreView, env: WriteEnv): Decision {
+    const refused = guard(command, view, env);
+
+    if (refused !== null) {
+        return refused;
+    }
+
     switch (command.verb) {
         case "spot":
             return decideSpot(command, view, env);

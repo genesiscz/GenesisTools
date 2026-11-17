@@ -17,6 +17,7 @@ import {
 } from "@genesiscz/utils/work/model/vocab";
 import { type ItemRow, listItems, showItem, type TriageRow, triage } from "@genesiscz/utils/work/read";
 import { type ReopenData, reopen } from "@genesiscz/utils/work/reopen";
+import { loadWorkRules } from "@genesiscz/utils/work/rules/load";
 import { type WorkContext, type WriteData, write } from "@genesiscz/utils/work/service";
 import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import type { WorkCommand } from "@genesiscz/utils/work/store/decide";
@@ -24,12 +25,14 @@ import type { Command } from "commander";
 import { actorHere, legacyHandoffs, sessionDelivery, t3Lineage } from "../adapters";
 import { contextHere } from "../adapters/context";
 import { openLegacySource } from "../adapters/legacy-source";
+import { registerConfigCommand } from "./config";
 import { emit } from "./emit";
 
 interface WriteFlags {
     json?: boolean;
     requestId?: string;
     dryRun?: boolean;
+    ownerSaid?: string;
 }
 
 function list(value: string | undefined): string[] | undefined {
@@ -43,13 +46,21 @@ function list(value: string | undefined): string[] | undefined {
         .filter((v) => v.length > 0);
 }
 
-function context(): WorkContext {
+async function context(flags: { ownerSaid?: string } = {}): Promise<WorkContext> {
     const { actor, project } = actorHere();
+    const loaded = await loadWorkRules({ project, repoRoot: actor.repoRoot });
+
+    for (const problem of loaded.problems) {
+        out.printlnErr(`${problem.severity}: ${problem.code}: ${problem.message}`);
+    }
+
     return {
         db: openWorkDb(),
         actor,
         project,
+        rules: loaded.rules,
         ports: { legacy: legacyHandoffs(), delivery: sessionDelivery(), lineage: t3Lineage() },
+        ...(flags.ownerSaid !== undefined ? { ownerSaid: flags.ownerSaid } : {}),
     };
 }
 
@@ -103,7 +114,7 @@ function writeText(data: WriteData): string[] {
 }
 
 async function runWrite(command: WorkCommand, flags: WriteFlags): Promise<void> {
-    const ctx = context();
+    const ctx = await context(flags);
 
     if (command.verb === "spot" && command.during === undefined) {
         // The preflight context, local providers only: its stamp goes into the journal, and a strong inferred
@@ -150,6 +161,7 @@ function withWriteFlags(command: Command): Command {
     return command
         .option("--request-id <id>", "a repeat with the same id returns the stored reply and writes nothing")
         .option("--dry-run", "print the changes, write nothing")
+        .option("--owner-said <words>", "the owner's words when you act on them; they give you the owner's role")
         .option("--json", "print the reply object as JSON");
 }
 
@@ -157,6 +169,8 @@ const TYPES_HELP = ITEM_TYPES.join("|");
 const SEVERITY_HELP = SEVERITIES.join("|");
 
 export function registerWorkCommands(program: Command): void {
+    registerConfigCommand(program);
+
     withWriteFlags(
         program
             .command("spot")
@@ -629,7 +643,7 @@ export function registerWorkCommands(program: Command): void {
             .requiredOption("--why <text>", "what is still wrong, with the evidence")
             .option("--deliver <mode>", "never: reopen without a message", "auto")
     ).action(async (ref: string, opts: WriteFlags & { why: string; deliver: string }) => {
-        const ctx = context();
+        const ctx = await context(opts);
 
         try {
             const reply = await reopen(ctx, {
