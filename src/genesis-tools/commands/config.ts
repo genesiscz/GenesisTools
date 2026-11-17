@@ -1,5 +1,6 @@
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { callRunningService } from "@genesiscz/utils/genesis-tools/service/clients";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -21,9 +22,10 @@ export function registerConfigCommand(program: Command): void {
         .command("get")
         .description("Print a resolved value (<area>.<key> or <area>.<action>.<key>), or an area's resolved config")
         .argument("<path>")
-        .action((path: string) => {
+        .action(async (path: string) => {
+            const remote = await callRunningService("config.get", { path });
             const store = createConfigStore({ registry: AREAS });
-            out.result(path.includes(".") ? store.get(path) : store.resolve(path));
+            out.result(remote.called ? remote.value : path.includes(".") ? store.get(path) : store.resolve(path));
         });
 
     config
@@ -32,7 +34,10 @@ export function registerConfigCommand(program: Command): void {
         .argument("<path>")
         .argument("<value>")
         .action(async (path: string, value: string) => {
-            await createConfigStore({ registry: AREAS }).set(path, parseValue(value));
+            const remote = await callRunningService("config.set", { path, value: parseValue(value) });
+            if (!remote.called) {
+                await createConfigStore({ registry: AREAS }).set(path, parseValue(value));
+            }
             out.println(`set ${path}`);
         });
 
@@ -41,7 +46,10 @@ export function registerConfigCommand(program: Command): void {
         .description("Remove a stored value, so the default (or the area's value) applies again")
         .argument("<path>")
         .action(async (path: string) => {
-            await createConfigStore({ registry: AREAS }).unset(path);
+            const remote = await callRunningService("config.unset", { path });
+            if (!remote.called) {
+                await createConfigStore({ registry: AREAS }).unset(path);
+            }
             out.println(`unset ${path}`);
         });
 }

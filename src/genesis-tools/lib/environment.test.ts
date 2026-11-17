@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { appBuilder, registerAppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
+import { registerCliAppBuilder } from "./app-builder";
 import {
     type EnvironmentSources,
     environmentMarkdown,
@@ -271,4 +273,19 @@ describe("triage", () => {
         expect(markdown).not.toContain("s3cret");
         expect(triageDocument(report)).toContain("#### State of this Mac at 19:00:00");
     });
+});
+
+test("the CLI app builder refuses host effects before loading the macos tool", async () => {
+    const previous = appBuilder();
+    registerCliAppBuilder();
+    try {
+        const builder = appBuilder();
+        if (!builder) {
+            throw new Error("CLI app builder was not registered");
+        }
+        await expect(builder.build(null)).rejects.toThrow();
+        await expect(builder.offerBuild(null)).rejects.toThrow();
+    } finally {
+        registerAppBuilder(previous);
+    }
 });
