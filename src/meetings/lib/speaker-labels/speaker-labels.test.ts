@@ -258,6 +258,33 @@ describe("speaker-label integration", () => {
         expect(await proposeSpeakerLabels(opened, config.global.speakerLabels)).toEqual([]);
     });
 
+    test("an attended person with no seat entry shares the call seat, so the listed remote person is not named", async () => {
+        const { opened, meeting, config } = await runnerFixture({
+            seats: { room: ["Alice Example"], remote: [{ name: "Bob Example" }] },
+        });
+        meeting.transcript = [0, 10].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                segments: [
+                    { startSec: 0, endSec: 10, channel: "mic" },
+                    { startSec: 10, endSec: 20, channel: "system" },
+                ],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(opened, "presence").mockResolvedValue([
+                { name: "Alice Example", fromSec: 0, toSec: 25 },
+                { name: "Bob Example", fromSec: 0, toSec: 25 },
+                { name: "Carol Example", fromSec: 0, toSec: 25 },
+            ])
+        );
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.map((label) => [label.seat, label.person, label.reason])).toEqual([
+            ["mic", "Alice Example", "seat-of-one"],
+            ["call", undefined, "seat-shared"],
+        ]);
+    });
+
     test("labels win over platform and reference names; confirmed ranges remain unchanged", async () => {
         const { record, meeting, config } = await runnerFixture();
         meeting.speakers = [{ name: "Alice Example", origin: "platform", speakerId: 1 }];

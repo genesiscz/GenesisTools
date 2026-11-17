@@ -82,10 +82,13 @@ export async function proposeSpeakerLabels(
             }
 
             const remote = record.seats?.remote.find((person) => sameName(person.name, stay.name));
+            const self = record.participants.some((person) => person.self && sameName(person.name, stay.name));
             return [
                 {
                     person: stay.name,
-                    seat: remote ? "call" : undefined,
+                    // Saved seats state who is in the room: the owner speaks into the microphone, everybody else
+                    // attends through the call, so a person with no seat entry still shares the call seat.
+                    seat: remote ? "call" : record.seats ? (self ? "mic" : "call") : undefined,
                     fromSec: Math.max(stay.fromSec, remote?.fromSec ?? stay.fromSec),
                     toSec: Math.min(stay.toSec, remote?.toSec ?? stay.toSec),
                 },
