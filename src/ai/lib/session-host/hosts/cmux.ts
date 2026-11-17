@@ -152,8 +152,9 @@ export function createCmuxSessionHost(deps: CmuxHostDeps = LIVE_DEPS): SessionHo
         place: PLACE,
 
         async describe(sessionIds) {
+            // The journal keys sessions lowercased (`loadAllSessionCmuxRefs`), as the live panes are.
             const refs = deps.refs();
-            const recorded = sessionIds.filter((id) => refs.has(id));
+            const recorded = sessionIds.filter((id) => refs.has(id.toLowerCase()));
             const tree = await deps.tree();
             const live = tree.available ? livePanes(tree) : new Map<string, LivePane>();
             const views = new Map<string, SessionHostView>();
@@ -161,7 +162,7 @@ export function createCmuxSessionHost(deps: CmuxHostDeps = LIVE_DEPS): SessionHo
             for (const sessionId of sessionIds) {
                 const key = sessionId.toLowerCase();
                 const pane = live.get(key) ?? live.get(key.slice(0, 8));
-                const journal = refs.get(sessionId);
+                const journal = refs.get(key);
 
                 if (pane) {
                     views.set(sessionId, {
