@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCmuxTree } from "@genesiscz/utils/cmux/agent-tree";
@@ -365,8 +365,17 @@ describe("the host table", () => {
 });
 
 describe("T3 Code's state", () => {
+    let home: string;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "gt-t3-place-"));
+    });
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
+
     test("a thread's title, deletion and live run come from the state database; the link encodes the thread id", () => {
-        const home = mkdtempSync(join(tmpdir(), "gt-t3-place-"));
         mkdirSync(join(home, "userdata"));
         writeFileSync(join(home, "userdata", "environment-id"), `${ENV_ID}\n`);
         const db = new Database(join(home, "userdata", "statev2.sqlite"));
