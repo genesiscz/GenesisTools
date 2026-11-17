@@ -250,6 +250,16 @@ describe("the cmux host", () => {
         expect(views.get("bbbbbbbb-new-session")?.live).toBe(true);
     });
 
+    test("an upper-case id finds its journal record, which the journal keys lower case", async () => {
+        const id = "cccccccc-dddd-4eee-8fff-000000000001";
+        const host = createCmuxSessionHost(
+            cmuxDeps({ tree: async () => cmuxTree([]), refs: () => new Map([[id, journal(id)]]) })
+        );
+        const views = await host.describe([id.toUpperCase()]);
+
+        expect(views.get(id.toUpperCase())).toMatchObject({ label: "workspace:3 · surface:9", live: false });
+    });
+
     test("an unreachable cmux disables every action with its error", async () => {
         const host = createCmuxSessionHost(cmuxDeps({ tree: async () => cmuxTree([], false) }));
         const view = (await host.describe(["claude-closed"])).get("claude-closed");
