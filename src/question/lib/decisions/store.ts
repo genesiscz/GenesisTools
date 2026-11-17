@@ -13,9 +13,12 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { appendFeedEvent, type JsonlLog, jsonlLog } from "@genesiscz/utils/storage/locked-document";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { withWorkDb } from "@genesiscz/utils/work/store/db";
 import type { z } from "zod";
 import { closeNoticeItemsLater, noticeItem } from "../notices/notices";
 import { decisionOptionLabels } from "./option-labels";
+import { decisionFiles } from "./paths";
 import {
     type ANSWERED_VIA,
     type DECISION_KINDS,
@@ -1863,6 +1866,7 @@ function appendEvent(events: string, value: Record<string, unknown>): void {
 /** Starts on a fresh line when the last write was torn, so one bad row cannot swallow the next. */
 function append(file: string, row: DecisionRecord): void {
     decisionLog(file).append(row);
+    mirrorTodos(file, [row]);
 }
 
 /**
@@ -1872,4 +1876,25 @@ function append(file: string, row: DecisionRecord): void {
  */
 function rewrite(file: string, rows: DecisionRecord[]): void {
     decisionLog(file).rewrite(rows);
+    mirrorTodos(file, rows);
+}
+
+/**
+ * The to-do rows of the default log also live in the work store (work-items P9): an item of type `task` with the tag
+ * `session-todo`. Only the default log is mirrored, so a test or a scratch log never writes the store. A failure is
+ * logged and never fails the log write; the next write of the log brings the store up to date again.
+ */
+function mirrorTodos(file: string, rows: readonly DecisionRecord[]): void {
+    const todos = rows.filter((row) => kindOf(row) === "todo");
+
+    if (todos.length === 0 || file !== decisionFiles().file) {
+        return;
+    }
+
+    try {
+        const report = withWorkDb(undefined, (db) => mirrorSessionTodos(db, todos));
+        logger.debug({ file, ...report }, "[decisions] session to-do items mirrored into the work store");
+    } catch (error) {
+        logger.warn({ err: error, file }, "[decisions] the work store mirror of the to-do items failed");
+    }
 }
