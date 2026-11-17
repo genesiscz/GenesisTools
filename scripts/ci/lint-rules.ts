@@ -875,7 +875,15 @@ const RULES: Rule[] = [
         name: "no-hand-rolled-app-check",
         severity: "error",
         kinds: ["call_expression"],
-        matcher: { rule: { kind: "call_expression" } },
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: {
+                    field: "function",
+                    regex: "(?:isGenesisAppBundleInstalled|installedGenesisAppLauncher|isGenesisAppRpcAvailable|appCannotAnswer|genesisAppBuildHint|existsSync|exists)$",
+                },
+            },
+        },
         onlyIn: /^src\//,
         allowedIn: /^src\/utils\/(?:genesis-tools\/|macos\/(?:genesis-app(?:-rpc)?|xcode)\.ts$)/,
         allowedCounts: APP_CHECK_RATCHET,
