@@ -52,6 +52,11 @@ export function failureBackoffMs(failures: number, baseMs: number): number {
 export function captureKeepsTrying(error: unknown): boolean {
     return !(error instanceof CaptureError && error.kind === "no-permission");
 }
+/** A capture refused for the microphone grant alone (ax-tool: "microphone access is not granted …"). */
+export function microphoneRefused(error: unknown): boolean {
+    return error instanceof CaptureError && error.kind === "no-permission" && /microphone/i.test(error.message);
+}
+
 /** The first frame's OCR finds less text than this: probably only the desktop, so the grant is likely missing. */
 export const EMPTY_FRAME_CHARS = 20;
 /** How long the socket stays open after the stop answer, so the answer reaches the caller. */

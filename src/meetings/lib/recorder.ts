@@ -80,7 +80,12 @@ function meetingRecorderConfig(run: MeetingRun) {
                     backoffMs: (failures) => failureBackoffMs(failures, deps.failurePauseMs),
                     keepTrying: captureKeepsTrying,
                     struggling: (count, err) => run.captureStruggling(count, err),
-                    verdict: captureErrorVerdict,
+                    // No microphone grant: the piece neither failed nor recorded, and the next one records without it.
+                    verdict: (piece, now) => {
+                        const dropped = run.dropRefusedMicrophone(recording, piece.error ?? piece.outcome?.lastError);
+                        const verdict = captureErrorVerdict(piece, now);
+                        return dropped && verdict === "failed" ? "neither" : verdict;
+                    },
                     gaveUp: (count, err) => {
                         run.note(`capture failed ${count} times in a row: ${errorText(err)}`);
                         state.stopReason = "failed";
@@ -102,6 +107,7 @@ function meetingRecorderConfig(run: MeetingRun) {
             hooks: {
                 beforeLoop: () => run.begin(recording),
                 afterLoop: () => {
+                    run.salvageTracks(run.pieceDir);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {
@@ -162,7 +168,10 @@ function meetingRecorderConfig(run: MeetingRun) {
                             run.note(`${entry.target.label}: ${errorText(err)}`);
                         }
                     },
-                    onSettled: (entry) => rmSync(entry.outDir, { recursive: true, force: true }),
+                    onSettled: (entry) => {
+                        run.salvageTracks(entry.outDir);
+                        rmSync(entry.outDir, { recursive: true, force: true });
+                    },
                 },
             },
             finish: {
