@@ -275,8 +275,9 @@ describe("the cmux host", () => {
         expect((await host.act("focus", "claude-live")).ok).toBe(true);
         expect((await host.act("keepalive", "claude-live")).ok).toBe(true);
         expect(deps.runs).toEqual([
-            ["claude", "cmux", "focus", "claude-live", "--first", "--json"],
-            ["claude", "cmux", "send", "claude-live", "/keepalive", "--first", "--json"],
+            // An automated action never takes the matcher's guesses (a topic alias, text on a screen, a pane of the same folder).
+            ["claude", "cmux", "focus", "claude-live", "--exact", "--first", "--json"],
+            ["claude", "cmux", "send", "claude-live", "/keepalive", "--exact-session", "--first", "--json"],
         ]);
 
         const missing = createCmuxSessionHost(

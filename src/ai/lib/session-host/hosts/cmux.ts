@@ -106,8 +106,13 @@ function cliReason(stderr: string): string {
     return (line ?? "the tools CLI reported no detail").replace(/^✘\s*/, "");
 }
 
+/**
+ * A button of a session window acts with no person at the matcher, so it takes only a pane that is proven to run the
+ * session: `--exact` for focus and `--exact-session` for send. Without them the matcher may fall back to a topic
+ * alias, to text on the screen or to another pane of the same working directory, and `--first` would take that pane.
+ */
 async function focus(sessionId: string, deps: CmuxHostDeps): Promise<SessionHostActResult> {
-    const result = await deps.run(["claude", "cmux", "focus", sessionId, "--first", "--json"]);
+    const result = await deps.run(["claude", "cmux", "focus", sessionId, "--exact", "--first", "--json"]);
     let focused: unknown;
 
     try {
@@ -125,7 +130,7 @@ async function focus(sessionId: string, deps: CmuxHostDeps): Promise<SessionHost
 }
 
 async function send(sessionId: string, text: string, deps: CmuxHostDeps): Promise<SessionHostActResult> {
-    const result = await deps.run(["claude", "cmux", "send", sessionId, text, "--first", "--json"]);
+    const result = await deps.run(["claude", "cmux", "send", sessionId, text, "--exact-session", "--first", "--json"]);
     const receipt = readPaneReceipt(result.stdout);
 
     switch (receipt.kind) {
