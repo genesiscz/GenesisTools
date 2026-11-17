@@ -19,6 +19,8 @@ export interface TranscriptEntry {
     text: string;
     confidence?: number;
     suggestedSpeaker?: string;
+    nameSource?: "voice";
+    nameScore?: number;
     /** Original source entry index when corrected/segmented entries carry per-line voice evidence. */
     sourceIndex?: number;
     questioned?: boolean;

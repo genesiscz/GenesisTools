@@ -610,7 +610,7 @@ class TerminalAdapter implements ListenAdapter {
         }
 
         return await ask({
-            question,
+            question: { ...question, question: view.question },
             clip,
             plan,
             player: this.deps.player,

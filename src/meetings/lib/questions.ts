@@ -11,7 +11,7 @@ import {
     LAST_LINE_SEC,
     TranscriptLines,
 } from "@genesiscz/utils/transcribe/lines";
-import { formatClock } from "@genesiscz/utils/transcribe/render";
+import { formatClock, voiceNameText } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -1068,9 +1068,39 @@ export function questionView(
             ? undefined
             : heardContext(question, transcript, maxChars, questionOccurrence(record, question));
     const said = question.about === "speaker" ? spokenIn(question, transcript, maxChars) : undefined;
+    const voiceSources =
+        question.about === "speaker"
+            ? [
+                  ...linesOf(transcript).entries.filter(
+                      (line) =>
+                          line.nameSource === "voice" &&
+                          line.startSec !== undefined &&
+                          line.startSec >= question.fromSec &&
+                          line.startSec < question.toSec
+                  ),
+                  ...record.items.flatMap((item) =>
+                      item.kind === "speaker-range" &&
+                      item.status === "suggested" &&
+                      item.speaker &&
+                      question.decides.includes(item.id) &&
+                      item.rules.includes(MeetingRule.VoiceEmbedding)
+                          ? [
+                                {
+                                    nameSource: "voice" as const,
+                                    nameScore:
+                                        typeof item.evidence?.score === "number"
+                                            ? item.evidence.score
+                                            : item.confidence,
+                                },
+                            ]
+                          : []
+                  ),
+              ]
+            : [];
+    const voice = [...new Set(voiceSources.map(voiceNameText))].join(", ");
     return {
         label: questionLabel(record, question.id),
-        question: question.question,
+        question: `${question.question}${voice ? ` (${voice})` : ""}`,
         range: `${formatClock(question.fromSec)}–${formatClock(question.toSec)}`,
         ...(question.priority === undefined ? {} : { priority: question.priority }),
         ...(context ? { context } : {}),

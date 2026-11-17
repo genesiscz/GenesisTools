@@ -10,6 +10,7 @@ import {
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { JournalEntry } from "./decision-actions";
+import { recordPeople } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines } from "./speaker-labels/voice";
@@ -22,8 +23,8 @@ export interface VoicePrintChange {
     after: VoicePrint;
 }
 
-/** Called by the decision writer only after a person's speaker answer is saved. */
-export async function saveAnsweredVoiceSamples(options: {
+/** Extract without writing: the journal publishes these prints together with the answer. */
+export async function prepareAnsweredVoiceSamples(options: {
     opened: OpenedMeeting;
     entry: JournalEntry;
 }): Promise<VoicePrintChange[]> {
@@ -42,9 +43,8 @@ export async function saveAnsweredVoiceSamples(options: {
         return [];
     }
     const person = question.answer.trim();
-    // A split, "nobody", or free text that does not identify an attended person cannot seed a voice.
-    const stays = (await opened.presence())?.filter((stay) => sameName(stay.name, person)) ?? [];
-    if (!stays.length) {
+    // A split or a comment is not a single person's confirmed name. A missing attendance row is not a veto.
+    if (![...question.choices, ...recordPeople(record)].some((name) => sameName(name, person))) {
         return [];
     }
     const energy = await opened.energy();
@@ -60,20 +60,11 @@ export async function saveAnsweredVoiceSamples(options: {
             : question.toSec;
     const eligible: LabelContext["lines"][number][] = lines.flatMap((line) => {
         const share = line.micShare ?? line.energyMic;
-        if (
-            share === undefined ||
-            share === 0.5 ||
-            line.startSec < question.fromSec ||
-            line.endSec > questionEnd ||
-            !stays.some((stay) => stay.fromSec <= line.startSec && stay.toSec >= line.endSec)
-        ) {
+        if (share === undefined || share === 0.5 || line.startSec < question.fromSec || line.endSec > questionEnd) {
             return [];
         }
         const seat = share > 0.5 ? "mic" : "call";
-        const room = record.seats?.room.some((name) => sameName(name, person));
-        const self = record.participants.some((participant) => participant.self && sameName(participant.name, person));
-        const personSeat = record.seats ? (room || self ? "mic" : "call") : undefined;
-        return personSeat === seat ? [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }] : [];
+        return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
     });
     const embeddings = await embedSeatLines({ lines: eligible, sound: await opened.sound() });
     const hashes = new Map<string, string>();
@@ -111,10 +102,101 @@ export async function saveAnsweredVoiceSamples(options: {
                 sample.fromSec === after.fromSec &&
                 sample.toSec === after.toSec
         );
-        addVoicePrint(record.project, person, after, voice.model);
         changes.push({ project: record.project, person, model: voice.model, ...(before ? { before } : {}), after });
     }
     return changes;
+}
+
+export function writeAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
+    const written: VoicePrintChange[] = [];
+    try {
+        for (const change of changes) {
+            addVoicePrint(change.project, change.person, change.after, change.model);
+            written.push(change);
+        }
+    } catch (error) {
+        undoAnsweredVoiceSamples(written);
+        throw error;
+    }
+}
+
+export async function saveAnsweredVoiceSamples(options: {
+    opened: OpenedMeeting;
+    entry: JournalEntry;
+}): Promise<VoicePrintChange[]> {
+    const changes = await prepareAnsweredVoiceSamples(options);
+    writeAnsweredVoiceSamples(changes);
+    return changes;
+}
+
+/** Restore only samples owned by questions whose answer changed, including Undo of an Undo. */
+export function transitionAnsweredVoiceSamples(options: {
+    entry: JournalEntry;
+    entryOf: (token: string) => JournalEntry | undefined;
+}): () => void {
+    const removed: VoicePrintChange[] = [];
+    const added: VoicePrintChange[] = [];
+    for (const change of options.entry.changes) {
+        const was = change.before;
+        const next = change.after;
+        if (was?.kind !== "question" && next?.kind !== "question") {
+            continue;
+        }
+        const beforeToken = was?.status === "confirmed" ? was.decision?.token : undefined;
+        const afterToken = next?.status === "confirmed" ? next.decision?.token : undefined;
+        if (beforeToken === afterToken) {
+            continue;
+        }
+        if (beforeToken) {
+            removed.push(
+                ...(options.entryOf(beforeToken)?.voices ?? []).filter((voice) => voice.after.question === change.id)
+            );
+        }
+        if (afterToken && afterToken !== options.entry.token) {
+            added.push(
+                ...(options.entryOf(afterToken)?.voices ?? []).filter((voice) => voice.after.question === change.id)
+            );
+        }
+    }
+    const owned = removed.filter((change) =>
+        readVoiceStore(change.project).people[change.person]?.samples.some(
+            (sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after)
+        )
+    );
+    added.push(...(options.entry.voices ?? []));
+    // Snapshot ownership at the moment of the write, so another answer's later sample survives rollback.
+    const captured = added.map((change) => ({
+        ...change,
+        before: readVoiceStore(change.project).people[change.person]?.samples.find(
+            (sample) =>
+                sample.meeting === change.after.meeting &&
+                sample.sourceSha === change.after.sourceSha &&
+                sample.track === change.after.track &&
+                sample.fromSec === change.after.fromSec &&
+                sample.toSec === change.after.toSec
+        ),
+    }));
+    const rollback = () => {
+        undoAnsweredVoiceSamples(captured);
+        writeAnsweredVoiceSamples(owned);
+    };
+    try {
+        undoAnsweredVoiceSamples(owned);
+        writeAnsweredVoiceSamples(captured);
+    } catch (error) {
+        rollback();
+        throw error;
+    }
+    return rollback;
+}
+
+/** Replay persisted embeddings in journal file order (oldest first); no source sound or model is needed. */
+export function replayAnsweredVoiceSamples(entries: readonly JournalEntry[]): void {
+    const known = new Map<string, JournalEntry>();
+    for (const entry of entries) {
+        transitionAnsweredVoiceSamples({ entry, entryOf: (token) => known.get(token) });
+        known.set(entry.token, entry);
+    }
 }
 
 /** Undo removes only a print this answer still owns; a later confirmation survives. */

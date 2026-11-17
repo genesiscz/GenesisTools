@@ -255,7 +255,9 @@ export async function runSuggest(options: {
             }
 
             retired = [...settled.keys()];
+            const suggested = current.items.filter((item) => item.status === "suggested");
             fresh = suggestItems({ ...inputs, record: current });
+            retired.push(...suggested.filter((item) => item.status === "rejected").map((item) => item.id));
             current.items.push(...fresh);
             // The long-stretch questions are evidence questions, and they share the meeting's one question budget.
             const open = current.items.filter(

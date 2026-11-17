@@ -367,6 +367,23 @@ export function correctTranscript(options: {
             );
             const proposal = proposals.findLast((item) => item.status === "confirmed") ?? proposals.at(-1);
             const confidence = proposal?.confidence;
+            const assigned = record.speakers.assignments?.some((assignment) =>
+                covers(
+                    {
+                        ...assignment,
+                        fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
+                        toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,
+                    },
+                    { atSec, sourceIndex }
+                )
+            );
+            const voiceName =
+                (options.withSuggested || options.include?.includes(proposal?.id ?? "")) &&
+                !assigned &&
+                proposal?.status === "suggested" &&
+                proposal.speaker &&
+                proposal.rules.includes(MeetingRule.VoiceEmbedding);
+            const score = typeof proposal?.evidence?.score === "number" ? proposal.evidence.score : confidence;
             const guess = entry.speaker.includes(" %]");
             return [
                 {
@@ -380,6 +397,12 @@ export function correctTranscript(options: {
                         ? {
                               ...(confidence === undefined ? {} : { confidence }),
                               ...(proposal.speaker ? { suggestedSpeaker: proposal.speaker } : {}),
+                              ...(voiceName
+                                  ? {
+                                        nameSource: "voice" as const,
+                                        ...(score === undefined ? {} : { nameScore: score }),
+                                    }
+                                  : {}),
                               guess,
                               band:
                                   proposal.status === "confirmed"

@@ -54,6 +54,7 @@ import {
     MEETING_FIELDS,
 } from "./decision-actions";
 import { appendLines } from "./ndjson-lines";
+import { OpenedMeeting } from "./opened-meeting";
 import { projectRequired } from "./project";
 import {
     answerQuestion,
@@ -86,6 +87,7 @@ import {
     revertAssignments,
 } from "./speaker-assign";
 import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
+import { prepareAnsweredVoiceSamples, transitionAnsweredVoiceSamples, type VoicePrintChange } from "./voice-samples";
 
 const { log } = logger.scoped("meetings-journal");
 
@@ -2039,7 +2041,12 @@ export class DecisionJournal {
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
         let before: MeetingRecord | undefined;
+        let voices: VoicePrintChange[] = [];
+        let voiceBase: MeetingRecord | undefined;
         const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
+            if (voiceBase && !isDeepStrictEqual(record, voiceBase)) {
+                throw new Error("The meeting changed while preparing voice samples; retry the answer.");
+            }
             if (this.options.onApplied) {
                 before = structuredClone(record);
             }
@@ -2108,6 +2115,7 @@ export class DecisionJournal {
                     ...(assigned.length > 0 ? { assignments: assigned } : {}),
                     corrections: outcome.corrections ?? [],
                     ...(dictionary.length > 0 ? { dictionary } : {}),
+                    ...(voices.length > 0 ? { voices } : {}),
                 },
                 skipped: outcome.skipped ?? [],
                 ...warnings,
@@ -2118,6 +2126,26 @@ export class DecisionJournal {
         if (!save) {
             decide(structuredClone(saved));
             return result;
+        }
+
+        if (action.kind === "answer" && saved.project && ["window", "listen", "cli"].includes(request.actor.kind)) {
+            decide(structuredClone(saved));
+            if (result.entry) {
+                try {
+                    voices = await prepareAnsweredVoiceSamples({
+                        opened: OpenedMeeting.of(store, saved),
+                        entry: result.entry,
+                    });
+                    if (voices.length > 0) {
+                        voiceBase = saved;
+                    }
+                } catch (error) {
+                    log.warn({ error, meeting }, "speaker answer could not prepare voice samples");
+                    notes.push(
+                        "The answer was saved without voice samples: source sound or voice extraction was unavailable."
+                    );
+                }
+            }
         }
 
         let takeBack = (): void => {};
@@ -2132,10 +2160,23 @@ export class DecisionJournal {
             await store.update(meeting, history, decide, {
                 write: () => {
                     if (result.entry) {
-                        takeBack = this.writeLines(result.entry, {
-                            reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
-                            openAfter,
+                        const undoVoices = transitionAnsweredVoiceSamples({
+                            entry: result.entry,
+                            entryOf: context.entryOf,
                         });
+                        try {
+                            const undoLines = this.writeLines(result.entry, {
+                                reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
+                                openAfter,
+                            });
+                            takeBack = () => {
+                                undoLines();
+                                undoVoices();
+                            };
+                        } catch (error) {
+                            undoVoices();
+                            throw error;
+                        }
                     }
                 },
                 undo: () => takeBack(),
