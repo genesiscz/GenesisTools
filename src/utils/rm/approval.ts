@@ -5,7 +5,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
-import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { appCannotAnswer, type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
 import { appleScriptString } from "@genesiscz/utils/macos/jxa";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type RmApproval, rmConfigPath } from "./config";
@@ -537,12 +537,6 @@ export function showPersonDialog(
 /** A person reads the window and touches the sensor; the app gives up at 170 s and says why. */
 const APP_TIMEOUT_MS = 180_000;
 
-/**
- * The app cannot ask: no bundle (or routing off), a build without `rm.approve`, or something other than the app
- * answered. Only these fall back to the code. A deny, a failed Touch ID and a timeout are answers, never a fallback.
- */
-const APP_MISSING_CODES = new Set(["unavailable", "method_unknown", "handshake"]);
-
 /** `genesisAppRpc`'s detail when the window's process exited before it replied. */
 const WINDOW_ENDED = /produced no reply \(exit \d+\)/;
 
@@ -755,7 +749,8 @@ function isPersonsDeny(decision: string, reason: string | undefined): boolean {
 /** Only an exact `allow` approves; any other reply, and any failure that is not "no app", is a no. */
 export function appApprovalFromReply(outcome: GenesisAppRpcOutcome<RmApproveReply>): AppApproval {
     if (!outcome.ok) {
-        if (APP_MISSING_CODES.has(outcome.error.code)) {
+        // Only an app that cannot ask falls back to the code. A deny, a failed Touch ID and a timeout are answers.
+        if (appCannotAnswer(outcome.error)) {
             return { kind: "missing", detail: outcome.error.message };
         }
 

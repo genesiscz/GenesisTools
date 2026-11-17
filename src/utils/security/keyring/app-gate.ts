@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import {
+    appCannotAnswer,
     type GenesisAppRpcOutcome,
     genesisAppRpc,
     genesisAppRpcSync,
@@ -60,8 +61,8 @@ export class VaultKeyDeniedError extends Error {
     }
 }
 
-/** App errors that mean "nobody here can decide": the keychain rung answers instead. */
-const FALL_THROUGH = new Set(["unavailable", "method_unknown", "handshake", "no_key"]);
+/** The app's own "I hold no key" answer: like an app that cannot answer, the keychain rung answers instead. */
+const NO_KEY = "no_key";
 
 export function vaultUnlockRequest(): VaultUnlockRequest {
     const command = currentCommandLine();
@@ -81,7 +82,7 @@ function isReply(value: unknown): value is VaultUnlockReply {
 /** The app's answer as a key, undefined (let the next rung answer), or a thrown deny. */
 export function keyFromReply(outcome: GenesisAppRpcOutcome<VaultUnlockReply>, tool: string): Buffer | undefined {
     if (!outcome.ok) {
-        if (FALL_THROUGH.has(outcome.error.code)) {
+        if (appCannotAnswer(outcome.error) || outcome.error.code === NO_KEY) {
             logger.debug(
                 { code: outcome.error.code, message: outcome.error.message },
                 "vault key: the app cannot answer"
