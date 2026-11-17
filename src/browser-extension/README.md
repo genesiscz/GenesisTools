@@ -95,7 +95,10 @@ tools browser-extension route https://dashboard/
   needs `--path`. A page without a file opens the checkout. The file must exist in the checkout and stay inside it
   after symlinks. A branch name with slashes in a file URL is split against the local branch names, longest first.
 - `hub` selects `owner/repo#42` (GitLab: `group/project!42`) in the PRs mode, and `--path` opens that file in the PR's
-  review. Any other page opens the Worktrees mode on its checkout. It never builds GenesisTools.app: an older app
+  review; a PR commit page (`/pull/42/commits/<sha>`) also selects that commit. A commit page (`/commit/<sha>`) opens
+  that commit in the Worktrees diff of its checkout. When the checkout lacks the commit, `hub` runs `git fetch origin`
+  first (30 s deadline); when even that does not bring it, the worktree opens and the reply says why. Any other page
+  opens the Worktrees mode on its checkout. It never builds GenesisTools.app: an older app
   still opens, and a missing one says how to build it. It prints `Asked GenesisTools to show ...`, which means the
   app got the request, not that it found the target.
 - `explain` reads the hunk from stdin (1 to 20,000 characters). The agent may read the checkout but not edit, run or

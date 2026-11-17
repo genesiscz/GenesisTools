@@ -16,6 +16,8 @@ export interface ForgePage {
     view: ForgeView;
     /** PR / MR number. */
     number?: number;
+    /** A commit page's sha (`/commit/<sha>`, GitHub's `/pull/<n>/commits/<sha>`), lowercased. */
+    commit?: string;
     /** Blob and tree pages: `<ref>/<path>`, split later against the local branch names. */
     refPath?: string;
     /** From `#L12`, `#L12-L20`, `#L12-20` or a diff anchor `#diff-<sha>R12`. */
@@ -23,6 +25,7 @@ export interface ForgePage {
 }
 
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
+const SHA = /^[0-9a-f]{7,40}$/i;
 
 function lineFromHash(hash: string): number | undefined {
     const match = /^#L(\d{1,7})(?:-L?\d+)?$/.exec(hash) ?? /^#diff-[0-9a-f]+R(\d{1,7})$/.exec(hash);
@@ -45,12 +48,13 @@ function decodedPath(segments: string[]): string | null {
     }
 }
 
-function tail(kind: ForgeKind, rest: string[]): Pick<ForgePage, "view" | "number" | "refPath"> {
+function tail(kind: ForgeKind, rest: string[]): Pick<ForgePage, "view" | "number" | "refPath" | "commit"> {
     const [verb, ...more] = rest;
     const prVerb = kind === "github" ? "pull" : "merge_requests";
 
     if (verb === prVerb && more[0] && /^\d{1,9}$/.test(more[0])) {
-        return { view: "pr", number: Number(more[0]) };
+        const commit = more[1] === "commits" && more[2] && SHA.test(more[2]) ? more[2].toLowerCase() : undefined;
+        return commit ? { view: "pr", number: Number(more[0]), commit } : { view: "pr", number: Number(more[0]) };
     }
 
     if ((verb === "blob" || verb === "tree") && more.length > 0) {
@@ -60,6 +64,11 @@ function tail(kind: ForgeKind, rest: string[]): Pick<ForgePage, "view" | "number
         return refPath === null ? { view: "project" } : { view: verb, refPath };
     }
 
+    if (verb === "commit" && more[0] && SHA.test(more[0])) {
+        return { view: "commit", commit: more[0].toLowerCase() };
+    }
+
+    // `/commits/<ref>` lists a branch's history: a commit page with no one commit to open.
     if ((verb === "commit" || verb === "commits") && more[0]) {
         return { view: "commit" };
     }
