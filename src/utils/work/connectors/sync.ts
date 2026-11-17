@@ -6,9 +6,10 @@
  */
 import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { Change } from "../model/change";
 import type { Actor, Item, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
-import type { ItemPatch } from "../model/payloads";
+import type { EditedPayload, ItemPatch } from "../model/payloads";
 import { type ItemType, levelOf, type Role } from "../model/vocab";
 import { allows } from "../rules/resolve";
 import { rolesOf } from "../rules/roles";
@@ -132,6 +133,8 @@ export interface SyncReport {
     pushed: number;
     held: number;
     failed: number;
+    /** Pairings marked drift in this pass: a local edit of a fact the outside owns, which is never pushed. */
+    drift: number;
     skipped?: "lease";
     cursor: number;
 }
@@ -233,16 +236,46 @@ async function pushItems(
     }
 }
 
+/**
+ * The other direction of drift: a local edit of a fact the outside owns (the title of a task born outside). The push
+ * never sends it; the pairing says so, after the push, so a successful push of the local facts does not hide it.
+ */
+function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: SyncReport): void {
+    for (const change of changes) {
+        if (change.kind !== "edited" || change.origin.via === "connector" || change.origin.via === "legacy") {
+            continue;
+        }
+
+        const set = (change.payload as EditedPayload).set;
+        const keys = Object.keys(set);
+
+        for (const pairing of selectPairings(deps.db, { item: change.item })) {
+            const owned = SYNCED_FACTS.filter((fact) => pairing.origin[fact] === "remote" && keys.includes(fact));
+
+            if (owned.length > 0) {
+                inTransaction(deps.db, () =>
+                    writePairing(deps.db, deps, {
+                        ...pairing,
+                        state: "drift",
+                        note: `changed here, owned outside: ${owned.join(", ")}`,
+                    })
+                );
+                report.drift++;
+            }
+        }
+    }
+}
+
 /** One pass: every change after the cursor, pushed under the lease. Safe to run again: it starts at its cursor. */
 export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
     const { db } = deps;
     const now = deps.now();
 
     if (!takeLease(db, deps.owner, now)) {
-        return { pushed: 0, held: 0, failed: 0, skipped: "lease", cursor: -1 };
+        return { pushed: 0, held: 0, failed: 0, drift: 0, skipped: "lease", cursor: -1 };
     }
 
-    const report: SyncReport = { pushed: 0, held: 0, failed: 0, cursor: 0 };
+    const report: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: 0 };
 
     try {
         const cursor = (db.query("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR) as { seq: number }).seq;
@@ -260,6 +293,7 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
             .map(([id, actor]) => ({ item: selectItem(db, id), actor, release: false }))
             .filter((entry): entry is { item: Item; actor: Actor; release: boolean } => entry.item !== null);
         await pushItems(deps, items, report);
+        markLocalDrift(deps, changes, report);
         const last = changes.length > 0 ? changes[changes.length - 1].seq : cursor;
         db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [last, CURSOR]);
         report.cursor = last;
@@ -271,7 +305,7 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
 
 /** `sync --release <ref>`: push a held change now, whatever role made it. */
 export async function releaseHeld(deps: SyncDeps, item: ItemId): Promise<SyncReport> {
-    const report: SyncReport = { pushed: 0, held: 0, failed: 0, cursor: -1 };
+    const report: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 };
     const row = selectItem(deps.db, item);
 
     if (row !== null) {

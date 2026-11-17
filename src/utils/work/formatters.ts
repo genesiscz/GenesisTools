@@ -336,7 +336,7 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
             text: (d) => [
                 d.skipped !== undefined
                     ? `skipped: ${d.skipped} (another runner holds the lease)`
-                    : `${d.pushed} pushed, ${d.held} held, ${d.failed} failed`,
+                    : `${d.pushed} pushed, ${d.held} held, ${d.failed} failed, ${d.drift} drift`,
             ],
         }),
         batch: defineFormatter<Reply<unknown>[]>({
