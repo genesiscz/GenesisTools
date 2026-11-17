@@ -11,6 +11,7 @@ enum TranscriptLineMark: String, Hashable, CaseIterable {
     /// The engine is not sure who said this line (a speaker hint range covers it).
     case unclearSpeaker
     case byVoice
+    case swapSkipped, noRemotePresent, callEcho
     /// A confirmed item or a dictionary entry changed words of this line.
     case corrected
     /// A staged comment for the listening agent covers this line.
@@ -31,6 +32,7 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
     var marks: Set<TranscriptLineMark> = []
     var words: [TranscriptWord] = []
     var indicator: TranscriptLine.Indicator? = nil
+    var evidenceMarks: [TranscriptEvidenceMark] = []
 
     /// True while `position` is inside the line. A line without an end is heard from its start on.
     func isHeard(at position: Double) -> Bool {
@@ -55,7 +57,9 @@ struct TranscriptBlock: Equatable, Identifiable {
     /// silence longer than `breakAfterGapSec` (nil: never; the plan's pick, one block per turn as Riverside draws it).
     /// `durationSec` ends the last line; `marks` adds marks by line id.
     static func build(from entries: [TranscriptLine], durationSec: Double? = nil,
-                      marks: [String: Set<TranscriptLineMark>] = [:], breakAfterGapSec: Double? = nil) -> [TranscriptBlock] {
+                      marks: [String: Set<TranscriptLineMark>] = [:], evidence: [WindowLineEvidence] = [],
+                      items: [MeetingItem] = [], echoAbove: Int = MeetingsPreferences.Transcript.defaultEchoAbove,
+                      breakAfterGapSec: Double? = nil) -> [TranscriptBlock] {
         // The end of a line is the one `meeting.transcript` sends (G-TR-1), else the next timed line's start.
         var ends = [Double?](repeating: durationSec, count: entries.count)
         var nextStart = durationSec
@@ -64,9 +68,12 @@ struct TranscriptBlock: Equatable, Identifiable {
             if let start = entries[index].startSec { nextStart = start }
         }
         var blocks: [TranscriptBlock] = []
+        let byIndex = Dictionary(evidence.map { ($0.index, $0) }, uniquingKeysWith: { _, last in last })
         for (index, entry) in entries.enumerated() {
+            let cues = byIndex[entry.sourceIndex ?? index].map { TranscriptEvidenceMark.build($0, items: items, echoAbove: echoAbove) } ?? []
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
-                                           text: entry.text, marks: marks[entry.rowID] ?? [], words: entry.words ?? [], indicator: entry.indicator)
+                                           text: entry.text, marks: (marks[entry.rowID] ?? []).union(cues.map(\.kind)), words: entry.words ?? [],
+                                           indicator: entry.indicator, evidenceMarks: cues)
             if var last = blocks.last, last.speaker == entry.speaker, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
                 blocks[blocks.count - 1] = last
@@ -128,6 +135,29 @@ struct TranscriptHeard: Equatable, Hashable {
     let blockID: String
     let lineID: String
     var wordRange: NSRange? = nil
+}
+
+/// New line cues keep their own glyph, hue and words in both the tooltip and the accessibility label.
+struct TranscriptEvidenceMark: Equatable, Hashable {
+    let kind: TranscriptLineMark
+    let text: String
+    var symbol: String { kind == .swapSkipped ? "arrow.triangle.swap" : kind == .noRemotePresent ? "person.crop.circle.badge.exclamationmark" : "speaker.wave.2" }
+    var color: Color { kind == .swapSkipped ? .cyan : kind == .noRemotePresent ? .yellow : .pink }
+
+    static func build(_ evidence: WindowLineEvidence, items: [MeetingItem], echoAbove: Int) -> [Self] {
+        var marks: [Self] = []
+        let swaps = (evidence.swapSkippedBy ?? []).compactMap { id -> String? in
+            guard let swap = items.first(where: { $0.id == id && $0.status != "rejected" }) else { return nil }
+            let span = "\(MeetingsFormat.clock(swap.fromSec ?? evidence.startSec)) to \(MeetingsFormat.clock(swap.toSec ?? evidence.endSec))"
+            return "swap to \(swap.speaker ?? "another speaker") at \(span)"
+        }
+        if !swaps.isEmpty { marks.append(.init(kind: .swapSkipped, text: "Skipped by " + Set(swaps).sorted().joined(separator: "; "))) }
+        if evidence.noRemotePresent == true { marks.append(.init(kind: .noRemotePresent, text: "No remote person was in the call at this time")) }
+        if echoAbove > 0, let echo = evidence.echoOfCall, echo * 100 >= Double(echoAbove) {
+            marks.append(.init(kind: .callEcho, text: "High echo of call: \(Int((echo * 100).rounded())) % of microphone power"))
+        }
+        return marks
+    }
 }
 
 /// What a click on a line asks for. A plain click plays from the line (R42); ⇧ extends the selection to it and ⌘ adds
@@ -358,6 +388,10 @@ private struct TranscriptBlockLineView: View {
                     .font(.system(size: 11)).foregroundStyle(indicator.ignored == nil ? Color.secondary : .orange)
                     .instantTooltip(indicator.shownText)
                     .accessibilityLabel(indicator.shownText)
+            }
+            ForEach(line.evidenceMarks, id: \.self) { mark in
+                Image(systemName: mark.symbol).font(.system(size: 11)).foregroundStyle(mark.color)
+                    .instantTooltip(mark.text).accessibilityLabel(mark.text)
             }
             if line.marks.contains(.unclearSpeaker) {
                 Image(systemName: "questionmark.circle")

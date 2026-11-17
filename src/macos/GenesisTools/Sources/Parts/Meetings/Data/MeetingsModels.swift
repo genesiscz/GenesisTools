@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 // The JSON the `tools meetings … --json` doors print, decoded with only the fields this part shows. The shapes live
 // in TypeScript (src/meetings/lib/overview.ts, screen-timeline.ts, capture-cost.ts, match-preview.ts,
@@ -821,4 +822,87 @@ struct MeetingSeats: Codable, Equatable, Hashable {
     var room: [String] = []
     var remote: [Remote] = []
     var microphones: [Microphone]? = nil
+}
+
+/// One saved engine threshold for the transcript and both settings surfaces. No window copy is written.
+@Observable @MainActor
+final class MeetingsApplyThreshold {
+    static let path = "global.suggest.applyAbove"
+    static let segments = ["global", "suggest", "applyAbove"]
+    static let legacyKey = "meetings.transcript.applyAbove"
+    static let shared: MeetingsApplyThreshold = {
+        let model = MeetingsApplyThreshold(migrates: !CommandLine.arguments.contains("--snapshot"))
+        if MeetingsService.shared != nil { Task { await model.load() } }
+        return model
+    }()
+    private(set) var percent: Double?
+    private var saved: Double?
+    private(set) var busy = false
+    private(set) var failure: Error?
+    private let defaults: UserDefaults
+    private let migrates: Bool
+    @ObservationIgnored private var watcher: DirectoryWatcher?
+    @ObservationIgnored var read: () async throws -> MeetingsAPI.ConfigRead.Result
+    @ObservationIgnored var write: (Double, Double) async throws -> Double
+    @ObservationIgnored var stored: (String) async throws -> JSONValue = { file in
+        try await Task.detached {
+            let decoder = JSONDecoder(); decoder.allowsJSON5 = true
+            do { return try decoder.decode(JSONValue.self, from: Data(contentsOf: URL(fileURLWithPath: file))) }
+            catch CocoaError.fileReadNoSuchFile { return .null }
+        }.value
+    }
+
+    init(defaults: UserDefaults = .standard, migrates: Bool = true,
+         read: @escaping () async throws -> MeetingsAPI.ConfigRead.Result = {
+             guard let service = MeetingsService.shared else { throw MeetingsService.Unavailable(reason: "The Meetings service is unavailable") }
+             return try await service.call(MeetingsAPI.ConfigRead.self, .init(path: nil))
+         }, write: @escaping (Double, Double) async throws -> Double = { value, previous in
+             guard let service = MeetingsService.shared else { throw MeetingsService.Unavailable(reason: "The Meetings service is unavailable") }
+             let result = try await service.call(MeetingsAPI.ConfigSet.self, .init(path: path, value: .number(value), expect: .number(previous)))
+             guard case .number(let saved) = result.value else { throw MeetingsService.Unavailable(reason: "The saved threshold was missing") }
+             return saved
+         }) {
+        self.defaults = defaults; self.migrates = migrates; self.read = read; self.write = write
+    }
+
+    func load(clearFailure: Bool = true) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let config = try await read()
+            guard case .number(var value) = config.value.at(Self.segments) else { return }
+            if migrates, let old = defaults.object(forKey: Self.legacyKey) as? NSNumber {
+                // Only a genuinely absent saved engine key accepts the old window value, even if both equal 70%.
+                let raw = try await stored(config.path)
+                if raw.at(Self.segments) == .null {
+                    value = try await write(min(1, max(0, old.doubleValue / 100)), value)
+                }
+                defaults.removeObject(forKey: Self.legacyKey)
+            }
+            saved = value; percent = value * 100
+            if clearFailure { failure = nil }
+            if watcher == nil, config.path.hasPrefix("/") {
+                let file = DirectoryWatcher.normalizedEventPath(config.path)
+                watcher = DirectoryWatcher(paths: [URL(fileURLWithPath: file).deletingLastPathComponent().path], latency: 0.3,
+                                           accepts: { $0 == file }) { [weak self] _ in
+                    Task { @MainActor in await self?.load(clearFailure: false) }
+                }
+            }
+        } catch { failure = error }
+    }
+
+    func set(_ next: Double) async {
+        guard !busy, let previous = saved else { return }
+        busy = true; failure = nil
+        do { let value = try await write(next / 100, previous); saved = value; percent = value * 100 }
+        catch {
+            failure = error
+            // A stale refusal may name another editor's saved value. Show that, or retain our last saved value.
+            if let config = try? await read(), case .number(let value) = config.value.at(Self.segments) {
+                saved = value; percent = value * 100
+            }
+        }
+        busy = false
+    }
 }

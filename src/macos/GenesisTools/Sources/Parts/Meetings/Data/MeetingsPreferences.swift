@@ -315,9 +315,11 @@ extension MeetingsPreferences {
 
     /// The transcript blocks and a selection's clip (F9).
     enum Transcript {
-        static let applyAbove = MeetingsWindowSetting(
-            key: "meetings.transcript.applyAbove", defaultValue: 70, choices: [50, 60, 70, 80, 90],
-            title: "Apply suggestions above", detail: "Lower confidence voices keep a percentage mark. Filters loaded suggestions without reloading.")
+        // 70% explained microphone power makes the inline echo cue selective; the popover keeps every measurement.
+        static let defaultEchoAbove = 70
+        static let echoAbove = MeetingsWindowSetting(
+            key: "meetings.transcript.echoAbove", defaultValue: defaultEchoAbove, choices: [0, 50, 60, 70, 80, 90],
+            title: "Mark echo above", detail: "Explained microphone power that shows an echo glyph on a line. 0 turns the glyph off; measurements stay in its popover.")
         static let wordHighlights = MeetingsWindowSetting(
             key: "meetings.transcript.wordHighlights", defaultValue: true, choices: [true, false],
             title: "Highlight the spoken word", detail: "Use saved ASR timing evidence for exact matched words; untimed words keep the line highlight.")
