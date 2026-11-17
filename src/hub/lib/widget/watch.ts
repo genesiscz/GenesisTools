@@ -11,6 +11,7 @@ import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { workDbPath } from "@genesiscz/utils/work/store/db";
 import { prepareWidgetAsset } from "../composer/assets";
 import { widgetDispatcher } from "../composer/dispatch";
 import { type OutboxDispatcher, processWidgetOutbox } from "../composer/engine";
@@ -89,7 +90,7 @@ export async function watchWidget({
         prepare?: typeof prepareWidgetAsset;
         snapshot?: typeof widgetSnapshot;
         dispatcher?: OutboxDispatcher;
-        inboxPaths?: { answerLog: string; database: string; decisions: string };
+        inboxPaths?: { answerLog: string; database: string; decisions: string; work?: string };
         watchInbox?: typeof createWatcher;
         watchSessions?: typeof createWatcher;
         sessionRoots?: Record<WidgetRosterProvider, string[]>;
@@ -426,13 +427,23 @@ export async function watchWidget({
                     answerLog: logDir(),
                     database: toolDataDir("question", "qa.db"),
                     decisions: decisionFiles().file,
+                    // The session to-do items live in the work store (work-items P9).
+                    work: workDbPath(),
                 };
                 const paths = {
                     answerLog: resolve(configured.answerLog),
                     database: resolve(configured.database),
                     decisions: resolve(configured.decisions),
+                    work: configured.work !== undefined ? resolve(configured.work) : null,
                 };
-                const directories = [...new Set([paths.answerLog, dirname(paths.database), dirname(paths.decisions)])];
+                const directories = [
+                    ...new Set([
+                        paths.answerLog,
+                        dirname(paths.database),
+                        dirname(paths.decisions),
+                        ...(paths.work !== null ? [dirname(paths.work)] : []),
+                    ]),
+                ];
                 const roots = directories.filter(
                     (directory) =>
                         !directories.some(
@@ -455,6 +466,8 @@ export async function watchWidget({
                                     event.path === paths.database ||
                                     event.path === `${paths.database}-wal` ||
                                     event.path === paths.decisions ||
+                                    (paths.work !== null &&
+                                        (event.path === paths.work || event.path === `${paths.work}-wal`)) ||
                                     (dirname(event.path) === paths.answerLog && event.path.endsWith(".jsonl")),
                             })
                         );

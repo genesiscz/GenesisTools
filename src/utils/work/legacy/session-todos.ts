@@ -17,7 +17,10 @@ import { selectItem } from "../store/rows";
 export const SESSION_TODO_POINTER = "session-todo";
 export const SESSION_TODO_TAG = "session-todo";
 
-/** The fields of a decision-log row the mirror reads; the question tool's `DecisionRecord` has them all. */
+/**
+ * The fields of a decision-log row the mirror reads; the question tool's `DecisionRecord` has them all. The other
+ * fields of the row ride along in the pointer, so the row comes back whole (`readSessionTodos`).
+ */
 export interface SessionTodoRow {
     id: string;
     sessionId: string;
@@ -42,8 +45,26 @@ export interface SessionTodoRow {
     revision?: number;
 }
 
-/** What the pointer keeps: the row without its text and state, so the widget can show the task as it does today. */
-export type SessionTodoMeta = Omit<SessionTodoRow, "prompt" | "state">;
+/** What the pointer keeps: the row without its text and state (the item has those), and the log's own state word. */
+export type SessionTodoMeta = Omit<SessionTodoRow, "prompt" | "state"> & { logState: string } & Record<string, unknown>;
+
+/** A row as the store gives it back: the known fields and every other field the log row had. */
+export type StoredSessionTodo = SessionTodoRow & Record<string, unknown>;
+
+function isSessionTodoMeta(value: unknown): value is SessionTodoMeta {
+    if (value === null || typeof value !== "object") {
+        return false;
+    }
+
+    const v = value as Record<string, unknown>;
+    return (
+        typeof v.id === "string" &&
+        typeof v.sessionId === "string" &&
+        typeof v.number === "number" &&
+        typeof v.updatedTs === "string" &&
+        typeof v.logState === "string"
+    );
+}
 
 /** The states of the log mapped to item states (list 2 of the detail file). */
 const STATE_OF: Record<string, ItemState> = {
@@ -70,7 +91,7 @@ export function sessionTodoLogState(state: ItemState): string {
 }
 
 /** The to-do rows as the store holds them: the pointer's fields, the item's text and state, newest change first. */
-export function readSessionTodos(db: Database): { rows: SessionTodoRow[]; stamp: string } {
+export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; stamp: string } {
     const stamp = String((db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0);
     const rows = db
         .query<{ meta: string | null; body: string | null; state: ItemState }, [string]>(
@@ -78,8 +99,17 @@ export function readSessionTodos(db: Database): { rows: SessionTodoRow[]; stamp:
         )
         .all(SESSION_TODO_POINTER)
         .flatMap((r) => {
-            const meta = r.meta === null ? null : (SafeJSON.parse(r.meta) as SessionTodoMeta);
-            return meta === null ? [] : [{ ...meta, prompt: r.body ?? "", state: sessionTodoLogState(r.state) }];
+            const meta: unknown = r.meta === null ? null : SafeJSON.parse(r.meta);
+
+            if (!isSessionTodoMeta(meta)) {
+                return [];
+            }
+
+            const { logState, ...rest } = meta;
+            // The log's word survives while the item still stands for it (superseded and dismissed are both dropped);
+            // a move through the store (`tools work finish`) gives the word of the new state.
+            const state = sessionTodoState(logState) === r.state ? logState : sessionTodoLogState(r.state);
+            return [{ ...rest, prompt: r.body ?? "", state }];
         });
     return { rows, stamp };
 }
@@ -110,8 +140,8 @@ function actorOf(row: SessionTodoRow): Actor {
 }
 
 function metaOf(row: SessionTodoRow): SessionTodoMeta {
-    const { prompt: _prompt, state: _state, ...meta } = row;
-    return meta;
+    const { prompt: _prompt, state, ...rest } = row;
+    return { ...rest, logState: state };
 }
 
 export interface MirrorReport {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -13,8 +13,8 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { appendFeedEvent, type JsonlLog, jsonlLog } from "@genesiscz/utils/storage/locked-document";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
-import { withWorkDb } from "@genesiscz/utils/work/store/db";
+import { mirrorSessionTodos, readSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import type { z } from "zod";
 import { closeNoticeItemsLater, noticeItem } from "../notices/notices";
 import { decisionOptionLabels } from "./option-labels";
@@ -1821,17 +1821,42 @@ export function readDecisionsWithIntegrity(file: string): {
     complete: boolean;
     missing?: true;
 } {
-    const { rows, torn, malformed, missing } = decisionLog(file).read();
+    const { rows: logged, torn, malformed, missing } = decisionLog(file).read();
 
     if (torn > 0 || malformed > 0) {
         logger.warn({ file, skipped: torn, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
+    const store = todoStoreOf(file);
+    const stored = store === null ? [] : storedTodoRows(store);
+    // A to-do row the store holds wins over an older copy still in the log (the log loses them at its next rewrite).
+    const held = new Set(stored.map((row) => row.id));
+    const rows = stored.length === 0 ? logged : [...logged.filter((row) => !held.has(row.id)), ...stored];
+
     return {
         rows,
         complete: !missing && torn === 0 && malformed === 0,
-        ...(missing ? { missing: true } : {}),
+        ...(missing && stored.length === 0 ? { missing: true } : {}),
     };
+}
+
+/**
+ * The work store holds the to-do rows of the default log (work-items P9): an item of type `task` with the tag
+ * `session-todo` each. Null for any other log, so a test or a scratch log keeps its to-do rows in the file.
+ */
+function todoStoreOf(file: string): string | null {
+    return file === decisionFiles().file ? workDbPath() : null;
+}
+
+/** The to-do rows the work store holds, each checked like a row of the log; none when the store does not exist. */
+export function storedTodoRows(store: string = workDbPath()): DecisionRecord[] {
+    if (!existsSync(store)) {
+        return [];
+    }
+
+    return withWorkDb(store, (db) => readSessionTodos(db).rows).flatMap((row): DecisionRecord[] =>
+        isStoredDecision(row) ? [row] : []
+    );
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {
@@ -1882,8 +1907,14 @@ function appendEvent(events: string, value: Record<string, unknown>): void {
 
 /** Starts on a fresh line when the last write was torn, so one bad row cannot swallow the next. */
 function append(file: string, row: DecisionRecord): void {
+    const store = todoStoreOf(file);
+
+    if (store !== null && kindOf(row) === "todo") {
+        writeTodos(store, [row]);
+        return;
+    }
+
     decisionLog(file).append(row);
-    mirrorTodos(file, [row]);
 }
 
 /**
@@ -1892,26 +1923,27 @@ function append(file: string, row: DecisionRecord): void {
  * for good. Every caller holds the decisions lock, so the file has not changed since that read.
  */
 function rewrite(file: string, rows: DecisionRecord[]): void {
-    decisionLog(file).rewrite(rows);
-    mirrorTodos(file, rows);
-}
+    const store = todoStoreOf(file);
 
-/**
- * The to-do rows of the default log also live in the work store (work-items P9): an item of type `task` with the tag
- * `session-todo`. Only the default log is mirrored, so a test or a scratch log never writes the store. A failure is
- * logged and never fails the log write; the next write of the log brings the store up to date again.
- */
-function mirrorTodos(file: string, rows: readonly DecisionRecord[]): void {
-    const todos = rows.filter((row) => kindOf(row) === "todo");
-
-    if (todos.length === 0 || file !== decisionFiles().file) {
+    if (store === null) {
+        decisionLog(file).rewrite(rows);
         return;
     }
 
-    try {
-        const report = withWorkDb(undefined, (db) => mirrorSessionTodos(db, todos));
-        logger.debug({ file, ...report }, "[decisions] session to-do items mirrored into the work store");
-    } catch (error) {
-        logger.warn({ err: error, file }, "[decisions] the work store mirror of the to-do items failed");
+    // The store first: when it fails, the log is untouched and still holds what it held.
+    writeTodos(
+        store,
+        rows.filter((row) => kindOf(row) === "todo")
+    );
+    decisionLog(file).rewrite(rows.filter((row) => kindOf(row) !== "todo"));
+}
+
+/** Writes to-do rows into the work store; a failure throws, so a caller never reports a to-do it did not keep. */
+function writeTodos(store: string, todos: readonly DecisionRecord[]): void {
+    if (todos.length === 0) {
+        return;
     }
+
+    const report = withWorkDb(store, (db) => mirrorSessionTodos(db, todos));
+    logger.debug({ store, ...report }, "[decisions] session to-do items written to the work store");
 }
