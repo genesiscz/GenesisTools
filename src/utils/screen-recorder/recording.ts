@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { type JobInfo, JobRegistry, type JobStep } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
-import { type AudioSegment, type AudioSession, recordsAudioSession } from "./audio-session";
+import { type AudioSegment, type AudioSession, type RecorderAudioOptions, recordsAudioSession } from "./audio-session";
 import {
     type AudioDevices,
     type AudioSource,
@@ -882,30 +882,24 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     private async startSound(): Promise<void> {
-        const { recorder, hooks } = this.config;
+        const { recorder } = this.config;
 
         if (!recorder.supports.audio || this.sound.sources.length === 0 || this.stopRequested) {
             return;
         }
 
+        let refused = false;
         if (recordsAudioSession(recorder)) {
-            this.soundSession = await recorder.startAudioSession({
-                folder: this.config.live.folder,
-                outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
-                request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
-                signal: this.soundAbort.signal,
-                onSegment: (segment) => hooks.onAudioSegment?.(segment),
-                onWarning: (warning) => this.soundWarning(warning),
-                onFailure: (error) => {
-                    this.soundWarning(error.message);
-                    hooks.onError?.(error);
-                    this.requestStop();
-                },
-            });
+            const started = await this.startSoundSession(recorder);
+            this.soundSession = started.session;
+            refused = started.refused;
         }
 
         if (!this.soundSession) {
-            this.soundWarning("continuous sound is unavailable; sound stays in the frame pieces");
+            if (!refused) {
+                this.soundWarning("continuous sound is unavailable; sound stays in the frame pieces");
+            }
+
             return;
         }
 
@@ -921,6 +915,54 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
         if (this.paused) {
             await this.soundSession.pause();
+        }
+    }
+
+    /**
+     * A sound session that cannot start, or that dies later, never ends the recording: the frames go on, and the
+     * sound goes back into the frame pieces from the next piece (`audio` of the piece request reads `soundSession`).
+     */
+    private async startSoundSession(
+        recorder: FrameRecorder & {
+            startAudioSession(options: RecorderAudioOptions): Promise<AudioSession | undefined>;
+        }
+    ): Promise<{ session: AudioSession | undefined; refused: boolean }> {
+        const { hooks } = this.config;
+        let running = false;
+
+        try {
+            const session = await recorder.startAudioSession({
+                folder: this.config.live.folder,
+                outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
+                request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
+                signal: this.soundAbort.signal,
+                onSegment: (segment) => hooks.onAudioSegment?.(segment),
+                onWarning: (warning) => this.soundWarning(warning),
+                onFailure: (error) => {
+                    // A failure before the session was ready also rejects the start: the catch below notes it.
+                    if (!running) {
+                        return;
+                    }
+
+                    log.warn({ error }, "the continuous sound session stopped");
+                    this.soundWarning(
+                        `continuous sound stopped (${error.message}); sound goes back into the frame pieces`
+                    );
+                    this.soundSession = undefined;
+                },
+            });
+            running = session !== undefined;
+            return { session, refused: false };
+        } catch (error) {
+            if (this.soundAbort.signal.aborted) {
+                throw error;
+            }
+
+            log.warn({ error }, "the continuous sound session did not start");
+            this.soundWarning(
+                `continuous sound did not start (${error instanceof Error ? error.message : String(error)}); sound stays in the frame pieces`
+            );
+            return { session: undefined, refused: true };
         }
     }
 

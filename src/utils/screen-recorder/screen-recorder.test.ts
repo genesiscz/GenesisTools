@@ -2272,6 +2272,45 @@ describe("frame recordings with continuous sound", () => {
         expect(rows.every((row) => existsSync(join(recording.folder, row.file)))).toBe(true);
     });
 
+    test("a sound session that dies at its start or later never ends the recording: the pieces record the sound", async () => {
+        for (const [mode, note] of [
+            ["--fixture-audio-session-dies-at-start", "continuous sound did not start"],
+            ["--fixture-audio-session-dies-later", "continuous sound stopped"],
+        ] as const) {
+            const root = mkdtempSync(join(tmpdir(), "frames-sound-dies-"));
+            // The fake session dies 150 ms after its start: the second piece outlasts that, so the third piece is
+            // requested after the death.
+            class SlowSecondPiece extends SessionRecorder {
+                override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+                    if (this.requests.length === 1) {
+                        await Bun.sleep(400);
+                    }
+
+                    return super.capture(request, signal);
+                }
+            }
+            const recorder = new SlowSecondPiece(mode);
+            const recording = await startRecording({
+                recorder,
+                folder: join(root, "rec"),
+                liveDir: join(root, "live"),
+                audio: { mic: true },
+            });
+            let notes: string[] | undefined;
+            try {
+                await withTimeout(
+                    recorder.thirdFrame.promise,
+                    5000,
+                    new Error(`three pieces did not arrive (${mode})`)
+                );
+                expect(recorder.requests.at(-1)?.audio?.sources).toEqual(["mic"]);
+            } finally {
+                notes = (await recording.stop()).notes;
+            }
+            expect(notes?.filter((text) => text.includes(note))).toHaveLength(1);
+        }
+    });
+
     test("a tool without audio-record leaves sound on every piece and notes the fallback once", async () => {
         const root = mkdtempSync(join(tmpdir(), "frames-piece-sound-"));
         const recorder = new SessionRecorder("--fixture-no-audio-session");

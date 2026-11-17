@@ -80,13 +80,28 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             }
             let elapsed = CMTimeGetSeconds(CMTimeSubtract(time, track.first ?? time))
             let remaining = max(1, Int(((segmentSeconds - max(elapsed, track.fileTimeline.seconds)) * rate).rounded()))
-            let length = min(count - offset, remaining)
-            var part: CMSampleBuffer?
-            guard CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
-                        sampleRange: CFRange(location: offset, length: length), sampleBufferOut: &part) == noErr,
-                  let part else {
-                fail("could not split \(source.rawValue) audio at the segment boundary")
-                return
+            var length = min(count - offset, remaining)
+            let part: CMSampleBuffer
+            if offset == 0 && length == count {
+                // The whole buffer goes through untouched: no copy can fail.
+                part = buffer
+            } else {
+                var cut: CMSampleBuffer?
+                if CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
+                        sampleRange: CFRange(location: offset, length: length), sampleBufferOut: &cut) == noErr,
+                   let cut {
+                    part = cut
+                } else if offset == 0 {
+                    // ScreenCaptureKit's planar buffers of the system sound refuse a range copy (seen 2026-11-17:
+                    // it stopped the whole recording). The buffer stays whole, and the segment ends at its end:
+                    // at most one buffer longer than `segmentSeconds`. The next segment starts at that end.
+                    part = buffer
+                    length = count
+                } else {
+                    // The start of this buffer repeats the last segment and cannot be cut off: drop the buffer.
+                    // The writer fills its time with silence and reports it as lost, so the timeline stays right.
+                    return
+                }
             }
             track.muted = muted[source] ?? false
             let samples: CMSampleBuffer
