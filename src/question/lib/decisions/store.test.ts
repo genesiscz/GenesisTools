@@ -2006,6 +2006,17 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             [1, "implemented"],
             [2, "open"],
         ]);
+        // A process with older code appends a newer copy of a to-do row to the log: the read shows that copy.
+        const second = readDecisions(files.file).find((r) => r.id === next.id);
+        const newer = {
+            ...second,
+            title: "Changed by old code",
+            updatedTs: new Date(Date.now() + 60_000).toISOString(),
+        };
+        appendFileSync(files.file, `${SafeJSON.stringify(newer)}\n`);
+        expect(readDecisions(files.file).find((r) => r.id === next.id)?.title).toBe("Changed by old code");
+        expect(readDecisions(files.file).filter((r) => r.id === next.id)).toHaveLength(1);
+
         const db = openWorkDb(workDbPath());
 
         try {

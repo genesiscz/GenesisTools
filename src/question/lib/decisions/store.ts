@@ -1812,9 +1812,19 @@ export function readDecisionsWithIntegrity(file: string): {
 
     const store = todoStoreOf(file);
     const stored = store === null ? [] : storedTodoRows(store);
-    // A to-do row the store holds wins over an older copy still in the log (the log loses them at its next rewrite).
-    const held = new Set(stored.map((row) => row.id));
-    const rows = stored.length === 0 ? logged : [...logged.filter((row) => !held.has(row.id)), ...stored];
+    // One copy per id: the newer one. The store's copy is newer unless a process with older code wrote the log after
+    // it; the next rewrite of the log moves that row into the store.
+    const byId = new Map(stored.map((row) => [row.id, row]));
+
+    for (const row of logged) {
+        const held = byId.get(row.id);
+
+        if (held !== undefined && kindOf(row) === "todo" && row.updatedTs > held.updatedTs) {
+            byId.set(row.id, row);
+        }
+    }
+
+    const rows = stored.length === 0 ? logged : [...logged.filter((row) => !byId.has(row.id)), ...byId.values()];
 
     return {
         rows,
