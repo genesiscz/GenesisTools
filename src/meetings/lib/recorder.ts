@@ -34,7 +34,7 @@ import { startOcrWorker } from "./ocr-worker";
 import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
 
 /**
- * The meetings recorder's configuration of the shared capture core. Its rules: the engine records the sound, the
+ * The meetings recorder's configuration of the shared capture core. Its rules: one capture records the sound, the
  * controls are refused while it stops, each capture takes a settings change on its own, and the socket stays open a
  * moment for the stop answer. The meeting's own steps are the run's.
  */
@@ -71,7 +71,7 @@ function meetingRecorderConfig(run: MeetingRun) {
             pieces: {
                 dir: run.pieceDir,
                 sec: deps.pieceSec,
-                // Older native tools use one piece for sound; a continuous session records it beside every piece.
+                // One capture records the sound: two would write the same microphone twice.
                 audioOwnership: "single",
                 request: (now) => ({ ...run.nativeKeys, heartbeatSec: now.heartbeatSec }),
                 failures: {
@@ -105,8 +105,6 @@ function meetingRecorderConfig(run: MeetingRun) {
                 save: (marker) => run.recordingRecord.addMarker(marker),
             },
             hooks: {
-                onAudioSegment: (segment) => run.keptSound(segment),
-                onAudioWarning: (warning) => run.note(warning),
                 beforeLoop: () => run.begin(recording),
                 afterLoop: () => {
                     run.salvageTracks(run.pieceDir);

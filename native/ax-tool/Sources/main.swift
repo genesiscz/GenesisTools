@@ -101,10 +101,6 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
       ax-tool audio-devices                                   Audio inputs and outputs: id (UID), name, channels, default
-      ax-tool audio-record --sources mic,system [--mic-device UID] --out DIR [--segment-sec 60]
-                      One continuous audio stream; closed segments as JSON lines on stdout.
-                      JSON-line controls on stdin: mute/unmute {"source":"mic"|"system"}, set-mic {"deviceId"},
-                      pause, resume, status, stop; state/settings/error events on stderr; stdin EOF stops.
       ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot
@@ -189,7 +185,7 @@ if command == "quit-app" {
 // list, which every command used to report as a fact about the target ("no windows for X").
 // The exceptions read no AX state: `screens` (NSScreen), `capture` (ScreenCaptureKit, gated
 // on Screen Recording inside Record.swift) and `ocr --image` (a file on disk).
-let axFreeCommands: Set<String> = ["screens", "capture", "audio-devices", "audio-record"]
+let axFreeCommands: Set<String> = ["screens", "capture", "audio-devices"]
 if !axFreeCommands.contains(command) && !(command == "ocr" && argValue("--image") != nil) {
     // NSWorkspace answers without Accessibility, so a typo in --app is reported as a typo rather
     // than hidden behind the missing grant. `resolveAppPid` never touches the target.
@@ -240,10 +236,6 @@ if command == "screens" {
 }
 if command == "audio-devices" {
     cmdAudioDevices()
-    exit(0)
-}
-if command == "audio-record" {
-    cmdAudioRecord()
     exit(0)
 }
 if command == "capture" {

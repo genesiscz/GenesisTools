@@ -44,7 +44,6 @@ interface GapRow {
     zero: string;
     durationSec: number;
     gapMs?: number;
-    lostMs: number;
     kept: string;
 }
 
@@ -109,7 +108,6 @@ function gapRows(rows: readonly AudioRow[]): GapRow[] {
                 file: row.file,
                 zero: `${clockWithMs(zero)}${row.zeroAt ? "" : " (at)"}`,
                 durationSec: row.durationMs / 1000,
-                lostMs: (row.lostSpans ?? []).reduce((sum, [from, to]) => sum + to - from, 0),
                 ...(previousEnd !== undefined ? { gapMs: Math.round(zero - previousEnd) } : {}),
                 kept: row.kept ?? "normal",
             });
@@ -241,11 +239,10 @@ async function main(): Promise<void> {
                 row.zero,
                 row.durationSec.toFixed(3),
                 row.gapMs?.toString() ?? "",
-                row.lostMs.toString(),
                 row.kept,
             ]),
-            ["source", "file", "second 0 (local)", "length s", "gap ms", "lost ms", "kept"],
-            { alignRight: [3, 4, 5] }
+            ["source", "file", "second 0 (local)", "length s", "gap ms", "kept"],
+            { alignRight: [3, 4] }
         )
     );
     out.println(

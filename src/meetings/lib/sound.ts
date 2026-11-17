@@ -44,7 +44,6 @@ export const audioRowSchema = z.object({
     at: z.string(),
     durationMs: z.number().default(0),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
-    lostSpans: z.array(z.tuple([z.number(), z.number()])).optional(),
     /** Wall time of the file's second 0 (`at` + the engine's `startOffsetMs`). Absent: readers use `at`. */
     zeroAt: z.string().optional(),
     /** `salvaged`: the file was found in `.piece/` at a start or after the loop; its times come from the file. */
