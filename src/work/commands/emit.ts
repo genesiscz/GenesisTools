@@ -1,9 +1,7 @@
-/**
- * The minimal printer of P1: text or JSON. P2 replaces it with the output layer's `emit` and the formatter table.
- */
-import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
-import type { NextAction, Reply } from "@genesiscz/utils/output/reply";
+/** How the CLI door prints a next action: as the `tools work` command line that runs it. */
+import type { Door } from "@genesiscz/utils/output/formatter";
+import type { NextAction } from "@genesiscz/utils/output/reply";
+import { WORK_CLI_POSITIONAL } from "@genesiscz/utils/work/api";
 
 function kebab(key: string): string {
     return key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
@@ -13,20 +11,20 @@ function quote(value: string): string {
     return /^[\w:./@#,-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`;
 }
 
-/** A next action as the command line of this door. */
+function text(value: unknown): string {
+    return quote(Array.isArray(value) ? value.join(",") : String(value));
+}
+
 export function commandOf(call: NonNullable<NextAction["call"]>): string {
     const parts = ["tools", "work", call.method];
     const params = { ...call.params };
+    const words = Reflect.get(WORK_CLI_POSITIONAL, call.method) as readonly string[] | undefined;
 
-    for (const key of ["ref", "refs", "title"]) {
-        const value = params[key];
-
-        if (value === undefined) {
-            continue;
+    for (const key of words ?? []) {
+        if (params[key] !== undefined) {
+            parts.push(text(params[key]));
+            delete params[key];
         }
-
-        parts.push(quote(Array.isArray(value) ? value.join(",") : String(value)));
-        delete params[key];
     }
 
     for (const [key, value] of Object.entries(params)) {
@@ -34,57 +32,10 @@ export function commandOf(call: NonNullable<NextAction["call"]>): string {
             continue;
         }
 
-        if (value === true) {
-            parts.push(`--${kebab(key)}`);
-            continue;
-        }
-
-        parts.push(`--${kebab(key)}`, quote(Array.isArray(value) ? value.join(",") : String(value)));
+        parts.push(...(value === true ? [`--${kebab(key)}`] : [`--${kebab(key)}`, text(value)]));
     }
 
     return parts.join(" ");
 }
 
-export interface EmitFlags {
-    json?: boolean;
-}
-
-/** Prints a reply: the result on stdout, diagnostics and next actions on stderr, exit code 1 when it failed. */
-export function emit<T>(reply: Reply<T>, flags: EmitFlags, text: (data: T) => string[]): void {
-    if (flags.json) {
-        out.result(reply);
-    } else if (reply.ok) {
-        const lines = text(reply.data);
-
-        if (reply.dryRun) {
-            lines.unshift("(dry run: nothing was written)");
-        }
-
-        if (reply.receipt?.replayed) {
-            lines.unshift(`(replayed the stored reply of request ${reply.receipt.requestId ?? "?"})`);
-        }
-
-        if (lines.length > 0) {
-            out.print(`${lines.join("\n")}\n`);
-        }
-    }
-
-    if (!flags.json) {
-        for (const diagnostic of reply.diagnostics) {
-            out.printlnErr(`${diagnostic.severity}: ${diagnostic.code}: ${diagnostic.message}`);
-        }
-
-        for (const next of reply.next) {
-            const how = next.call ? commandOf(next.call) : (next.ask ?? "");
-            out.printlnErr(`next: ${next.do}${how ? `: ${how}` : ""}`);
-        }
-    }
-
-    if (!reply.ok) {
-        process.exitCode = 1;
-    }
-}
-
-export function jsonLine(value: unknown): string {
-    return SafeJSON.stringify(value);
-}
+export const cliDoor: Door = { commandOf };

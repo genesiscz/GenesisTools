@@ -53,6 +53,7 @@ export type WorkCommand =
     | { verb: "finish"; ref: string; proof: string; commits?: string[] }
     | { verb: "log"; ref: string; result: LogResult; note?: string; measured?: string }
     | { verb: "comment"; ref: string; text: string }
+    | { verb: "claim" | "release"; ref: string }
     | { verb: "reopen"; ref: string; why: string }
     | { verb: "delivered"; ref: string; key: string; receipt: DeliveryReceipt }
     | { verb: "handoff"; title: string; from: string[]; target?: string; body?: string };
@@ -878,6 +879,47 @@ function decideComment(cmd: Extract<WorkCommand, { verb: "comment" }>, view: Sto
     };
 }
 
+function decideClaim(
+    cmd: Extract<WorkCommand, { verb: "claim" | "release" }>,
+    view: StoreView,
+    env: WriteEnv
+): Decision {
+    const resolved = view.resolve(cmd.ref);
+
+    if (resolved === null) {
+        return notFound(cmd.ref);
+    }
+
+    const item = resolved.item;
+    const slots = slotsOf(view, resolved);
+    const handoff = slots[0]?.handoff ?? (item.type === "handoff" ? item.id : null);
+
+    // A handoff's claim lives in the old log while shadow mode lasts; a member's claim is its handoff's.
+    if (handoff !== null) {
+        return {
+            ok: true,
+            changes: [],
+            legacy: [{ action: cmd.verb === "claim" ? "claim" : "unclaim", handoff }],
+            items: [item.id],
+            diagnostics: [],
+            next: [],
+        };
+    }
+
+    const to = TRANSITIONS[cmd.verb][item.state];
+    const changes: NewChange[] = [
+        { ...base(env, item.id), kind: cmd.verb === "claim" ? "claimed" : "released", payload: {} },
+    ];
+
+    if (to !== undefined) {
+        changes.push(move(env, item, to));
+    } else if (cmd.verb === "claim" && item.state !== "active") {
+        return fail("BAD_TRANSITION", `${item.id} is ${item.state}; only an open or reopened item is claimed.`);
+    }
+
+    return { ok: true, changes, legacy: [], items: [item.id], diagnostics: [], next: [] };
+}
+
 /** The first transaction of a reopen: the reason and the move. The delivery and its receipt come after. */
 function decideReopen(cmd: Extract<WorkCommand, { verb: "reopen" }>, view: StoreView, env: WriteEnv): Decision {
     if (cmd.why.trim().length === 0) {
@@ -1053,7 +1095,7 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
             diagnostics: [
                 errorDiagnostic(
                     "ROLE_REFUSED",
-                    `${verb} of ${item.id} (a ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}. When the owner asked for it, pass his words with --owner-said "<words>".`
+                    `${verb} of ${item.id} (type ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}. When the owner asked for it, pass his words with --owner-said "<words>".`
                 ),
             ],
             next: [{ do: "ask the owner", ask: `May this session ${verb} ${item.id} (${item.title})?` }],
@@ -1091,6 +1133,9 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
             return check(command.ref, "log");
         case "comment":
             return check(command.ref, "comment");
+        case "claim":
+        case "release":
+            return check(command.ref, command.verb);
         case "reopen":
             return check(command.ref, "reopen");
     }
@@ -1124,6 +1169,9 @@ export function decide(command: WorkCommand, view: StoreView, env: WriteEnv): De
             return decideLog(command, view, env);
         case "comment":
             return decideComment(command, view, env);
+        case "claim":
+        case "release":
+            return decideClaim(command, view, env);
         case "reopen":
             return decideReopen(command, view, env);
         case "delivered":

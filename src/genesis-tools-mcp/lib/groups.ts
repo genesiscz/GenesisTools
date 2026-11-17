@@ -54,4 +54,13 @@ export const TOOL_GROUPS: readonly ToolGroupRow[] = [
         // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
         load: () => import("@app/ai/mcp/genesis-tools").then((m) => m.toolGroup()),
     },
+    {
+        // The work store (handoffs, tasks, spotted items). Opt-in until the owner turns it on at a quiet time: a new
+        // tool in the default list costs every running session one full prompt-cache miss.
+        id: "work",
+        prefix: "work_",
+        optIn: true,
+        // lint-rules-ignore: the MCP server loads a tool group only when a capability list exposes it
+        load: () => import("@app/work/mcp/genesis-tools").then((m) => m.toolGroup()),
+    },
 ];
