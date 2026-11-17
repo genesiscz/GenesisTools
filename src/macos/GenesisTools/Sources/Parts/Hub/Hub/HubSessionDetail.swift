@@ -92,6 +92,9 @@ struct HubSessionDetailHost: View {
     @State private var hostAnswer: SessionHostAnswer?
     /// The banner's report of a host lookup that failed, so the next lookup that answers clears exactly that notice.
     @State private var hostLookupFailure: FailureReport?
+    /// Host lookups overlap (the journal's new pane, Reload, Try again, the read after an action): only the newest
+    /// sets the answer or the failure.
+    @State private var hostLookups = HostLookups()
     /// The banner's failure (a refresh or an earlier page that did not load) with its Try again, set and cleared as one.
     @State private var bannerFailure: (report: FailureReport, retry: @MainActor () -> Void)?
     /// The report of an earlier-page failure the banner shows, so a retry that loads the page clears that notice and
@@ -482,10 +485,11 @@ struct HubSessionDetailHost: View {
     /// Try again; an older `tools` without `ai session-host` is no failure: the journal's cmux place stays in charge.
     private func loadHost() async {
         let id = session.sessionId
+        let ticket = hostLookups.start()
         let ledger = ToolsCallLedger()
         do {
             let answers = try await ledger.record { try await SessionHostClient(bridge: HubSource.bridge).describe([id]) }
-            guard !Task.isCancelled, id == session.sessionId else { return }
+            guard !Task.isCancelled, id == session.sessionId, hostLookups.isLatest(ticket) else { return }
             hostAnswer = answers.first
             if let failed = hostLookupFailure {
                 if bannerFailure?.report == failed { bannerFailure = nil }
@@ -494,7 +498,7 @@ struct HubSessionDetailHost: View {
         } catch SessionHostClientError.unsupported {
             HubPerf.log("session.host \(id.prefix(8)): this tools has no ai session-host, the journal's pane stands")
         } catch {
-            guard !Task.isCancelled, id == session.sessionId else { return }
+            guard !Task.isCancelled, id == session.sessionId, hostLookups.isLatest(ticket) else { return }
             HubPerf.log("session.host \(id.prefix(8)) failed: \(error.localizedDescription)")
             let report = FailureReport.toolsCall(error, outcome: "Where the session runs did not load", action: "Find the session's cmux pane or T3 Code thread",
                                                  call: ledger.failed, title: "Session host did not load", area: "hub",
@@ -934,6 +938,19 @@ struct HubSessionDetailHost: View {
             searchDocument = nil
             searchNote = "Whole-session search failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Tickets for host lookups that can overlap: each lookup takes one when it starts, and only the newest ticket's
+    /// result is applied, so an older lookup that finishes last never replaces a newer answer or failure.
+    struct HostLookups: Equatable {
+        private(set) var latest = 0
+
+        mutating func start() -> Int {
+            latest += 1
+            return latest
+        }
+
+        func isLatest(_ ticket: Int) -> Bool { ticket == latest }
     }
 
     static func searchTurns(earlier: [TranscriptTurn], window: [TranscriptTurn], start: Int) -> [TranscriptTurn] {
