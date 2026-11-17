@@ -413,7 +413,7 @@ export async function embedVoiceLines(options: {
     return result;
 }
 
-if (import.meta.main) {
+async function runWorkerMain(): Promise<void> {
     const request = voiceWorkerRequestSchema.parse(SafeJSON.parse(await Bun.stdin.text(), { strict: true }));
     try {
         const result =
@@ -425,4 +425,12 @@ if (import.meta.main) {
         }
         out.print(SafeJSON.stringify({ unavailable: error.message }, { strict: true }));
     }
+}
+
+if (import.meta.main) {
+    // Folder discovery imports record, whose schemas import this module. Finish loading before doing that work.
+    void runWorkerMain().catch((error) => {
+        logger.error({ error }, "Voice worker failed");
+        process.exitCode = 1;
+    });
 }
