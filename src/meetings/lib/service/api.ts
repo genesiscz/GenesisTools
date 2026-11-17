@@ -875,6 +875,28 @@ const configEdit = defineMethod({
     effect: "reversible",
 });
 
+/** One source line of the transcript, uncut, as a window row shows it. */
+const windowDecidedLineSchema = z.object({
+    index: z.number().int().nonnegative(),
+    startSec: z.number().optional(),
+    endSec: z.number().optional(),
+    speaker: z.string(),
+    text: z.string(),
+});
+
+/** What the engine measured for one source line; a missing measurement is an absent field. */
+const windowLineEvidenceSchema = z.object({
+    index: z.number().int().nonnegative(),
+    startSec: z.number(),
+    endSec: z.number(),
+    swapSkippedBy: z.array(z.string()).optional(),
+    noRemotePresent: z.literal(true).optional(),
+    micShare: z.number().min(0).max(1).optional(),
+    callRms: z.number().nonnegative().optional(),
+    echoOfCall: z.number().min(0).max(1).optional(),
+    acousticQuality: z.enum(["linear-estimate", "quiet", "insufficient"]).optional(),
+});
+
 const meetingRows = defineMethod({
     name: "meeting.rows",
     params: z
@@ -885,7 +907,24 @@ const meetingRows = defineMethod({
             applyAbove: z.number().min(0).max(1).optional(),
         })
         .strict(),
-    result: reviewRowsSchema,
+    result: reviewRowsSchema.extend({
+        attendanceWarning: z.string().optional(),
+        lineEvidence: z.array(windowLineEvidenceSchema).optional(),
+        questionDetails: z
+            .array(
+                z.object({
+                    id: z.string(),
+                    decidedLines: z.array(windowDecidedLineSchema),
+                    impact: z.object({
+                        lines: z.number().int().nonnegative(),
+                        words: z.number().int().nonnegative(),
+                        sameDoubtLines: z.number().int().nonnegative(),
+                    }),
+                    raisedLines: z.array(windowDecidedLineSchema).optional(),
+                })
+            )
+            .optional(),
+    }),
     resultName: "{ meeting, rows: ReviewRow[], hidden }",
     doc: "The review rows (`meetings rows --json`): one per item in the order `listen` asks, each with its question as parts (who, said, when, asks, settles, reason), its typed choices with confidence, its edit kind, what it needs, its sources, its Moment and its last decision. A decided row keeps its place.",
     effect: "read",
@@ -1352,11 +1391,21 @@ const dictionaryRemove = defineMethod({
 const dictionaryTest = defineMethod({
     name: "dictionary.test",
     params: z
-        .object({ phrase: z.string(), project: dictionaryProject, entry: dictionaryEntrySchema.optional() })
+        .object({
+            phrase: z.string(),
+            project: dictionaryProject,
+            entry: dictionaryEntrySchema.optional(),
+            /** With a meeting, the answer also lists the lines of that meeting the draft entry would change. */
+            meeting: meetingRef.optional(),
+        })
         .strict(),
-    result: phraseTestSchema,
-    resultName: "{ phrase, text, fired, suggestions, counts }",
-    doc: "What the scope's dictionary does to one phrase, with each entry that fired, as `dictionary test --json` prints it. Reads only.",
+    result: phraseTestSchema.extend({
+        lines: z
+            .array(windowDecidedLineSchema.omit({ text: true }).extend({ before: z.string(), after: z.string() }))
+            .optional(),
+    }),
+    resultName: "{ phrase, text, fired, suggestions, counts, lines? }",
+    doc: "What the scope's dictionary does to one phrase, with each entry that fired, as `dictionary test --json` prints it. With `meeting`, also each line of that meeting the draft entry would change, before and after. Reads only.",
     effect: "read",
 });
 
