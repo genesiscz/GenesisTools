@@ -9,6 +9,36 @@ import XCTest
 /// read, and the rows from `meeting.rows` with their decisions through the journal.
 @MainActor
 final class MeetingsReviewRowTests: XCTestCase {
+    func testWordOccurrenceSheetRendersTheSharedPlacesListOffScreen() async throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[],"dictionary":[],"spelling":{"occurrences":[{"line":2,"atSec":15,"speaker":"Speaker 1","text":"The zorb is ready.","selected":true,"primary":true},{"line":3,"atSec":20,"speaker":"Speaker 2","text":"Use the zorb again.","selected":true,"primary":false}],"dictionary":false}}"#.utf8))
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: model)
+        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 430), styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        let hosting = NSHostingView(rootView: WordOccurrencesSheet(spelling: try XCTUnwrap(reach.spelling), detail: detail, close: {})
+            .frame(width: 520, height: 430, alignment: .top).background(Color(white: 0.15)).environment(\.colorScheme, .dark))
+        hosting.sizingOptions = []
+        panel.contentView = hosting
+        panel.orderInForSnapshot()
+        defer { panel.orderOut(nil); panel.close() }
+        try await Task.sleep(for: .milliseconds(900))
+        let captured = await WindowSnapshot.capture(panel)
+        let capture = try XCTUnwrap(captured)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        try VNImageRequestHandler(cgImage: XCTUnwrap(capture.image.cgImage)).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        XCTAssertTrue(text.contains("This also affects"), text)
+        XCTAssertTrue(text.contains("zorb"), text)
+        XCTAssertTrue(text.contains("Done"), text)
+        if let folder = ProcessInfo.processInfo.environment["MEETINGS_UI_SNAPSHOTS"] {
+            let png = try XCTUnwrap(capture.image.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("2026-11-17-P3-occurrence-sheet-fixture.png"))
+        }
+    }
+
     func testDictionaryQuestionsStayInTheWordRowAndMatchTheCurrentSpelling() throws {
         func item(_ json: String) throws -> MeetingItem { try JSONDecoder().decode(MeetingItem.self, from: Data(json.utf8)) }
         let word = try item(#"{"id":"q","kind":"question","status":"confirmed","about":"term","group":"words","heard":"zorb","answer":"Zorb","decides":["t"],"choices":["Zorb"]}"#)

@@ -59,7 +59,7 @@ struct RepeatedWordRow: View {
     @State private var readingPlaces = false
     @FocusState private var typing: Bool
     @State private var earlierText = ""
-
+    @State private var advanceAfterSave = false
     private var answer: String { detail.drafts[row.id] ?? item.wordSuggestion ?? "" }
     private var dictionary: ReviewRow? {
         let items = detail.record.value?.items ?? []
@@ -118,7 +118,8 @@ struct RepeatedWordRow: View {
         }
         .onChange(of: detail.editingRow) { _, id in typing = id == row.id && row.isOpen }
         .onChange(of: row.isOpen) { wasOpen, open in
-            guard wasOpen, !open, typing else { return }
+            guard wasOpen, !open, advanceAfterSave else { return }
+            advanceAfterSave = false
             let rows = ItemsTab.wordRows(detail.rows.value?.rows ?? [], items: detail.record.value?.items ?? [])
             if let next = MeetingDetailModel.nextOpenRow(after: row.id, in: rows), next.group == "words" { detail.edit(next) }
         }
@@ -126,9 +127,9 @@ struct RepeatedWordRow: View {
             if let places { WordOccurrencesSheet(spelling: places, detail: detail) { self.places = nil } }
         }
     }
-
     private func save(_ text: String) {
         guard let text = MeetingsWords.typedAnswer(text) else { return }
+        advanceAfterSave = typing
         detail.decide(row, .answer(row.id, text), askReach: false)
     }
 
@@ -157,6 +158,8 @@ struct ItemsTab: View {
     }
 
     @Bindable var detail: MeetingDetailModel
+    var projectPicker: AnyView? = nil
+    @State private var projectRefused = false
     @FocusState private var focused: Bool
 
     @AppStorage(MeetingsPreferences.Rows.order.key) private var order = MeetingsPreferences.Rows.order.defaultValue.rawValue
@@ -175,22 +178,57 @@ struct ItemsTab: View {
     @AppStorage("meetings.listen.longStretchWords") private var qualityWords = 50
 
     var body: some View {
+        VStack(spacing: 0) {
+        if needsProject {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(KitHue.care.ink)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("This meeting has no project. Suggestions use the project's dictionary.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    projectPicker
+                }
+                Spacer(minLength: 0)
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }
         LoadablePane(state: detail.rows, reading: "Reading the items…", retry: detail.loadRows) { rows in
             if rows.rows.isEmpty, rows.hidden.lowPriority == 0 {
+                if needsProject { Color.clear } else {
                 let hasTranscript = detail.window?.meeting(detail.id)?.hasTranscript ?? true
                 EmptyState(symbol: "checklist", text: "No items yet",
                            detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
-                           actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { detail.suggest() }
+                           actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { suggest() }
+                }
             } else {
                 list(rows)
             }
         }
+        }
+        .onChange(of: detail.record.value?.project) { _, _ in projectRefused = false }
         .onChange(of: lowPriority) { _, _ in detail.readRows(quiet: true) }
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
                 FindingComposerButton(detail: detail)
                 Spacer()
             }.padding(.horizontal, 16).padding(.vertical, 6)
+        }
+    }
+
+    private var needsProject: Bool { projectRefused || detail.record.value.map { $0.project?.isEmpty != false } == true }
+
+    private func suggest() {
+        guard !needsProject, !detail.isBusy("suggest") else { return }
+        guard let service = detail.service else { detail.suggest(); return }
+        detail.busy.insert("suggest")
+        Task {
+            defer { detail.busy.remove("suggest") }
+            do {
+                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: detail.id, attendance: nil))
+                detail.suggestionWarnings = result.warnings
+                detail.readRecordAndRows()
+            } catch let failure as MeetingsCLI.Failure where failure.code == "project-required" {
+                projectRefused = true
+                detail.readRecordAndRows()
+            } catch { detail.notices.push(.meetingsFailure(error) { suggest() }) }
         }
     }
 
