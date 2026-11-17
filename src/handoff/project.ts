@@ -2,6 +2,9 @@ import type { Handoff, HandoffPublicEvent } from "./types";
 
 /** Canonical MCP `include` section names (Architecture). */
 export const HANDOFF_INCLUDE_SECTIONS = [
+    "rows",
+    "description",
+    "full",
     "tasks",
     "claimedBy",
     "comments",
@@ -62,7 +65,15 @@ export type HandoffCoreProjection = {
     finishedBy?: Handoff["finishedBy"];
 };
 
+/** One line per member of the compact view: what it is and where it stands, no proof and no attribution. */
+export interface HandoffTaskRow {
+    id: string;
+    text: string;
+    state: "open" | "done" | "denied";
+}
+
 export type ProjectedHandoff = HandoffCoreProjection & {
+    rows?: HandoffTaskRow[];
     tasks?: Handoff["tasks"];
     claimedBy?: Handoff["claimedBy"];
     comments?: Handoff["comments"];
@@ -102,7 +113,10 @@ export function projectHandoff({
         core.name = handoff.name;
     }
 
-    if (handoff.description !== undefined) {
+    const want = new Set(sections);
+
+    // The compact view (rows alone) leaves the body out; it is the largest field of most handoffs.
+    if (handoff.description !== undefined && (want.has("description") || want.has("tasks"))) {
         core.description = handoff.description;
     }
 
@@ -122,8 +136,15 @@ export function projectHandoff({
         core.finishedBy = handoff.finishedBy;
     }
 
-    const want = new Set(sections);
     const out: ProjectedHandoff = { ...core };
+
+    if (want.has("rows")) {
+        out.rows = handoff.tasks.map((t) => ({
+            id: t.id,
+            text: t.text,
+            state: t.checked ? "done" : t.denied ? "denied" : "open",
+        }));
+    }
 
     if (want.has("tasks")) {
         out.tasks = handoff.tasks;

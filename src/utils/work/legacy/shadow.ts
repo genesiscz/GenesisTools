@@ -176,7 +176,7 @@ class Ingest {
         };
         this.write({ ts, item: this.handoffId, actor, kind: "created", payload, origin: { via: "legacy", uid } });
         this.db.run(
-            "INSERT INTO handoffs (id, name, target) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, target = excluded.target",
+            "INSERT INTO handoff_meta (id, name, target) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, target = excluded.target",
             [
                 this.handoff.id,
                 this.handoff.name ?? null,
