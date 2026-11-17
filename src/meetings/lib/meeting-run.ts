@@ -1,18 +1,18 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import {
     defaultOcrLanguages,
     errorText,
     frameName,
     framesOnDisk,
     log,
+    microphoneRefused,
     type NativeKeys,
     type RecorderDeps,
     type RecorderState,
     type RunRecorderOptions,
 } from "@app/meetings/lib/recorder-shared";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
@@ -26,8 +26,12 @@ import { appendFrameIndex, readFrameIndex } from "./frame-index";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
+import { AUDIO_FOLDER, appendAudioRow } from "./sound";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
+
+/** How ax-tool names a capture's sound file. */
+const SALVAGED_TRACK = /^audio-(mic|system)\.m4a$/;
 
 /**
  * One run of the meetings recorder: the meeting's folder and record, its spans, the recorder state file and the
@@ -59,6 +63,7 @@ export class MeetingRun {
     private runFrames = 0;
     private audioFiles = 0;
     private zeroMs?: number;
+    private microphoneDropped = false;
 
     constructor(
         options: RunRecorderOptions & {
@@ -158,6 +163,7 @@ export class MeetingRun {
      * meeting's OCR worker.
      */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
+        this.salvageTracks(this.pieceDir);
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
         this.saveState();
@@ -234,9 +240,12 @@ export class MeetingRun {
         });
     }
 
-    /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
+    /**
+     * Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`, with `zeroAt`, the
+     * wall time of the file's second 0, when the engine reported where the track started.
+     */
     keepTracks(result: CaptureResult, target: PieceTarget): void {
-        const audioDir = join(this.folder, "audio");
+        const audioDir = join(this.folder, AUDIO_FOLDER);
 
         for (const track of result.tracks ?? []) {
             for (const warning of track.warnings ?? []) {
@@ -252,12 +261,106 @@ export class MeetingRun {
             const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
             mkdirSync(audioDir, { recursive: true });
             renameSync(track.path, join(audioDir, name));
-            appendFileSync(
-                join(this.folder, "audio.jsonl"),
-                `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
-            );
+            appendAudioRow(this.folder, {
+                file: `${AUDIO_FOLDER}/${name}`,
+                source: track.source,
+                at: at.toISOString(),
+                durationMs: track.durationMs,
+                mutedSpans: track.mutedSpans,
+                ...(track.startOffsetMs !== undefined
+                    ? { zeroAt: new Date(result.startedAtMs + track.startOffsetMs).toISOString() }
+                    : {}),
+            });
             this.audioFiles += 1;
         }
+    }
+
+    /**
+     * Moves every sound file a capture left in `dir` (a crash, a kill, a failed capture) to the meeting's `audio/`,
+     * so clearing `dir` loses no sound. A file named as ax-tool names a track (`audio-<source>.m4a`) gets a row with
+     * `kept: "salvaged"`, its start and length taken from the file's times; any other `.m4a` is moved without a row.
+     * Answers how many files it kept.
+     */
+    salvageTracks(dir: string): number {
+        let names: string[];
+
+        try {
+            names = readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(".m4a"));
+        } catch (err) {
+            if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+                return 0;
+            }
+
+            throw err;
+        }
+
+        const audioDir = join(this.folder, AUDIO_FOLDER);
+        let kept = 0;
+
+        for (const relative of names) {
+            const path = join(dir, relative);
+            const stat = statSync(path, { throwIfNoEntry: false });
+
+            if (!stat?.isFile() || stat.size === 0) {
+                continue;
+            }
+
+            const source = SALVAGED_TRACK.exec(basename(path))?.[1];
+            const startMs = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+            const at = new Date(startMs);
+            const stem = frameName(at, 0).replace(/\.jpg$/, `-${source ?? basename(path, ".m4a")}`);
+            let name = `${stem}-salvaged.m4a`;
+
+            for (let copy = 2; existsSync(join(audioDir, name)); copy++) {
+                name = `${stem}-salvaged-${copy}.m4a`;
+            }
+
+            mkdirSync(audioDir, { recursive: true });
+            renameSync(path, join(audioDir, name));
+            kept += 1;
+
+            if (source === "mic" || source === "system") {
+                appendAudioRow(this.folder, {
+                    file: `${AUDIO_FOLDER}/${name}`,
+                    source,
+                    at: at.toISOString(),
+                    durationMs: Math.max(0, Math.round(stat.mtimeMs - startMs)),
+                    mutedSpans: [],
+                    kept: "salvaged",
+                });
+            }
+
+            log.warn({ meeting: this.meetingId, from: path, to: name }, "kept a sound file a capture left behind");
+        }
+
+        if (kept > 0) {
+            this.note(`kept ${kept} sound file(s) a capture left behind`);
+        }
+
+        return kept;
+    }
+
+    /**
+     * A capture refused for the microphone grant: the recording goes on with the system sound only (the microphone
+     * counts as muted, so the next capture leaves it out) and says so once. Answers whether it dropped it now.
+     */
+    dropRefusedMicrophone(recording: FrameRecording<string[]>, error: unknown): boolean {
+        const audio = recording.audio;
+
+        if (!microphoneRefused(error) || !audio.sources.includes("mic") || audio.muted.mic) {
+            return false;
+        }
+
+        if (!this.microphoneDropped) {
+            this.microphoneDropped = true;
+            this.note("the microphone is not granted; the recording keeps the system sound only");
+            log.warn({ meeting: this.meetingId }, "no microphone grant; recording the system sound only");
+        }
+
+        void recording.muteAudio("mic", true).catch((err: unknown) => {
+            log.warn({ err, meeting: this.meetingId }, "the microphone could not be left out of the next capture");
+        });
+        return true;
     }
 
     /**
