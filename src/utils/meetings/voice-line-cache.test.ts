@@ -55,6 +55,7 @@ async function fixture() {
     return {
         store,
         record,
+        backend,
         options,
         compute,
         decode,
@@ -80,6 +81,7 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     expect(first.map((line) => line.channels[0]?.quality)).toEqual(["unknown", "ready", "unknown", "unknown"]);
     expect(f.compute).toHaveBeenCalledTimes(1);
     expect(f.decode).toHaveBeenCalledTimes(1);
+    expect(f.decode.mock.calls[0]?.[1].decoderThreads).toBe(1);
     const disk = z
         .object({ version: z.literal(1), entries: z.record(z.string(), z.unknown()) })
         .parse(SafeJSON.parse(readFileSync(f.cachePath, "utf8")));
@@ -93,6 +95,121 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     const reindexed = await voice.embedVoiceLines({ ...options, spans: [{ index: 42, fromSec: 0, toSec: 2 }] });
     expect(reindexed).toEqual([{ ...first[1]!, index: 42 }]);
     expect(f.compute).not.toHaveBeenCalled();
+});
+
+test("the background worker owns model work and returns validated line results", async () => {
+    const f = await fixture();
+    const result: voice.LineEmbedding[] = [
+        {
+            index: 0,
+            channels: [
+                {
+                    source: { audioPath: f.options.audioPath, size: 14, mtimeMs: 1 },
+                    channel: 0,
+                    track: "raw-mic",
+                    fromSec: 0,
+                    toSec: 2,
+                    quality: "ready",
+                    model: "fixture-model",
+                    embedding: [1, 0],
+                },
+            ],
+        },
+    ];
+    const output = SafeJSON.stringify(SafeJSON.stringify(result, { strict: true }), { strict: true });
+    const child = Bun.spawn([process.execPath, "-e", `await Bun.stdin.text(); process.stdout.write(${output});`], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5_000,
+        env: process.env,
+    });
+    const spawn = spyOn(Bun, "spawn").mockReturnValue(child);
+    spies.push(spawn);
+    const prefix = ["fixture-priority", "fixture-worker"];
+    expect(await voice.embedVoiceLines({ ...f.options, workerPrefix: prefix })).toEqual(result);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const command = spawn.mock.calls[0]?.[0];
+    if (!Array.isArray(command)) {
+        throw new Error("Expected worker argv");
+    }
+    expect(command.slice(0, 2)).toEqual(prefix);
+    expect(command[2]).toBe(process.execPath);
+    expect(f.backend).not.toHaveBeenCalled();
+    expect(f.compute).not.toHaveBeenCalled();
+    expect(f.decode).not.toHaveBeenCalled();
+});
+
+test("audio windows keep default ffmpeg threads and accept an explicit decoder limit without changing samples", async () => {
+    const commands: string[][] = [];
+    for (const decoderThreads of [undefined, 1]) {
+        const child = Bun.spawn(
+            [process.execPath, "-e", 'process.stdout.write(Buffer.from("0000803e000000bf", "hex"));'],
+            { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 5_000, env: process.env }
+        );
+        const spawn = spyOn(Bun, "spawn").mockReturnValue(child);
+        spies.push(spawn);
+        try {
+            const samples = await converter.toFloat32AudioWindow("fixture.wav", {
+                fromSec: 0,
+                toSec: 1,
+                decoderThreads,
+            });
+            expect(Array.from(samples)).toEqual([0.25, -0.5]);
+            const command = spawn.mock.calls[0]?.[0];
+            if (!Array.isArray(command)) {
+                throw new Error("Expected decoder argv");
+            }
+            commands.push(command);
+        } finally {
+            spawn.mockRestore();
+        }
+    }
+    expect(commands[0]).not.toContain("-threads");
+    expect(commands[0]).not.toContain("-filter_complex_threads");
+    const limited = commands[1]!;
+    expect(limited.slice(limited.indexOf("-threads"), limited.indexOf("-threads") + 2)).toEqual(["-threads", "1"]);
+    expect(limited.indexOf("-threads")).toBeLessThan(limited.indexOf("-i"));
+    expect(
+        limited.slice(limited.indexOf("-filter_complex_threads"), limited.indexOf("-filter_complex_threads") + 2)
+    ).toEqual(["-filter_complex_threads", "1"]);
+});
+
+test("a background sample preserves an unavailable-voice reason without running the model in its caller", async () => {
+    const f = await fixture();
+    const unavailable = "Voice sample is quiet; identity remains unknown";
+    const output = SafeJSON.stringify(SafeJSON.stringify({ unavailable }, { strict: true }), { strict: true });
+    const child = Bun.spawn([process.execPath, "-e", `await Bun.stdin.text(); process.stdout.write(${output});`], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5_000,
+        env: process.env,
+    });
+    const spawn = spyOn(Bun, "spawn").mockReturnValue(child);
+    spies.push(spawn);
+    const result = voice.embedVoice({
+        audioPath: f.options.audioPath,
+        channel: 0,
+        fromSec: 0,
+        toSec: 2,
+        workerPrefix: ["fixture-priority"],
+    });
+    await expect(result).rejects.toBeInstanceOf(voice.VoiceUnavailableError);
+    await expect(result).rejects.toThrow(unavailable);
+    expect(f.backend).not.toHaveBeenCalled();
+    expect(f.decode).not.toHaveBeenCalled();
+});
+
+test("invalid decoder limits fail before spawning a child", async () => {
+    const spawn = spyOn(Bun, "spawn");
+    spies.push(spawn);
+    for (const decoderThreads of [0, -1, 1.5]) {
+        await expect(
+            converter.toFloat32AudioWindow("fixture.wav", { fromSec: 0, toSec: 1, decoderThreads })
+        ).rejects.toThrow("Decoder threads must be a positive integer");
+    }
+    expect(spawn).not.toHaveBeenCalled();
 });
 
 test("a copied meeting keeps embeddings in its own folder when its retained source is elsewhere", async () => {

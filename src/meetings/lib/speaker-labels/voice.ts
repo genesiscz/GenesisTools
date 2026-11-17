@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { taskArgv } from "@app/daemon/lib/runner";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines } from "@genesiscz/utils/meetings/voice";
@@ -7,6 +8,8 @@ import type { OpenedMeeting } from "../opened-meeting";
 import { type MeetingSound, measureSoundClock, meetingSound, readSoundInputs, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
 import type { LabelContext, SpeakerLabeler } from "./types";
+
+export const VOICE_WORKER_PREFIX = [...taskArgv('exec "$@"', "low"), "voice-worker"];
 
 /** Batches spans on the same file/channel while retaining transcript-clock times on the resulting line. */
 export async function embedSeatLines(
@@ -41,6 +44,7 @@ export async function embedSeatLines(
         const embeddings = await embedVoiceLines({
             audioPath: group.path,
             cachePath: context.cachePath,
+            workerPrefix: VOICE_WORKER_PREFIX,
             spans: group.lines.map(({ line, slice }) => ({
                 index: line.index,
                 fromSec: slice.fileFromSec,

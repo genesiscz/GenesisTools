@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { ArtifactStore } from "@genesiscz/utils/ai/local/artifacts";
 import { EMBEDDING_MODEL } from "@genesiscz/utils/ai/local/runtimes/sherpa/models";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { VoiceLineCache, voiceLineCachePath } from "./voice-line-cache";
@@ -103,12 +104,22 @@ export async function embedVoice(options: {
     channel: 0 | 1;
     fromSec: number;
     toSec: number;
+    workerPrefix?: readonly string[];
 }): Promise<{ model: string; embedding: number[] }> {
     if (options.toSec - options.fromSec < 1.5) {
         throw new VoiceUnavailableError("Voice sample needs at least 1.5 seconds of confirmed single-speaker speech");
     }
+    if (options.workerPrefix) {
+        const input = voiceSampleRequestSchema.parse(options);
+        return voiceSampleSchema.pick({ model: true, embedding: true }).parse(
+            await runVoiceWorker({
+                workerPrefix: options.workerPrefix,
+                request: { kind: "sample", input },
+            })
+        );
+    }
     const backend = localVoiceBackend();
-    const samples = await toFloat32AudioWindow(options.audioPath, options);
+    const samples = await toFloat32AudioWindow(options.audioPath, { ...options, decoderThreads: 1 });
     return embeddingOf(samples, backend);
 }
 
@@ -210,13 +221,98 @@ export interface LineEmbedding {
     index: number;
     channels: ChannelEmbedding[];
 }
+
+const voiceLineRequestSchema = z.object({
+    audioPath: z.string(),
+    spans: z.array(z.object({ index: z.number().int(), fromSec: z.number(), toSec: z.number() })),
+    channels: z.array(
+        z.object({
+            channel: z.union([z.literal(0), z.literal(1)]),
+            track: z.enum(["raw-mic", "isolated-call", "clean-mic"]),
+        })
+    ),
+    cachePath: z.string().optional(),
+});
+const voiceSampleRequestSchema = z.object({
+    audioPath: z.string(),
+    channel: z.union([z.literal(0), z.literal(1)]),
+    fromSec: z.number(),
+    toSec: z.number(),
+});
+const voiceWorkerRequestSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("lines"), input: voiceLineRequestSchema }),
+    z.object({ kind: z.literal("sample"), input: voiceSampleRequestSchema }),
+]);
+const workerResultSchema = z.array(
+    z.object({
+        index: z.number().int(),
+        channels: z.array(
+            z.intersection(
+                z.object({
+                    source: z.object({ audioPath: z.string(), size: z.number(), mtimeMs: z.number() }),
+                    channel: z.union([z.literal(0), z.literal(1)]),
+                    track: z.enum(["raw-mic", "isolated-call", "clean-mic"]),
+                    fromSec: z.number(),
+                    toSec: z.number(),
+                }),
+                z.discriminatedUnion("quality", [
+                    z.object({
+                        quality: z.literal("ready"),
+                        model: z.string(),
+                        embedding: z.array(z.number().finite()).min(1),
+                    }),
+                    z.object({ quality: z.literal("unknown"), reason: z.string() }),
+                ])
+            )
+        ),
+    })
+);
+
+async function runVoiceWorker(options: {
+    request: z.infer<typeof voiceWorkerRequestSchema>;
+    workerPrefix: readonly string[];
+}): Promise<unknown> {
+    const { workerPrefix, request } = options;
+    const child = Bun.spawn([...workerPrefix, process.execPath, fileURLToPath(import.meta.url)], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 600_000,
+        killSignal: "SIGKILL",
+    });
+    child.stdin.write(SafeJSON.stringify(request, { strict: true }));
+    child.stdin.end();
+    const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+    ]);
+    if (code !== 0) {
+        throw new Error(`Voice embedding worker failed (exit ${code}): ${stderr.slice(-1500)}`);
+    }
+    const result: unknown = SafeJSON.parse(stdout, { strict: true });
+    const unavailable = z.object({ unavailable: z.string() }).safeParse(result);
+    if (unavailable.success) {
+        throw new VoiceUnavailableError(unavailable.data.unavailable);
+    }
+    return result;
+}
 /** Canonical per-line adapter for Listen and Room. Unknown channels never masquerade as empty embeddings. */
 export async function embedVoiceLines(options: {
     audioPath: string;
     spans: readonly { index: number; fromSec: number; toSec: number }[];
     channels: readonly { channel: 0 | 1; track: VoiceEmbeddingProvenance["track"] }[];
     cachePath?: string;
+    workerPrefix?: readonly string[];
 }): Promise<LineEmbedding[]> {
+    if (options.workerPrefix) {
+        return workerResultSchema.parse(
+            await runVoiceWorker({
+                request: { kind: "lines", input: voiceLineRequestSchema.parse(options) },
+                workerPrefix: options.workerPrefix,
+            })
+        );
+    }
     const stat = statSync(options.audioPath);
     const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
     const result: LineEmbedding[] = [];
@@ -265,6 +361,7 @@ export async function embedVoiceLines(options: {
                             fromSec,
                             toSec,
                             channel: channel.channel,
+                            decoderThreads: 1,
                         }),
                     };
                     windows.set(channel.channel, window);
@@ -289,4 +386,18 @@ export async function embedVoiceLines(options: {
     }
     cache?.save();
     return result;
+}
+
+if (import.meta.main) {
+    const request = voiceWorkerRequestSchema.parse(SafeJSON.parse(await Bun.stdin.text(), { strict: true }));
+    try {
+        const result =
+            request.kind === "sample" ? await embedVoice(request.input) : await embedVoiceLines(request.input);
+        out.print(SafeJSON.stringify(result, { strict: true }));
+    } catch (error) {
+        if (!(error instanceof VoiceUnavailableError)) {
+            throw error;
+        }
+        out.print(SafeJSON.stringify({ unavailable: error.message }, { strict: true }));
+    }
 }
