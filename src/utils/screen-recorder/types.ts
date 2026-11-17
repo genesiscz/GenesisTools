@@ -48,6 +48,8 @@ export interface AudioTrack {
     startOffsetMs?: number;
     /** `[fromMs, toMs]` on the audio file's timeline while the source was muted. */
     mutedSpans: Array<[number, number]>;
+    /** Missing samples replaced by silence, in milliseconds on the file timeline. */
+    lostSpans?: Array<[number, number]>;
     /** What went wrong with this track (its sidecar did not start or finish); a track without `path` lost its sound. */
     warnings?: string[];
 }
