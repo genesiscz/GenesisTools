@@ -199,7 +199,7 @@ export interface RecorderHooks {
     /** Before the first piece, once the socket listens; a throw ends the recording (`onError`). */
     beforeLoop?: () => Promise<void> | void;
     /** After the last piece, before the finish. */
-    afterLoop?: () => void;
+    afterLoop?: () => Promise<void> | void;
     /** `beforeLoop`, a piece or a verdict threw: the recording ends and finishes. */
     onError?: (error: unknown) => void;
     /** `at`: when the pause was asked for; the running piece converts its frames after that. */
@@ -352,6 +352,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private sound: AudioState;
     private soundSession?: AudioSession;
     private startingSound?: Promise<void>;
+    private lastSoundRestart = -Infinity;
     private readonly soundAbort = new AbortController();
     private readonly soundNotes: string[] = [];
     private currentSoundPath: RecordingSoundPath = { path: "pieces" };
@@ -921,26 +922,13 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return;
         }
 
-        this.soundAbort.signal.throwIfAborted();
-
-        this.sound = { ...this.sound, sources: [...this.soundSession.sources] };
         this.currentSoundPath = { path: "session", sources: [...this.sound.sources] };
         this.config.hooks.onSoundPath?.(this.currentSoundPath);
-
-        for (const source of this.sound.sources) {
-            if (this.sound.muted[source]) {
-                await this.soundSession.mute(source, true);
-            }
-        }
-
-        if (this.paused) {
-            await this.soundSession.pause();
-        }
     }
 
     /**
-     * A sound session that cannot start, or that dies later, never ends the recording: the frames go on, and the
-     * sound goes back into the frame pieces from the next piece (`audio` of the piece request reads `soundSession`).
+     * A failed session never ends the frames. One immediate restart per minute avoids waiting for a new piece;
+     * a refused restart or another failure within the minute leaves the sound on the pieces.
      */
     private async startSoundSession(
         recorder: FrameRecorder & {
@@ -949,6 +937,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     ): Promise<{ session: AudioSession | undefined; refused: boolean }> {
         const { hooks } = this.config;
         let running = false;
+        let candidate: AudioSession | undefined;
 
         try {
             const session = await recorder.startAudioSession({
@@ -960,26 +949,70 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 onWarning: (warning) => this.soundWarning(warning),
                 onFailure: (error) => {
                     // A failure before the session was ready also rejects the start: the catch below notes it.
-                    if (!running) {
+                    if (!running || this.soundAbort.signal.aborted) {
                         return;
                     }
 
                     log.warn({ error }, "the continuous sound session stopped");
-                    this.soundSession = undefined;
-                    this.fallBackSound(error.message);
+                    // Cleanup has its own deadline. A killed process must not delay opening the replacement.
+                    void session
+                        ?.stop()
+                        .catch((stopError: unknown) => log.debug({ stopError }, "failed audio session cleaned up"));
+                    this.startingSound = this.restartSound(error).catch((restartError: unknown) => {
+                        if (!this.soundAbort.signal.aborted) {
+                            this.soundSession = undefined;
+                            this.fallBackSound(errorText(restartError));
+                        }
+                    });
                 },
             });
+            candidate = session;
+            if (session) {
+                for (const source of session.sources) {
+                    if (this.sound.muted[source]) {
+                        await session.mute(source, true);
+                    }
+                }
+                if (this.paused) {
+                    await session.pause();
+                }
+                this.soundAbort.signal.throwIfAborted();
+                if (session.failureReason) {
+                    throw session.failureReason;
+                }
+                this.sound = { ...this.sound, sources: [...session.sources] };
+            }
             running = session !== undefined;
             return { session, refused: false };
         } catch (error) {
+            await candidate
+                ?.stop()
+                .catch((stopError: unknown) => log.debug({ stopError }, "failed audio setup cleaned up"));
             if (this.soundAbort.signal.aborted) {
                 throw error;
             }
 
             log.warn({ error }, "the continuous sound session did not start");
+            this.soundSession = undefined;
             this.fallBackSound(errorText(error));
             return { session: undefined, refused: true };
         }
+    }
+
+    private async restartSound(error: Error): Promise<void> {
+        const now = performance.now();
+        if (now - this.lastSoundRestart < 60_000) {
+            this.soundSession = undefined;
+            this.fallBackSound(`${error.message}; the sound session already restarted within the last minute`);
+            return;
+        }
+        this.lastSoundRestart = now;
+        const at = new Date();
+        const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+        this.soundWarning(
+            `The continuous sound stopped at ${time} (${error.message}); an immediate restart was requested.`
+        );
+        await this.startSound();
     }
 
     private fallBackSound(reason: string): void {
@@ -1028,6 +1061,10 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 hooks.onError?.(error);
             }
         } finally {
+            this.soundAbort.abort();
+            await this.startingSound?.catch((error: unknown) =>
+                log.debug({ error }, "audio startup ended with the loop")
+            );
             try {
                 await this.soundSession?.stop();
             } catch (error) {
@@ -1041,7 +1078,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             process.off("SIGINT", onSignal);
 
             try {
-                hooks.afterLoop?.();
+                await hooks.afterLoop?.();
             } catch (error) {
                 log.warn({ error, id: this.config.live.id }, "the recording's cleanup after the loop failed");
                 hooks.onError?.(error);

@@ -6,6 +6,13 @@ import XCTest
 @testable import ax_tool
 
 final class AudioSessionTests: XCTestCase {
+    private func closedRows(_ lines: [Data]) throws -> [[String: Any]] {
+        try lines.map { line in
+            XCTAssertEqual(line.last, 0x0a)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: line) as? [String: Any])
+        }.filter { $0["event"] == nil }
+    }
+
     private func pcm(samples: Int, at: CMTime) throws -> CMSampleBuffer {
         var description = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
@@ -47,10 +54,7 @@ final class AudioSessionTests: XCTestCase {
         audio.queue.sync { audio.append(rest, source: .mic) }
         try await audio.finish()
         XCTAssertEqual(failures, [])
-        var rows = try lines.map { line -> [String: Any] in
-            XCTAssertEqual(line.last, 0x0a)
-            return try XCTUnwrap(JSONSerialization.jsonObject(with: line) as? [String: Any])
-        }
+        var rows = try closedRows(lines)
         rows.sort { ($0["zeroAt"] as? String ?? "") < ($1["zeroAt"] as? String ?? "") }
         XCTAssertEqual(rows.count, 3)
         XCTAssertEqual(rows.compactMap { $0["durationMs"] as? Int }, [100, 100, 100])
@@ -88,7 +92,7 @@ final class AudioSessionTests: XCTestCase {
         audio.queue.sync { audio.append(resumed, source: .mic) }
         try await audio.finish()
         try await audio.finish()
-        let rows = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+        let rows = try closedRows(lines)
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows.compactMap { $0["durationMs"] as? Int }, [25, 25])
         let formatter = ISO8601DateFormatter()
@@ -181,7 +185,7 @@ final class AudioSessionTests: XCTestCase {
         let duplicate = try pcm(samples: 480, at: CMTimeAdd(first, CMTime(value: 179, timescale: 1)))
         audio.queue.sync { audio.append(duplicate, source: .mic) }
         try await audio.finish()
-        let rows = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: $0) as? [String: Any]) }
+        let rows = try closedRows(lines)
             .sorted { ($0["zeroAt"] as? String ?? "") < ($1["zeroAt"] as? String ?? "") }
         XCTAssertEqual(rows.count, 3)
         let formatter = ISO8601DateFormatter()
@@ -197,5 +201,29 @@ final class AudioSessionTests: XCTestCase {
                 XCTAssertEqual(starts[index + 1].timeIntervalSince(starts[index]), CMTimeGetSeconds(duration), accuracy: 0.020)
             }
         }
+    }
+
+    func testFirstSampleClockIsEmittedBeforeTheSegmentCloses() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("audio-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var lines: [Data] = []
+        let host = CMTime(value: 123, timescale: 1)
+        let wall = Date(timeIntervalSince1970: 1_700_000_000)
+        let audio = SegmentedAudio(directory: directory, seconds: 60, emit: { lines.append($0) }, clock: (host, wall))
+        let first = CMTimeAdd(host, CMTime(value: 700, timescale: 1000))
+        let buffer = try pcm(samples: 4800, at: first)
+        audio.queue.sync { audio.append(buffer, source: .mic) }
+        let next = try pcm(samples: 4800, at: CMTimeAdd(first, CMTime(value: 100, timescale: 1000)))
+        audio.queue.sync { audio.append(next, source: .mic) }
+        XCTAssertEqual(lines.count, 1, "the open segment is announced once before finish")
+        let started = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(lines.first)) as? [String: Any])
+        XCTAssertEqual(started["event"] as? String, "segment-started")
+        XCTAssertEqual(started["file"] as? String, "audio-000001-mic.m4a")
+        XCTAssertEqual(started["source"] as? String, "mic")
+        XCTAssertEqual(started["zeroAt"] as? String, "2023-11-14T22:13:20.700Z")
+        try await audio.finish()
+        let closed = try XCTUnwrap(closedRows(lines).first)
+        XCTAssertEqual(closed["zeroAt"] as? String, started["zeroAt"] as? String)
     }
 }

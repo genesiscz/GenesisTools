@@ -2191,15 +2191,23 @@ test("peekaboo display output rejects incomplete JSON as a capture error", async
 
 describe("frame recordings with continuous sound", () => {
     class ModeRecording extends LibraryRecording {
+        readonly fellBack = Promise.withResolvers<void>();
+
         constructor(options: ConstructorParameters<typeof LibraryRecording>[0] & { audioMode: "pieces" | "session" }) {
             super(options);
             this.config.audioMode = options.audioMode;
+            this.config.hooks.onSoundPath = (sound) => {
+                if (sound.path === "pieces" && sound.reason) {
+                    this.fellBack.resolve();
+                }
+            };
         }
     }
 
     class SessionRecorder extends NativeFrameRecorder {
         readonly requests: CaptureRequest[] = [];
         readonly thirdFrame = Promise.withResolvers<void>();
+        readonly restarted = Promise.withResolvers<void>();
         sessionStarts = 0;
 
         constructor(mode?: string) {
@@ -2213,9 +2221,13 @@ describe("frame recordings with continuous sound", () => {
             });
         }
 
-        override startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+        override async startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
             this.sessionStarts += 1;
-            return super.startAudioSession(options);
+            const session = await super.startAudioSession(options);
+            if (this.sessionStarts === 2) {
+                this.restarted.resolve();
+            }
+            return session;
         }
 
         override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
@@ -2314,25 +2326,54 @@ describe("frame recordings with continuous sound", () => {
         expect(rows.every((row) => existsSync(join(recording.folder, row.file)))).toBe(true);
     });
 
-    test("each session fallback keeps recording, with exactly one note and a structured reason", async () => {
+    test("a dead sound session restarts immediately while its existing screen piece keeps running", async () => {
+        const root = mkdtempSync(join(tmpdir(), "frames-sound-restart-"));
+        const recorder = new SessionRecorder("--fixture-audio-session-dies-once");
+        const recording = await new ModeRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+            audioMode: "session",
+        }).start();
+        let notes: string[] | undefined;
+        try {
+            await withTimeout(recorder.thirdFrame.promise, 5000, new Error("the screen piece did not start"));
+            await withTimeout(recorder.restarted.promise, 3000, new Error("sound did not restart within 3s"));
+            expect(recorder.sessionStarts).toBe(2);
+            expect(recorder.requests).toHaveLength(3);
+            expect(recorder.requests.every((request) => request.audio === undefined)).toBe(true);
+            expect(recording.soundPath).toEqual({ path: "session", sources: ["mic"] });
+            expect((await recording.status()).warning).toContain("an immediate restart was requested");
+        } finally {
+            notes = (await recording.stop()).notes;
+        }
+        expect(notes).toHaveLength(1);
+        expect(notes?.[0]).toContain("an immediate restart was requested");
+    });
+
+    test("each session fallback keeps recording; a second death within a minute or a refused restart falls back once", async () => {
         for (const [mode, reason] of [
             ["--fixture-audio-session-dies-at-start", "could not split system audio at the segment boundary"],
-            ["--fixture-audio-session-dies-later", "the system writer stopped accepting samples"],
+            [
+                "--fixture-audio-session-dies-later",
+                "the system writer stopped accepting samples; the sound session already restarted within the last minute",
+            ],
+            ["--fixture-audio-session-restart-fails", "could not split system audio at the segment boundary"],
             ["--fixture-no-audio-session", "the native recorder has no audio-record command"],
         ] as const) {
             const root = mkdtempSync(join(tmpdir(), "frames-sound-dies-"));
-            // The fake session dies 150 ms after its start: the second piece outlasts that, so the third piece is
-            // requested after the death.
-            class SlowSecondPiece extends SessionRecorder {
+            class HeldSecondPiece extends SessionRecorder {
+                readonly releaseSecond = Promise.withResolvers<void>();
+
                 override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
                     if (this.requests.length === 1) {
-                        await Bun.sleep(400);
+                        await withTimeout(this.releaseSecond.promise, 5000, new Error("second piece was not released"));
                     }
-
                     return super.capture(request, signal);
                 }
             }
-            const recorder = new SlowSecondPiece(mode);
+            const recorder = new HeldSecondPiece(mode);
             const recording = await new ModeRecording({
                 recorder,
                 folder: join(root, "rec"),
@@ -2341,7 +2382,11 @@ describe("frame recordings with continuous sound", () => {
                 audioMode: "session",
             }).start();
             let notes: string[] | undefined;
+            const retried =
+                mode === "--fixture-audio-session-dies-later" || mode === "--fixture-audio-session-restart-fails";
             try {
+                await withTimeout(recording.fellBack.promise, 5000, new Error(`sound did not fall back (${mode})`));
+                recorder.releaseSecond.resolve();
                 await withTimeout(
                     recorder.thirdFrame.promise,
                     5000,
@@ -2349,22 +2394,25 @@ describe("frame recordings with continuous sound", () => {
                 );
                 expect(recorder.requests.at(-1)?.audio?.sources).toEqual(["mic"]);
                 expect(recording.soundPath).toEqual({ path: "pieces", since: expect.any(String), reason });
-                expect(recorder.sessionStarts).toBe(1);
+                expect(recorder.sessionStarts).toBe(retried ? 2 : 1);
             } finally {
+                recorder.releaseSecond.resolve();
                 notes = (await recording.stop()).notes;
             }
-            expect(notes).toHaveLength(1);
+            expect(notes).toHaveLength(retried ? 2 : 1);
             const sound = recording.soundPath;
             expect(sound.path).toBe("pieces");
             if (sound.path === "pieces" && sound.since) {
                 const at = new Date(sound.since);
                 const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-                expect(notes).toEqual([
+                expect(
+                    notes?.filter((note) => note.includes("The sound is recorded inside the screen pieces"))
+                ).toEqual([
                     `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; up to 5 seconds are missing every 30 seconds.`,
                 ]);
             }
         }
-    });
+    }, 15_000);
 
     test("a tool without audio-record leaves sound on every piece and notes the fallback once", async () => {
         const root = mkdtempSync(join(tmpdir(), "frames-piece-sound-"));
