@@ -20,6 +20,10 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
+import {
+    parseSwiftRpcMethods,
+    RPC_METHODS_SWIFT_FILE,
+} from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
 import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -169,6 +173,8 @@ export interface AppManifest extends AppSourceInfo {
     parts?: string[];
     /** What this build's Swift accepts from the processes it starts (`APP_ACCEPTS`). Absent before 2026-11-18. */
     accepts?: AppCapability[];
+    /** The `--rpc` methods this build answers (Swift `let rpcMethods`). Absent in builds before 2026-11-17. */
+    rpcMethods?: string[];
 }
 
 /**
@@ -1557,6 +1563,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         teamId: signature.teamId,
         parts: [...parts],
         accepts: [...APP_ACCEPTS],
+        rpcMethods: parseSwiftRpcMethods(readFileSync(join(APP_SOURCE_DIR, RPC_METHODS_SWIFT_FILE), "utf8")),
     };
     await Bun.write(join(staging, "manifest.json"), `${SafeJSON.stringify(manifest, null, 2)}\n`);
 
