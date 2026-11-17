@@ -1,6 +1,6 @@
+import { sessionHostActJson, sessionHostDescribeJson } from "@app/ai/lib/session-host/output";
 import { actOnSessionHost, describeSessionHosts } from "@app/ai/lib/session-host/registry";
 import { SESSION_HOST_ACTIONS, type SessionHostAction } from "@app/ai/lib/session-host/types";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -40,14 +40,12 @@ export function registerSessionHostCommands(program: Command): void {
         .description("The host of each session, with each action's state")
         .option("--json", "Print the answers as JSON")
         .action(async (sessionIds: string[], opts: { json?: boolean }) => {
-            const answers = await describeSessionHosts(sessionIds);
-
             if (opts.json) {
-                out.result(SafeJSON.stringify({ answers }, null, 2));
+                out.result(await sessionHostDescribeJson(sessionIds));
                 return;
             }
 
-            printAnswerLines(answers);
+            printAnswerLines(await describeSessionHosts(sessionIds));
         });
 
     const verbs: Record<SessionHostAction, string> = {
@@ -61,15 +59,17 @@ export function registerSessionHostCommands(program: Command): void {
             .description(verbs[action])
             .option("--json", "Print the result as JSON")
             .action(async (sessionId: string, opts: { json?: boolean }) => {
+                if (opts.json) {
+                    const { json, ok } = await sessionHostActJson({ sessionId, action });
+                    process.exitCode = ok ? 0 : 1;
+                    out.result(json);
+                    return;
+                }
+
                 const result = await actOnSessionHost({ sessionId, action });
 
                 if (!result.ok) {
                     process.exitCode = 1;
-                }
-
-                if (opts.json) {
-                    out.result(SafeJSON.stringify(result, null, 2));
-                    return;
                 }
 
                 if (result.ok) {
