@@ -931,11 +931,14 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             } else if (opts.json) {
                 out.result(SafeJSON.stringify(result.entry, null, 2));
             } else {
-                const answered = result.entry.changes.find(
-                    (change) => change.after?.kind === "question" && change.before !== undefined
+                const entry = result.entry;
+                const answered = (
+                    entry.changes.find((change) => change.id === entry.question) ??
+                    entry.changes.find((change) => change.after?.kind === "question")
                 )?.after;
+                const now = store.read(meeting.id) ?? meeting;
                 ui.ok(
-                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}${answered?.kind === "question" ? wordOutcome(meeting, answered, result.entry) : ""}\n`
+                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}${answered?.kind === "question" ? wordOutcome(now, answered, entry) : ""}\n`
                 );
                 ui.dim(`  undo: ${TOOL} reopen ${meeting.id} --token ${result.entry.token}`);
             }
