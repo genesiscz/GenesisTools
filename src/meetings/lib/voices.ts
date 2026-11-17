@@ -93,7 +93,9 @@ export async function voiceReadMeeting(opened: OpenedMeeting): Promise<OpenedMee
     return opened;
 }
 
-export async function listVoices(options: VoicesAccess & { project?: string }): Promise<{ people: VoicePersonRow[] }> {
+export async function listProjectVoices(
+    options: VoicesAccess & { project?: string }
+): Promise<{ people: VoicePersonRow[] }> {
     const records = options.store.list();
     const folder = toolDataDir("meetings", "voices");
     const projects = options.project

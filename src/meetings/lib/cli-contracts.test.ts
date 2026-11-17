@@ -45,7 +45,7 @@ import * as labelsModule from "./speaker-labels";
 import * as suggestRun from "./suggest-run";
 import {
     applyVoices,
-    listVoices,
+    listProjectVoices,
     planVoiceRemoval,
     previewVoices,
     removeVoice,
@@ -2320,7 +2320,7 @@ test("sample reads use the confirmed track and hash; removal invalidates project
         new Error("a voice list must not embed a meeting")
     );
     p6VoiceSpies.push(model, embed);
-    const listed = await listVoices({ store, project });
+    const listed = await listProjectVoices({ store, project });
     expect(listed.people.find((row) => row.person === p6Alice.person)?.samples[0]).toMatchObject({
         sample: 1,
         words: "The sample words.",
