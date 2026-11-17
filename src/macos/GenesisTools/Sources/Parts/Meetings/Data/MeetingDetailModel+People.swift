@@ -1,6 +1,42 @@
 import Foundation
 import Observation
 
+/// Prepared when the record changes, never once per row or playback tick.
+struct PresenceGroup: Identifiable, Equatable {
+    struct Person: Identifiable, Equatable {
+        let person: MeetingRecordView.Person
+        var reads: [MeetingRecordView.Evidence.Indicator] = []
+        var id: String { person.name }
+    }
+    let id: String
+    let title: String
+    var people: [Person]
+
+    static func make(_ record: MeetingRecordView?) -> [Self] {
+        guard let record else { return [] }
+        var reads: [String: [MeetingRecordView.Evidence.Indicator]] = [:]
+        for read in record.evidence?.indicator ?? [] {
+            for name in Set((read.speakingUnknown == true ? [] : read.speaking) + (read.muted ?? [])) {
+                reads[name, default: []].append(read)
+            }
+        }
+        var groups = [Self(id: "room", title: "Room", people: [])]
+        let microphones = (record.seats?.microphones ?? []).filter { $0.id != "self" }
+        groups += microphones.map { Self(id: "mic." + $0.id, title: "Via " + ($0.label ?? $0.deviceId ?? $0.id), people: []) }
+        let remoteIndex = groups.count
+        groups.append(Self(id: "remote", title: "Remote", people: []))
+        groups.append(Self(id: "unknown", title: "Unknown seat", people: []))
+        var seat: [String: Int] = [:]
+        for remote in record.seats?.remote ?? [] { seat[remote.name] = remoteIndex }
+        for (index, microphone) in microphones.enumerated() { for name in microphone.people { seat[name] = index + 1 } }
+        for name in (record.seats?.room ?? []) + (record.seats?.microphones?.first { $0.id == "self" }?.people ?? []) { seat[name] = 0 }
+        for person in record.participants ?? [] {
+            groups[seat[person.name] ?? (person.isSelf == true ? 0 : groups.count - 1)].people.append(Person(person: person, reads: reads[person.name] ?? []))
+        }
+        return groups.filter { !$0.people.isEmpty }
+    }
+}
+
 // MARK: - The people directory's calls (F10; R23, R24, R44)
 
 /// The people directory's methods: through the Meetings service when it answers, else `tools meetings people` with the

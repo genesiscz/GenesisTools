@@ -25,6 +25,7 @@ struct TimelinePin: Identifiable, Equatable {
     let state: State
     /// A filter hides the row in the list: the pin is drawn dimmed (G-PLAY-5).
     var dimmed: Bool = false
+    var isCut = false
 
     /// The pin of a review row: the start of its first `when` part, its label as the text.
     init?(row: ReviewRow, playing: Bool = false, dimmed: Bool = false) {
@@ -36,6 +37,7 @@ struct TimelinePin: Identifiable, Equatable {
                   state: playing ? .playing : row.isQuestion && row.isOpen ? .question : row.isOpen ? .open
                     : row.status == "rejected" ? .rejected : .done,
                   dimmed: dimmed)
+        isCut = row.isQuestion && (row.group == "long-stretch" || row.what.contains("Who says \""))
     }
 
     init(id: String, sec: Double, text: String, state: State, dimmed: Bool = false) {
@@ -266,6 +268,24 @@ struct TimelinePinsRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Pins")
+    }
+}
+
+/// Drawn after the waveform so the bars cannot cover a cut tick. Rebuilt only when the pins change.
+struct TimelineCutTicks: View {
+    let pins: [TimelinePin]
+    let view: ClosedRange<Double>
+    @State private var cuts: [Double] = []
+    var body: some View {
+        GeometryReader { geometry in
+            ForEach(cuts, id: \.self) { sec in
+                if view.contains(sec) {
+                    Rectangle().fill(Color.primary.opacity(0.8)).frame(width: 1, height: geometry.size.height)
+                        .offset(x: TimelineGeometry.x(sec, in: view, width: geometry.size.width))
+                }
+            }
+        }.allowsHitTesting(false).accessibilityHidden(true)
+        .onChange(of: pins, initial: true) { _, pins in cuts = Array(Set(pins.filter(\.isCut).map(\.sec))).sorted() }
     }
 }
 

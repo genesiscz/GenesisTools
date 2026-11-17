@@ -13,16 +13,18 @@ struct MeetingRoomPeopleView: View {
     @State private var voice: [MeetingsAPI.Voice.Line] = []
     @State private var count = 3
     @State private var channel = 0
+    @State private var departures: [String] = []
+    @State private var warnings: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let source = detail.record.value?.copySource {
                 Text("Copy of \(source)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
-            ForEach((detail.record.value?.items ?? []).filter { $0.departureText != nil }) { item in
-                Text(item.departureText ?? "").font(.caption).foregroundStyle(.secondary)
+            ForEach(departures, id: \.self) { text in
+                Text(text).font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(detail.suggestionWarnings, id: \.self) { warning in
+            ForEach(warnings, id: \.self) { warning in
                 HStack {
                     Text(verbatim: warning).font(.caption).foregroundStyle(.orange)
                     Button("Add people by hand") { edit("") }
@@ -68,7 +70,18 @@ struct MeetingRoomPeopleView: View {
                 }
             }
         }.padding(.horizontal, 16)
+        .task { if case .idle = detail.rows { detail.loadRows() } }
+        .onChange(of: detail.record.value, initial: true) { _, record in departures = record?.items.compactMap(\.departureText) ?? [] }
+        .onChange(of: detail.rows.value?.attendanceWarning, initial: true) { _, _ in updateWarnings() }
+        .onChange(of: detail.suggestionWarnings, initial: true) { _, _ in updateWarnings() }
         .sheet(isPresented: $detail.showingMeetingPeopleEditor) { editor }
+    }
+
+    private func updateWarnings() {
+        warnings = Self.peopleWarnings(attendance: detail.rows.value?.attendanceWarning, suggested: detail.suggestionWarnings)
+    }
+    static func peopleWarnings(attendance: String?, suggested: [String]) -> [String] {
+        Array(Set(suggested + (attendance.map { [$0] } ?? []))).sorted()
     }
 
     private func voiceText(_ line: MeetingsAPI.Voice.Line) -> String {
@@ -120,7 +133,7 @@ struct MeetingRoomPeopleView: View {
                 try await detail.editMeetingPerson(.init(meeting: detail.id, name: name, action: remove ? "remove" : "add",
                     fromSec: Double(from), toSec: Double(to), atMic: atMic, via: !atMic && !owner.isEmpty ? owner : nil))
                 detail.showingMeetingPeopleEditor = false
-            } catch { failure = error.localizedDescription }
+            } catch { failure = asFailure(error).sentence }
         }
     }
 

@@ -196,7 +196,7 @@ struct MeetingRecordView: Decodable, Equatable {
     var review: Review? = nil
     var speakers: Speakers
     struct Person: Decodable, Equatable {
-        struct Stay: Decodable, Equatable { var fromSec: Double; var toSec: Double?; var source: String; var confidence: Double? }
+        struct Stay: Decodable, Equatable { var fromSec: Double; var toSec: Double?; var source: String; var confidence: Double?; var leaveSource: String? = nil }
         var name: String; var from: [String]?
         var isSelf: Bool? = nil
         var firstSeenSec: Double? = nil
