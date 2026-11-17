@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
@@ -723,7 +724,7 @@ export function registerWorkCommands(program: Command): void {
                               diagnostics: [
                                   errorDiagnostic(
                                       "PARITY",
-                                      `${differences.length} differences. A process with old code wrote past the hook: restart it, then run tools work migrate backfill.`
+                                      `${differences.length} differences. A process with old code wrote past the hook: restart it, then run ${toolCommand("work", "migrate", "backfill")}.`
                                   ),
                               ],
                           };

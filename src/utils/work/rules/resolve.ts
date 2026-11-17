@@ -114,7 +114,7 @@ function severityRank(severity: Severity | undefined): number {
     return severity === undefined ? Number.POSITIVE_INFINITY : SEVERITIES.indexOf(severity);
 }
 
-export function resolveRules(layers: readonly RuleLayerInput[]): ResolvedRules {
+export function resolveWorkRules(layers: readonly RuleLayerInput[]): ResolvedRules {
     return {
         layers,
         field(type, field) {
@@ -161,7 +161,7 @@ export function resolveRules(layers: readonly RuleLayerInput[]): ResolvedRules {
     };
 }
 
-export const DEFAULT_RULES = resolveRules([]);
+export const DEFAULT_RULES = resolveWorkRules([]);
 
 export function allows(rule: RoleRule, roles: readonly Role[]): boolean {
     return rule === "anyone" || rule.some((role) => roles.includes(role));

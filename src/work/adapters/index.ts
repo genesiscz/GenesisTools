@@ -2,7 +2,9 @@
  * The tool-side halves of the work package's ports: the caller, the old handoff store, session delivery and the
  * lineage of a T3 child thread.
  */
+// lint-rules-ignore: the adapter of the LegacyHandoffs port writes through the old executor until the switch (spec P1, P10)
 import { executeHandoffActions, type HandoffDeps, postHandoff } from "@app/handoff/executor";
+// lint-rules-ignore: the adapter of the SessionDelivery port wraps deliverToSession until the sessions area exists (spec, Session delivery)
 import { deliverToSession, isLiveDelivery, locateDelivery } from "@app/question/lib/decisions/deliver";
 
 import { logger } from "@genesiscz/utils/logger";

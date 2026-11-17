@@ -133,21 +133,19 @@ export type MigrateResult =
     | { ok: false; newer: number }
     | { ok: false; problem: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Runs each migration whose `from` matches, in order. A second run changes nothing; a newer version is not guessed. */
 export function migrateWorkConfig(
     raw: unknown,
     chain: readonly WorkConfigMigration[] = WORK_CONFIG_MIGRATIONS,
     current: number = WORK_CONFIG_VERSION
 ): MigrateResult {
-    if (!isRecord(raw)) {
+    const object = z.record(z.string(), z.unknown()).safeParse(raw);
+
+    if (!object.success) {
         return { ok: false, problem: "the file is not a JSON object" };
     }
 
-    let doc: Record<string, unknown> = raw;
+    let doc: Record<string, unknown> = object.data;
     let version = typeof doc.version === "number" ? doc.version : 1;
     const migrated: string[] = [];
 
