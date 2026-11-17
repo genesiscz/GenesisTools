@@ -12,6 +12,7 @@ import { gitCommonRoot } from "@genesiscz/utils/agent/identity";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { pairItem } from "@genesiscz/utils/work/connectors/sync";
 import type { NewChange } from "@genesiscz/utils/work/model/change";
 import { type Actor, asItemId, type Item, type ItemFields } from "@genesiscz/utils/work/model/item";
 import type { ItemPatch } from "@genesiscz/utils/work/model/payloads";
@@ -471,6 +472,32 @@ export class TodoStore {
     }
 
     /** Locates a todo by id in every project, so a command can name the project that holds it. */
+    /** The todo an item of the work store holds, for the reminders connector. */
+    static async findByItem(itemId: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
+        for (const row of TodoStore.allRows(storageRoot)) {
+            const todo = row.item.id === itemId ? todoOf(row.item, row.meta) : null;
+
+            if (todo !== null) {
+                return { todo, projectRoot: row.meta.projectRoot };
+            }
+        }
+
+        return null;
+    }
+
+    /** Records that a todo is paired with an outside item (made by `--sync-to`), so the store knows the pairing. */
+    async recordPairing(todoId: string, connector: string, remoteKey: string): Promise<void> {
+        const row = this.rows().find((r) => r.todoId === todoId);
+
+        if (row === undefined) {
+            return;
+        }
+
+        this.withDb((db) =>
+            pairItem({ db, now: () => new Date().toISOString() }, row.item.id, connector, remoteKey, "in-sync")
+        );
+    }
+
     static async findTodo(id: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
         for (const row of TodoStore.allRows(storageRoot)) {
             const todo = row.todoId === id ? todoOf(row.item, row.meta) : null;

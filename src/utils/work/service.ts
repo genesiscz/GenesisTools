@@ -3,7 +3,14 @@ import { randomBytes } from "node:crypto";
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import type { ContextStamp } from "./model/change";
 import type { Actor, Item } from "./model/item";
-import type { LegacyAction, LegacyHandoffs, LegacyWriteResult, LineageResolver, SessionDelivery } from "./ports";
+import type {
+    ConnectorPort,
+    LegacyAction,
+    LegacyHandoffs,
+    LegacyWriteResult,
+    LineageResolver,
+    SessionDelivery,
+} from "./ports";
 import type { ResolvedRules } from "./rules/resolve";
 import type { WorkCommand, WriteEnv } from "./store/decide";
 import { newItemId } from "./store/decide";
@@ -14,6 +21,8 @@ export interface WorkPorts {
     legacy: LegacyHandoffs;
     delivery: SessionDelivery;
     lineage?: LineageResolver;
+    /** The connectors (P5); a door without them answers the connector methods with CONNECTORS_MISSING. */
+    connectors?: ConnectorPort;
 }
 
 export interface WorkContext {

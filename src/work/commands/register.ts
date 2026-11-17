@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { toCliCommands } from "@genesiscz/utils/api-descriptor/cli";
+import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { FormatFlags } from "@genesiscz/utils/output/formats";
@@ -15,6 +16,7 @@ import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import type { Command } from "commander";
 import { actorHere } from "../adapters/actor";
 import { openLegacySource } from "../adapters/legacy-source";
+import { connectorsEnabled } from "../connectors";
 import { openSession } from "../session";
 import { cliDoor } from "./emit";
 
@@ -62,6 +64,8 @@ function emitAs<T>(reply: Reply<T>, formatter: Formatter<T>, flags: FormatFlags)
 }
 
 /** Runs one method of `workApi` for the CLI and prints its reply. */
+const CONNECTOR_METHODS = new Set<string>(["pair", "unpair", "pull", "sync"]);
+
 export async function runMethod(
     method: string,
     params: Record<string, unknown>,
@@ -91,6 +95,18 @@ export async function runMethod(
         // The formatter of this method; `callWork` returns its reply as unknown, so the door widens the formatter.
         const formatter = formatters[method] as Formatter<unknown>;
         emitAs(reply, formatter, formatFlags(extra));
+
+        // The sync is a feed consumer: it runs after the commit, in its own process, so a write never waits for the
+        // network (P5 decision 4). The connector methods push themselves.
+        if (
+            reply.ok &&
+            !read &&
+            extra.dryRun !== true &&
+            !CONNECTOR_METHODS.has(method) &&
+            connectorsEnabled(opened.session.ctx.rules?.layers ?? [])
+        ) {
+            spawnToolDetached(["work", "sync"], { reparent: true });
+        }
     } finally {
         opened.close();
     }

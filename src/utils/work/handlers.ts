@@ -4,6 +4,17 @@
  */
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import { type WorkMethodName, type WorkParams, workMethods } from "./api";
+import {
+    type PullReport,
+    pairItem,
+    pullRemote,
+    releaseHeld,
+    runSyncOnce,
+    type SyncDeps,
+    type SyncReport,
+    unpairItem,
+} from "./connectors/sync";
+import { originFor, type Pairing } from "./connectors/types";
 import { type ContextReport, stampOf } from "./context";
 import type { Item } from "./model/item";
 import { ITEM_TYPES, type ItemType, isOpenState } from "./model/vocab";
@@ -13,8 +24,9 @@ import type { FieldRule, RoleRule } from "./rules/config";
 import { RULE_FIELDS, type RuleField, WRITE_VERBS, type WriteVerb } from "./rules/config";
 import { loadWorkRules } from "./rules/load";
 import type { Resolved } from "./rules/resolve";
-import { type WorkContext, type WriteData, write } from "./service";
+import { randomItemSuffix, type WorkContext, type WriteData, write } from "./service";
 import type { WorkCommand } from "./store/decide";
+import { newItemId } from "./store/decide";
 import { selectItems } from "./store/view";
 
 export interface CallOptions {
@@ -88,7 +100,16 @@ export interface WorkResults {
     log: WriteData;
     reopen: ReopenData;
     handoff: WriteData;
+    pair: PairData;
+    unpair: { removed: boolean };
+    pull: PullReport;
+    sync: SyncReport;
     batch: Reply<unknown>[];
+}
+
+export interface PairData {
+    pairing: Pairing;
+    push: SyncReport;
 }
 
 export type WorkHandlers = {
@@ -121,6 +142,48 @@ function run(session: WorkSession, command: WorkCommand): Promise<Reply<WriteDat
     const ctx: WorkContext =
         session.call.ownerSaid !== undefined ? { ...session.ctx, ownerSaid: session.call.ownerSaid } : session.ctx;
     return write(ctx, command, strip({ request: session.call.request, dryRun: session.call.dryRun }));
+}
+
+/** The sync's view of this call's project, or a refusal when the door has no connectors or the ref is unknown. */
+function syncOf(session: WorkSession, verb: string): { deps: SyncDeps } | { refused: Reply<never> } {
+    const port = session.ctx.ports.connectors;
+
+    if (port === undefined) {
+        return {
+            refused: failReply(verb, [
+                errorDiagnostic(
+                    "CONNECTORS_MISSING",
+                    "This door has no connectors; the work CLI and the work_write MCP tool have them."
+                ),
+            ]),
+        };
+    }
+
+    return { deps: port.syncDeps(session.ctx.project, session.ctx.rules?.layers ?? []) };
+}
+
+function itemOf(session: WorkSession, verb: string, ref: string): { item: Item } | { refused: Reply<never> } {
+    const shown = showItem(session.ctx.db, ref);
+
+    if (shown === null) {
+        return { refused: failReply(verb, [errorDiagnostic("NOT_FOUND", `No item ${ref}.`, "ref")]) };
+    }
+
+    return { item: shown.item };
+}
+
+function knownConnector(deps: SyncDeps, verb: string, id: string): Reply<never> | null {
+    if (Object.hasOwn(deps.connectors, id)) {
+        return null;
+    }
+
+    return failReply(verb, [
+        errorDiagnostic(
+            "UNKNOWN_CONNECTOR",
+            `No connector ${id}. Connectors: ${Object.keys(deps.connectors).join(", ") || "none"}.`,
+            "connector"
+        ),
+    ]);
 }
 
 export const workHandlers: WorkHandlers = {
@@ -332,6 +395,102 @@ export const workHandlers: WorkHandlers = {
             session,
             strip({ verb: "handoff" as const, title: p.title, from: p.from, target: p.target, body: p.body })
         );
+    },
+
+    async pair(p, session) {
+        const sync = syncOf(session, "pair");
+        const found = itemOf(session, "pair", p.ref);
+
+        if ("refused" in sync) {
+            return sync.refused;
+        }
+
+        if ("refused" in found) {
+            return found.refused;
+        }
+
+        const unknown = knownConnector(sync.deps, "pair", p.connector);
+
+        if (unknown !== null) {
+            return unknown;
+        }
+
+        if (session.call.dryRun === true) {
+            return okReply("pair", {
+                pairing: {
+                    item: found.item.id,
+                    connector: p.connector,
+                    remoteKey: p.key,
+                    born: "local",
+                    origin: originFor("local"),
+                    state: "pending",
+                    updatedTs: sync.deps.now(),
+                },
+                push: { pushed: 0, held: 0, failed: 0, cursor: -1 },
+            });
+        }
+
+        const pairing = pairItem(sync.deps, found.item.id, p.connector, p.key);
+        const push = await releaseHeld(sync.deps, found.item.id);
+        return okReply("pair", { pairing, push });
+    },
+
+    async unpair(p, session) {
+        const sync = syncOf(session, "unpair");
+        const found = itemOf(session, "unpair", p.ref);
+
+        if ("refused" in sync) {
+            return sync.refused;
+        }
+
+        if ("refused" in found) {
+            return found.refused;
+        }
+
+        if (session.call.dryRun === true) {
+            return okReply("unpair", { removed: false });
+        }
+
+        return okReply("unpair", { removed: unpairItem(sync.deps, found.item.id, p.connector) });
+    },
+
+    async pull(p, session) {
+        const sync = syncOf(session, "pull");
+
+        if ("refused" in sync) {
+            return sync.refused;
+        }
+
+        const unknown = knownConnector(sync.deps, "pull", p.connector);
+
+        if (unknown !== null) {
+            return unknown;
+        }
+
+        const project = p.project ?? session.ctx.project;
+        const random = session.ctx.random ?? randomItemSuffix;
+        const report = await pullRemote({ ...sync.deps, project, newId: () => newItemId(random) }, p.connector, p.keys);
+        return okReply("pull", report);
+    },
+
+    async sync(p, session) {
+        const sync = syncOf(session, "sync");
+
+        if ("refused" in sync) {
+            return sync.refused;
+        }
+
+        if (p.release === undefined) {
+            return okReply("sync", await runSyncOnce(sync.deps));
+        }
+
+        const found = itemOf(session, "sync", p.release);
+
+        if ("refused" in found) {
+            return found.refused;
+        }
+
+        return okReply("sync", await releaseHeld(sync.deps, found.item.id));
     },
 
     async batch(p, session) {

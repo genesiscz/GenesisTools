@@ -8,6 +8,7 @@ import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import { legacyHandoffs, sessionDelivery, t3Lineage } from "./adapters";
 import { actorHere } from "./adapters/actor";
 import { contextHere } from "./adapters/context";
+import { connectorPort } from "./connectors";
 
 export interface OpenedSession {
     session: WorkSession;
@@ -35,7 +36,7 @@ export async function openSession(
             actor,
             project,
             rules: loaded.rules,
-            ports: { legacy: legacyHandoffs(), delivery, lineage: t3Lineage() },
+            ports: { legacy: legacyHandoffs(), delivery, lineage: t3Lineage(), connectors: connectorPort(db) },
         },
         call,
         alive: async (sessionId, harness) => (await delivery.place(sessionId, harness))?.live ?? null,
