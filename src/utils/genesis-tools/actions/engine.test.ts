@@ -20,6 +20,7 @@ import { APP_SURFACE_PATH, readAppSurfaceInput, renderAppSurface } from "../../.
 function fakeFacts(overrides: Partial<Facts> = {}): Facts {
     return {
         platform: () => "darwin",
+        isAgent: () => false,
         isTest: () => false,
         appBundle: () => ({ installed: true, routingOff: false, path: "/Applications/Fake.app" }),
         appManifest: () => ({ buildId: "b1", parts: ["features"], rpcMethods: ["rpc.hello"] }),

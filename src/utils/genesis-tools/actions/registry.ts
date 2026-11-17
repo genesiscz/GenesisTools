@@ -2,6 +2,7 @@ import { type AppBuilder, appBuilder as registeredAppBuilder } from "@genesiscz/
 import { type Facts, LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
 import type { z } from "zod";
+import type { ServiceDoor } from "../service/clients";
 import { type ConfigStore, createConfigStore } from "./config";
 import type { ActionOutcome, AnyActionDef, AppDoor, AreaDef, ArgsOf, ResultOf, RunOptions } from "./define";
 import { type AreaEventBus, createAreaEventBus } from "./events";
@@ -54,6 +55,7 @@ export interface EngineDeps {
     builder: AppBuilder | null;
     events: AreaEventBus;
     now: () => Date;
+    service?: ServiceDoor | null;
 }
 
 export const LIVE_APP_DOOR: AppDoor = {
@@ -72,6 +74,7 @@ export function liveEngineDeps(registry: Record<string, Area>, overrides: Partia
         builder: overrides.builder !== undefined ? overrides.builder : registeredAppBuilder(),
         events: overrides.events ?? AREA_EVENTS,
         now: overrides.now ?? (() => new Date()),
+        service: overrides.service ?? null,
     };
 }
 

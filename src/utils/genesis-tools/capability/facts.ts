@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveEnvHost } from "@genesiscz/utils/agent/identity/env";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -24,6 +25,7 @@ export interface AppManifestFacts {
 
 /** Live readers of this machine. Each one is cheap, reads only, and starts no process. Tests pass a fake. */
 export interface Facts {
+    isAgent(): boolean;
     platform(): NodeJS.Platform;
     isTest(): boolean;
     appBundle(): { installed: boolean; routingOff: boolean; path: string };
@@ -67,6 +69,7 @@ function readAppManifest(): AppManifestFacts | null {
 }
 
 export const LIVE_FACTS: Facts = {
+    isAgent: () => resolveEnvHost(env.getProcessEnv()).isInAgent === true,
     platform: () => process.platform,
     isTest: () => isTestProcess(),
     appBundle: () => {
@@ -84,7 +87,20 @@ export const LIVE_FACTS: Facts = {
             return false;
         }
 
-        return process.platform === "darwin" || process.platform === "win32" || env.device.hasGraphicalDisplay();
+        if (process.platform === "darwin") {
+            const result = Bun.spawnSync(["/usr/sbin/ioreg", "-n", "Root", "-d", "1"], {
+                stdout: "pipe",
+                stderr: "pipe",
+                timeout: 2000,
+            });
+            if (result.exitCode !== 0) {
+                logger.debug({ exit: result.exitCode }, "display probe did not answer");
+                return false;
+            }
+            const text = new TextDecoder().decode(result.stdout);
+            return !/"CGSSessionScreenIsLocked"\s*=\s*(?:Yes|true)/i.test(text) && /IOConsoleUsers/.test(text);
+        }
+        return process.platform === "win32" || env.device.hasGraphicalDisplay();
     },
     hasTerminal: () => isInteractive(),
 };

@@ -183,3 +183,10 @@ export function musicSoundfontInstallCommand(): string {
 export function macosPermissionsCommand(): string {
     return toolCommand("macos permissions");
 }
+
+export function genesisToolsRequestOpenCommand(id: string): string {
+    if (!/^[a-zA-Z0-9:._-]{1,500}$/.test(id)) {
+        throw new Error("Invalid request id");
+    }
+    return `${toolCommand("genesis-tools request open")} ${id}`;
+}

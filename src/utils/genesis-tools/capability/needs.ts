@@ -3,6 +3,7 @@ import type { StateStore, StateValue } from "@genesiscz/utils/genesis-tools/acti
 import { type AppBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
 import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
 import type { AppPartId, AppRpcMethod } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import type { ServiceDoor } from "@genesiscz/utils/genesis-tools/service/clients";
 import { macosPermissionsCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import type { PermissionKindId } from "@genesiscz/utils/macos/permission-kinds";
 
@@ -55,6 +56,7 @@ export interface NeedEnv {
     now: () => Date;
     /** Probe even when a state value could answer. */
     fresh: boolean;
+    service?: ServiceDoor | null;
     /** Whether a probe may write what it measured into state (false for `explain` without `--fresh`). */
     write: boolean;
 }
@@ -242,9 +244,11 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
     "rootHelper.enabled": async (_need, env) =>
         inTest(env, "the root helper") ?? fail("helper-off", "the root helper is not built yet (Phase 5)"),
 
-    "service.client": async (_need, env) =>
+    "service.client": async (need, env) =>
         inTest(env, "the GenesisTools service") ??
-        fail("no-service", "the GenesisTools service is not built yet (Phase 2)"),
+        (env.service?.hasClient(need.method)
+            ? OK_PROBE
+            : fail("no-service", `no connected face serves ${need.method}`)),
 };
 
 export function checkNeed(need: NeedSpec, env: NeedEnv): Promise<NeedResult> {

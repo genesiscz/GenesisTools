@@ -1,0 +1,135 @@
+import { createInterface } from "node:readline/promises";
+import { env } from "@genesiscz/utils/env";
+import type { ActionContext, Pass } from "@genesiscz/utils/genesis-tools/actions/define";
+import { genesisToolsRequestOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
+import { out } from "@genesiscz/utils/logger";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
+import { personConfigSchema } from "./deliveries";
+import { type PersonRequest, type RequestOutcome, requestOutcomeSchema } from "./request";
+import { DIALOG_SYSTEM, dialogEnvironment, PERSON_DIALOGS } from "./system-dialog";
+
+export type RequestContext = ActionContext<PersonRequest, Record<string, unknown>>;
+
+export async function presentInApp(ctx: RequestContext): Promise<RequestOutcome | Pass> {
+    refuseHostEffectInTest("request.present", "Inject a request surface in tests.");
+    const timeoutMs = Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000));
+    const reply = await ctx.app.rpc("request.present", ctx.args, { timeoutMs });
+    return reply.ok
+        ? { ...requestOutcomeSchema.parse(reply.result), via: "app-window", method: "click" as const }
+        : reply.error.code === "timeout"
+          ? { id: ctx.args.id, status: "pending", reason: "The request window has not answered yet." }
+          : ctx.pass(`${reply.error.code}: ${reply.error.message}`);
+}
+
+export async function presentInSystemDialog(ctx: RequestContext): Promise<RequestOutcome | Pass> {
+    refuseHostEffectInTest("request system dialog", "Inject a request surface in tests.");
+    const dialog = PERSON_DIALOGS[ctx.facts.platform()];
+    const argv = dialog?.command({ title: ctx.args.title, body: ctx.args.reason }, DIALOG_SYSTEM);
+    if (!dialog || !argv) {
+        return ctx.pass("No trusted system dialog program is installed.");
+    }
+    const timeout = Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000));
+    const proc = Bun.spawn(argv, {
+        env: dialogEnvironment(dialog.searchPath),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout,
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+    ]);
+    if (exitCode !== 0 && stderr.trim()) {
+        return ctx.pass(`System dialog failed: ${stderr.trim()}`);
+    }
+    return {
+        id: ctx.args.id,
+        status: dialog.approved({ exitCode, stdout }) ? "done" : "declined",
+        reason: null,
+        via: "system-dialog",
+        method: "click",
+    };
+}
+
+export async function presentInTerminal(ctx: RequestContext): Promise<RequestOutcome> {
+    refuseHostEffectInTest("request terminal", "Inject a request surface in tests.");
+    const terminal = createInterface({ input: process.stdin, output: process.stderr });
+    const signal = AbortSignal.timeout(
+        Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000))
+    );
+    out.log.info(`${ctx.args.title}\n${ctx.args.reason}`);
+    try {
+        const answer = await terminal.question("Acknowledge? [y/N] ", { signal });
+        return {
+            id: ctx.args.id,
+            status: /^y(?:es)?$/i.test(answer.trim()) ? "done" : "declined",
+            reason: null,
+            via: "terminal",
+            method: "terminal",
+        };
+    } catch (error) {
+        if (!signal.aborted) {
+            throw error;
+        }
+        return { id: ctx.args.id, status: "pending", reason: "The terminal wait reached its deadline." };
+    } finally {
+        terminal.close();
+    }
+}
+
+export async function notifyRequest(ctx: RequestContext): Promise<RequestOutcome | Pass> {
+    refuseHostEffectInTest("request notification", "Inject a notification sender in tests.");
+    const reply = await ctx.app.rpc(
+        "notify.post",
+        {
+            id: ctx.args.id,
+            title: ctx.args.title,
+            message: ctx.args.reason,
+            sound: personConfigSchema.parse(ctx.areaConfig).notification.sound,
+            execute: genesisToolsRequestOpenCommand(ctx.args.id),
+            genesisHome: env.tools.getHome(),
+        },
+        { timeoutMs: Math.min(ctx.timeoutMs, 10_000) }
+    );
+    return reply.ok
+        ? { id: ctx.args.id, status: "pending", reason: "The notification opens this request when clicked." }
+        : ctx.pass(`${reply.error.code}: ${reply.error.message}`);
+}
+
+export async function notifyViaChannels(ctx: RequestContext): Promise<RequestOutcome | Pass> {
+    refuseHostEffectInTest("request notification channels", "Inject notification channels in tests.");
+    const { dispatchNotification, notificationsConfig, CHANNEL_NAMES } = await import("@genesiscz/utils/notifications");
+    const channels = await notificationsConfig.getChannels("genesis-tools");
+    if (!CHANNEL_NAMES.some((name) => channels[name].enabled)) {
+        return ctx.pass("No notification channel is enabled.");
+    }
+    const posted = await dispatchNotification({
+        app: "genesis-tools",
+        id: ctx.args.id,
+        title: ctx.args.title,
+        message: ctx.args.reason,
+        execute: genesisToolsRequestOpenCommand(ctx.args.id),
+        sound: personConfigSchema.parse(ctx.areaConfig).notification.sound,
+    });
+    return posted
+        ? {
+              id: ctx.args.id,
+              status: "pending",
+              reason: "The request was handed to the configured notification channels.",
+          }
+        : ctx.pass("Notification delivery failed.");
+}
+
+export async function printRequest(ctx: RequestContext): Promise<RequestOutcome | Pass> {
+    if (ctx.facts.isTest()) {
+        return ctx.pass("in-test: a test process never delivers a request");
+    }
+    const manual = genesisToolsRequestOpenCommand(ctx.args.id);
+    out.log.info(`${ctx.args.title}\n${ctx.args.reason}\n${manual}`);
+    return {
+        id: ctx.args.id,
+        status: "unreachable",
+        reason: `No person surface answered. Open the request with ${manual}`,
+    };
+}

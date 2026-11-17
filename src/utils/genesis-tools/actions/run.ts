@@ -68,7 +68,15 @@ export function findAction(
 }
 
 function needEnv(deps: EngineDeps, options: { fresh: boolean; write: boolean }): NeedEnv {
-    return { state: deps.state, facts: deps.facts, app: deps.app, builder: deps.builder, now: deps.now, ...options };
+    return {
+        state: deps.state,
+        facts: deps.facts,
+        app: deps.app,
+        builder: deps.builder,
+        now: deps.now,
+        service: deps.service,
+        ...options,
+    };
 }
 
 function fixOf(result: NeedResult): Fix | null {
@@ -133,6 +141,8 @@ async function firstFailedNeed(params: {
     return null;
 }
 
+class ActionDeadlineError extends Error {}
+
 async function withDeadline<T>(work: Promise<T>, timeoutMs: number | undefined, way: WayName): Promise<T> {
     if (timeoutMs === undefined) {
         return work;
@@ -140,7 +150,7 @@ async function withDeadline<T>(work: Promise<T>, timeoutMs: number | undefined, 
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${way} timed out after ${timeoutMs} ms`)), timeoutMs);
+        timer = setTimeout(() => reject(new ActionDeadlineError(`${way} timed out after ${timeoutMs} ms`)), timeoutMs);
     });
 
     try {
@@ -157,9 +167,11 @@ function contextFor(params: {
     args: unknown;
     config: Record<string, unknown>;
     deps: EngineDeps;
+    timeoutMs: number;
 }): ActionContext<unknown, Record<string, unknown>> {
     const { registry, areaName, area, deps } = params;
     const clients = clientsOf(registry, () => deps);
+    const timeoutMs = params.timeoutMs;
 
     return {
         ...clients,
@@ -172,7 +184,8 @@ function contextFor(params: {
             report: (key, value) => deps.state.report(areaName, key, value),
         },
         facts: deps.facts,
-        service: null,
+        service: deps.service ?? null,
+        timeoutMs,
         pass: (reason): Pass => ({ pass: true, reason }),
         emit: (event, payload) => {
             const schema = area.events?.[event];
@@ -234,10 +247,11 @@ export async function runAction(
             continue;
         }
 
-        const ctx = contextFor({ registry, areaName, area, args: parsedArgs.data, config, deps });
+        const timeoutMs = Math.max(1, options.timeoutMs ?? action.timeoutMs ?? 120_000);
+        const ctx = contextFor({ registry, areaName, area, args: parsedArgs.data, config, deps, timeoutMs });
 
         try {
-            const value = await withDeadline(Promise.resolve(run(ctx)), options.timeoutMs, way);
+            const value = await withDeadline(Promise.resolve(run(ctx)), timeoutMs, way);
 
             if (isPass(value)) {
                 skip(way, "passed", value.reason);
@@ -256,6 +270,17 @@ export async function runAction(
         } catch (error) {
             logger.debug({ id, way, error }, "genesis-tools actions: a way threw");
             skip(way, "threw", error instanceof Error ? error.message : String(error));
+            if (error instanceof ActionDeadlineError) {
+                if (action.onTimeout) {
+                    return {
+                        status: "ran",
+                        via: way,
+                        value: action.result.parse(action.onTimeout(parsedArgs.data)),
+                        skipped,
+                    };
+                }
+                return { status: "unreachable", skipped, manual: action.manual?.(parsedArgs.data) ?? null };
+            }
         }
     }
 
