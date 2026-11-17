@@ -1,6 +1,7 @@
-// Irreversible operations: data that is gone with no snapshot to restore.
+// Irreversible operations: data that is gone with no snapshot to restore, or a live session that is broken.
 
-import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "../scan";
+import { constants } from "node:os";
+import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize, wordsFrom } from "../scan";
 import type { ShellMatch, ShellRule } from "./types";
 
 /** Docker global options that consume the next token, in their separate-value spelling. */
@@ -100,4 +101,85 @@ export const dockerVolumeDestroy: ShellRule = {
     },
 };
 
-export const destructiveRules: readonly ShellRule[] = [dockerVolumeDestroy];
+/** `kill`'s options that take the signal as the next word. */
+const KILL_SIGNAL_OPTIONS = new Set(["-s", "-n", "--signal"]);
+
+/** SIGCONT by name, in any case, with or without `SIG`, or by this platform's number (19 on macOS, 18 on Linux). */
+function isContSignal(signal: string): boolean {
+    return signal.toUpperCase().replace(/^SIG/, "") === "CONT" || signal === String(constants.signals.SIGCONT);
+}
+
+/** The signal and the targets of `kill`'s arguments; no signal option means SIGTERM. */
+function killArguments(args: readonly string[]): { signal: string; targets: string[] } {
+    const [first, second] = args;
+
+    if (first !== undefined && KILL_SIGNAL_OPTIONS.has(first)) {
+        return { signal: second ?? "", targets: args.slice(2) };
+    }
+
+    if (first?.startsWith("-") && first !== "--") {
+        return { signal: first.slice(1), targets: args.slice(1) };
+    }
+
+    return { signal: "TERM", targets: [...args] };
+}
+
+// kill -CONT -<pgid>, in every spelling of the signal: the end of the usual "TERM, then CONT" way to stop a job.
+export const stoppedJobWake: ShellRule = {
+    id: "stopped-job-wake",
+    kind: "destructive",
+    title: "kill -CONT to a process group wakes a stopped job, which then rewrites the tty a live TUI may use",
+    severity: "block",
+    why:
+        "SIGCONT lets a stopped (Ctrl-Z) job run again on its old tty, where a live TUI such as Claude may run now. " +
+        "The woken job writes to that tty: its resume code turns its input modes back on (mouse, kitty keyboard), " +
+        "and its exit code restores the termios it saved at its own start, which is the shell's cooked mode. The " +
+        "live TUI does not know, so the kernel echoes every key and mouse report as text (`^[[<35;x;yM`) and holds " +
+        "it in a line buffer the TUI never reads. SIGKILL ends a stopped group without letting it run.",
+    wrong: 'kill -TERM -"$pgid"; kill -CONT -"$pgid"',
+    right:
+        'T=/dev/ttysNNN; saved=$(stty -g -f $T); kill -KILL -"$pgid"; ' +
+        '[ "$(stty -g -f $T)" = "$saved" ] || stty -f $T "$saved"   # every pgid of the job; Linux: stty -F',
+    evidence:
+        "2026-11-17 13:47: TERM then CONT to 8 stopped Claude jobs left ttys006 in `icanon echo` under a live " +
+        "Claude, and salon's input on ttys003 arrived as `xt/exit` and `^[[117;5u`. 2026-10-30: the same codes " +
+        "in another pane after its stopped launcher was killed.",
+    detect(scan): ShellMatch | null {
+        for (const statements of scan.units) {
+            for (const statement of statements) {
+                if (!statement.text.includes("kill")) {
+                    continue;
+                }
+
+                for (const element of splitPipeline(statement)) {
+                    const tokens = tokenize(element);
+                    const cmd = commandTokenIndex(tokens, scan.command);
+
+                    if (cmd === -1 || commandWord(tokens[cmd].text) !== "kill") {
+                        continue;
+                    }
+
+                    // The words as the shell splits them: the scan blanks quotes, so `-"$g"` tokenizes as `-` and `$g`.
+                    const { signal, targets } = killArguments(wordsFrom(scan, tokens[cmd].start).words.slice(1));
+                    const groups = targets.filter((target) => target.startsWith("-") && target !== "--");
+
+                    if (!isContSignal(signal) || groups.length === 0) {
+                        continue;
+                    }
+
+                    const start = tokens[cmd].start;
+
+                    return {
+                        matched: originalSlice(scan, start, element.start + element.text.length),
+                        index: start,
+                        detail: `SIGCONT to the process group ${groups.join(", ")}`,
+                    };
+                }
+            }
+        }
+
+        return null;
+    },
+};
+
+export const destructiveRules: readonly ShellRule[] = [dockerVolumeDestroy, stoppedJobWake];

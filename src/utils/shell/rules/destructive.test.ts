@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { constants } from "node:os";
 import { destructiveRules } from "./destructive";
 import { detectShellViolations, type ShellViolation } from "./index";
 
@@ -107,5 +108,61 @@ describe("docker's long flag spellings", () => {
         expect(detectShellViolations(command).map((violation) => violation.ruleId)).not.toContain(
             "docker-volume-destroy"
         );
+    });
+});
+
+const WAKE = "stopped-job-wake";
+// 19 on macOS, 18 on Linux: the rule reads the number of the platform it runs on.
+const CONT_NUMBER = String(constants.signals.SIGCONT);
+
+describe("stopped-job-wake", () => {
+    it("blocks the 2026-11-17 loop that ended stopped Claude jobs with TERM and CONT", () => {
+        const command =
+            "for L in 1 2; do g=$(ps -o pgid= -p $L | tr -d ' '); " +
+            '[ -n "$g" ] && { kill -TERM -"$g"; kill -CONT -"$g"; }; done';
+        const v = only(command, WAKE);
+
+        expect(v?.severity).toBe("block");
+        expect(v?.matched).toBe('kill -CONT -"$g"');
+        expect(v?.index).toBe(command.indexOf("kill -CONT"));
+        expect(v?.detail).toBe("SIGCONT to the process group -$g");
+        expect(detectShellViolations(command).map((violation) => violation.ruleId)).toContain(WAKE);
+    });
+
+    const woken = [
+        "kill -CONT -1234",
+        "kill -SIGCONT -1234",
+        "kill -cont -1234",
+        "kill -s CONT -1234",
+        "kill -s SIGCONT -- -1234",
+        "kill --signal CONT -1234",
+        `kill -${CONT_NUMBER} -1234`,
+        "kill -CONT -- -1234",
+        "kill -CONT 55 -1234",
+        "sudo /bin/kill -CONT -$PG",
+        "kill -CONT \"-$(ps -o pgid= -p 5 | tr -d ' ')\"",
+        'bash -c "kill -CONT -77"',
+        "ps -p 1; kill -CONT -$pg && echo done",
+    ];
+
+    it.each(woken)("blocks %j", (command) => {
+        expect(ids(command)).toEqual([WAKE]);
+    });
+
+    const passed = [
+        "kill -CONT 1234",
+        "kill -CONT -- 1234",
+        "kill -TERM -1234",
+        "kill -KILL -1234",
+        "kill -s KILL -1234",
+        "kill -l CONT",
+        "kill 1234",
+        "echo 'kill -CONT -12'",
+        "cat <<'EOF'\nkill -CONT -12\nEOF",
+        "# kill -CONT -12\nps -p 1",
+    ];
+
+    it.each(passed)("passes %j", (command) => {
+        expect(ids(command)).toEqual([]);
     });
 });
