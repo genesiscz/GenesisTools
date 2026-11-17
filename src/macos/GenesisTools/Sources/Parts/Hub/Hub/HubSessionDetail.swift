@@ -87,6 +87,9 @@ struct HubSessionDetailHost: View {
     @State private var loadState: TranscriptLoadState = .loading
     @State private var loadingEarlier = false
     @State private var banner: String?
+    /// Where the session lives (a cmux pane, a T3 Code thread), from GenesisTools' host table
+    /// (`tools ai session-host describe`, a hub server door). nil until it answers: the journal's cmux place stands in.
+    @State private var hostAnswer: SessionHostAnswer?
     /// The banner's failure (a refresh or an earlier page that did not load) with its Try again, set and cleared as one.
     @State private var bannerFailure: (report: FailureReport, retry: @MainActor () -> Void)?
     /// The report of an earlier-page failure the banner shows, so a retry that loads the page clears that notice and
@@ -200,6 +203,11 @@ struct HubSessionDetailHost: View {
                 Task { await jump(toTurn: index, rowId: rowId) }
             }
         }
+        .task(id: agentChild ? "" : session.sessionId) {
+            hostAnswer = nil
+            guard !agentChild else { return }
+            await loadHost()
+        }
         .task(id: session.id) {
             tail?.stop()
             tail = nil
@@ -282,12 +290,14 @@ struct HubSessionDetailHost: View {
         }()
         let cacheCold = session.cacheStatus.map { $0 == .COLD }
         let inPane = session.cmux != nil
+        // The host's answer once it came (a live pane, a running T3 turn; false when no host holds it), else the journal.
+        let held = hostAnswer.map { answer in answer.host.map { $0.live ?? false } ?? false } ?? inPane
         let guessed = SessionLiveness.resolve(
             lastActivity: lastActivity,
             terminated: envelope?.terminated,
             pendingTool: pendingTool,
             cacheCold: cacheCold,
-            inPane: inPane
+            inPane: held
         )
         // The follow's activity outranks the guess from the last write's age: a long think writes nothing for minutes.
         let status = liveHeader.map { TranscriptLiveActivity.status($0, over: guessed) }
@@ -307,7 +317,7 @@ struct HubSessionDetailHost: View {
         info.livenessNote = status?.note ?? {
             switch liveness {
             case .running: return pendingTool ? "A tool call is waiting for its result" : "Activity in the last 2 minutes"
-            case .idle: return inPane ? "Waiting in a cmux pane" : "Prompt cache is warm, no activity"
+            case .idle: return hostAnswer?.host?.note ?? (inPane ? "Waiting in a cmux pane" : "Prompt cache is warm, no activity")
             case .ended: return envelope?.terminated == "error" ? "The transcript ended with an error" : "No recent activity"
             }
         }()
@@ -316,6 +326,8 @@ struct HubSessionDetailHost: View {
             info.cacheNote = status == .COLD ? "Prompt cache is cold" : "\(SessionStatusFormat.ttlPhrase(session.cacheTtlSec ?? 0)) of prompt cache left"
         }
         info.inPane = inPane
+        info.host = hostAnswer?.host
+        info.hostMissing = hostAnswer?.host == nil ? hostAnswer?.reason : nil
         info.startedAt = windowStart == 0 ? document.firstAt : nil
         info.lastActivityAt = lastActivity
         info.contextTokens = session.displayContextTokens
@@ -404,7 +416,14 @@ struct HubSessionDetailHost: View {
             actions.openInFinder = { PathOpener.finder(cwd) }
             actions.openInCursor = { PathOpener.cursor(cwd) }
         }
-        if session.cmux != nil, Harness(rawValue: session.provider) != nil {
+        if !agentChild, let hostAnswer {
+            // The host table decides each button and acts there; a disabled one shows its reason (GenesisKit).
+            let states = hostAnswer.host?.actions
+            if states?.focus.enabled == true { actions.focus = { act(.focus) } }
+            if states?.wake.enabled == true { actions.wake = { act(.wake) } }
+            if states?.keepalive.enabled == true { actions.keepalive = { act(.keepalive) } }
+            actions.openTerminal = actions.focus
+        } else if session.cmux != nil, Harness(rawValue: session.provider) != nil {
             let id = session.sessionId
             let provider = session.provider
             // Off the main thread: it spawns `tools`, and a wait in a button action still spins the run loop.
@@ -443,6 +462,37 @@ struct HubSessionDetailHost: View {
         }
         // The list knows its session by the transcript's own id (`services.sessionId`).
         TranscriptBus.post(TranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
+    }
+
+    /// Asks GenesisTools where the session lives. A failure keeps the last answer and is logged: an older `tools` without
+    /// `ai session-host` leaves the journal's cmux place in charge.
+    private func loadHost() async {
+        let id = session.sessionId
+        do {
+            let answers = try await SessionHostClient(bridge: HubSource.bridge).describe([id])
+            guard !Task.isCancelled, id == session.sessionId else { return }
+            hostAnswer = answers.first
+        } catch {
+            HubPerf.log("session.host \(id.prefix(8)) failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Focus, Wake or Keepalive through the session's host; a refusal shows in the banner, then the host is read again
+    /// (a Wake that started a T3 turn shows it).
+    private func act(_ action: SessionHostAction) {
+        let id = session.sessionId
+        HubPerf.log("session.\(action.rawValue) \(id.prefix(8))")
+        Task {
+            do {
+                let result = try await SessionHostClient(bridge: HubSource.bridge).act(action, sessionId: id)
+                if !result.ok, id == session.sessionId {
+                    banner = "\(action.rawValue.capitalized) failed: \(result.reason ?? "no reason given")"
+                }
+            } catch {
+                banner = "\(action.rawValue.capitalized) failed: \(error.localizedDescription)"
+            }
+            await loadHost()
+        }
     }
 
     /// Types one line into the session's cmux pane, off the main thread; a failure shows in the banner.
