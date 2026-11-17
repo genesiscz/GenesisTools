@@ -125,7 +125,8 @@ export async function fetchAgentCmuxTree(options: AgentCmuxTreeOptions = {}): Pr
             ...surface,
             sessionId: session?.sessionId ?? null,
             provider: session?.provider ?? null,
-            sessionHint: surface.title.match(TITLE_SHORT_ID_RE)?.[1]?.toLowerCase() ?? null,
+            // Only for a surface the journal names no session for: a reused tab's title still carries the old one.
+            sessionHint: session ? null : (surface.title.match(TITLE_SHORT_ID_RE)?.[1]?.toLowerCase() ?? null),
         };
     });
 

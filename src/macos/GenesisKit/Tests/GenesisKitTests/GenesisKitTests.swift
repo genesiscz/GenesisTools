@@ -39,6 +39,14 @@ final class CmuxTreeTests: XCTestCase {
         XCTAssertFalse(tree.hostsSession("11111111"))
     }
 
+    /// A reused tab keeps the old session's marker in its title; the session the journal places there owns it.
+    func testATitleHintBesideAKnownSessionClaimsNothing() {
+        let reused = CmuxTree.Surface(id: "surface:9", title: "old · aaaaaaaa", sessionId: "bbbbbbbb-new", sessionHint: "aaaaaaaa")
+        XCTAssertTrue(reused.holds("BBBBBBBB-NEW"))
+        XCTAssertFalse(reused.holds("aaaaaaaa-old"))
+        XCTAssertTrue(CmuxTree.Surface(id: "surface:8", sessionHint: "aaaaaaaa").holds("aaaaaaaa-old"))
+    }
+
     func testAnUnreachableCmuxDecodesWithItsError() throws {
         let tree = try CmuxTree.decode(Data(#"{"available":false,"error":"cmux is not running","windows":[]}"#.utf8))
         XCTAssertFalse(tree.available)
