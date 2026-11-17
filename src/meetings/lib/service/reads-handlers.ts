@@ -1,8 +1,12 @@
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { channelEnergy, ENERGY_BLOCKS_PER_SEC } from "@genesiscz/utils/meetings/energy";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { DEFAULT_SPAN_GAP_SEC, sameName } from "@genesiscz/utils/transcribe/speakers";
 import {
     configValueAt,
     missingMapKey,
@@ -11,8 +15,10 @@ import {
     unknownConfigPath,
     unsetConfigValue,
 } from "../config-edit";
+import { DecisionJournal } from "../decision-journal";
+import { type DecidedLine, decidedLines, itemLines, personPresent } from "../listen-answers";
 import { localSpeechDuring } from "../local-speech";
-import { OpenedMeeting } from "../opened-meeting";
+import { attendanceWarning, OpenedMeeting } from "../opened-meeting";
 import { compactEvidence, rawMeeting } from "../raw";
 import { screenTimeline } from "../screen-timeline";
 import { configShowRead, overviewRead, rowsRead, speakerStatsRead } from "../window-reads";
@@ -28,18 +34,228 @@ export async function readRows(
     params: MeetingsParsedParams<"meeting.rows">,
     store: MeetingStore,
     deps: MeetingsHandlerDeps
-): Promise<MeetingsResult<"meeting.rows">> {
+): Promise<
+    MeetingsResult<"meeting.rows"> & {
+        questionDetails?: QuestionDetails[];
+        lineEvidence?: WindowLineEvidence[];
+        attendanceWarning?: string;
+    }
+> {
     const record = recordOf(store, params.meeting);
     const linked = deps.linkedSource?.(record);
     const config = deps.config ? await deps.config() : undefined;
-    return rowsRead({
-        store,
-        record,
-        ...(linked ? { linked } : {}),
-        ...(config ? { minPriority: config.global.playback.listen.minPriority } : {}),
-        ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
-        ...(params.applyAbove === undefined ? {} : { applyAbove: params.applyAbove }),
+    const warning = attendanceWarning(record);
+    const result = {
+        ...(await rowsRead({
+            store,
+            record,
+            ...(linked ? { linked } : {}),
+            ...(config ? { minPriority: config.global.playback.listen.minPriority } : {}),
+            ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
+            ...(params.applyAbove === undefined ? {} : { applyAbove: params.applyAbove }),
+        })),
+        ...(warning ? { attendanceWarning: warning } : {}),
+    };
+    const opened = OpenedMeeting.of(store, record, linked);
+    const transcript = await opened.meeting().catch((error: unknown) => {
+        logger.debug({ error, meeting: record.id }, "question line data needs a readable transcript");
+        return undefined;
     });
+
+    if (!transcript) {
+        return result;
+    }
+
+    const lines = new TranscriptLines(transcript.transcript);
+    const questions = record.items.filter((item) => item.kind === "question");
+    const decidedById = new Map(
+        questions.map((question) => [question.id, decidedLines({ record, question, transcript: lines })])
+    );
+    const doubtKey = (question: (typeof questions)[number]) => {
+        if (question.about === "speaker" && question.signature) {
+            return SafeJSON.stringify([question.about, question.signature, question.evidence?.labels]);
+        }
+        if (question.about !== "speaker" && question.heard) {
+            return SafeJSON.stringify([question.about, question.heard.toLocaleLowerCase(), question.choices]);
+        }
+        return question.id;
+    };
+    const doubts = new Map<string, Set<number>>();
+    for (const question of questions.filter((one) => one.status === "suggested")) {
+        const key = doubtKey(question);
+        const indexes = doubts.get(key) ?? new Set<number>();
+        for (const line of decidedById.get(question.id) ?? []) {
+            indexes.add(line.index);
+        }
+        doubts.set(key, indexes);
+    }
+    const asked = new Set(questions.flatMap((question) => question.decides));
+    for (const item of record.items) {
+        if (
+            item.kind !== "speaker-range" ||
+            item.status !== "suggested" ||
+            asked.has(item.id) ||
+            typeof item.evidence?.signature !== "string"
+        ) {
+            continue;
+        }
+        const key = SafeJSON.stringify(["speaker", item.evidence.signature, [item.label]]);
+        const indexes = doubts.get(key) ?? new Set<number>();
+        for (const line of itemLines(item, lines)) {
+            indexes.add(line.index);
+        }
+        doubts.set(key, indexes);
+    }
+    const entries = new Map(new DecisionJournal({ store }).read(record.id).map((entry) => [entry.token, entry]));
+    const questionDetails = result.rows.flatMap((row): QuestionDetails[] => {
+        const question = questions.find((one) => one.id === row.id);
+        if (!question) {
+            return [];
+        }
+
+        const decided = decidedById.get(question.id) ?? [];
+        const sameLines = new Set([...(doubts.get(doubtKey(question)) ?? []), ...decided.map((line) => line.index)]);
+        const entry = question.decision && entries.get(question.decision.token);
+        const raised =
+            entry?.action.kind === "answer" && entry.question === question.id && !entry.revertedBy
+                ? entry.changes.flatMap((change) => {
+                      const after = change.after;
+                      return after &&
+                          !question.decides.includes(after.id) &&
+                          after.id !== question.id &&
+                          after.confidence !== undefined &&
+                          after.confidence > (change.before?.confidence ?? 0)
+                          ? after.kind === "question"
+                              ? decidedLines({ record, question: after, transcript: lines })
+                              : itemLines(after, lines)
+                          : [];
+                  })
+                : [];
+        return [
+            {
+                id: row.id,
+                decidedLines: decided,
+                impact: {
+                    lines: decided.length,
+                    words: decided.reduce((total, line) => total + line.text.trim().split(/\s+/u).length, 0),
+                    sameDoubtLines: sameLines.size,
+                },
+                ...(entry?.action.kind === "answer"
+                    ? {
+                          raisedLines: [...new Map(raised.map((line) => [line.index, line])).values()].sort(
+                              (a, b) => a.index - b.index
+                          ),
+                      }
+                    : {}),
+            },
+        ];
+    });
+    const facts = await Promise.all([opened.evidence(), opened.energy(), opened.presence()]).catch((error: unknown) => {
+        logger.debug({ error, meeting: record.id }, "line measurements unavailable for review rows");
+        return undefined;
+    });
+    const [evidence, energy, presence] = facts ?? [];
+    const atMic = [
+        ...(record.seats?.room ?? []),
+        ...record.participants.filter((person) => person.self).map((person) => person.name),
+        ...(evidence?.selfName ? [evidence.selfName] : []),
+    ];
+    const remoteKnown =
+        record.attendance !== undefined ||
+        record.seats !== undefined ||
+        record.participants.some((person) => !person.self && person.stays !== undefined);
+    const perLine = lineEvidence(
+        transcript.transcript,
+        evidence ?? { segments: [], speaking: [] },
+        presence,
+        energy?.share
+    ).map((line): WindowLineEvidence => {
+        const skipped = record.items
+            .filter((item) => {
+                const swap = item.evidence?.swap;
+                return (
+                    item.kind === "speaker-range" &&
+                    item.status !== "rejected" &&
+                    typeof swap === "object" &&
+                    swap !== null &&
+                    "skipped" in swap &&
+                    Array.isArray(swap.skipped) &&
+                    swap.skipped.includes(line.startSec) &&
+                    (!("selfLabel" in swap) ||
+                        swap.selfLabel === line.label ||
+                        ("otherLabel" in swap && swap.otherLabel === line.label))
+                );
+            })
+            .map((item) => item.id);
+        const remotePresent = record.seats
+            ? record.seats.remote.some(
+                  (person) =>
+                      line.startSec >= (person.fromSec ?? 0) &&
+                      (person.toSec === undefined || line.startSec < person.toSec) &&
+                      personPresent(record, person.name, line.startSec)
+              )
+            : presence?.some(
+                  (person) =>
+                      !person.self &&
+                      !atMic.some((name) => sameName(name, person.name)) &&
+                      line.startSec >= person.fromSec &&
+                      line.startSec < person.toSec
+              );
+        const microphone = line.energyMic ?? line.micShare;
+        const noRemote =
+            remoteKnown &&
+            remotePresent === false &&
+            (microphone === undefined || microphone < 0.5) &&
+            !atMic.some((name) => sameName(name, line.label));
+        return {
+            index: line.index,
+            startSec: line.startSec,
+            endSec: line.endSec,
+            ...(skipped.length ? { swapSkippedBy: skipped } : {}),
+            ...(noRemote ? { noRemotePresent: true } : {}),
+            ...(microphone === undefined ? {} : { micShare: microphone }),
+            ...(line.acoustic
+                ? {
+                      callRms: line.acoustic.callRms,
+                      echoOfCall: line.acoustic.echoOfCall,
+                      acousticQuality: line.acoustic.quality,
+                  }
+                : {}),
+        };
+    });
+    const measured = perLine.some(
+        (line) =>
+            line.swapSkippedBy !== undefined ||
+            line.noRemotePresent !== undefined ||
+            line.micShare !== undefined ||
+            line.callRms !== undefined ||
+            line.echoOfCall !== undefined
+    );
+    return {
+        ...result,
+        ...(questionDetails.length ? { questionDetails } : {}),
+        ...(measured ? { lineEvidence: perLine } : {}),
+    };
+}
+
+interface QuestionDetails {
+    id: string;
+    decidedLines: DecidedLine[];
+    impact: { lines: number; words: number; sameDoubtLines: number };
+    raisedLines?: DecidedLine[];
+}
+
+interface WindowLineEvidence {
+    index: number;
+    startSec: number;
+    endSec: number;
+    swapSkippedBy?: string[];
+    noRemotePresent?: true;
+    /** Clean energy share when measured, otherwise the share of microphone-tagged segments. */
+    micShare?: number;
+    callRms?: number;
+    echoOfCall?: number;
+    acousticQuality?: "linear-estimate" | "quiet" | "insufficient";
 }
 
 export async function readSpeakers(
