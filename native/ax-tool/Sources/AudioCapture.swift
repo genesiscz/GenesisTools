@@ -111,6 +111,48 @@ private func sampleBufferPeak(_ buffer: CMSampleBuffer) -> Float {
     return peak
 }
 
+typealias AudioRangeCopy = (CMSampleBuffer, CFRange) -> (status: OSStatus, buffer: CMSampleBuffer?)
+
+func copyAudioRange(_ buffer: CMSampleBuffer, _ range: CFRange) -> (status: OSStatus, buffer: CMSampleBuffer?) {
+    var copy: CMSampleBuffer?
+    let status = CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
+        sampleRange: range, sampleBufferOut: &copy)
+    if status == noErr, let copy { return (status, copy) }
+    // Some PCM buffers refuse CoreMedia's range copy. Copy each plane's frames, never a contiguous
+    // byte range across channels: ScreenCaptureKit's stereo output is non-interleaved.
+    let count = CMSampleBufferGetNumSamples(buffer)
+    guard range.location >= 0, range.length > 0, range.location <= count - range.length,
+          let format = CMSampleBufferGetFormatDescription(buffer),
+          let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+          description.mFormatID == kAudioFormatLinearPCM, description.mSampleRate > 0 else { return (status, nil) }
+    let list = AudioBufferList.allocate(maximumBuffers: Int(description.mChannelsPerFrame))
+    defer { free(list.unsafeMutablePointer) }
+    var block: CMBlockBuffer?
+    guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(buffer, bufferListSizeNeededOut: nil,
+        bufferListOut: list.unsafeMutablePointer,
+        bufferListSize: MemoryLayout<AudioBufferList>.size + max(0, list.count - 1) * MemoryLayout<AudioBuffer>.size,
+        blockBufferAllocator: kCFAllocatorDefault, blockBufferMemoryAllocator: kCFAllocatorDefault,
+        flags: 0, blockBufferOut: &block) == noErr else { return (status, nil) }
+    for index in list.indices {
+        let bytes = Int(list[index].mDataByteSize) / count
+        guard bytes > 0, let data = list[index].mData else { return (status, nil) }
+        list[index].mData = data.advanced(by: range.location * bytes)
+        list[index].mDataByteSize = UInt32(range.length * bytes)
+    }
+    var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(description.mSampleRate)),
+        presentationTimeStamp: CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer),
+            CMTime(seconds: Double(range.location) / description.mSampleRate, preferredTimescale: 1_000_000_000)),
+        decodeTimeStamp: .invalid)
+    guard CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: nil, dataReady: false,
+        makeDataReadyCallback: nil, refcon: nil, formatDescription: format, sampleCount: range.length,
+        sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil,
+        sampleBufferOut: &copy) == noErr, let copy,
+        CMSampleBufferSetDataBufferFromAudioBufferList(copy, blockBufferAllocator: kCFAllocatorDefault,
+            blockBufferMemoryAllocator: kCFAllocatorDefault, flags: 0,
+            bufferList: list.unsafeMutablePointer) == noErr else { return (status, nil) }
+    return (noErr, copy)
+}
+
 /// The same audio timing and format, all samples zero: muting keeps the timeline instead of leaving a gap.
 func silentCopy(_ buffer: CMSampleBuffer, samples: Int? = nil, at: CMTime? = nil) -> CMSampleBuffer? {
     guard let format = CMSampleBufferGetFormatDescription(buffer), let data = CMSampleBufferGetDataBuffer(buffer) else { return nil }
@@ -164,6 +206,7 @@ final class AudioTrack {
     var muted = false
     var peak: Float = 0
     var first: CMTime?
+    var zeroAt: String?
     var end: CMTime?
     var buffers = 0
     var movieAppends = 0
@@ -178,6 +221,7 @@ final class AudioTrack {
     // The writer operations are replaceable so refusal is reproducible with generated PCM, without a device.
     var sidecarReady: (AVAssetWriterInput) -> Bool = { $0.isReadyForMoreMediaData }
     var sidecarAppend: (AVAssetWriterInput, CMSampleBuffer) -> Bool = { $0.append($1) }
+    var rangeCopy: AudioRangeCopy = copyAudioRange
     var sidecarFailed: Bool { sidecarStartFailed || sidecar?.status == .failed }
     var lostSpans: [[Int]] {
         losses.map { [Int(($0.start * 1000).rounded()), Int(($0.end * 1000).rounded())] }
@@ -228,10 +272,17 @@ final class AudioTrack {
         if delta < -0.005 {
             let skip = min(count, Int((-delta * rate).rounded()))
             guard skip < count else { return }
-            var trimmed: CMSampleBuffer?
-            guard CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
-                sampleRange: CFRange(location: skip, length: count - skip), sampleBufferOut: &trimmed) == noErr,
-                  let trimmed else { return }
+            let copy = rangeCopy(buffer, CFRange(location: skip, length: count - skip))
+            guard copy.status == noErr, let trimmed = copy.buffer else {
+                let category = "the \(source.rawValue) sidecar could not trim overlapping audio:"
+                let before = failures.count
+                appendCaptureFailure("\(category) range copy status \(copy.status); missing samples are kept as silence",
+                    category: category, to: &failures)
+                if failures.count > before, let message = failures.last {
+                    CaptureEvents.emit(["event": "warning", "message": message])
+                }
+                return
+            }
             samples = trimmed
         }
         _ = writeSidecar(samples, rate: rate, lost: false)

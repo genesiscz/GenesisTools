@@ -22,8 +22,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private let outputLock = NSLock()
     private let directory: URL
     private let segmentSeconds: Double
-    private let epoch: Date
-    private let hostTime: CMTime
+    private let clock: () -> (host: CMTime, wall: Date)
     private var tracks: [CaptureAudioSource: AudioTrack] = [:]
     private var announced: Set<CaptureAudioSource> = []
     private var encoderPriming: [CaptureAudioSource: UInt32] = [:]
@@ -34,20 +33,24 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private var closed = false
     var failed: ((String) -> Void)?
     private let emit: ((Data) -> Void)?
+    var rangeCopy: AudioRangeCopy = copyAudioRange
 
     init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil,
-         clock: (host: CMTime, wall: Date)? = nil) {
+         muted: [CaptureAudioSource] = [], paused: Bool = false,
+         clock: (() -> (host: CMTime, wall: Date))? = nil) {
         self.directory = directory
         self.emit = emit
         segmentSeconds = seconds
-        hostTime = clock?.host ?? CMClockGetTime(CMClockGetHostTimeClock())
-        epoch = clock?.wall ?? Date()
+        self.muted = Dictionary(uniqueKeysWithValues: muted.map { ($0, true) })
+        self.paused = paused
+        self.clock = clock ?? { (CMClockGetTime(CMClockGetHostTimeClock()), Date()) }
     }
 
     private func wallTime(_ time: CMTime) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: epoch.addingTimeInterval(CMTimeGetSeconds(CMTimeSubtract(time, hostTime))))
+        let anchor = clock()
+        return formatter.string(from: anchor.wall.addingTimeInterval(CMTimeGetSeconds(CMTimeSubtract(time, anchor.host))))
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -77,6 +80,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         }
         while offset < count && !closed {
             let time = CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer), CMTime(seconds: Double(offset) / rate, preferredTimescale: 1_000_000_000))
+            let opening = tracks[source] == nil
             let track: AudioTrack
             if let open = tracks[source] {
                 track = open
@@ -87,6 +91,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                 track = AudioTrack(source: source, movieInput: nil, sidecarURL: directory.appendingPathComponent(file))
                 track.fragmentInterval = CMTime(seconds: 1, preferredTimescale: 48_000)
                 track.first = time
+                track.zeroAt = wallTime(time)
                 tracks[source] = track
             }
             let elapsed = CMTimeGetSeconds(CMTimeSubtract(time, track.first ?? time))
@@ -97,20 +102,21 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                 // The whole buffer goes through untouched: no copy can fail.
                 part = buffer
             } else {
-                var cut: CMSampleBuffer?
-                if CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
-                        sampleRange: CFRange(location: offset, length: length), sampleBufferOut: &cut) == noErr,
-                   let cut {
+                let copy = rangeCopy(buffer, CFRange(location: offset, length: length))
+                if copy.status == noErr, let cut = copy.buffer {
                     part = cut
                 } else if offset == 0 {
-                    // ScreenCaptureKit's planar buffers of the system sound refuse a range copy (seen 2026-11-17:
-                    // it stopped the whole recording). The buffer stays whole, and the segment ends at its end:
-                    // at most one buffer longer than `segmentSeconds`. The next segment starts at that end.
+                    // A buffer that refuses both copies stays whole, at most one buffer beyond the boundary.
                     part = buffer
                     length = count
                 } else {
-                    // The start of this buffer repeats the last segment and cannot be cut off: drop the buffer.
-                    // The writer fills its time with silence and reports it as lost, so the timeline stays right.
+                    if opening && track.fileTimeline.seconds == 0 {
+                        tracks[source] = nil
+                        sequence[source] = max(0, (sequence[source] ?? 1) - 1)
+                    }
+                    // An established writer fills the missing time. A still empty track must take its zero
+                    // from the next accepted buffer, since no file sample exists at this buffer's time.
+                    CaptureEvents.emit(["event": "warning", "message": "could not trim \(source.rawValue) segment overlap: range copy status \(copy.status)"])
                     return
                 }
             }
@@ -133,7 +139,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             if track.fileTimeline.durationMs > 0, !announced.contains(source), let url = track.sidecarURL {
                 announced.insert(source)
                 var row: [String: Any] = ["event": "segment-started", "file": url.lastPathComponent,
-                    "source": source.rawValue, "zeroAt": wallTime(track.first ?? time)]
+                    "source": source.rawValue, "zeroAt": track.zeroAt ?? wallTime(track.first ?? time)]
                 if encoderPriming[source] == nil {
                     encoderPriming[source] = sessionEncoderPrimingFrames(settings: aacSettings(channels: audioChannelCount(source)))
                 }
@@ -159,7 +165,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         guard let track = tracks.removeValue(forKey: source), let first = track.first else { return }
         announced.remove(source)
         retiredEnd[source] = track.end
-        let zeroAt = wallTime(first)
+        let zeroAt = track.zeroAt ?? wallTime(first)
         finishing.enter()
         DispatchQueue.global(qos: .utility).async { [self] in
             defer { finishing.leave() }
@@ -230,16 +236,19 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
     let sources: [CaptureAudioSource]
     let configuration: SCStreamConfiguration
     var stream: SCStream?
-    private var muted: [String: Bool] = ["mic": false, "system": false]
-    private var paused = false
+    private var muted: [String: Bool]
+    private var paused: Bool
     private var stopping = false
     private var failed = false
     private var signals: [DispatchSourceSignal] = []
 
-    init(audio: SegmentedAudio, sources: [CaptureAudioSource], configuration: SCStreamConfiguration) {
+    init(audio: SegmentedAudio, sources: [CaptureAudioSource], configuration: SCStreamConfiguration,
+         muted: [CaptureAudioSource], paused: Bool) {
         self.audio = audio
         self.sources = sources
         self.configuration = configuration
+        self.muted = ["mic": muted.contains(.mic), "system": muted.contains(.system)]
+        self.paused = paused
         super.init()
         audio.failed = { [weak self] message in
             DispatchQueue.main.async {
@@ -369,6 +378,16 @@ func cmdAudioRecord() {
     case .success(let parsed): sources = parsed
     case .failure(let error): errorExit(error.message, code: "invalid-argument")
     }
+    let muted: [CaptureAudioSource]
+    if let value = argValue("--muted") {
+        switch parseAudioSources(value) {
+        case .success(let parsed): muted = parsed
+        case .failure(let error): errorExit(error.message, code: "invalid-argument")
+        }
+    } else {
+        muted = []
+    }
+    let paused = CommandLine.arguments.contains("--paused")
     if sources.contains(.mic) {
         if #unavailable(macOS 15.0) {
             sources.removeAll { $0 == .mic }
@@ -398,8 +417,8 @@ func cmdAudioRecord() {
         let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
         guard let display = content.displays.first else { errorExit("audio-record found no shareable display") }
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        let audio = SegmentedAudio(directory: directory, seconds: seconds)
-        let host = AudioSessionHost(audio: audio, sources: sources, configuration: configuration)
+        let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused)
+        let host = AudioSessionHost(audio: audio, sources: sources, configuration: configuration, muted: muted, paused: paused)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: host)
         host.stream = stream
         if sources.contains(.system) { try stream.addStreamOutput(audio, type: .audio, sampleHandlerQueue: audio.queue) }

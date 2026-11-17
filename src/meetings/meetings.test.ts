@@ -5084,6 +5084,7 @@ test("native sound mode and each fallback reach live status, the meeting record 
             "--fixture-audio-session-dies-later",
             "the system writer stopped accepting samples; the sound session already restarted within the last minute",
         ],
+        ["session", "--fixture-audio-session-restart-fails", "could not split system audio at the segment boundary"],
         ["session", "--fixture-no-audio-session", "the native recorder has no audio-record command"],
     ] as const) {
         const customHome = mkdtempSync(join(tmpdir(), "meeting-sound-status-"));
@@ -5105,10 +5106,6 @@ test("native sound mode and each fallback reach live status, the meeting record 
 
                 override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
                     const piece = requests.push(request);
-                    if (piece === 2 && fixture === "--fixture-audio-session-dies-later") {
-                        await Bun.sleep(400);
-                    }
-
                     const controller = new AbortController();
                     const abort = () => controller.abort();
                     signal?.addEventListener("abort", abort, { once: true });
@@ -5124,9 +5121,16 @@ test("native sound mode and each fallback reach live status, the meeting record 
                                     ...request.hooks,
                                     onFrame: (frame) => {
                                         request.hooks?.onFrame?.(frame);
-                                        if (piece < 3) {
+                                        if (
+                                            piece < 3 &&
+                                            !(
+                                                piece === 2 &&
+                                                (fixture === "--fixture-audio-session-dies-later" ||
+                                                    fixture === "--fixture-audio-session-restart-fails")
+                                            )
+                                        ) {
                                             controller.abort();
-                                        } else {
+                                        } else if (piece >= 3) {
                                             thirdFrame.resolve();
                                         }
                                     },
@@ -5177,7 +5181,12 @@ test("native sound mode and each fallback reach live status, the meeting record 
                 // A session that dies while it records is started again once (P16d decision 2); one that never
                 // starts, or a tool with no session, falls back at once.
                 expect(recorder.sessionStarts).toBe(
-                    mode === "pieces" ? 0 : fixture === "--fixture-audio-session-dies-later" ? 2 : 1
+                    mode === "pieces"
+                        ? 0
+                        : fixture === "--fixture-audio-session-dies-later" ||
+                            fixture === "--fixture-audio-session-restart-fails"
+                          ? 2
+                          : 1
                 );
                 expect(sound).toEqual(
                     reason
@@ -5217,7 +5226,10 @@ test("native sound mode and each fallback reach live status, the meeting record 
                 expect(saved?.recording?.warning).toBe(last.warning);
                 // One note per restart and one per fall back (P16d decision 2).
                 expect(saved?.recording?.warning?.match(/The continuous sound stopped at/g)).toHaveLength(
-                    fixture === "--fixture-audio-session-dies-later" ? 2 : 1
+                    fixture === "--fixture-audio-session-dies-later" ||
+                        fixture === "--fixture-audio-session-restart-fails"
+                        ? 2
+                        : 1
                 );
                 expect(saved?.recording?.warning).toContain(reason);
             } else {

@@ -944,6 +944,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 folder: this.config.live.folder,
                 outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
                 request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
+                muted: this.sound.sources.filter((source) => this.sound.muted[source]),
+                paused: this.paused,
                 signal: this.soundAbort.signal,
                 onSegment: (segment) => hooks.onAudioSegment?.(segment),
                 onWarning: (warning) => this.soundWarning(warning),
@@ -968,14 +970,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             });
             candidate = session;
             if (session) {
-                for (const source of session.sources) {
-                    if (this.sound.muted[source]) {
-                        await session.mute(source, true);
-                    }
-                }
-                if (this.paused) {
-                    await session.pause();
-                }
                 this.soundAbort.signal.throwIfAborted();
                 if (session.failureReason) {
                     throw session.failureReason;
@@ -1023,6 +1017,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         const now = new Date();
         const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
         this.currentSoundPath = { path: "pieces", since: now.toISOString(), reason };
+        if (this.phase === "recording") {
+            this.captures.abortAll();
+        }
         this.config.hooks.onSoundPath?.(this.currentSoundPath);
         this.soundWarning(
             `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; up to 5 seconds are missing every 30 seconds.`
