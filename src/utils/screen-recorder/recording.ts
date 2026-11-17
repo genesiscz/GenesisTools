@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { type JobInfo, JobRegistry, type JobStep } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
-import { type AudioSegment, type AudioSession, recordsAudioSession } from "./audio-session";
 import {
     type AudioDevices,
     type AudioSource,
@@ -192,9 +190,6 @@ export interface RecorderControlsConfig {
 }
 
 export interface RecorderHooks {
-    /** A closed continuous sound file has been kept in the recording's audio ledger. */
-    onAudioSegment?: (segment: AudioSegment) => void;
-    onAudioWarning?: (warning: string) => void;
     /** Before the first piece, once the socket listens; a throw ends the recording (`onError`). */
     beforeLoop?: () => Promise<void> | void;
     /** After the last piece, before the finish. */
@@ -343,10 +338,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private readonly completed = Promise.withResolvers<StopAnswer>();
     private current: RecorderSettings;
     private sound: AudioState;
-    private soundSession?: AudioSession;
-    private startingSound?: Promise<void>;
-    private readonly soundAbort = new AbortController();
-    private readonly soundNotes: string[] = [];
     private readonly marked: RecordingMarker[] = [];
     protected readonly config: RecorderConfig<S>;
 
@@ -383,10 +374,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             // A muted source is left out of a new capture, so its start-up buffers never reach the file; unmuting
             // restarts the captures with it. A capture without the microphone gets no microphone device either.
             audio: () => {
-                if (this.soundSession) {
-                    return undefined;
-                }
-
                 const sources = this.sound.sources.filter((source) => !this.sound.muted[source]);
                 const micDevice = sources.includes("mic") ? this.sound.micDevice : undefined;
                 return config.recorder.supports.audio && sources.length > 0
@@ -593,8 +580,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             throw new RpcError(RPC_ERRORS.alreadyPaused, "the recording is already paused");
         }
 
-        await this.startingSound;
-        await this.soundSession?.pause();
         const at = new Date().toISOString();
         this.phase = "paused";
         // A capture with a live channel pauses in place; any other ends its piece.
@@ -609,8 +594,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
         }
 
-        await this.startingSound;
-        await this.soundSession?.resume();
         this.phase = "recording";
         this.captures.resume();
         this.update({ state: "recording" });
@@ -639,7 +622,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         this.phase = "stopping";
         this.update({ state: "stopping" });
         this.captures.abortAll();
-        this.soundAbort.abort();
         this.backoff.abort();
         this.wake?.();
 
@@ -712,19 +694,12 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
     override async muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
         this.refuseWhileStopping();
-        await this.startingSound;
 
         if (!this.sound.sources.includes(source)) {
             throw new RpcError(this.config.controls.unrecordedSource, `this recording records no ${source} sound`);
         }
 
         if (this.sound.muted[source] === muted) {
-            return this.audio;
-        }
-
-        if (this.soundSession) {
-            await this.soundSession.mute(source, muted);
-            this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: muted } };
             return this.audio;
         }
 
@@ -763,7 +738,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
     override async setAudioInput(deviceId: string): Promise<AudioState> {
         this.refuseWhileStopping();
-        await this.startingSound;
 
         if (!this.sound.sources.includes("mic")) {
             throw new RpcError(this.config.controls.unrecordedSource, "this recording records no microphone");
@@ -773,12 +747,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
         if (!devices.inputs.some((device) => device.id === deviceId)) {
             throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
-        }
-
-        if (this.soundSession) {
-            await this.soundSession.setMic(deviceId);
-            this.sound = { ...this.sound, micDevice: deviceId };
-            return this.audio;
         }
 
         const owners = [...this.captures.running.values()].filter((one) => one.audio);
@@ -881,60 +849,6 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         return this.session;
     }
 
-    private async startSound(): Promise<void> {
-        const { recorder, hooks } = this.config;
-
-        if (!recorder.supports.audio || this.sound.sources.length === 0 || this.stopRequested) {
-            return;
-        }
-
-        if (recordsAudioSession(recorder)) {
-            this.soundSession = await recorder.startAudioSession({
-                folder: this.config.live.folder,
-                outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
-                request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
-                signal: this.soundAbort.signal,
-                onSegment: (segment) => hooks.onAudioSegment?.(segment),
-                onWarning: (warning) => this.soundWarning(warning),
-                onFailure: (error) => {
-                    this.soundWarning(error.message);
-                    hooks.onError?.(error);
-                    this.requestStop();
-                },
-            });
-        }
-
-        if (!this.soundSession) {
-            this.soundWarning("continuous sound is unavailable; sound stays in the frame pieces");
-            return;
-        }
-
-        this.soundAbort.signal.throwIfAborted();
-
-        this.sound = { ...this.sound, sources: [...this.soundSession.sources] };
-
-        for (const source of this.sound.sources) {
-            if (this.sound.muted[source]) {
-                await this.soundSession.mute(source, true);
-            }
-        }
-
-        if (this.paused) {
-            await this.soundSession.pause();
-        }
-    }
-
-    private soundWarning(warning: string): void {
-        if (this.soundNotes.includes(warning)) {
-            return;
-        }
-
-        this.soundNotes.push(warning);
-        log.warn({ id: this.config.live.id, warning }, "recording sound warning");
-        this.update({ warning });
-        this.config.hooks.onAudioWarning?.(warning);
-    }
-
     private async run(): Promise<void> {
         const { hooks } = this.config;
         const onSignal = () => this.requestStop();
@@ -947,21 +861,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         try {
             await hooks.beforeLoop?.();
             await this.managed().ready();
-            this.startingSound = this.startSound();
-            await this.startingSound;
             await this.capturePieces();
         } catch (error) {
             log.debug({ error, id: this.config.live.id }, "the recording's capture loop ended on an error");
-            if (!(this.stopRequested && error instanceof Error && error.name === "AbortError")) {
-                hooks.onError?.(error);
-            }
+            hooks.onError?.(error);
         } finally {
-            try {
-                await this.soundSession?.stop();
-            } catch (error) {
-                hooks.onError?.(error);
-            }
-
             this.ended = true;
             this.phase = "stopping";
             this.update({ state: "stopping" });
@@ -1089,12 +993,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             id: this.finishJob,
             initial: finish.initial,
             steps: [...waitForCaptures, ...finish.steps],
-            answer: (state, job) => {
-                const answer = finish.answer(state, job);
-                return this.soundNotes.length > 0
-                    ? { ...answer, notes: [...new Set([...(answer.notes ?? []), ...this.soundNotes])] }
-                    : answer;
-            },
+            answer: finish.answer,
             failed: finish.failed,
             close: () => this.session?.live.close(finish.closeReason()),
             closeAfterMs: finish.closeAfterMs,
