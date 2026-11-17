@@ -1,8 +1,13 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { protectsMeetingSourceAudio } from "@genesiscz/utils/meetings/source-audio-paths";
 import * as removal from "@genesiscz/utils/rm";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { capturesToPrune, pruneCapturesDaily, trashWithRm } from "./retention";
 
@@ -63,6 +68,55 @@ describe("capture retention", () => {
         ]);
     });
 
+    test("recorded sound stays while audioRetentionDays is unset, and goes after its own newest file when set", () => {
+        const store = fresh();
+        const id = "2026-09-01_10-00-sound";
+        meetingWithCaptures(store, id, 60);
+        const folder = store.folder(id);
+        const audio = join(folder, "audio");
+        mkdirSync(audio);
+        writeFileSync(join(audio, "piece-mic.m4a"), "audio fixture");
+        writeFileSync(join(folder, "audio.jsonl"), "{}\n");
+        const old = new Date(now - 60 * DAY_MS);
+
+        for (const path of [join(audio, "piece-mic.m4a"), audio, join(folder, "audio.jsonl")]) {
+            utimesSync(path, old, old);
+        }
+
+        const kept = capturesToPrune(store, { days: 30, now })[0]?.paths ?? [];
+        expect(kept.map((path) => relative(folder, path))).toEqual(["frames", "ocr.jsonl"]);
+        expect(kept.some((path) => path.startsWith(audio))).toBe(false);
+        expect(capturesToPrune(store, { days: 30, audioDays: 90, now })[0]?.paths).toEqual([
+            join(folder, "frames"),
+            join(folder, "ocr.jsonl"),
+        ]);
+        expect(capturesToPrune(store, { days: 30, audioDays: 30, now })[0]?.paths).toEqual([
+            join(folder, "frames"),
+            join(folder, "ocr.jsonl"),
+            audio,
+            join(folder, "audio.jsonl"),
+        ]);
+    });
+
+    test("cleanup presets leave a meeting's recorded sound alone until audioRetentionDays is set", async () => {
+        const home = mkdtempSync(join(tmpdir(), "sound-protect-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const meeting = toolDataDir("meetings", "2026-11-01_10-00-sound");
+            const configPath = toolDataDir("meetings", "config.json");
+            mkdirSync(join(meeting, "audio"), { recursive: true });
+            writeFileSync(join(meeting, "audio", "piece-mic.m4a"), "audio fixture");
+            writeFileSync(join(meeting, "audio.jsonl"), "{}\n");
+            mkdirSync(join(meeting, "frames"));
+            expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(true);
+            expect(protectsMeetingSourceAudio(join(meeting, "audio", "piece-mic.m4a"))).toBe(true);
+            expect(protectsMeetingSourceAudio(join(meeting, "audio.jsonl"))).toBe(true);
+            expect(protectsMeetingSourceAudio(join(meeting, "frames"))).toBe(false);
+            writeFileSync(configPath, SafeJSON.stringify({ global: { capture: { audioRetentionDays: 60 } } }));
+            expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(false);
+            expect(protectsMeetingSourceAudio(join(meeting, "source-audio"))).toBe(true);
+        });
+    });
+
     test("audio-only captures expire using the newest audio file timestamp", () => {
         const store = fresh();
         const id = "audio-only";
@@ -78,10 +132,11 @@ describe("capture retention", () => {
         utimesSync(ledger, old, old);
         utimesSync(audio, old, old);
         utimesSync(track, recent, recent);
-        expect(capturesToPrune(store, { days: 30, now })).toEqual([]);
+        expect(capturesToPrune(store, { days: 30, audioDays: 30, now })).toEqual([]);
         utimesSync(track, old, old);
-        expect(capturesToPrune(store, { days: 30, now })[0]?.paths).toEqual([audio, ledger]);
-        expect(capturesToPrune(store, { days: 30, now, skip: id })).toEqual([]);
+        expect(capturesToPrune(store, { days: 30, now })).toEqual([]);
+        expect(capturesToPrune(store, { days: 30, audioDays: 30, now })[0]?.paths).toEqual([audio, ledger]);
+        expect(capturesToPrune(store, { days: 30, audioDays: 30, now, skip: id })).toEqual([]);
     });
 
     test("an unreadable audio folder stops the pass instead of pruning on partial evidence", () => {
@@ -95,7 +150,7 @@ describe("capture retention", () => {
         chmodSync(audio, 0o000);
 
         try {
-            expect(() => capturesToPrune(store, { days: 30, now })).toThrow();
+            expect(() => capturesToPrune(store, { days: 30, audioDays: 30, now })).toThrow();
         } finally {
             chmodSync(audio, 0o755);
         }
