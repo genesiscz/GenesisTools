@@ -16,7 +16,9 @@ import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { wisprLocalAudio } from "@app/wisprflow/lib/source-audio";
 import { withTimeout } from "@genesiscz/utils/async";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -48,6 +50,7 @@ import {
     RPC_ERRORS,
     type RpcError,
 } from "@genesiscz/utils/screen-recorder/live";
+import { NativeFrameRecorder } from "@genesiscz/utils/screen-recorder/native";
 import { pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
     CaptureError,
@@ -66,7 +69,9 @@ import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import * as transcribeTerms from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
+import { Command } from "commander";
 import { z } from "zod";
+import { registerRecordCommands } from "./commands/record";
 import { claimWatcher } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
@@ -5068,6 +5073,149 @@ test("characterization (stage 5): a live recorder's claim is refused and left as
     expect(readFileSync(files.pid, "utf8")).toBe(before);
     expect(existsSync(files.state)).toBe(false);
 });
+
+test("native sound mode and each fallback reach live status, the meeting record and recorder-last.json", async () => {
+    for (const [mode, fixture, reason] of [
+        ["pieces", "--fixture-audio-three", undefined],
+        ["session", "--fixture-audio-three", undefined],
+        ["session", "--fixture-audio-session-dies-at-start", "could not split system audio at the segment boundary"],
+        ["session", "--fixture-audio-session-dies-later", "the system writer stopped accepting samples"],
+        ["session", "--fixture-no-audio-session", "the native recorder has no audio-record command"],
+    ] as const) {
+        const customHome = mkdtempSync(join(tmpdir(), "meeting-sound-status-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: customHome }, async () => {
+            const store = new MeetingStore();
+            const record = await store.create(
+                { title: "Sound fixture", start: meeting.start, createdBy: "record" },
+                { command: "test", change: "fixture" }
+            );
+            const thirdFrame = Promise.withResolvers<void>();
+            const requests: CaptureRequest[] = [];
+            class FixtureRecorder extends NativeFrameRecorder {
+                sessionStarts = 0;
+
+                override startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+                    this.sessionStarts += 1;
+                    return super.startAudioSession(options);
+                }
+
+                override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+                    const piece = requests.push(request);
+                    if (piece === 2 && fixture === "--fixture-audio-session-dies-later") {
+                        await Bun.sleep(400);
+                    }
+
+                    const controller = new AbortController();
+                    const abort = () => controller.abort();
+                    signal?.addEventListener("abort", abort, { once: true });
+                    if (signal?.aborted) {
+                        abort();
+                    }
+
+                    try {
+                        return await super.capture(
+                            {
+                                ...request,
+                                hooks: {
+                                    ...request.hooks,
+                                    onFrame: (frame) => {
+                                        request.hooks?.onFrame?.(frame);
+                                        if (piece < 3) {
+                                            controller.abort();
+                                        } else {
+                                            thirdFrame.resolve();
+                                        }
+                                    },
+                                },
+                            },
+                            controller.signal
+                        );
+                    } finally {
+                        signal?.removeEventListener("abort", abort);
+                    }
+                }
+            }
+
+            const recorder = new FixtureRecorder({
+                axTool: async () => [
+                    process.execPath,
+                    join(moduleDir(import.meta), "../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),
+                    fixture,
+                ],
+                launch: (argv) => argv,
+            });
+            const capture = meetingsConfigSchema.parse({
+                global: { capture: { displays: "main", recorders: { native: { audio: { mode } } } } },
+            }).global.capture;
+            const running = runRecorder({
+                store,
+                meetingId: record.id,
+                capture,
+                deps: {
+                    recorder,
+                    pieceSec: 1,
+                    startOcr: () => undefined,
+                    toJpeg: async (_png, jpg) => {
+                        await Bun.write(jpg, "jpeg");
+                    },
+                    notify: async () => {
+                        throw new Error("sound fallback must not send a notification");
+                    },
+                },
+            });
+            const dim = spyOn(ui, "dim").mockImplementation(() => undefined);
+            const result = spyOn(out, "result").mockImplementation(() => undefined);
+            try {
+                await withTimeout(thirdFrame.promise, 5000, new Error(`missing third piece for ${fixture}`));
+                const current = readRecorderState(store);
+                const sound = current.state?.sound;
+                expect(current.running).toBe(true);
+                expect(recorder.sessionStarts).toBe(mode === "pieces" ? 0 : 1);
+                expect(sound).toEqual(
+                    reason
+                        ? { path: "pieces", since: expect.any(String), reason }
+                        : mode === "session"
+                          ? { path: "session", sources: ["mic", "system"] }
+                          : { path: "pieces" }
+                );
+                const program = () => {
+                    const command = new Command();
+                    registerRecordCommands(command);
+                    return command;
+                };
+                await program().parseAsync(["record", "status"], { from: "user" });
+                const expected =
+                    sound?.path === "session"
+                        ? "Sound: continuous session (mic, system)"
+                        : sound?.since && reason
+                          ? `Sound: inside the screen pieces since ${new Date(sound.since).toTimeString().slice(0, 5)}, the continuous session stopped: ${reason}`
+                          : "Sound: inside the screen pieces (the setting)";
+                expect(dim.mock.calls.flat()).toContain(expected);
+                await program().parseAsync(["record", "status", "--json"], { from: "user" });
+                expect(SafeJSON.parse(String(result.mock.calls.at(-1)?.[0]))).toMatchObject({ state: { sound } });
+                expect(requests.at(-1)?.audio?.sources).toEqual(
+                    mode === "session" && !reason ? undefined : ["mic", "system"]
+                );
+            } finally {
+                dim.mockRestore();
+                result.mockRestore();
+                await callRecorder({ id: meetingLiveId(record.id), method: "stop" });
+                await running;
+            }
+            const last = SafeJSON.parse(readFileSync(join(store.folder(record.id), "recorder-last.json"), "utf8"));
+            const saved = new MeetingStore().read(record.id);
+            if (reason) {
+                expect(last).toMatchObject({ sound: { path: "pieces", reason, since: expect.any(String) } });
+                expect(saved?.recording?.warning).toBe(last.warning);
+                expect(saved?.recording?.warning?.match(/The continuous sound stopped at/g)).toHaveLength(1);
+                expect(saved?.recording?.warning).toContain(reason);
+            } else {
+                expect(last.warning).toBeUndefined();
+                expect(saved?.recording?.warning).toBeUndefined();
+            }
+        });
+    }
+}, 30_000);
 
 test("a recycled pid's claim and an unreadable pid file are both taken over, as the daemon and chrome-devtools do", async () => {
     const store = new MeetingStore(new Storage("recorder-claim-kinds"));
