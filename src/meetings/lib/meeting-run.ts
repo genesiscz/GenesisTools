@@ -15,6 +15,7 @@ import {
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
+import type { AudioSegment } from "@genesiscz/utils/screen-recorder/audio-session";
 import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -31,7 +32,7 @@ import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
 /** How ax-tool names a capture's sound file. */
-const SALVAGED_TRACK = /^audio-(mic|system)\.m4a$/;
+const SALVAGED_TRACK = /^audio-(?:\d+-)?(mic|system)\.m4a$/;
 
 /**
  * One run of the meetings recorder: the meeting's folder and record, its spans, the recorder state file and the
@@ -267,12 +268,18 @@ export class MeetingRun {
                 at: at.toISOString(),
                 durationMs: track.durationMs,
                 mutedSpans: track.mutedSpans,
+                ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
                 ...(track.startOffsetMs !== undefined
                     ? { zeroAt: new Date(result.startedAtMs + track.startOffsetMs).toISOString() }
                     : {}),
             });
             this.audioFiles += 1;
         }
+    }
+
+    /** The engine has already moved and indexed a closed continuous sound segment. */
+    keptSound(_segment: AudioSegment): void {
+        this.audioFiles += 1;
     }
 
     /**
