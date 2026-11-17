@@ -6653,6 +6653,7 @@ test("raw facts expose indicator gaps, prehistory, indicator-only people and unk
     expect(raw.meeting.labels?.[0]).toMatchObject({ firstOwnIndicatorSec: 120, fromSec: 0, toSec: 110, lines: 12 });
     expect(raw.meeting.indicatorGaps?.some((gap) => gap.toSec - gap.fromSec >= 60)).toBe(true);
     expect(raw.people.find((person) => person.name === "Carol Example")?.origin).toBe("indicator");
+    expect(raw.people.find((person) => person.name === "Bob Example")?.origin).toBe("indicator");
     const compact = compactEvidence(raw);
     expect(compact.split("\n")).toHaveLength(transcript.length + 1);
     expect(compact).toContain("|e?|s[");
