@@ -15,6 +15,7 @@ import {
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { type AppStatus, appStatus } from "./app";
 import { type PermissionKindId, parsePermissionStatusLines, permissionStatusLabel } from "./kinds";
+import { currentLinkRoute, type LinkRoute, linkRouteProblem } from "./links";
 import {
     type LocalNetworkAnswer,
     localNetworkAnswer,
@@ -62,6 +63,8 @@ export interface PermissionsReport {
     launchdJobsOutsideApp: string[];
     /** the settings window's "Route tools through this app" switch is off */
     disabledByMarker: boolean;
+    /** which running instance macOS hands links to (links.ts); null when the app is not built */
+    links: LinkRoute | null;
     userDb: Pick<TccReadResult, "readable" | "error">;
     systemDb: Pick<TccReadResult, "readable" | "error">;
     problems: string[];
@@ -246,6 +249,12 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
         );
     }
 
+    const linkProblem = report.links ? linkRouteProblem(report.links) : null;
+
+    if (linkProblem) {
+        problems.push(linkProblem);
+    }
+
     return problems;
 }
 
@@ -262,6 +271,7 @@ export function permissionsReport(): PermissionsReport {
         oldBuilds: app.built ? oldBuildsInUse(app.launcherPath, lanRules) : [],
         launchdJobsOutsideApp: app.built ? launchdJobsOutsideApp(app.launcherPath) : [],
         disabledByMarker: isGenesisAppDisabledByMarker(),
+        links: app.built ? currentLinkRoute() : null,
         userDb: { readable: user.readable, error: user.error },
         systemDb: { readable: system.readable, error: system.error },
     };

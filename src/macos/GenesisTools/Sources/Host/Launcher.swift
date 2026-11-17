@@ -152,7 +152,18 @@ func waitAndExit(_ pid: pid_t, run: LauncherFailures.Run? = nil) -> Never {
     exit((status >> 8) & 0xff)
 }
 
-/// A launcher owns TCC attribution, but must not compete with a window in System Events.
+/// Only a helper face (`--rpc`, `--mic`, `--capsule`, the permission faces) marks itself a background helper, so it
+/// does not compete with a window in System Events. A launcher run (`GenesisTools <program>`) never does:
+/// TransformProcessType checks the process in with Launch Services as an instance of the bundle, and Launch Services
+/// hands every link, banner click and Dock reopen to the OLDEST instance (LinkRelay.swift). From 2026-11-13 to
+/// 2026-11-17 every `tools` run checked in; Claude sessions' launchers outlived a rebuild's new link relay, and each
+/// click ended in "The application GenesisTools.app is not open anymore" (-600, procNotFound: a launcher has no
+/// event loop). A window face, a link relay and a link router (`GenesisTools https://…`) set their own type.
+func marksBackgroundHelper(_ arguments: [String]) -> Bool {
+    guard let first = arguments.first, first.hasPrefix("--"), first != "--window" else { return false }
+    return AppParts.partOfFace[first] == nil
+}
+
 @MainActor
 func markBackgroundHelper() {
     var serial = ProcessSerialNumber(highLongOfPSN: 0, lowLongOfPSN: UInt32(kCurrentProcess))

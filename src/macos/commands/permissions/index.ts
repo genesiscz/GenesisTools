@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -25,6 +25,7 @@ import {
     testApp,
 } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
+import { currentLinkRoute, describeLinkRoute, launcherChecksIn, linkRouteProblem } from "../../lib/permissions/links";
 import {
     describePromptProcesses,
     type LocalNetworkAnswer,
@@ -151,6 +152,31 @@ function printRetiredSummary(summary: RetiredBundlesSummary, applied: boolean): 
     }
 }
 
+/** After a build: a launcher run must never check in with Launch Services, and links must reach the link relay. */
+async function reportLinks(bundlePath: string): Promise<void> {
+    const checksIn = await launcherChecksIn(join(bundlePath, "Contents/MacOS/GenesisTools"));
+
+    if (checksIn === true) {
+        ui.err(
+            'A launcher run checks in with Launch Services. After the next relay restart it becomes the oldest instance and takes every link and banner click ("GenesisTools.app is not open anymore"). See marksBackgroundHelper in Sources/Host/Launcher.swift.'
+        );
+        process.exitCode = 1;
+    } else if (checksIn === null) {
+        ui.warn(
+            "The launcher check did not reach its program in 10 s, so whether a launcher run checks in is unknown."
+        );
+    }
+
+    const route = currentLinkRoute();
+    const problem = linkRouteProblem(route);
+
+    if (problem) {
+        ui.warn(problem);
+    } else {
+        ui.kv("links", describeLinkRoute(route), 8);
+    }
+}
+
 function printReport(report: PermissionsReport): void {
     ui.header("GenesisTools.app (TCC identity)");
 
@@ -180,6 +206,16 @@ function printReport(report: PermissionsReport): void {
                 : `host only (${toolCommand("hub")} adds the hub)`,
             11
         );
+
+        if (report.links) {
+            const described = describeLinkRoute(report.links);
+
+            if (linkRouteProblem(report.links)) {
+                ui.warn(`links      ${described}`);
+            } else {
+                ui.kv("links", described, 11);
+            }
+        }
     } else {
         ui.err(`not built (${report.app.bundlePath})`);
     }
@@ -330,6 +366,7 @@ export function registerPermissionsCommand(program: Command): void {
             ui.ok(`${result.bundlePath}`);
             ui.kv("signed", result.signature.adhoc ? "ad-hoc" : result.signature.authority, 8);
             ui.kv("parts", result.manifest.parts?.length ? result.manifest.parts.join(", ") : "host only", 8);
+            await reportLinks(result.bundlePath);
 
             if (result.signature.adhoc) {
                 ui.warn(

@@ -87,6 +87,16 @@ documents were closed"; find it with `command log show --predicate 'processID ==
 now quits with `exit(0)`, never `NSApp.terminate`, and a build is not done until one `open -a ~/Applications/GenesisTools.app
 https://example.org/` leaves no router running after ~8 s.
 
+**Every link, banner click and Dock reopen goes to the OLDEST GenesisTools process that checked in with Launch
+Services, a launcher included** (`Sources/Host/LinkRelay.swift`). A launcher run (`GenesisTools <program>`, every
+`tools` run) never checks in (`marksBackgroundHelper` in `Sources/Host/Launcher.swift`): from 2026-11-13 to 11-17 each
+one did (TransformProcessType), a rebuild restarted the relay, and every click went to a Claude session's launcher
+("The application GenesisTools.app is not open anymore", -600 procNotFound). A delivery even turns a `BackgroundOnly`
+instance into a `UIElement`, so its type is no shield, and nothing can take another process out of Launch Services:
+such a launcher holds the links until it exits. `bun run app:status` prints a `links` line naming the process macOS
+hands links to (`src/macos/lib/permissions/links.ts`), and every build runs `<launcher> /bin/sleep 3` and fails when
+that run checks in.
+
 **Notifications specifically** (`src/macos/GenesisTools/Sources/Host/Notify.swift`, reached from
 `src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then
 `tools notify status`. `alertStyle: banner` means macOS's "Temporary" — the banner fades in ~5 s,
