@@ -69,6 +69,30 @@ final class SessionHostPlaceTests: XCTestCase {
         let unread = try await silent.act(.focus, sessionId: "x")
         XCTAssertEqual(unread, SessionHostActResult(ok: false, reason: "No cmux pane matches \"x\"."))
     }
+
+    /// An older `tools` without the command is the window's fallback case; any other failed describe is a failure.
+    func testAnOlderToolsIsUnsupportedAndEveryOtherFailedDescribeIsAnError() async {
+        let older = SessionHostClient { _, _ in
+            ToolsRunResult(stdout: "", stderr: "error: unknown command 'session-host'\n(Did you mean sessions?)", exitCode: 1, wallMs: 1)
+        }
+        do {
+            _ = try await older.describe(["s1"])
+            XCTFail("an older tools must throw")
+        } catch {
+            XCTAssertEqual(error as? SessionHostClientError, .unsupported)
+        }
+
+        let broken = SessionHostClient { _, _ in
+            ToolsRunResult(stdout: "", stderr: "✘ database is locked", exitCode: 1, wallMs: 1)
+        }
+        do {
+            _ = try await broken.describe(["s1"])
+            XCTFail("a failed describe must throw")
+        } catch {
+            XCTAssertNil(error as? SessionHostClientError)
+            XCTAssertTrue("\(error)".contains("database is locked"))
+        }
+    }
 }
 
 private actor CallLog {
