@@ -48,6 +48,8 @@ struct TranscriptBlock: Equatable, Identifiable {
 
     var startSec: Double? { lines.first(where: { $0.startSec != nil })?.startSec }
     var endSec: Double? { lines.last?.endSec }
+    /// The block's name is a guess with its percent (`[name: NN %]`, I11): its chip takes the guess style.
+    var isGuess: Bool { speaker.hasPrefix("[") && speaker.hasSuffix(" %]") }
 
     /// Groups the transcript's lines into blocks. A new block starts when the speaker changes, and also after a
     /// silence longer than `breakAfterGapSec` (nil: never; the plan's pick, one block per turn as Riverside draws it).
@@ -239,7 +241,9 @@ struct TranscriptBlockView: View, Equatable {
             }
             VStack(alignment: .leading, spacing: 2) {
                 SpeakerChip(speaker: block.speaker, startSec: block.startSec, play: play)
-                    .opacity(block.speaker.contains(" %]") ? 0.65 : 1)
+                    // The guess style (I11): lighter, with a dotted underline, so a guess never reads as a fact.
+                    .opacity(block.isGuess ? 0.65 : 1)
+                    .underline(block.isGuess, pattern: .dot)
                 ForEach(block.lines) { line in
                     TranscriptBlockLineView(
                         line: line, speaker: SpeakerChip(speaker: block.speaker).name, heard: line.id == heardLineID,
@@ -352,8 +356,8 @@ private struct TranscriptBlockLineView: View {
             if let indicator = line.indicator {
                 Image(systemName: indicator.ignored == nil ? "person.wave.2" : "exclamationmark.triangle")
                     .font(.system(size: 11)).foregroundStyle(indicator.ignored == nil ? Color.secondary : .orange)
-                    .instantTooltip(indicator.text)
-                    .accessibilityLabel(indicator.text)
+                    .instantTooltip(indicator.shownText)
+                    .accessibilityLabel(indicator.shownText)
             }
             if line.marks.contains(.unclearSpeaker) {
                 Image(systemName: "questionmark.circle")
@@ -425,5 +429,18 @@ private struct TranscriptBlockLineView: View {
         if line.marks.contains(.filterHit) { return Color.yellow.opacity(0.22) }
         if hovering { return Color.primary.opacity(0.06) }
         return .clear
+    }
+}
+
+extension TranscriptLine.Indicator {
+    /// The indicator's names, and when the engine ignores it, why in words (C2): the engine sends a code.
+    var shownText: String {
+        let names = names.isEmpty ? "No named indicator" : names.joined(separator: ", ")
+        switch ignored {
+        case nil: return names
+        case "meeting-dominance": return "\(names) · stuck: one name lit it through most of the meeting, so it is ignored"
+        case "stretch-stuck": return "\(names) · stuck: it stayed on one name through this stretch of the call, so it is ignored"
+        default: return "\(names) · stuck, so it is ignored"
+        }
     }
 }
