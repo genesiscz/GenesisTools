@@ -205,8 +205,11 @@ struct HubSessionDetailHost: View {
                 Task { await jump(toTurn: index, rowId: rowId) }
             }
         }
-        .task(id: agentChild ? "" : session.sessionId) {
-            hostAnswer = nil
+        // Read again when the journal records a new pane for the session (a resume, a moved tab), not only on open.
+        .task(id: agentChild ? "" : hostKey) {
+            if agentChild || hostAnswer?.sessionId != session.sessionId {
+                hostAnswer = nil
+            }
             guard !agentChild else { return }
             await loadHost()
         }
@@ -393,6 +396,10 @@ struct HubSessionDetailHost: View {
             }
             // An established window keeps its start, 0 included: a nil offset asks for the latest turns, which
             // drops the earlier ones on screen once more turns arrived than the limit leaves room for.
+            // The reload asks where the session lives again: a pane opened or cmux came back since the last answer.
+            if !agentChild {
+                Task { await loadHost() }
+            }
             Task {
                 let row = session
                 await load(offset: turns.isEmpty ? nil : windowStart, limit: TranscriptPaging.refreshLimit(loaded: turns.count), throughEnd: true)
@@ -464,6 +471,11 @@ struct HubSessionDetailHost: View {
         }
         // The list knows its session by the transcript's own id (`services.sessionId`).
         TranscriptBus.post(TranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
+    }
+
+    /// What the host lookup follows besides the session: the journal's record of its pane, which a resume rewrites.
+    private var hostKey: String {
+        "\(session.sessionId)|\(session.cmux?.surfaceId ?? "")|\(session.cmux?.at ?? 0)"
     }
 
     /// Asks GenesisTools where the session lives. A failure keeps the last answer and shows in the banner with its
