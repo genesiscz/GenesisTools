@@ -1,4 +1,5 @@
 import type { AppPartId } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { macosPermissionsBuildCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 
 /**
  * Builds GenesisTools.app for the engine's `fix` decisions. The build lives in the macos tool, which `src/utils` cannot
@@ -26,5 +27,5 @@ export function appBuilder(): AppBuilder | null {
 
 /** The command when no builder is registered; the same words the macos tool prints. */
 export function defaultBuildCommand(part: AppPartId | null): string {
-    return part ? `tools macos permissions build --add-part ${part}` : "tools macos permissions build";
+    return macosPermissionsBuildCommand(part);
 }

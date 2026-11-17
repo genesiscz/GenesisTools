@@ -1,5 +1,5 @@
 import { defineAction, defineArea } from "@genesiscz/utils/genesis-tools/actions/define";
-import { appBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
+import { appBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
 import { APP_PART_IDS, APP_RPC_METHODS } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import { Need } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { z } from "zod";
@@ -71,7 +71,7 @@ export const app = defineArea({
                     return { built: true as const, part };
                 },
             },
-            manual: (args) => `tools macos permissions build${args.part ? ` --add-part ${args.part}` : ""}`,
+            manual: (args) => defaultBuildCommand(args.part ?? null),
         }),
     },
 });
