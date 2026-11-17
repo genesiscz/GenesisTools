@@ -1,6 +1,7 @@
 import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
 import type { AppPartId, AppRpcMethod } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import type { NeedSpec } from "@genesiscz/utils/genesis-tools/capability/needs";
+import type { ServiceDoor } from "@genesiscz/utils/genesis-tools/service/clients";
 import type { GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
 import type { z } from "zod";
 import type { ContextAreas } from "./registry";
@@ -91,8 +92,8 @@ export interface ActionContextBase<A, C> {
     /** The calling area's slice of state.json. */
     state: AreaStateView;
     facts: Facts;
-    /** Phase 2, not built yet: the service door inside `tools genesis-tools serve`. Always null now. */
-    service: null;
+    service: ServiceDoor | null;
+    timeoutMs: number;
     pass(reason: string): Pass;
     /** Emits `<area>.<event>`; the payload is checked against the area's `events` schema and a mismatch throws. */
     emit(event: string, payload: unknown): void;
@@ -127,6 +128,8 @@ export interface ActionSpec<TArgs extends z.ZodType, TResult extends z.ZodType, 
     summary: string;
     args: TArgs;
     result: TResult;
+    onTimeout?: (args: z.output<TArgs>) => z.output<TResult>;
+    timeoutMs?: number;
     /** Per-action config keys with defaults; resolved into ctx.config. */
     config?: TConfig;
     native?: Way<z.output<TArgs>, z.output<TResult>, z.output<TConfig>>;

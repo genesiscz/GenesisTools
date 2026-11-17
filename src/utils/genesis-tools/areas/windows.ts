@@ -55,6 +55,7 @@ export const windows = defineArea({
     }),
     actions: {
         open: defineAction({
+            timeoutMs: 600_000,
             summary: "Open a GenesisTools.app window: --hub, --meetings, --recorder, --window and the other faces",
             args: openArgs,
             result: z.object({ window: z.enum(FACE_FLAGS), opened: z.literal(true) }),

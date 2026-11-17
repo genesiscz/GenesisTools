@@ -54,6 +54,7 @@ export const app = defineArea({
             },
         }),
         build: defineAction({
+            timeoutMs: 600_000,
             summary: "Build and install GenesisTools.app, with one more part when one is named",
             args: z.object({ part: z.enum(APP_PART_IDS).optional() }),
             result: z.object({ built: z.literal(true), part: z.enum(APP_PART_IDS).nullable() }),
