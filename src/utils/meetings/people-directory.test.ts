@@ -140,7 +140,7 @@ describe("PeopleDirectory.known", () => {
         ]);
         const directory = peopleDirectory({ store, config: meetingsConfigSchema.parse({}), book });
 
-        for (const query of ["exam", "EXAMPLE", "Exámple", "Exámple".normalize("NFD"), "dana ex"]) {
+        for (const query of ["exam", "EXAMPLE", "Exámple", "Exámple".normalize("NFD"), "dana ex", "EXÁMPLE DANA"]) {
             const known = await directory.known(query);
             expect({ query, names: known.people.map((person) => person.name) }).toEqual({
                 query,
@@ -151,6 +151,16 @@ describe("PeopleDirectory.known", () => {
         const [dana] = (await directory.known("dana")).people;
         expect(dana?.meetings).toBe(3);
         expect(dana?.aliases).toEqual(["Dana Example"]);
+    });
+
+    test("matches reordered words through a source that only searches phrase substrings", async () => {
+        const { book } = scratch([]);
+        const directory = new PeopleDirectory({
+            book,
+            sources: [searching([{ name: "Dana Example" }, { name: "Dana Else" }])],
+        });
+        expect((await directory.known("Example Dana")).people.map((person) => person.name)).toEqual(["Dana Example"]);
+        expect((await directory.known("Example Nobody")).people).toEqual([]);
     });
 
     test("a refused Contacts grant is a reason, never an empty list, and the other sources still answer", async () => {

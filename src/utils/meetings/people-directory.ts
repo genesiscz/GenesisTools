@@ -326,9 +326,11 @@ function textMatches(identity: Identity, query: string): boolean {
         return true;
     }
 
+    const words = query.split(/\s+/u);
+    const matchesName = (name: string) => words.every((word) => foldText(name).includes(word));
     return (
-        foldText(shownName(identity)).includes(query) ||
-        [...identity.names.keys()].some((name) => foldText(name).includes(query)) ||
+        matchesName(shownName(identity)) ||
+        [...identity.names.keys()].some(matchesName) ||
         [...identity.emails].some((email) => email.includes(query))
     );
 }
@@ -759,10 +761,16 @@ export class PeopleDirectory {
         const wanted = options.kinds;
         const limit = Math.max(options.limit ?? DEFAULT_LIMIT, DEFAULT_LIMIT);
         const asked = this.options.sources.filter((source) => !wanted || wanted.includes(source.kind));
+        // A source may only support a phrase substring. Filter all words after grouping its candidates.
+        const sourceText =
+            query
+                .trim()
+                .split(/\s+/u)
+                .sort((a, b) => b.length - a.length)[0] ?? "";
         const answers = await Promise.all(
             asked.map(async (source) => {
                 try {
-                    return { source, answer: await source.people({ text: query.trim(), limit }) };
+                    return { source, answer: await source.people({ text: sourceText, limit }) };
                 } catch (error) {
                     log.warn({ kind: source.kind, error }, "a people source failed");
                     const reason = error instanceof Error ? error.message : String(error);
