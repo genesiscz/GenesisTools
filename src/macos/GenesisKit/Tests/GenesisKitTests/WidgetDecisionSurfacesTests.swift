@@ -723,7 +723,8 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertTrue(model.moveInList(.open, alternate: true), "the inbox takes ⌘-Return")
         await record.drain()
         XCTAssertEqual(record.actions().last?.action, "send-staged", "⌘-Return sends the ticked set")
-        XCTAssertEqual(model.stagedOption("d15", stored: nil), "bd", "⌘-Return did not tick or untick the option")
+        // The delivered send takes the stage made here with it (2026-11-17); the row names the set it sent.
+        XCTAssertEqual(model.shownStagedOption("d15", stored: nil), "bd", "⌘-Return did not tick or untick the option")
     }
 
     /// DECISION 15's open card with a and c ticked, and its entry in the inbox of every session: check boxes, the
@@ -767,6 +768,41 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertTrue(oneText.contains("Send now"), oneText)
         XCTAssertTrue(oneText.contains("Staged"), oneText)
         XCTAssertFalse(oneText.contains("Pick the recommended"), oneText)
+    }
+
+    /// 2026-11-17: a staged row read "Staged: a) … · 3m ago" right after the click, the age of the ask. Its age is the
+    /// stage's, and once a send took it the row says where the send is.
+    func testAStagedRowCountsItsAgeFromTheStageAndSaysWhereItsSendIs() throws {
+        let now = Date().timeIntervalSince1970
+        var staged = Self.card(key + "0", number: 8, draftOption: "b")
+        staged["status"] = "drafted"
+        staged["at"] = (now - 3 * 3_600) * 1_000
+        staged["draftedAt"] = (now - 150) * 1_000
+        let model = try self.model(cards: [staged])
+        defer { model.stop() }
+        model.error = nil
+        model.openCard(try XCTUnwrap(model.cards.first { $0.number == 8 }))
+        let size = CGSize(width: Self.widgetWidth, height: 600)
+        func shown(_ name: String) throws -> String {
+            let view = LiveWidgetView(model: model, edge: .right, embedded: true)
+                .frame(width: size.width, height: size.height, alignment: .top)
+                .background(NativeThemePalette.graphiteBase)
+                .environment(\.nativeSettingsTheme, .graphite)
+                .environment(\.colorScheme, .dark)
+            return try recognizedText(try XCTUnwrap(KitShots.render(view, size: size, name: name, settle: 1.2).cgImage))
+                .replacingOccurrences(of: "\n", with: " ")
+        }
+        let line = try shown("staged-row-age")
+        XCTAssertTrue(line.contains("Staged: b)"), line)
+        XCTAssertTrue(line.contains("2m ago"), "the age is the stage's: \(line)")
+        XCTAssertFalse(line.contains("3h ago"), "not the ask's: \(line)")
+
+        model.sendingDecisionIDs.insert("d8")
+        XCTAssertTrue(try shown("sending-row").contains("Sending: b)"))
+        model.sendingDecisionIDs.remove("d8")
+        model.sentDecisions["d8"] = WidgetSentDecision(at: now, delivered: true, option: "b")
+        let sent = try shown("sent-row")
+        XCTAssertTrue(sent.contains("Sent: b)"), sent)
     }
 
     // MARK: - The hub Inbox card's context (2026-11-01)

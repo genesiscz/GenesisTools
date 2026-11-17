@@ -2135,6 +2135,117 @@ final class WidgetStagingTests: XCTestCase {
         try XCTUnwrap(held).resume(returning: ["ok": true])
     }
 
+    /// Waits until the send that runs released its decisions (its answer was read and applied).
+    private func sendEnded(_ model: WidgetModel) async {
+        let ended = expectation(description: "the send released its decisions")
+        let watch = model.$sendingDecisionIDs.dropFirst().filter(\.isEmpty).prefix(1).sink { _ in ended.fulfill() }
+        defer { watch.cancel() }
+        await fulfillment(of: [ended], timeout: 2)
+    }
+
+    /// 2026-11-17: a delivered send left its pick staged here for 14 s, the leave question asked about the decision,
+    /// and then read "0 decisions". A delivered decision shows Sending, then Sent until a snapshot drops it; its stage
+    /// made here goes with the send, no close asks about it, and Send does not send it twice.
+    func testADeliveredDecisionShowsSentUntilTheSnapshotAgreesAndNeverAsksOnLeave() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == "send-staged" else { return ["ok": true] }
+            return ["sent": 1, "queued": 0, "failed": 0, "sessions": [["session": "fixture-staged", "numbers": [7],
+                                                                        "result": ["delivered": true]]]]
+        }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        let item = WidgetModel.inboxItem(card)
+        stageHere(model, card.sourceId, "a", item: item)
+        XCTAssertEqual(model.stagePhase(card.sourceId, draftedAt: 5_000), .staged(since: seconds, unsent: nil),
+                       "a pick staged here counts its age from the click, not from an older stage")
+        await model.decisionWritesEnded()
+        seconds += 2
+        model.sendStaged([card.sourceId], known: [item])
+        XCTAssertEqual(model.stagePhase(card.sourceId, draftedAt: nil), .sending)
+        await sendEnded(model)
+        XCTAssertEqual(model.stagePhase(card.sourceId, draftedAt: nil), .sent(at: seconds))
+        XCTAssertNil(model.decisions.pending[card.sourceId], "the delivered stage leaves with the send")
+        XCTAssertEqual(model.shownStagedOption(card.sourceId, stored: nil), "a", "the row still names what was sent")
+        XCTAssertTrue(model.stagedForLeave.isEmpty)
+
+        seconds += 10
+        model.receive([try snapshot(draftOption: "a")])
+        XCTAssertEqual(model.stagePhase(card.sourceId, draftedAt: nil), .sent(at: seconds - 10),
+                       "a snapshot started before the send does not stage it again")
+        XCTAssertTrue(model.stagedToSend.isEmpty, "the staged count and Send skip it")
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertFalse(model.stagedLeavePrompt, "a delivered decision is never asked about")
+        XCTAssertNil(model.expanded)
+        model.sendStaged([card.sourceId])
+        XCTAssertEqual(model.notice, "This decision was sent already.")
+
+        model.receive([try snapshot(draftOption: nil)])
+        XCTAssertTrue(model.sentDecisions.isEmpty, "the snapshot agrees, so the sent state ends")
+    }
+
+    /// Each decision shows what the hub did with its session: kept for the session's next prompt (answered, so not
+    /// staged), or refused (staged, with the hub's words). A sent decision a snapshot still lists as staged past
+    /// `sentAgreeSeconds` shows the snapshot again. A snapshot's stage time is the row's age.
+    func testEachDecisionShowsWhatTheHubDidWithItsSession() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var seconds = Date().timeIntervalSince1970
+        model.decisions.now = { seconds }
+        var reply: WidgetJSON = ["sent": 0, "queued": 1, "failed": 0, "sessions": [["session": "fixture-staged",
+            "numbers": [7], "result": ["delivered": false, "detail": "No cmux pane runs this session."]]]]
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, fields["action"] == "send-staged" else { return ["ok": true] }
+            return reply
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: 1_700_000_000_000), .staged(since: 1_700_000_000, unsent: nil))
+
+        model.sendStaged(["d1"])
+        await sendEnded(model)
+        XCTAssertEqual(model.stagePhase("d1", draftedAt: nil),
+                       .waiting(at: seconds, reason: "No cmux pane runs this session."))
+        XCTAssertTrue(model.stagedForLeave.isEmpty, "the hub stored the answer; Send again lives in the note")
+
+        seconds += WidgetModel.sentAgreeSeconds + 1
+        model.receive([try snapshot(draftOption: "a")])
+        XCTAssertTrue(model.sentDecisions.isEmpty, "a snapshot that keeps listing it is the truth again")
+        XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"])
+
+        reply = ["sent": 0, "queued": 0, "failed": 1,
+                 "sessions": [["session": "fixture-staged", "numbers": [7], "error": "DECISION 7 changed"]]]
+        model.sendStaged(["d1"])
+        await sendEnded(model)
+        let refused = model.stagePhase("d1", draftedAt: nil)
+        XCTAssertEqual(refused, .staged(since: nil, unsent: "DECISION 7 changed"))
+        XCTAssertEqual(refused.reason, "Not sent: DECISION 7 changed")
+        XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"], "a refused decision stays staged")
+        stageHere(model, "d1", "b")
+        XCTAssertNil(model.unsentReasons["d1"], "a new stage drops the old reason")
+    }
+
+    /// 2026-11-17: the leave question stayed open reading "You have 0 decisions staged". Once its list empties it
+    /// closes, and the close the user asked for happens.
+    func testTheLeaveQuestionClosesOnceNothingIsStaged() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt)
+        model.receive([try snapshot(draftOption: nil)])
+        XCTAssertFalse(model.stagedLeavePrompt, "nothing is left to ask about")
+        XCTAssertNil(model.expanded, "the close the user asked for happens")
+    }
+
     /// Decision audit F11: ⇧ adds a letter or takes it out, a plain click picks one alone, as in the hub.
     func testThePickRuleKeepsSeveralLetters() {
         XCTAssertEqual(DecisionAnswering.nextPick("ac", "b", adding: true), "abc")

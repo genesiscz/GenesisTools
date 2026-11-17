@@ -585,8 +585,12 @@ struct WidgetPeekView: View {
     /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
     private var title: String {
         if isReminder {
-            let count = model.stagedItems.count
-            return count == 0 ? "Nothing is staged now." : Plural.count(count, "decision") + " staged and not sent yet"
+            let count = model.stagedToSend.count
+            guard count == 0 else { return Plural.count(count, "decision") + " staged and not sent yet" }
+            let sending = model.stagedItems.filter { model.sendingDecisionIDs.contains($0.sourceId) }.count
+            let sent = model.stagedItems.filter { model.sentDecisions[$0.sourceId] != nil }.count
+            return sending + sent == 0 ? "Nothing is staged now."
+                : WidgetStagedChip.onTheirWay(sending: sending, sent: sent)
         }
         let plain = item.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return plain.isEmpty ? "Open the inbox to see it." : plain
@@ -836,9 +840,13 @@ struct WidgetPeekView: View {
                         .foregroundStyle(SessionPalette.blue)
                     Text(row.title ?? "").font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 4)
-                    Text(model.shownStagedOption(row.sourceId, stored: row.draftOption)
-                        .map { $0.map { "\($0))" }.joined(separator: " ") } ?? "note")
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    let phase = model.stagePhase(row.sourceId, draftedAt: row.draftedAt)
+                    let pick = model.shownStagedOption(row.sourceId, stored: row.draftOption)
+                        .map { $0.map { "\($0))" }.joined(separator: " ") } ?? "note"
+                    // A decision a send took says so ("Sending a)", "Sent a)") until the snapshot drops it.
+                    Text((phase.onItsWay ? phase.word + " " : "") + pick)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(phase.onItsWay ? AnyShapeStyle(phase.color) : AnyShapeStyle(.secondary))
                 }
                 .padding(.horizontal, 8)
                 .accessibilityElement(children: .combine)
@@ -923,8 +931,9 @@ struct WidgetPeekView: View {
         }
         Spacer(minLength: 0)
         if isReminder {
-            let ids = model.stagedItems.map(\.sourceId)
-            let sending = !ids.isEmpty && ids.allSatisfy { model.sendingDecisionIDs.contains($0) }
+            // Only the decisions no send took yet: one being sent or sent shows its state in the list above.
+            let ids = model.stagedToSend.map(\.sourceId)
+            let sending = ids.isEmpty && model.stagedItems.contains { model.sendingDecisionIDs.contains($0.sourceId) }
             Button("Show them") { open() }
                 .instantTooltip("Opens the staged decisions in the inbox")
             Button(sending ? "Sending…" : "Send now") { model.sendStaged(ids) }

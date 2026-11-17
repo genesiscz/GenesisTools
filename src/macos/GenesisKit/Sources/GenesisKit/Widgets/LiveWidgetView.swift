@@ -566,8 +566,9 @@ public struct LiveWidgetView: View {
             // The card's head is a value row; the open card's detail below keeps every control it has (one card).
             WidgetInboxCardRow(
                 card: card, open: open, selected: card.id == model.card?.id, staged: staged,
-                stagedLine: staged ? "Staged: " + WidgetStagedText.line(WidgetModel.inboxItem(card),
-                    option: model.shownStagedOption(card.sourceId, stored: card.draftOption)) : nil,
+                stage: staged ? WidgetStageLine(phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt),
+                    pick: WidgetStagedText.line(WidgetModel.inboxItem(card),
+                        option: model.shownStagedOption(card.sourceId, stored: card.draftOption))) : nil,
                 toggle: { toggle(card) })
                 .equatable()
             if open {
@@ -608,7 +609,8 @@ public struct LiveWidgetView: View {
             // its text. Up and Down move through the options; the chosen one wears the focus ring.
             WidgetOptionLabel(badge: key ?? choice.id, letter: key == nil ? nil : choice.id, text: text, picked: picked,
                               recommended: choice.recommended, focused: focused, rationale: choice.rationale,
-                              multiple: multiple)
+                              multiple: multiple,
+                              pickedWord: model.stagePhase(card.sourceId, draftedAt: card.draftedAt).word)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
@@ -1530,22 +1532,21 @@ struct WidgetInboxCardRow: View, Equatable {
     let card: WidgetCard
     let open: Bool
     let selected: Bool
-    /// A decision whose pick or note is staged.
+    /// A decision whose pick or note is staged, being sent or sent.
     let staged: Bool
-    /// "Staged: …" for a staged decision, read from the model by the parent.
-    let stagedLine: String?
+    /// Its state line ("Staged: … · just now", "Sending: …", "Sent: …"), read from the model by the parent.
+    let stage: WidgetStageLine?
     let toggle: () -> Void
 
     static func == (a: WidgetInboxCardRow, b: WidgetInboxCardRow) -> Bool {
-        a.card == b.card && a.open == b.open && a.selected == b.selected && a.staged == b.staged
-            && a.stagedLine == b.stagedLine
+        a.card == b.card && a.open == b.open && a.selected == b.selected && a.staged == b.staged && a.stage == b.stage
     }
 
     var body: some View {
         let _ = RenderProbe.hit("widget.inbox.card.body")
         labels
             .rowButton(cornerRadius: 11) { toggle() }
-            .accessibilityLabel((staged ? "Staged" : LiveWidgetView.kindLabel(card)) + ": "
+            .accessibilityLabel((stage?.phase.label ?? LiveWidgetView.kindLabel(card)) + ": "
                 + WidgetWords.numbered(card.title, number: card.number) + spokenFacts)
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("widget.inbox.row." + card.id)
@@ -1594,12 +1595,16 @@ struct WidgetInboxCardRow: View, Equatable {
                 if !open, let preview = LiveWidgetView.previewLine(card.fullText) {
                     Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
-                HStack(spacing: 4) {
-                    Text(stagedLine ?? LiveWidgetView.kindLabel(card)).lineLimit(1)
-                    Text("·")
-                    LiveAgo(date: Date(timeIntervalSince1970: card.at / 1000), style: .brief)
-                }.font(.system(size: 11))
-                    .foregroundStyle(waiting ? Color.orange : staged ? SessionPalette.blue : SessionPalette.secondary)
+                // A staged decision's age is its stage's, not the ask's; the line says where its send is.
+                if let stage {
+                    stage
+                } else {
+                    HStack(spacing: 4) {
+                        Text(LiveWidgetView.kindLabel(card)).lineLimit(1)
+                        Text("·")
+                        LiveAgo(date: Date(timeIntervalSince1970: card.at / 1000), style: .brief)
+                    }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
+                }
             }
             Spacer(minLength: 4)
             Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))

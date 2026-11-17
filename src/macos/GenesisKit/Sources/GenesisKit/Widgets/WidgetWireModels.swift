@@ -241,6 +241,9 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     /// A staged decision's unsent pick and note (the decision log's `drafted` state); sent with the other staged ones.
     public var draftOption: String? = nil
     public var draft: String? = nil
+    /// When the pick or note was staged (epoch ms; the store's `draftedTs`): a staged row's age counts from it, not
+    /// from the ask. A comment on the decision does not move it. Nil from an older hub.
+    public var draftedAt: Double? = nil
     /// A decision-log card's context, proposal, notes, confidence, cited code and delivery; nil from an older hub.
     public var decision: WidgetDecisionDetails? = nil
     /// A decision that takes any set of its options (`takesSeveral` in src/question/lib/decisions/option-labels.ts):
@@ -757,6 +760,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     /// A staged decision's unsent pick and note; see `WidgetCard.draftOption`.
     public var draftOption: String? = nil
     public var draft: String? = nil
+    /// When the pick or note was staged; see `WidgetCard.draftedAt`.
+    public var draftedAt: Double? = nil
     /// A decision answered outside the widget (`WidgetInboxSummary.answeredElsewhere`): the chosen letters, the
     /// answer, and who stored it ("agent" or "automatic_heuristic").
     public var option: String? = nil
