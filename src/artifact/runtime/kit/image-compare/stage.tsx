@@ -17,6 +17,7 @@ import {
     type CompareView,
     canPan,
     NO_SHIFT,
+    PANE_MIN_HEIGHT,
     paneHeight,
     panKeyDelta,
     panView,
@@ -372,7 +373,11 @@ export function ComparePane({
     };
 
     const cursor = dragging ? "cursor-grabbing" : pannable ? "cursor-grab" : onTap ? "cursor-pointer" : "";
-    const style: CSSProperties = { height: width > 0 ? height : undefined, touchAction: pannable ? "none" : "auto" };
+    const style: CSSProperties = {
+        height: width > 0 ? height : undefined,
+        minHeight: PANE_MIN_HEIGHT,
+        touchAction: pannable ? "none" : "auto",
+    };
 
     return (
         <div className="min-w-0">
@@ -399,7 +404,7 @@ export function ComparePane({
                         onPointerMove={onPointerMove}
                         onPointerUp={onPointerUp}
                         onPointerCancel={onPointerUp}
-                        className={`relative box-content min-h-24 min-w-0 flex-1 select-none overflow-hidden rounded-card border border-line bg-canvas ${cursor} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info`}
+                        className={`relative box-content min-w-0 flex-1 select-none overflow-hidden rounded-card border border-line bg-canvas ${cursor} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info`}
                         style={style}
                     >
                         {children}
@@ -638,8 +643,9 @@ export function useIdleCompute<T>({
         return { status: "ready", value: hit.value, ms: hit.ms, stale: false };
     }
 
+    // The comparison's own result of this key is current even after the shared cache let it go for another one.
     if (last && last.group === group) {
-        return { status: "ready", value: last.value, ms: last.ms, stale: true };
+        return { status: "ready", value: last.value, ms: last.ms, stale: last.key !== key };
     }
 
     return { status: "loading" };

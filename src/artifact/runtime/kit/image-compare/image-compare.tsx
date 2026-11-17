@@ -196,10 +196,25 @@ interface Picks {
 
 const FIRST_TWO: Picks = { a: 0, b: 1 };
 
-/** The A and B picks: their labels as saved (one per line), and the indexes they had when picked. */
+/** The A and B picks: their labels as saved, and the indexes they had when picked. */
 interface PickedImages {
-    labels: string | undefined;
+    labels: readonly [string, string] | undefined;
     at: Picks;
+}
+
+/** Saved picks: a JSON array of the A and B labels (a label may hold any character, a line break too). */
+function parseStoredPicks(stored: string | undefined): PickedImages {
+    let parsed: unknown;
+
+    try {
+        parsed = stored === undefined ? undefined : SafeJSON.parse(stored, { strict: true });
+    } catch {
+        // Not JSON (a hand-edited value): the first two, until the next pick writes a good one.
+    }
+
+    const [a, b] = Array.isArray(parsed) && parsed.length === 2 ? parsed : [];
+
+    return { labels: typeof a === "string" && typeof b === "string" ? [a, b] : undefined, at: FIRST_TWO };
 }
 
 /** A picked image's index: where it was while that image still has its label (two may share one), else its label's. */
@@ -212,12 +227,11 @@ function pickIndex(all: ResolvedCompareImage[], label: string, at: number): numb
  * image when the `images` prop is reordered. A label that is no longer among the images falls back to the first two.
  */
 function resolvePicks(all: ResolvedCompareImage[], picked: PickedImages): Picks {
-    const [labelA, labelB] = picked.labels?.split("\n") ?? [];
-
-    if (labelA === undefined || labelB === undefined) {
+    if (!picked.labels) {
         return FIRST_TWO;
     }
 
+    const [labelA, labelB] = picked.labels;
     const a = pickIndex(all, labelA, picked.at.a);
     const b = pickIndex(all, labelB, picked.at.b);
 
@@ -286,7 +300,7 @@ export function ImageCompare({
     const itemKey = id === undefined ? undefined : `${page?.storageKey ?? IMAGE_COMPARE_STORAGE_KEY}:item:${id}`;
     // Saved by label, so a pick follows its image when the list changes; without an id the picks live in state only.
     const picksKey = itemKey === undefined ? undefined : `${itemKey}:picks`;
-    const [picked, setPicked] = useStoredValue(picksKey, (stored): PickedImages => ({ labels: stored, at: FIRST_TWO }));
+    const [picked, setPicked] = useStoredValue(picksKey, parseStoredPicks);
     const picks = resolvePicks(all, picked);
     const first = all[picks.a];
     const second = all[picks.b];
@@ -387,11 +401,11 @@ export function ImageCompare({
         }
     };
     const setPicks = (next: Picks): void => {
-        const labels = `${all[next.a].label}\n${all[next.b].label}`;
+        const labels = [all[next.a].label, all[next.b].label] as const;
         setPicked({ labels, at: next });
 
         if (picksKey) {
-            writeStored(picksKey, labels);
+            writeStored(picksKey, SafeJSON.stringify(labels));
         }
     };
     /** Steps B through the images, past A. */

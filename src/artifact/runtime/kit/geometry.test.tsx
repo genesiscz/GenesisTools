@@ -13,6 +13,7 @@ import {
     gutterLabels,
     LEADER_TICK,
     matchRegion,
+    PANE_MIN_HEIGHT,
     paneHeight,
     panKeyDelta,
     panView,
@@ -1068,6 +1069,43 @@ describe("image compare core", () => {
             dx: 2,
             dy: -40,
         });
+    });
+
+    test("alignment sees one-pixel rules on odd rows and odd columns, so a one-pixel move of thin lines is found", () => {
+        /** One-pixel rules of varied lengths on odd rows (`across`) or odd columns, moved `move` px along the rule. */
+        const rules = ({ across, move }: { across: boolean; move: number }): RgbaImage => {
+            const size = 200;
+            const data = new Uint8ClampedArray(size * size * 4).fill(255);
+
+            for (let line = 0; line < 30; line++) {
+                const start = 10 + ((line * 37) % 29) + move;
+                const at = 1 + line * 4;
+
+                for (let i = start; i < start + 40 + ((line * 53) % 90); i++) {
+                    data.set([40, 40, 48, 255], ((across ? at : i) * size + (across ? i : at)) * 4);
+                }
+            }
+
+            return { width: size, height: size, data };
+        };
+
+        // The candidates 0 and 1 differ by one pixel; both must be compared on the rows and columns that hold the rules.
+        expect(estimateShift(rules({ across: true, move: 0 }), rules({ across: true, move: 1 }))).toEqual({
+            dx: 1,
+            dy: 0,
+        });
+        expect(estimateShift(rules({ across: false, move: 0 }), rules({ across: false, move: 1 }))).toEqual({
+            dx: 0,
+            dy: 1,
+        });
+    });
+
+    test("the pane is never shorter than its CSS minimum, so zoom and pan work on the pane the user sees", () => {
+        // A 120 x 40 image fits at 40 px and a maxHeight of 50 caps a tall image at 50, but the pane is 96 px tall.
+        expect(PANE_MIN_HEIGHT).toBe(96);
+        expect(paneHeight({ canvas: { width: 120, height: 40 }, width: 600, maxHeight: 640 })).toBe(PANE_MIN_HEIGHT);
+        expect(paneHeight({ canvas: { width: 800, height: 600 }, width: 600, maxHeight: 50 })).toBe(PANE_MIN_HEIGHT);
+        expect(paneHeight({ canvas: { width: 800, height: 600 }, width: 600, maxHeight: 640 })).toBe(450);
     });
 
     /**

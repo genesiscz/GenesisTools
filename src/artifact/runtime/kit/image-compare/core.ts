@@ -414,7 +414,8 @@ function markSizeChanges({
  * How far the alignment looks for a shift on each axis, in pixels (ImageCompare's `alignWindow` default). A taller
  * banner moves a page by more than 32 px. Measured in Bun 1.4.2 on a 1280 x 2000 text page moved by (3, 48), 15
  * interleaved rounds: the estimate's median is 36.7 ms at 32 px (which finds a wrong shift), 37.2 ms at 64 px and
- * 37.2 ms at 128 px, so the default is the largest value under 100 ms.
+ * 37.2 ms at 128 px, so the default is the largest value under 100 ms. The checkerboard of meanDifference makes it
+ * 57.6 ms at 128 px (median of 15 rounds, three runs).
  */
 export const ALIGN_WINDOW = 128;
 /** How many of the best profile offsets per axis are tried as a shift. */
@@ -508,13 +509,19 @@ function profileOffsets(a: Float64Array, b: Float64Array, window: number): numbe
         .map(([d]) => d);
 }
 
-/** Mean absolute luminance difference of A and B moved back by `shift`, over their overlap (every second pixel). */
+/**
+ * Mean absolute luminance difference of A and B moved back by `shift`, over their overlap. It reads half the pixels,
+ * the checkerboard of A where x + y is even: every row and every column of both images, and the same pixels of A for
+ * every shift. Every second row and column skipped one-pixel rules on the other rows, so a move of thin lines read as
+ * no move. Every pixel made the estimate 107 ms on the page ALIGN_WINDOW was measured on.
+ */
 function meanDifference(a: RgbaImage, b: RgbaImage, shift: Shift): number {
     let total = 0;
     let count = 0;
+    const left = Math.max(0, -shift.dx);
 
-    for (let y = Math.max(0, -shift.dy); y < Math.min(a.height, b.height - shift.dy); y += 2) {
-        for (let x = Math.max(0, -shift.dx); x < Math.min(a.width, b.width - shift.dx); x += 2) {
+    for (let y = Math.max(0, -shift.dy); y < Math.min(a.height, b.height - shift.dy); y++) {
+        for (let x = left + ((left + y) & 1); x < Math.min(a.width, b.width - shift.dx); x += 2) {
             total += Math.abs(
                 luminance(a.data, (y * a.width + x) * 4) -
                     luminance(b.data, ((y + shift.dy) * b.width + x + shift.dx) * 4)
@@ -696,7 +703,13 @@ export function fitScale(pane: CompareSize, canvas: CompareSize): number {
     return Math.min(1, pane.width / canvas.width, pane.height / canvas.height);
 }
 
-/** The pane height for a canvas: its height at the width the pane fits it to, capped at `maxHeight`. */
+/** The shortest pane in pixels, room for the loading line and an error. It wins over `maxHeight`, as min-height does. */
+export const PANE_MIN_HEIGHT = 96;
+
+/**
+ * The pane height for a canvas: its height at the width the pane fits it to, capped at `maxHeight`, never under
+ * PANE_MIN_HEIGHT. The pane's style uses the same number, so zoom, pan and the gutter work on the pane the user sees.
+ */
 export function paneHeight({
     canvas,
     width,
@@ -707,11 +720,11 @@ export function paneHeight({
     maxHeight: number;
 }): number {
     if (canvas.width <= 0 || width <= 0) {
-        return Math.min(maxHeight, canvas.height);
+        return Math.max(PANE_MIN_HEIGHT, Math.min(maxHeight, canvas.height));
     }
 
     // Rounded up, so a pane never ends a fraction of a pixel short of the image it fits.
-    return Math.max(1, Math.ceil(Math.min(maxHeight, canvas.height * Math.min(1, width / canvas.width))));
+    return Math.max(PANE_MIN_HEIGHT, Math.ceil(Math.min(maxHeight, canvas.height * Math.min(1, width / canvas.width))));
 }
 
 /**

@@ -2970,7 +2970,8 @@ class FakeImage {
         }
 
         const size = /^fake:\/\/(\d+)x(\d+)\//.exec(value);
-        setTimeout(() => {
+        // A timer of the page window, so a wait in settleUntil wakes when the image answers.
+        window.setTimeout(() => {
             if (!size) {
                 this.onerror?.();
                 return;
@@ -3065,8 +3066,17 @@ async function mountImageCompare(
     const dom = await mountDom(null);
     const saved = { Image: globalThis.Image, ImageData: globalThis.ImageData };
     const painted: FakeImageData[] = [];
+    // Puts the browser globals back even when the unmount throws.
+    const restore = async () => {
+        try {
+            await dom.unmount();
+        } finally {
+            Object.assign(globalThis, saved);
+        }
+    };
     Object.assign(globalThis, { Image: FakeImage, ImageData: FakeImageData });
     Object.assign(dom.window, { Image: FakeImage });
+    countTimerRuns(dom.window);
     // Every pane is 600 px wide, so fit and the zoom buttons have a size to work with.
     Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 600 });
     Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
@@ -3088,9 +3098,18 @@ async function mountImageCompare(
             };
         },
     });
-    prepare?.(dom.window);
-    await dom.render(node);
-    await settleUntil(() => ready(dom.container), "the comparison to be ready");
+
+    try {
+        prepare?.(dom.window);
+        await dom.render(node);
+        await settleUntil(() => ready(dom.container), "the comparison to be ready");
+    } catch (error) {
+        // A mount that fails cleans up after itself: the caller never got `restore`.
+        await restore().catch((cleanup: unknown) => {
+            throw new AggregateError([error, cleanup], "The comparison failed to mount, and its cleanup failed too.");
+        });
+        throw error;
+    }
 
     const text = (scope: Element = dom.container) => scope.textContent ?? "";
     const radio = (label: string, scope: ParentNode = dom.container) =>
@@ -3099,34 +3118,74 @@ async function mountImageCompare(
         [...scope.querySelectorAll("button")].find(
             (element) => element.getAttribute("aria-label") === label || element.textContent === label
         );
-    const restore = async () => {
-        await dom.unmount();
-        Object.assign(globalThis, saved);
-    };
 
     return { dom, text, radio, button, restore, painted };
 }
 
-async function settleFor(ms: number): Promise<void> {
-    await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * The runs of the page timers: every timer a mounted comparison sets on its window (an image that answers, the load
+ * deadline, the wait before a computation, the idle callback), each counted after its handler ran. In these tests
+ * nothing on the page changes except in one of them or in an `act` the test runs itself.
+ */
+const pageTimers = { runs: 0, waiting: new Set<() => void>() };
+
+/** Counts each run of `window`'s timers in `pageTimers` and wakes every wait. */
+function countTimerRuns(window: DomHarness["window"]): void {
+    const setTimer = window.setTimeout.bind(window);
+
+    Object.assign(window, {
+        setTimeout: (handler: () => void, delay = 0) =>
+            setTimer(() => {
+                try {
+                    handler();
+                } finally {
+                    pageTimers.runs += 1;
+
+                    for (const wake of [...pageTimers.waiting]) {
+                        wake();
+                    }
+                }
+            }, delay),
+    });
+}
+
+/** The run count once a page timer ran past `seen` runs, or after `ms` when none did. */
+function nextTimerRun(seen: number, ms: number): Promise<number> {
+    if (pageTimers.runs !== seen) {
+        return Promise.resolve(pageTimers.runs);
+    }
+
+    return new Promise((resolve) => {
+        const wake = (): void => {
+            clearTimeout(deadline);
+            pageTimers.waiting.delete(wake);
+            resolve(pageTimers.runs);
+        };
+        const deadline = setTimeout(wake, ms);
+        pageTimers.waiting.add(wake);
     });
 }
 
 /**
- * Flushes React in short acts until `check` holds, and fails naming `what` after `deadlineMs`. React applies a state
- * update when an `act` ends, so each look follows a short act of its own; the wait ends on the condition, never on a
- * guess of how long the work takes.
+ * Flushes React until `check` holds, and fails naming `what` after `deadlineMs`. Each look follows an `act` that
+ * ends when the next page timer has run, because React applies the update that timer made when the act ends; between
+ * two runs nothing changes, so the wait wakes on the run and never on a short clock.
  */
 async function settleUntil(check: () => boolean, what: string, deadlineMs = 5_000): Promise<void> {
     const deadline = Date.now() + deadlineMs;
+    let seen = pageTimers.runs;
 
     while (!check()) {
-        if (Date.now() > deadline) {
+        const left = deadline - Date.now();
+
+        if (left <= 0) {
             throw new Error(`Gave up after ${deadlineMs} ms waiting for ${what}.`);
         }
 
-        await settleFor(10);
+        // A run during the act's own flush is past `seen`, so the next look comes at once.
+        await act(async () => {
+            seen = await nextTimerRun(seen, left);
+        });
     }
 }
 
@@ -3675,6 +3734,65 @@ describe("ImageCompare", () => {
         }
     }, 20_000);
 
+    test("an image whose label has a line break can be picked as B, and the pick survives a reload", async () => {
+        const picksKey = "artifact.image-compare:item:kit-break:picks";
+        const images = [
+            { src: "fake://80x60/plain-q1", label: "First" },
+            { src: "fake://80x60/plain-q2", label: "Second" },
+            { src: "fake://80x60/plain-q3", label: "Third\nwith a note" },
+        ];
+        const selects = (scope: ParentNode) => [...scope.querySelectorAll("select")].map((select) => select.value);
+        let saved: string | null = null;
+        const first = await mountImageCompare(<ImageCompare id="kit-break" images={images} />);
+
+        try {
+            await first.dom.press(first.dom.container.querySelector('[role="group"]'), "]");
+            expect(selects(first.dom.container)).toEqual(["0", "2"]);
+            saved = first.dom.window.localStorage.getItem(picksKey);
+        } finally {
+            await first.restore();
+        }
+
+        const reload = await mountImageCompare(<ImageCompare id="kit-break" images={images} />, {
+            prepare: (window) => window.localStorage.setItem(picksKey, saved ?? ""),
+        });
+
+        try {
+            expect(selects(reload.dom.container)).toEqual(["0", "2"]);
+        } finally {
+            await reload.restore();
+        }
+    }, 20_000);
+
+    test("a diff the shared cache let go stays current on its comparison when the page draws again", async () => {
+        // Seven diffs on one page, one more than the shared diff cache keeps, so the first one's entry leaves it.
+        const pairs = Array.from({ length: 7 }, (_, i) => ({
+            before: { src: `fake://80x60/plain-ev${i}` },
+            after: { src: `fake://80x60/changed-ev${i}` },
+        }));
+        const Page = ({ round }: { round: number }) => (
+            <>
+                {pairs.map((pair) => (
+                    <ImageCompare key={pair.before.src} {...pair} caption={`Round ${round}`} defaultMode="diff" />
+                ))}
+            </>
+        );
+        const { dom, text, restore } = await mountImageCompare(<Page round={1} />);
+        const working = BUSY_TEXT.filter((busy) => !busy.startsWith("Updating"));
+
+        try {
+            await settleUntil(() => !working.some((busy) => text().includes(busy)), "every diff to be computed");
+            await dom.render(<Page round={2} />);
+            expect(text()).not.toContain("Updating for the new settings");
+            const downloads = [...dom.container.querySelectorAll("button")].filter((button) =>
+                button.textContent?.includes("Download diff PNG")
+            );
+            expect(downloads.map((button) => button.disabled)).toEqual(pairs.map(() => false));
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
     test("the blink interval and the diff underlay opacity start at the props and change on the comparison", async () => {
         const { dom, radio, restore } = await mountImageCompare(
             <ImageCompare
@@ -3811,7 +3929,9 @@ describe("ImageCompare", () => {
             await dom.click(button("Reorder"));
             expect(selects().map((select) => select.value)).toEqual(["0", "2"]);
             expect(shown()).toEqual(["Third", "Second"]);
-            expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-list:picks")).toBe("Third\nSecond");
+            expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-list:picks")).toBe(
+                SafeJSON.stringify(["Third", "Second"])
+            );
 
             // Third is gone: the first two, never one image on both sides.
             await dom.click(button("Two left"));
@@ -3862,7 +3982,7 @@ describe("ImageCompare", () => {
             expect(errors).toEqual([]);
             expect(selects().map((select) => select.value)).toEqual(["0", "2"]);
             expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-shrink:picks")).toBe(
-                "First\nThird"
+                SafeJSON.stringify(["First", "Third"])
             );
         } finally {
             await restore();
