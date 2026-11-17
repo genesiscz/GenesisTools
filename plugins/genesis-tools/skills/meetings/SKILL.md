@@ -165,6 +165,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 - A worked example with confirmed answers lives in the user's notes vault, because it holds real names. Never commit
   real names, quotes or client data to this repository. Use the example to check a result, not as a shortcut, and never
   give it to a worker you are testing the skill with.
+- The tooling never calls a language model. You, the agent running this skill, propose a correction of a misheard
+  word from its context and the project's dictionary, and record it with `items add` or as an answer; the user
+  confirms the repeated ones through the word questions, the most heard first, and a confirmed spelling goes into the
+  dictionary.
 - Never write to the source app, ADO, Teams or the vault's git. The user commits the vault.
 - Every change is visible in a `diff` block, with `//` lines that give the rule and the score.
 
