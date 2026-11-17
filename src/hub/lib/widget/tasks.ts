@@ -258,7 +258,9 @@ export function listWidgetTasks({
         total: selected.length,
         activeCount: cached.tasks.filter((task) => ["open", "acknowledged"].includes(task.state)).length,
         truncated: selected.length > options.limit,
-        sourcePath: fromStore !== null && store !== undefined ? store : file,
+        // The widget watches this one path for changes. A store write lands in its WAL file (the database file changes
+        // only at a checkpoint), so the store's WAL is the path to watch; a write after a checkpoint creates it again.
+        sourcePath: fromStore !== null && store !== undefined ? `${store}-wal` : file,
         sourceStamp: stamp,
     };
 }
