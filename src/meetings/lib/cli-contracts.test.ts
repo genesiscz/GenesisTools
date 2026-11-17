@@ -1352,6 +1352,30 @@ describe("rows --json: the review rows (F3)", () => {
         expect(order(answered)).toEqual(["i93", "i94"]);
     });
 
+    test("word questions come in the window order the terminal asks them: the most heard word first", async () => {
+        const { reviewRows } = await import("./review-rows");
+        const { openQuestions } = await import("./questions");
+        const wordQuestion = (id: string, fromSec: number, heard: string, occurrences: number) =>
+            question(id, {
+                about: "term",
+                group: "words",
+                fromSec,
+                toSec: fromSec + 2,
+                heard,
+                question: `How is "${heard}" spelled?`,
+                choices: [],
+                decides: [],
+                evidence: { occurrences },
+            });
+        const asked = meetingRecordSchema.parse({
+            ...record,
+            items: [wordQuestion("i95", 100, "zorbex", 2), wordQuestion("i96", 400, "quillet", 9)],
+        });
+
+        expect(openQuestions(asked).map((item) => item.id)).toEqual(["i96", "i95"]);
+        expect(reviewRows(asked, { minPriority: 0 }).rows.map((row) => row.id)).toEqual(["i96", "i95"]);
+    });
+
     test("an item row: its choices act on it, its reason is pieces and sources, and a decision names who made it", async () => {
         const { reviewRow } = await import("./review-rows");
         const term = reviewRow(record, record.items[0]!);
