@@ -197,3 +197,7 @@ seats. Enrolment uses isolated-call solo windows or confirmed lines and excludes
 Cosine and margin are evidence, not probabilities. Missing models, quiet audio, incompatible embeddings and ambiguous
 scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
 estimated-clean tracks separately.
+
+Set `global.capture.recorders.native.audio.mode` to `session` for continuous sound in 60-second files; the default
+`pieces` records the sound inside the screen pieces, with up to 5 seconds missing every 30 seconds, and `record status`
+explains a fall back.
