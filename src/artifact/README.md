@@ -287,15 +287,25 @@ bodies render as markdown.
 - Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/- counts). `beforeValue` and
   `afterValue` accept JSON values and sort nested object keys, preserving array order. Split context rows use
   each file's own line number, and `wrap` uses normal break opportunities.
-- Compare images: `ImageCompare` takes `before`/`after` (or two `images`) and switches between side by side, a
-  slider (`role="slider"`, arrows and Home/End), blink (click or Space; an auto flip that reduced motion turns off),
-  fade and a pixel diff. The diff runs pixelmatch in the browser on both images padded top-left to a common size,
-  paints changed pixels pink (`IMAGE_DIFF_COLOR`), boxes the changed regions with the same clustering as
-  `tools control compare-screenshot` (`src/utils/image/regions.ts`), and steps the zoom from region to region. Every
-  mode shares one zoom and pan (buttons, Ctrl or Cmd with the wheel at the pointer, drag). `ImageCompareProvider`
-  plus `ImageCompareModeSwitch` set the mode and threshold of every comparison on a page; a comparison where the
-  user picked its own mode keeps it until "Follow page". The diff needs images from the page's origin, data: URLs
-  or CORS headers; the other modes work with any image. Demo: `src/artifact/gallery/image-compare.tsx`.
+- Compare images: `ImageCompare` takes `before`/`after`, or two or more `images` (A and B selects; `[` and `]` step
+  B), and switches between side by side, a slider (`role="slider"`, arrows and Home/End), blink (click or Space; an
+  auto flip that reduced motion turns off), fade, a pixel diff and a heat map. The diff runs pixelmatch in the
+  browser on both images placed top-left on one canvas, paints changed pixels pink (`IMAGE_DIFF_COLOR`), boxes the
+  changed regions with the same clustering as `tools control compare-screenshot` (`src/utils/image/regions.ts`),
+  lists them in a table whose numbers zoom to them, steps the zoom from region to region, and downloads the diff as
+  a PNG. Heat draws each pixel's colour distance on a ramp of the kit tones. Before both, `estimateShift` looks for
+  one whole-pixel offset of B within 32 px: the row and column projection profiles propose offsets and the pixel
+  difference picks one, because a page's column profile is mostly text and a few real changes pull its correlation
+  down. A found shift is shown ("After is shifted by +3, +12 px") and applied while Align is on; then only the
+  overlap of the two images is compared, and the summary says "on the aligned pair, where both overlap". An
+  unrelated pair gets no offset. Every mode shares one zoom and pan (buttons, Ctrl or Cmd with the wheel at the
+  pointer, drag); the first view fits the image, never above 100%, centred across with its top edge at the top.
+  Labels sit in a strip above each stage, never on the image.
+  With a comparison focused, 1 to 6 pick a mode, + and - zoom and 0 fits; a select or text field keeps its keys.
+  `ImageCompareProvider` plus `ImageCompareModeSwitch` set the mode and threshold of every comparison on a page; a
+  comparison where the user picked its own mode keeps it until "Follow page". A new mode is one file in
+  `runtime/kit/image-compare/modes/` and one line in its `registry.ts`. Diff and heat need images from the page's
+  origin, data: URLs or CORS headers; the other modes work with any image. Demo: `src/artifact/gallery/image-compare.tsx`.
 - Structure: `TreeView` + `treeFromPaths` (file trees; `variant="ascii"` prints a command tree with ├─ guides,
   per-group badge columns and one comment column, `color` inherited), `Steps` (status stepper), `Compare` (A vs B
   columns), `KeyValue` (definition grid), `MappingList` (old name to new name: `arrow` rows with a note, or

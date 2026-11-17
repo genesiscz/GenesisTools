@@ -6,7 +6,7 @@ export const meta: GalleryMeta = {
     family: "Diff",
     title: "Image compare",
     summary:
-        "ImageCompare: before and after images side by side, under a slider, blinking, faded, or as a pixel diff with pink changed pixels and boxes around the changed regions. One zoom and pan for every mode; a page switch sets every comparison at once.",
+        "ImageCompare: before and after images side by side, under a slider, blinking, faded, as a pixel diff with pink changed pixels, boxed and listed regions, or as a colour-distance heat map. A page moved by a few pixels is found and aligned first. One zoom and pan for every mode; a page switch sets every comparison at once.",
     components: ["ImageCompare", "ImageCompareProvider", "ImageCompareModeSwitch"],
 };
 
@@ -49,15 +49,18 @@ interface MockOptions {
     rows?: number;
     /** A footer row only the after image has (the size demo). */
     footer?: boolean;
+    /** Draws the whole page moved by this many pixels (the alignment demo). */
+    shift?: { dx: number; dy: number };
 }
 
 /** A small dashboard drawn on a canvas, so the gallery needs no binary fixture. `after` changes a few things. */
 function drawMock(
     context: CanvasRenderingContext2D,
-    { width, height, palette, after, rows = 1, footer = false }: MockOptions
+    { width, height, palette, after, rows = 1, footer = false, shift }: MockOptions
 ): void {
     context.fillStyle = palette.page;
     context.fillRect(0, 0, width, height);
+    context.translate(shift?.dx ?? 0, shift?.dy ?? 0);
     context.fillStyle = palette.panel;
     context.fillRect(0, 0, width, 52);
     context.fillStyle = palette.line;
@@ -145,6 +148,7 @@ function mockUrl(options: MockOptions): string {
 }
 
 interface Samples {
+    shifted: { before: string; after: string };
     light: { before: string; after: string };
     dark: { before: string; after: string };
     taller: { before: string; after: string };
@@ -166,6 +170,10 @@ function useSamples(): Samples | undefined {
             dark: pair({ width: 720, height: 400, palette: DARK }),
             taller: pair({ width: 720, height: 400, palette: LIGHT }, 480),
             large: pair({ width: 1280, height: 2000, palette: LIGHT, rows: 6 }),
+            shifted: {
+                before: mockUrl({ width: 720, height: 400, palette: LIGHT, after: false }),
+                after: mockUrl({ width: 720, height: 400, palette: LIGHT, after: true, shift: { dx: 3, dy: 12 } }),
+            },
         });
     }, []);
 
@@ -179,7 +187,7 @@ export default function ImageComparePage() {
         <GalleryPage
             title={meta.title}
             summary={meta.summary}
-            keyboard="The mode switch is a radio group: Tab reaches it and the arrows pick a mode. In Slider, Tab reaches the handle: Left and Right move it 2%, with Shift 10%, and Home and End jump to the edges. In Blink, the stage takes focus and Space shows the other image. Ctrl or Cmd with the wheel zooms at the pointer, and a drag pans once the image is larger than the stage."
+            keyboard="Click an image (or Tab to a stage) to focus a comparison. Then 1 to 6 pick a mode, + and - zoom, 0 fits, and with three or more images [ and ] step image B. A key typed into a select or a text field stays there. The mode switch is a radio group: the arrows pick a mode. In Slider, Tab reaches the handle: Left and Right move it 2%, with Shift 10%, and Home and End jump to the edges. In Blink, Space on the stage shows the other image. Ctrl or Cmd with the wheel zooms at the pointer, and a drag pans once the image is larger than the stage. The Keys line under each comparison repeats this."
         >
             {samples ? (
                 <>
@@ -210,6 +218,29 @@ export default function ImageComparePage() {
                                 { src: samples.dark.after, label: "Dark after" },
                             ]}
                             modes={["slider", "blink", "diff"]}
+                            defaultMode="slider"
+                        />
+                    </Demo>
+                    <Demo
+                        title="A shifted image"
+                        note="After is the same page moved by 3 px right and 12 px down, with a few real changes. The diff finds the shift, says so and compares the aligned pair, so only the real changes are pink; turn Align off to see the smear a moved page makes. Heat shows how far each pixel's colour moved."
+                    >
+                        <ImageCompare
+                            before={{ src: samples.shifted.before }}
+                            after={{ src: samples.shifted.after, label: "After, moved" }}
+                            defaultMode="diff"
+                        />
+                    </Demo>
+                    <Demo
+                        title="Three images"
+                        note="With three or more images, two selects pick A and B; with the comparison focused, [ and ] step B."
+                    >
+                        <ImageCompare
+                            images={[
+                                { src: samples.light.before, label: "Build 1" },
+                                { src: samples.light.after, label: "Build 2" },
+                                { src: samples.taller.after, label: "Build 3, with a footer" },
+                            ]}
                             defaultMode="slider"
                         />
                     </Demo>

@@ -275,6 +275,7 @@ export {
     DEFAULT_DIFF_THRESHOLD,
     diffImages,
     diffSummary,
+    estimateShift,
     IMAGE_DIFF_COLOR,
     ImageCompare,
     type ImageCompareItem,
@@ -289,9 +290,11 @@ export {
     loadImagePixels,
     type PixelError,
     type PixelLoad,
+    type PixelPair,
     type PixelState,
     padToCommonSize,
     type RgbaImage,
+    type Shift,
     useImageCompare,
 } from "./image-compare";
 // Design-document kit: the document look, a top bar, a layered diagram, a segment bar, mapping rows, named hues.

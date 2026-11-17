@@ -1,12 +1,20 @@
 import { blinkMode } from "./modes/blink";
 import { diffMode } from "./modes/diff";
 import { fadeMode } from "./modes/fade";
+import { heatMode } from "./modes/heat";
 import { sideBySideMode } from "./modes/side-by-side";
 import { sliderMode } from "./modes/slider";
 import type { CompareMode } from "./stage";
 
 /** Every mode in switch order: the only place that lists them. A new mode is one file in `modes/` and one line here. */
-export const COMPARE_MODES: readonly CompareMode[] = [sideBySideMode, sliderMode, blinkMode, fadeMode, diffMode];
+export const COMPARE_MODES: readonly CompareMode[] = [
+    sideBySideMode,
+    sliderMode,
+    blinkMode,
+    fadeMode,
+    diffMode,
+    heatMode,
+];
 
 /** The mode a comparison shows when nothing else picks one. */
 export const DEFAULT_COMPARE_MODE = sideBySideMode.id;

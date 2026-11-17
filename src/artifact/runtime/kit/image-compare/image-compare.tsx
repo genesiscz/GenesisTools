@@ -1,5 +1,5 @@
-import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { Button } from "../forms";
+import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { Button, Field, Select } from "../forms";
 import { MdInline } from "../md";
 import { SegmentedControl } from "../primitives";
 import { IMAGE_COMPARE_STORAGE_KEY, parseStoredThreshold, readStored, useImageCompare, writeStored } from "./context";
@@ -9,6 +9,7 @@ import {
     type CompareSize,
     type CompareView,
     commonSize,
+    compareKey,
     DEFAULT_DIFF_THRESHOLD,
     DIFF_THRESHOLD_MAX,
     DIFF_THRESHOLD_MIN,
@@ -22,7 +23,7 @@ import {
     ZOOM_STEP,
     zoomViewBy,
 } from "./core";
-import { diffImageUrls, loadImageSize } from "./load";
+import { loadImageSize, loadPixelPair } from "./load";
 import { COMPARE_MODES, checkModeId, compareModesFor, DEFAULT_COMPARE_MODE, findCompareMode } from "./registry";
 import type {
     CompareImage,
@@ -39,7 +40,7 @@ export interface ImageCompareProps {
     before?: ImageCompareSide;
     /** Image B. Sugar for `images[1]`. */
     after?: ImageCompareSide;
-    /** Two images, A and B. Pass this or `before` and `after`, not both. */
+    /** Two or more images. With three or more, two selects (and the keys [ and ]) pick A and B. Pass this or `before` and `after`, not both. */
     images?: ImageCompareItem[];
     /** Inline markdown under the comparison. */
     caption?: string;
@@ -55,46 +56,43 @@ export interface ImageCompareProps {
     maxHeight?: number;
 }
 
-/** Waits for a dragged threshold to settle before a diff starts, so only the value it stops on is computed. */
-const SETTLE_MS = 120;
 const PIXELS_OFF: PixelState = { status: "off" };
 const PIXELS_LOADING: PixelState = { status: "loading" };
 
-/** The natural size of an image: undefined while it loads, null when it failed. */
-function useNaturalSize(src: string): CompareSize | null | undefined {
-    const [state, setState] = useState<{ src: string; size: CompareSize | null }>();
+/**
+ * The natural size of every image, loaded together, so stepping B to another image keeps the stage (and its focus)
+ * instead of waiting for that image. A size is undefined while it loads and null when the image failed.
+ */
+function useNaturalSizes(srcs: string[]): ReadonlyMap<string, CompareSize | null> {
+    const [sizes, setSizes] = useState<ReadonlyMap<string, CompareSize | null>>(() => new Map());
+    const latest = useRef(srcs);
+    latest.current = srcs;
+    const key = srcs.join("\n");
 
     useEffect(() => {
         let live = true;
-        loadImageSize(src).then((size) => {
-            if (live) {
-                setState({ src, size });
-            }
-        });
+
+        for (const src of latest.current) {
+            loadImageSize(src).then((size) => {
+                if (live) {
+                    setSizes((previous) => (previous.get(src) === size ? previous : new Map(previous).set(src, size)));
+                }
+            });
+        }
 
         return () => {
             live = false;
         };
-    }, [src]);
+    }, [key]);
 
-    return state?.src === src ? state.size : undefined;
+    return sizes;
 }
 
 /**
- * The diff of A and B for a mode that needs pixels. Off for the other modes, so nothing is decoded until a pixel
- * mode is shown. While a new threshold computes, the previous result of the same pair stays on screen.
+ * Both decoded images and their shift estimate, for a mode that needs pixels. Off for the other modes, so nothing is
+ * decoded until a pixel mode is shown.
  */
-function usePixelDiff({
-    a,
-    b,
-    threshold,
-    enabled,
-}: {
-    a: string;
-    b: string;
-    threshold: number;
-    enabled: boolean;
-}): PixelState {
+function usePixelPair({ a, b, enabled }: { a: string; b: string; enabled: boolean }): PixelState {
     const pair = `${a}\n${b}`;
     const [state, setState] = useState<{ pair: string; pixels: PixelState }>();
 
@@ -103,33 +101,33 @@ function usePixelDiff({
             return;
         }
 
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => {
-            diffImageUrls({ a, b, threshold, signal: controller.signal }).then((result) => {
-                if (controller.signal.aborted || result === null) {
-                    return;
-                }
-
+        let live = true;
+        loadPixelPair(a, b).then((result) => {
+            if (live) {
                 setState({
                     pair,
                     pixels: result.ok
-                        ? { status: "ready", diff: result.diff, ms: result.ms }
+                        ? { status: "ready", pair: result.pair }
                         : { status: "error", message: result.error.message },
                 });
-            });
-        }, SETTLE_MS);
+            }
+        });
 
         return () => {
-            window.clearTimeout(timer);
-            controller.abort();
+            live = false;
         };
-    }, [enabled, a, b, threshold, pair]);
+    }, [enabled, a, b, pair]);
 
     if (!enabled) {
         return PIXELS_OFF;
     }
 
     return state?.pair === pair ? state.pixels : PIXELS_LOADING;
+}
+
+/** True when a key belongs to a control that types or picks (a text input, a select), never to the comparison. */
+function isTypingTarget(target: EventTarget): boolean {
+    return target instanceof Element && target.closest("input, select, textarea, [contenteditable='true']") !== null;
 }
 
 /** The first candidate the comparison offers; the chain runs from the most specific choice to the kit default. */
@@ -150,8 +148,9 @@ function clampThreshold(value: number): number {
 }
 
 /**
- * Before and after images with a mode switch: side by side, a slider, blink, fade and a pixel diff (pink pixels,
- * boxes around changed regions), on one zoom and pan stage. Under an ImageCompareProvider it follows the page mode
+ * Before and after images with a mode switch: side by side, a slider, blink, fade, a pixel diff (pink pixels, boxes
+ * and a list of changed regions, a PNG download) and a colour-distance heat map, on one zoom and pan stage. A page
+ * moved by a few pixels is found and aligned before the diff. Under an ImageCompareProvider it follows the page mode
  * until the user picks a mode on it; "Follow page" returns it.
  */
 export function ImageCompare({
@@ -165,7 +164,10 @@ export function ImageCompare({
     id,
     maxHeight = 640,
 }: ImageCompareProps) {
-    const [first, second] = resolveCompareImages({ before, after, images });
+    const all = resolveCompareImages({ before, after, images });
+    const [picks, setPicks] = useState({ a: 0, b: 1 });
+    const first = all[Math.min(picks.a, all.length - 1)];
+    const second = all[Math.min(picks.b, all.length - 1)];
     const allowed = compareModesFor(modes);
     checkModeId(defaultMode, "defaultMode");
     const page = useImageCompare();
@@ -178,15 +180,15 @@ export function ImageCompare({
     const effectiveThreshold = clampThreshold(ownThreshold ?? page?.threshold ?? threshold ?? DEFAULT_DIFF_THRESHOLD);
     const detached = ownMode !== undefined || ownThreshold !== undefined;
 
-    const sizeA = useNaturalSize(first.src);
-    const sizeB = useNaturalSize(second.src);
+    const sizes = useNaturalSizes(all.map((image) => image.src));
+    const sizeA = sizes.get(first.src);
+    const sizeB = sizes.get(second.src);
     const [view, setView] = useState<CompareView>(FIT_VIEW);
     const [pane, setPane] = useState<CompareSize | null>(null);
     const [settings, setSettings] = useState<CompareSettings>({});
-    const pixels = usePixelDiff({
+    const pixels = usePixelPair({
         a: first.src,
         b: second.src,
-        threshold: effectiveThreshold,
         enabled: mode.needsPixels === true && Boolean(sizeA && sizeB),
     });
     const canvas = sizeA && sizeB ? commonSize(sizeA, sizeB) : undefined;
@@ -235,6 +237,45 @@ export function ImageCompare({
     const zoomBy = (factor: number): void => {
         if (pane && canvas) {
             setView((current) => zoomViewBy({ view: current, pane, canvas, factor }));
+        }
+    };
+    /** Steps B through the images, past A. */
+    const stepB = (by: number): void => {
+        setPicks((current) => {
+            let next = current.b;
+
+            do {
+                next = (next + by + all.length) % all.length;
+            } while (next === current.a && all.length > 1);
+
+            return { a: current.a, b: next };
+        });
+    };
+    const onKeys = (event: KeyboardEvent<HTMLElement>): void => {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) {
+            return;
+        }
+
+        const action = compareKey(event.key);
+
+        if (
+            !action ||
+            (action.kind === "mode" && !allowed[action.index]) ||
+            (action.kind === "step-b" && all.length < 3)
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+
+        if (action.kind === "mode") {
+            pickOwnMode(allowed[action.index].id);
+        } else if (action.kind === "zoom") {
+            zoomBy(action.factor);
+        } else if (action.kind === "fit") {
+            setView(FIT_VIEW);
+        } else {
+            stepB(action.by);
         }
     };
     const scale = view.scale ?? (pane && canvas ? fitScale(pane, canvas) : 1);
@@ -292,7 +333,26 @@ export function ImageCompare({
     }
 
     return (
-        <figure data-image-compare={id ?? ""} className="my-4 rounded-card border border-line bg-panel/60 p-3">
+        <figure
+            data-image-compare={id ?? ""}
+            onKeyDown={onKeys}
+            className="my-4 rounded-card border border-line bg-panel/60 p-3"
+        >
+            {all.length > 2 ? (
+                <div className="mb-2 flex flex-wrap items-end gap-3">
+                    {(["a", "b"] as const).map((side) => (
+                        <div key={side} className="w-56">
+                            <Field label={side === "a" ? "A" : "B"}>
+                                <Select
+                                    options={all.map((image, index) => ({ value: String(index), label: image.label }))}
+                                    value={String(side === "a" ? picks.a : picks.b)}
+                                    onChange={(value) => setPicks((current) => ({ ...current, [side]: Number(value) }))}
+                                />
+                            </Field>
+                        </div>
+                    ))}
+                </div>
+            ) : null}
             <div className="mb-2 flex flex-wrap items-center gap-2">
                 {allowed.length > 1 ? (
                     <SegmentedControl
@@ -339,6 +399,14 @@ export function ImageCompare({
                     <MdInline>{caption}</MdInline>
                 </figcaption>
             ) : null}
+            <details className="mt-1.5 text-xs text-dim">
+                <summary className="w-fit cursor-pointer select-none">Keys</summary>
+                <p className="mt-1">
+                    {`With the comparison focused (click an image): 1 to ${allowed.length} pick a mode, + and - zoom, 0 fits.${
+                        all.length > 2 ? " [ and ] step image B." : ""
+                    } In Blink, Space shows the other image. Keys never reach the comparison while a text field or a select has focus.`}
+                </p>
+            </details>
         </figure>
     );
 }

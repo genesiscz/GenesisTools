@@ -1,14 +1,6 @@
 import { type PointerEvent, useRef } from "react";
 import { clampPercent, percentAt, sliderKeyPercent } from "../core";
-import {
-    type CompareMode,
-    ComparePane,
-    type CompareStageProps,
-    numberSetting,
-    StageImage,
-    StageLabel,
-    ViewLayer,
-} from "../stage";
+import { type CompareMode, ComparePane, type CompareStageProps, numberSetting, StageImage, ViewLayer } from "../stage";
 
 const POSITION = "slider.position";
 
@@ -28,15 +20,18 @@ function SliderStage(props: CompareStageProps) {
     };
 
     return (
-        <ComparePane stage={props} label={`${props.a.label} and ${props.b.label}, split by a slider`}>
+        <ComparePane
+            stage={props}
+            label={`${props.a.label} and ${props.b.label}, split by a slider`}
+            caption={`${props.a.label}, left of the handle`}
+            captionEnd={`${props.b.label}, right of the handle`}
+        >
             <ViewLayer>
                 <StageImage image={props.b} />
             </ViewLayer>
             <ViewLayer clip={`inset(0 ${100 - position}% 0 0)`}>
                 <StageImage image={props.a} />
             </ViewLayer>
-            <StageLabel>{props.a.label}</StageLabel>
-            <StageLabel corner="top-right">{props.b.label}</StageLabel>
             <div
                 role="slider"
                 tabIndex={0}

@@ -6,7 +6,6 @@ import {
     numberSetting,
     RangeControl,
     StageImage,
-    StageLabel,
     ViewLayer,
 } from "../stage";
 
@@ -17,14 +16,17 @@ function FadeStage(props: CompareStageProps) {
     const opacity = numberSetting(props.settings, OPACITY, 50);
 
     return (
-        <ComparePane stage={props} label={`${props.b.label} over ${props.a.label} at ${Math.round(opacity)}%`}>
+        <ComparePane
+            stage={props}
+            label={`${props.b.label} over ${props.a.label} at ${Math.round(opacity)}%`}
+            caption={`${props.a.label} under ${props.b.label} at ${Math.round(opacity)}%`}
+        >
             <ViewLayer>
                 <StageImage image={props.a} />
             </ViewLayer>
             <ViewLayer style={{ opacity: opacity / 100 }}>
                 <StageImage image={props.b} />
             </ViewLayer>
-            <StageLabel>{`${props.a.label} under ${props.b.label} at ${Math.round(opacity)}%`}</StageLabel>
         </ComparePane>
     );
 }

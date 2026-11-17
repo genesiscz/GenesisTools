@@ -2973,9 +2973,28 @@ class FakeImage {
     }
 }
 
-/** White pixels; a name with "changed" adds an 8 x 6 navy block at (12, 30). */
+/**
+ * White pixels; a name with "changed" adds an 8 x 6 navy block at (12, 30). A name with "page" draws text-like bars,
+ * moved by (3, 12) when the name also says "shifted", so the alignment has something to find.
+ */
 function fakePixels(src: string, width: number, height: number): Uint8ClampedArray {
     const data = new Uint8ClampedArray(width * height * 4).fill(255);
+
+    if (src.includes("page")) {
+        const dx = src.includes("shifted") ? 3 : 0;
+        const dy = src.includes("shifted") ? 12 : 0;
+
+        for (let line = 0; line * 14 + 16 < height; line++) {
+            const left = 12 + ((line * 37) % 29) + dx;
+            const length = 20 + ((line * 53) % (width - 80));
+
+            for (let y = Math.max(0, 10 + line * 14 + dy); y < Math.min(height, 17 + line * 14 + dy); y++) {
+                for (let x = Math.max(0, left); x < Math.min(width, left + length); x++) {
+                    data.set([40, 40, 48, 255], (y * width + x) * 4);
+                }
+            }
+        }
+    }
 
     if (src.includes("changed")) {
         for (let y = 30; y < 36; y++) {
@@ -2994,6 +3013,11 @@ class FakeImageData {
     height: number;
 
     constructor(data: Uint8ClampedArray, width: number, height: number) {
+        // The browser refuses a buffer of the wrong length; so does this stand-in.
+        if (data.length !== width * height * 4) {
+            throw new RangeError(`ImageData: ${data.length} bytes for ${width} x ${height}`);
+        }
+
         this.data = data;
         this.width = width;
         this.height = height;
@@ -3048,6 +3072,16 @@ async function settleFor(ms: number): Promise<void> {
     });
 }
 
+/**
+ * A pixel mode needs two rounds: the decoded pair renders, and only then does the mode start its diff or heat map.
+ * React applies a state update when an `act` ends, so the wait is several short acts, not one long one.
+ */
+async function settlePixels(): Promise<void> {
+    for (let round = 0; round < 4; round++) {
+        await settleFor(150);
+    }
+}
+
 describe("ImageCompare", () => {
     test("every mode renders, the slider keys move the handle, Space flips Blink and the diff boxes its region", async () => {
         const { dom, text, radio, button, restore } = await mountImageCompare(
@@ -3060,7 +3094,7 @@ describe("ImageCompare", () => {
 
         try {
             expect(text()).toContain("Sizes differ: Before 120 x 80, After 120 x 90");
-            expect(dom.container.querySelectorAll('[role="radio"]').length).toBe(5);
+            expect(dom.container.querySelectorAll('[role="radio"]').length).toBe(6);
             expect(dom.container.querySelectorAll("img").length).toBe(2);
             expect(dom.container.querySelector("figcaption em")?.textContent).toBe("caption");
 
@@ -3087,7 +3121,7 @@ describe("ImageCompare", () => {
             expect(text()).toContain("After opacity");
 
             await dom.click(radio("Diff"));
-            await settleFor(400);
+            await settlePixels();
             // 48 block pixels plus the 10 rows only After has (120 x 10).
             expect(text()).toContain("11.6% of pixels differ (1,248)");
             const boxes = [...dom.container.querySelectorAll("[data-region]")];
@@ -3105,6 +3139,18 @@ describe("ImageCompare", () => {
             expect(text()).toContain("-100%+");
             await dom.click(button("Zoom in"));
             expect(text()).toContain("-125%+");
+
+            // The regions list: a click on a number zooms to that region.
+            expect(dom.container.querySelector("table")?.textContent).toContain("1,200");
+            await dom.click(button("Zoom to region 2"));
+            expect(text()).toContain("Region 2 of 2");
+            expect(text()).not.toContain("-125%+");
+            expect(button("Download diff PNG")?.disabled).toBe(false);
+
+            await dom.click(radio("Heat"));
+            await settlePixels();
+            expect(text()).toContain("% of pixels changed colour");
+            expect(text()).toContain("Large change");
         } finally {
             await restore();
         }
@@ -3140,6 +3186,74 @@ describe("ImageCompare", () => {
             expect(text(pageSwitch.parentElement?.parentElement ?? dom.container)).not.toContain("Threshold");
             await dom.click(radio("Diff", pageSwitch));
             expect(text(pageSwitch.parentElement?.parentElement ?? dom.container)).toContain("Threshold");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("three images get A and B selects, the keys pick modes and step B, and a select keeps its own keys", async () => {
+        const { dom, radio, text, restore } = await mountImageCompare(
+            <ImageCompare
+                images={[
+                    { src: "fake://80x60/plain-f", label: "First" },
+                    { src: "fake://80x60/plain-g", label: "Second" },
+                    { src: "fake://80x60/plain-h", label: "Third" },
+                ]}
+            />
+        );
+
+        try {
+            const selects = () => [...dom.container.querySelectorAll("select")];
+            const pane = () => dom.container.querySelector('[role="group"]');
+            const checked = () => dom.container.querySelector('[role="radio"][aria-checked="true"]')?.textContent;
+            expect(selects().map((select) => select.value)).toEqual(["0", "1"]);
+            expect(text()).toContain("[ and ] step image B");
+
+            await dom.press(pane(), "]");
+            expect(selects()[1].value).toBe("2");
+            expect(text()).toContain("Third");
+            // B skips A on its way round.
+            await dom.press(pane(), "]");
+            expect(selects()[1].value).toBe("1");
+            await dom.press(pane(), "[");
+            expect(selects()[1].value).toBe("2");
+
+            await dom.press(pane(), "2");
+            expect(checked()).toBe("Slider");
+            await dom.press(dom.container.querySelector('[role="slider"]'), "5");
+            expect(checked()).toBe("Diff");
+            // A key typed into a select never reaches the comparison.
+            await dom.press(selects()[0], "3");
+            expect(checked()).toBe("Diff");
+            expect(radio("Heat")).toBeDefined();
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a pair moved by a few pixels is found, said, and diffed aligned until Align is turned off", async () => {
+        const { dom, text, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://160x200/page-a" }}
+                after={{ src: "fake://160x200/page-shifted" }}
+                defaultMode="diff"
+            />
+        );
+
+        try {
+            await settlePixels();
+            expect(text()).toContain("After is shifted by +3, +12 px");
+            expect(text()).toContain("on the aligned pair");
+            const heat = [...dom.container.querySelectorAll('[role="radio"]')].find((r) => r.textContent === "Heat");
+            await dom.click(heat);
+            await settlePixels();
+            expect(text()).toContain("% of pixels changed colour on the aligned pair");
+
+            // Each mode draws its own controls, so the Align toggle is looked up in Heat's row.
+            const align = [...dom.container.querySelectorAll("label")].find((label) => label.textContent === "Align");
+            await dom.click(align?.querySelector("input"));
+            await settlePixels();
+            expect(text()).not.toContain("on the aligned pair");
         } finally {
             await restore();
         }

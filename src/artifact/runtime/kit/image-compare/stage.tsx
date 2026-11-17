@@ -11,19 +11,21 @@ import {
     useRef,
     useState,
 } from "react";
-import { Badge } from "../primitives";
 import {
     type CompareRect,
     type CompareSize,
     type CompareView,
     canPan,
-    type ImageDiff,
+    NO_SHIFT,
     paneHeight,
     panView,
     resolveView,
+    type Shift,
+    shiftText,
     type ViewTransform,
     zoomViewAt,
 } from "./core";
+import type { IdleCache, PixelPair } from "./load";
 
 /**
  * The stage every mode draws into: a pane that owns zoom and pan (Ctrl or Cmd plus the wheel zooms at the pointer, a
@@ -42,12 +44,15 @@ export interface CompareImage {
     height: number;
 }
 
-/** Decoded pixels for a mode with `needsPixels`: off for the other modes. */
+/**
+ * Decoded pixels of both images and the shift estimate, for a mode with `needsPixels`; off for the other modes. A
+ * pixel mode computes its own product (a diff, a heat map) from the pair, so a new one needs no shared type.
+ */
 export type PixelState =
     | { status: "off" }
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; diff: ImageDiff; ms: number };
+    | { status: "ready"; pair: PixelPair };
 
 export type CompareSettingValue = string | number | boolean;
 
@@ -76,7 +81,7 @@ export interface CompareStageProps {
 }
 
 export interface CompareMode {
-    /** "side-by-side" | "slider" | "blink" | "fade" | "diff" */
+    /** "side-by-side" | "slider" | "blink" | "fade" | "diff" | "heat" */
     id: string;
     /** Sentence case, shown on the switch. */
     label: string;
@@ -84,7 +89,7 @@ export interface CompareMode {
     Stage: ComponentType<CompareStageProps>;
     /** Optional controls row under the switch (threshold, opacity, underlay). */
     Controls?: ComponentType<CompareStageProps>;
-    /** True when the mode needs decoded pixels of both images (diff). */
+    /** True when the mode needs decoded pixels of both images (diff, heat). */
     needsPixels?: boolean;
 }
 
@@ -133,12 +138,33 @@ export interface ComparePaneProps {
     children: ReactNode;
     /** A click or tap that did not pan (Blink flips on it). */
     onTap?: () => void;
-    /** Makes the pane focusable and hands it the keys. */
+    /** Keys for the mode while the pane has focus (Blink's Space); the comparison's own keys bubble past it. */
     onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+    /** The canvas this pane shows, when a mode draws a different one (an aligned pair). Default: the stage's. */
+    canvas?: CompareSize;
+    /**
+     * What the pane shows, in a strip above it: a label never sits on the image, where it would hide the very
+     * pixels being compared. `captionEnd` goes to the right end of the strip (Slider's B).
+     */
+    caption?: ReactNode;
+    captionEnd?: ReactNode;
 }
 
-/** One pannable, zoomable pane. Its height follows the canvas aspect, capped at the comparison's maxHeight. */
-export function ComparePane({ stage, label, children, onTap, onKeyDown }: ComparePaneProps) {
+/**
+ * One pannable, zoomable pane. Its height follows the canvas aspect, capped at the comparison's maxHeight. It takes
+ * focus on a click, so the comparison's keys work right after the user points at an image.
+ */
+export function ComparePane({
+    stage: stageProps,
+    label,
+    children,
+    onTap,
+    onKeyDown,
+    canvas,
+    caption,
+    captionEnd,
+}: ComparePaneProps) {
+    const stage = canvas ? { ...stageProps, canvas } : stageProps;
     const paneRef = useRef<HTMLDivElement>(null);
     const [width, setWidth] = useState(0);
     const [dragging, setDragging] = useState(false);
@@ -274,23 +300,36 @@ export function ComparePane({ stage, label, children, onTap, onKeyDown }: Compar
     const style: CSSProperties = { height: width > 0 ? height : undefined, touchAction: pannable ? "none" : "auto" };
 
     return (
-        <TransformContext.Provider value={{ transform, canvas: stage.canvas }}>
-            <div
-                ref={paneRef}
-                role="group"
-                aria-label={label}
-                tabIndex={onKeyDown ? 0 : undefined}
-                onKeyDown={onKeyDown}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-                className={`relative box-content min-h-24 select-none overflow-hidden rounded-card border border-line bg-canvas ${cursor} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info`}
-                style={style}
-            >
-                {children}
-            </div>
-        </TransformContext.Provider>
+        <div className="min-w-0">
+            {caption !== undefined || captionEnd !== undefined ? (
+                <div
+                    data-stage-caption=""
+                    className="mb-1 flex min-h-4 items-end justify-between gap-3 text-xs font-medium leading-4 text-dim"
+                >
+                    <span className="min-w-0 truncate">{caption}</span>
+                    {captionEnd !== undefined ? (
+                        <span className="min-w-0 truncate text-right">{captionEnd}</span>
+                    ) : null}
+                </div>
+            ) : null}
+            <TransformContext.Provider value={{ transform, canvas: stage.canvas }}>
+                <div
+                    ref={paneRef}
+                    role="group"
+                    aria-label={label}
+                    tabIndex={0}
+                    onKeyDown={onKeyDown}
+                    onPointerDown={onPointerDown}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                    onPointerCancel={onPointerUp}
+                    className={`relative box-content min-h-24 select-none overflow-hidden rounded-card border border-line bg-canvas ${cursor} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info`}
+                    style={style}
+                >
+                    {children}
+                </div>
+            </TransformContext.Provider>
+        </div>
     );
 }
 
@@ -314,8 +353,16 @@ export function ViewLayer({ children, clip, style }: { children: ReactNode; clip
     );
 }
 
-/** An image at its natural size at the canvas's top-left; past 100% its pixels stay sharp. */
-export function StageImage({ image, className = "" }: { image: CompareImage; className?: string }) {
+/** An image at its natural size, at the canvas's top-left or at `at`; past 100% its pixels stay sharp. */
+export function StageImage({
+    image,
+    className = "",
+    at,
+}: {
+    image: CompareImage;
+    className?: string;
+    at?: { x: number; y: number };
+}) {
     const { scale } = useViewTransform();
 
     return (
@@ -325,20 +372,15 @@ export function StageImage({ image, className = "" }: { image: CompareImage; cla
             width={image.width}
             height={image.height}
             draggable={false}
-            className={`absolute left-0 top-0 block max-w-none ${className}`}
-            style={{ width: image.width, height: image.height, imageRendering: scale > 1 ? "pixelated" : undefined }}
+            className={`absolute block max-w-none ${className}`}
+            style={{
+                left: at?.x ?? 0,
+                top: at?.y ?? 0,
+                width: image.width,
+                height: image.height,
+                imageRendering: scale > 1 ? "pixelated" : undefined,
+            }}
         />
-    );
-}
-
-const CORNER = { "top-left": "left-2 top-2", "top-right": "right-2 top-2" } as const;
-
-/** An image name in a pane corner, readable over any image. */
-export function StageLabel({ children, corner = "top-left" }: { children: ReactNode; corner?: keyof typeof CORNER }) {
-    return (
-        <span className={`pointer-events-none absolute z-[2] -ml-1.5 shadow-sm ${CORNER[corner]}`}>
-            <Badge tag>{children}</Badge>
-        </span>
     );
 }
 
@@ -407,4 +449,133 @@ export function ToggleControl({
             {hint ? <span className="text-xs text-dim">{hint}</span> : null}
         </label>
     );
+}
+
+// ─── Pixel modes ───
+
+/** The pixel modes' shared setting: apply the found shift (on by default when one is found). */
+const ALIGN = "align";
+/** Waits for a dragged control to settle before a computation starts. */
+const SETTLE_MS = 120;
+
+/** The shift a pixel mode applies: the estimate, unless the user turned Align off. */
+export function appliedShift(props: CompareStageProps): Shift {
+    const { pixels } = props;
+
+    if (pixels.status !== "ready" || !pixels.pair.shift || !boolSetting(props.settings, ALIGN, true)) {
+        return NO_SHIFT;
+    }
+
+    return pixels.pair.shift;
+}
+
+/** True when a pixel mode compares a shifted pair; its summary then says so. */
+export function isAligned(shift: Shift): boolean {
+    return shift.dx !== 0 || shift.dy !== 0;
+}
+
+/** "After is shifted by +3, +12 px" and the Align toggle, when the estimate found a shift. */
+export function AlignControl(props: CompareStageProps) {
+    const shift = props.pixels.status === "ready" ? props.pixels.pair.shift : null;
+
+    if (!shift || !isAligned(shift)) {
+        return null;
+    }
+
+    return (
+        <span className="flex items-center gap-3">
+            <span className="text-xs text-ink">{shiftText(shift, props.b.label)}</span>
+            <ToggleControl
+                label="Align"
+                checked={boolSetting(props.settings, ALIGN, true)}
+                onChange={(checked) => props.setSetting(ALIGN, checked)}
+            />
+        </span>
+    );
+}
+
+export type IdleResult<T> = { status: "loading" } | { status: "ready"; value: T; ms: number; stale: boolean };
+
+/**
+ * A pixel mode's product, computed after the browser goes idle and cached by the job's key. While a new key computes,
+ * the last result of the same `group` (the same pair of images) stays on screen, marked stale.
+ */
+export function useIdleCompute<T>({
+    cache,
+    group,
+    job,
+}: {
+    cache: IdleCache<T>;
+    group: string;
+    /** Null until the inputs are ready. */
+    job: { key: string; compute: () => T } | null;
+}): IdleResult<T> {
+    const [last, setLast] = useState<{ key: string; group: string; value: T; ms: number }>();
+    const latest = useRef(job);
+    latest.current = job;
+    const key = job?.key ?? null;
+
+    useEffect(() => {
+        const current = latest.current;
+
+        if (key === null || !current) {
+            return;
+        }
+
+        const hit = cache.peek(key);
+
+        if (hit) {
+            setLast({ key, group, value: hit.value, ms: hit.ms });
+            return;
+        }
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => {
+            cache.run({ key, compute: current.compute, signal: controller.signal }).then((result) => {
+                if (result && !controller.signal.aborted) {
+                    setLast({ key, group, value: result.value, ms: result.ms });
+                }
+            });
+        }, SETTLE_MS);
+
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [cache, key, group]);
+
+    const hit = key === null ? undefined : cache.peek(key);
+
+    if (hit) {
+        return { status: "ready", value: hit.value, ms: hit.ms, stale: false };
+    }
+
+    if (last && last.group === group) {
+        return { status: "ready", value: last.value, ms: last.ms, stale: true };
+    }
+
+    return { status: "loading" };
+}
+
+/** The loading line or the error of a pixel mode, over its pane. */
+export function PixelNotice({ pixels, computing }: { pixels: PixelState; computing: boolean }) {
+    if (pixels.status === "error") {
+        return (
+            <div role="alert" className="absolute inset-0 z-[3] flex items-center justify-center p-4 text-center">
+                <span className="rounded-card border border-warn bg-panel px-3 py-2 text-sm text-warn">
+                    {pixels.message}
+                </span>
+            </div>
+        );
+    }
+
+    if (pixels.status === "loading" || computing) {
+        return (
+            <div className="absolute inset-0 z-[3] flex items-center justify-center text-sm text-dim">
+                Reading the pixels...
+            </div>
+        );
+    }
+
+    return null;
 }

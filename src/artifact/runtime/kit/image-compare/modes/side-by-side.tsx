@@ -5,14 +5,11 @@ function SideBySideStage(props: CompareStageProps) {
     return (
         <div className="grid grid-cols-2 gap-2">
             {[props.a, props.b].map((image, index) => (
-                <div key={index === 0 ? "a" : "b"} className="min-w-0">
-                    <div className="mb-1 truncate text-xs font-medium text-dim">{image.label}</div>
-                    <ComparePane stage={props} label={image.label}>
-                        <ViewLayer>
-                            <StageImage image={image} />
-                        </ViewLayer>
-                    </ComparePane>
-                </div>
+                <ComparePane key={index === 0 ? "a" : "b"} stage={props} label={image.label} caption={image.label}>
+                    <ViewLayer>
+                        <StageImage image={image} />
+                    </ViewLayer>
+                </ComparePane>
             ))}
         </div>
     );

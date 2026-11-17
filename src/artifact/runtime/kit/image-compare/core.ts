@@ -72,9 +72,6 @@ export interface ResolvedCompareImage {
     alt: string;
 }
 
-/** The most images ImageCompare shows; more `images` are refused until A and B can be picked from them. */
-export const MAX_COMPARE_IMAGES = 2;
-
 /** The images of a comparison from its props, or a thrown error that says which prop shape is wrong. */
 export function resolveCompareImages({
     before,
@@ -92,12 +89,6 @@ export function resolveCompareImages({
     if (images !== undefined) {
         if (images.length < 2) {
             throw new Error(`ImageCompare needs at least two \`images\`; it got ${images.length}.`);
-        }
-
-        if (images.length > MAX_COMPARE_IMAGES) {
-            throw new Error(
-                `ImageCompare shows ${MAX_COMPARE_IMAGES} images; it got ${images.length}. Pass two \`images\` (or \`before\` and \`after\`).`
-            );
         }
 
         return images.map((image) => ({ src: image.src, label: image.label, alt: image.alt ?? image.label }));
@@ -130,54 +121,195 @@ export function sizesDifferText(
 
 // ─── Pixels ───
 
+/** A whole-pixel offset of B against A: B's content sits at A's position plus (dx, dy). */
+export interface Shift {
+    dx: number;
+    dy: number;
+}
+
+export const NO_SHIFT: Shift = { dx: 0, dy: 0 };
+
 /** The canvas both images share: the larger width and the larger height. */
 export function commonSize(a: CompareSize, b: CompareSize): CompareSize {
     return { width: Math.max(a.width, b.width), height: Math.max(a.height, b.height) };
 }
 
-/** The image drawn top-left on a transparent canvas of `size`; the same object when it already has that size. */
-export function padImage(image: RgbaImage, size: CompareSize): RgbaImage {
-    if (image.width === size.width && image.height === size.height) {
+/** The canvas of a pair with A at the origin and B drawn at (-dx, -dy), so B's content lines up with A's. */
+export function alignedSize(a: CompareSize, b: CompareSize, shift: Shift): CompareSize {
+    return { width: Math.max(a.width, b.width - shift.dx), height: Math.max(a.height, b.height - shift.dy) };
+}
+
+/**
+ * The image drawn with its top-left corner at `at` on a transparent canvas of `size`, cropped at the canvas edges.
+ * The same object when it already fills that canvas from the origin.
+ */
+export function placeImage(
+    image: RgbaImage,
+    size: CompareSize,
+    at: { x: number; y: number } = { x: 0, y: 0 }
+): RgbaImage {
+    if (at.x === 0 && at.y === 0 && image.width === size.width && image.height === size.height) {
         return image;
     }
 
     const data = new Uint8ClampedArray(size.width * size.height * 4);
-    const rowBytes = Math.min(image.width, size.width) * 4;
+    const fromX = Math.max(0, -at.x);
+    const toX = Math.min(image.width, size.width - at.x);
 
-    for (let y = 0; y < Math.min(image.height, size.height); y++) {
-        const from = y * image.width * 4;
-        data.set(image.data.subarray(from, from + rowBytes), y * size.width * 4);
+    for (let y = Math.max(0, -at.y); y < Math.min(image.height, size.height - at.y) && toX > fromX; y++) {
+        const row = y * image.width;
+        data.set(image.data.subarray((row + fromX) * 4, (row + toX) * 4), ((y + at.y) * size.width + fromX + at.x) * 4);
     }
 
     return { width: size.width, height: size.height, data };
 }
 
-/** Both images padded to their common size, so pixelmatch can compare them. */
+/** Both images on their common canvas, top-left, so pixelmatch can compare them. */
 export function padToCommonSize(a: RgbaImage, b: RgbaImage): { a: RgbaImage; b: RgbaImage; size: CompareSize } {
     const size = commonSize(a, b);
 
-    return { a: padImage(a, size), b: padImage(b, size), size };
+    return { a: placeImage(a, size), b: placeImage(b, size), size };
+}
+
+/** The part of the aligned canvas both images cover: A at the origin, B moved back by `shift`. */
+export function overlapRect(a: CompareSize, b: CompareSize, shift: Shift): CompareRect {
+    const x = Math.max(0, -shift.dx);
+    const y = Math.max(0, -shift.dy);
+
+    return {
+        x,
+        y,
+        w: Math.max(0, Math.min(a.width, b.width - shift.dx) - x),
+        h: Math.max(0, Math.min(a.height, b.height - shift.dy) - y),
+    };
+}
+
+/** The pixels of `rect` (inside the image) as an image of their own. */
+function cropImage(image: RgbaImage, rect: CompareRect): RgbaImage {
+    const data = new Uint8ClampedArray(rect.w * rect.h * 4);
+
+    for (let y = 0; y < rect.h; y++) {
+        const from = ((rect.y + y) * image.width + rect.x) * 4;
+        data.set(image.data.subarray(from, from + rect.w * 4), y * rect.w * 4);
+    }
+
+    return { width: rect.w, height: rect.h, data };
 }
 
 /**
- * pixelmatch over the two images on their common canvas. A pixel inside one image and outside the other counts as
- * changed whatever pixelmatch says, since transparent padding against a white page would otherwise read as equal.
+ * pixelmatch over the two images on one canvas: A at the origin, B moved back by `shift` (none by default).
+ *
+ * Unshifted, the whole canvas is compared, and a pixel inside one image and outside the other counts as changed
+ * whatever pixelmatch says, since transparent padding against a white page would otherwise read as equal.
+ *
+ * Shifted, only the overlap is compared and counted (`total` is its area). The rows and columns the move uncovers
+ * belong to the shift, which is reported as one finding; counted as changes they framed the image and merged every
+ * real change into one region the size of the page.
+ *
  * Anti-aliased pixels are not changes (pixelmatch's default). Regions come from the same clustering
  * `tools control compare-screenshot` uses.
  */
-export function diffImages({ a, b, threshold }: { a: RgbaImage; b: RgbaImage; threshold: number }): ImageDiff {
-    const padded = padToCommonSize(a, b);
-    const { width, height } = padded.size;
+export function diffImages({
+    a,
+    b,
+    threshold,
+    shift = NO_SHIFT,
+}: {
+    a: RgbaImage;
+    b: RgbaImage;
+    threshold: number;
+    shift?: Shift;
+}): ImageDiff {
+    const size = alignedSize(a, b, shift);
+    const { width, height } = size;
     const overlay = new Uint8ClampedArray(width * height * 4);
-    let changed = pixelmatch(padded.a.data, padded.b.data, overlay, width, height, {
-        threshold,
-        diffMask: true,
-        diffColor: IMAGE_DIFF_RGB,
-    });
-    changed += markOutside({ overlay, size: padded.size, a, b });
+    const options = { threshold, diffMask: true, diffColor: IMAGE_DIFF_RGB };
+    let changed: number;
+    let total: number;
+
+    if (shift.dx === 0 && shift.dy === 0) {
+        const placedA = placeImage(a, size);
+        const placedB = placeImage(b, size);
+        changed = pixelmatch(placedA.data, placedB.data, overlay, width, height, options);
+        changed += markOutside({
+            overlay,
+            size,
+            a: { x: 0, y: 0, w: a.width, h: a.height },
+            b: { x: 0, y: 0, w: b.width, h: b.height },
+        });
+        total = width * height;
+    } else {
+        const area = overlapRect(a, b, shift);
+        const part = new Uint8ClampedArray(area.w * area.h * 4);
+        changed =
+            area.w * area.h === 0
+                ? 0
+                : pixelmatch(
+                      cropImage(a, area).data,
+                      cropImage(b, { ...area, x: area.x + shift.dx, y: area.y + shift.dy }).data,
+                      part,
+                      area.w,
+                      area.h,
+                      options
+                  );
+
+        for (let y = 0; y < area.h; y++) {
+            overlay.set(part.subarray(y * area.w * 4, (y + 1) * area.w * 4), ((area.y + y) * width + area.x) * 4);
+        }
+
+        total = area.w * area.h;
+    }
+
     const regions = changed === 0 ? [] : clusterMask({ mask: overlay, width, height, ...DEFAULT_REGION_OPTIONS });
 
-    return { size: padded.size, overlay, changed, total: width * height, regions };
+    return { size, overlay, changed, total, regions };
+}
+
+type Span = [number, number];
+
+/** The part of row `y` a rect covers, clipped to the canvas width, or null. */
+function rowSpan(rect: CompareRect, y: number, width: number): Span | null {
+    if (y < rect.y || y >= rect.y + rect.h) {
+        return null;
+    }
+
+    const start = Math.max(0, rect.x);
+    const end = Math.min(width, rect.x + rect.w);
+
+    return end > start ? [start, end] : null;
+}
+
+/** The pixels of a row that exactly one of two spans covers. */
+export function exclusiveSpans(p: Span | null, q: Span | null): Span[] {
+    if (!p || !q) {
+        return [p, q].filter((span): span is Span => span !== null);
+    }
+
+    if (p[1] <= q[0] || q[1] <= p[0]) {
+        return [p, q];
+    }
+
+    const spans: Span[] = [
+        [Math.min(p[0], q[0]), Math.max(p[0], q[0])],
+        [Math.min(p[1], q[1]), Math.max(p[1], q[1])],
+    ];
+
+    return spans.filter(([start, end]) => end > start);
+}
+
+/** The spans of row `y` that lie inside exactly one of the two rects (both clipped to the canvas width). */
+export function outsideOneSpans({
+    a,
+    b,
+    y,
+    width,
+}: {
+    a: CompareRect;
+    b: CompareRect;
+    y: number;
+    width: number;
+}): Span[] {
+    return exclusiveSpans(rowSpan(a, y, width), rowSpan(b, y, width));
 }
 
 /** Paints every pixel that lies inside exactly one of the two images; returns how many were not painted before. */
@@ -189,32 +321,193 @@ function markOutside({
 }: {
     overlay: Uint8ClampedArray;
     size: CompareSize;
-    a: CompareSize;
-    b: CompareSize;
+    a: CompareRect;
+    b: CompareRect;
 }): number {
     let added = 0;
 
     for (let y = 0; y < size.height; y++) {
-        const aEnd = y < a.height ? a.width : 0;
-        const bEnd = y < b.height ? b.width : 0;
         const rowStart = y * size.width;
 
-        for (let x = Math.min(aEnd, bEnd); x < Math.max(aEnd, bEnd); x++) {
-            const at = (rowStart + x) * 4;
+        for (const [start, end] of outsideOneSpans({ a, b, y, width: size.width })) {
+            for (let x = start; x < end; x++) {
+                const at = (rowStart + x) * 4;
 
-            if (overlay[at + 3] !== 0) {
-                continue;
+                if (overlay[at + 3] !== 0) {
+                    continue;
+                }
+
+                overlay[at] = IMAGE_DIFF_RGB[0];
+                overlay[at + 1] = IMAGE_DIFF_RGB[1];
+                overlay[at + 2] = IMAGE_DIFF_RGB[2];
+                overlay[at + 3] = 255;
+                added++;
             }
-
-            overlay[at] = IMAGE_DIFF_RGB[0];
-            overlay[at + 1] = IMAGE_DIFF_RGB[1];
-            overlay[at + 2] = IMAGE_DIFF_RGB[2];
-            overlay[at + 3] = 255;
-            added++;
         }
     }
 
     return added;
+}
+
+// ─── Alignment ───
+
+/** How far the alignment looks for a shift on each axis, in pixels. */
+export const ALIGN_WINDOW = 32;
+/** How many of the best profile offsets per axis are tried as a shift. */
+const PROFILE_CANDIDATES = 3;
+/** The winner (a shift, or no shift) must leave at most this share of the runner-up's mean luminance difference. */
+const MAX_ALIGNED_RESIDUAL = 0.6;
+
+/** Luminance of one pixel, blended over white by its alpha. */
+function luminance(data: Uint8ClampedArray, at: number): number {
+    const alpha = data[at + 3] / 255;
+
+    return (0.299 * data[at] + 0.587 * data[at + 1] + 0.114 * data[at + 2]) * alpha + 255 * (1 - alpha);
+}
+
+/** Mean luminance of every row and of every column: the projection profiles. */
+export function projectionProfiles(image: RgbaImage): { rows: Float64Array; cols: Float64Array } {
+    const rows = new Float64Array(image.height);
+    const cols = new Float64Array(image.width);
+
+    for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < image.width; x++) {
+            const value = luminance(image.data, (y * image.width + x) * 4);
+            rows[y] += value;
+            cols[x] += value;
+        }
+    }
+
+    for (let y = 0; y < image.height; y++) {
+        rows[y] /= Math.max(1, image.width);
+    }
+
+    for (let x = 0; x < image.width; x++) {
+        cols[x] /= Math.max(1, image.height);
+    }
+
+    return { rows, cols };
+}
+
+/**
+ * The offsets d in [-window, window] at which `b[i + d]` follows `a[i]` best: the highest local peaks of the
+ * normalised correlation over at least half of the shorter profile, best first. Empty when the profiles are flat
+ * (that axis carries no evidence).
+ */
+function profileOffsets(a: Float64Array, b: Float64Array, window: number): number[] {
+    const minOverlap = Math.max(8, Math.floor(Math.min(a.length, b.length) / 2));
+    const scores = new Map<number, number>();
+
+    for (let d = -window; d <= window; d++) {
+        const start = Math.max(0, -d);
+        const end = Math.min(a.length, b.length - d);
+        const n = end - start;
+
+        if (n < minOverlap) {
+            continue;
+        }
+
+        let sumA = 0;
+        let sumB = 0;
+
+        for (let i = start; i < end; i++) {
+            sumA += a[i];
+            sumB += b[i + d];
+        }
+
+        const meanA = sumA / n;
+        const meanB = sumB / n;
+        let cov = 0;
+        let varA = 0;
+        let varB = 0;
+
+        for (let i = start; i < end; i++) {
+            const p = a[i] - meanA;
+            const q = b[i + d] - meanB;
+            cov += p * q;
+            varA += p * p;
+            varB += q * q;
+        }
+
+        if (varA >= 1e-6 * n && varB >= 1e-6 * n) {
+            scores.set(d, cov / Math.sqrt(varA * varB));
+        }
+    }
+
+    const peaks = [...scores].filter(
+        ([d, score]) => score >= (scores.get(d - 1) ?? -2) && score >= (scores.get(d + 1) ?? -2)
+    );
+
+    return peaks
+        .sort((p, q) => q[1] - p[1] || Math.abs(p[0]) - Math.abs(q[0]))
+        .slice(0, PROFILE_CANDIDATES)
+        .map(([d]) => d);
+}
+
+/** Mean absolute luminance difference of A and B moved back by `shift`, over their overlap (every second pixel). */
+function meanDifference(a: RgbaImage, b: RgbaImage, shift: Shift): number {
+    let total = 0;
+    let count = 0;
+
+    for (let y = Math.max(0, -shift.dy); y < Math.min(a.height, b.height - shift.dy); y += 2) {
+        for (let x = Math.max(0, -shift.dx); x < Math.min(a.width, b.width - shift.dx); x += 2) {
+            total += Math.abs(
+                luminance(a.data, (y * a.width + x) * 4) -
+                    luminance(b.data, ((y + shift.dy) * b.width + x + shift.dx) * 4)
+            );
+            count++;
+        }
+    }
+
+    return count === 0 ? Number.POSITIVE_INFINITY : total / count;
+}
+
+/**
+ * One whole-pixel offset of B against A within `window` px either way: the projection-profile approach, where a moved page is
+ * one finding instead of a smear of changed pixels. The row and column projection profiles only propose offsets (their
+ * best peaks per axis); the pixels decide. A page's column profile is mostly its text, so a few real changes can pull
+ * that correlation low even when the shift is plain to see, and a correlation gate rejected such a pair.
+ *
+ * Returns the shift that leaves clearly the smallest mean luminance difference: a non-zero one only when it beats the
+ * unmoved pair, { dx: 0, dy: 0 } only when the unmoved pair beats every proposed shift. Null when nothing wins clearly
+ * (an unrelated pair), so such a pair never gets a wrong offset.
+ */
+export function estimateShift(a: RgbaImage, b: RgbaImage, window = ALIGN_WINDOW): Shift | null {
+    const profileA = projectionProfiles(a);
+    const profileB = projectionProfiles(b);
+    const xs = new Set([0, ...profileOffsets(profileA.cols, profileB.cols, window)]);
+    const ys = new Set([0, ...profileOffsets(profileA.rows, profileB.rows, window)]);
+    const unmoved = meanDifference(a, b, NO_SHIFT);
+    let best: { shift: Shift; residual: number } | null = null;
+
+    for (const dx of xs) {
+        for (const dy of ys) {
+            if (dx === 0 && dy === 0) {
+                continue;
+            }
+
+            const residual = meanDifference(a, b, { dx, dy });
+
+            if (!best || residual < best.residual) {
+                best = { shift: { dx, dy }, residual };
+            }
+        }
+    }
+
+    if (!best || unmoved <= MAX_ALIGNED_RESIDUAL * best.residual) {
+        return { dx: 0, dy: 0 };
+    }
+
+    return best.residual <= MAX_ALIGNED_RESIDUAL * unmoved ? best.shift : null;
+}
+
+function signed(value: number): string {
+    return value > 0 ? `+${value}` : String(value);
+}
+
+/** "After is shifted by +3, +12 px". */
+export function shiftText(shift: Shift, label = "B"): string {
+    return `${label} is shifted by ${signed(shift.dx)}, ${signed(shift.dy)} px`;
 }
 
 /** "1.24% of pixels differ (31,452)", or "No pixels differ". */
@@ -261,6 +554,38 @@ export function sliderKeyPercent({
 
     if (key === "End") {
         return 100;
+    }
+
+    return undefined;
+}
+
+/** What a key does while a comparison has focus. */
+export type CompareKeyAction =
+    | { kind: "mode"; index: number }
+    | { kind: "zoom"; factor: number }
+    | { kind: "fit" }
+    | { kind: "step-b"; by: number };
+
+/** 1 to 9 pick a mode by position, + and - zoom (= and _ too, for a key without Shift), 0 fits, [ and ] step B. */
+export function compareKey(key: string): CompareKeyAction | undefined {
+    if (/^[1-9]$/.test(key)) {
+        return { kind: "mode", index: Number(key) - 1 };
+    }
+
+    if (key === "+" || key === "=") {
+        return { kind: "zoom", factor: ZOOM_STEP };
+    }
+
+    if (key === "-" || key === "_") {
+        return { kind: "zoom", factor: 1 / ZOOM_STEP };
+    }
+
+    if (key === "0") {
+        return { kind: "fit" };
+    }
+
+    if (key === "[" || key === "]") {
+        return { kind: "step-b", by: key === "]" ? 1 : -1 };
     }
 
     return undefined;

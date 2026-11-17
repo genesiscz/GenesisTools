@@ -3,16 +3,19 @@ import { contrastRatio } from "./color";
 import {
     actualSizeView,
     type CompareSize,
+    compareKey,
     diffImages,
     diffSummary,
+    estimateShift,
     FIT_VIEW,
-    padImage,
     paneHeight,
     percentAt,
+    placeImage,
     type RgbaImage,
     regionLabelSide,
     resolveCompareImages,
     resolveView,
+    shiftText,
     sliderKeyPercent,
     viewForRect,
     zoomViewAt,
@@ -616,7 +619,7 @@ describe("image compare core", () => {
 
     test("different sizes share the larger canvas top-left, and pixels inside only one image count as changed", () => {
         const wide = solid({ width: 3, height: 1, rgb: WHITE });
-        const padded = padImage(wide, { width: 3, height: 3 });
+        const padded = placeImage(wide, { width: 3, height: 3 });
 
         expect([...padded.data.slice(0, 12)]).toEqual([...wide.data]);
         expect([...padded.data.slice(12)].every((byte) => byte === 0)).toBe(true);
@@ -629,7 +632,7 @@ describe("image compare core", () => {
         expect(diff.changed).toBe(4);
     });
 
-    test("ImageCompare takes before and after or two images, and refuses anything else", () => {
+    test("ImageCompare takes before and after or two or more images, and refuses anything else", () => {
         expect(resolveCompareImages({ before: { src: "a.png" }, after: { src: "b.png", alt: "New" } })).toEqual([
             { src: "a.png", label: "Before", alt: "Before" },
             { src: "b.png", label: "After", alt: "New" },
@@ -639,15 +642,15 @@ describe("image compare core", () => {
             resolveCompareImages({ before: { src: "a.png" }, images: [{ src: "a.png", label: "A" }] })
         ).toThrow("not both");
         expect(() => resolveCompareImages({ images: [{ src: "a.png", label: "A" }] })).toThrow("at least two");
-        expect(() =>
+        expect(
             resolveCompareImages({
                 images: [
                     { src: "a.png", label: "A" },
                     { src: "b.png", label: "B" },
                     { src: "c.png", label: "C" },
                 ],
-            })
-        ).toThrow("got 3");
+            }).map((image) => image.label)
+        ).toEqual(["A", "B", "C"]);
     });
 
     test("the slider moves 2% per arrow, 10% with Shift, jumps with Home and End, and stays in 0 to 100", () => {
@@ -739,5 +742,180 @@ describe("image compare core", () => {
         expect(regionLabelSide({ x: 10, y: 0, w: 20, h: 10 }, 1)).toBe("below");
         // 40 image pixels are only 10 screen pixels at 25%: too little room for the label.
         expect(regionLabelSide({ x: 10, y: 40, w: 20, h: 10 }, 0.25)).toBe("below");
+    });
+
+    /** A text-like page: bars of seeded lengths on white, drawn moved by `shift`. */
+    function textPage({
+        width,
+        height,
+        seed,
+        shift = { dx: 0, dy: 0 },
+    }: CompareSize & { seed: number; shift?: { dx: number; dy: number } }): RgbaImage {
+        const data = new Uint8ClampedArray(width * height * 4).fill(255);
+        let state = seed;
+        const next = (): number => {
+            state = (state * 1103515245 + 12345) % 2147483648;
+            return state / 2147483648;
+        };
+
+        for (let line = 0; line * 14 + 16 < height; line++) {
+            const top = 10 + line * 14 + shift.dy;
+            const left = 12 + Math.floor(next() * 30) + shift.dx;
+            const length = 20 + Math.floor(next() * (width - 80));
+
+            for (let y = Math.max(0, top); y < Math.min(height, top + 7); y++) {
+                for (let x = Math.max(0, left); x < Math.min(width, left + length); x++) {
+                    data.set([40, 40, 48, 255], (y * width + x) * 4);
+                }
+            }
+        }
+
+        return { width, height, data };
+    }
+
+    /** Seeded grey noise: no structure for a shift to lock onto. */
+    function noise({ width, height, seed }: CompareSize & { seed: number }): RgbaImage {
+        const data = new Uint8ClampedArray(width * height * 4);
+        let state = seed;
+
+        for (let i = 0; i < width * height; i++) {
+            state = (state * 1103515245 + 12345) % 2147483648;
+            const grey = Math.floor((state / 2147483648) * 256);
+            data.set([grey, grey, grey, 255], i * 4);
+        }
+
+        return { width, height, data };
+    }
+
+    test("alignment finds a known shift, gives 0, 0 for an identical pair and no offset for unrelated pairs", () => {
+        const a = textPage({ width: 220, height: 260, seed: 7 });
+        const moved = textPage({ width: 220, height: 260, seed: 7, shift: { dx: 3, dy: 12 } });
+        const shift = estimateShift(a, moved);
+
+        expect(shift).toEqual({ dx: 3, dy: 12 });
+        expect(estimateShift(a, textPage({ width: 220, height: 260, seed: 7, shift: { dx: -5, dy: -9 } }))).toEqual({
+            dx: -5,
+            dy: -9,
+        });
+        expect(estimateShift(a, a)).toEqual({ dx: 0, dy: 0 });
+        expect(
+            estimateShift(noise({ width: 200, height: 160, seed: 1 }), noise({ width: 200, height: 160, seed: 2 }))
+        ).toBeNull();
+        expect(estimateShift(a, textPage({ width: 220, height: 260, seed: 99 }))).toBeNull();
+        expect(shiftText({ dx: 3, dy: 12 }, "After")).toBe("After is shifted by +3, +12 px");
+
+        // On the aligned pair only the overlap is compared, and a pure move leaves nothing; unaligned, every text
+        // line differs.
+        const aligned = diffImages({ a, b: moved, threshold: 0.15, shift: { dx: 3, dy: 12 } });
+        expect(aligned.size).toEqual({ width: 220, height: 260 });
+        expect({ changed: aligned.changed, total: aligned.total }).toEqual({ changed: 0, total: 217 * 248 });
+        expect(diffImages({ a, b: moved, threshold: 0.15 }).changed).toBeGreaterThan(1000);
+    });
+
+    /**
+     * The gallery's dashboard drawn without a canvas: a white header with a title and a button, three cards with a
+     * label and a value, and a chart panel with a line of dots on a light grey page. Text is drawn as glyph-like
+     * strokes, one pattern per character, because the column profile of a real page is mostly its text. `after`
+     * makes the gallery's real changes (the button moves 14 px, turns green and gets a new label, two values change,
+     * one chart point jumps) and `shift` moves the whole page, as the gallery's "A shifted image" does.
+     */
+    function dashboard({ after, shift }: { after: boolean; shift: { dx: number; dy: number } }): RgbaImage {
+        const width = 720;
+        const height = 400;
+        const data = new Uint8ClampedArray(width * height * 4);
+        const fill = (x: number, y: number, w: number, h: number, rgb: [number, number, number]): void => {
+            for (let row = Math.max(0, y + shift.dy); row < Math.min(height, y + h + shift.dy); row++) {
+                for (let col = Math.max(0, x + shift.dx); col < Math.min(width, x + w + shift.dx); col++) {
+                    data.set([...rgb, 255], (row * width + col) * 4);
+                }
+            }
+        };
+
+        for (let i = 0; i < width * height; i++) {
+            data.set([244, 245, 247, 255], i * 4);
+        }
+
+        /** Each character is a 10 px cell with one or two strokes placed by its code, so another string changes columns. */
+        const text = (x: number, y: number, value: string, size: number, rgb: [number, number, number]): void => {
+            [...value].forEach((char, index) => {
+                const code = char.charCodeAt(0);
+                const left = x + index * Math.round(size * 0.62);
+                fill(left + (code % 5), y, 2, size, rgb);
+
+                if (code % 3 === 0) {
+                    fill(left, y + Math.round(size / 2), Math.round(size * 0.5), 2, rgb);
+                }
+
+                if (code % 2 === 0) {
+                    fill(left + 2 + (code % 4), y, 2, Math.round(size / 2), rgb);
+                }
+            });
+        };
+        const ink: [number, number, number] = [29, 35, 48];
+        const dim: [number, number, number] = [107, 115, 133];
+        const white: [number, number, number] = [255, 255, 255];
+        fill(0, 0, width, 52, white);
+        fill(0, 52, width, 1, [217, 220, 227]);
+        text(20, 18, "Bookings", 17, ink);
+        fill(width - (after ? 150 : 164), 12, 128, 30, after ? [31, 157, 107] : [47, 111, 236]);
+        text(width - (after ? 132 : 146), 20, after ? "New booking" : "Add booking", 13, white);
+        const cardWidth = (width - 80) / 3;
+        const cards = [
+            ["Today", after ? "1,312" : "1,284"],
+            ["This week", "8,940"],
+            ["No-shows", after ? "2.1%" : "3.4%"],
+        ];
+
+        cards.forEach(([label, value], card) => {
+            const left = Math.round(20 + card * (cardWidth + 20));
+            fill(left, 72, Math.round(cardWidth), 96, white);
+            text(left + 16, 90, label, 13, dim);
+            text(left + 16, 118, value, 28, ink);
+        });
+
+        fill(20, 188, width - 40, 160, white);
+
+        for (let step = 0; step <= 12; step++) {
+            const x = Math.round(40 + ((width - 80) * step) / 12);
+            const bump = after && step === 8 ? 38 : 0;
+            const y = Math.round(188 + 120 - 50 * Math.abs(Math.sin(step / 2.2)) - bump);
+            fill(x - 3, y - 3, 6, 6, [47, 111, 236]);
+        }
+
+        return { width, height, data };
+    }
+
+    test("alignment finds a page shift that comes with a few real changes, as in the gallery's shifted case", () => {
+        const before = dashboard({ after: false, shift: { dx: 0, dy: 0 } });
+        const moved = dashboard({ after: true, shift: { dx: 3, dy: 12 } });
+
+        expect(estimateShift(before, moved)).toEqual({ dx: 3, dy: 12 });
+        // The real changes alone are no shift.
+        expect(estimateShift(before, dashboard({ after: true, shift: { dx: 0, dy: 0 } }))).toEqual({ dx: 0, dy: 0 });
+
+        // Aligned, the diff is the real changes only: the strips the move uncovered are the shift, not changes, so
+        // no region is the whole page.
+        const realOnly = diffImages({
+            a: before,
+            b: dashboard({ after: true, shift: { dx: 0, dy: 0 } }),
+            threshold: 0.15,
+        });
+        const aligned = diffImages({ a: before, b: moved, threshold: 0.15, shift: { dx: 3, dy: 12 } });
+        expect(aligned.changed).toBeGreaterThan(0);
+        expect(aligned.changed).toBeLessThanOrEqual(realOnly.changed);
+        expect(aligned.regions.every((region) => region.w < 700 && region.h < 380)).toBe(true);
+    });
+
+    test("the comparison keys pick a mode by number, zoom, fit and step image B", () => {
+        expect(compareKey("1")).toEqual({ kind: "mode", index: 0 });
+        expect(compareKey("6")).toEqual({ kind: "mode", index: 5 });
+        expect(compareKey("+")).toEqual({ kind: "zoom", factor: 1.25 });
+        expect(compareKey("=")).toEqual({ kind: "zoom", factor: 1.25 });
+        expect(compareKey("-")).toEqual({ kind: "zoom", factor: 0.8 });
+        expect(compareKey("0")).toEqual({ kind: "fit" });
+        expect(compareKey("]")).toEqual({ kind: "step-b", by: 1 });
+        expect(compareKey("[")).toEqual({ kind: "step-b", by: -1 });
+        expect(compareKey("a")).toBeUndefined();
+        expect(compareKey(" ")).toBeUndefined();
     });
 });

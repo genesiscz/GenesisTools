@@ -1,28 +1,38 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { readableTextOn } from "../../color";
+import { DataTable, type DataTableCell } from "../../data";
 import { Button } from "../../forms";
-import { SegmentedControl } from "../../primitives";
+import { Collapse, SegmentedControl } from "../../primitives";
 import {
     type CompareRegion,
     DIFF_THRESHOLD_MAX,
     DIFF_THRESHOLD_MIN,
+    diffImages,
     diffSummary,
     IMAGE_DIFF_COLOR,
     type ImageDiff,
     REGION_OUTLINE_REACH,
+    type RgbaImage,
     regionLabelSide,
+    type Shift,
 } from "../core";
+import { createIdleCache } from "../load";
 import {
+    AlignControl,
+    appliedShift,
     boolSetting,
     type CompareMode,
     ComparePane,
     type CompareStageProps,
     choiceSetting,
+    type IdleResult,
+    isAligned,
     numberSetting,
+    PixelNotice,
     RangeControl,
     StageImage,
-    StageLabel,
     ToggleControl,
+    useIdleCompute,
     useViewTransform,
     ViewLayer,
 } from "../stage";
@@ -32,8 +42,30 @@ const REGIONS = "diff.regions";
 const REGION = "diff.region";
 const UNDERLAYS = ["after", "before", "mask"] as const;
 const REGION_INK = readableTextOn(IMAGE_DIFF_COLOR);
+/** A diff of a large pair holds a canvas-sized overlay, so only the latest few stay. */
+const diffCache = createIdleCache<ImageDiff>(6);
 
-/** The overlay as a canvas the size of the common canvas: pink where a pixel differs. */
+/** The diff at this comparison's threshold, on the aligned pair while Align is on. */
+function useDiff(props: CompareStageProps): { result: IdleResult<ImageDiff>; shift: Shift } {
+    const shift = appliedShift(props);
+    const { pixels, threshold } = props;
+    const group = `${props.a.src}\n${props.b.src}`;
+    const pair = pixels.status === "ready" ? pixels.pair : null;
+    const result = useIdleCompute({
+        cache: diffCache,
+        group,
+        job: pair
+            ? {
+                  key: `${group}\n${threshold}\n${shift.dx},${shift.dy}`,
+                  compute: () => diffImages({ a: pair.a, b: pair.b, threshold, shift }),
+              }
+            : null,
+    });
+
+    return { result, shift };
+}
+
+/** The overlay as a canvas the size of the diff canvas: pink where a pixel differs. */
 function DiffCanvas({ diff }: { diff: ImageDiff }) {
     const ref = useRef<HTMLCanvasElement>(null);
 
@@ -101,54 +133,207 @@ function RegionBoxes({ regions, active }: { regions: CompareRegion[]; active: nu
     });
 }
 
-/** pixelmatch's changed pixels in pink over the chosen underlay, with boxes around the changed regions. */
+function goToRegion(props: CompareStageProps, regions: CompareRegion[], index: number): void {
+    props.setSetting(REGION, index);
+    props.zoomTo(regions[index]);
+}
+
+const REGION_COLUMNS = [
+    { key: "region", label: "Region" },
+    { key: "x", label: "X", mono: true },
+    { key: "y", label: "Y", mono: true },
+    { key: "width", label: "Width", mono: true },
+    { key: "height", label: "Height", mono: true },
+    { key: "pixels", label: "Pixels", mono: true },
+];
+
+/** Every changed region as a row; the number zooms the stage to it. */
+function RegionTable({
+    props,
+    regions,
+    active,
+}: {
+    props: CompareStageProps;
+    regions: CompareRegion[];
+    active: number;
+}) {
+    const rows = regions.map(
+        (region, index): Record<string, DataTableCell> => ({
+            region: (
+                <button
+                    type="button"
+                    onClick={() => goToRegion(props, regions, index)}
+                    aria-label={`Zoom to region ${index + 1}`}
+                    className="font-mono font-semibold text-accent underline-offset-2 hover:underline"
+                >
+                    {index + 1}
+                </button>
+            ),
+            x: region.x,
+            y: region.y,
+            width: region.w,
+            height: region.h,
+            pixels: region.pixels.toLocaleString("en-US"),
+        })
+    );
+
+    return (
+        <div className="mt-2">
+            <Collapse summary="Changed regions" meta={String(regions.length)} open>
+                <div className="max-h-72 overflow-auto">
+                    <DataTable
+                        columns={REGION_COLUMNS}
+                        rows={rows}
+                        rowTone={(_row, index) => (index === active ? "info" : undefined)}
+                    />
+                </div>
+            </Collapse>
+        </div>
+    );
+}
+
+/** pixelmatch's changed pixels in pink over the chosen underlay, boxes around the changed regions, and their list. */
 function DiffStage(props: CompareStageProps) {
     const underlay = choiceSetting(props.settings, UNDERLAY, UNDERLAYS, "after");
     const showRegions = boolSetting(props.settings, REGIONS, true);
     const active = numberSetting(props.settings, REGION, -1);
-    const { pixels } = props;
+    const { result, shift } = useDiff(props);
+    const diff = result.status === "ready" ? result.value : null;
     const shown = underlay === "after" ? props.b : underlay === "before" ? props.a : undefined;
 
     return (
-        <ComparePane stage={props} label={`Pixel diff of ${props.a.label} and ${props.b.label}`}>
-            <ViewLayer>
-                {shown ? <StageImage image={shown} className="opacity-40 grayscale" /> : null}
-                {pixels.status === "ready" ? <DiffCanvas diff={pixels.diff} /> : null}
-                {pixels.status === "ready" && showRegions ? (
-                    <RegionBoxes regions={pixels.diff.regions} active={active} />
-                ) : null}
-            </ViewLayer>
-            <StageLabel>{shown ? `Diff over ${shown.label}` : "Diff mask"}</StageLabel>
-            {pixels.status === "loading" ? (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-dim">
-                    Computing the diff...
-                </div>
+        <>
+            <ComparePane
+                stage={props}
+                label={`Pixel diff of ${props.a.label} and ${props.b.label}`}
+                canvas={diff?.size}
+                caption={shown ? `Diff over ${shown.label}` : "Diff mask"}
+            >
+                <ViewLayer>
+                    {shown ? (
+                        <StageImage
+                            image={shown}
+                            at={shown === props.b ? { x: -shift.dx, y: -shift.dy } : undefined}
+                            className="opacity-40 grayscale"
+                        />
+                    ) : null}
+                    {diff ? <DiffCanvas diff={diff} /> : null}
+                    {diff && showRegions ? <RegionBoxes regions={diff.regions} active={active} /> : null}
+                </ViewLayer>
+                <PixelNotice pixels={props.pixels} computing={result.status === "loading"} />
+            </ComparePane>
+            {diff && diff.regions.length > 0 ? (
+                <RegionTable props={props} regions={diff.regions} active={active} />
             ) : null}
-            {pixels.status === "error" ? (
-                <div role="alert" className="absolute inset-0 flex items-center justify-center p-4 text-center">
-                    <span className="rounded-card border border-warn bg-panel px-3 py-2 text-sm text-warn">
-                        {pixels.message}
-                    </span>
-                </div>
-            ) : null}
-        </ComparePane>
+        </>
     );
+}
+
+/** The image as a canvas, so it can be drawn with a filter. */
+function imageCanvas(image: RgbaImage): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    canvas
+        .getContext("2d")
+        ?.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+
+    return canvas;
+}
+
+function fileSlug(text: string): string {
+    return (
+        text
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "") || "image"
+    );
+}
+
+/** The diff as the stage draws it: white page, the faded grey underlay, the pink pixels. Resolves false on failure. */
+function downloadDiff({
+    diff,
+    underlay,
+    at,
+    name,
+}: {
+    diff: ImageDiff;
+    underlay: RgbaImage | undefined;
+    at: { x: number; y: number };
+    name: string;
+}): Promise<boolean> {
+    const canvas = document.createElement("canvas");
+    canvas.width = diff.size.width;
+    canvas.height = diff.size.height;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+        return Promise.resolve(false);
+    }
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (underlay) {
+        context.filter = "grayscale(1)";
+        context.globalAlpha = 0.4;
+        context.drawImage(imageCanvas(underlay), at.x, at.y);
+        context.filter = "none";
+        context.globalAlpha = 1;
+    }
+
+    context.drawImage(imageCanvas({ ...diff.size, data: diff.overlay }), 0, 0);
+
+    return new Promise((resolve) => {
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                resolve(false);
+                return;
+            }
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = name;
+            link.click();
+            // The click starts the download; the URL can go once the browser has read it.
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            resolve(true);
+        }, "image/png");
+    });
 }
 
 function DiffControls(props: CompareStageProps) {
     const underlay = choiceSetting(props.settings, UNDERLAY, UNDERLAYS, "after");
     const showRegions = boolSetting(props.settings, REGIONS, true);
-    const { pixels } = props;
-    const regions = pixels.status === "ready" ? pixels.diff.regions : [];
+    const { result, shift } = useDiff(props);
+    const diff = result.status === "ready" ? result.value : null;
+    const regions = diff?.regions ?? [];
     const active = numberSetting(props.settings, REGION, -1);
+    const [downloadFailed, setDownloadFailed] = useState(false);
     const step = (by: number): void => {
         if (regions.length === 0) {
             return;
         }
 
-        const next = active < 0 ? (by > 0 ? 0 : regions.length - 1) : (active + by + regions.length) % regions.length;
-        props.setSetting(REGION, next);
-        props.zoomTo(regions[next]);
+        goToRegion(
+            props,
+            regions,
+            active < 0 ? (by > 0 ? 0 : regions.length - 1) : (active + by + regions.length) % regions.length
+        );
+    };
+    const download = (): void => {
+        if (!diff || props.pixels.status !== "ready") {
+            return;
+        }
+
+        const { pair } = props.pixels;
+        downloadDiff({
+            diff,
+            underlay: underlay === "after" ? pair.b : underlay === "before" ? pair.a : undefined,
+            at: underlay === "after" ? { x: -shift.dx, y: -shift.dy } : { x: 0, y: 0 },
+            name: `diff-${fileSlug(props.a.label)}-${fileSlug(props.b.label)}.png`,
+        }).then((ok) => setDownloadFailed(!ok));
     };
 
     return (
@@ -177,6 +362,7 @@ function DiffControls(props: CompareStageProps) {
                 checked={showRegions}
                 onChange={(checked) => props.setSetting(REGIONS, checked)}
             />
+            <AlignControl {...props} />
             <div className="flex items-center gap-1">
                 <Button size="sm" disabled={regions.length === 0} onClick={() => step(-1)}>
                     Previous region
@@ -192,15 +378,23 @@ function DiffControls(props: CompareStageProps) {
                     </span>
                 ) : null}
             </div>
+            <Button size="sm" disabled={!diff} onClick={download}>
+                Download diff PNG
+            </Button>
+            {downloadFailed ? (
+                <span role="alert" className="text-xs text-err">
+                    The browser could not make the PNG.
+                </span>
+            ) : null}
             <span aria-live="polite" className="text-xs text-dim">
-                {pixels.status === "ready" ? (
+                {diff && result.status === "ready" ? (
                     <>
-                        <span className="font-medium text-ink">{diffSummary(pixels.diff)}</span>
-                        {` in ${Math.round(pixels.ms)} ms`}
+                        <span className="font-medium text-ink">{diffSummary(diff)}</span>
+                        {`${isAligned(shift) ? " on the aligned pair, where both overlap," : ""} in ${Math.round(result.ms)} ms`}
                     </>
-                ) : pixels.status === "loading" ? (
+                ) : props.pixels.status === "error" ? null : (
                     "Computing the diff..."
-                ) : null}
+                )}
             </span>
         </>
     );

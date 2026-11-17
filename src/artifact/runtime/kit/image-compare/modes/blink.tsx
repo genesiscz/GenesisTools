@@ -7,7 +7,6 @@ import {
     type CompareStageProps,
     choiceSetting,
     StageImage,
-    StageLabel,
     ToggleControl,
     ViewLayer,
 } from "../stage";
@@ -64,6 +63,7 @@ function BlinkStage(props: CompareStageProps) {
         <ComparePane
             stage={props}
             label={`Blink comparison showing ${shown.label}; press Space to show the other image`}
+            caption={<span aria-live={auto ? "off" : "polite"}>{`${showing.toUpperCase()}: ${shown.label}`}</span>}
             onTap={() => flip(props)}
             onKeyDown={(event) => {
                 if (event.key === " ") {
@@ -78,9 +78,6 @@ function BlinkStage(props: CompareStageProps) {
             <ViewLayer style={{ visibility: showing === "b" ? "visible" : "hidden" }}>
                 <StageImage image={props.b} />
             </ViewLayer>
-            <StageLabel>
-                <span aria-live={auto ? "off" : "polite"}>{`${showing.toUpperCase()}: ${shown.label}`}</span>
-            </StageLabel>
         </ComparePane>
     );
 }
