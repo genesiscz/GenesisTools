@@ -778,6 +778,45 @@ test("an exact-session send by full id asks the guarded input for recorded surfa
     expect(asked.map((input) => input.recordedOnly)).toEqual([true, false]);
 });
 
+test("an exact-session send never types into the recorded pane once the guarded input found no live surface for it", async () => {
+    // The recorded tab runs another session now; it shows that session's short id in its title.
+    const other = "c0ffee00-0efc-4990-ba3e-b77262498421";
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            selectedSurfaceRef: "surface:41",
+            surfaces: [surface({ id: "surface:41", title: `x · ${other.slice(0, 8)}`, selected: true })],
+        }),
+    ]);
+    const sessionInput = async () => ({ delivered: false as const, reason: "not-found" as const, detail: "fixture" });
+    const recorded = { ...deps, sessionInput, lookupRefs: () => recordedRefs() };
+
+    await sendCommand(SESSION_A, "keep alive", { exactSession: true, first: true, paste: true, json: true }, recorded);
+
+    expect(SafeJSON.parse(await capturedResult()).sent).toBe(false);
+    expect(events.some((event) => event.startsWith("paste ") || event.startsWith("send "))).toBe(false);
+
+    // A pane that shows the session's own id still gets the text.
+    events = [];
+    stdout = [];
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            selectedSurfaceRef: "surface:41",
+            surfaces: [surface({ id: "surface:41", title: `x · ${SESSION_A.slice(0, 8)}`, selected: true })],
+        }),
+    ]);
+    expect(await sendCommand(SESSION_A, "keep alive", { exactSession: true, first: true, paste: true }, recorded)).toBe(
+        true
+    );
+    expect(events).toContain("paste --surface surface:41 --submit -- keep alive");
+
+    // Control: without --exact-session the recorded pane is still the first try.
+    events = [];
+    await sendCommand(SESSION_A, "hi", { paste: true, enter: false, enterDelay: "0" }, recorded);
+    expect(events).toContain(`paste --surface ${LIVE_SURFACE_UUID} -- hi`);
+});
+
 test("a single working-directory match still delivers", async () => {
     setSnapshot([
         pane({
