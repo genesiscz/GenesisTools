@@ -249,12 +249,12 @@ describe("the parsed journal", () => {
 describe("the T3 Code thread of a session", () => {
     test("is the newest pin's T3 host, and a later pin with no host ends it", async () => {
         await recordPin(pin({ sessionId: "s1", host: { kind: "t3", id: "thread:fixture%3Aone" }, at: 1_000 }));
-        expect(await t3ThreadOfSession("s1")).toBe("thread:fixture%3Aone");
+        expect(await t3ThreadOfSession({ sessionId: "s1" })).toBe("thread:fixture%3Aone");
         await recordPin(pin({ sessionId: "s1", at: 2_000 }));
-        expect(await t3ThreadOfSession("s1")).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "s1" })).toBeUndefined();
         await recordPin(pin({ sessionId: "s2", host: { kind: "t3" }, at: 3_000 }));
-        expect(await t3ThreadOfSession("s2")).toBeUndefined();
-        expect(await t3ThreadOfSession("never-pinned")).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "s2" })).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "never-pinned" })).toBeUndefined();
     });
 
     test("a Codex session T3 Code runs is found in T3 Code's state, with no pin at all", async () => {
@@ -271,10 +271,10 @@ describe("the T3 Code thread of a session", () => {
         db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run("mcp:launch:codex-thread", "{}");
         db.close();
 
-        expect(await t3ThreadOfSession("codex-session", t3)).toBe("mcp:launch:codex-thread");
+        expect(await t3ThreadOfSession({ sessionId: "codex-session", homeDir: t3 })).toBe("mcp:launch:codex-thread");
         // The same session resumed later in a terminal pins again with no host: T3 Code no longer runs it.
         await recordPin(pin({ sessionId: "codex-session", provider: "codex", at: 4_000 }));
-        expect(await t3ThreadOfSession("codex-session", t3)).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "codex-session", homeDir: t3 })).toBeUndefined();
     });
 
     test("the desktop link keeps the thread id percent-encoded as T3 Code prints it", () => {
