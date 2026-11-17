@@ -196,6 +196,79 @@ describe("meetings config", () => {
         expect(() => meetingsConfigSchema.parse({ global: { assign: { folderWaitDays: 0 } } })).toThrow();
     });
 
+    test("a file with no word, speaker label, sound or track keys reads their defaults, still at version 7", () => {
+        const config = meetingsConfigSchema.parse({ version: 7, global: { language: "cs" } });
+
+        expect(config.version).toBe(7);
+        expect(config.global.suggest.words).toEqual({ minOccurrences: 2 });
+        expect(config.global.speakerLabels).toEqual({
+            seat: { enabled: true },
+            voice: {
+                enabled: true,
+                gate: { score: 0.45, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
+                minSeconds: 1.5,
+            },
+        });
+        expect(config.global.capture.audioRetentionDays).toBeUndefined();
+        expect(config.global.playback.tracks).toBe("best");
+        expect(config.global.capture.recorders.native.audio.sources).toEqual([]);
+
+        const set = meetingsConfigSchema.parse({
+            global: {
+                suggest: { words: { minOccurrences: 5 } },
+                speakerLabels: { seat: { enabled: false }, voice: { gate: { score: 0.55 }, minSeconds: 3 } },
+                capture: { audioRetentionDays: 90 },
+                playback: { tracks: "source" },
+            },
+        }).global;
+        expect(set.suggest.words.minOccurrences).toBe(5);
+        expect(set.speakerLabels.seat.enabled).toBe(false);
+        expect(set.speakerLabels.voice).toEqual({
+            enabled: true,
+            gate: { score: 0.55, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
+            minSeconds: 3,
+        });
+        expect(set.capture.audioRetentionDays).toBe(90);
+        expect(set.playback.tracks).toBe("source");
+    });
+
+    test("each new key refuses a value outside its bound", () => {
+        const refused = [
+            { suggest: { words: { minOccurrences: 1 } } },
+            { suggest: { words: { minOccurrences: 51 } } },
+            { suggest: { words: { minOccurrences: 2.5 } } },
+            { speakerLabels: { seat: { enabled: "yes" } } },
+            { speakerLabels: { voice: { enabled: 1 } } },
+            { speakerLabels: { voice: { gate: { score: -0.1 } } } },
+            { speakerLabels: { voice: { gate: { score: 1.1 } } } },
+            { speakerLabels: { voice: { gate: { margin: 1.5 } } } },
+            { speakerLabels: { voice: { gate: { loneScore: -1 } } } },
+            { speakerLabels: { voice: { gate: { unsampledScore: 2 } } } },
+            { speakerLabels: { voice: { gate: { strangerScore: -0.01 } } } },
+            { speakerLabels: { voice: { gate: { strangerScore: 1.01 } } } },
+            { speakerLabels: { voice: { minSeconds: -1 } } },
+            { speakerLabels: { voice: { minSeconds: 61 } } },
+            { capture: { audioRetentionDays: 0 } },
+            { capture: { audioRetentionDays: 1.5 } },
+            { playback: { tracks: "mic" } },
+        ];
+        for (const global of refused) {
+            expect(meetingsConfigSchema.safeParse({ global }).success, SafeJSON.stringify(global)).toBe(false);
+        }
+
+        const edges = meetingsConfigSchema.parse({
+            global: {
+                suggest: { words: { minOccurrences: 50 } },
+                speakerLabels: { voice: { gate: { score: 0, margin: 1, strangerScore: 1 }, minSeconds: 0 } },
+                capture: { audioRetentionDays: 1 },
+            },
+        }).global;
+        expect(edges.suggest.words.minOccurrences).toBe(50);
+        expect(edges.speakerLabels.voice.gate).toMatchObject({ score: 0, margin: 1, strangerScore: 1 });
+        expect(edges.speakerLabels.voice.minSeconds).toBe(0);
+        expect(edges.capture.audioRetentionDays).toBe(1);
+    });
+
     test("a version 1 file moves each key to its axis, and the old places still read", () => {
         const v1 = {
             version: 1,

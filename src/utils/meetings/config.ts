@@ -136,6 +136,11 @@ const captureSchema = z.object({
      */
     retentionDays: z.number().int().positive().default(30),
     /**
+     * The recorded sound (`audio/`, `audio.jsonl`) is kept this many days after the meeting's newest capture file.
+     * Unset: the recorded sound is kept for ever.
+     */
+    audioRetentionDays: z.number().int().positive().optional(),
+    /**
      * The notices of a capture that keeps failing while the recording goes on trying (an ax-tool being rebuilt, a
      * timeout): `failing-and-recovered` says when it starts failing and when it records again, `failing` only the first,
      * `off` neither. A recording that stops (a refused permission) always says so.
@@ -180,6 +185,10 @@ export type SourceSettings = z.infer<typeof wisprflowSourceSchema>;
 
 /** The players `tools meetings play` can start at a time, in the order it tries them. */
 export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
+
+/** Which recorded track a clip plays (`global.playback.tracks`). */
+export const PLAYBACK_TRACKS = ["best", "source"] as const;
+export type PlaybackTracks = (typeof PLAYBACK_TRACKS)[number];
 
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
 export const LISTEN_PLAYERS = ["afplay", "vlc", "ffplay"] as const;
@@ -338,7 +347,42 @@ const playbackSchema = z.object({
     player: z.enum(MEETING_PLAYERS).default("vlc"),
     /** Start this many seconds before the asked time, so the sentence is heard from its start. */
     beforeSec: z.number().min(0).max(60).default(5),
+    /**
+     * Which recorded track a clip plays: `best` picks the clearest track of the seat (the recorder's own microphone
+     * track when it was kept), `source` always plays the transcript source's own audio.
+     */
+    tracks: z.enum(PLAYBACK_TRACKS).default("best"),
     listen: listenSchema.prefault({}),
+});
+
+/**
+ * The speaker labelers and their keys, one block per labeler (the axis is the labeler: a new labeler is one more
+ * block). `seat` names a line by the seat it was heard on, `voice` by the voice samples kept per project.
+ */
+const speakerLabelsSchema = z.object({
+    seat: z.object({ enabled: z.boolean().default(true) }).prefault({}),
+    voice: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** When a voice match is good enough to name a line (cosine scores, 0 to 1). */
+            gate: z
+                .object({
+                    /** The lowest score that names a person. */
+                    score: z.number().min(0).max(1).default(0.45),
+                    /** The lead the best person needs over the next one. */
+                    margin: z.number().min(0).max(1).default(0.1),
+                    /** The lowest score when only one person of the meeting has a sample (no rival to compare). */
+                    loneScore: z.number().min(0).max(1).default(0.7),
+                    /** The lowest score while a person with no sample is in the meeting. */
+                    unsampledScore: z.number().min(0).max(1).default(0.55),
+                    /** Under this score a line on a seat of one person does not sound like that person. */
+                    strangerScore: z.number().min(0).max(1).default(0.3),
+                })
+                .prefault({}),
+            /** A line shorter than this many seconds is not named by voice: too little sound to compare. */
+            minSeconds: z.number().min(0).max(60).default(1.5),
+        })
+        .prefault({}),
 });
 
 /** The audio a clip keeps before and after the heard stretch. */
@@ -507,8 +551,16 @@ const storedConfigSchema = z
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
                         restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
+                        /** Unknown words heard again and again become one word question each. */
+                        words: z
+                            .object({
+                                /** A word is asked about once it is heard at least this many times in one meeting. */
+                                minOccurrences: z.number().int().min(2).max(50).default(2),
+                            })
+                            .prefault({}),
                     })
                     .prefault({}),
+                speakerLabels: speakerLabelsSchema.prefault({}),
                 assign: assignSchema.prefault({}),
                 people: z
                     .object({
