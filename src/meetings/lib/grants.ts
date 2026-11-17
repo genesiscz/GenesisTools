@@ -1,9 +1,8 @@
-import { existsSync } from "node:fs";
 import { readLivePermissions } from "@app/control/lib/permissions";
 import { execToolInteractive, isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath, installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import { installedGenesisAppLauncher, isGenesisAppBundleInstalled } from "@genesiscz/utils/macos/genesis-app";
 
 const { log } = logger.scoped("meetings-grants");
 
@@ -62,7 +61,7 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
         return { granted: true, identity: first.identity };
     }
 
-    const appInstalled = existsSync(genesisAppBundlePath());
+    const appInstalled = isGenesisAppBundleInstalled();
     const installHint = appInstalled
         ? `Grant it in the GenesisTools permissions window: ${OPEN_WINDOW}`
         : `GenesisTools.app is not installed, and this terminal has no grant. Install the app (${toolCommand("macos", "permissions", "build")}), then grant it: ${OPEN_WINDOW}`;

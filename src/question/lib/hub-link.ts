@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBundlePath, isGenesisAppBundleInstalled } from "@genesiscz/utils/macos/genesis-app";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
 /** Which inbox card a banner click selects: a decision or todo (`d_…`/`t_…`) or a pending form (`ask_…`). */
@@ -11,7 +10,7 @@ export type HubItemKind = "decision" | "question";
  * to a running hub. Null when GenesisTools.app is not installed, so the caller sends no hub banner.
  */
 export function hubItemClickCommand(kind: HubItemKind, id: string, bundle = genesisAppBundlePath()): string | null {
-    if (process.platform !== "darwin" || !existsSync(bundle)) {
+    if (process.platform !== "darwin" || !isGenesisAppBundleInstalled(bundle)) {
         return null;
     }
 
