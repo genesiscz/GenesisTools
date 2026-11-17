@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
+import { AudioSession, type RecorderAudioOptions } from "./audio-session";
 import { AUDIO_SOURCES, type AudioDevices, type AudioSource } from "./control";
 import { mainDisplay, outputScaleFor, parseDisplayList } from "./displays";
 import { runCaptureProcess } from "./process";
@@ -40,6 +41,7 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "--mic-device",
     "--audio-sidecar",
     "audio-devices",
+    "audio-record",
     // `--control-stdin` commands, named in the same help text.
     "mute",
     "set-mic",
@@ -627,6 +629,17 @@ export class NativeFrameRecorder extends FrameRecorder {
         }
 
         return parseAudioDevices(SafeJSON.parse(result.stdout, { strict: true }));
+    }
+
+    /** An older tool leaves the recording on its piece sound path. */
+    async startAudioSession(options: RecorderAudioOptions): Promise<AudioSession | undefined> {
+        const argv = await this.axTool(options.signal);
+
+        if (!this.flags.has("audio-record")) {
+            return undefined;
+        }
+
+        return AudioSession.start({ ...options, argv, launch: this.context.launch });
     }
 
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
