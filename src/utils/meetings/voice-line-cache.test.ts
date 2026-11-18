@@ -83,6 +83,7 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     expect(f.compute).toHaveBeenCalledTimes(1);
     expect(f.decode).toHaveBeenCalledTimes(1);
     expect(f.decode.mock.calls[0]?.[1].decoderThreads).toBe(1);
+    expect(f.decode.mock.calls[0]?.[1].timeoutMs).toBe(120_000);
     const disk = z
         .object({ version: z.literal(1), entries: z.record(z.string(), z.unknown()) })
         .parse(SafeJSON.parse(readFileSync(f.cachePath, "utf8")));
@@ -159,6 +160,26 @@ test("a complete cache hit starts neither a background worker nor extraction", a
     expect(f.decode).not.toHaveBeenCalled();
 });
 
+test("a temporary decoder failure is retried instead of becoming a permanent unknown voice", async () => {
+    const f = await fixture();
+    f.decode.mockRejectedValueOnce(new Error("temporary decoder failure"));
+    expect((await voice.embedVoiceLines(f.options))[0]?.channels[0]?.quality).toBe("unknown");
+    expect((await voice.embedVoiceLines(f.options))[0]?.channels[0]?.quality).toBe("ready");
+    expect(f.decode).toHaveBeenCalledTimes(2);
+    expect(f.compute).toHaveBeenCalledTimes(1);
+});
+
+test("a cached line still anchors the decode window used by a later uncached line", async () => {
+    const f = await fixture();
+    await voice.embedVoiceLines(f.options);
+    f.decode.mockClear();
+    f.compute.mockClear();
+    await voice.embedVoiceLines({ ...f.options, spans: [...f.options.spans, { index: 1, fromSec: 10, toSec: 12 }] });
+    expect(f.decode).toHaveBeenCalledTimes(1);
+    expect(f.decode.mock.calls[0]?.[1].fromSec).toBe(0);
+    expect(f.compute).toHaveBeenCalledTimes(1);
+});
+
 test("audio windows keep default ffmpeg threads and accept an explicit decoder limit without changing samples", async () => {
     const commands: string[][] = [];
     for (const decoderThreads of [undefined, 1]) {
@@ -173,7 +194,9 @@ test("audio windows keep default ffmpeg threads and accept an explicit decoder l
                 fromSec: 0,
                 toSec: 1,
                 decoderThreads,
+                ...(decoderThreads === undefined ? {} : { timeoutMs: 120_000 }),
             });
+            expect(spawn.mock.calls[0]?.[1]?.timeout).toBe(decoderThreads === undefined ? 30_000 : 120_000);
             expect(Array.from(samples)).toEqual([0.25, -0.5]);
             const command = spawn.mock.calls[0]?.[0];
             if (!Array.isArray(command)) {
@@ -227,6 +250,11 @@ test("invalid decoder limits fail before spawning a child", async () => {
         await expect(
             converter.toFloat32AudioWindow("fixture.wav", { fromSec: 0, toSec: 1, decoderThreads })
         ).rejects.toThrow("Decoder threads must be a positive integer");
+    }
+    for (const timeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(
+            converter.toFloat32AudioWindow("fixture.wav", { fromSec: 0, toSec: 1, timeoutMs })
+        ).rejects.toThrow("Decoder timeout must be positive and finite");
     }
     expect(spawn).not.toHaveBeenCalled();
 });

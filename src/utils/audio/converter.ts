@@ -34,6 +34,7 @@ export async function toFloat32AudioWindow(
         channel?: 0 | 1;
         signal?: AbortSignal;
         decoderThreads?: number;
+        timeoutMs?: number;
     }
 ): Promise<Float32Array> {
     const duration = options.toSec - options.fromSec;
@@ -55,6 +56,9 @@ export async function toFloat32AudioWindow(
         (!Number.isInteger(options.decoderThreads) || options.decoderThreads < 1)
     ) {
         throw new RangeError("Decoder threads must be a positive integer");
+    }
+    if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+        throw new RangeError("Decoder timeout must be positive and finite");
     }
     options.signal?.throwIfAborted();
     const filters = Array.from({ length: tracks }, (_, index) => `[0:a:${index}]${CONTAINER_CLOCK_FILTER}[a${index}]`);
@@ -97,7 +101,7 @@ export async function toFloat32AudioWindow(
             stdin: "ignore",
             stdout: "pipe",
             stderr: "pipe",
-            timeout: 30_000,
+            timeout: options.timeoutMs ?? 30_000,
             killSignal: "SIGKILL",
             ...(options.signal ? { signal: options.signal } : {}),
         }
