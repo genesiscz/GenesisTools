@@ -12,7 +12,7 @@ import { resolveTranscript, rootsOfHome, type TranscriptRoots } from "@genesiscz
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { type WidgetCard, type WidgetSources, widgetProvider } from "./snapshot";
+import { type WidgetCard, type WidgetSources, widgetMessageBody, widgetProvider } from "./snapshot";
 import { parseWidgetSessionKey } from "./types";
 
 const prof = profiler.scope("widget");
@@ -36,6 +36,15 @@ function readStoredReceipt<T>(read: (db: Database) => T | null): T | null {
     } finally {
         db.close();
     }
+}
+
+/** Expanding a long overview entry reads one indexed receipt, including when its sender has no session. */
+export function readWidgetMessageBody(id: string): { body: string } {
+    const entry = readStoredReceipt((db) => getStoredEntryById(db, id));
+    if (entry?.tag !== "message") {
+        throw new Error("This message is no longer in the inbox store.");
+    }
+    return { body: widgetMessageBody(entry.answerMd, entry.question) };
 }
 
 function sourceStamp(source: NonNullable<WidgetCard["sourceContext"]>): NonNullable<WidgetCard["sourceContext"]> {

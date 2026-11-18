@@ -2927,6 +2927,15 @@ public final class WidgetModel: ObservableObject {
         return value
     }
 
+    func messageBody(for item: WidgetInboxItem) async throws -> String {
+        struct Response: Decodable { let body: String }
+        let result = try await bridge.run(subcommand: "hub", args: widgetArgs + ["message-body", item.sourceId],
+                                          timeoutSeconds: 8)
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
+        return try JSONDecoder().decode(Response.self, from: Data(result.stdout.utf8)).body
+    }
+
     private func transcriptQuery(_ session: WidgetSession) -> SessionTranscriptCache.Query {
         SessionTranscriptCache.Query(identity: session.key, query: session.transcriptPath ?? session.target.sessionId,
                                      provider: session.target.provider)

@@ -53,7 +53,7 @@ import {
     imageReadsSettled,
     liftCardImages,
 } from "../widget/card-images";
-import { readWidgetReceiptContext } from "../widget/context";
+import { readWidgetMessageBody, readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
 import { oneShotWidgetSources, readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
 import { unplacedScopes, WidgetRosterReads, widgetRosterChange } from "../widget/roster-index";
@@ -6623,9 +6623,55 @@ describe("inbox card images and agent messages", () => {
                         .find((group) => group.key === session?.key)
                         ?.items?.find((item) => item.kind === "answer");
                     expect(entry?.tag).toBe("message");
+                    expect(entry?.message).toEqual({ text: "All 40 tests pass." });
                 }
 
                 expect(snapshot.sessions.some((entry) => entry.target.provider === "unknown")).toBe(false);
+            }
+        );
+    });
+
+    test("standalone messages retain their own sender, preview and full stored markdown", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                const markdown = "Inspect **backups**.\n\n" + "more text ".repeat(120) + "\nEnd.";
+                const now = Date.now();
+                try {
+                    const insert = db.query(
+                        "INSERT INTO entries (id,ts,session_id,agent,project,cwd,agent_label,tag,source,question,answer_md,refs_json) VALUES (?,?,'unknown','unknown',?,'/fixture',?,'message','cli',?,?,'[]')"
+                    );
+                    insert.run("notice-a", now, "Orchard", null, "Monitor", "Monitor\nSecond line\n\nThird line");
+                    insert.run("notice-b", now + 1, "Harbor", "backup", "Backup delayed", markdown);
+                } finally {
+                    db.close();
+                }
+                const snapshot = await widgetSnapshot({
+                    root: directory,
+                    now: now + 1,
+                    sources: {
+                        ...realWidgetSources,
+                        sessions: async () => [],
+                        agents: noAgents,
+                        forms: () => [],
+                        decisions: () => [],
+                    },
+                });
+                const items = snapshot.notifications?.sessions.flatMap((session) => session.items ?? []) ?? [];
+                expect(items.find((item) => item.sourceId === "notice-a")?.message).toEqual({
+                    text: "Second line\n\nThird line",
+                    origin: "Orchard · cli",
+                });
+                const preview = items.find((item) => item.sourceId === "notice-b")?.message;
+                expect(preview).toMatchObject({ origin: "Harbor · backup", more: true });
+                expect(preview?.text).toStartWith("Inspect **backups**.");
+                expect(preview?.text).not.toContain("End.");
+                expect(readWidgetMessageBody("notice-b")).toEqual({ body: markdown });
+                expect(snapshot.cards.find((card) => card.sourceId === "notice-a")?.messageOrigin).toBe(
+                    "Orchard · cli"
+                );
             }
         );
     });
