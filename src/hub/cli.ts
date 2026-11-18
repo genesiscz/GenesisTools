@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
-import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -11,7 +10,6 @@ import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "@genesiscz/utils/
 import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { profiler } from "@genesiscz/utils/profile";
 import * as p from "@genesiscz/utils/prompts/p";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
@@ -39,16 +37,17 @@ import { commitFlagsProblem, isHubPrRef } from "./lib/pr-ref";
 import { prSessions } from "./lib/pr-sessions";
 import {
     type DraftDecision,
-    hubStatus,
     isProposalProvider,
     listProposals,
     listProposalsFor,
+    openInApp,
     ProposalError,
     parseProposal,
     proposalKey,
     proposalListRows,
     proposalMarkdown,
     reconcileProposal,
+    reviewWindowStatus,
     saveProposal,
 } from "./lib/proposal";
 import { decideProposalDraft, discardProposal, publishProposal } from "./lib/proposal-publish";
@@ -299,12 +298,6 @@ async function readInput(file: string): Promise<string> {
     return file === "-" ? await Bun.stdin.text() : await Bun.file(file).text();
 }
 
-function openInApp(path: string): void {
-    const binary = join(genesisAppBundlePath(), "Contents", "MacOS", "GenesisTools");
-    const child = spawn(binary, ["--review", "--proposal", path], { detached: true, stdio: "ignore" });
-    child.unref();
-}
-
 proposal
     .command("push")
     .description("Validate and store a proposal (JSON file or - for stdin); keeps decisions already made in the window")
@@ -317,13 +310,7 @@ proposal
             const saved = await saveProposal(parsed);
 
             if (opts.open) {
-                const status = hubStatus();
-
-                if (status.available) {
-                    openInApp(saved.path);
-                } else {
-                    out.log.warn(`Not opened: ${status.reason}`);
-                }
+                await openInApp(saved.path);
             }
 
             if (opts.json) {
@@ -514,8 +501,8 @@ program
     .command("status")
     .description("Exit 0 when GenesisTools.app with the review window is installed, 1 otherwise (the hard gate)")
     .option("--json", "machine-readable output")
-    .action((opts: { json?: boolean }) => {
-        const status = hubStatus();
+    .action(async (opts: { json?: boolean }) => {
+        const status = await reviewWindowStatus();
 
         if (opts.json) {
             out.result(status);
