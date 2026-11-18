@@ -41,8 +41,8 @@ export type DialogAnswer = "approved" | "cancelled" | "gave-up" | "failed";
 export interface DialogSystem {
     /** Whether `path` is a program only an administrator could have put there (`isTrustedDialogProgram`). */
     trusted: (path: string) => boolean;
-    /** Runs `argv` with only the variables of `environment` until it exits; its exit code and stdout. */
-    run: (argv: string[], environment: Record<string, string>) => DialogResult;
+    /** Runs `argv` with only the variables of `environment` and `input` on stdin; its exit code and stdout. */
+    run: (argv: string[], environment: Record<string, string>, input?: string) => DialogResult;
     /** A graphical session a window can open on (Linux: DISPLAY or WAYLAND_DISPLAY is set). */
     hasDisplay: () => boolean;
 }
@@ -51,6 +51,8 @@ export interface DialogSystem {
 export interface PersonDialog {
     /** The argv that shows the dialog, or null when no trusted program for it is installed. */
     command: (dialog: SystemDialogText, system: DialogSystem) => string[] | null;
+    /** What the program reads on stdin, for a dialog whose text does not ride on its command line. */
+    input?: (dialog: SystemDialogText) => string;
     /** Reads the program's result: only an explicit Approve is `approved`, only an explicit Cancel is `cancelled`. */
     answer: (result: DialogResult) => DialogAnswer;
     /** The PATH the program runs with: the platform's system folders, never the caller's PATH. */
@@ -210,25 +212,27 @@ const LINUX_DIALOG: PersonDialog = {
 };
 
 /**
- * A Windows Forms message box through PowerShell, No as the default button. The text and the title go in as base64, so
- * a path with quotes (a typographic one too) or `$` is never read as PowerShell.
+ * The fixed PowerShell script of the Windows dialog. The title and the text arrive on stdin as two base64 lines: the
+ * caller's text is never part of the script, so a quote or `$` is never read as PowerShell, and a long text does not
+ * meet the 32,767 character limit of a Windows command line. Base64 is ASCII, so the console code page cannot alter it.
  */
+export const WINDOWS_DIALOG_SCRIPT = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$lines = [Console]::In.ReadToEnd().Split([char]10)",
+    "$title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($lines[0].Trim()))",
+    "$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($lines[1].Trim()))",
+    "[System.Windows.Forms.MessageBox]::Show($text, $title, 'YesNo', 'Warning', 'Button2', 'DefaultDesktopOnly')",
+].join("; ");
+
+/** A Windows Forms message box through PowerShell, No as the default button. */
 const WINDOWS_DIALOG: PersonDialog = {
-    command: ({ title, body }, system) => {
+    command: (_dialog, system) => {
         const powershell = trustedProgram(system, DIALOG_PROGRAM_PATHS.powershell);
-
-        if (!powershell) {
-            return null;
-        }
-
+        return powershell ? [powershell, "-NoProfile", "-Command", WINDOWS_DIALOG_SCRIPT] : null;
+    },
+    input: ({ title, body }) => {
         const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
-        const script = [
-            "Add-Type -AssemblyName System.Windows.Forms",
-            `$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(`${body}\n\nYes approves.`)}'))`,
-            `$title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(title)}'))`,
-            "[System.Windows.Forms.MessageBox]::Show($text, $title, 'YesNo', 'Warning', 'Button2', 'DefaultDesktopOnly')",
-        ].join("; ");
-        return [powershell, "-NoProfile", "-Command", script];
+        return `${base64(title)}\n${base64(`${body}\n\nYes approves.`)}\n`;
     },
     answer: ({ exitCode, stdout }) => {
         if (exitCode === null) {
@@ -254,10 +258,11 @@ export const PERSON_DIALOGS: Partial<Record<NodeJS.Platform, PersonDialog>> = {
 
 export const DIALOG_SYSTEM: DialogSystem = {
     trusted: (path) => isTrustedDialogProgram(path),
-    run: (argv, environment) => {
+    run: (argv, environment, input) => {
         refuseHostEffectInTest("The system dialog", "Inject a DialogSystem in tests.");
         const proc = Bun.spawnSync(argv, {
             env: environment,
+            stdin: input === undefined ? "ignore" : Buffer.from(input, "utf8"),
             stdout: "pipe",
             stderr: "pipe",
             timeout: (DIALOG_GIVE_UP_S + 10) * 1000,
@@ -288,7 +293,7 @@ export function showSystemDialog(
         return null;
     }
 
-    const result = system.run(argv, dialogEnvironment(dialog.searchPath));
+    const result = system.run(argv, dialogEnvironment(dialog.searchPath), dialog.input?.(text));
     logger.debug(
         { program: argv[0], exitCode: result.exitCode, answer: result.stdout.trim() },
         "system dialog: answered"
