@@ -2051,6 +2051,47 @@ test("a rejected line spelling fix does not suppress an everywhere suggestion", 
 });
 
 describe("fuzzy dictionary suggestions (R2.5)", () => {
+    test("automatic terms: the fuzzy dictionary respects dictionary and spoken Czech verdicts", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [line("Alice Example", 0, "Vramel."), line("Alice Example", 8, "Vrafel.")],
+            },
+            rules: ["terms"],
+            dictionary: { abbrExpansion: "off", entries: [{ type: "term", value: "Vranel" }] },
+            sourceWords: [],
+            wordCheck: {
+                language: "cs",
+                provider: "fixture",
+                verdict: (word) => ({ class: word === "Vramel" ? "dictionary" : "spoken", count: 1 }),
+                dispose() {},
+            },
+            now: meeting.start,
+        });
+        expect(items.filter((item) => item.kind === "term")).toEqual([]);
+    });
+
+    test("automatic terms: a clipped loan phrase heard once keeps its Czech ending", () => {
+        const suggest = (...vocabulary: string[]) =>
+            suggestItems({
+                record,
+                meeting: { ...meeting, transcript: [line("Alice Example", 8, "Veln basky")] },
+                rules: ["terms"],
+                dictionary: { abbrExpansion: "off", entries: [] },
+                sourceWords: vocabulary.map((value) => ({ value })),
+                now: meeting.start,
+            }).filter((item) => item.kind === "term");
+        const corrected = expect.objectContaining({
+            heard: "Veln basky",
+            proposed: "Veln rebasky",
+            status: "suggested",
+        });
+        expect(suggest("Veln rebask")).toContainEqual(corrected);
+        expect(suggest("Veln", "Veln rebask")).toContainEqual(corrected);
+        expect(suggest("Veln")).toEqual([]);
+    });
+
     test("a word close to a term but below the apply score becomes a term item with its score", () => {
         const items = suggestItems({
             record,

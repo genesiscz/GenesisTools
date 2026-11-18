@@ -21,6 +21,33 @@ const check: WordCheck = {
 };
 
 describe("meeting term regressions", () => {
+    test("automatic terms: a Czech verb at the end of a run stays a separate word", () => {
+        const vocab = [
+            { term: "Zeln.Bylox", source: "dictionary" },
+            { term: "Zeln.Plaver", source: "dictionary" },
+        ];
+        const entries = [entry("Zeln bylo"), entry("Zeln plave")];
+        const wordCheck: WordCheck = {
+            ...check,
+            verdict: (word) => ({ class: word === "plave" ? "dictionary" : "unknown", count: 0 }),
+        };
+        expect(findSuspectTerms({ entries, vocab, wordCheck }).map((item) => item.heard)).toEqual([]);
+        expect(findSuspectTerms({ entries: [entries[0]!], vocab })).toEqual([]);
+    });
+
+    test("automatic terms: an extra capital is an acronym edit and a Czech suffix is evidence for its stem", () => {
+        const vocab = [{ term: "VQT", source: "dictionary" }];
+        const suggest = (text: string) => findUnknownWords({ entries: [entry(text)], vocab, wordCheck: check });
+        const found = suggest("VQTu. VQTK VQTK.");
+        expect(found.find((item) => item.heard === "VQTK")?.candidates[0]).toMatchObject({
+            term: "VQT",
+            confidence: 80,
+        });
+        expect(found.some((item) => item.heard === "VQTu")).toBe(false);
+        expect(suggest("VQTK")[0]?.candidates).toEqual([]);
+        expect(suggest("vqt VQTK")[0]?.candidates).toEqual([]);
+    });
+
     test("Czech verbs cannot be glued to framework vocabulary", () => {
         expect(
             findSuspectTerms({
