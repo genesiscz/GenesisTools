@@ -85,6 +85,7 @@ export class SessionRecorderControl extends RecorderControl {
     readonly markers: RecordingMarker[] = [];
     private state: ControlState = "recording";
     private target: RecordingTarget;
+    private capturedDisplay?: RecorderStatus["displays"][number];
     private warning?: string;
     private elapsedMs = 0;
     /** A segment records: the session is `recording`, not `starting` (arming), paused or finishing. */
@@ -173,6 +174,7 @@ export class SessionRecorderControl extends RecorderControl {
         if (event.event === "state") {
             this.state = CONTROL_STATE[event.state];
             this.target = event.target;
+            this.capturedDisplay = event.display;
             this.elapsedMs = event.elapsedMs;
             this.elapsedRunning = event.state === "recording";
             this.limitMs = event.limitMs;
@@ -192,7 +194,7 @@ export class SessionRecorderControl extends RecorderControl {
             kind: this.kind,
             title: this.title,
             state: this.state,
-            displays: [],
+            displays: this.capturedDisplay ? [this.capturedDisplay] : [],
             frames: 0,
             elapsedMs: this.elapsedMs,
             elapsedRunning: this.elapsedRunning,
@@ -286,15 +288,14 @@ export class SessionRecorderControl extends RecorderControl {
         return { state: this.state };
     }
 
-    /**
-     * A display target that follows the pointer marks no display: its capture drops screenIndex
-     * (`segmentCaptureSpec`) and picks the display under the pointer itself, and this path does not hear which.
-     */
+    /** A following movie identifies the captured display by its stable CG ID, even if the display order changes. */
     override async listDisplays(): Promise<DisplayEntry[]> {
         const target = this.target;
         return (await this.connectedDisplays()).map((display) => ({
             ...display,
-            recorded: target.kind === "display" && !target.follow && target.screenIndex === display.index,
+            recorded:
+                target.kind === "display" &&
+                (target.follow ? this.capturedDisplay?.id === display.id : target.screenIndex === display.index),
         }));
     }
 

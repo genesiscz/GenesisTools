@@ -271,6 +271,12 @@ private func displayForScreenIndex(_ index: Int) -> DisplayGeometry {
     return displayGeometry(id)
 }
 
+private func recordingDisplayName(_ id: CGDirectDisplayID) -> String {
+    NSScreen.screens.first {
+        ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id
+    }?.localizedName ?? "Display \(id)"
+}
+
 private func displayForID(_ id: CGDirectDisplayID) -> DisplayGeometry {
     guard activeDisplays().contains(where: { $0.id == id }) else {
         let known = activeDisplays().map { String($0.id) }.joined(separator: ", ")
@@ -449,6 +455,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastKeptMs: Int?
     /// The display the frames come from, `nil` for isolated captures. Changed on this queue by `displayChanged`.
     private var currentDisplayID: CGDirectDisplayID?
+    private var currentDisplayName: String?
     private var focusedDisplayID: CGDirectDisplayID?
     private(set) var displaySwitches = 0
     private(set) var heartbeatFrames = 0
@@ -466,6 +473,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.activeFps = options.activeFps
         self.idleFps = options.idleFps
         self.currentDisplayID = displayID
+        self.currentDisplayName = options.followFocus ? displayID.map(recordingDisplayName) : nil
         self.focusedDisplayID = displayID == nil ? nil : currentFocusDisplay()
         self.warnings = options.startWarnings
     }
@@ -477,13 +485,13 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pendingDisplay: (id: CGDirectDisplayID, width: Int, height: Int)?
 
     /// The frames now come from another display: tag them with it, and keep the next one as its first frame.
-    func displayChanged(to id: CGDirectDisplayID) {
+    func displayChanged(to id: CGDirectDisplayID, name: String) {
         queue.async { [self] in
-            applyDisplayChange(id)
+            applyDisplayChange(id, name: name)
         }
     }
 
-    private func applyDisplayChange(_ id: CGDirectDisplayID) {
+    private func applyDisplayChange(_ id: CGDirectDisplayID, name: String) {
         pendingDisplay = nil
         guard id != currentDisplayID else { return }
         var event: [String: Any] = ["event": "display-switch", "to": id]
@@ -491,6 +499,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             event["from"] = currentDisplayID
         }
         currentDisplayID = id
+        if options.followFocus {
+            currentDisplayName = name
+            if let at = firstFrameEpoch { noteMovieStart(at) }
+        }
         latestBuffer = nil
         displaySwitches += 1
         policy.restart(reason: "display-switch")
@@ -920,7 +932,11 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         guard options.videoOut != nil else { return }
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent("movie-start.json")
         do {
-            try JSONSerialization.data(withJSONObject: ["firstFrameEpochMs": at]).write(to: url, options: .atomic)
+            var status: [String: Any] = ["firstFrameEpochMs": at]
+            if let currentDisplayID, let currentDisplayName {
+                status["display"] = ["id": currentDisplayID, "name": currentDisplayName] as [String: Any]
+            }
+            try JSONSerialization.data(withJSONObject: status).write(to: url, options: .atomic)
         } catch {
             warnings.append("the movie's first-frame time could not be written: \(error.localizedDescription)")
         }
@@ -1674,6 +1690,7 @@ private final class ScreenStreamHost {
 
     @available(macOS 14.0, *)
     private func switchLive(to target: CGDirectDisplayID) {
+        let name = recordingDisplayName(target)
         switching = true
         let owner = switchOwner
         let token = owner.begin()
@@ -1721,7 +1738,7 @@ private final class ScreenStreamHost {
                 try await stream.updateContentFilter(filter)
                 filterChanged = true
                 guard owner.end(token) else { throw LiveSwitchExpired() }
-                recorder.displayChanged(to: target)
+                recorder.displayChanged(to: target, name: name)
                 DispatchQueue.main.async {
                     self.adopt(geometry)
                     self.switching = false
@@ -1788,7 +1805,7 @@ private final class ScreenStreamHost {
             stream = next
             recorder.stream = next
             recorder.clearFailure()
-            recorder.displayChanged(to: target)
+            recorder.displayChanged(to: target, name: recordingDisplayName(target))
             adopt(geometry)
             deadTicks = 0
         } catch {

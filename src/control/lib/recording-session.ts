@@ -81,6 +81,7 @@ export type RecordingSessionEvent =
           state: RecordingState;
           reason: RecordingStateReason;
           target: RecordingTarget;
+          display?: SegmentStart["display"];
           elapsedMs: number;
           segments: number;
           limitMs: number;
@@ -146,6 +147,7 @@ export interface SegmentResult {
 /** When a run's first frame was captured (epoch ms), as the recorder measured it: the movie's time 0. */
 export interface SegmentStart {
     firstFrameAt: number;
+    display?: { id: number; name: string };
 }
 
 /**
@@ -163,6 +165,7 @@ export interface SegmentRecorder {
         maxSeconds: number;
         signal: AbortSignal;
         onRecording: (start?: SegmentStart) => void;
+        onDisplayChanged?: (display: NonNullable<SegmentStart["display"]>) => void;
         /** The recorder needs a slow step before it can start (a compile after an update). */
         onPreparing?: () => void;
     }): Promise<SegmentResult>;
@@ -243,6 +246,7 @@ export function recordingsDir(...segments: string[]): string {
  * deadline is followed by the next one at once. Commands run one at a time, in arrival order.
  */
 export class RecordingSession {
+    private capturedDisplay?: SegmentStart["display"];
     private state: RecordingState | "ended" = "paused";
     private target: RecordingTarget;
     private readonly segments: FinishedSegment[] = [];
@@ -513,6 +517,7 @@ export class RecordingSession {
     }
 
     private beginSegment(reason: RecordingStateReason): void {
+        this.capturedDisplay = undefined;
         this.counter += 1;
         const index = this.counter;
         const path = join(this.options.directory, `segment-${String(index).padStart(3, "0")}.mp4`);
@@ -548,6 +553,16 @@ export class RecordingSession {
                 maxSeconds,
                 signal: controller.signal,
                 onRecording: (start) => this.markRecording(run, start),
+                onDisplayChanged: (display) => {
+                    if (this.current !== run || run.stopping || this.state !== "recording") {
+                        return;
+                    }
+                    if (this.capturedDisplay?.id === display.id && this.capturedDisplay.name === display.name) {
+                        return;
+                    }
+                    this.capturedDisplay = display;
+                    this.setState("recording", run.reason);
+                },
                 onPreparing: () => {
                     run.preparing = true;
                     this.options.emit({ event: "preparing", message: PREPARING_MESSAGE });
@@ -583,6 +598,7 @@ export class RecordingSession {
 
         const now = this.now();
         run.startedAt = Math.min(now, Math.max(run.requestedAt, start?.firstFrameAt ?? now));
+        this.capturedDisplay = start?.display;
         run.settleFramed();
         clearTimeout(run.slowStart);
         log.debug({ index: run.index }, "recording segment started");
@@ -838,6 +854,7 @@ export class RecordingSession {
             reason,
             target: this.target,
             elapsedMs: this.elapsedMs(),
+            ...(this.capturedDisplay ? { display: this.capturedDisplay } : {}),
             segments: this.segments.length,
             limitMs: this.limitMs,
         });
