@@ -1348,6 +1348,11 @@ export async function widgetSnapshot({
     let countedAnswers = 0;
     let badgeAnswers = 0;
     const answerTails = new Map<string, { total: number; listed: number }>();
+    for (const key of ["answer", "message"] as const) {
+        if (inboxData.recentByKind && kinds[key].show) {
+            answerTails.set(key, { total: inboxData.recentByKind[key], listed: 0 });
+        }
+    }
     for (const row of inboxData.answers) {
         // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
         const session =

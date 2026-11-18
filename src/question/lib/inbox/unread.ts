@@ -44,6 +44,7 @@ export interface WidgetInboxGroup {
  * (`waitingSet`) counts them from the rows the snapshot already read.
  */
 export interface WidgetInboxData {
+    recentByKind?: { answer: number; message: number };
     answers: WidgetInboxGroup[];
     complete: boolean;
     truncated: boolean;
@@ -67,7 +68,7 @@ export function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
         read: (db) => {
             runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
             const answers = db
-                .query<WidgetInboxGroup, [number, number]>(`
+                .query<WidgetInboxGroup & { recentAnswers: number; recentMessages: number }, [number, number]>(`
                 WITH unseen AS (
                     SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
@@ -81,18 +82,22 @@ export function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                 ), ranked AS (
                     SELECT *, COUNT(*) OVER (${INBOX_GROUP}) AS count,
                         ${INBOX_WINDOW_COUNTS},
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 AND messageKind=0 THEN 1 ELSE 0 END) OVER () AS recentAnswers,
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 AND messageKind=1 THEN 1 ELSE 0 END) OVER () AS recentMessages,
                         ROW_NUMBER() OVER (${INBOX_GROUP} ORDER BY at DESC,id DESC) AS position
                     FROM unseen
                 ), newest AS (
                     SELECT * FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
                 ) SELECT newest.id,sessionId,provider,title,newest.project,newest.cwd,at,count,itemTitle,itemTag,afterClear,recentAfterClear,
-                    recentAfterClearTotal, substr(msg.answer_md,1,${MESSAGE_PREVIEW_CHARS + 1}) AS messageText,
+                    recentAfterClearTotal, recentAnswers, recentMessages,
+                    substr(msg.answer_md,1,${MESSAGE_PREVIEW_CHARS + 1}) AS messageText,
                     COALESCE(NULLIF(trim(msg.agent_label),''),msg.source) AS sender
                   FROM newest LEFT JOIN entries msg ON itemTag='message' AND msg.id=newest.id ORDER BY at DESC,newest.id DESC
             `)
                 .all(...bounds);
             return {
                 answers: answers.slice(0, 256),
+                recentByKind: { answer: answers[0]?.recentAnswers ?? 0, message: answers[0]?.recentMessages ?? 0 },
                 complete: true,
                 truncated: answers.length > 256,
             };
