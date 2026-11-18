@@ -6030,14 +6030,22 @@ test("native sound mode and each fallback reach live status, the meeting record 
                 { title: "Sound fixture", start: meeting.start, createdBy: "record" },
                 { command: "test", change: "fixture" }
             );
+            const secondFrame = Promise.withResolvers<void>();
             const thirdFrame = Promise.withResolvers<void>();
+            const restarted = Promise.withResolvers<void>();
+            const failsDuringCapture =
+                fixture === "--fixture-audio-session-dies-later" || fixture === "--fixture-audio-session-restart-fails";
             const requests: CaptureRequest[] = [];
             class FixtureRecorder extends NativeFrameRecorder {
                 sessionStarts = 0;
 
-                override startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+                override async startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
                     this.sessionStarts += 1;
-                    return super.startAudioSession(options);
+                    const session = await super.startAudioSession(options);
+                    if (this.sessionStarts === 2) {
+                        restarted.resolve();
+                    }
+                    return session;
                 }
 
                 override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
@@ -6057,14 +6065,10 @@ test("native sound mode and each fallback reach live status, the meeting record 
                                     ...request.hooks,
                                     onFrame: (frame) => {
                                         request.hooks?.onFrame?.(frame);
-                                        if (
-                                            piece < 3 &&
-                                            !(
-                                                piece === 2 &&
-                                                (fixture === "--fixture-audio-session-dies-later" ||
-                                                    fixture === "--fixture-audio-session-restart-fails")
-                                            )
-                                        ) {
+                                        if (piece === 2) {
+                                            secondFrame.resolve();
+                                        }
+                                        if (piece === 1 || (piece === 2 && !failsDuringCapture)) {
                                             controller.abort();
                                         } else if (piece >= 3) {
                                             thirdFrame.resolve();
@@ -6086,7 +6090,10 @@ test("native sound mode and each fallback reach live status, the meeting record 
                     join(moduleDir(import.meta), "../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),
                     fixture,
                 ],
-                launch: (argv) => argv,
+                launch: (argv) =>
+                    failsDuringCapture && argv.includes("audio-record")
+                        ? [...argv, "--fixture-fail-when", join(customHome, `fail-session-${recorder.sessionStarts}`)]
+                        : argv,
             });
             const capture = meetingsConfigSchema.parse({
                 global: { capture: { displays: "main", recorders: { native: { audio: { mode } } } } },
@@ -6110,6 +6117,20 @@ test("native sound mode and each fallback reach live status, the meeting record 
             const dim = spyOn(ui, "dim").mockImplementation(() => undefined);
             const result = spyOn(out, "result").mockImplementation(() => undefined);
             try {
+                if (failsDuringCapture) {
+                    await withTimeout(secondFrame.promise, 5000, new Error("missing second frame before failure"));
+                    writeFileSync(join(customHome, "fail-session-1"), "");
+                    if (fixture === "--fixture-audio-session-dies-later") {
+                        await withTimeout(restarted.promise, 5000, new Error("sound session did not restart"));
+                        // An unchanged mute waits for the replacement to become the recording's active session.
+                        await callRecorder({
+                            id: meetingLiveId(record.id),
+                            method: "audio.mute",
+                            params: { source: "mic", muted: false },
+                        });
+                        writeFileSync(join(customHome, "fail-session-2"), "");
+                    }
+                }
                 await withTimeout(thirdFrame.promise, 5000, new Error(`missing third piece for ${fixture}`));
                 const current = readRecorderState(store);
                 const sound = current.state?.sound;
