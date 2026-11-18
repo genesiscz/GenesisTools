@@ -1,17 +1,11 @@
 import { existsSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { Executor } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
-import {
-    branchWebUrl,
-    commitWebUrl,
-    detectOrigin,
-    type OriginKind,
-    originDriver,
-    originWebBase,
-    type PrInfo,
-} from "./origins";
+import { CHILD_DEADLINE_EXIT } from "@genesiscz/utils/process/child-deadline";
+import { branchWebUrl, commitWebUrl, detectOrigin, type OriginKind, originWebBase, type PrInfo } from "./origins";
+import { driverForOrigin } from "./origins/detector";
 import { cachedPrForHead } from "./origins/lookup-cache";
 
 /** What the hub shows about a folder: its checkout, branch and the web pages for them. */
@@ -33,11 +27,51 @@ export interface RepoFacts {
 }
 
 const log = logger.child({ component: "review/repo" });
+const GIT_TIMEOUT_MS = 10_000;
+const GIT_BACKOFF_MS = 30_000;
+const gitFailures = new Map<string, { until: number; message: string }>();
+
+function checkoutGit(path: string, signal?: AbortSignal): Pick<Executor, "exec"> {
+    const key = resolve(path);
+    const executor = new Executor({ prefix: "git", cwd: path });
+    return {
+        async exec(args) {
+            signal?.throwIfAborted();
+            const failure = gitFailures.get(key);
+            if (failure && Date.now() < failure.until) {
+                throw new Error(`${failure.message} (retry after ${new Date(failure.until).toISOString()})`);
+            }
+
+            try {
+                const result = await executor.exec(args, { timeout: GIT_TIMEOUT_MS, signal });
+                // The external deadline can fire first if the socket thread is itself stalled.
+                if (result.exitCode === CHILD_DEADLINE_EXIT) {
+                    throw new Error(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS}ms`);
+                }
+
+                return result;
+            } catch (error) {
+                signal?.throwIfAborted();
+                const message = `${path}: ${error instanceof Error ? error.message : String(error)}`;
+                const now = Date.now();
+                for (const [folder, previous] of gitFailures) {
+                    if (previous.until <= now) {
+                        gitFailures.delete(folder);
+                    }
+                }
+
+                gitFailures.set(key, { message, until: now + GIT_BACKOFF_MS });
+                throw new Error(message, { cause: error });
+            }
+        },
+    };
+}
 
 export async function repoFacts({
     path,
     withPr = false,
     maxCacheAgeSeconds,
+    signal,
 }: {
     path: string;
     withPr?: boolean;
@@ -46,6 +80,7 @@ export async function repoFacts({
      * configured TTL; unset uses that TTL, 0 asks the host and still refreshes the cache on success.
      */
     maxCacheAgeSeconds?: number;
+    signal?: AbortSignal;
 }): Promise<RepoFacts> {
     const empty: RepoFacts = {
         path,
@@ -64,7 +99,7 @@ export async function repoFacts({
         return empty;
     }
 
-    const git = new Executor({ prefix: "git", cwd: path });
+    const git = checkoutGit(path, signal);
     const res = await git.exec([
         "rev-parse",
         "--path-format=absolute",
@@ -102,7 +137,7 @@ export async function repoFacts({
         commonDir.endsWith("/.git") || basename(commonDir) === ".git" ? dirname(commonDir) : commonDir
     );
     const branch = branchRef && branchRef !== "HEAD" ? branchRef : null;
-    const origin = await detectOrigin(path);
+    const origin = await detectOrigin(path, git);
     const facts: RepoFacts = {
         ...empty,
         root,
@@ -115,7 +150,7 @@ export async function repoFacts({
     };
 
     if (withPr) {
-        const driver = branch ? await originDriver(path) : null;
+        const driver = branch ? driverForOrigin({ cwd: path, origin }) : null;
 
         if (!driver || !branch) {
             facts.pr = null;
@@ -148,16 +183,27 @@ export async function repoFactsMany({
     paths,
     withPr = false,
     maxCacheAgeSeconds,
+    signal,
+    failOnError = false,
 }: {
     paths: string[];
     withPr?: boolean;
     maxCacheAgeSeconds?: number;
+    signal?: AbortSignal;
+    /** The CLI and socket report a failed read. Inventory consumers retain their partial results. */
+    failOnError?: boolean;
 }): Promise<RepoFacts[]> {
     const unique = [...new Set(paths)];
     const results = await concurrentMap({
         items: unique,
-        fn: (path) => repoFacts({ path, withPr, maxCacheAgeSeconds }),
+        fn: (path) => repoFacts({ path, withPr, maxCacheAgeSeconds, signal }),
         concurrency: 4,
+        onError: (path, error) => {
+            if (failOnError) {
+                throw error;
+            }
+            log.warn({ path, error }, "could not read repo facts");
+        },
     });
 
     return paths.map(

@@ -87,8 +87,11 @@ export function isLocalRemoteUrl(url: string): boolean {
 }
 
 /** The `origin` remote of `cwd`, classified; null when there is no origin. */
-export async function detectOrigin(cwd: string): Promise<OriginInfo | null> {
-    const res = await new Executor({ prefix: "git", cwd }).exec(["remote", "get-url", "origin"]);
+export async function detectOrigin(
+    cwd: string,
+    git: Pick<Executor, "exec"> = new Executor({ prefix: "git", cwd })
+): Promise<OriginInfo | null> {
+    const res = await git.exec(["remote", "get-url", "origin"]);
 
     if (!res.success || !res.stdout) {
         return null;
@@ -103,8 +106,18 @@ export async function detectOrigin(cwd: string): Promise<OriginInfo | null> {
  * continue without it.
  */
 export async function originDriver(cwd: string, runner: CommandRunner = spawnRunner): Promise<OriginDriver | null> {
-    const origin = await detectOrigin(cwd);
+    return driverForOrigin({ cwd, origin: await detectOrigin(cwd), runner });
+}
 
+export function driverForOrigin({
+    cwd,
+    origin,
+    runner = spawnRunner,
+}: {
+    cwd: string;
+    origin: OriginInfo | null;
+    runner?: CommandRunner;
+}): OriginDriver | null {
     if (!origin?.kind) {
         logger.debug({ host: origin?.host ?? null }, "origins: no driver for this origin");
         return null;
