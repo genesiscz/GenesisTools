@@ -252,12 +252,10 @@ struct TimelinePinsRow: View {
     var lanes: Int = 1
     /// How suggested, confirmed and rejected pins differ (`meetings.rows.stateLook`), read once here for every mark.
     @AppStorage(MeetingsPreferences.Rows.stateLook.key) private var stateLook = MeetingsPreferences.Rows.stateLook.defaultValue
+    @State private var clusters: [PinCluster] = []
 
     var body: some View {
         GeometryReader { proxy in
-            let captionRoom: CGFloat = showsText ? 72 : PinMark.markWidth
-            let clusters = lanes > 1 ? PinCluster.laid(pins, in: view, width: proxy.size.width, lanes: lanes, markWidth: captionRoom)
-                : PinCluster.clusters(pins, in: view, width: proxy.size.width, markWidth: captionRoom)
             ZStack(alignment: .topLeading) {
                 ForEach(clusters) { cluster in
                     PinMark(cluster: cluster, showsText: showsText, expands: cluster.expands(in: view), actions: actions, stateLook: stateLook)
@@ -265,9 +263,26 @@ struct TimelinePinsRow: View {
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .onChange(of: TimelinePinLayout(pins: pins, view: view, width: proxy.size.width, lanes: lanes, showsText: showsText), initial: true) { _, input in
+                clusters = input.make()
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Pins")
+    }
+}
+
+/// Geometry is an input too: a resize or zoom needs a new placement, a hover or playback tick does not.
+struct TimelinePinLayout: Equatable {
+    let pins: [TimelinePin]
+    let view: ClosedRange<Double>
+    let width: CGFloat
+    let lanes: Int
+    let showsText: Bool
+    func make() -> [PinCluster] {
+        let room: CGFloat = showsText ? 72 : PinMark.markWidth
+        return lanes > 1 ? PinCluster.laid(pins, in: view, width: width, lanes: lanes, markWidth: room)
+            : PinCluster.clusters(pins, in: view, width: width, markWidth: room)
     }
 }
 
