@@ -110,6 +110,7 @@ export interface WorkResults {
     log: WriteData;
     reopen: ReopenData;
     handoff: WriteData;
+    addMember: WriteData;
     pair: PairData;
     unpair: { removed: boolean };
     pull: PullReport;
@@ -505,6 +506,10 @@ export const workHandlers: WorkHandlers = {
         }
 
         return okReply("sync", await releaseHeld(sync.deps, found.item.id));
+    },
+
+    async addMember(p, session) {
+        return run(session, { verb: "add-member", refs: p.refs, to: p.to });
     },
 
     async batch(p, session) {

@@ -168,3 +168,28 @@ describe("doors", () => {
         expect(await work.list({ limit: 1 })).toMatchObject({ ok: true, verb: "list" });
     });
 });
+
+describe("add-member (P5 decision 5)", () => {
+    test("an item becomes one more task of an open handoff; a second add changes nothing; a non-handoff target is refused", async () => {
+        const posted = postHandoff({ title: "h", tasks: [{ text: "one" }] }, deps);
+        const handoff = posted.handoff.id;
+        const a = await spot("joins the handoff");
+        const reply = await write(ctx(), { verb: "add-member", refs: [a], to: handoff });
+        expect(reply.ok).toBe(true);
+        expect(getHandoff({ id: handoff }, deps).handoff.tasks.map((t) => t.text)).toEqual([
+            "one",
+            "joins the handoff",
+        ]);
+        const members = listItems(db, { under: handoff });
+        expect(members.ok && members.rows.map((r) => r.ref)).toContain(a);
+        expect(showItem(db, a)?.item.state).toBe("open");
+
+        const again = await write(ctx(), { verb: "add-member", refs: [a], to: handoff });
+        expect(again.ok).toBe(true);
+        expect(getHandoff({ id: handoff }, deps).handoff.tasks).toHaveLength(2);
+
+        const refused = await write(ctx(), { verb: "add-member", refs: [a], to: a });
+        expect(refused.ok ? "" : refused.diagnostics[0].code).toBe("NOT_A_HANDOFF");
+        expect(parity()).toEqual([]);
+    });
+});

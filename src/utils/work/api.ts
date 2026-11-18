@@ -273,6 +273,14 @@ export const workMethods = {
         reaches: ["user"],
         doc: "One pass of the sync consumer under its lease, or --release <ref> for a held change.",
     }),
+    addMember: defineMethod({
+        name: "addMember",
+        params: z.object({ refs, to: ref.describe("the open handoff that takes them") }),
+        result: z.unknown(),
+        resultName: `${reply}, data: { items: Item[] }`,
+        effect: "reversible",
+        doc: "Add items to an open handoff as its tasks; nothing moves, the items stay where they are.",
+    }),
     handoff: defineMethod({
         name: "handoff",
         params: z.object({
@@ -331,6 +339,7 @@ export const WORK_CLI_POSITIONAL: Partial<Record<WorkMethodName, readonly string
     log: ["ref"],
     reopen: ["ref"],
     handoff: ["title"],
+    addMember: ["refs"],
     pair: ["ref", "connector", "key"],
     unpair: ["ref", "connector"],
     pull: ["connector", "keys"],

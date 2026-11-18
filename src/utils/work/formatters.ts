@@ -299,6 +299,7 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
         comment: writeFormatter,
         log: writeFormatter,
         handoff: writeFormatter,
+        addMember: writeFormatter,
         reopen: defineFormatter<ReopenData>({
             text(data) {
                 const lines = [`${data.item.id}  ${data.item.state}  ${data.item.title}`];

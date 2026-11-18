@@ -54,6 +54,7 @@ export type WorkCommand =
     | { verb: "log"; ref: string; result: LogResult; note?: string; measured?: string }
     | { verb: "comment"; ref: string; text: string }
     | { verb: "claim" | "release"; ref: string }
+    | { verb: "add-member"; refs: string[]; to: string }
     | { verb: "reopen"; ref: string; why: string }
     | { verb: "delivered"; ref: string; key: string; receipt: DeliveryReceipt }
     | { verb: "handoff"; title: string; from: string[]; target?: string; body?: string };
@@ -1004,6 +1005,86 @@ function decideDelivered(cmd: Extract<WorkCommand, { verb: "delivered" }>, view:
  * `handoff --from`: accept the items here; the old log gets the post, and each of its tasks carries the item id, so
  * the hook (or a later backfill) adds the member references and makes no second item.
  */
+/**
+ * "Move to my handoff" (P5 decision 5): each item becomes one more task of an open handoff, through the old store's
+ * `add_tasks` with the item named, so the fold adds the member reference. Nothing moves; a spotted item is accepted.
+ */
+function decideAddMember(cmd: Extract<WorkCommand, { verb: "add-member" }>, view: StoreView, env: WriteEnv): Decision {
+    const target = view.resolve(cmd.to);
+
+    if (target === null) {
+        return notFound(cmd.to);
+    }
+
+    const handoff = target.item;
+
+    if (handoff.type !== "handoff") {
+        return fail("NOT_A_HANDOFF", `${handoff.id} is a ${handoff.type}; members go into a handoff.`, "to");
+    }
+
+    if (!isOpenState(handoff.state)) {
+        return fail("BAD_TRANSITION", `${handoff.id} is ${handoff.state}; reopen it before it takes more tasks.`, "to");
+    }
+
+    const members = new Set(
+        view
+            .refsFrom(handoff.id)
+            .filter((ref) => ref.kind === "member")
+            .map((ref) => ref.to)
+    );
+    const changes: NewChange[] = [];
+    const tasks: { text: string; acceptanceCriteria?: string; item: string }[] = [];
+    const items: ItemId[] = [];
+
+    for (const ref of cmd.refs) {
+        const resolved = view.resolve(ref);
+
+        if (resolved === null) {
+            return notFound(ref);
+        }
+
+        const item = resolved.item;
+
+        if (item.type === "handoff") {
+            return fail("NOT_WORK", `${item.id} is a handoff; a handoff holds work items.`);
+        }
+
+        if (!isOpenState(item.state)) {
+            return fail("BAD_TRANSITION", `${item.id} is ${item.state}; reopen it before it goes into a handoff.`);
+        }
+
+        if (members.has(item.id) || items.includes(item.id)) {
+            continue;
+        }
+
+        items.push(item.id);
+        const accept = TRANSITIONS.accept[item.state];
+
+        if (accept !== undefined) {
+            changes.push(move(env, item, accept));
+        }
+
+        tasks.push({
+            text: item.title,
+            ...(item.acceptance !== undefined ? { acceptanceCriteria: item.acceptance } : {}),
+            item: item.id,
+        });
+    }
+
+    if (tasks.length === 0) {
+        return { ok: true, changes: [], legacy: [], items: [handoff.id], diagnostics: [], next: [] };
+    }
+
+    return {
+        ok: true,
+        changes,
+        legacy: [{ action: "add_tasks", handoff: handoff.id, tasks }],
+        items: [handoff.id, ...items],
+        diagnostics: [],
+        next: [],
+    };
+}
+
 function decideHandoff(cmd: Extract<WorkCommand, { verb: "handoff" }>, view: StoreView, env: WriteEnv): Decision {
     const title = cmd.title.trim();
 
@@ -1127,6 +1208,13 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
             return first(
                 command.from.map((ref) => (view.resolve(ref)?.item.state === "spotted" ? check(ref, "accept") : null))
             );
+        case "add-member":
+            return first([
+                check(command.to, "reference"),
+                ...command.refs.map((ref) =>
+                    view.resolve(ref)?.item.state === "spotted" ? check(ref, "accept") : null
+                ),
+            ]);
         case "finish":
             return check(command.ref, "finish");
         case "log":
@@ -1178,6 +1266,8 @@ export function decide(command: WorkCommand, view: StoreView, env: WriteEnv): De
             return decideDelivered(command, view, env);
         case "handoff":
             return decideHandoff(command, view, env);
+        case "add-member":
+            return decideAddMember(command, view, env);
     }
 }
 

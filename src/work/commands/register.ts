@@ -139,6 +139,8 @@ export function registerWorkCommands(program: Command): void {
         run: runMethod,
     });
     registerConfigSet(commands.get("config"));
+    // The spec's spelling (P5 decision 5); the method keeps the camel-case name every other door uses.
+    commands.get("addMember")?.alias("add-member");
 
     program
         .command("dump")
