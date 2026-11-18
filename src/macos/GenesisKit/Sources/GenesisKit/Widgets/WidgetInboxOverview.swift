@@ -262,108 +262,8 @@ struct WidgetInboxOverview: View {
     private func row(_ item: WidgetInboxItem) -> some View {
         let open = openID == item.id
         let focused = focusID == item.id
-        let session = item.message?.origin == nil ? model.session(forKey: item.key) : nil
-        return VStack(alignment: .leading, spacing: 0) {
-            WidgetInboxOverviewRow(
-                item: item, open: open, focused: focused, grouped: grouped,
-                sessionTitle: item.message?.origin ?? session?.title, stagedLine: stagedLine(item), toggle: { toggle(item) })
-                .equatable()
-            if open {
-                detail(item, session: session).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
-                    .transition(.genReveal)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(item.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
-        // The keyboard's row: a focus ring, the look of the system's own.
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear, lineWidth: 2))
-        .id(item.id)
-    }
-
-    private func stagedLine(_ item: WidgetInboxItem) -> String? {
-        let option = model.shownStagedOption(item.sourceId, stored: item.draftOption)
-        let note = model.shownStagedNote(item.sourceId, item.draft)
-        guard item.kind == "decision", item.needsAnswer, option != nil || note != nil else { return nil }
-        return WidgetStagedText.line(item, option: option)
-    }
-
-    /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
-    /// row, so this list, the alert and a session's inbox draw an option one way.
-    @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
-        if ["decision", "dialog"].contains(item.kind), item.needsAnswer, let options = item.options, !options.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                    let letter = Self.letter(index)
-                    WidgetItemOptionButton(model: model, item: item, index: index, option: option,
-                                           focused: focusID == item.id && focusedOption == letter)
-                        .id(item.id + "#" + letter)
-                }
-                // A set's clicks only tick, so its Send lives here, beside the options it sends.
-                if item.takesSeveral { setSendBar(item) }
-            }
-        }
-    }
-
-    /// The Send of a decision that takes any set of its options, and its recommended set in one click.
-    private func setSendBar(_ item: WidgetInboxItem) -> some View {
-        WidgetSetSendBar(
-            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-            recommended: DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0),
-            sending: model.sendingDecisionIDs.contains(item.sourceId),
-            identifier: "widget.overview.sendSet." + item.sourceId,
-            pick: { model.pickSet(item, option: $0) },
-            send: { model.sendStaged([item.sourceId], known: [item]) })
-            .padding(.top, 2)
-    }
-
-    /// An open decision's question under its title, drawn as the alert popup draws it (`WidgetPeekSummary`), so a pick
-    /// here is not made blind: the entry showed only "a", "b", "c" for a decision whose words were in its prompt
-    /// (Martin, 2026-11-01). Widgets → General, "Show the question in the inbox of every session".
-    @ViewBuilder private func summary(_ item: WidgetInboxItem) -> some View {
-        if model.preferences.overviewSummary, item.needsAnswer,
-           let summary = item.summary, !summary.isEmpty {
-            WidgetPeekSummary(summary: summary, identifier: "widget.overview.summary").equatable()
-        }
-    }
-
-    private func detail(_ item: WidgetInboxItem, session: WidgetSession?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            summary(item)
-            if let message = item.message {
-                WidgetOverviewMessage(message: message, load: { try await model.messageBody(for: item) })
-                    .id(item.id)
-            }
-            choices(item)
-            if let session {
-                HStack(spacing: 8) {
-                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
-                        Text([session.project, session.visualStatus.label, String(session.target.sessionId.prefix(8))]
-                            .filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-            }
-            HStack(spacing: 8) {
-                if item.message?.origin == nil {
-                    Button(item.needsAnswer ? "Answer in its session" : "Open in its session") { model.openInboxItem(item) }
-                        .buttonStyle(.genHover(accent: item.needsAnswer ? .orange : KitTheme.accent))
-                        .accessibilityIdentifier("widget.overview.open." + item.id)
-                }
-                if let session {
-                    Button("Whole inbox") {
-                        model.select(session.key)
-                        model.section = "Inbox"
-                    }.buttonStyle(.genHover())
-                    Spacer(minLength: 0)
-                    WidgetCmuxButton(model: model, session: session, size: 12)
-                }
-            }.font(.caption)
-        }
+        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, grouped: grouped,
+                                focusedOption: focusedOption, toggle: { toggle(item) })
     }
 
     static func title(_ item: WidgetInboxItem) -> String {
@@ -383,29 +283,6 @@ struct WidgetInboxOverview: View {
         case "todo": return "Task"
         case "form": return "Question"
         default: return LiveWidgetView.sentenceCase(item.kind)
-        }
-    }
-}
-
-private struct WidgetOverviewMessage: View {
-    let message: WidgetInboxItem.Message
-    let load: () async throws -> String
-    @State private var full: String?
-    @State private var failure: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            let text = full ?? message.text
-            if !text.isEmpty { WidgetMarkdown(text: text) }
-            if let failure {
-                Text(failure).font(.caption).foregroundStyle(.secondary)
-            } else if message.more == true, full == nil {
-                ProgressView().controlSize(.small).accessibilityLabel("Loading the full message")
-            }
-        }.task {
-            guard message.more == true else { return }
-            do { full = try await load() }
-            catch { if !Task.isCancelled { failure = error.localizedDescription } }
         }
     }
 }
@@ -444,8 +321,9 @@ struct WidgetInboxOverviewRow: View, Equatable {
     }
 
     private var labels: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Circle().fill(item.needsAnswer ? Color.orange : SessionPalette.blue)
+        let waiting = item.needsAnswer
+        return HStack(alignment: .top, spacing: 9) {
+            Circle().fill(waiting ? Color.orange : SessionPalette.blue)
                 .frame(width: 7, height: 7).padding(.top, 5)
             Image(systemName: LiveWidgetView.kindSymbol(item.kind)).font(.system(size: 11))
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
@@ -468,7 +346,7 @@ struct WidgetInboxOverviewRow: View, Equatable {
                         Text("·")
                     }
                     LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                }.font(.system(size: 11)).foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.secondary)
+                }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
             }
             Spacer(minLength: 4)
             if let count = item.count, count > 1 {
