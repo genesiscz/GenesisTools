@@ -11,9 +11,14 @@ final class RecorderLayersViewTests: XCTestCase {
     private var service: FakeServiceLink!
     private var model: EditorModel!
     private var window: NSWindow!
-    private var pasteboards: [NSPasteboard] = []
+    private var probeWasEnabled = false
+    private var soundReadings: [String: SoundRowProbe.Reading] = [:]
 
     override func setUp() async throws {
+        _ = NSApplication.shared
+        probeWasEnabled = FrameProbe.enabled
+        FrameProbe.reset()
+        FrameProbe.enabled = true
         folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var project = EditProject.whole(video: folder.appendingPathComponent("screen.mp4").path, durationUs: 10_000_000,
@@ -35,12 +40,12 @@ final class RecorderLayersViewTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        pasteboards.forEach { $0.releaseGlobally() }
-        pasteboards.removeAll()
         window?.orderOut(nil)
         window?.contentView = nil
         window?.close()
         window = nil
+        FrameProbe.enabled = probeWasEnabled
+        FrameProbe.reset()
         model.close()
         model = nil
         service = nil
@@ -52,73 +57,138 @@ final class RecorderLayersViewTests: XCTestCase {
         window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
                           backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.level = .init(rawValue: -1000)
         window.contentView = NSHostingView(rootView: TimelineView(model: model, viewportWidth: size.width)
             .defaultAppStorage(UserDefaults(suiteName: UUID().uuidString)!)
+            .onPreferenceChange(SoundRowProbe.self) { [weak self] in self?.soundReadings = $0 }
             .frame(width: size.width, height: size.height))
-        window.orderInForSnapshot()
-        window.contentView?.layoutSubtreeIfNeeded()
+        window.orderFrontRegardless()
+        XCTAssertFalse(window.isKeyWindow)
     }
 
-    private func element(_ id: String) throws -> NSAccessibilityProtocol {
-        // AppKit exposes the last committed SwiftUI transaction. Let a button's synchronous service reply draw.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        window.contentView?.layoutSubtreeIfNeeded()
-        func find(_ node: NSAccessibilityProtocol) -> NSAccessibilityProtocol? {
-            if node.accessibilityIdentifier() == id { return node }
-            for child in node.accessibilityChildren() ?? [] {
-                if let child = child as? NSAccessibilityProtocol, let match = find(child) { return match }
-            }
-            return nil
+    private func waitFor<T>(_ description: String, file: StaticString = #filePath, line: UInt = #line,
+                            _ read: () -> T?) async throws -> T {
+        let deadline = ContinuousClock.now + .seconds(3)
+        repeat {
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            if let value = read() { return value }
+            try await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        return try XCTUnwrap(read(), description, file: file, line: line)
+    }
+
+    private func centerInWindow(_ frame: CGRect) -> CGPoint {
+        CGPoint(x: frame.midX, y: window.frame.height - frame.midY)
+    }
+
+    private func visibleFrame(_ id: String, in viewport: CGRect? = nil,
+                              file: StaticString = #filePath, line: UInt = #line) async throws -> CGRect {
+        let bounds = viewport ?? CGRect(origin: .zero, size: window.frame.size)
+        return try await waitFor("Missing visible frame for \(id)", file: file, line: line) {
+            guard let frame = FrameProbe.frames[id], !frame.isEmpty, bounds.contains(centerInWindow(frame)) else { return nil }
+            return frame
         }
-        return try XCTUnwrap(find(window), "Missing editor accessibility element \(id)")
     }
 
-    func testTimelineShowsBothNamedSoundRows() throws {
-        hostTimeline()
-        XCTAssertEqual(try element("recorder.timeline.sound.mic").accessibilityLabel(), "Microphone")
-        XCTAssertEqual(try element("recorder.timeline.sound.system").accessibilityLabel(), "System sound")
+    private func sound(_ suffix: String, changedFrom oldValue: String? = nil) async throws -> SoundRowProbe.Reading {
+        let id = "recorder.timeline.sound." + suffix
+        _ = try await visibleFrame(id)
+        return try await waitFor("Missing updated label and value for \(id)") {
+            guard let reading = soundReadings[id], reading.value != oldValue else { return nil }
+            return reading
+        }
     }
 
-    func testPressingMuteSendsOneOpAndAnnouncesMuted() throws {
+    private func mouse(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+    }
+
+    private func press(_ id: String) async throws {
+        let point = centerInWindow(try await visibleFrame(id))
+        let down = try mouse(.leftMouseDown, at: point), up = try mouse(.leftMouseUp, at: point)
+        // A native button can consume the release inside mouseDown's tracking loop.
+        NSApp.postEvent(up, atStart: true)
+        window.sendEvent(down)
+        if let next = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: false),
+           next.windowNumber == window.windowNumber,
+           let release = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+            window.sendEvent(release)
+        }
+        XCTAssertFalse(window.isKeyWindow)
+    }
+
+    /// Ask the hit view or its hosting ancestor for the real context menu without presenting it.
+    private func menu(for layer: String) async throws -> NSMenu {
+        let point = centerInWindow(try await visibleFrame("recorder.timeline.layer." + layer))
+        let event = try mouse(.rightMouseDown, at: point)
+        let content = try XCTUnwrap(window.contentView)
+        var target: NSView? = content.hitTest(content.superview?.convert(point, from: nil) ?? point) ?? content
+        var found: NSMenu?
+        while let view = target {
+            if let menu = view.menu(for: event) { found = menu; break }
+            target = view === content ? nil : view.superview
+        }
+        let menu = try XCTUnwrap(found, "Missing context menu for layer \(layer)")
+        menu.update()
+        return menu
+    }
+
+    func testTimelineShowsBothNamedSoundRows() async throws {
         hostTimeline()
-        XCTAssertTrue(try element("recorder.timeline.sound.mic.mute").accessibilityPerformPress())
+        let mic = try await sound("mic")
+        let system = try await sound("system")
+        XCTAssertEqual(mic.label, "Microphone")
+        XCTAssertEqual(system.label, "System sound")
+    }
+
+    func testPressingMuteSendsOneOpAndAnnouncesMuted() async throws {
+        hostTimeline()
+        let before = try await sound("mic")
+        XCTAssertEqual(before.value, "100%")
+        try await press("recorder.timeline.sound.mic.mute")
+        let after = try await sound("mic", changedFrom: before.value)
         XCTAssertEqual(service.sentOps as NSArray, [["op": "audioLane", "id": "mic", "muted": true]] as NSArray)
-        XCTAssertEqual(try element("recorder.timeline.sound.mic").accessibilityValue() as? String, "muted")
+        XCTAssertEqual(after.value, "muted")
         XCTAssertFalse(try XCTUnwrap(model.project.audio.lanes?.last).muted)
     }
 
-    func testLayersAppearFrontToBack() throws {
+    func testLayersAppearFrontToBack() async throws {
         hostTimeline()
-        let logo = try element("recorder.timeline.layer.logo")
-        let camera = try element("recorder.timeline.layer.camera")
-        XCTAssertGreaterThan(logo.accessibilityFrame().midY, camera.accessibilityFrame().midY,
-                             "AppKit accessibility coordinates increase toward the top")
+        let logo = try await visibleFrame("recorder.timeline.layer.logo")
+        let art = try await visibleFrame("recorder.timeline.layer.art")
+        let camera = try await visibleFrame("recorder.timeline.layer.camera")
+        XCTAssertLessThan(logo.midY, art.midY, "SwiftUI global coordinates increase toward the bottom")
+        XCTAssertLessThan(art.midY, camera.midY)
     }
 
-    func testFourOrderActionsSendTheirNamedMovesOnce() throws {
+    func testFourOrderActionsSendTheirNamedMovesOnce() async throws {
         hostTimeline()
-        let row = try element("recorder.timeline.layer.art")
-        let actions = try XCTUnwrap(row.accessibilityCustomActions())
+        let actions = try await menu(for: "art")
         for title in ["Bring to Front", "Bring Forward", "Send Backward", "Send to Back"] {
-            let action = try XCTUnwrap(actions.first { $0.name == title }, "Missing \(title)")
-            if let handler = action.handler {
-                XCTAssertTrue(handler())
-            } else {
-                XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(action.selector), to: action.target, from: action))
-            }
+            let index = try XCTUnwrap(actions.items.firstIndex { $0.title == title }, "Missing \(title)")
+            XCTAssertTrue(actions.items[index].isEnabled, title)
+            actions.performActionForItem(at: index)
         }
-        XCTAssertEqual(service.count("edit.apply"), 4)
+        let calls = try await waitFor("The four order commands must reach edit.apply") {
+            let count = service.count("edit.apply")
+            return count >= 4 ? count : nil
+        }
+        XCTAssertEqual(calls, 4)
         XCTAssertEqual(service.sentOps as NSArray, ["top", "up", "down", "bottom"].map {
             ["op": "layerMove", "id": "art", "to": $0]
         } as NSArray)
     }
 
-    func testOnlyMediaOffersDelete() throws {
+    func testOnlyMediaOffersDelete() async throws {
         hostTimeline()
-        let camera = try XCTUnwrap(try element("recorder.timeline.layer.camera").accessibilityCustomActions()).map(\.name)
+        let camera = try await menu(for: "camera").items.map(\.title)
         XCTAssertTrue(camera.contains("Hide Camera"))
         XCTAssertFalse(camera.contains("Delete"))
-        let media = try XCTUnwrap(try element("recorder.timeline.layer.logo").accessibilityCustomActions()).map(\.name)
+        let media = try await menu(for: "logo").items.map(\.title)
         XCTAssertTrue(media.contains("Delete"))
         XCTAssertTrue(media.contains("Replace File…"))
     }
@@ -132,10 +202,8 @@ final class RecorderLayersViewTests: XCTestCase {
             applied.fulfill()
             return moved
         }
-        let item = NSPasteboardItem()
-        item.setData(try JSONSerialization.data(withJSONObject: ["row": ["window": model.session.holder, "id": "logo"]]),
-                     forType: .init("tools.genesis.recorder.layer-row"))
-        try drop(item, on: "recorder.timeline.layer.camera")
+        let camera = try await dropTarget("camera")
+        XCTAssertTrue(model.dropLayer(.row(window: model.session.holder, id: "logo"), on: camera))
         await fulfillment(of: [applied], timeout: 3)
         XCTAssertEqual(service.sentOps as NSArray, [["op": "layerMove", "id": "logo", "to": 0]] as NSArray)
         XCTAssertEqual(model.project.layerOrder().first?.id, "logo")
@@ -167,7 +235,9 @@ final class RecorderLayersViewTests: XCTestCase {
             return next
         }
         hostTimeline()
-        try drop(image as NSURL, on: "recorder.timeline.layer.logo", atOutput: 1_500_000)
+        let logo = try await dropTarget("logo")
+        model.seek(1_500_000)
+        XCTAssertTrue(model.dropLayer(.file(image), on: logo))
         await fulfillment(of: [applied], timeout: 3)
         XCTAssertEqual(service.sentTags, ["layerAdd"])
         XCTAssertNil(service.sentOps.first?["endUs"], "an image uses the service's five-second span")
@@ -200,25 +270,37 @@ final class RecorderLayersViewTests: XCTestCase {
         XCTAssertEqual(project.layerOrder().count, 4)
         model.adopt(project, rebuild: false)
         hostTimeline(height: 250)
-        let top = try XCTUnwrap(project.layerOrder().last).id
-        _ = try element("recorder.timeline.layer." + top)
-        let bottom = try XCTUnwrap(project.audio.lanes?.last).id
+        let layerIDs = project.layerOrder().map { "recorder.timeline.layer." + $0.id }
+        let soundIDs = try XCTUnwrap(project.audio.lanes).map { "recorder.timeline.sound." + $0.id }
+        _ = try await visibleFrame(try XCTUnwrap(layerIDs.last))
         func scrollView(in view: NSView) -> NSScrollView? {
             if let scroll = view as? NSScrollView { return scroll }
             return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
         }
         let scroll = try XCTUnwrap(scrollView(in: try XCTUnwrap(window.contentView)))
         let clip = scroll.contentView
+        let viewport = clip.convert(clip.bounds, to: nil)
+        for id in layerIDs {
+            _ = try await visibleFrame(id, in: viewport)
+        }
         let end = try XCTUnwrap(scroll.documentView).frame.height - clip.bounds.height
         XCTAssertGreaterThan(end, 0)
+        let initialY = clip.bounds.minY
+        let bottomSound = try XCTUnwrap(soundIDs.last)
+        if let frame = FrameProbe.frames[bottomSound], !frame.isEmpty {
+            XCTAssertFalse(viewport.contains(centerInWindow(frame)), "The last sound row should start below the viewport")
+        }
         func scrollTo(_ y: CGFloat) {
             clip.scroll(to: CGPoint(x: 0, y: y))
             scroll.reflectScrolledClipView(clip)
             window.contentView?.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
         }
-        scrollTo(end)
-        _ = try element("recorder.timeline.sound." + bottom)
+        scrollTo(clip.isFlipped ? end : 0)
+        XCTAssertNotEqual(clip.bounds.minY, initialY)
+        for id in soundIDs {
+            _ = try await visibleFrame(id, in: viewport)
+        }
         if fixture != nil {
             var times: [Double] = []
             for step in 0..<120 {
@@ -234,63 +316,8 @@ final class RecorderLayersViewTests: XCTestCase {
         }
     }
 
-    /// Deliver the pasteboard to the hosting view's registered drop destination. A base without rows fails at
-    /// the same lookup as a user trying to drop there. No mouse event or active window is needed.
-    private func drop(_ item: NSPasteboardWriting, on id: String, atOutput: Int64? = nil) throws {
-        let frame = try element(id).accessibilityFrame()
-        if let atOutput { model.seek(atOutput) }
-        let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
-        let drag = LayerTestDrag(item, window: window, at: point)
-        pasteboards.append(drag.draggingPasteboard)
-        let content = try XCTUnwrap(window.contentView)
-        var view = content.hitTest(content.convert(point, from: nil))
-        while let target = view {
-            let destination: NSDraggingDestination = target
-            if !target.registeredDraggedTypes.isEmpty, let entered = destination.draggingEntered?(drag), !entered.isEmpty {
-                _ = destination.draggingUpdated?(drag)
-                XCTAssertTrue(destination.prepareForDragOperation?(drag) ?? true)
-                XCTAssertEqual(destination.performDragOperation?(drag), true)
-                destination.concludeDragOperation?(drag)
-                return
-            }
-            view = target.superview
-        }
-        XCTFail("No drop destination accepted the pasteboard at \(id)")
-    }
-}
-
-@MainActor
-private final class LayerTestDrag: NSObject, NSDraggingInfo {
-    let draggingPasteboard = NSPasteboard(name: .init("layer-drop-\(UUID().uuidString)"))
-    let draggingDestinationWindow: NSWindow?
-    let draggingLocation: NSPoint
-    let draggingSourceOperationMask: NSDragOperation = [.copy, .move]
-    var draggingSource: Any? { nil }
-    var draggedImage: NSImage? { nil }
-    var draggedImageLocation: NSPoint { draggingLocation }
-    let draggingSequenceNumber = 1
-    var draggingFormation: NSDraggingFormation = .default
-    var animatesToDestination = false
-    var numberOfValidItemsForDrop = 1
-    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
-
-    init(_ item: NSPasteboardWriting, window: NSWindow, at location: NSPoint) {
-        draggingDestinationWindow = window
-        draggingLocation = location
-        super.init()
-        draggingPasteboard.writeObjects([item])
-    }
-
-    func slideDraggedImage(to screenPoint: NSPoint) {}
-    func resetSpringLoading() {}
-    func enumerateDraggingItems(options: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes: [AnyClass],
-                                searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
-                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {
-        var stop = ObjCBool(false)
-        for (index, object) in (draggingPasteboard.readObjects(forClasses: classes, options: searchOptions) ?? []).enumerated() {
-            guard let writer = object as? NSPasteboardWriting else { continue }
-            block(NSDraggingItem(pasteboardWriter: writer), index, &stop)
-            if stop.boolValue { return }
-        }
+    private func dropTarget(_ id: String) async throws -> EditorLayerRow {
+        _ = try await visibleFrame("recorder.timeline.layer." + id)
+        return try XCTUnwrap(model.layersByID[id])
     }
 }

@@ -82,6 +82,7 @@ struct LayerRowsView: View {
     var body: some View {
         LazyVStack(spacing: 0) {
             ForEach(model.layerRows) { row in
+                let id = "recorder.timeline.layer." + row.id
                 let selected = model.selection == .layer(row.id)
                 HStack(spacing: 6) {
                     Button { model.toggleVisibility(row) } label: {
@@ -125,8 +126,9 @@ struct LayerRowsView: View {
                 .accessibilityLabel(row.name)
                 .accessibilityValue(row.hidden ? "hidden" : "visible")
                 .accessibilityAddTraits(selected ? .isSelected : [])
-                .accessibilityIdentifier("recorder.timeline.layer." + row.id)
+                .accessibilityIdentifier(id)
                 .accessibilityActions { actions(row) }
+                .frameProbe(id)
                 .id(row.id)
             }
         }

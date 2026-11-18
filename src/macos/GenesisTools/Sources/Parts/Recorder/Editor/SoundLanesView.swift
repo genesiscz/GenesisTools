@@ -77,6 +77,7 @@ struct SoundLanesView: View {
                     .buttonStyle(.genHoverPlain())
                     .accessibilityLabel(row.lane.muted ? "Unmute \(row.name)" : "Mute \(row.name)")
                     .accessibilityIdentifier(id + ".mute")
+                    .frameProbe(id + ".mute")
                     .instantTooltip(row.lane.muted ? "Unmute \(row.name) (M)" : "Mute \(row.name) (M)")
                     Text(verbatim: row.name).lineLimit(1)
                     if scale == nil { Spacer(minLength: 2) }
@@ -108,9 +109,7 @@ struct SoundLanesView: View {
                 .focused($focus, equals: row.id)
                 .contextMenu { levels(row) }
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel(row.name)
-                .accessibilityValue(row.accessibilityValue)
-                .accessibilityIdentifier(id)
+                .soundRowAccessibility(id: id, label: row.name, value: row.accessibilityValue)
                 .id(row.id)
             }
         }
@@ -136,6 +135,30 @@ struct SoundLanesView: View {
                     Label("\(percent)%", systemImage: "checkmark")
                 } else { Text("\(percent)%") }
             }
+        }
+    }
+}
+
+/// The hidden host reads the label and value supplied to each mounted row's accessibility modifiers.
+enum SoundRowProbe: PreferenceKey {
+    struct Reading: Equatable {
+        let label: String
+        let value: String
+    }
+
+    static var defaultValue: [String: Reading] { [:] }
+    static func reduce(value: inout [String: Reading], nextValue: () -> [String: Reading]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+private extension View {
+    @MainActor @ViewBuilder func soundRowAccessibility(id: String, label: String, value: String) -> some View {
+        let row = accessibilityLabel(label).accessibilityValue(value).accessibilityIdentifier(id)
+        if FrameProbe.enabled {
+            row.frameProbe(id).preference(key: SoundRowProbe.self, value: [id: .init(label: label, value: value)])
+        } else {
+            row
         }
     }
 }
