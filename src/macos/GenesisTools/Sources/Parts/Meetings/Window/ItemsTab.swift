@@ -200,7 +200,7 @@ struct ItemsTab: View {
                 if needsProject { Color.clear } else {
                 let hasTranscript = detail.window?.meeting(detail.id)?.hasTranscript ?? true
                 if detail.isBusy("suggest") {
-                    SuggestRunView(progress: detail.suggestProgress)
+                    SuggestRunView(progress: detail.suggestProgress) { detail.cancelSuggest() }
                 } else {
                     ItemsEmptyState(hasTranscript: hasTranscript) { suggest() }
                 }
@@ -222,7 +222,14 @@ struct ItemsTab: View {
             span.end()
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            ItemsBar(detail: detail, projection: projection, group: $questionGroup, applyAbove: applyAbove)
+            VStack(spacing: 0) {
+                ItemsBar(detail: detail, projection: projection, group: $questionGroup, applyAbove: applyAbove)
+                // A run on a meeting that has items ("Run the rules again…") shows its steps above the list.
+                if detail.isBusy("suggest"), !(detail.rowsForReopen.value?.rows.isEmpty ?? true) {
+                    SuggestRunStrip(progress: detail.suggestProgress) { detail.cancelSuggest() }
+                    Divider()
+                }
+            }
         }
     }
 
@@ -582,6 +589,8 @@ struct ItemsEmptyState: View {
 /// spinner hold one height, so the words do not move when the first step arrives.
 struct SuggestRunView: View {
     let progress: MeetingsCallProgress?
+    /// Stops the run (`$/cancel`: the service kills the voice workers and saves nothing); nil draws no Cancel.
+    var cancel: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -605,12 +614,17 @@ struct SuggestRunView: View {
                 .font(.system(size: 11.5).monospacedDigit())
                 .foregroundColor(KitPalette.dim)
                 .multilineTextAlignment(.center)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Suggesting items")
+                .accessibilityValue(Self.label(progress))
+            if let cancel {
+                GhostButton("Cancel", symbol: "xmark", tooltip: "Stop the rules; nothing is saved", identifier: "meetings.items.suggestCancel",
+                            action: cancel)
+                    .padding(.top, 2)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Suggesting items")
-        .accessibilityValue(Self.label(progress))
     }
 
     /// The step in words: the service's label with the share done, either alone, or a waiting line before any step.
@@ -623,5 +637,31 @@ struct SuggestRunView: View {
         case let (nil, percent?): return "\(percent) done"
         case (nil, nil): return "Running the rules…"
         }
+    }
+}
+
+/// A run of the rules on a meeting that has items: one line above the list with the bar, the step in words and Cancel.
+struct SuggestRunStrip: View {
+    let progress: MeetingsCallProgress?
+    let cancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if let fraction = progress?.fraction {
+                    ProgressView(value: min(1, max(0, fraction))).progressViewStyle(.linear).frame(width: 140)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(height: 14)
+            Text(verbatim: progress == nil ? "Running the rules again…" : SuggestRunView.label(progress))
+                .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+                .accessibilityLabel("Running the rules")
+            Spacer(minLength: 6)
+            GhostButton("Cancel", symbol: "xmark", tooltip: "Stop the rules; nothing is saved", height: 22,
+                        identifier: "meetings.items.suggestCancel", action: cancel)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
     }
 }

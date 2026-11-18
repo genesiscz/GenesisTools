@@ -43,6 +43,8 @@ final class MeetingDetailModel {
     var suggestionWarnings: [String] = []
     /// The running suggest's newest step from the service; nil when none runs or before its first step.
     var suggestProgress: MeetingsCallProgress?
+    /// The running suggest, so its Cancel can stop it.
+    @ObservationIgnored private var suggestTask: Task<Void, Never>?
     /// The Voices pane's state for this meeting (VoicesPane.swift): made when the pane first opens, dropped with the meeting.
     @ObservationIgnored private(set) lazy var voices = VoicesModel(meeting: id, detail: self)
     /// The notices of this pane's actions, floating over its tabs: several at once, each with its own Undo and time.
@@ -1039,10 +1041,11 @@ extension MeetingDetailModel {
         guard !busy.contains("suggest") else { return }
         busy.insert("suggest")
         suggestProgress = nil
-        Task {
+        suggestTask = Task {
             defer {
                 busy.remove("suggest")
                 suggestProgress = nil
+                suggestTask = nil
             }
             do {
                 // The deadline of every call (`MeetingsService.silenceLimit`): the service repeats a running call's
@@ -1055,10 +1058,18 @@ extension MeetingDetailModel {
             } catch let failure as MeetingsCLI.Failure where failure.code == "project-required" && projectRequired != nil {
                 projectRequired?()
                 readRecordAndRows()
+            } catch where Task.isCancelled || error is CancellationError {
+                // Cancel: the service hears `$/cancel`, kills the voice workers and saves nothing (w_s12ed97x).
+                notices.push(StackedNotice(text: "Stopped the rules; nothing was saved"))
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in self?.suggest(projectRequired: projectRequired) })
             }
         }
+    }
+
+    /// Stops a running suggest from its progress bar.
+    func cancelSuggest() {
+        suggestTask?.cancel()
     }
 
 }

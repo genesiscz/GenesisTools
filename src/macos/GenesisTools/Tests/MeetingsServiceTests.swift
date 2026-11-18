@@ -1132,6 +1132,45 @@ final class MeetingsServiceTests: XCTestCase {
                        "1 line waits for one. Confirm one line of this person to add a sample.")
     }
 
+    /// w_s12ed97x: Cancel on the progress bar stops the call on the wire (`$/cancel`; the service kills its voice workers
+    /// and saves nothing), the bar goes, and the notice says nothing was saved instead of a failure.
+    func testCancelStopsARunningSuggestOnTheWireAndSaysNothingWasSaved() async throws {
+        try writeServiceEntry()
+        fake.silent = ["meeting.suggest"]
+        fake.progress["meeting.suggest"] = Array(Self.suggestSteps.prefix(1))
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        detail.suggest()
+        let reached = await waitUntil(3) { detail.suggestProgress != nil }
+        XCTAssertTrue(reached, "the run reports its first step")
+        detail.cancelSuggest()
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "meeting.suggest" } }.value
+        let cancel = try await Task.detached { try fake.line { $0["method"] as? String == "$/cancel" } }.value
+        XCTAssertEqual((cancel["params"] as? [String: Any])?["id"] as? Int, sent["id"] as? Int, "the cancel names the call")
+        let ended = await waitUntil(3) { !detail.isBusy("suggest") }
+        XCTAssertTrue(ended, "the run ends at once")
+        XCTAssertNil(detail.suggestProgress)
+        XCTAssertEqual(detail.notices.notices.map(\.text), ["Stopped the rules; nothing was saved"])
+    }
+
+    func testCancelStopsAVoicesPreviewAndKeepsTheEarlierList() async throws {
+        try writeServiceEntry()
+        fake.silent = ["voices.preview"]
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        let voices = detail.voices
+        voices.runPreview()
+        let fake = self.fake!
+        _ = try await Task.detached { try fake.line { $0["method"] as? String == "voices.preview" } }.value
+        voices.cancelRun()
+        _ = try await Task.detached { try fake.line { $0["method"] as? String == "$/cancel" } }.value
+        let ended = await waitUntil(3) { voices.running == nil }
+        XCTAssertTrue(ended)
+        XCTAssertEqual(voices.preview, .idle, "a cancelled first preview leaves no failure behind")
+        XCTAssertTrue(detail.notices.notices.isEmpty)
+    }
+
     func testTheWindowReadsTheRuleSentencesOnceFromTheService() async throws {
         try writeServiceEntry()
         let service = makeService()
