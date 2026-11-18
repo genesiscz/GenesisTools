@@ -10,6 +10,14 @@ public enum HubSessionRows {
     public static let hideSharedKey = "hub.sessions.hideShared"
 }
 
+/// Which project the hub shows when entering Work.
+public enum HubWorkOpeningProject: String, Sendable {
+    case recentSession, lastOpened, firstInList
+    public static let key = "hub.work.openingProject"
+
+    public static func stored(_ raw: String?) -> Self { raw.flatMap(Self.init(rawValue:)) ?? .recentSession }
+}
+
 /// When a PR row shows its CI icon. The readiness word ("ready", "2 open", "checks failed") is the row's status; the
 /// CI icon beside it repeated a red mark on nearly every row of a project whose checks usually fail (hub UX C9).
 public enum HubPRRowCI: String, CaseIterable, Identifiable, Sendable {

@@ -8,19 +8,46 @@ import SwiftUI
 @MainActor
 final class HubWorkModel: ObservableObject {
     let screen: WorkScreenModel
+    private let defaults: UserDefaults
+    private static let lastOpenedKey = "hub.work.lastOpenedProject"
     /// Called once when the screen has something to show (its first snapshot, a failure, or no project at all): a
     /// launch with `--mode work` settles there, as the Timeline and Inbox modes settle on their first load.
     var onLoaded: (() -> Void)? { didSet { watchFirstLoad() } }
     private var loadWatch: AnyCancellable?
 
-    init(source: WorkSource? = nil) {
+    init(source: WorkSource? = nil, defaults: UserDefaults = HubDefaults.store) {
+        self.defaults = defaults
         screen = WorkScreenModel(source: source ?? LiveWorkSource())
         // No reload while nobody can see the hub (Hub/HubVisibility.swift); one when it shows again.
         screen.setVisible(HubVisibility.shared.visible)
         HubVisibility.shared.onChange(self) { model, visible in model.screen.setVisible(visible) }
     }
 
-    func activate() { screen.activate() }
+    func activate(sessions: [HubSession] = []) {
+        let candidates: [String]
+        switch HubWorkOpeningProject.stored(defaults.string(forKey: HubWorkOpeningProject.key)) {
+        case .recentSession:
+            // A transcript's metadata can change after its last turn. Older rows have only the file time.
+            let latest = sessions.max { ($0.lastCacheAt ?? $0.mtime) < ($1.lastCacheAt ?? $1.mtime) }
+            candidates = latest.map { session in
+                // A session in a subfolder or linked worktree can carry that folder's name as its project.
+                // Match the named project first, then the closest Work project in the cached path.
+                let folders = (session.cwd as NSString).pathComponents
+                if let project = session.project, !project.isEmpty, project != folders.last { return [project] }
+                return Array(folders.reversed())
+            } ?? []
+        case .lastOpened:
+            candidates = [defaults.string(forKey: Self.lastOpenedKey)].compactMap { $0 }
+        case .firstInList:
+            candidates = []
+        }
+        screen.activate(preferring: candidates)
+    }
+
+    func openProject(_ name: String) {
+        defaults.set(name, forKey: Self.lastOpenedKey)
+        screen.project = name
+    }
 
     private func watchFirstLoad() {
         guard onLoaded != nil else { loadWatch = nil; return }
@@ -49,6 +76,7 @@ extension HubWorkModel: HubModeModel {
 struct WorkProjectsList: View {
     @ObservedObject var screen: WorkScreenModel
     let filter: String
+    let openProject: (String) -> Void
 
     var body: some View {
         let words = filter.lowercased().split(whereSeparator: \.isWhitespace)
@@ -63,7 +91,7 @@ struct WorkProjectsList: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
                 }
                 ForEach(shown, id: \.self) { name in
-                    WorkProjectRow(name: name, selected: screen.project == name) { screen.project = name }
+                    WorkProjectRow(name: name, selected: screen.project == name) { openProject(name) }
                         .equatable()
                 }
             }

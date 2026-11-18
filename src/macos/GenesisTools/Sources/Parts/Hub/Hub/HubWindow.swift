@@ -1254,7 +1254,7 @@ final class HubModel {
                 }
             }
         case .work:
-            if id != Self.wholeList { work.screen.project = id }
+            if id != Self.wholeList { work.openProject(id) }
         case .agents:
             if id == Self.wholeList {
                 agents.selectedID = nil
@@ -1377,7 +1377,7 @@ final class HubModel {
             case .usage:
                 usage.activate()
             case .work:
-                work.activate()
+                work.activate(sessions: sessions)
             case .inbox:
                 inbox.loadIfStale()
             case .timeline:
@@ -1511,7 +1511,7 @@ final class HubModel {
     }
 
     func openSession(_ session: HubSession) {
-        mode = .sessions
+        setMode(.sessions)
         select(session.id)
     }
 
@@ -2921,6 +2921,10 @@ private struct SessionListView: View {
                     }
                     .fixedSize()
                     .instantTooltip("Group sessions: \(mode.title.lowercased())")
+                } else if model.mode == .work {
+                    IconButton(systemName: "gearshape", tooltip: "Choose which project Work opens") {
+                        FeatureSettingsLaunch.open(pageID: "\(HubSettingsPages.panesPageID)#work")
+                    }
                 }
             }
             .padding(.horizontal, 10)
@@ -3017,7 +3021,7 @@ private struct SessionListView: View {
                 default: UsageListView(usage: model.usage, filter: model.filter)
                 }
             case .work:
-                WorkProjectsList(screen: model.work.screen, filter: model.filter)
+                WorkProjectsList(screen: model.work.screen, filter: model.filter, openProject: model.work.openProject)
             case .agents:
                 AgentsListView(model: model, agents: model.agents)
             case .sessions:

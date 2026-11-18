@@ -80,7 +80,7 @@ struct UsageSettingsSketchChoiceB<Value: Hashable>: View {
 
 /// The hub modes the Panes page is split by.
 enum UsageSketchPaneTabB: String, CaseIterable, Hashable {
-    case sessions, changes, prs, inbox, activity, agents, worktrees, window
+    case sessions, changes, prs, inbox, activity, agents, work, worktrees, window
 
     var title: String {
         switch self {
@@ -90,6 +90,7 @@ enum UsageSketchPaneTabB: String, CaseIterable, Hashable {
         case .inbox: return "Inbox"
         case .activity: return "Activity"
         case .agents: return "Agents"
+        case .work: return "Work"
         case .worktrees: return "Worktrees"
         case .window: return "Every mode"
         }
@@ -103,6 +104,7 @@ enum UsageSketchPaneTabB: String, CaseIterable, Hashable {
         case .inbox: return "The decision and question cards."
         case .activity: return "The rows of the Activity feed."
         case .agents: return "The Agents list and the agent processes pane."
+        case .work: return "The project list for handoffs and work items."
         case .worktrees: return "The worktree cleanup pane."
         case .window: return "The hub window as a whole. Changes apply to a running hub at once."
         }
@@ -201,6 +203,7 @@ struct UsageSettingsSketchPanesB: View {
     /// as the tab. The control identifiers (`hub.prs.rowCI`) are not in the anchor, so a lookup by them found no tab.
     static func tab(for anchor: String) -> UsageSketchPaneTabB? {
         if anchor == "lists" { return .prs }
+        if anchor == "work" { return .work }
         guard anchor.hasPrefix("search/") else { return nil }
         // `search/<page>/<key>`: the page id has no slash, so the key starts after the second one.
         let rest = anchor.dropFirst("search/".count)
@@ -221,6 +224,8 @@ struct UsageSettingsSketchPanesB: View {
         }
         if tab == .prs {
             page.nativeSettingsAnchor("lists")
+        } else if tab == .work {
+            page.nativeSettingsAnchor("work")
         } else {
             page
         }
@@ -311,6 +316,8 @@ struct UsageSettingsSketchPanesB: View {
                 detail: "Adds macOS energy impact to each process. Every refresh takes one top sample of about 1 s.",
                 identifier: "hub.procs.energy", isOn: $preferences.processEnergy)
                 .usageSketchRowB()
+        case .work:
+            HubWorkOpeningProjectPicker().usageSketchRowB()
         case .worktrees:
             number("Removable after idle for", detail: "Only worktrees idle this long count as removable. 0 days means any idle time.",
                    unit: "days", range: HubPreferences.cleanupIdleDaysRange, identifier: "hub.cleanup.idleDays",
