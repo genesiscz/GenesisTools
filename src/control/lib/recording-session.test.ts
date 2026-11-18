@@ -2008,8 +2008,30 @@ describe("a movie recording's live settings", () => {
             server.close();
             await recording.command({ cmd: "discard" });
         };
-        return { client, runs, close };
+        return { client, control, runs, close };
     }
+
+    it("applies widget stdin rates through settings.set and acknowledges the next segment while paused", async () => {
+        const { client, control, runs, close } = await movie();
+        try {
+            await client.pause();
+            const command = parseRecordingCommand('{"cmd":"rates","activeFps":24,"idleFps":0,"threshold":2}');
+            if ("error" in command) {
+                throw new Error(command.error);
+            }
+
+            const replies: MovieRates[] = [];
+            await applyRecordingCommand(control, command, (rates) => replies.push(rates));
+            expect(replies).toEqual([{ activeFps: 24, idleFps: 24, threshold: 2 }]);
+            expect(runs).toHaveLength(1);
+            await client.resume();
+            expect(runs[1].rates).toEqual(replies[0]);
+            await applyRecordingCommand(control, { cmd: "rates", activeFps: 30, idleFps: 1 });
+            expect(runs[2].rates).toEqual({ activeFps: 30, idleFps: 1, threshold: 2 });
+        } finally {
+            await close();
+        }
+    });
 
     it("reads the movie's rates and threshold, and names the keys a movie keeps as they are", async () => {
         const { client, close } = await movie();
