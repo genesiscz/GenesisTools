@@ -385,8 +385,13 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         let range = bounds[0]...bounds[1]
         let selection = Set(projection.built.flatMap(\.lines).filter { range.contains($0.index) }.map(\.id))
         FileHandle.standardError.write(Data("meetings snapshot: selection of \(selection.count) of \(entries.count) lines, \(detail.record.value?.items.count ?? 0) items\n".utf8))
-        return AnyView(TranscriptSelectionPopover(detail: detail, entries: entries, projection: projection, selection: selection,
-                                                  wordSelection: nil, clipSec: 5, clear: {}))
+        let span = HubPerf.begin("meetings.transcript.selection", "\(selection.count) of \(entries.count) lines")
+        let facts = TranscriptSelectionFacts.make(.init(open: true, selection: selection, built: projection.built, shown: projection.shown,
+                                                        entries: entries, voice: detail.record.value?.evidence?.voice?.lines ?? [:],
+                                                        evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [],
+                                                        ruleNames: model.ruleNames ?? [:]))
+        span.end()
+        return facts.map { AnyView(TranscriptSelectionPopover(detail: detail, facts: $0, clipSec: 5, clear: {})) }
     }
     if let sheet = request.sheet, sheet.hasPrefix("person:") {
         let name = String(sheet.dropFirst(7))

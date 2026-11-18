@@ -81,6 +81,10 @@ struct TranscriptBlocksPane: View {
     /// "Who was there" open or folded, remembered across meetings; folded at first, so the lines get the room.
     @AppStorage("meetings.transcript.presenceOpen") private var presenceOpen = false
     @State private var projection: TranscriptPaneProjection?
+    /// What the selection popover shows, made when the selection or what it reads changes (w_av97ayas), never in a
+    /// body; and the input it was made from.
+    @State private var selectionFacts: TranscriptSelectionFacts?
+    @State private var selectionFactsInput: TranscriptSelectionFacts.Input?
 
     /// The popovers of the header's "…" menu, anchored on it.
     enum PaneSheet: String, Identifiable {
@@ -183,6 +187,8 @@ struct TranscriptBlocksPane: View {
             projection = TranscriptPaneProjection.make(input)
             span.end()
         }
+        // The selection's facts follow a reload of the record, the rows or the lines while the popover is open.
+        .onChange(of: selectionInput) { _, input in refreshSelection(input) }
         .onAppear {
             detail.restoreRowsForReopen()
             detail.ensureComments()
@@ -412,6 +418,8 @@ struct TranscriptBlocksPane: View {
         }
         anchor = line
         popoverLine = selection.isEmpty ? nil : line.id
+        // In the click, so the popover opens with its content: made after the next body, it opened empty first.
+        refreshSelection(selectionInput)
     }
 
     private func selectWords(_ line: TranscriptBlockLine, _ range: NSRange) {
@@ -420,16 +428,33 @@ struct TranscriptBlocksPane: View {
         selection = [line.id]
         anchor = line
         popoverLine = line.id
+        refreshSelection(selectionInput)
+    }
+
+    /// What the popover's facts are made from: the selection while the popover is open, and the data it reads.
+    private var selectionInput: TranscriptSelectionFacts.Input {
+        .init(open: popoverLine != nil, selection: selection, words: wordSelection, built: projection?.built ?? [],
+              shown: projection?.shown ?? [], entries: entries, voice: detail.record.value?.evidence?.voice?.lines ?? [:],
+              evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [],
+              ruleNames: detail.window?.ruleNames ?? [:])
+    }
+
+    private func refreshSelection(_ input: TranscriptSelectionFacts.Input) {
+        guard input != selectionFactsInput else { return }
+        selectionFactsInput = input
+        let span = HubPerf.begin("meetings.transcript.selection", "\(input.selection.count) of \(input.entries.count) lines")
+        selectionFacts = TranscriptSelectionFacts.make(input)
+        span.end()
     }
 
     private var selectedLines: [TranscriptBlockLine] {
         (projection?.built ?? []).flatMap(\.lines).filter { selection.contains($0.id) }
     }
 
-    /// Built only while the selection popover is open.
+    /// Built only while the selection popover is open, from the facts made for the selection.
     private func popover() -> AnyView {
-        AnyView(TranscriptSelectionPopover(detail: detail, entries: entries, projection: projection, selection: selection,
-                                           wordSelection: wordSelection, clipSec: clipSec, clear: clearSelection))
+        guard let selectionFacts else { return AnyView(EmptyView()) }
+        return AnyView(TranscriptSelectionPopover(detail: detail, facts: selectionFacts, clipSec: clipSec, clear: clearSelection))
     }
 
     private func clearSelection() {
@@ -437,6 +462,7 @@ struct TranscriptBlocksPane: View {
         selection = []
         anchor = nil
         popoverLine = nil
+        refreshSelection(selectionInput)
     }
 
     // MARK: Staged comments (G60)
@@ -487,48 +513,87 @@ struct TranscriptBlocksPane: View {
 /// the line marks (every line against every hint, term and comment range), built every block, counted the bands, summed
 /// the words and filtered the items for the spot check on each redraw: a keystroke in the Word timings form, a line
 /// selection, a popover toggle.
-/// The selection popover's content: each selected line's voice scores and acoustic notes, then Comment and Clip with
-/// the sentences of the speaker ranges that named the lines. `--sheet selection:<from>-<to>` draws it alone, and its
-/// render runs in a span (`meetings.transcript.selection.render`).
+/// What the selection popover shows, made once per change of the selection or of what it reads (w_av97ayas): the
+/// popover's body filtered every built line and, per selected line, every item and every line's evidence on each
+/// redraw while it was open.
+struct TranscriptSelectionFacts: Equatable {
+    struct Input: Equatable {
+        /// The popover is open; closed, there are no facts to make.
+        var open = false
+        var selection: Set<String> = []
+        var words: TranscriptSelection?
+        var built: [TranscriptBlock] = []
+        var shown: [TranscriptLine] = []
+        var entries: [TranscriptLine] = []
+        /// The record's voice scores by source line index.
+        var voice: [String: MeetingRecordView.Evidence.Voice.Match] = [:]
+        var evidence: [WindowLineEvidence] = []
+        var items: [MeetingItem] = []
+        var ruleNames: [String: String] = [:]
+    }
+
+    /// One selected line's notes: its voice scores, and what the acoustic evidence says about it.
+    struct Note: Equatable, Identifiable {
+        let id: String
+        var voice: MeetingRecordView.Evidence.Voice.Match?
+        var acoustic: [String] = []
+        var echo: String?
+    }
+
+    var selection: TranscriptSelection
+    var lines: [TranscriptBlockLine]
+    var notes: [Note]
+    /// The sentences of the speaker ranges that named the lines (`TranscriptBlocksPane.lineEvidence`).
+    var speakerEvidence: [String]
+
+    @MainActor
+    static func make(_ input: Input) -> Self? {
+        guard input.open, !input.selection.isEmpty || input.words != nil else { return nil }
+        let lines = input.built.flatMap(\.lines).filter { input.selection.contains($0.id) }
+        guard let selection = input.words ?? TranscriptSelection.lines(lines) else { return nil }
+        let evidence = Dictionary(input.evidence.map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
+        let notes = lines.compactMap { line -> Note? in
+            let source = input.entries.indices.contains(line.index) ? (input.entries[line.index].sourceIndex ?? line.index) : line.index
+            let voice = input.voice[String(source)]
+            let acoustic = evidence[source]
+            guard voice != nil || acoustic != nil else { return nil }
+            return Note(id: line.id, voice: voice, acoustic: acoustic?.acousticText ?? [], echo: acoustic?.echoText)
+        }
+        // Only speaker ranges can name a line; the rest of the items are left out once, not for every line.
+        let ranges = input.items.filter { $0.kind == "speaker-range" && $0.status != "rejected" }
+        let shown = lines.compactMap { input.shown.indices.contains($0.index) ? input.shown[$0.index] : nil }
+        return Self(selection: selection, lines: lines, notes: notes,
+                    speakerEvidence: TranscriptBlocksPane.lineEvidence(shown, items: ranges, ruleNames: input.ruleNames))
+    }
+}
+
+/// The selection popover's content, drawn from its facts: each selected line's voice scores and acoustic notes, then
+/// Comment and Clip with the sentences of the speaker ranges that named the lines. `--sheet selection:<from>-<to>`
+/// draws it alone, and its render runs in a span (`meetings.transcript.selection.render`).
 struct TranscriptSelectionPopover: View {
     @Bindable var detail: MeetingDetailModel
-    let entries: [TranscriptLine]
-    let projection: TranscriptPaneProjection?
-    let selection: Set<String>
-    let wordSelection: TranscriptSelection?
+    let facts: TranscriptSelectionFacts
     let clipSec: Double
     let clear: () -> Void
 
-    private var selectedLines: [TranscriptBlockLine] {
-        (projection?.built ?? []).flatMap(\.lines).filter { selection.contains($0.id) }
-    }
-
     var body: some View {
-        let span = HubPerf.begin("meetings.transcript.selection.render", "\(selection.count) lines")
+        let span = HubPerf.begin("meetings.transcript.selection.render", "\(facts.lines.count) lines")
         let content = self.content
         span.end()
         return content
     }
 
-    @ViewBuilder
     private var content: some View {
-        if let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) {
-            let shown = projection?.shown ?? []
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(selectedLines) { line in
-                    let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
-                    if let match = detail.record.value?.evidence?.voice?.lines[String(sourceIndex)] {
-                        ListenVoiceScores(match: match)
-                    }
-                    if let acoustic = detail.rows.value?.lineEvidence?.first(where: { $0.index == sourceIndex }) {
-                        ForEach(acoustic.acousticText, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(.secondary) }
-                        if let echo = acoustic.echoText {
-                            Label(echo, systemImage: "speaker.wave.2").font(.system(size: 11)).foregroundStyle(.pink)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(facts.notes) { note in
+                if let match = note.voice { ListenVoiceScores(match: match) }
+                ForEach(note.acoustic, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(.secondary) }
+                if let echo = note.echo {
+                    Label(echo, systemImage: "speaker.wave.2").font(.system(size: 11)).foregroundStyle(.pink)
                 }
-                SelectionPopover(
-                selection: chosen,
+            }
+            SelectionPopover(
+                selection: facts.selection,
                 clipLengthSec: clipSec > 0 ? clipSec : MeetingsPreferences.Transcript.clipSec.defaultValue,
                 stage: { selection, text in
                     detail.stageComment(selection, text: text)
@@ -544,10 +609,8 @@ struct TranscriptSelectionPopover: View {
                     detail.saveSelectionClip(selection, length: length) { clear() }
                 },
                 savingClip: detail.isBusy("clip.save"),
-                speakerEvidence: TranscriptBlocksPane.lineEvidence(selectedLines.compactMap { shown.indices.contains($0.index) ? shown[$0.index] : nil },
-                                                                   items: detail.record.value?.items ?? [], ruleNames: detail.window?.ruleNames ?? [:]),
+                speakerEvidence: facts.speakerEvidence,
                 close: { clear() })
-            }
         }
     }
 }
