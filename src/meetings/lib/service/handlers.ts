@@ -277,6 +277,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 attendance: params.attendance,
                 actor: actorOfCall(context),
                 onProgress: voicePassProgress(context),
+                ...(context.signal ? { signal: context.signal } : {}),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             return { added: result.fresh.length, warnings: result.warnings };

@@ -110,6 +110,8 @@ export async function runSuggest(options: {
     attendanceId?: string;
     wordCheck?: WordCheckChoice;
     onProgress?: VoiceProgress;
+    /** Stops the run before it saves anything; the voice pass kills its workers (`$/cancel`, a closed connection). */
+    signal?: AbortSignal;
     /** Who runs it. Without an actor nobody is asked (voice enrolment, tests). */
     actor?: DecisionActor;
     /** The person area; tests pass a fake. */
@@ -121,15 +123,23 @@ export async function runSuggest(options: {
     const terms = rules.includes("terms");
     const warnings: string[] = [];
     const opened = prof.measure("open", () => OpenedMeeting.of(store, record));
-    if (options.onProgress || prof.enabled) {
-        let beforeProgress = prof.enabled ? prof.start("before-first-voice-progress") : undefined;
-        const { voiceProgressForMeeting } = await import("./speaker-labels/voice");
-        voiceProgressForMeeting.set(opened, (done, total) => {
-            beforeProgress?.();
-            beforeProgress = undefined;
-            options.onProgress?.(done, total);
-        });
+    if (options.onProgress || options.signal || prof.enabled) {
+        const { voiceProgressForMeeting, voiceSignalForMeeting } = await import("./speaker-labels/voice");
+        if (options.onProgress || prof.enabled) {
+            let beforeProgress = prof.enabled ? prof.start("before-first-voice-progress") : undefined;
+            voiceProgressForMeeting.set(opened, (done, total) => {
+                beforeProgress?.();
+                beforeProgress = undefined;
+                options.onProgress?.(done, total);
+            });
+        }
+
+        if (options.signal) {
+            voiceSignalForMeeting.set(opened, options.signal);
+        }
     }
+
+    options.signal?.throwIfAborted();
 
     const collected = await prof.measureAsync("collectForSuggest", () =>
         collectForSuggest(
@@ -281,6 +291,8 @@ export async function runSuggest(options: {
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
     const known = knownWord(wordCheck);
+    // A cancelled run saves nothing: the last moment to stop is before the one write.
+    options.signal?.throwIfAborted();
 
     try {
         using _save = prof.section("save");

@@ -251,8 +251,11 @@ async function runVoiceWorker(options: {
     workerPrefix: readonly string[];
     clearBackground: boolean;
     onProgress?: (done: number) => void;
+    /** Kills the worker when it aborts: a cancelled call leaves no process embedding on (w_s12ed97x). */
+    signal?: AbortSignal;
 }): Promise<unknown> {
     const { workerPrefix, request, clearBackground } = options;
+    options.signal?.throwIfAborted();
     const child = Bun.spawn([...workerPrefix, process.execPath, fileURLToPath(import.meta.url)], {
         env: env.getProcessEnv(),
         stdin: "pipe",
@@ -261,6 +264,7 @@ async function runVoiceWorker(options: {
         // A background pass (taskpolicy -b) may yield for minutes while the foreground is busy.
         timeout: 1_800_000,
         killSignal: "SIGKILL",
+        ...(options.signal ? { signal: options.signal } : {}),
     });
     child.stdin.write(SafeJSON.stringify({ request, modelFile: selectedModelFile, clearBackground }, { strict: true }));
     const [stdout, stderr, code] = await Promise.all([
@@ -269,6 +273,7 @@ async function runVoiceWorker(options: {
         child.exited,
         child.stdin.end(),
     ]);
+    options.signal?.throwIfAborted();
     if (code !== 0) {
         throw new Error(`Voice embedding worker failed (exit ${code}): ${stderr}`);
     }
@@ -293,11 +298,13 @@ async function embedChunk(options: {
     input: VoiceChunk;
     backend: SpeakerEmbedder | Error;
     onProgress?: (done: number) => void;
+    signal?: AbortSignal;
 }): Promise<ChunkResults> {
     const { input, backend, onProgress } = options;
     const results: ChunkResults = [];
     const windows = new Map<number, { fromSec: number; samples: Float32Array }>();
     for (const clip of input.clips) {
+        options.signal?.throwIfAborted();
         const row: ChunkResults[number] = [];
         for (const channel of clip.channels) {
             try {
@@ -370,6 +377,7 @@ async function fillVoiceChunk(options: {
     clearBackground?: boolean;
     backend: SpeakerEmbedder | Error;
     advance?: (lines: number) => void;
+    signal?: AbortSignal;
 }): Promise<void> {
     const { chunk, audioPath, workerPrefix, backend } = options;
     let reported = 0;
@@ -389,9 +397,15 @@ async function fillVoiceChunk(options: {
                       workerPrefix,
                       clearBackground: options.clearBackground === true,
                       onProgress: report,
+                      ...(options.signal ? { signal: options.signal } : {}),
                   })
               )
-            : await embedChunk({ input, backend, onProgress: report });
+            : await embedChunk({
+                  input,
+                  backend,
+                  onProgress: report,
+                  ...(options.signal ? { signal: options.signal } : {}),
+              });
         if (rows.length !== chunk.length || rows.some((row, i) => row.length !== chunk[i]!.missing.length)) {
             throw new Error("Voice worker returned an incomplete chunk");
         }
@@ -399,6 +413,10 @@ async function fillVoiceChunk(options: {
             line.results = rows[i]!;
         }
     } catch (error) {
+        if (options.signal?.aborted) {
+            throw options.signal.reason;
+        }
+
         logger.warn({ error, lines: chunk.length }, "Voice embedding chunk failed");
         const reason = error instanceof Error ? error.message : String(error);
         for (const line of chunk) {
@@ -421,6 +439,11 @@ export async function embedVoiceLines(options: {
     /** A pass can defer sampling idle cores until its first cache miss needs a worker. */
     workers?: number | (() => Promise<number>);
     onProgress?: VoiceProgress;
+    /**
+     * Stops the pass: its workers are killed, the chunks that finished before stay in the cache (a worker answers its
+     * chunk only at its end), and the call rejects with the signal's reason, so a cancelled run names nothing.
+     */
+    signal?: AbortSignal;
 }): Promise<LineEmbedding[]> {
     const { audioPath, spans, onProgress } = options;
     const stat = statSync(audioPath);
@@ -501,7 +524,7 @@ export async function embedVoiceLines(options: {
             onProgress(done, spans.length);
         });
     const chunks = splitVoiceWork(pending, workerPrefix ? workers : 1);
-    await Promise.all(
+    const filled = await Promise.allSettled(
         chunks.map((chunk) =>
             fillVoiceChunk({
                 chunk,
@@ -510,15 +533,21 @@ export async function embedVoiceLines(options: {
                 clearBackground: options.clearBackground,
                 backend,
                 advance,
+                ...(options.signal ? { signal: options.signal } : {}),
             })
         )
     );
+    const aborted = options.signal?.aborted === true;
 
     // Commit in input order, independent of worker completion. For repeated millisecond keys the first
     // cacheable result wins, just as if each line had looked up the one before it in a serial pass.
     for (const line of pending) {
         for (const [i, { slot, provenance }] of line.missing.entries()) {
-            const computed = line.results[i]!;
+            const computed = line.results[i];
+            if (!computed) {
+                continue;
+            }
+
             const previous = cache?.get(provenance);
             const value =
                 previous ?? ("error" in computed ? { quality: "unknown" as const, reason: computed.error } : computed);
@@ -529,6 +558,16 @@ export async function embedVoiceLines(options: {
         }
     }
     cache?.save();
+    if (aborted) {
+        throw options.signal?.reason;
+    }
+
+    for (const outcome of filled) {
+        if (outcome.status === "rejected") {
+            throw outcome.reason;
+        }
+    }
+
     return result;
 }
 

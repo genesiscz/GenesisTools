@@ -18,11 +18,16 @@ export function voicesHandlers(
     return {
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voices.preview": (params, context) =>
-            previewVoices({ ...access, ...params, onProgress: voicePassProgress(context) }),
+            previewVoices({ ...access, ...params, onProgress: voicePassProgress(context), signal: context.signal }),
         "voices.sample": (params) => voiceSample({ ...access, ...params }),
         "voices.workers": () => autoVoiceWorkers(deps.freeCores),
         "voices.apply": async (params, context) => {
-            const result = await applyVoices({ ...access, ...params, onProgress: voicePassProgress(context) });
+            const result = await applyVoices({
+                ...access,
+                ...params,
+                onProgress: voicePassProgress(context),
+                signal: context.signal,
+            });
             context.emit?.("meeting.changed", { meeting: result.meeting, parts: ["show", "speakers", "transcript"] });
             return result;
         },
