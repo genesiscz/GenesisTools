@@ -76,13 +76,14 @@ function shortPath(value: unknown): string {
     return text(value).replace(/^\/Users\/[^/]+\//, "~/");
 }
 
-function addAttachment(row: Record<string, unknown>, add: Add): void {
+function addAttachment(row: Record<string, unknown>, add: Add, omitted: Map<string, number>): void {
     const attachment = row.attachment;
     if (!isObject(attachment)) {
         return;
     }
     const type = text(attachment.type) || "?";
     if (excluded.has(type)) {
+        omitted.set(type, (omitted.get(type) ?? 0) + SafeJSON.stringify(attachment, { strict: true }).length);
         return;
     }
     if (type === "hook_additional_context") {
@@ -147,6 +148,14 @@ export function collectContext(loop: SessionLoop): LoopCollector<LoopContext> {
     const toolCalls = new Map<string, number>();
     const seen = new Set<string>();
     const boundaries = new Set<string>();
+    const omitted = new Map<string, number>();
+    const bashResults = { count: 0, tokens: 0, bigCount: 0, bigTokens: 0 };
+    let input = 0;
+    let cacheWrite = 0;
+    let output = 0;
+    let measuredAtSegmentEnds = 0;
+    let estimatedAtSegmentEnds = 0;
+    let lastContext = 0;
     let compactions = 0;
     let segmentStart = 0;
     let visibleTokens = 0;
@@ -158,6 +167,11 @@ export function collectContext(loop: SessionLoop): LoopCollector<LoopContext> {
 
     // While a segment is open carryCalls holds the call count at entry. Close each item once.
     function closeSegment(): void {
+        if (lastContext > 0) {
+            estimatedAtSegmentEnds += visibleTokens + (baseline?.tokens ?? 0);
+            measuredAtSegmentEnds += lastContext;
+            lastContext = 0;
+        }
         for (let i = segmentStart; i < items.length; i++) {
             items[i].carryCalls = seen.size - items[i].carryCalls;
         }
@@ -170,13 +184,21 @@ export function collectContext(loop: SessionLoop): LoopCollector<LoopContext> {
             const at = isoOf(row.timestamp);
             const add: Add = (source, key, chars, imageTokens) => {
                 const tokens = imageTokens ?? Math.round(chars / 4);
+                if (source === "tool_result" && key === "Bash") {
+                    bashResults.count++;
+                    bashResults.tokens += tokens;
+                    if (tokens >= 2000) {
+                        bashResults.bigCount++;
+                        bashResults.bigTokens += tokens;
+                    }
+                }
                 if (tokens > 0) {
                     items.push({ path, line, at, source, key, tokens, carryCalls: seen.size });
                     visibleTokens += tokens;
                 }
             };
             if (row.type === "attachment") {
-                addAttachment(row, add);
+                addAttachment(row, add, omitted);
             } else if (row.type === "user") {
                 addUser(row, firstUser, toolNames, add);
                 firstUser = false;
@@ -191,6 +213,10 @@ export function collectContext(loop: SessionLoop): LoopCollector<LoopContext> {
                 const usage = claudeUsageOfRow(row);
                 if (usage && !seen.has(usage.messageId)) {
                     const context = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+                    lastContext = context;
+                    input += usage.inputTokens;
+                    cacheWrite += usage.cacheCreationTokens;
+                    output += usage.outputTokens;
                     if (firstCallContext === null) {
                         firstCallContext = context;
                         if (context > visibleTokens) {
@@ -244,6 +270,13 @@ export function collectContext(loop: SessionLoop): LoopCollector<LoopContext> {
                 firstCallContext,
                 peakContext,
                 cacheRead,
+                input,
+                cacheWrite,
+                output,
+                estimatedAtSegmentEnds,
+                measuredAtSegmentEnds,
+                excluded: Object.fromEntries(omitted),
+                bashResults,
                 toolCalls: Object.fromEntries(toolCalls),
                 compactions,
                 items,

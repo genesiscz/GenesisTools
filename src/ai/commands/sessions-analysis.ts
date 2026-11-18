@@ -76,6 +76,11 @@ export function registerSessionAnalysis(sessions: Command): void {
         .option("--project <name>", "Limit --since to this project")
         .option("--ttl-only", "Print only the cache lifetime table and reader coverage")
         .option("--waits", "Include tool waits in the text listing")
+        .option("--top <n>", "Limit the number of loops in each text listing")
+        .option("--cold", "Compare cold subagent and teammate resumes with starting fresh")
+        .option("--idle-seconds <n>", "Shortest idle time in the cold comparison", "295")
+        .option("--fresh-start <tokens>", "Initial context of a fresh agent in the comparison", "66000")
+        .option("--price-model <id>", "Model to price the fresh-agent comparison", "opus")
         .option("--min-gap <seconds>", "Shortest pause to include", "60")
         .option("--no-main", "Leave out the main loop")
         .option("--json", "Print sessions.resumes@1")
@@ -89,6 +94,11 @@ export function registerSessionAnalysis(sessions: Command): void {
                     ttlOnly?: boolean;
                     waits?: boolean;
                     minGap: string;
+                    top?: string;
+                    cold?: boolean;
+                    idleSeconds: string;
+                    freshStart: string;
+                    priceModel: string;
                     main: boolean;
                     json?: boolean;
                 }
@@ -106,8 +116,29 @@ export function registerSessionAnalysis(sessions: Command): void {
                     }
 
                     const sinceMs = opts.since === undefined ? undefined : sinceTime(opts.since);
+                    const top = opts.top === undefined ? Infinity : Number(opts.top);
+                    const idleSeconds = Number(opts.idleSeconds);
+                    const freshStart = Number(opts.freshStart);
+                    if (
+                        (opts.top !== undefined && (!Number.isSafeInteger(top) || top < 0)) ||
+                        !Number.isFinite(idleSeconds) ||
+                        idleSeconds < 0 ||
+                        !Number.isSafeInteger(freshStart) ||
+                        freshStart < 0
+                    ) {
+                        throw new Error(
+                            "--top and --fresh-start need nonnegative integers; --idle-seconds needs a nonnegative duration."
+                        );
+                    }
                     const { printResumes } = await import("../lib/sessions/session-resumes");
-                    await printResumes(ids, { ...opts, sinceMs, minGapMs: seconds * 1000 });
+                    await printResumes(ids, {
+                        ...opts,
+                        top,
+                        idleSeconds,
+                        freshStart,
+                        sinceMs,
+                        minGapMs: seconds * 1000,
+                    });
                 } catch (error) {
                     out.printlnErr(error instanceof Error ? error.message : String(error));
                     process.exitCode = 1;

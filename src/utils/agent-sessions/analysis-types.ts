@@ -73,6 +73,13 @@ export interface LoopContext extends SessionLoop {
     firstCallContext: number | null;
     peakContext: number | null;
     cacheRead: number;
+    input: number;
+    cacheWrite: number;
+    output: number;
+    estimatedAtSegmentEnds: number;
+    measuredAtSegmentEnds: number;
+    excluded: Record<string, number>;
+    bashResults: { count: number; tokens: number; bigCount: number; bigTokens: number };
     toolCalls: Record<string, number>;
     compactions: number;
     items: ContextItem[];

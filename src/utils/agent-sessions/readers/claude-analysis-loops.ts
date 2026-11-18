@@ -4,7 +4,13 @@ import { isObject } from "@genesiscz/utils/object";
 import { nonEmptyString } from "@genesiscz/utils/string";
 import type { LoopSelection, SessionCall, SessionFacts, SessionLoop } from "../analysis-types";
 import { forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
-import { claudeAgentOwner, claudeSubagentTranscripts, readClaudeSubagentMeta } from "./claude-paths";
+import {
+    claudeAgentOwner,
+    claudeSubagentIdOf,
+    claudeSubagentLead,
+    claudeSubagentTranscripts,
+    readClaudeSubagentMeta,
+} from "./claude-paths";
 
 type Row = Record<string, unknown>;
 
@@ -65,8 +71,10 @@ export function lastClaudeContext(records: readonly Row[]): number | null {
 }
 
 function loopsOf(path: string, selection: LoopSelection): SessionLoop[] {
+    const parent = claudeSubagentLead(path);
+    const selectedAgent = parent && claudeSubagentIdOf(basename(path));
     const main: SessionLoop[] =
-        selection.main === false
+        selection.main === false || selectedAgent
             ? []
             : [
                   {
@@ -78,12 +86,15 @@ function loopsOf(path: string, selection: LoopSelection): SessionLoop[] {
                   },
               ];
 
-    if (selection.agents === false) {
+    if (selection.agents === false && !selectedAgent) {
         return main;
     }
 
     const agents = new Map<string, SessionLoop>();
-    for (const file of claudeSubagentTranscripts(path)) {
+    for (const file of claudeSubagentTranscripts(parent?.transcript ?? path)) {
+        if (selectedAgent && file.agentId !== selectedAgent) {
+            continue;
+        }
         const meta = readClaudeSubagentMeta(file.meta);
         const owner = claudeAgentOwner(meta);
         const loop: SessionLoop = agents.get(file.agentId) ?? {
