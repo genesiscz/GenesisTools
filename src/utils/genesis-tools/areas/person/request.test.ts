@@ -228,7 +228,10 @@ test("an unreachable target falls back to the request window and a legacy notice
         status: "pending" as const,
         reason: null,
     }));
-    for (const notice of [{ ...input, open }, { ...input, id: "notice:legacy" }]) {
+    for (const notice of [
+        { ...input, open },
+        { ...input, id: "notice:legacy" },
+    ]) {
         const view = await journal.post({ input: notice });
         const outcome = await presentPostedRequest({ view, journal, openWindow, showRequest });
         expect(openWindow).toHaveBeenCalledTimes(1);
