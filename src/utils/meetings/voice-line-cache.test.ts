@@ -1,6 +1,7 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type SpeakerExtractor, speakerEmbeddingOf } from "@genesiscz/utils/ai/local/runtimes/sherpa/speaker-embedding";
 import * as converter from "@genesiscz/utils/audio/converter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -34,18 +35,19 @@ async function fixture() {
     const decode = spyOn(converter, "toFloat32AudioWindow").mockResolvedValue(samples);
     let model = "fixture-model";
     let speech = true;
+    const extractor: SpeakerExtractor = {
+        createStream: () => ({
+            acceptWaveform: ({ samples: input }) => {
+                speech = input[0] !== samples[5 * 16000];
+            },
+            inputFinished: () => undefined,
+        }),
+        isReady: () => speech,
+        compute,
+    };
     const backend = spyOn(voice, "localVoiceBackend").mockImplementation(() => ({
         model,
-        extractor: {
-            createStream: () => ({
-                acceptWaveform: ({ samples: input }) => {
-                    speech = input[0] !== samples[5 * 16000];
-                },
-                inputFinished: () => undefined,
-            }),
-            isReady: () => speech,
-            compute,
-        },
+        embed: (input: Float32Array) => speakerEmbeddingOf(() => extractor, input),
     }));
     spies.push(decode, backend);
     const options = {
