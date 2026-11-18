@@ -578,7 +578,7 @@ describe("the click", () => {
     test("a PR banner runs windows.open with the PR ref in one shell-quoted JSON argument", () => {
         expect(hubPrRef({ project: "group/app", number: 3, provider: "gitlab" })).toBe("group/app!3");
         expect(openHubCommand(" owner's/$(project)#7 ")).toBe(
-            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","prs","--pr","owner'\\''s/$(project)#7"]}'`
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","prs","--pr","owner'\\''s/$(project)#7"],"fix":"skip"}'`
         );
     });
 });
@@ -597,10 +597,10 @@ describe("daemonEvery", () => {
 describe("the test notification", () => {
     test("the test banner runs windows.open with or without a PR ref", () => {
         expect(testNotification(null).execute).toBe(
-            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","prs"]}'`
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","prs"],"fix":"skip"}'`
         );
         expect(testNotification("group/app!12").execute).toBe(
-            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","prs","--pr","group/app!12"]}'`
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","prs","--pr","group/app!12"],"fix":"skip"}'`
         );
         expect(testNotification(null).title).toContain("TEST");
 

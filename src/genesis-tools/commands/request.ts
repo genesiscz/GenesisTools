@@ -87,9 +87,14 @@ export function registerRequestCommand(program: Command): void {
                         journal: createRequestJournal(),
                         openWindow: options.fromNotification
                             ? (target) =>
-                                  client.call<ActionOutcome<unknown>>("windows.open", target, {
-                                      timeoutMs: serviceActionClientTimeoutMs(windows.actions.open.timeoutMs),
-                                  })
+                                  // A click has no terminal and is killed after 30 s: it never builds a missing part.
+                                  client.call<ActionOutcome<unknown>>(
+                                      "windows.open",
+                                      { ...target, fix: "skip" },
+                                      {
+                                          timeoutMs: serviceActionClientTimeoutMs(windows.actions.open.timeoutMs),
+                                      }
+                                  )
                             : undefined,
                         showRequest: (request) => showRequestWindow(client, request, options.fromNotification === true),
                     })
