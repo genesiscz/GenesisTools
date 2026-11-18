@@ -127,7 +127,11 @@ export async function embedVoice(options: {
         );
     }
     const backend = localVoiceBackend();
-    const samples = await toFloat32AudioWindow(options.audioPath, { ...options, decoderThreads: 1 });
+    const samples = await toFloat32AudioWindow(options.audioPath, {
+        ...options,
+        decoderThreads: 1,
+        timeoutMs: 120_000,
+    });
     return embeddingOf(samples, backend);
 }
 
@@ -287,7 +291,8 @@ async function runVoiceWorker(options: {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        timeout: 600_000,
+        // Background QoS may yield for minutes while the foreground is busy.
+        timeout: 1_800_000,
         killSignal: "SIGKILL",
     });
     child.stdin.write(SafeJSON.stringify({ request, modelFile: selectedModelFile }, { strict: true }));
@@ -318,7 +323,7 @@ export async function embedVoiceLines(options: {
     const stat = statSync(options.audioPath);
     const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
     const result: LineEmbedding[] = [];
-    const windows = new Map<number, { fromSec: number; toSec: number; samples: Float32Array }>();
+    const windows = new Map<number, { fromSec: number; toSec: number; samples?: Float32Array }>();
     let cache: VoiceLineCache | undefined;
     let backend: ReturnType<typeof localVoiceBackend> | undefined;
     let backendError: unknown;
@@ -366,34 +371,45 @@ export async function embedVoiceLines(options: {
         const channels: ChannelEmbedding[] = [];
         for (const channel of options.channels) {
             const provenance = { source, ...channel, fromSec: span.fromSec, toSec: span.toSec };
+            const duration = span.toSec - span.fromSec;
+            let window = windows.get(channel.channel);
+            // Cache hits and failed decodes must keep the same window origin as a complete cold pass.
+            if (
+                Number.isFinite(span.fromSec) &&
+                span.fromSec >= 0 &&
+                duration >= 1.5 &&
+                duration <= 60 &&
+                (!window || span.fromSec < window.fromSec || span.toSec > window.toSec)
+            ) {
+                window = { fromSec: span.fromSec, toSec: span.fromSec + 60 };
+                windows.set(channel.channel, window);
+            }
             const cached = cache?.get(provenance);
             if (cached) {
                 channels.push({ ...provenance, ...cached });
                 continue;
             }
             try {
-                const duration = span.toSec - span.fromSec;
+                if (!Number.isFinite(span.fromSec) || span.fromSec < 0 || !Number.isFinite(duration)) {
+                    throw new VoiceUnavailableError("Voice line needs a finite nonnegative start and duration");
+                }
                 if (duration < 1.5 || duration > 60) {
                     throw new VoiceUnavailableError("Voice line needs 1.5 to 60 seconds of speech");
                 }
                 if (!backend) {
                     throw backendError;
                 }
-                let window = windows.get(channel.channel);
-                if (!window || span.fromSec < window.fromSec || span.toSec > window.toSec) {
-                    const fromSec = span.fromSec;
-                    const toSec = fromSec + 60;
-                    window = {
-                        fromSec,
-                        toSec,
-                        samples: await toFloat32AudioWindow(options.audioPath, {
-                            fromSec,
-                            toSec,
-                            channel: channel.channel,
-                            decoderThreads: 1,
-                        }),
-                    };
-                    windows.set(channel.channel, window);
+                if (!window) {
+                    throw new VoiceUnavailableError("Voice line needs a finite nonnegative start");
+                }
+                if (!window.samples) {
+                    window.samples = await toFloat32AudioWindow(options.audioPath, {
+                        fromSec: window.fromSec,
+                        toSec: window.toSec,
+                        channel: channel.channel,
+                        decoderThreads: 1,
+                        timeoutMs: 120_000,
+                    });
                 }
                 const samples = window.samples.slice(
                     Math.round((span.fromSec - window.fromSec) * 16000),
@@ -408,7 +424,9 @@ export async function embedVoiceLines(options: {
                     reason: error instanceof Error ? error.message : String(error),
                 } as const;
                 channels.push({ ...provenance, ...unknown });
-                cache?.set(provenance, unknown);
+                if (error instanceof VoiceUnavailableError) {
+                    cache?.set(provenance, unknown);
+                }
             }
         }
         result.push({ index: span.index, channels });
