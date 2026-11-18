@@ -82,6 +82,13 @@ struct TranscriptBlock: Equatable, Identifiable {
         }
         var blocks: [TranscriptBlock] = []
         let byIndex = Dictionary(evidence.map { ($0.index, $0) }, uniquingKeysWith: { _, last in last })
+        // The voice model's score of a marked line whose shown name is not its own (an open question covers it): the
+        // suggested range's cosine at the line's start. One pass over the items, not one per line.
+        var voiceScores: [Double: Double] = [:]
+        for item in items where item.kind == "speaker-range" && item.status == "suggested" && item.rules?.contains("voice-embedding") == true {
+            guard let from = item.fromSec, case .number(let score)? = item.evidence?["score"] else { continue }
+            voiceScores[from] = score
+        }
         for (index, entry) in entries.enumerated() {
             let cues = byIndex[entry.sourceIndex ?? index].map { TranscriptEvidenceMark.build($0, items: items, echoAbove: echoAbove) } ?? []
             let voiced = entry.who.isVoice
@@ -90,7 +97,8 @@ struct TranscriptBlock: Equatable, Identifiable {
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
                                            text: entry.text, marks: lineMarks, words: entry.words ?? [],
                                            indicator: entry.indicator, evidenceMarks: cues,
-                                           voiceScore: voiced ? entry.nameScore : nil)
+                                           voiceScore: voiced ? entry.nameScore
+                                               : lineMarks.contains(.byVoice) ? entry.startSec.flatMap { voiceScores[$0] } : nil)
             let who = entry.who
             if var last = blocks.last, last.who == who, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
