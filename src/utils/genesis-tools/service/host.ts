@@ -16,7 +16,7 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { personConfigSchema } from "../areas/person/deliveries";
 import { genesisToolsApi, type serviceMethods } from "./api";
-import { genesisToolsServiceDir, type ServiceDoor } from "./clients";
+import { genesisToolsServiceDir, type ServiceDoor, serviceActionDeadlineMs } from "./clients";
 
 interface FaceState {
     methods: string[];
@@ -90,7 +90,7 @@ export async function startGenesisToolsService(
     for (const [area, definition] of Object.entries(AREAS)) {
         for (const [name, action] of Object.entries(definition.actions)) {
             const id = `${area}.${name}`;
-            deadlines.set(id, Math.max(130_000, (action.timeoutMs ?? 120_000) + 10_000));
+            deadlines.set(id, serviceActionDeadlineMs(action.timeoutMs));
             handlers[id] = (params, connection) =>
                 runAreaAction(
                     AREAS,
