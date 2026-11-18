@@ -154,6 +154,7 @@ final class EditorModel {
     var selection: EditorSelection = .none
     /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
     var changes: [EditChange] = []
+    @ObservationIgnored private var renderWarnings: Set<RenderWarnings.Entry> = []
     /// Each banner's removal, cancelled while the pointer rests on it (`holdBanner`).
     @ObservationIgnored var bannerTimers: [UUID: Task<Void, Never>] = [:]
     /// A counter per zoom, hidden part, text or shape id: its timeline segment flashes each time it rises.
@@ -493,8 +494,7 @@ final class EditorModel {
     /// Whether the preview's movie must be made again for the change from `a` to `b`: an input changed that
     /// EditRenderer.render reads once per build. Those are the clips' spans and speeds (not their ids), the sound, the
     /// click sound's ticks, the canvas shape and the codec (outputSizes sizes the render from both), and the camera
-    /// movie (CameraFeed opens it, so a camera added to an edit that had none counts). Everything else reaches the
-    /// next frame drawn through ZoomState.
+    /// movie, layer files and their placement. Other picture edits reach the next frame through ZoomState.
     nonisolated static func needsNewMovie(_ a: EditProject, _ b: EditProject) -> Bool {
         a.clips.count != b.clips.count
             || zip(a.clips, b.clips).contains { $0.fromUs != $1.fromUs || $0.toUs != $1.toUs || $0.speed != $1.speed }
@@ -503,6 +503,7 @@ final class EditorModel {
             || a.frame?.aspect?.ratio != b.frame?.aspect?.ratio
             || a.export.codec != b.export.codec
             || a.camera?.file != b.camera?.file
+            || MediaLayers.needsNewMovie(a, b)
     }
 
     /// Whether the transcript's lines reach the preview's sound: the music ducks under them.
@@ -1277,6 +1278,7 @@ final class EditorModel {
                 let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440)
                 span.end()
                 guard !Task.isCancelled, let self else { return }
+                self.reportRenderWarnings(rendered.warnings)
                 self.frameUs = rendered.frameUs
                 let item = AVPlayerItem(asset: rendered.composition)
                 item.videoComposition = rendered.videoComposition
@@ -1290,6 +1292,18 @@ final class EditorModel {
                 self.previewFailed(error)
             }
         }
+    }
+
+    private func reportRenderWarnings(_ warnings: [RenderWarnings.Entry]) {
+        let new = warnings.filter { !renderWarnings.contains($0) }
+        renderWarnings = Set(warnings)
+        guard !new.isEmpty else { return }
+        let change = EditChange(at: Date(), by: "Renderer", revision: project.revision,
+                                lines: new.map { .init(symbol: "exclamationmark.triangle", text: $0.message) },
+                                itemIDs: [], startUs: nil, touchesPicture: false, action: "warning")
+        changes.append(change)
+        if changes.count > 3 { changes.removeFirst(changes.count - 3) }
+        scheduleBannerRemoval(change.id)
     }
 
     /// Reads the movie again after something wrote a new one in its place (a display switch makes a new proxy).

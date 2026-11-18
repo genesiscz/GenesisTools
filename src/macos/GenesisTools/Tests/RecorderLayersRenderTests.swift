@@ -276,7 +276,7 @@ final class RecorderLayersRenderTests: XCTestCase {
         let rendered = try await render(edit)
         XCTAssertTrue(rendered.composition.tracks(withMediaType: .audio).isEmpty, "the skipped mic must not restore the mixed proxy")
         XCTAssertEqual(rendered.warnings.count, 1)
-        XCTAssertTrue(rendered.warnings.first?.contains(file) == true)
+        XCTAssertEqual(rendered.warnings.first?.file.lastPathComponent, file)
         let url = dir.appendingPathComponent("edited.mp4")
         _ = try await EditExporter.export(project: edit, to: url) { _ in }
         let result = AVURLAsset(url: url)
@@ -304,5 +304,54 @@ final class RecorderLayersRenderTests: XCTestCase {
             XCTAssertTrue(input.getVolumeRamp(for: .zero, startVolume: &start, endVolume: &end, timeRange: &range))
             XCTAssertEqual(start, file == "bed.wav" ? 0.3 : 0, accuracy: 0.001)
         }
+    }
+
+    func testEditorRebuildsForLayerFilesPlacementAndSoundLaneChanges() throws {
+        var edit = EditProject.whole(video: "/tmp/screen.mov", durationUs: durationUs, width: side, height: side,
+                                     cursor: nil, recording: nil)
+        edit.camera = .init(file: "camera.mov")
+        edit.layers = .init(media: [.init(id: "inset", kind: .video, file: "inset.mov", startUs: 0, endUs: durationUs)])
+        edit.audio.lanes = [.init(id: "mic", source: .mic, file: "mic.wav")]
+        func rebuild(_ change: (inout EditProject) -> Void) -> Bool {
+            var next = edit
+            change(&next)
+            return EditorModel.needsNewMovie(edit, next)
+        }
+        XCTAssertTrue(rebuild { $0.layers?.media[0].file = "replacement.mov" })
+        XCTAssertTrue(rebuild { $0.layers?.media[0].x = 0.25 })
+        XCTAssertTrue(rebuild { $0.layers?.media[0].y = 0.75 })
+        XCTAssertTrue(rebuild { $0.layers?.media[0].startUs = 100_000 })
+        XCTAssertTrue(EditorModel.needsNewMovie(edit, try edit.movingLayer("inset", to: .bottom)))
+        XCTAssertTrue(rebuild { $0.layers?.media[0].videoSound = true })
+        XCTAssertTrue(rebuild { $0.audio.lanes?[0].muted = true })
+        XCTAssertTrue(rebuild { $0.audio.lanes?[0].volume = 0.5 })
+        XCTAssertFalse(rebuild { $0.layers?.media[0].name = "Inset" })
+        XCTAssertFalse(EditorModel.needsNewMovie(edit, edit))
+    }
+
+    @MainActor
+    func testEditorChangeFeedReportsAMissingFileOnceAcrossRebuilds() async throws {
+        let dir = try folder()
+        var edit = try await source(in: dir)
+        edit.layers = .init(media: [.init(id: "logo", kind: .image, file: "missing.png", startUs: 0, endUs: durationUs)])
+        let model = EditorModel(project: edit, store: ProjectStore(url: dir.appendingPathComponent("edit.json")), link: { nil })
+        @MainActor func waitForItem(rebuild: Bool) async {
+            if !rebuild, model.player.currentItem != nil { return }
+            let installed = expectation(description: "the preview installs the rendered composition")
+            let watch = model.player.observe(\.currentItem, options: [.new]) { player, _ in
+                if player.currentItem != nil { installed.fulfill() }
+            }
+            if rebuild { model.rebuild() }
+            await fulfillment(of: [installed], timeout: 10)
+            watch.invalidate()
+        }
+        await waitForItem(rebuild: false)
+        let change = try XCTUnwrap(model.changes.first)
+        XCTAssertEqual(change.lines.count, 1)
+        XCTAssertTrue(change.lines[0].text.contains("missing.png"))
+        model.holdBanner(change.id, hovering: true)
+        await waitForItem(rebuild: true)
+        XCTAssertEqual(model.changes.map(\.id), [change.id])
+        model.holdBanner(change.id, hovering: false)
     }
 }
