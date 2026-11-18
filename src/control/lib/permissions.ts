@@ -21,7 +21,11 @@ import {
 } from "@app/macos/lib/permissions/tcc";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
-import { checkAppInstalled, describeNeedFailure, type NeedResult } from "@genesiscz/utils/genesis-tools/capability/needs";
+import {
+    checkAppInstalled,
+    describeNeedFailure,
+    type NeedResult,
+} from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {

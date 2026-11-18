@@ -4,9 +4,7 @@
         "src/azure-devops/lib/ancestors.ts": 1,
         "src/azure-devops/timelog-api.ts": 1
     },
-    "roster-app-status-outside-permissions": {
-        "src/update/index.ts": 1
-    },
+    "roster-app-status-outside-permissions": {},
     "roster-cdp-conn-outside-connect": {},
     "roster-cdp-socket-outside-connect": {},
     "roster-choose-cost-outside-priced-usage": {},
