@@ -16,10 +16,12 @@ import { duplicateMeeting } from "../lib/duplicate";
 import { linkSource } from "../lib/link";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
+import { OpenedMeeting } from "../lib/opened-meeting";
 import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
+import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
 import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
@@ -202,21 +204,23 @@ async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
 }
 
 async function show(ref: string, opts: { json?: boolean }): Promise<void> {
-    let record: MeetingRecord;
-
     try {
-        record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
+        const record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
+        if (opts.json) {
+            out.result(windowJson(record));
+            return;
+        }
+
+        const tracks = await listSoundTracks(OpenedMeeting.of(new MeetingStore(), record));
+        const lines = tracks.map(({ kind, holder, clock }) => {
+            const origin = holder === "record" ? "this record" : `linked source app (${holder})`;
+            return `- ${kind} (${clock}) from ${origin}`;
+        });
+        const text = showText(record);
+        out.print(lines.length ? `${text}\n## Sound tracks\n\n${lines.join("\n")}\n` : text);
     } catch (err) {
         fail(err);
-        return;
     }
-
-    if (opts.json) {
-        out.result(windowJson(record));
-        return;
-    }
-
-    out.print(showText(record));
 }
 
 import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
