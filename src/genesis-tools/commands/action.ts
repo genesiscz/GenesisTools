@@ -1,5 +1,5 @@
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { explainAction, findAction, runAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { explainAction, findAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { callRunningService } from "@genesiscz/utils/genesis-tools/service/clients";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -103,7 +103,7 @@ export function registerActionCommand(program: Command): void {
                 }
                 const outcome = remote.called
                     ? remote.value
-                    : await runAction(AREAS, id, parseArgs(options.json), liveEngineDeps(AREAS), { timeoutMs });
+                    : await runAreaAction(AREAS, id, parseArgs(options.json), liveEngineDeps(AREAS), { timeoutMs });
                 out.result(outcome);
 
                 if (

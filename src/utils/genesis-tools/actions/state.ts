@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -46,13 +47,9 @@ function emptyState(): GenesisToolsStateFile {
     return { version: 1, areas: {} };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isStateValue(value: unknown): value is StateValue {
     return (
-        isRecord(value) &&
+        isObject(value) &&
         "value" in value &&
         typeof value.at === "string" &&
         typeof value.source === "string" &&
@@ -76,14 +73,14 @@ export function parseStateText(text: string): GenesisToolsStateFile {
         return emptyState();
     }
 
-    if (!isRecord(raw) || (raw.version !== undefined && raw.version !== 1) || !isRecord(raw.areas)) {
+    if (!isObject(raw) || (raw.version !== undefined && raw.version !== 1) || !isObject(raw.areas)) {
         return emptyState();
     }
 
     const areas: GenesisToolsStateFile["areas"] = {};
 
     for (const [area, values] of Object.entries(raw.areas)) {
-        if (!isRecord(values)) {
+        if (!isObject(values)) {
             continue;
         }
 

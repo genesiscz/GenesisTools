@@ -6,7 +6,7 @@ import type { ServiceDoor } from "../service/clients";
 import { type ConfigStore, createConfigStore } from "./config";
 import type { ActionOutcome, AnyActionDef, AppDoor, AreaDef, ArgsOf, ResultOf, RunOptions } from "./define";
 import { type AreaEventBus, createAreaEventBus } from "./events";
-import { runAction } from "./run";
+import { runAreaAction } from "./run";
 import { createStateStore, type StateStore } from "./state";
 
 /**
@@ -99,7 +99,7 @@ export function stitchAreas<T extends Record<string, Area>>(
     return clientsOf(areas, resolveDeps);
 }
 
-/** Builds `{ <area>: { <action>: (args, options) => runAction(...) } }` over a deps getter. */
+/** Builds `{ <area>: { <action>: (args, options) => runAreaAction(...) } }` over a deps getter. */
 export function clientsOf<T extends Record<string, Area>>(areas: T, deps: () => EngineDeps): StitchedClients<T> {
     const clients: Record<string, Record<string, (args: unknown, options?: RunOptions) => Promise<unknown>>> = {};
 
@@ -107,7 +107,7 @@ export function clientsOf<T extends Record<string, Area>>(areas: T, deps: () => 
         clients[name] = {};
 
         for (const action of Object.keys(area.actions)) {
-            clients[name][action] = (args, options) => runAction(areas, `${name}.${action}`, args, deps(), options);
+            clients[name][action] = (args, options) => runAreaAction(areas, `${name}.${action}`, args, deps(), options);
         }
     }
 
