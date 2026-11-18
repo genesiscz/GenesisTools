@@ -605,9 +605,11 @@ describe("toolset method names", () => {
                     reason: expect.any(String),
                 });
                 const plan = await library.remove({ id, preview: true });
+                // Read the token first: toMatchObject below writes its matchers into the bound result.
+                const planToken = plan.planToken;
                 expect(plan).toMatchObject({ ids: [id], planToken: expect.any(String) });
                 await expect(library.remove({ id, planToken: "expired" })).rejects.toThrow("Stale");
-                expect(await library.remove({ id, planToken: plan.planToken })).toMatchObject({
+                expect(await library.remove({ id, planToken })).toMatchObject({
                     removed: 1,
                     ids: [id],
                 });
