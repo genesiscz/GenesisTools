@@ -15,6 +15,8 @@ export interface CpuTimeSample {
     pid: number;
     cpuMs: number;
     command: string;
+    /** When the process started (ms since epoch), or null when unknown: a reused pid has a new start. */
+    startMs: number | null;
 }
 
 export interface SpinningProcess extends CpuTimeSample {
@@ -29,7 +31,8 @@ export type ProcessOwner = "genesis-face" | "genesis-tool" | null;
  * Processes that burned at least `thresholdPercent` of one core between two samples. Two readings
  * of accumulated CPU time are exact where `ps -o pcpu` is a decaying average: pcpu smears a spin
  * that started a minute ago and hides one that started a second ago. A process born inside the
- * window has no first sample and is not judged.
+ * window has no first sample and is not judged, and neither is a pid that another process took over between the
+ * samples (a different start time or command line).
  */
 export function spinningProcesses(
     before: Map<number, CpuTimeSample>,
@@ -42,7 +45,7 @@ export function spinningProcesses(
     for (const [pid, now] of after) {
         const earlier = before.get(pid);
 
-        if (!earlier || earlier.command !== now.command) {
+        if (!earlier || earlier.startMs !== now.startMs || earlier.command !== now.command) {
             continue;
         }
 
@@ -87,7 +90,12 @@ export function sampleCpuTimes(): Map<number, CpuTimeSample> | null {
                 ? [
                       [
                           entry.pid,
-                          { pid: entry.pid, cpuMs: entry.usage.cpuTimeMs, command: entry.command ?? entry.name },
+                          {
+                              pid: entry.pid,
+                              cpuMs: entry.usage.cpuTimeMs,
+                              command: entry.command ?? entry.name,
+                              startMs: entry.startMs,
+                          },
                       ] as const,
                   ]
                 : []
