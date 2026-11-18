@@ -41,7 +41,9 @@ public final class ScreenRecorder: ObservableObject {
     @Published public private(set) var isActive = false
 
     public let settings: RecordingSettings
-    private let bridge: ToolsBridge
+    private let makeController: @MainActor () -> RecordingSessionController
+    private let defaults: UserDefaults
+    private let forSnapshot: Bool
     private let permissionGate: @MainActor (PermissionNeed) async -> Bool
     private let loadTargets: @MainActor () async throws -> RecordingTargets
     private var host: ScreenRecordingHost?
@@ -69,12 +71,11 @@ public final class ScreenRecorder: ObservableObject {
 
     private static weak var running: ScreenRecorder?
 
-    public init(bridge: ToolsBridge, settings: RecordingSettings? = nil,
-                permissionGate: (@MainActor (PermissionNeed) async -> Bool)? = nil) {
-        self.bridge = bridge
-        self.settings = settings ?? .shared
-        self.permissionGate = permissionGate ?? { await PermissionCenter.shared.ensure($0) }
-        loadTargets = {
+    public convenience init(bridge: ToolsBridge, settings: RecordingSettings? = nil,
+                            permissionGate: (@MainActor (PermissionNeed) async -> Bool)? = nil) {
+        self.init(settings: settings ?? .shared, defaults: .standard,
+                  permissionGate: permissionGate ?? { await PermissionCenter.shared.ensure($0) },
+                  makeController: { RecordingSessionController(bridge: bridge) }, loadTargets: {
             // Long enough for the one compile after an update (about 30 s, more on a busy Mac); the compile goes on
             // without this call if it is cut, and the recording then reuses its binary.
             let result = try await bridge.run(subcommand: "control", args: ["capture", "targets", "--json"],
@@ -83,7 +84,20 @@ public final class ScreenRecorder: ObservableObject {
                 throw ToolsBridgeError.refused(String(result.stderr.suffix(600)))
             }
             return try JSONDecoder().decode(RecordingTargets.self, from: Data(result.stdout.utf8))
-        }
+        })
+    }
+
+    init(settings: RecordingSettings, defaults: UserDefaults, forSnapshot: Bool = false,
+         permissionGate: @escaping @MainActor (PermissionNeed) async -> Bool,
+         makeController: @escaping @MainActor () -> RecordingSessionController,
+         loadTargets: @escaping @MainActor () async throws -> RecordingTargets) {
+        self.settings = settings
+        self.defaults = defaults
+        self.forSnapshot = forSnapshot
+        self.permissionGate = permissionGate
+        self.makeController = makeController
+        self.loadTargets = loadTargets
+        if forSnapshot { picker.window.alphaValue = 0; picker.window.ignoresMouseEvents = true }
     }
 
     /// Opens the picker near `anchor` (a Cocoa screen point; the pointer when nil), starting on the front window of
@@ -184,7 +198,7 @@ public final class ScreenRecorder: ObservableObject {
             },
             restoring: pickerFilter,
             onFilterChange: { [weak self] tab, query in self?.pickerFilter = (tab, query) })
-        picker.present(view, near: pickerAnchor) { [weak self] in self?.pickerCancel?() }
+        picker.present(view, near: pickerAnchor, focus: !forSnapshot) { [weak self] in self?.pickerCancel?() }
     }
 
     // MARK: Session
@@ -204,8 +218,9 @@ public final class ScreenRecorder: ObservableObject {
 
     private func record(_ target: RecordingTarget) {
         guard let host else { return }
-        let controller = RecordingSessionController(bridge: bridge)
+        let controller = makeController()
         let controls = RecordingControlsPanel()
+        if forSnapshot { controls.window.alphaValue = 0; controls.window.ignoresMouseEvents = true }
         self.controller = controller
         self.controls = controls
         controller.onDone = { [weak self] url, _ in self?.use(url) }
