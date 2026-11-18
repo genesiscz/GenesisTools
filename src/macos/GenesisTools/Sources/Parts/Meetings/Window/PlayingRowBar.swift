@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - The playing row's mini bar (R25, R46, G-ROW-1, G-ROW-2)
 
 /// The bar that replaces a playing row's subtitle line, at the same height (G-ROW-1): the clip from its start to its
-/// end, the pad dim, the asked span bright, the flag on the boundary where the asked part begins (R46), the playhead,
+/// end, the pad dim, the asked span bright, the flag on the asked spot (`ZoomSpan.flagSec`, U11), the playhead,
 /// and the clip's length ("15 s clip") at the end. The flag has a 22 pt hit area and plays from just before the tone (G-PLAY-3); a
 /// click on the bar seeks there. VoiceOver reads one adjustable element: swipe up or down seeks by `stepSec`.
 struct PlayingRowBar: View {
@@ -36,6 +36,7 @@ struct PlayingRowBar: View {
                 let width = proxy.size.width
                 let askX = TimelineGeometry.x(span.fromSec, in: clip, width: width)
                 let askEnd = TimelineGeometry.x(max(span.fromSec, span.toSec), in: clip, width: width)
+                let flagX = TimelineGeometry.x(span.flagSec, in: clip, width: width)
                 let mid = height / 2
                 ZStack(alignment: .topLeading) {
                     Capsule().fill(Color.accentColor.opacity(0.25)).frame(width: width, height: 4).offset(y: mid - 2)
@@ -51,7 +52,7 @@ struct PlayingRowBar: View {
                              "Asked spot at \(MeetingsFormat.clock(span.spotSec)). Plays from there.", compact: true) {
                         onFlag(span.flagSeekTarget)
                     }
-                    .offset(x: askX - FlagMark.lineX, y: (height - max(22, height)) / 2)
+                    .offset(x: flagX - FlagMark.lineX, y: (height - max(22, height)) / 2)
                 }
                 .frame(width: width, height: height, alignment: .topLeading)
                 .contentShape(Rectangle())

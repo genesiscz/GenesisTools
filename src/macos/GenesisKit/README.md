@@ -19,7 +19,7 @@ the libraries it imports, so an optional part costs an app nothing until it uses
   `Permissions/` (the approval panel: `ApprovalDialogView` with fact rows, `ApprovalItem` rows for the paths a
   destructive request names, and `ApprovalVerifier`, Touch ID inside the window through `LAAuthenticationView`),
   `Perf/` (PerfLog, PerfSpans, HangWatch, …), `Paths/` (`PathOpener`, `Clipboard`, `CopyToast`,
-  `PathKind`, `PathDisplay`), `Tools/` (`ToolsBridge`, the server client), `Style/` (motion, `RowButton`, `Plural`, `ByteFormat`,
+  `PathKind`, `PathDisplay`), `Tools/` (`ToolsBridge`, the server client), `Style/` (motion, `RowButton`, `Plural`, `ByteFormat`, `HighlightedText`,
   `KitPalette`, and `KitHost`: the `GenesisKitBaseHost` protocol and the class-name lookup), `Window/`
   (`WindowTitlebar`, `SingleInstance`). No external package. `GenesisKit` re-exports it, so an app that imports
   `GenesisKit` never names it. A host-only GenesisTools build (no optional part, src/macos/lib/permissions/parts.ts) links only

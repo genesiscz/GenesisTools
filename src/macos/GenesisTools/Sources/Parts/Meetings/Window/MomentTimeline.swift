@@ -57,6 +57,11 @@ struct ZoomSpan: Equatable {
 
     /// Where a flag click plays from (G-PLAY-3).
     var flagSeekTarget: Double { TimelineGeometry.flagSeekTarget(toneSec: toneSec, spotSec: spotSec, clipStartSec: startSec) }
+
+    /// Where the flag stands: on the asked spot, the word or the second the question names, so the word starts as the
+    /// playhead reaches the flag (U11: it stood on the asked span's start, 1.5 s before a spelling's word). A range
+    /// question's spot is its start. A spot the clip does not hold leaves the flag on the asked span's start.
+    var flagSec: Double { (startSec...max(startSec, endSec)).contains(spotSec) ? spotSec : fromSec }
 }
 
 /// A stretch one speaker talks in, with that speaker's colour (the avatars' and the lanes').
@@ -351,7 +356,7 @@ struct VoiceLegendRow: View {
     }
 }
 
-/// The zoomed timeline: the clip with its pad shaded, the asked span, the flag on the span's boundary (R46), the end
+/// The zoomed timeline: the clip with its pad shaded, the asked span, the flag on the asked spot (U11), the end
 /// tick of a range question (G-PLAY-4), the playhead, and under it the pad words. The view range is the caller's:
 /// "Zoom out" asks for a wider one and never touches the sound (R4). At the clip's end it offers "Play 30 s more"
 /// (G-PLAY-1). In whole-meeting mode (`span` nil) it shows the pins instead.
@@ -464,9 +469,9 @@ struct MomentTimeline: View {
         .allowsHitTesting(false)
     }
 
-    // The flag stands on the boundary where the asked part begins (R46). A range question adds a tick at its end.
+    // The flag stands on the asked spot (`ZoomSpan.flagSec`, U11). A range question adds a tick at its end.
     private func flag(_ span: ZoomSpan, width: CGFloat) -> some View {
-        let x = TimelineGeometry.x(span.fromSec, in: view, width: width)
+        let x = TimelineGeometry.x(span.flagSec, in: view, width: width)
         let endX = TimelineGeometry.x(span.toSec, in: view, width: width)
         return ZStack(alignment: .topLeading) {
             if span.isRange, span.toSec > span.fromSec {
@@ -474,7 +479,7 @@ struct MomentTimeline: View {
                     .offset(x: endX - 1, y: height - 38)
                     .accessibilityHidden(true)
             }
-            FlagMark(text: "\(MeetingsFormat.clock(span.fromSec)) · \(span.label)", lineHeight: height - 44,
+            FlagMark(text: "\(MeetingsFormat.clock(span.flagSec)) · \(span.label)", lineHeight: height - 44,
                      accessibility: "Asked spot at \(MeetingsFormat.clock(span.spotSec)), \(span.label). Plays from there.") {
                 onFlag(span.flagSeekTarget)
             }
