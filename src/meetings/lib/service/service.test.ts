@@ -2942,6 +2942,7 @@ async function captureExamples(): Promise<Example[]> {
         { backup: (removal?.reply?.result as { backup?: string } | undefined)?.backup },
         "The Undo of the removal: the block, its pairings and the meeting it left without a project come back."
     );
+    await ask(window, "rules.names", {}, "Every rule's sentence by its id, as a review row words an item's rules.");
     return examples;
 }
 

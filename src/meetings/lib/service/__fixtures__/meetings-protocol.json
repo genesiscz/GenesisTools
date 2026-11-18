@@ -42,6 +42,7 @@
             "moment.save",
             "tone.preview",
             "tone.presets",
+            "rules.names",
             "meeting.audio",
             "acoustic.inspect",
             "acoustic.clip",
@@ -106,7 +107,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "c2d5b2fa463e"
+          "version": "51d23163bb72"
         }
       }
     },
@@ -1384,6 +1385,7 @@
             "moment.save",
             "tone.preview",
             "tone.presets",
+            "rules.names",
             "meeting.audio",
             "acoustic.inspect",
             "acoustic.clip",
@@ -1448,7 +1450,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "c2d5b2fa463e"
+          "version": "51d23163bb72"
         }
       }
     },
@@ -6050,6 +6052,7 @@
             "moment.save",
             "tone.preview",
             "tone.presets",
+            "rules.names",
             "meeting.audio",
             "acoustic.inspect",
             "acoustic.clip",
@@ -6114,7 +6117,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "c2d5b2fa463e"
+          "version": "51d23163bb72"
         }
       }
     },
@@ -6809,6 +6812,53 @@
           "sources": [
             "wisprflow"
           ]
+        }
+      }
+    },
+    {
+      "method": "rules.names",
+      "direction": "client→service",
+      "note": "Every rule's sentence by its id, as a review row words an item's rules.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 115,
+        "method": "rules.names",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 115,
+        "result": {
+          "names": {
+            "platform-prehistory": "The name appears before the call first shows that person.",
+            "local-speech": "The computer read these words aloud.",
+            "voice": "The voice matches a confirmed voice sample.",
+            "RA": "The attendance record shows who was there.",
+            "R1": "Someone says goodbye.",
+            "R5": "More lines appear under the same name after the goodbye.",
+            "R13": "Another speaker answers the goodbye.",
+            "R14": "This speaker echoes someone else's goodbye.",
+            "R15": "A participant is present but has no lines under their name for a long stretch.",
+            "R16": "This line comes just after someone joins the call.",
+            "R17": "The person speaks under their own name on a nearby line.",
+            "R18": "More than one person may be using the same microphone.",
+            "R19": "This name usually appears on the microphone track.",
+            "R20": "The transcript appears to have swapped two speakers' names.",
+            "RM": "The call shows someone was muted during this line.",
+            "E1": "The recording separates microphone audio from call audio.",
+            "E3": "The call shows who is speaking.",
+            "voice-embedding": "The call audio was compared with saved voice samples.",
+            "E4": "The recorder attached a name to the voice during the call.",
+            "energy": "The recording shows how loud each audio track was.",
+            "phonetic": "The word sounds like a known term.",
+            "dictionary-fuzzy": "The spelling is close to a dictionary term.",
+            "summary-name": "The meeting summary mentions this name.",
+            "unknown-word": "The word is missing from the known vocabulary.",
+            "read-aloud": "These words match a passage in a document.",
+            "spoken-identifier": "The spoken words match a name or path in a document.",
+            "agent": "An agent suggested this after reviewing the meeting.",
+            "user": "Someone added this by hand."
+          }
         }
       }
     }
