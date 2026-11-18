@@ -23,6 +23,15 @@ interface BackfillDecision extends VoiceTarget {
     skipped?: string;
 }
 
+/**
+ * Answers saved before free text was parsed into people (I6) can hold a whole sentence as the speaker, and the record
+ * then lists that sentence as a confirmed speaker, so the record's own people cannot veto it. A name never holds
+ * sentence punctuation followed by a space, nor more than six words.
+ */
+export function looksLikeOnePerson(name: string): boolean {
+    return !/[.?!,;:]\s/.test(name) && name.trim().split(/\s+/).length <= 6;
+}
+
 async function prepareDecisions(
     access: VoicesAccess,
     journal: DecisionJournal,
@@ -39,6 +48,10 @@ async function prepareDecisions(
             throw new Error(`Decision ${entry.token} belongs to ${entry.meeting}, not ${record.id}.`);
         }
         for (const target of answeredVoiceTargets(entry, people)) {
+            if (!looksLikeOnePerson(target.voice.person)) {
+                decisions.push({ ...target, changes: [], skipped: "the answer is a sentence, not one person" });
+                continue;
+            }
             if (owners.get(target.voice.item) !== entry.token) {
                 decisions.push({ ...target, changes: [], skipped: "confirmation undone or replaced" });
                 continue;
