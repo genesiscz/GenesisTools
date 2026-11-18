@@ -4,9 +4,9 @@ import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { splitLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import type { SessionToolCall, SessionTranscript } from "@genesiscz/utils/session-changes/types";
 import type { SessionChangesRead } from "../types";
+import { CHUNK_BYTES, changesCache } from "./changes-window-cache";
 import {
     applyToolResult,
     backupReader,
@@ -38,7 +38,8 @@ export function claudeSessionChanges(sessionId: string): SessionChangesRead | nu
 }
 
 /** One transcript file read up to its last complete line, with what its lines leave for the merge. */
-interface FileFold {
+export interface FileFold {
+    start: number;
     ino: number;
     /** Bytes up to and including the last newline already parsed. */
     consumed: number;
@@ -54,73 +55,45 @@ interface FileFold {
 interface SessionFolds {
     main: FileFold | null;
     agents: Map<string, FileFold>;
-    lastUsed: number;
 }
 
-const CHUNK_BYTES = 8 * 1024 * 1024;
-/** Sessions kept: the hub shows one, sometimes two. A fold holds every tool input of its files. */
-const SESSIONS_KEPT = 2;
-/**
- * The hub asks only when an editing command of the shown session finishes, often minutes apart: with 2 minutes, an ask
- * after a 3.5 minute pause rebuilt the folds (1.0 s CPU instead of ~0.2 s, 2026-10-08). A kept session costs ~130 MB.
- */
-const IDLE_MS = 10 * 60_000;
-const sessions = new Map<string, SessionFolds>();
-let sweep: ReturnType<typeof setTimeout> | null = null;
-
-function scheduleSweep(): void {
-    if (sweep) {
-        return;
-    }
-
-    sweep = setTimeout(() => {
-        sweep = null;
-        const now = Date.now();
-        for (const [path, entry] of sessions) {
-            if (now - entry.lastUsed > IDLE_MS) {
-                sessions.delete(path);
-            }
-        }
-
-        if (sessions.size > 0) {
-            scheduleSweep();
-        }
-        // A quarter of the window: a session goes at most 12.5 minutes after its last ask, not up to 20.
-    }, IDLE_MS / 4);
-    // Never what keeps a process alive.
-    sweep.unref?.();
-}
-
-// A resident process over its memory cap drops the folds rather than restart (`releaseMemory`).
-onReleaseMemory("session-changes folds", () => {
-    sessions.clear();
-});
+const sessions = changesCache<SessionFolds>("session-changes folds");
 
 /**
  * `fold` brought up to the file's last complete line, or a new fold read from the start when the file was replaced,
  * shortened or rewritten. Null when the file ends in a line without its newline that the full parse would read
  * (it parses as JSON): the caller then parses the whole session.
  */
-function advance(path: string, agentId: string | null, fold: FileFold | null): FileFold | null {
+export function advanceFrom(
+    path: string,
+    agentId: string | null,
+    fold: FileFold | null,
+    start: number
+): FileFold | null {
     const fd = openSync(path, "r");
     try {
         const { size, ino } = fstatSync(fd);
-        let prefix = readPrefixMark(fd, fold?.ino === ino && fold.consumed <= size ? fold.consumed : 0);
-        const usable = fold !== null && fold.ino === ino && fold.consumed <= size && prefix.digest() === fold.mark;
+        if (start > size) {
+            return null;
+        }
+        const candidate = fold?.start === start && fold.ino === ino && fold.consumed <= size;
+        let prefix = readPrefixMark(fd, candidate ? fold.consumed : start);
+        const usable = candidate && prefix.digest() === fold.mark;
         const current: FileFold =
             usable && fold
                 ? fold
                 : {
                       ino,
-                      consumed: 0,
+                      consumed: start,
+                      start,
                       mark: "",
                       state: emptyParseState(),
                       cursor: { currentTurn: null },
                       prompts: [],
                       unmatched: [],
                   };
-        if (!usable) {
-            prefix = readPrefixMark(fd, 0);
+        if (candidate && !usable) {
+            prefix = readPrefixMark(fd, start);
         }
 
         const hooks = {
@@ -183,7 +156,11 @@ function advance(path: string, agentId: string | null, fold: FileFold | null): F
  * main turns still without one, then its calls join, and the calls it added take the launching call's turn when
  * their own turn is not a main turn (`parseClaudeTranscript`).
  */
-function merge(main: FileFold, agents: Array<{ fold: FileFold; parentToolUseId: string | null }>): ParseState {
+export function merge(
+    main: FileFold,
+    agents: Array<{ fold: FileFold; parentToolUseId: string | null }>,
+    isMainTurn: (id: string) => boolean = (id) => main.state.turns.has(id)
+): ParseState {
     const state: ParseState = {
         calls: new Map([...main.state.calls].map(([id, call]) => [id, { ...call }])),
         inputs: new Map(main.state.inputs),
@@ -231,7 +208,7 @@ function merge(main: FileFold, agents: Array<{ fold: FileFold; parentToolUseId: 
         const parentTurn = parentToolUseId ? state.calls.get(parentToolUseId)?.turnId : undefined;
         if (parentTurn) {
             for (const call of added) {
-                if (!state.turns.has(call.turnId)) {
+                if (!isMainTurn(call.turnId)) {
                     call.turnId = parentTurn;
                 }
             }
@@ -259,19 +236,8 @@ export function readClaudeTranscriptFolded(
             return readClaudeTranscript(transcriptPath);
         }
 
-        const kept = sessions.get(transcriptPath) ?? { main: null, agents: new Map(), lastUsed: 0 };
-        kept.lastUsed = Date.now();
-        sessions.delete(transcriptPath);
-        sessions.set(transcriptPath, kept);
-        if (sessions.size > SESSIONS_KEPT) {
-            const oldest = sessions.keys().next().value;
-            if (oldest !== undefined) {
-                sessions.delete(oldest);
-            }
-        }
-
-        scheduleSweep();
-        const main = advance(transcriptPath, null, kept.main);
+        const kept = sessions.get(transcriptPath, () => ({ main: null, agents: new Map() }));
+        const main = advanceFrom(transcriptPath, null, kept.main, 0);
         kept.main = main;
         if (!main) {
             return readClaudeTranscript(transcriptPath);
@@ -282,7 +248,7 @@ export function readClaudeTranscriptFolded(
         const seen = new Set<string>();
         for (const file of files) {
             seen.add(file.path);
-            const fold = advance(file.path, file.agentId, kept.agents.get(file.path) ?? null);
+            const fold = advanceFrom(file.path, file.agentId, kept.agents.get(file.path) ?? null, 0);
             if (!fold) {
                 kept.agents.delete(file.path);
                 return readClaudeTranscript(transcriptPath);

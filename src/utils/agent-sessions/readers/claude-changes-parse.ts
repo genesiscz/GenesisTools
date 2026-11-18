@@ -423,6 +423,19 @@ export interface TranscriptSource {
     subagents?: { agentId: string; content: string | Iterable<string>; parentToolUseId: string | null }[];
     /** Reads one of Claude's checkpoint backups by file name, or returns null. */
     readBackup?: (name: string) => string | null;
+    isMainTurn?: (id: string) => boolean;
+}
+
+function newestBackupTimes(backups: HistoryBackup[]) {
+    const newest = new Map<string, number>();
+
+    for (const backup of backups) {
+        if (backup.backup !== null && backup.backupTime !== null) {
+            newest.set(backup.backup, Math.max(newest.get(backup.backup) ?? 0, backup.backupTime));
+        }
+    }
+
+    return newest;
 }
 
 /**
@@ -432,17 +445,15 @@ export interface TranscriptSource {
  * it), then follows the calls in order: a call's before is the previous call's after, and its
  * after is its edits applied to that. A chain with no checkpoint stays unknown.
  */
-function fillFromBackups(state: ParseState, readBackup: (name: string) => string | null): void {
+function fillFromBackups(
+    state: ParseState,
+    readBackup: (name: string) => string | null,
+    sessionNewest?: ReadonlyMap<string, number>
+): void {
     const seeds = new Map<string, HistoryBackup>();
     // Claude restarts a file's versions at `@v1` after a resume and writes over the old backup,
     // so only the newest entry naming a backup file still describes the bytes on disk.
-    const newest = new Map<string, number>();
-
-    for (const backup of state.backups) {
-        if (backup.backup !== null && backup.backupTime !== null) {
-            newest.set(backup.backup, Math.max(newest.get(backup.backup) ?? 0, backup.backupTime));
-        }
-    }
+    const newest = sessionNewest ?? newestBackupTimes(state.backups);
 
     for (const backup of state.backups) {
         if (
@@ -531,10 +542,11 @@ export function emptyParseState(): ParseState {
 export function finishTranscript(
     sessionId: string,
     state: ParseState,
-    readBackup?: (name: string) => string | null
+    readBackup?: (name: string) => string | null,
+    newest?: ReadonlyMap<string, number>
 ): SessionTranscript {
     if (readBackup) {
-        fillFromBackups(state, readBackup);
+        fillFromBackups(state, readBackup, newest);
     }
 
     return {
@@ -549,6 +561,7 @@ export function finishTranscript(
 export function parseClaudeTranscript(sessionId: string, source: TranscriptSource): SessionTranscript {
     const state = emptyParseState();
     parseLines(source.main, null, state);
+    const isMainTurn = source.isMainTurn ?? ((id: string) => state.turns.has(id));
 
     for (const agent of source.subagents ?? []) {
         const before = new Set(state.calls.keys());
@@ -557,7 +570,7 @@ export function parseClaudeTranscript(sessionId: string, source: TranscriptSourc
 
         for (const [id, call] of state.calls) {
             // A subagent's prompt id is its own; its work belongs to the turn that launched it.
-            if (!before.has(id) && parentTurn && !state.turns.has(call.turnId)) {
+            if (!before.has(id) && parentTurn && !isMainTurn(call.turnId)) {
                 call.turnId = parentTurn;
             }
         }

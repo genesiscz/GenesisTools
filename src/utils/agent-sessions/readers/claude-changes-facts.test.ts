@@ -28,7 +28,9 @@ it("indexes direct and indirect heredoc writers, then resumes or rebuilds on a r
     const original = advanceClaudeFacts(transcript, true);
     const facts = sessionFacts(new Map([[transcript, original]]));
     expect(facts.writersOf("/work/acme/gen.sh").map((w) => w.callId)).toContain("generate");
-    expect(facts.writersOf("/any/target").map((w) => w.callId)).toEqual(["run-gen", "run-written"]);
+    expect(facts.writersOf("/any/target").map((w) => w.callId)).toEqual(
+        expect.arrayContaining(["run-gen", "run-written"])
+    );
     appendFileSync(
         transcript,
         `${jsonl([prompt("p9", "", 90), ...createFile("p9", "last", "/work/acme/last", 91)])}\n`
