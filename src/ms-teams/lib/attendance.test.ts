@@ -1,5 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Command } from "commander";
+import { registerMeetingsCommand } from "../commands/meetings";
 import { buildMeetingAttendance, intervalsFromEvents, observerFromEvents, parseCallEndedMessage } from "./attendance";
+import * as cacheModule from "./cache";
 import { parseCallLogFile, parseCallLogMessage } from "./call-log";
 import { TeamsCache } from "./store";
 import type { CallLogEvent, ConversationRow } from "./types";
@@ -10,6 +15,108 @@ const ME = "8:orgid:00000000-0000-0000-0000-0000000000aa";
 const ADA = "8:orgid:00000000-0000-0000-0000-0000000000a1";
 const BOB = "8:teamsvisitor:00000000000000000000000000000b0b";
 const t = (hhmmss: string) => Date.parse(`2026-03-02T${hhmmss}Z`);
+
+describe("attendance candidate output", () => {
+    const title = "Paper Kite Review";
+    const newer = "19:meeting_kite_new@thread.v2";
+    const older = "19:meeting_kite_old@thread.v2";
+    const date = "2026-03-02T10:00:00.000Z";
+
+    function runAttendance(query: string, json = false) {
+        const cache = new TeamsCache(":memory:");
+        const chat = (id: string, topic: string, lastMessageTimeUtc: number) => ({
+            id,
+            type: "meeting",
+            threadProperties: { topic },
+            lastMessageTimeUtc,
+            members: [{ id: "kite-1" }, { id: "kite-2" }],
+        });
+        const weekly = Array.from({ length: 10 }, (_, i) => chat(`weekly-${i}`, "Pocket Atlas", 100 - i));
+        cache.ingestDump({
+            conversations: [
+                chat(older, title, 200),
+                chat(newer, title, 100),
+                { ...chat("ordinary-chat", title, 300), type: "Chat" },
+                ...weekly,
+            ],
+            profiles: [],
+            calls: [{ id: "kite-call", groupChatThreadId: newer, startTime: date }],
+            replychains: [
+                {
+                    conversationId: older,
+                    messageMap: {
+                        call: { id: "old-call", messageType: "Event/Call", originalArrivalTime: t("09:00:00") },
+                    },
+                },
+            ],
+            activity: [],
+        });
+        cache.ingestCallLogEvents(
+            weekly.slice(1).map((row, i) => ({
+                kind: "thread-link",
+                threadId: row.id,
+                callId: `atlas-call-${i}`,
+                at: t("10:00:00") + i * 1000,
+            }))
+        );
+        const open = spyOn(cacheModule, "openCache").mockReturnValue(cache);
+        const chunks: string[] = [];
+        const stdout = spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+            chunks.push(String(chunk));
+            return true;
+        });
+        const saved = process.exitCode;
+        try {
+            process.exitCode = undefined;
+            const program = new Command();
+            registerMeetingsCommand(program);
+            program.parse(["meetings", "attendance", query, ...(json ? ["--json"] : [])], { from: "user" });
+            return { exitCode: process.exitCode, stdout: chunks.join("") };
+        } finally {
+            process.exitCode = saved;
+            stdout.mockRestore();
+            open.mockRestore();
+        }
+    }
+
+    test("prints both matching meeting chats, newest call first, with full retry commands and exit 1", () => {
+        const result = runAttendance(title);
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain(title);
+        expect(result.stdout).toContain(formatLocalDateTimeStamp(date));
+        expect(result.stdout).toContain("2 participants");
+        for (const id of [newer, older]) {
+            expect(result.stdout).toContain(`tools ms-teams meetings attendance --id ${id}`);
+        }
+        expect(result.stdout.indexOf(newer)).toBeLessThan(result.stdout.indexOf(older));
+        expect(result.stdout).not.toContain("ordinary-chat");
+    });
+
+    test("returns both candidates as JSON with actual call dates and chat participant counts", () => {
+        const result = runAttendance(title, true);
+        expect(result.exitCode).toBe(1);
+        const candidates = [newer, older].map((id, i) => ({
+            id,
+            title,
+            lastCallAt: i === 0 ? date : new Date(t("09:00:00")).toISOString(),
+            participantCount: 2,
+            command: `tools ms-teams meetings attendance --id ${id}`,
+        }));
+        expect(SafeJSON.parse(result.stdout, { strict: true })).toEqual({ status: "ambiguous", candidates });
+    });
+
+    test("limits after ranking by call date and gives a missing query an empty candidate list", () => {
+        const top = runAttendance("Pocket Atlas", true);
+        expect(top.exitCode).toBe(1);
+        const rows = SafeJSON.parse(top.stdout, { strict: true }).candidates;
+        expect(rows.map((row: { id: string }) => row.id)).toEqual(
+            Array.from({ length: 8 }, (_, i) => `weekly-${9 - i}`)
+        );
+        const missing = runAttendance("Glass Orchard", true);
+        expect(missing.exitCode).toBe(1);
+        expect(SafeJSON.parse(missing.stdout, { strict: true })).toEqual({ status: "none", candidates: [] });
+    });
+});
 
 describe("parseCallLogMessage", () => {
     test("reads participant added across the line break Teams puts in it", () => {
