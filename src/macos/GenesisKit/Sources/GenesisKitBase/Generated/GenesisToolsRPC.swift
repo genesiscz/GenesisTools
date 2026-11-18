@@ -8448,13 +8448,30 @@ public struct ConfigPersonWindowNotice: Codable, Sendable {
 public final class GenesisToolsRPC {
     public static let shared = GenesisToolsRPC()
     public var timeoutSeconds: TimeInterval = 130
+    /// Once per published connection that the service ends (a restart, a crash); not after `close()`.
+    public var onDisconnect: (() -> Void)?
     private var peer: JSONRPCSocketClient?
+    /// The one connection attempt in flight: every caller that finds no peer awaits it.
+    private var connecting: Task<JSONRPCSocketClient, Error>?
     private let path: String
     private var handlers: [String: JSONRPCSocketClient.Handler] = [:]
-    private var listeners: [String: [UUID: (Data) -> Void]] = [:]
+    private struct Listener {
+        let deliver: (Data) -> Void
+        let finish: (Error?) -> Void
+    }
+    private var listeners: [String: [UUID: Listener]] = [:]
     public init(path: String = GenesisToolsHome.path("genesis-tools/service.sock")) { self.path = path }
-    public func connect() async throws {
-        if peer != nil { return }
+    public func connect() async throws { _ = try await ready() }
+    private func ready() async throws -> JSONRPCSocketClient {
+        if let peer { return peer }
+        if let connecting { return try await connecting.value }
+        let attempt = Task { @MainActor in try await self.open() }
+        connecting = attempt
+        defer { if connecting == attempt { connecting = nil } }
+        return try await attempt.value
+    }
+    /// Starts the service when its socket is missing, and publishes the connection only after `hello` and `subscribe`.
+    private func open() async throws -> JSONRPCSocketClient {
         if !FileManager.default.fileExists(atPath: path) {
             let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
             let started = try await bridge.run(subcommand: "genesis-tools", args: ["serve", "--detach"], timeoutSeconds: 20)
@@ -8462,31 +8479,72 @@ public final class GenesisToolsRPC {
         }
         let opened = JSONRPCSocketClient(path: path)
         try opened.connect()
-        peer = opened
+        var announced = Set(handlers.keys)
         for (name, handler) in handlers { opened.answer(name, with: handler) }
-        opened.onClose = { [weak self] in Task { @MainActor in self?.peer = nil } }
+        opened.onClose = { [weak self, weak opened] in
+            Task { @MainActor in
+                guard let self, let opened, self.peer === opened else { return }
+                self.peer = nil
+                self.finishListeners(JSONRPCSocketClient.Failure.closed)
+                self.onDisconnect?()
+            }
+        }
         opened.onNotification = { [weak self] name, value in
             guard let value, let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) else { return }
-            Task { @MainActor in self?.listeners[name]?.values.forEach { $0(data) } }
+            Task { @MainActor in self?.listeners[name]?.values.forEach { $0.deliver(data) } }
         }
-        _ = try await opened.call("hello", params: ["methods": Array(handlers.keys)])
-        _ = try await opened.call("subscribe", params: [:])
+        do {
+            _ = try await opened.call("hello", params: ["methods": Array(announced)])
+            _ = try await opened.call("subscribe", params: [:])
+            // A handler registered while the handshake ran is answered and announced on this connection too.
+            while Set(handlers.keys) != announced {
+                announced = Set(handlers.keys)
+                for (name, handler) in handlers { opened.answer(name, with: handler) }
+                _ = try await opened.call("hello", params: ["methods": Array(announced)])
+            }
+            try Task.checkCancellation()
+        } catch {
+            opened.close()
+            throw error
+        }
+        peer = opened
+        return opened
     }
-    public func close() { peer?.close(); peer = nil }
+    public func close() {
+        connecting?.cancel()
+        connecting = nil
+        peer?.close()
+        peer = nil
+        finishListeners(nil)
+    }
+    private func finishListeners(_ error: Error?) {
+        let ended = listeners.values.flatMap(\.values)
+        listeners = [:]
+        ended.forEach { $0.finish(error) }
+    }
     fileprivate func call<P: Encodable, R: Decodable>(_ method: String, _ params: P, timeout: TimeInterval? = nil) async throws -> R {
-        try await connect()
+        let peer = try await ready()
         let encoded = try JSONEncoder().encode(params)
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        let result = try await peer!.call(method, params: object, timeout: timeout ?? timeoutSeconds)
+        let result = try await peer.call(method, params: object, timeout: timeout ?? timeoutSeconds)
         let bytes = try JSONSerialization.data(withJSONObject: result ?? NSNull(), options: [.fragmentsAllowed])
         return try JSONDecoder().decode(R.self, from: bytes)
     }
-    fileprivate func stream<E: Decodable>(_ name: String) -> AsyncStream<E> {
-        AsyncStream { continuation in
+    /// Events named `name`. The stream ends with the error when the connection cannot be made or the service ends it.
+    fileprivate func stream<E: Decodable>(_ name: String) -> AsyncThrowingStream<E, Error> {
+        AsyncThrowingStream { continuation in
             let id = UUID()
-            listeners[name, default: [:]][id] = { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } }
+            listeners[name, default: [:]][id] = Listener(
+                deliver: { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } },
+                finish: { error in continuation.finish(throwing: error) }
+            )
             continuation.onTermination = { [weak self] _ in Task { @MainActor in self?.listeners[name]?[id] = nil } }
-            Task { try? await connect() }
+            Task {
+                do { try await connect() } catch {
+                    listeners[name]?[id] = nil
+                    continuation.finish(throwing: error)
+                }
+            }
         }
     }
     public lazy var app = App(owner: self)
@@ -8547,9 +8605,9 @@ public final class GenesisToolsRPC {
     @MainActor public final class Events {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public var requestChanged: AsyncStream<RequestChangedEvent> { owner.stream("request.changed") }
-        public var configChanged: AsyncStream<ConfigChangedEvent> { owner.stream("config.changed") }
-        public var stateChanged: AsyncStream<StateChangedEvent> { owner.stream("state.changed") }
+        public var requestChanged: AsyncThrowingStream<RequestChangedEvent, Error> { owner.stream("request.changed") }
+        public var configChanged: AsyncThrowingStream<ConfigChangedEvent, Error> { owner.stream("config.changed") }
+        public var stateChanged: AsyncThrowingStream<StateChangedEvent, Error> { owner.stream("state.changed") }
     }
     public lazy var config = Config(owner: self)
     @MainActor public final class Config {
