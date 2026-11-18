@@ -82,6 +82,7 @@ if (args[0] === "screens") {
 
 const value = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const outDir = value("--out") ?? ".";
+const frameReady = join(outDir, "..", "fixture-frame-ready");
 
 /** Decodable mono PCM under the native track name, for file-clock and recovery fixtures. */
 function fixturePcm(durationMs: number, marker?: { firstSecond: number; source: string }): Buffer {
@@ -205,7 +206,9 @@ if (args[0] === "audio-record") {
             process.stdin.prependOnceListener("data", () => process.exit(1));
             process.stdin.once("end", () => process.exit(1));
         };
-        const gate = value("--fixture-fail-when");
+        const gate =
+            value("--fixture-fail-when") ??
+            (fixtureMode === "--fixture-audio-session-restart-fails" ? frameReady : undefined);
         if (gate) {
             const { waitForPath } = await import("@genesiscz/utils/fs/watcher");
             if (!(await waitForPath(gate, { timeoutMs: 10_000 }))) {
@@ -383,6 +386,9 @@ if (fixtureMode === "--fixture-screen-changes") {
     }
 } else {
     const firstPng = keep({ reason: "first" });
+    if (fixtureMode === "--fixture-audio-session-restart-fails") {
+        writeFileSync(frameReady, "");
+    }
     if (capturedAt !== undefined) {
         const landed = new Date(capturedAt + 800);
         utimesSync(firstPng, landed, landed);
