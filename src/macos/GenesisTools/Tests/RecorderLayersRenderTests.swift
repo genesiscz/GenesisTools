@@ -248,4 +248,41 @@ final class RecorderLayersRenderTests: XCTestCase {
             XCTAssertEqual(segment.timeMapping.target.duration.seconds, times.2, accuracy: 0.001)
         }
     }
+
+    func testMissingInputUsedByPictureAndSoundLeavesAnExportableComposition() async throws {
+        let dir = try folder()
+        var edit = try await source(in: dir, mixed: true)
+        let file = "removed.mov"
+        edit.layers = .init(media: [.init(id: "inset", kind: .video, file: file, startUs: 0, endUs: durationUs, videoSound: true)])
+        edit.audio.lanes = [.init(id: "mic", source: .mic, file: file)]
+        let rendered = try await render(edit)
+        XCTAssertTrue(rendered.composition.tracks(withMediaType: .audio).isEmpty, "the skipped mic must not restore the mixed proxy")
+        let url = dir.appendingPathComponent("edited.mp4")
+        _ = try await EditExporter.export(project: edit, to: url) { _ in }
+        let result = AVURLAsset(url: url)
+        let picture = try await result.loadTracks(withMediaType: .video)
+        let sound = try await result.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(picture.count, 1)
+        XCTAssertTrue(sound.isEmpty)
+    }
+
+    func testMusicAndVoiceoverUseTheirOwnLevelMultipliedByTheirLane() async throws {
+        let dir = try folder()
+        var edit = try await source(in: dir)
+        try tone(dir.appendingPathComponent("bed.wav"), frequencies: [110])
+        try tone(dir.appendingPathComponent("voice.wav"), frequencies: [440])
+        edit.audio.music = .init(file: dir.appendingPathComponent("bed.wav").path, volume: 0.6, duck: 0, fadeMs: 0)
+        edit.audio.voiceovers = [.init(id: "voice", atUs: 0, file: dir.appendingPathComponent("voice.wav").path, durationUs: durationUs)]
+        edit.audio.lanes = [.init(id: "music", source: .music, volume: 0.5), .init(id: "voice", source: .voiceover, muted: true)]
+        let result = try await render(edit)
+        let inputs = try XCTUnwrap(result.audioMix?.inputParameters)
+        XCTAssertEqual(inputs.count, 2)
+        for input in inputs {
+            let track = try XCTUnwrap(result.composition.track(withTrackID: input.trackID))
+            let file = try XCTUnwrap(track.segments.first { !$0.isEmpty }?.sourceURL?.lastPathComponent)
+            var start: Float = -1, end: Float = -1, range = CMTimeRange.zero
+            XCTAssertTrue(input.getVolumeRamp(for: .zero, startVolume: &start, endVolume: &end, timeRange: &range))
+            XCTAssertEqual(start, file == "bed.wav" ? 0.3 : 0, accuracy: 0.001)
+        }
+    }
 }
