@@ -43,6 +43,7 @@ export const person = defineArea({
                     run: async (ctx): Promise<RequestOutcome | Pass> => {
                         const outcome: ActionOutcome<RequestOutcome> = await ctx.terminal.prompt(ctx.args, {
                             timeoutMs: ctx.timeoutMs,
+                            signal: ctx.signal,
                         });
                         return outcome.status === "ran"
                             ? outcome.value
@@ -65,6 +66,7 @@ export const person = defineArea({
             native: async (ctx): Promise<RequestOutcome | Pass> => {
                 const outcome: ActionOutcome<RequestOutcome> = await ctx.person.showWindow(ctx.args, {
                     timeoutMs: ctx.timeoutMs,
+                    signal: ctx.signal,
                 });
                 return outcome.status === "ran"
                     ? outcome.value
@@ -84,6 +86,7 @@ export const person = defineArea({
                     }
                     const outcome: ActionOutcome<RequestOutcome> = await ctx.person.showWindow(ctx.args, {
                         timeoutMs: ctx.timeoutMs,
+                        signal: ctx.signal,
                     });
                     return outcome.status === "ran"
                         ? outcome.value
@@ -94,6 +97,7 @@ export const person = defineArea({
                 notification: async (ctx): Promise<RequestOutcome | Pass> => {
                     const outcome: ActionOutcome<RequestOutcome> = await ctx.person.notifyThenAsk(ctx.args, {
                         timeoutMs: ctx.timeoutMs,
+                        signal: ctx.signal,
                     });
                     return outcome.status === "ran"
                         ? outcome.value

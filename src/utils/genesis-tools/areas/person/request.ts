@@ -190,7 +190,8 @@ export function defineRequest<TArgs extends z.ZodType>(spec: {
                         deadlineSeconds: ctx.timeoutMs / 1000,
                         takesFocus: personConfigSchema.parse(ctx.areaConfig).dialog.takesFocus,
                     },
-                    { timeoutMs: ctx.timeoutMs }
+                    // The nested delivery stops at this action's deadline or the caller's cancel.
+                    { timeoutMs: ctx.timeoutMs, signal: ctx.signal }
                 );
                 if (ran.status !== "ran") {
                     return {
