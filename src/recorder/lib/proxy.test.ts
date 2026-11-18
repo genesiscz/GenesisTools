@@ -1,15 +1,20 @@
 import { describe, expect, it, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { audioLanesOf } from "@genesiscz/utils/recording-editor/audio-lanes";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
+import { SERVICE_PROTOCOL } from "@genesiscz/utils/screen-recorder/service-link";
 import * as video from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
-import { readUndoSteps } from "./edit";
+import * as edits from "./edit";
+import { EditSession } from "./edit-session";
 import { prepareFramesMovie, switchDisplay } from "./frames-movie";
 import { audioOncePerSource, boxInFrame, boxInProxy, chosenPlan, framesForPlan, makeProxy, proxyCanvas } from "./proxy";
 import { findOnScreen } from "./screen-search";
+import { startRecorderService } from "./service";
 
 test("proxy retains valid audio before a truncated index row", async () => {
     const folder = mkdtempSync(join(tmpdir(), "proxy-audio-"));
@@ -156,7 +161,7 @@ describe("a frames recording plays each source's sound once, though every displa
             }
 
             commands.push(options.command);
-            writeFileSync(join(folder, ".proxy.partial.mp4"), "fixture output");
+            writeFileSync(options.command[options.command.length - 1], "fixture output");
             return "";
         });
 
@@ -182,7 +187,7 @@ describe("a frames recording plays each source's sound once, though every displa
         const commands: string[][] = [];
         const encode = spyOn(video, "runVideoCommand").mockImplementation(async (options) => {
             commands.push(options.command);
-            writeFileSync(join(folder, ".proxy.partial.mp4"), "fixture output");
+            writeFileSync(options.command[options.command.length - 1], "fixture output");
             return "";
         });
 
@@ -402,7 +407,7 @@ describe("a display switch keeps the proxy's picture, and the edit made on it", 
             expect(fitted.zooms.find((zoom) => zoom.id === "z2")?.focusY).toBe(0.25);
             expect(fitted.lens?.items[0].y).toBeCloseTo(0.14, 6);
 
-            const [step] = readUndoSteps(editPath);
+            const [step] = edits.readUndoSteps(editPath);
             expect(step.ops).toEqual(["fitToProxy"]);
             expect(step.before.redactions?.[0].y).toBe(0.1);
             expect(step.afterRevision).toBe(fitted.revision);
@@ -411,7 +416,7 @@ describe("a display switch keeps the proxy's picture, and the edit made on it", 
             const text = readFileSync(editPath, "utf8");
             await switchDisplay(folder, { fromUs: 0, toUs: 4_000_000, displayId: 2 });
             expect(readFileSync(editPath, "utf8")).toBe(text);
-            expect(readUndoSteps(editPath)).toHaveLength(1);
+            expect(edits.readUndoSteps(editPath)).toHaveLength(1);
         } finally {
             spy.mockRestore();
         }
@@ -563,4 +568,250 @@ test("proxy on a recording that has its movie says a proxy is for frames recordi
     await expect(makeProxy(folder)).rejects.toThrow(
         "has its movie (screen.mp4); a proxy is only for a frames recording"
     );
+});
+
+const micTrack = { source: "mic", path: "audio/mic.m4a", startOffsetMs: -35 };
+const systemTrack = { source: "system", path: "audio/system.m4a", startOffsetMs: 120 };
+
+/** Only ffprobe is stubbed. The recorder opens the manifest, edit and media paths in the fixture folder. */
+async function withSoundRecording(
+    options: {
+        tracks: Array<{ source: string; path?: string; startOffsetMs?: number; warnings?: string[] }>;
+        native?: boolean;
+    },
+    work: (fixture: { folder: string; movie: string; edit: string }) => Promise<void>
+) {
+    const folder = mkdtempSync(join(tmpdir(), "recorder-lanes-"));
+    const movie = join(folder, options.native ? "screen.mp4" : "proxy.mp4");
+    const edit = join(folder, "edit.json");
+    mkdirSync(join(folder, "audio"));
+    writeFileSync(movie, "fixture");
+    for (const track of options.tracks) {
+        if (track.path) {
+            writeFileSync(join(folder, track.path), "fixture audio");
+        }
+    }
+
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "fixture",
+            title: "Fixture",
+            startedAt: "2026-01-01T00:00:00Z",
+            frames: [],
+            displays: [],
+            settings: { tracks: options.tracks, ...(options.native ? { kind: "video" } : {}) },
+        })
+    );
+    const probe = spyOn(video, "runVideoCommand").mockImplementation(async ({ command }) => {
+        expect(command[0]).toBe("ffprobe");
+        const stream = command[command.indexOf("-select_streams") + 1];
+        if (stream === "a") {
+            expect(command.at(-1)).toBe(movie);
+            return options.native ? "1\n2\n" : "1\n";
+        }
+        expect(stream).toBe("v:0");
+        const input = command.at(-1);
+        expect([movie, join(folder, "overlay.mp4")]).toContain(input);
+        return SafeJSON.stringify({ streams: [{ width: 160, height: 90, duration: input === movie ? "20" : "2.5" }] });
+    });
+    try {
+        await work({ folder, movie, edit });
+    } finally {
+        probe.mockRestore();
+    }
+}
+
+describe("recording sound facts", () => {
+    test("the first save keeps mic and system offsets and excludes the proxy track", async () => {
+        await withSoundRecording({ tracks: [systemTrack, micTrack] }, async ({ movie, edit }) => {
+            const opened = await edits.openProject(movie);
+            expect(existsSync(edit)).toBe(false);
+            const expected = [
+                { id: "mic", source: "mic", file: micTrack.path, offsetMs: -35, muted: false, volume: 1 },
+                { id: "system", source: "system", file: systemTrack.path, offsetMs: 120, muted: false, volume: 1 },
+            ];
+            expect(opened.project.audio.lanes).toEqual(expected);
+            await edits.editProject(movie, [{ op: "volume", volume: 0.8 }]);
+            expect(readProject(edit).audio.lanes).toEqual(expected);
+        });
+    });
+
+    test("one source stays implicit on disk and remains editable by its recording name", async () => {
+        await withSoundRecording({ tracks: [micTrack] }, async ({ movie, edit }) => {
+            await edits.editProject(movie, [{ op: "volume", volume: 0.8 }]);
+            expect(readProject(edit).audio).not.toHaveProperty("lanes");
+            await edits.editProject(edit, [{ op: "audioLane", id: "mic", volume: 0.5 }]);
+            expect(readProject(edit).audio.lanes).toEqual([
+                expect.objectContaining({ id: "mic", volume: 0.5, offsetMs: -35 }),
+            ]);
+        });
+    });
+
+    test("a source which recorded no file has a check issue and no lane", async () => {
+        const failed = { source: "system", warnings: ["No samples arrived"] };
+        await withSoundRecording({ tracks: [micTrack, failed] }, async ({ movie, edit }) => {
+            const { recordingAudioIssues } = await import("./proxy");
+            expect(recordingAudioIssues(movie)).toEqual([
+                expect.objectContaining({
+                    kind: "recording-audio-warning",
+                    item: "audio source system",
+                    message: "System sound recorded no file. No samples arrived",
+                }),
+            ]);
+            const facts = await edits.audioFactsOf(movie);
+            const { project } = await edits.openProject(movie);
+            expect(audioLanesOf(project, facts).map((lane) => lane.id)).toEqual(["mic"]);
+            expect(project.audio).not.toHaveProperty("lanes");
+            expect(existsSync(edit)).toBe(false);
+        });
+    });
+
+    test("session.open sends the sources of an old edit and only a lane change writes them", async () => {
+        await withSoundRecording({ tracks: [micTrack, systemTrack] }, async ({ movie, edit }) => {
+            const project = wholeProject({ video: movie, durationUs: 20_000_000, width: 160, height: 90 });
+            writeProject(edit, { ...project, audio: { ...project.audio, mutedTracks: [0] } });
+            const before = readFileSync(edit, "utf8");
+            const start = await startRecorderService({ dir: mkdtempSync(join(tmpdir(), "rs-")), idleMs: 0 });
+            if (start.status !== "started") {
+                throw new Error("fixture service already running");
+            }
+            try {
+                const client = await RpcSocketClient.connect({
+                    socket: start.service.entry.socket,
+                    label: "recorder service",
+                    logScope: "recorder-test",
+                });
+                try {
+                    await client.call("hello", { role: "client", protocol: SERVICE_PROTOCOL, pid: process.pid });
+                    const params = { path: edit, holder: "fixture" };
+                    const opened = await client.call<unknown>("session.open", params);
+                    expect(opened).toMatchObject({
+                        audioFacts: {
+                            movieTracks: 1,
+                            mixedFrom: [
+                                { source: "mic", file: micTrack.path, offsetMs: -35 },
+                                { source: "system", file: systemTrack.path, offsetMs: 120 },
+                            ],
+                        },
+                    });
+                    expect(await client.call<unknown>("session.open", params)).toEqual(opened);
+                    expect(readFileSync(edit, "utf8")).toBe(before);
+                    await client.call("edit.apply", {
+                        path: edit,
+                        ops: [{ op: "audioLane", id: "mic", muted: false }],
+                    });
+                    expect(readProject(edit).audio.lanes?.map(({ id, muted }) => [id, muted])).toEqual([
+                        ["mic", false],
+                        ["system", true],
+                    ]);
+                } finally {
+                    client.close();
+                }
+            } finally {
+                start.service.stop("test");
+            }
+        });
+    });
+
+    test("native movie streams keep numbered tracks regardless of the requested sources", async () => {
+        await withSoundRecording({ native: true, tracks: [systemTrack, micTrack] }, async ({ movie }) => {
+            const { project } = await edits.openProject(movie);
+            expect(project.audio.lanes?.map(({ id, source, track, name }) => ({ id, source, track, name }))).toEqual([
+                { id: "movie-0", source: "movie", track: 0, name: undefined },
+                { id: "movie-1", source: "movie", track: 1, name: undefined },
+            ]);
+        });
+    });
+
+    test("a source with pieces after a gap reopens as one complete lane beside the original proxy mix", async () => {
+        const { folder, files } = duplicateSoundFolder([
+            { display: 1, atMs: 1000, durationMs: 3000 },
+            { display: 2, atMs: 1200, durationMs: 2800 },
+            { display: 1, atMs: 6000, durationMs: 1000 },
+        ]);
+        const movie = join(folder, "proxy.mp4");
+        const commands: string[][] = [];
+        const encode = spyOn(video, "runVideoCommand").mockImplementation(async ({ command }) => {
+            if (command[0] === "ffprobe") {
+                expect(command.at(-1)).toBe(movie);
+                return "1\n";
+            }
+            commands.push(command);
+            writeFileSync(command[command.length - 1], "fixture mix");
+            return "";
+        });
+        try {
+            await makeProxy(folder, { display: 1 });
+            const facts = await edits.audioFactsOf(movie);
+            expect(facts.movieTracks).toBe(1);
+            expect(facts.mixedFrom).toHaveLength(1);
+            const [system] = facts.mixedFrom;
+            expect(system).toMatchObject({ source: "system", offsetMs: 0 });
+            expect(existsSync(join(folder, system.file))).toBe(true);
+            expect(commands).toHaveLength(2);
+            for (const argv of commands) {
+                expect(argv.filter((arg) => files.includes(arg))).toEqual([files[0], files[2]]);
+                const graph = argv[argv.indexOf("-filter_complex") + 1];
+                expect(graph).toContain("adelay=1000:all=1");
+                expect(graph).toContain("adelay=6000:all=1");
+            }
+        } finally {
+            encode.mockRestore();
+        }
+    });
+
+    test("an image uses the supplied source playhead or the first kept frame headlessly", async () => {
+        await withSoundRecording({ tracks: [] }, async ({ movie, edit }) => {
+            const project = wholeProject({ video: movie, durationUs: 20_000_000, width: 160, height: 90 });
+            project.clips[0].fromUs = 3_000_000;
+            writeProject(edit, project);
+            const image = { op: "layerAdd", kind: "image", file: "logo.png" } as const;
+            await edits.editProject(edit, [image], { playheadUs: 7_000_000 });
+            await edits.editProject(edit, [image]);
+            expect(readProject(edit).layers?.media.map(({ startUs, endUs }) => [startUs, endUs])).toEqual([
+                [7_000_000, 12_000_000],
+                [3_000_000, 8_000_000],
+            ]);
+        });
+    });
+
+    test("a layer uses the source playhead and the duration of its own relative video file", async () => {
+        await withSoundRecording({ tracks: [] }, async ({ movie, folder, edit }) => {
+            writeFileSync(join(folder, "overlay.mp4"), "short overlay");
+            const session = await EditSession.open(movie, { onChange: () => {} });
+            try {
+                await session.apply([{ op: "layerAdd", kind: "video", file: "overlay.mp4" }], {
+                    by: "editor",
+                    playheadUs: 4_000_000,
+                });
+                await session.apply(
+                    [{ op: "layerAdd", kind: "video", file: "explicit.mp4", startUs: 1_000_000, endUs: 1_500_000 }],
+                    { by: "editor", playheadUs: 9_000_000 }
+                );
+            } finally {
+                session.close();
+            }
+            expect(readProject(edit).layers?.media.map(({ startUs, endUs }) => [startUs, endUs])).toEqual([
+                [4_000_000, 6_500_000],
+                [1_000_000, 1_500_000],
+            ]);
+        });
+    });
+
+    test("export protects the lane and layer files in the recording folder", async () => {
+        await withSoundRecording({ tracks: [micTrack, systemTrack] }, async ({ movie, folder }) => {
+            const { project } = await edits.editProject(movie, [
+                { op: "layerAdd", kind: "video", file: "overlay.mp4", endUs: 2_000_000 },
+            ]);
+            expect(edits.exportInputsOf(project)).toEqual(
+                expect.arrayContaining([
+                    join(folder, micTrack.path),
+                    join(folder, systemTrack.path),
+                    join(folder, "overlay.mp4"),
+                ])
+            );
+        });
+    });
 });
