@@ -83,6 +83,88 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(draft.joins, [""])
     }
 
+    // MARK: Undo ends its notice (w_o8fbzbq8)
+
+    func testAnUndoThatWorkedEndsItsNoticeAsUndoneAndTheNoticeFades() async throws {
+        let clock = ManualNoticeClock()
+        let notices = NoticeStackModel(clock: clock, announces: false)
+        let id = notices.push(StackedNotice(text: "Removed Dana Example from the meeting", actions: [.undo { _ in }]))
+        notices.press(try XCTUnwrap(notices.notice(id)?.actions.first), of: id)
+        XCTAssertEqual(notices.waiting[id], "Undoing…")
+
+        await notices.settleUndo(id, done: "Undone: Dana Example is back in the meeting, 02:00 to the end") {}.value
+        let notice = try XCTUnwrap(notices.notice(id), "the answer takes the Undo's place")
+        XCTAssertEqual(notice.text, "Undone: Dana Example is back in the meeting, 02:00 to the end")
+        XCTAssertNil(notices.waiting[id], "no notice stays on Undoing… after the undo finished")
+        XCTAssertTrue(notice.actions.isEmpty)
+        clock.advance(by: NoticeStackTiming.standard.plainSeconds + 0.1)
+        XCTAssertFalse(notices.contains(id), "a plain Undone notice fades")
+    }
+
+    func testAnUndoThatFailedSaysSoAndItsRetryWaitsInPlace() async throws {
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        let id = notices.push(StackedNotice(text: "Removed Dana Example from the meeting", actions: [.undo { _ in }]))
+        notices.press(try XCTUnwrap(notices.notice(id)?.actions.first), of: id)
+        var attempts = 0
+        let work: @MainActor () async throws -> Void = {
+            attempts += 1
+            if attempts == 1 { throw MeetingsCLI.Failure(sentence: "The record is locked.", detail: "attendance m") }
+        }
+
+        await notices.settleUndo(id, done: "Undone: Dana Example is back", work).value
+        let failed = try XCTUnwrap(notices.notice(id))
+        XCTAssertEqual(failed.text, "Not undone: The record is locked.")
+        XCTAssertEqual(failed.tone, .error, "an error stays until it is closed")
+        XCTAssertNil(notices.waiting[id])
+        let retry = try XCTUnwrap(failed.actions.first)
+        XCTAssertEqual(retry.label, "Retry")
+        XCTAssertEqual(retry.afterPress, .wait("Undoing…"), "Retry waits in the notice's place, as the Undo did")
+
+        notices.press(retry, of: id)
+        try await until("the retried undo answers") { notices.notice(id)?.text == "Undone: Dana Example is back" }
+        XCTAssertEqual(attempts, 2)
+        XCTAssertNil(notices.waiting[id])
+    }
+
+    func testThePersonEditorsUndoWritesWhatTheNoticeReportsAndSaysSo() throws {
+        let dana = PersonStay(name: "Dana Example", fromSec: 120, toSec: nil, atMic: false, via: "carol-laptop", stays: 1)
+        var moved = dana
+        moved.fromSec = 300
+        let removal = try XCTUnwrap(PersonStay.undo(after: nil, before: dana, meeting: "m"))
+        XCTAssertEqual(removal.params, dana.params(meeting: "m"), "undoing a removal adds them back as they were")
+        XCTAssertEqual(removal.done, "Undone: Dana Example is back in the meeting, 02:00 to the end")
+        let addition = try XCTUnwrap(PersonStay.undo(after: dana, before: nil, meeting: "m"))
+        XCTAssertEqual(addition.params, dana.params(meeting: "m", remove: true), "undoing an addition removes them")
+        XCTAssertEqual(addition.done, "Undone: Dana Example is out of the meeting again")
+        let edit = try XCTUnwrap(PersonStay.undo(after: moved, before: dana, meeting: "m"))
+        XCTAssertEqual(edit.params, dana.params(meeting: "m"), "undoing an edit writes the stay from before")
+        XCTAssertEqual(edit.done, "Undone: Dana Example stays 02:00 to the end again")
+        XCTAssertNil(PersonStay.undo(after: nil, before: nil, meeting: "m"))
+    }
+
+    /// The kit's Undo leaves its notice on "Undoing…" until something replaces it, so an Undo whose closure drops the
+    /// notice's id can never end it. Every Undo in the Meetings part takes the id.
+    func testNoMeetingsUndoDropsItsNoticesID() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Parts/Meetings")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 20, "the scan reads the part's sources")
+        let dropped = try NSRegularExpression(pattern: #"\.undo \{ (\[[^\]]*\] )?_ in"#)
+        var found: [String] = []
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for match in dropped.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                let line = text[..<(Range(match.range, in: text)?.lowerBound ?? text.startIndex)].filter { $0 == "\n" }.count + 1
+                found.append("\(file.lastPathComponent):\(line)")
+            }
+        }
+        XCTAssertEqual(found, [], "an Undo that drops its notice's id leaves the notice on Undoing…")
+        let control = ".undo { [weak self] _ in self?.undo() }"
+        XCTAssertEqual(dropped.numberOfMatches(in: control, range: NSRange(control.startIndex..., in: control)), 1,
+                       "the pattern finds the defect")
+    }
+
     func testTheEditorAsksForClockTimesAndKeepsRemoveApart() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         let editor = PersonStayEditor(detail: detail, original: PersonStay(name: "Alice Example", fromSec: 5, toSec: 600, atMic: true,
