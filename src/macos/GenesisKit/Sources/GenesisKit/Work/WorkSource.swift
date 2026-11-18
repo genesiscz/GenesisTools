@@ -173,7 +173,8 @@ public final class LiveWorkSource: WorkSource {
     }
 
     public func projects() async throws -> [String] {
-        let rows: [WorkRowValue] = try reply(await rpc.work.list(WorkListParams(fields: ["ref", "state", "type", "title", "project"], limit: 5000)))
+        // Only the project field: 37 KB for the real store's 5,000 rows, where whole rows were 460 KB.
+        let rows: [ProjectOnly] = try reply(await rpc.work.list(WorkListParams(fields: ["project"], limit: 5000)))
         return Array(Set(rows.compactMap(\.project))).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
@@ -251,6 +252,7 @@ public final class LiveWorkSource: WorkSource {
         var skipped: [Skipped]
     }
     private struct IgnoredData: Decodable {}
+    private struct ProjectOnly: Decodable { var project: String? }
     private struct TreeData: Decodable { var containers: [WorkContainerValue] }
     private struct ConfigData: Decodable {
         struct Row: Decodable {
