@@ -4,6 +4,7 @@ import { nameKey } from "@genesiscz/utils/meetings/people";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { type DictionaryEntry, dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
+import { presentAt } from "@genesiscz/utils/transcribe/evidence";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
 import {
     type HeardContext,
@@ -144,6 +145,18 @@ function capitalMidSentence(heard: string, transcript: readonly TranscriptEntry[
  *   like an identifier, or seen twice with a capital that no sentence start explains (a name).
  * The question carries its impact and signature in `evidence`; `selectQuestions` clusters and ranks them.
  */
+/**
+ * Who the presence places in the call at `atSec`, and who it knows of but places outside the call then. Every
+ * speaker question offers only the first and never the second (I13: a person is offered only inside their window).
+ */
+export function presenceAt(presence: Presence[] | undefined, atSec: number): { present: string[]; absent: string[] } {
+    const present = presentAt(presence ?? [], atSec);
+    const absent = [...new Set((presence ?? []).map((stay) => stay.name))].filter(
+        (name) => !present.some((other) => sameName(name, other))
+    );
+    return { present, absent };
+}
+
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
     const low =
         item.evidence?.listen === true || (item.confidence !== undefined && item.confidence < context.listenBelow);
@@ -170,12 +183,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             return undefined;
         }
 
-        const present = (context.presence ?? [])
-            .filter((stay) => stay.fromSec <= item.fromSec && stay.toSec > item.fromSec)
-            .map((stay) => stay.name);
-        const absent = (context.presence ?? [])
-            .filter((stay) => !present.some((name) => sameName(name, stay.name)))
-            .map((stay) => stay.name);
+        const { present, absent } = presenceAt(context.presence, item.fromSec);
         // The people the range's typed scores weigh come last, so the first two choices (the signature) stay as before.
         const choices = [
             ...(item.speaker ? [item.speaker] : []),

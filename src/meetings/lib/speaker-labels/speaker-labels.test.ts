@@ -553,6 +553,38 @@ describe("speaker-label integration", () => {
         expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(reopened.items);
     });
 
+    test("a stranger stretch never offers a person outside their stay at that time", async () => {
+        const { store, record, meeting, opened } = await runnerFixture({
+            participants: [
+                { name: "Alice Example", self: true, from: ["fixture"] },
+                { name: "Bob Example", from: ["fixture"] },
+                { name: "Carol Example", from: ["fixture"] },
+            ],
+            seats: { room: ["Alice Example"], remote: [{ name: "Bob Example" }, { name: "Carol Example" }] },
+        });
+        meeting.transcript = [0, 10, 20, 30].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "Yes." }));
+        spies.push(
+            spyOn(opened, "presence").mockResolvedValue([
+                { name: "Alice Example", fromSec: 0, toSec: 1000 },
+                { name: "Bob Example", fromSec: 0, toSec: 1000 },
+                { name: "Carol Example", fromSec: 500, toSec: 900 },
+            ])
+        );
+        const labels: LineLabel[] = [0, 1, 2].map((index) => ({
+            labeler: "voice",
+            index,
+            seat: "mic",
+            reason: "not-the-seat-person",
+            score: 0.2,
+            next: { person: "Alice Example", score: 0.2 },
+        }));
+        spies.push(spyOn(labelers, "proposeSpeakerLabels").mockResolvedValue(labels));
+        await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        const asked = new MeetingStore(store.storage).read(record.id)!.items.filter((item) => item.kind === "question");
+        expect(asked).toHaveLength(1);
+        expect(asked[0]).toMatchObject({ fromSec: 0, choices: ["Alice Example", "Bob Example"] });
+    });
+
     test("a voice goodbye reaches the departure reason in the suggestion pass", async () => {
         const { record, meeting } = await runnerFixture({
             participants: [{ name: "Alice Example", self: true, from: ["fixture"] }],
