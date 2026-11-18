@@ -100,6 +100,11 @@ function buildBy(deps: HandoffDeps): HandoffEventBy {
     };
 }
 
+/** The poster credential of a handoff, for a write the owner makes through the work store. */
+export function posterEditId(id: string, deps: HandoffDeps = {}): string | undefined {
+    return withDb(deps, (db) => getHandoffById(db, id)?.editId);
+}
+
 function withDb<T>(deps: HandoffDeps, fn: (db: Database) => T): T {
     const db = openHandoffModel(deps.dbPath);
 

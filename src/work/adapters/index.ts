@@ -3,7 +3,7 @@
  * lineage of a T3 child thread.
  */
 // lint-rules-ignore: the adapter of the LegacyHandoffs port writes through the old executor until the switch (spec P1, P10)
-import { executeHandoffActions, type HandoffDeps, postHandoff } from "@app/handoff/executor";
+import { executeHandoffActions, type HandoffDeps, posterEditId, postHandoff } from "@app/handoff/executor";
 // lint-rules-ignore: the adapter of the SessionDelivery port wraps deliverToSession until the sessions area exists (spec, Session delivery)
 import { deliverToSession, isLiveDelivery, locateDelivery } from "@app/question/lib/decisions/deliver";
 
@@ -40,8 +40,16 @@ export function legacyHandoffs(deps: HandoffDeps = {}): LegacyHandoffs {
                 }
 
                 const { handoff, ...rest } = action;
+                const editId =
+                    rest.action === "add_tasks" && rest.asOwner === true ? posterEditId(handoff, deps) : undefined;
+                const input = rest.action === "add_tasks" ? { action: rest.action, tasks: rest.tasks } : rest;
                 const response = executeHandoffActions(
-                    { id: handoff, actions: [{ ...rest }], include: ["tasks"] },
+                    {
+                        id: handoff,
+                        ...(editId !== undefined ? { editId } : {}),
+                        actions: [{ ...input }],
+                        include: ["tasks"],
+                    },
                     deps
                 );
                 const result = response.results[0];

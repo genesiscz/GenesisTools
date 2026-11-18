@@ -38,6 +38,8 @@ export type LegacyAction =
           action: "add_tasks";
           handoff: string;
           tasks: { text: string; acceptanceCriteria?: string; item?: string }[];
+          /** The owner adds them: the old store wants the poster's credential, which the owner may use. */
+          asOwner?: boolean;
       }
     | {
           action: "post";
