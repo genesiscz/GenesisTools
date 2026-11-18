@@ -93,8 +93,8 @@ if ! bun run typecheck --prefer-tsc-rs; then
 fi
 stage_done
 
-# The dashboard smoke (scripts/ci/dashboard-smoke.ts) runs in CI's checks job, not here (decision 21, 2026-11-05):
-# every agent's push booted all eight Vite dashboards, and ten agents pushing at once exhausted the Mac's file handles.
+# The manual CI dashboard option runs the smoke on a hosted runner. Concurrent local pushes used to boot
+# eight Vite dashboards apiece and exhaust the Mac's file handles.
 
 # The repo guards from the CI "checks" job (ci.yml, after the TypeScript check). They used to run on
 # CI only, so a pid probe or a hard-coded command name reached every PR of a stack before anything
