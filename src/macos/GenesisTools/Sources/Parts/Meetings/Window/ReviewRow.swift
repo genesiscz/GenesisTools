@@ -170,6 +170,7 @@ struct ReviewRowView: View, Equatable {
                 .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.primary))
                 .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(asks ? KitHue.ask.ink.opacity(0.18) : Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                .instantTooltip(row.questionPriority ?? "")
             // The label, the kind and the score never break: the playing bar takes only the room they leave. Beside it at
             // 900 pt "Question" broke into "Questi" and "on", then "Q15" into "Q1" and "5", then "30 %".
             Text(verbatim: Self.kindWord(row.kind)).font(.system(size: 11, weight: .semibold))
@@ -729,7 +730,7 @@ struct ReviewRowView: View, Equatable {
 
     private var accessibilityLabel: String {
         let state = row.isOpen ? "open" : Self.decidedWords(row)
-        return "\(row.label), \(Self.kindWord(row.kind)), \(row.what), \(state)"
+        return [row.label, Self.kindWord(row.kind), row.what, state, row.questionPriority].compactMap { $0 }.joined(separator: ", ")
     }
 
     @ViewBuilder
