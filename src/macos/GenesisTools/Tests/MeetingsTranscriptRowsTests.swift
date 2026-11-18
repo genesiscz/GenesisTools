@@ -240,6 +240,15 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertFalse(text.contains("1)"), text)
     }
 
+    /// M12 and M10: a line's indicator glyph shows only what the block does not say, and a service failure reads as words.
+    func testTheIndicatorGlyphAndTheServiceFailureSaySomething() {
+        XCTAssertFalse(TranscriptLine.Indicator(names: ["Alice Example"], ignored: nil).addsTo(speaker: "Alice Example"))
+        XCTAssertFalse(TranscriptLine.Indicator(names: [], ignored: nil).addsTo(speaker: "Alice Example"))
+        XCTAssertTrue(TranscriptLine.Indicator(names: ["Bob Example"], ignored: nil).addsTo(speaker: "Alice Example"))
+        XCTAssertTrue(TranscriptLine.Indicator(names: ["Alice Example"], ignored: "stretch-stuck").addsTo(speaker: "Alice Example"))
+        XCTAssertEqual(MeetingsService.Unavailable(reason: "refused").localizedDescription, "The Meetings service did not answer (refused)")
+    }
+
     /// L23: the spot check's measured share, from the answered spot-check questions.
     func testTheSpotCheckRate() throws {
         XCTAssertNil(SpotCheckRate.of([]))
