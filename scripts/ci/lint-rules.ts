@@ -2481,7 +2481,8 @@ const RATCHET_INPUTS = [
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
     "scripts/ci/proxy-provider-ratchet.ts",
-    ...(includeRosters ? ["scripts/ci/rosters/rosters.json"] : []),
+    // Its growth check stays on with --no-rosters: comparing two manifests is cheap, and only the roster scan is deferred.
+    "scripts/ci/rosters/rosters.json",
     "scripts/ci/tool-command-ratchet.ts",
     "scripts/ci/transcript-format-ratchet.ts",
 ];
@@ -2626,7 +2627,14 @@ function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string;
     }
 }
 
-export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: string } = {}): Set<string> | null {
+/**
+ * `workingTree` compares the base with the files on disk (staged and unstaged edits of tracked files), not with HEAD:
+ * a local run lints what an agent is about to commit, and the pre-push hook and CI keep comparing commits.
+ */
+export function changedFiles(
+    base: string,
+    { cwd = process.cwd(), workingTree = false }: { cwd?: string; workingTree?: boolean } = {}
+): Set<string> | null {
     // Prefer the merge base, but fall back to diffing the ref directly. CI
     // checks out at depth 1 and fetches only the PR's base commit, so there is
     // no shared history for `merge-base` to walk — and GitHub's
@@ -2634,7 +2642,7 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
     const merged = spawnWithDeadline(["git", "merge-base", base, "HEAD"], { cwd });
     const from = merged.exitCode === 0 ? merged.stdout.toString().trim() : base;
     const diff = spawnWithDeadline(
-        ["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, "HEAD"],
+        ["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, ...(workingTree ? [] : ["HEAD"])],
         {
             cwd,
         }
@@ -2729,7 +2737,9 @@ export async function targetFiles(): Promise<string[]> {
         return included;
     }
 
-    const changed = changedFiles(process.argv[changedIndex + 1] ?? "origin/master");
+    const changed = changedFiles(process.argv[changedIndex + 1] ?? "origin/master", {
+        workingTree: process.argv.includes("--working-tree"),
+    });
 
     return changed === null ? included : included.filter((file) => changed.has(file));
 }

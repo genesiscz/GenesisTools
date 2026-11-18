@@ -1,12 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    cpSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import { TERMINAL_ENV_KEYS } from "@genesiscz/utils/agent/identity/terminals";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
+import { lintRulesPlan } from "../commands/lint-rules";
 import {
     AGENT_BINARY_TABLE_RATCHET,
     HARDCODED_ACCOUNT_ENV_RATCHET,
@@ -36,6 +47,7 @@ import {
     staticallyImportsReadme,
     withinCountRatchets,
 } from "./lint-rules";
+import { heavyCheckLockPath } from "./local-check-slot";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
@@ -1668,6 +1680,111 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             run(["add", "--", "scripts/ci/harness-ratchet.ts"]);
             run(["commit", "-qm", "grow exemption"]);
             expect(() => changedFiles(base, { cwd: dir })).toThrow("EXAMPLE_RATCHET: src/new.ts");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
+
+    test("a local run sees edits on disk, and --no-rosters still refuses a grown roster manifest", () => {
+        const dir = mkdtempSync(join(tmpdir(), "lint-worktree-"));
+        const run = (args: string[]) => {
+            const result = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+                cwd: dir,
+                encoding: "utf8",
+                env: { ...process.env },
+            });
+            expect(result.status, result.stderr).toBe(0);
+            return result.stdout.trim();
+        };
+
+        try {
+            mkdirSync(join(dir, "src"));
+            mkdirSync(join(dir, "scripts/ci/rosters"), { recursive: true });
+            writeFileSync(join(dir, "biome.json"), "{}");
+            writeFileSync(join(dir, "src/clean.ts"), "export const a = 1;\n");
+            writeFileSync(join(dir, "scripts/ci/rosters/rosters.json"), '{ "roster-a": { "src/one.ts": 1 } }\n');
+            run(["init", "-q"]);
+            run(["config", "user.name", "Fixture User"]);
+            run(["config", "user.email", "fixture@example.com"]);
+            run(["add", "--", "biome.json", "src/clean.ts", "scripts/ci/rosters/rosters.json"]);
+            run(["commit", "-qm", "base"]);
+            const base = run(["rev-parse", "HEAD"]);
+
+            writeFileSync(join(dir, "src/clean.ts"), "export const a = 2;\n");
+            writeFileSync(join(dir, "src/staged.ts"), "export const b = 1;\n");
+            run(["add", "--", "src/staged.ts"]);
+            expect(changedFiles(base, { cwd: dir })).toEqual(new Set());
+            expect(changedFiles(base, { cwd: dir, workingTree: true })).toEqual(
+                new Set(["src/clean.ts", "src/staged.ts"])
+            );
+
+            writeFileSync(join(dir, "scripts/ci/rosters/rosters.json"), '{ "roster-a": { "src/one.ts": 2 } }\n');
+            run(["add", "--", "scripts/ci/rosters/rosters.json"]);
+            run(["commit", "-qm", "grow a roster"]);
+            const automatic = spawnSync(
+                process.execPath,
+                [join(import.meta.dir, "lint-rules.ts"), "--no-rosters", "--changed", base],
+                { cwd: dir, env: process.env, encoding: "utf8" }
+            );
+            expect(automatic.status, automatic.stdout).not.toBe(0);
+            expect(automatic.stderr).toContain("ratchet lists may only shrink (scripts/ci/rosters/rosters.json)");
+            expect(automatic.stderr).toContain("roster-a: src/one.ts 1 → 2");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
+
+    test("bun run lint:rules checks the changed files by default and every file with --all or under CI", () => {
+        const changed = ["--no-rosters", "--changed", "origin/master", "--working-tree"];
+        expect(lintRulesPlan({ argv: [], ci: false }).args).toEqual(changed);
+        expect(lintRulesPlan({ argv: ["--base", "feat/parent"], ci: false }).args).toEqual([
+            "--no-rosters",
+            "--changed",
+            "feat/parent",
+            "--working-tree",
+        ]);
+        expect(lintRulesPlan({ argv: ["--all"], ci: false }).args).toEqual([]);
+        expect(lintRulesPlan({ argv: [], ci: true }).args).toEqual([]);
+        expect(() => lintRulesPlan({ argv: ["--base"], ci: false })).toThrow("--base needs a ref");
+        expect(() => lintRulesPlan({ argv: ["--everything"], ci: false })).toThrow("unknown argument --everything");
+    });
+
+    test("a linked worktree and a shared clone of it wait in the original repository's slot", () => {
+        const dir = mkdtempSync(join(tmpdir(), "lint-slot-"));
+        const git = (cwd: string, args: string[]) => {
+            const result = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+                cwd,
+                encoding: "utf8",
+                env: { ...process.env },
+            });
+            expect(result.status, result.stderr).toBe(0);
+        };
+
+        try {
+            for (const name of ["main", "other"]) {
+                mkdirSync(join(dir, name));
+                git(join(dir, name), ["init", "-q"]);
+                git(join(dir, name), [
+                    "-c",
+                    "user.name=Fixture User",
+                    "-c",
+                    "user.email=fixture@example.com",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "base",
+                ]);
+            }
+            git(join(dir, "main"), ["worktree", "add", "-q", "--detach", join(dir, "linked")]);
+            // The babysit integration gates run in such a snapshot of a worker's linked worktree.
+            git(dir, ["clone", "-q", "--shared", "--no-checkout", join(dir, "linked"), join(dir, "snapshot")]);
+
+            const main = heavyCheckLockPath(join(dir, "main"));
+            expect(main).toBe(join(realpathSync(join(dir, "main", ".git")), "genesis-heavy-check.lock"));
+            expect(heavyCheckLockPath(join(dir, "linked"))).toBe(main);
+            expect(heavyCheckLockPath(join(dir, "snapshot"))).toBe(main);
+            expect(heavyCheckLockPath(join(dir, "other"))).not.toBe(main);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

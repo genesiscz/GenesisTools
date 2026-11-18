@@ -43,13 +43,25 @@ test.skipIf(skip.onWindows)("the CI selector includes file readers and falls bac
         return p.stdout.toString();
     };
     mkdirSync(join(cwd, ".githooks"));
+    mkdirSync(join(cwd, ".github/workflows"), { recursive: true });
     mkdirSync(join(cwd, "scripts/ci"), { recursive: true });
+    // A shell script's suite is found beside it, so the fixture holds the suites first.
+    for (const suite of ["scripts/ci/summarize-tests.test.ts", "scripts/ci/ai-credentials-guard.test.ts"]) {
+        writeFileSync(join(cwd, suite), "fixture\n");
+    }
+    git("add", "scripts/ci");
+    git("commit", "-qm", "the suites that run shell scripts");
     const hook = select(".githooks/pre-push");
     expect(hook).toContain("babysit/scripts/scripts.test.ts");
     expect(hook).toContain("pre-commit-hook.test.ts");
     expect(hook).toContain("[ci] file-reader tests complete");
+    const workflow = select(".github/workflows/ci.yml");
+    expect(workflow).toContain("typecheck.test.ts");
+    expect(workflow).toContain("summarize-tests.test.ts");
     expect(select("scripts/ci/summarize-tests.sh")).toContain("summarize-tests.test.ts");
-    expect(select("scripts/ci/test-changed.sh")).toContain("summarize-tests.test.ts");
+    expect(select("scripts/ci/ai-credentials-guard.sh")).toContain("ai-credentials-guard.test.ts");
+    expect(select("scripts/ci/pid-safety-guard.sh")).not.toContain("pid-safety-guard.test.ts");
+    expect(select("scripts/ci/test-changed.sh")).toContain("[ci] full test suite");
     expect(select("scripts/test.ts")).toContain("[ci] full test suite");
 });
 
