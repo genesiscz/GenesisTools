@@ -1,11 +1,12 @@
 import { ui } from "@genesiscz/utils/cli/ui";
+import type { NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { out } from "@genesiscz/utils/logger";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { Command } from "commander";
 import { tccRowLine } from "../../lib/calendar/doctor";
+import { doctorResponsibleLabel } from "../../lib/permissions/report";
 import { type RemindersDoctorReport, runRemindersDoctor } from "../../lib/reminders/doctor";
 
-function printReport(report: RemindersDoctorReport): void {
+export function printRemindersDoctorReport(report: RemindersDoctorReport, env?: NeedEnv): void {
     ui.header("Reminders access");
     const statusLine = report.promptSkipped
         ? "not read (reading it would show the macOS permission dialog)"
@@ -20,16 +21,7 @@ function printReport(report: RemindersDoctorReport): void {
     ui.kv("lists", String(report.listCount), 11);
 
     ui.section("This process");
-    const responsible = report.hostApp.responsible;
-    ui.kv(
-        "responsible",
-        responsible.kind === "genesis-app"
-            ? `GenesisTools.app (${responsible.bundleId})`
-            : responsible.kind === "host-app"
-              ? `${responsible.bundleId} (launching app; build GenesisTools.app to own the grants — ${genesisAppBuildHint()})`
-              : "unknown (no bundle; launchd or a bare shell)",
-        11
-    );
+    ui.kv("responsible", doctorResponsibleLabel(report.hostApp.responsible, env), 11);
     ui.kv("host app", report.hostApp.bundleId ?? "none", 11);
     ui.kv("terminal", report.hostApp.termProgram ?? "unknown", 11);
     ui.kv("darwinkit", report.binary.path, 11);
@@ -85,7 +77,7 @@ export function registerDoctorCommand(program: Command): void {
             if (options.json) {
                 out.result(report);
             } else {
-                printReport(report);
+                printRemindersDoctorReport(report);
             }
 
             if (report.fix) {
