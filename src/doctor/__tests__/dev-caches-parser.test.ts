@@ -91,7 +91,7 @@ it.skipIf(process.platform !== "darwin")(
         let timeoutMs = 0;
         const algorithms = new Set<string>();
         const config = async () => ({
-            defaults: { olderThan: "3d", minKb: 0, exts: ["txt"] },
+            defaults: { olderThan: "2d12h", minKb: 0, exts: ["txt"] },
             harnesses: { fixture: { roots: [root] } },
         });
         await readCompressionHint({

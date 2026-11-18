@@ -1743,3 +1743,6 @@ The human output derives per-file compression savings from the existing logical 
 The change runs after a scan or database query. It adds no filesystem calls, index columns or walker counters.
 The native benchmark was not rerun. The volume formatting fixture uses 4,000,000 logical and 1,000,000 allocated
 bytes across two files and expects 3.0 MB saved before clone deduplication.
+
+The suggestion command also uses the writer's duration parser. Explicit zero and compound durations reach
+all three consumers, including the Disk Manager hint. Invalid durations fail before candidate discovery.

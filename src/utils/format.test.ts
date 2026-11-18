@@ -10,6 +10,7 @@ import {
     formatRelativeTime,
     formatTokens,
     parseDuration,
+    requireDuration,
 } from "./format";
 import { generateId } from "./id";
 
@@ -151,6 +152,13 @@ describe("parseDuration", () => {
     });
 
     describe("invalid input", () => {
+        it("distinguishes an explicit zero age from a malformed or overflowing duration", () => {
+            expect(requireDuration("0d")).toBe(0);
+            expect(requireDuration("2h15min")).toBe(8_100_000);
+            for (const value of ["", "3 dyas", `${"9".repeat(350)}d`]) {
+                expect(() => requireDuration(value)).toThrow("Invalid duration");
+            }
+        });
         it("returns 0 for invalid strings", () => {
             expect(parseDuration("")).toBe(0);
             expect(parseDuration("abc")).toBe(0);

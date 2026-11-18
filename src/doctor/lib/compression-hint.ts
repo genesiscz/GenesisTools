@@ -12,6 +12,7 @@ import {
     type TransparentWriter,
 } from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
+import { requireDuration } from "@genesiscz/utils/format";
 import { fileFlags, SF_DATALESS, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import { logger } from "@genesiscz/utils/logger";
 import { getPrivateSize } from "@genesiscz/utils/macos/apfs";
@@ -79,13 +80,7 @@ export async function readCompressionHint(reads: Partial<CompressionHintReads> =
     const writer = resolveWriter();
     const deadline = now() + BUDGET_MS;
     const config = await readConfig();
-    const age = /^(\d+)([dhm])$/.exec(config.defaults.olderThan);
-
-    if (!age) {
-        throw new Error(`Invalid compression olderThan: ${config.defaults.olderThan}`);
-    }
-
-    const units: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000 };
+    const olderThanMs = requireDuration(config.defaults.olderThan);
     const open = await opened({ timeoutMs: 1000 });
     const roots = [
         ...new Set(
@@ -160,7 +155,7 @@ export async function readCompressionHint(reads: Partial<CompressionHintReads> =
         }
 
         const { candidates } = plan(entries, {
-            olderThanMs: Number(age[1]) * units[age[2]],
+            olderThanMs,
             minBytes: config.defaults.minKb * 1024,
             exts: new Set(config.defaults.exts),
             open,
