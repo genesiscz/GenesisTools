@@ -26,6 +26,7 @@ import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
 import { DecisionJournal } from "./decision-journal";
+import { duplicateMeeting } from "./duplicate";
 import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { planMoment } from "./moment";
@@ -674,6 +675,77 @@ test("a fresh spot check selects only its sampled lines even with an older round
     } finally {
         source.mockRestore();
         output.mockRestore();
+    }
+});
+
+test("listen prints and persists the known spot-check share without initializing playback", async () => {
+    const store = new MeetingStore();
+    const at = "2026-11-02T12:00:00Z";
+    const range = {
+        id: "i1",
+        kind: "speaker-range" as const,
+        status: "suggested" as const,
+        fromSec: 2,
+        toSec: 2,
+        label: "Remote",
+        speaker: "River Example",
+        confidence: 0.63,
+        suggestedAt: at,
+        rules: [],
+    };
+    const original = await store.create(
+        { title: "Reusable sample", start: at, createdBy: "new", items: [range] },
+        { command: "test", change: "fixture" }
+    );
+    await new DecisionJournal({ store, now: () => new Date(at), ledger: () => {} }).apply({
+        meeting: original.id,
+        actor: { kind: "cli" },
+        action: { kind: "confirm", items: [range.id], speaker: "Cedar Example" },
+    });
+    const copy = await duplicateMeeting({ store, ref: original.id, withoutItems: true });
+    await store.update(copy.id, { command: "test", change: "fresh sample" }, (record) => {
+        record.items.push(range);
+    });
+    const source = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+        sourceMeetingId: "sample",
+        title: original.title,
+        start: at,
+        speakers: [],
+        participants: [],
+        folders: [],
+        transcript: [{ speaker: "Remote", startSec: 2, text: "A sample sentence." }],
+    });
+    const interactive = spyOn(await import("@genesiscz/utils/cli"), "isInteractive").mockReturnValue(false);
+    const audio = spyOn(OpenedMeeting.prototype, "audioPath").mockRejectedValue(
+        new Error("Known answers need no playback")
+    );
+    const pads = spyOn(p, "select").mockImplementation(async () => {
+        throw new Error("Known answers need no pad prompt");
+    });
+    const ok = spyOn(ui, "ok").mockImplementation(() => {});
+    const info = spyOn(ui, "info").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        expect(
+            program.commands.find((cmd) => cmd.name() === "listen")?.options.some((opt) => opt.long === "--ask-known")
+        ).toBe(true);
+        await program.parseAsync(["listen", copy.id, "--spot-check", "1"], { from: "user" });
+        expect(ok.mock.calls.map(([s]) => s.trim())).toContain("Q1 → Cedar Example (your answer from 2026-11-02)");
+        expect(info.mock.calls.map(([s]) => s)).toContain(
+            "Spot check: known 1/1 changed (100 %) · asked 0/0 changed (no answers)"
+        );
+        expect(new MeetingStore(store.storage).read(copy.id)?.review?.listen?.spotChecks?.at(-1)).toMatchObject({
+            known: { answered: 1, changed: 1 },
+            asked: { answered: 0, changed: 0 },
+        });
+        expect(audio).not.toHaveBeenCalled();
+        expect(pads).not.toHaveBeenCalled();
+    } finally {
+        for (const mock of [info, ok, pads, audio, interactive, source]) {
+            mock.mockRestore();
+        }
+        process.exitCode = 0;
     }
 });
 
