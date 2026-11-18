@@ -13,8 +13,8 @@ import {
     type ResponsibleIdentity,
     responsibleIdentity,
 } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
-import { type AppStatus, appStatus } from "./app";
+import { isTestProcess } from "@genesiscz/utils/test-process";
+import { type AppStatus, appRebuildCommand, appStatus } from "./app";
 import { type PermissionKindId, parsePermissionStatusLines, permissionStatusLabel } from "./kinds";
 import { currentLinkRoute, type LinkRoute, linkRouteProblem } from "./links";
 import {
@@ -123,6 +123,10 @@ function liveGrant(wire: string): { granted?: boolean; label: string } {
  * `<kind> <wire value>` line per grant for `all`.
  */
 export function runPermissionStatus(kind: PermissionKindId | "all", timeoutMs: number) {
+    if (isTestProcess()) {
+        throw new Error("a test process never reaches GenesisTools.app --permission-status");
+    }
+
     return Bun.spawnSync([genesisAppLauncherPath(), "--permission-status", kind], {
         stdout: "pipe",
         stderr: "pipe",
@@ -138,7 +142,7 @@ export function runPermissionStatus(kind: PermissionKindId | "all", timeoutMs: n
  */
 export function liveGrantStatuses(timeoutMs = 3_000): Map<PermissionKindId, string> | null {
     const launcher = genesisAppLauncherPath();
-    if (!existsSync(launcher)) {
+    if (isTestProcess() || !existsSync(launcher)) {
         return null;
     }
 
@@ -232,7 +236,7 @@ export function doctorResponsibleLabel(identity: ResponsibleIdentity, needEnv?: 
     return `${identity.bundleId} (launching app; ${purpose}${describeNeedFailure(installed)})`;
 }
 
-export function collectProblems(report: Omit<PermissionsReport, "problems">): string[] {
+export function collectProblems(report: Omit<PermissionsReport, "problems">, needEnv?: NeedEnv): string[] {
     const problems: string[] = [];
 
     // The per-user TCC.db is itself behind Full Disk Access, so failing to open it while running as
@@ -243,14 +247,25 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
         );
     }
 
-    if (!report.app.built) {
-        problems.push(`GenesisTools.app is not built: permissions follow the terminal. ${genesisAppBuildHint()}`);
-    } else if (!report.app.identityStable) {
+    const installed = checkAppInstalled(needEnv);
+    if (report.app.built && report.disabledByMarker) {
+        const reason = installed.ok ? "The launcher is switched off" : describeNeedFailure(installed);
+        problems.push(
+            `${reason}. The switch in GenesisTools window > Settings (\`${toolCommand("macos permissions disable")}\`) routes tools through the terminal. Re-enable with \`${toolCommand("macos permissions enable")}\`.`
+        );
+    } else if (!installed.ok) {
+        const consequence = report.app.built ? "" : "Permissions follow the terminal. ";
+        problems.push(consequence + describeNeedFailure(installed));
+    }
+
+    if (report.app.built && !report.app.identityStable) {
         problems.push(
             "GenesisTools.app is ad-hoc signed: every rebuild gets a new identity and macOS forgets its grants. Sign with a Developer ID or Apple Development certificate."
         );
-    } else if (report.app.stale) {
-        problems.push(`GenesisTools.app sources changed since the last build. ${genesisAppBuildHint()}`);
+    } else if (report.app.built && report.app.stale) {
+        problems.push(
+            `GenesisTools.app sources changed since the last build. Run \`${appRebuildCommand(needEnv?.builder)}\`.`
+        );
     }
 
     if (report.app.built && report.launchdJobsOutsideApp.length > 0) {
@@ -259,11 +274,7 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
         );
     }
 
-    if (report.app.built && report.disabledByMarker) {
-        problems.push(
-            `The launcher is switched off (GenesisTools window > Settings, or \`${toolCommand("macos permissions disable")}\`): tools run under the terminal's grants. Re-enable with \`${toolCommand("macos permissions enable")}\`.`
-        );
-    } else if (report.app.built && report.identity.kind !== "genesis-app") {
+    if (report.app.built && !report.disabledByMarker && report.identity.kind !== "genesis-app") {
         problems.push(
             "This process is not running under GenesisTools.app (GENESIS_TOOLS_NO_APP set, or started outside `tools`)."
         );

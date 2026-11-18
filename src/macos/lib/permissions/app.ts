@@ -20,6 +20,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
+import { appBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
 import {
     parseSwiftRpcMethods,
     RPC_METHODS_SWIFT_FILE,
@@ -636,6 +637,16 @@ export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> 
     );
 }
 
+/** The manual retry for an already installed app whose sources changed or whose rebuild failed. */
+export function appRebuildCommand(builder = appBuilder()): string {
+    return builder?.buildCommand(null) ?? defaultBuildCommand(null);
+}
+
+/** The builder and the updater show the same Xcode instructions for an unsupported SDK. */
+export function appBuildSdkProblem(sdk: AppBuildSdk): string | null {
+    return sdk.kind === "unsupported" ? genesisAppBuildHint(sdk.toolchain) : null;
+}
+
 /**
  * The SDK the build compiles against, or a refusal before `swift build` ever runs. Full Xcode builds as before. With
  * the Command Line Tools, the build uses the newest SDK whose SwiftUI `@State` needs no macro plugin (the 26.5 SDK
@@ -643,8 +654,9 @@ export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> 
  * instead of 100+ cascading "plugin for module 'SwiftUIMacros' not found" errors (#445).
  */
 export function requireAppBuildSdk(sdk: AppBuildSdk): { sdkRoot?: string } {
-    if (sdk.kind === "unsupported") {
-        throw new Error(genesisAppBuildHint(sdk.toolchain));
+    const problem = appBuildSdkProblem(sdk);
+    if (problem) {
+        throw new Error(problem);
     }
 
     return sdk.kind === "command-line-tools" ? { sdkRoot: sdk.sdkRoot } : {};

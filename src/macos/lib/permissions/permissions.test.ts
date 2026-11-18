@@ -24,6 +24,7 @@ import {
 import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -79,7 +80,7 @@ import {
     partsForBuild,
     scratchName,
 } from "./parts";
-import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
+import { collectProblems, grantsFor, launchdJobsOutsideApp, liveGrantStatuses, runPermissionStatus } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
 const FIND_IDENTITY = `Policy: Code Signing
@@ -870,49 +871,71 @@ describe("collectProblems", () => {
     };
 
     it("is quiet when the signed app runs this process", () => {
-        expect(collectProblems({ ...base, app: builtApp })).toEqual([]);
+        expect(collectProblems({ ...base, app: builtApp }, appNeedFixture())).toEqual([]);
     });
 
-    it("names the missing app, the ad-hoc signature and the stale build", () => {
-        expect(collectProblems({ ...base, app: { ...builtApp, built: false } })[0]).toContain("not built");
-        expect(collectProblems({ ...base, app: { ...builtApp, identityStable: false } })[0]).toContain("ad-hoc");
-        expect(collectProblems({ ...base, app: { ...builtApp, stale: true } })[0]).toContain("sources changed");
+    it("prints the install need's fix and uses the builder's retry command for stale sources", () => {
+        const missing = collectProblems(
+            { ...base, app: { ...builtApp, built: false } },
+            appNeedFixture({ installed: false })
+        );
+        expect(missing).toEqual([
+            "Permissions follow the terminal. GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`.",
+        ]);
+        expect(collectProblems({ ...base, app: { ...builtApp, identityStable: false } }, appNeedFixture())[0]).toContain(
+            "ad-hoc"
+        );
+        expect(collectProblems({ ...base, app: { ...builtApp, stale: true } }, appNeedFixture())).toEqual([
+            "GenesisTools.app sources changed since the last build. Run `fixture-build`.",
+        ]);
+    });
+
+    it("refuses the live permission-status binary in a test process", () => {
+        const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
+            throw new Error("unexpected spawn");
+        });
+        try {
+            expect(liveGrantStatuses()).toBeNull();
+            expect(() => runPermissionStatus("all", 100)).toThrow("a test process never reaches GenesisTools.app");
+            expect(spawn).not.toHaveBeenCalled();
+        } finally {
+            spawn.mockRestore();
+        }
     });
 
     it("reads an unreadable TCC.db under GenesisTools.app as missing Full Disk Access", () => {
-        const problems = collectProblems({
-            ...base,
-            app: builtApp,
-            userDb: { readable: false, error: "unable to open" },
-        });
+        const problems = collectProblems(
+            { ...base, app: builtApp, userDb: { readable: false, error: "unable to open" } },
+            appNeedFixture()
+        );
         expect(problems[0]).toContain("Full Disk Access is not granted");
         expect(problems[0]).toContain("full-disk-access");
         expect(problems[0]).toContain("Applications");
     });
 
     it("names launchd jobs that still bypass the launcher", () => {
-        const problems = collectProblems({
-            ...base,
-            app: builtApp,
-            launchdJobsOutsideApp: ["com.genesis-tools.dev-dashboard"],
-        });
+        const problems = collectProblems(
+            { ...base, app: builtApp, launchdJobsOutsideApp: ["com.genesis-tools.dev-dashboard"] },
+            appNeedFixture()
+        );
         expect(problems[0]).toContain("com.genesis-tools.dev-dashboard");
         expect(problems[0]).toContain("next start");
     });
 
     it("explains a switched-off launcher instead of blaming the process", () => {
-        const problems = collectProblems({
-            ...base,
-            identity: { kind: "host-app", bundleId: "com.x" },
-            app: builtApp,
-            disabledByMarker: true,
-        });
+        const problems = collectProblems(
+            { ...base, identity: { kind: "host-app", bundleId: "com.x" }, app: builtApp, disabledByMarker: true },
+            appNeedFixture({ routingOff: true })
+        );
         expect(problems[0]).toContain("switched off");
         expect(problems.some((p) => p.includes("not running under GenesisTools.app"))).toBe(false);
     });
 
     it("flags a process that bypassed the launcher", () => {
-        const problems = collectProblems({ ...base, identity: { kind: "host-app", bundleId: "com.x" }, app: builtApp });
+        const problems = collectProblems(
+            { ...base, identity: { kind: "host-app", bundleId: "com.x" }, app: builtApp },
+            appNeedFixture()
+        );
         expect(problems[0]).toContain("not running under GenesisTools.app");
     });
 });
