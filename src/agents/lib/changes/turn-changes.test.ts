@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CHUNK_BYTES } from "@genesiscz/utils/agent-sessions/readers/changes-window-cache";
 import {
@@ -152,5 +152,23 @@ it.each([
         expect(fullAnswer(f, 1, result)).toBe(
             fullAnswer(f, 1, loadSessionChanges({ sessionId: f.session, log: f.rows }))
         );
+    });
+});
+
+it("uses the full reader when a foreign turn needs a launcher outside the cut", async () => {
+    const f = claudeFixture("subagents");
+    const path = f.transcript;
+    if (!path) {
+        throw new Error("missing fixture");
+    }
+    const meta = join(dirname(path), f.session, "subagents", "agent-d.meta.json");
+    writeFileSync(meta, SafeJSON.stringify({ toolUseId: "launch" }));
+    appendFileSync(path, `${SafeJSON.stringify({ padding: "x".repeat(CHUNK_BYTES) })}\n`);
+    await inFixture(f, async () => {
+        const input = { sessionId: f.session, log: f.rows, count: 1, initialTurns: 1 };
+        const rounds: ChangesRound[] = [];
+        const recent = loadRecentSessionChanges({ ...input, onRound: (r) => rounds.push(r) });
+        expect(rounds.at(-1)?.fallback?.startsWith("F3")).toBe(true);
+        expect(fullAnswer(f, 1, recent)).toBe(fullAnswer(f, 1, loadSessionChanges(input)));
     });
 });

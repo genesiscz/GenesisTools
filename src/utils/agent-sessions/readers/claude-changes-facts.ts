@@ -20,7 +20,7 @@ interface LedgerEntry {
 }
 interface FactCall {
     id: string;
-    kind: "file" | "shell" | "launch";
+    kind: "file" | "shell";
     offset: number;
     at: number | null;
     dir: string | null;
@@ -176,7 +176,7 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 }
                 const { id, name, filePath, input, command } = use;
                 const via = fileToolVia(name);
-                if (!via && !isShellTool(name) && name !== "Agent" && name !== "Task") {
+                if (!via && !isShellTool(name)) {
                     continue;
                 }
                 facts.unplaced ||= !facts.cursor;
@@ -201,7 +201,7 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 facts.duplicateIds ||= facts.calls.has(id);
                 facts.calls.set(id, {
                     id,
-                    kind: via ? "file" : isShellTool(name) ? "shell" : "launch",
+                    kind: via ? "file" : "shell",
                     offset,
                     at: use.startedAt,
                     dir: via && filePath ? dirname(filePath) : null,
