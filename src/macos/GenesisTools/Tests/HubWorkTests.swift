@@ -42,6 +42,16 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(HubMode.work.title, "Work")
     }
 
+    /// The hub window's visibility reaches the Work screen, so a covered or hidden hub reloads nothing.
+    func testTheWorkScreenFollowsTheHubWindowsVisibility() {
+        let model = HubWorkModel(source: FakeWorkSource())
+        XCTAssertTrue(model.screen.visible)
+        HubVisibility.shared.set(false)
+        XCTAssertFalse(model.screen.visible)
+        HubVisibility.shared.set(true)
+        XCTAssertTrue(model.screen.visible)
+    }
+
     /// The whole Work main pane in a real window (the menu button's window reader is an AppKit view, which an image
     /// renderer cannot draw): the header names the project and its counts, the rows and their buttons draw. A handoff
     /// starts folded with its open count (the real project has 35 of them), so its tasks are not on screen yet.
