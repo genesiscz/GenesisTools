@@ -14,15 +14,18 @@ import { meetingsOverview } from "@app/meetings/lib/overview";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
 import { reviewRow } from "@app/meetings/lib/review-rows";
+import { applySuggestedSeats } from "@app/meetings/lib/seat-suggest";
 import { withMeetingsClient } from "@app/meetings/lib/service/client";
 import {
     acousticClip,
     acousticInspect,
     add,
+    type applySeats,
     assignApply,
     assignAsk,
     audioApply,
     audioPlan,
+    type backfillVoices,
     commentRead,
     commentWithdraw,
     configGet,
@@ -54,17 +57,22 @@ import {
     saveClip,
     screen,
     screenTimelineMethod,
+    type seats,
     set,
     speakers,
     suggest,
+    type thresholds,
     voiceEnroll,
     voiceFeatures,
+    type voiceReadiness,
     voiceScore,
 } from "@app/meetings/lib/service/toolset-api";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
+import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
+import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
 import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -122,6 +130,21 @@ export class MeetingsToolset extends ReplToolset {
         const store = new MeetingStore();
         return {
             meetings: {
+                applySeats: async ({ replace, ...params }: z.input<typeof applySeats.params>) =>
+                    withMeetingsClient(async (client) => {
+                        const view = await client.call("meeting.seats.suggest", params);
+                        return { ...view, saved: await applySuggestedSeats({ client, view, replace }) };
+                    }),
+                backfillVoices: async (params: z.input<typeof backfillVoices.params>) =>
+                    withMeetingsClient((client) => client.call("voice.backfill", params, { timeoutMs: 3_600_000 })),
+                seats: async (params: z.input<typeof seats.params>) =>
+                    withMeetingsClient((client) => client.call("meeting.seats.suggest", params)),
+                thresholds: async (params: z.input<typeof thresholds.params> = {}) =>
+                    withMeetingsClient((client) => readOrSetThresholds({ client, ...params })),
+                voiceReadiness: async ({ meeting }: z.input<typeof voiceReadiness.params>) =>
+                    withMeetingsClient(async (client) =>
+                        readVoiceReadiness(await client.call("meeting.show", { ref: meeting }))
+                    ),
                 audio: {
                     plan: async (input: z.input<typeof audioPlan.params> = {}) => {
                         audioPlan.params.parse(input);

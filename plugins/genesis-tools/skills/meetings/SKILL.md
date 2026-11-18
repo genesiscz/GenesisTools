@@ -57,17 +57,17 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
 
    **Seats and voices. Strongly recommended before pass 2.**
 
-   - Run `tools meetings seats <meeting>` and read the reasons. Someone listed in the call may have sat in the room.
-     Run `tools meetings seats <meeting> --apply` to save the suggestion when seats are missing. Ask where anyone
+   - Run `tools meetings seats <meeting>` or `await meetings.seats({ meeting })` and read the reasons. Someone listed in the call may have sat in the room.
+     Run `tools meetings seats <meeting> --apply` or `await meetings.applySeats({ meeting })` to save the suggestion when seats are missing. Ask where anyone
      marked unsure sat. Use `--room` and `--remote` for corrections. Use `--replace` to change saved seats.
-   - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`.
+   - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`, or call `await meetings.voiceReadiness({ meeting })`.
      `people` counts project samples per attendee. `ready` means seats are set and each occupied side of the recording
      has samples from at least one person on that side. Without seats or usable samples, voice naming is off and
      people in the room or on the call can stay unnamed.
-   - Run `tools meetings voices backfill --project <p>` to recover samples from earlier speaker answers and names
+   - Run `tools meetings voices backfill --project <p>` or `await meetings.backfillVoices({ project })` to recover samples from earlier speaker answers and names
      proposed by voice that a person confirmed individually. To select meetings directly, pass their IDs in place of
      `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
-     to see counts per meeting and person. Repeating the command counts existing samples separately.
+     to see counts per meeting and person. The matching REPL call is `await meetings.backfillVoices({ meetings: [meeting], dryRun: true })`. Repeating the command counts existing samples separately.
    - Run `tools meetings voices preview <meeting>`. Check proposed names, times and refusals. The pass can also
      use certain lines from this meeting as temporary samples. It excludes the line it is scoring. A person without
      a sample can still be proposed if they are the only such person present on that seat, the voice clearly matches
@@ -208,7 +208,7 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
 With `--with-suggested`, proposed terms apply at 70% confidence by default (`term.applyAbove`).
 Term and speaker thresholds are global settings in Settings → Meetings. Open Thresholds from a meeting to preview
 which proposals change there before saving a setting for all meetings. In the CLI, `tools meetings thresholds <meeting>`
-lists the names and current values. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` to
+lists the names and current values, as does `await meetings.thresholds({ meeting })`. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` or `await meetings.thresholds({ meeting, set: { [name]: value }, preview: true })` to
 see the changed lines, then omit `--preview` to save the value.
 
 `listen <meeting> --spot-check 20` samples the 50 to 69 percent band without replacement. Comments leave questions

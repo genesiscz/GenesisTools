@@ -251,6 +251,11 @@ interface MeetingHandle {
 
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
+    applySeats(input: unknown): Promise<unknown>;
+    backfillVoices(input: unknown): Promise<unknown>;
+    seats(input: unknown): Promise<unknown>;
+    thresholds(input?: unknown): Promise<unknown>;
+    voiceReadiness(input: unknown): Promise<unknown>;
     look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
@@ -306,6 +311,70 @@ describe("browser toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("meetings parity t1 previews, applies and protects saved seats", async () => {
+        const { id: meeting } = await new MeetingStore().create(
+            { title: "Rehearsal seats", start: "2026-11-01T09:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        const input = { meeting, room: ["Reed Example"] };
+        const view = await meetings.seats(input);
+        expect(view).toMatchObject({
+            meeting,
+            current: null,
+            suggestion: {
+                seats: { room: input.room, remote: [] },
+                people: [{ name: "Reed Example", seat: "room", reason: "Set by hand.", confidence: 1 }],
+            },
+        });
+        expect(new MeetingStore().read(meeting)?.seats).toBeUndefined();
+        expect(await meetings.applySeats(input)).toMatchObject({ saved: true });
+        expect(await meetings.applySeats({ meeting, remote: input.room })).toMatchObject({ saved: false });
+        expect(new MeetingStore().read(meeting)?.seats?.room).toEqual(input.room);
+        expect(await meetings.applySeats({ meeting, remote: input.room, replace: true })).toMatchObject({
+            saved: true,
+        });
+        expect(new MeetingStore().read(meeting)?.seats).toEqual({ room: [], remote: [{ name: "Reed Example" }] });
+    });
+
+    test("meetings parity t1 reports readiness and dry-run backfill by meeting or project", async () => {
+        const project = "repl-backfill-rehearsal";
+        const { id: meeting } = await new MeetingStore().create(
+            { title: "Rehearsal voices", start: "2026-11-01T10:00:00Z", createdBy: "new", project },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        expect(await meetings.voiceReadiness({ meeting })).toMatchObject({ seats: false, ready: false, samples: 0 });
+        const selected = await meetings.backfillVoices({ meetings: [meeting], dryRun: true });
+        expect(selected).toMatchObject({
+            dryRun: true,
+            added: 0,
+            present: 0,
+            rows: [expect.objectContaining({ meeting })],
+        });
+        expect(await meetings.backfillVoices({ project, dryRun: true })).toEqual(selected);
+        await expect(meetings.backfillVoices({ meetings: [meeting], project })).rejects.toThrow(
+            "Choose meetings or a project"
+        );
+    });
+
+    test("meetings parity t1 describes CLI twins and reads thresholds with the CLI save guard", async () => {
+        const meetings = await loadMeetings();
+        expect(await meetings.thresholds()).toMatchObject({ thresholds: expect.any(Array), changes: [], warnings: [] });
+        await expect(meetings.thresholds({ set: { "term.applyAbove": 0.8 }, preview: true })).rejects.toThrow(
+            "Choose a meeting"
+        );
+        for (const [method, cli] of [
+            ["applySeats", "seats"],
+            ["backfillVoices", "voices backfill"],
+            ["seats", "seats"],
+            ["thresholds", "thresholds"],
+            ["voiceReadiness", "show"],
+        ]) {
+            expect(describeMethod([new MeetingsToolset().api], `meetings.${method}`)).toContain(`meetings ${cli}`);
+        }
+    });
+
     test("meetings.look documents its CLI twin and accepts a meeting and two clocks", async () => {
         const help = describeMethod([new MeetingsToolset().api], "meetings.look");
         expect(help).toContain("meetings look");

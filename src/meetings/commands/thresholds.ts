@@ -2,9 +2,9 @@ import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { type MeetingsClient, withMeetingsClient } from "../lib/service/client";
+import { withMeetingsClient } from "../lib/service/client";
 import type { ThresholdResult } from "../lib/threshold-schema";
-import { thresholdEdits } from "../lib/thresholds";
+import { readOrSetThresholds } from "../lib/thresholds";
 import { windowJson } from "../lib/window-reads";
 
 interface Options {
@@ -13,9 +13,9 @@ interface Options {
     json?: boolean;
 }
 
-async function thresholds(client: MeetingsClient, meeting: string | undefined, opts: Options) {
+function parseAssignments(assignments: string[] = []) {
     const values: Record<string, number> = Object.create(null);
-    for (const assignment of opts.set ?? []) {
+    for (const assignment of assignments) {
         const match = /^([^=]+)=(.+)$/.exec(assignment);
         if (!match || !match[2]!.trim()) {
             throw new Error(`Expected --set name=value, got "${assignment}"`);
@@ -26,21 +26,7 @@ async function thresholds(client: MeetingsClient, meeting: string | undefined, o
         }
         values[name] = Number(match[2]);
     }
-    const edits = thresholdEdits(values);
-    const method = "meeting.thresholds.preview";
-    if (edits.length && !meeting) {
-        throw new Error("Choose a meeting when changing thresholds.");
-    }
-    if (edits.length && !opts.preview) {
-        // Resolve the meeting before changing global settings. Guard all touched paths in one transaction.
-        const current = await client.call(method, { meeting, values: {} });
-        const expected = new Map(current.thresholds.map((row) => [row.path, row.globalValue]));
-        await client.call("config.edit", {
-            edits: edits.map((edit) => ({ ...edit, expect: expected.get(edit.path) })),
-        });
-        return client.call(method, { meeting, values: {} });
-    }
-    return client.call(method, { meeting, values });
+    return values;
 }
 
 function printResult(result: ThresholdResult, opts: Options) {
@@ -84,6 +70,10 @@ export function registerThresholdsCommand(program: Command, connect = withMeetin
         .option("--preview", "compare the draft with the saved settings without writing")
         .option("--json", "print the thresholds and item differences as JSON")
         .action(async (meeting: string | undefined, opts: Options) => {
-            printResult(await connect((client) => thresholds(client, meeting, opts)), opts);
+            const set = parseAssignments(opts.set);
+            printResult(
+                await connect((client) => readOrSetThresholds({ client, meeting, set, preview: opts.preview })),
+                opts
+            );
         });
 }

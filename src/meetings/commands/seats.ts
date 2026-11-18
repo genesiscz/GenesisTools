@@ -6,6 +6,7 @@ import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import { applySuggestedSeats } from "../lib/seat-suggest";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, TOOL } from "../lib/shared";
 import { windowJson } from "../lib/window-reads";
@@ -58,16 +59,8 @@ async function seats(ref: string, opts: Options): Promise<void> {
                 remote: opts.remote,
             });
             const { suggestion, current, meeting } = view;
-            let saved = false;
             const write = opts.apply || opts.replace || opts.room || opts.remote;
-            const hasSeats = suggestion.seats.room.length > 0 || suggestion.seats.remote.length > 0;
-            if (write && hasSeats && (!current || opts.replace)) {
-                await client.call("decision.apply", {
-                    meeting,
-                    action: { kind: "set", seats: suggestion.seats, ...(opts.replace ? {} : { seatsIfAbsent: true }) },
-                });
-                saved = true;
-            }
+            const saved = write ? await applySuggestedSeats({ client, view, replace: opts.replace }) : false;
             const command = `${TOOL} seats ${shellWord(meeting)} ${current || saved ? "--replace" : "--apply"}`;
             const unresolved = suggestion.people
                 .filter((p) => p.seat === "unsure")

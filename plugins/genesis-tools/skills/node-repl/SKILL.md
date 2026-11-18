@@ -13,6 +13,16 @@ and `describe("movies.demo")` print the loaded toolsets' real signatures; read t
 Load what the task needs: `tools node-repl mcp --toolset movies,computer,presets` (or `run --toolset …` for one turn
 in a fresh process). Bindings survive between `js` calls of the MCP server, never between `run` calls.
 
+### Meetings
+
+| REPL call (await the result) | CLI command |
+| --- | --- |
+| `meetings.applySeats({ meeting, room, remote, replace })` | `tools meetings seats <meeting> --apply` (use `--replace` for saved seats) |
+| `meetings.backfillVoices({ project, dryRun: true })` or `meetings.backfillVoices({ meetings: [meeting], dryRun: true })` | `tools meetings voices backfill --project <p> --dry-run` or `tools meetings voices backfill <meeting> --dry-run` |
+| `meetings.seats({ meeting })` | `tools meetings seats <meeting> --json` |
+| `meetings.thresholds({ meeting, set: { "term.applyAbove": 0.8 }, preview: true })` | `tools meetings thresholds <meeting> --set term.applyAbove=0.8 --preview --json` |
+| `meetings.voiceReadiness({ meeting })` | The `voice` field of `tools meetings show <meeting> --json` |
+
 ## Presets (save a script that worked, run it again)
 
 1. Get the script right in the REPL first. A preset is the body of an async function: it reads `params` and `return`s

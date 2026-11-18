@@ -5,6 +5,25 @@ import { type MeetingSeats, microphoneSide, type RemoteSeat, seatSpan } from "@g
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { LINE_AT_TOLERANCE_SEC } from "@genesiscz/utils/transcribe/lines";
 import { baselineStays } from "./person-stays";
+import type { MeetingsResult } from "./service/api";
+import type { MeetingsClient } from "./service/client";
+
+export async function applySuggestedSeats(options: {
+    client: MeetingsClient;
+    view: MeetingsResult<"meeting.seats.suggest">;
+    replace?: boolean;
+}): Promise<boolean> {
+    const { client, view, replace } = options;
+    const { seats } = view.suggestion;
+    if ((!seats.room.length && !seats.remote.length) || (view.current && !replace)) {
+        return false;
+    }
+    await client.call("decision.apply", {
+        meeting: view.meeting,
+        action: { kind: "set", seats, ...(replace ? {} : { seatsIfAbsent: true }) },
+    });
+    return true;
+}
 
 type Seat = "room" | "remote" | "unsure";
 interface SeatPerson {

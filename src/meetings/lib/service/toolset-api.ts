@@ -16,7 +16,15 @@ import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { meetingTimeRangeSchema } from "../moment-schema";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
-import { listenPrepare, meetingPeopleEdit, meetingVoice, momentSave, voiceEnrol } from "./api";
+import {
+    listenPrepare,
+    meetingPeopleEdit,
+    meetingsMethod,
+    meetingVoice,
+    momentSave,
+    voiceBackfill,
+    voiceEnrol,
+} from "./api";
 
 /**
  * The REPL `meetings` toolset's descriptor (src/node-repl/lib/toolsets/meetings.ts reads it), beside the Meetings
@@ -616,6 +624,49 @@ export const commentWithdraw = defineMethod({
     doc: "Withdraw an unread comment. Refuses a comment the receiver has already acknowledged.",
 });
 
+const seatsRpc = meetingsMethod("meeting.seats.suggest");
+const thresholdsRpc = meetingsMethod("meeting.thresholds.preview");
+export const applySeats = defineMethod({
+    name: "applySeats",
+    params: seatsRpc.params.extend({ replace: z.boolean().optional() }),
+    result: seatsRpc.result.extend({ saved: z.boolean() }),
+    effect: "reversible",
+    doc: `Return the seat preview and saved flag. Save when seats are absent, or replace them with replace: true. CLI: ${toolCommand("meetings", "seats")} <meeting> --apply --json.`,
+});
+export const backfillVoices = defineMethod({
+    ...voiceBackfill,
+    name: "backfillVoices",
+    doc: `Return added, already-present and skipped counts for human-confirmed samples, by meeting and person. dryRun counts without saving. CLI: ${toolCommand("meetings", "voices", "backfill")} [meetings...] [--project <p>] [--dry-run] --json.`,
+});
+export const seats = defineMethod({
+    ...seatsRpc,
+    name: "seats",
+    doc: `Return the current seats, suggested seats and the reason and confidence for each person. CLI: ${toolCommand("meetings", "seats")} <meeting> --json.`,
+});
+export const thresholds = defineMethod({
+    name: "thresholds",
+    params: thresholdsRpc.params.omit({ values: true }).extend({
+        set: thresholdsRpc.params.shape.values.optional(),
+        preview: z.boolean().optional(),
+    }),
+    result: thresholdsRpc.result,
+    effect: "reversible",
+    doc: `Return thresholds, changes, counts and warnings. Pass a meeting and set (name to number) to save globally, or preview: true to compare without saving. CLI: ${toolCommand("meetings", "thresholds")} [meeting] [--set name=value] [--preview] --json.`,
+});
+export const voiceReadiness = defineMethod({
+    name: "voiceReadiness",
+    params: seatsRpc.params.pick({ meeting: true }),
+    result: z.object({
+        seats: z.boolean(),
+        samples: z.number(),
+        people: z.record(z.string(), z.number()),
+        ready: z.boolean(),
+        hints: z.array(z.string()),
+    }),
+    effect: "read",
+    doc: `Return the voice field of ${toolCommand("meetings", "show")} <meeting> --json, including seat coverage, per-person sample counts, readiness and next commands.`,
+});
+
 export const meetingsToolsetApi = defineApi({
     id: "meetings",
     global: "meetings",
@@ -623,6 +674,11 @@ export const meetingsToolsetApi = defineApi({
     summary:
         "List and open meetings; read their corrected transcript, evidence and items; suggest, confirm and reject items; name speakers.",
     methods: [
+        applySeats,
+        backfillVoices,
+        seats,
+        thresholds,
+        voiceReadiness,
         list,
         open,
         look,
