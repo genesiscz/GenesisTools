@@ -45,13 +45,13 @@ public struct WorkItemsView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            section("Handoffs and epics", count: snapshot.containers.count,
+            section(Self.containersTitle, count: snapshot.containers.count,
                     empty: "No open handoff or epic in \(snapshot.project)") {
                 ForEach(snapshot.containers) { container in
                     containerRow(container)
                 }
             }
-            section("Spotted", count: snapshot.spotted.count, empty: "Nothing spotted waits for a look") {
+            section(Self.spottedTitle, count: snapshot.spotted.count, empty: "Nothing spotted waits for a look") {
                 ForEach(spottedByType, id: \.type) { group in
                     Text(Plural.count(group.rows.count, group.type))
                         .font(.system(size: 11, weight: .medium))
@@ -60,13 +60,19 @@ public struct WorkItemsView: View {
                     ForEach(group.rows) { row in triageRow(row, accept: true) }
                 }
             }
-            section("Reopened, nobody working", count: snapshot.reopened.count,
+            section(Self.reopenedTitle, count: snapshot.reopened.count,
                     empty: "No reopened item waits for a worker") {
                 ForEach(snapshot.reopened) { row in triageRow(row, accept: false) }
             }
         }
         .accessibilityIdentifier("work-items")
     }
+
+    /// The scroll ID of a section's header, so a count elsewhere (the hub's title bar) can bring that section into view.
+    public static func sectionID(_ title: String) -> String { "work.section." + title }
+    public static let containersTitle = "Handoffs and epics"
+    public static let spottedTitle = "Spotted"
+    public static let reopenedTitle = "Reopened, nobody working"
 
     private var spottedByType: [(type: String, rows: [WorkTriageValue])] {
         Dictionary(grouping: snapshot.spotted, by: \.type)
@@ -84,6 +90,7 @@ public struct WorkItemsView: View {
                 Spacer()
             }
             .padding(.bottom, 4)
+            .id(WorkItemsView.sectionID(title))
             if count == 0 {
                 Text(empty).font(.system(size: 12)).foregroundStyle(KitPalette.faint)
             } else {
@@ -295,6 +302,7 @@ struct WorkReasonButton: View {
     let action: (String) -> Void
     @State private var asking = false
     @State private var text = ""
+    @FocusState private var typing: Bool
 
     var body: some View {
         IconButton(systemName: symbol, tooltip: tooltip) { asking = true }
@@ -305,7 +313,10 @@ struct WorkReasonButton: View {
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(2...5)
                         .frame(width: 320)
+                        .focused($typing)
                         .onSubmit(confirm)
+                        // The popover only asks for this text: it takes the keys at once, no second click.
+                        .onAppear { typing = true }
                     HStack {
                         Spacer()
                         Button("Cancel") { asking = false }.keyboardShortcut(.cancelAction)

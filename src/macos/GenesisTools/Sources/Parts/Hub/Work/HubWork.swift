@@ -138,6 +138,9 @@ struct WorkProjectRow: View, Equatable {
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
     @ObservedObject var screen: WorkScreenModel
+    /// A section a title bar count asked for; the Items scroll view brings its header to the top.
+    @State private var jump: String?
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -162,11 +165,22 @@ struct WorkMain: View {
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                         .lineLimit(1)
-                    if let summary {
-                        Text(verbatim: summary).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
-                    }
                 }
                 .titlebarLabel()
+                if let summary {
+                    // Every count opens what it counts: 47 handoffs push the spotted items far below the fold.
+                    HStack(spacing: 2) {
+                        ForEach(Array(summary.enumerated()), id: \.offset) { index, part in
+                            if index > 0 { Text(verbatim: "·").foregroundColor(ReviewPalette.dim) }
+                            Button { screen.pane = .items; jump = part.section } label: {
+                                Text(verbatim: part.text).foregroundColor(ReviewPalette.dim).lineLimit(1)
+                            }
+                            .buttonStyle(.genHoverPlain())
+                            .instantTooltip("Show the " + part.section.lowercased() + " section")
+                        }
+                    }
+                    .font(.system(size: 11.5))
+                }
                 Spacer()
                 GenSegmentedTabs("Work pane", items: WorkScreenModel.Pane.allCases.map { .init($0, $0.title) },
                                  selection: $screen.pane, minSegmentWidth: 96)
@@ -179,11 +193,11 @@ struct WorkMain: View {
         }
     }
 
-    private var summary: String? {
+    private var summary: [(text: String, section: String)]? {
         guard screen.itemRef == nil, let snapshot = screen.snapshot else { return nil }
-        return [Plural.count(snapshot.containers.count, "container"),
-                Plural.count(snapshot.spotted.count, "spotted item"),
-                Plural.count(snapshot.reopened.count, "reopened item")].joined(separator: " · ")
+        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle),
+                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle),
+                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle)]
     }
 
     @ViewBuilder
@@ -239,6 +253,7 @@ struct WorkMain: View {
             EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            ScrollViewReader { proxy in
             ScrollView {
                 Group {
                     switch screen.pane {
@@ -256,6 +271,14 @@ struct WorkMain: View {
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .genScrollBars()
+            }
+            .onChange(of: jump) { _, section in
+                guard let section else { return }
+                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                    proxy.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+                }
+                jump = nil
+            }
             }
         }
     }
