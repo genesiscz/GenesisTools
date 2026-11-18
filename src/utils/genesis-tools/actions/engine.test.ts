@@ -10,10 +10,12 @@ import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/act
 import { memoryStateStore, parseStateText } from "@genesiscz/utils/genesis-tools/actions/state";
 import type { AppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { windowOpenArgv } from "@genesiscz/utils/genesis-tools/areas/windows";
 import { parseSwiftRpcMethods } from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
 import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { Need } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { z } from "zod";
 import { APP_SURFACE_PATH, readAppSurfaceInput, renderAppSurface } from "../../../../scripts/gen-genesis-app-surface";
 
@@ -265,6 +267,18 @@ describe("state file", () => {
 });
 
 describe("the real areas", () => {
+    test("windows.open waits for a permission dialog and returns on handoff for a banner", () => {
+        const parsed = AREAS.windows.actions.open.args.parse({
+            window: "--permission-dialog", args: ["microphone", "--reason", "A clip"], wait: true,
+        });
+        expect(windowOpenArgv(parsed)).toEqual([
+            "/usr/bin/open", "-n", "-W", genesisAppBundlePath(), "--args", "--permission-dialog", "microphone", "--reason", "A clip",
+        ]);
+        expect(windowOpenArgv(AREAS.windows.actions.open.args.parse({ window: "--hub" }))).toEqual([
+            "/usr/bin/open", "-n", genesisAppBundlePath(), "--args", "--hub",
+        ]);
+    });
+
     test("explain windows.open names the ways and changes no state without --fresh", async () => {
         const state = memoryStateStore();
         const before = SafeJSON.stringify(state.read());

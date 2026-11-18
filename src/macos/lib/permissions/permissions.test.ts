@@ -13,17 +13,22 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
+import { gt } from "@genesiscz/utils/genesis-tools";
 import {
     GENESIS_TOOLS_LAUNCHER_SUFFIX,
     isGenesisToolsBinary,
     retiredAtOf,
 } from "@genesiscz/utils/genesis-tools/app-binary";
+import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
+import { Command } from "commander";
+import { registerPermissionsCommand } from "../../commands/permissions";
 import {
     codesignTrustAnswered,
     deleteRetiredStamps,
@@ -82,6 +87,108 @@ const FIND_IDENTITY = `Policy: Code Signing
   1) 59C58A980E277336F7FE8C9FAEF0F2D4ABE68601 "Apple Development: dev@example.com (TEAM1)"
   2) 00B19497EBBEEB0723ECDE42FD6312677BEF2A29 "Developer ID Application: Example Person (TEAM2)"
      2 valid identities found`;
+
+function runPermissions(args: string[]): Promise<void> {
+    const appHome = mkdtempSync(join(tmpdir(), "permission-window-"));
+    return env.testing.withOverrides({ GENESIS_TOOLS_APP_HOME: appHome }, async () => {
+        const program = new Command();
+        registerPermissionsCommand(program);
+        await program.parseAsync(["permissions", ...args], { from: "user" });
+    });
+}
+
+describe("permission window commands", () => {
+    it("requests the grant with its reason and waits for the dialog before probing again", async () => {
+        const calls: string[] = [];
+        const status = spyOn(gt.permissions, "status").mockImplementation(async ({ kind }) => {
+            calls.push("status");
+            return {
+                status: "ran",
+                via: "native",
+                value: { kind, status: calls.length === 1 ? "denied" : "granted" },
+                skipped: [],
+            };
+        });
+        const open = spyOn(gt.windows, "open").mockImplementation(async ({ window }) => {
+            calls.push("dialog");
+            return { status: "ran", via: "native", value: { window, opened: true }, skipped: [] };
+        });
+        const ok = spyOn(ui, "ok").mockImplementation(() => {});
+        try {
+            await runPermissions(["request", "microphone", "--reason", "Record this clip"]);
+            expect(open.mock.calls).toEqual([
+                [{
+                    window: "--permission-dialog",
+                    args: ["microphone", "--reason", "Record this clip"],
+                    activate: true,
+                    wait: true,
+                }],
+            ]);
+            expect(calls).toEqual(["status", "dialog", "status"]);
+            expect(ok).toHaveBeenCalledWith("microphone: granted");
+        } finally {
+            ok.mockRestore();
+            open.mockRestore();
+            status.mockRestore();
+        }
+    });
+
+    it("prints the dialog's skipped reason and fix without probing the grant again", async () => {
+        const exitCode = process.exitCode;
+        const status = spyOn(gt.permissions, "status").mockResolvedValue({
+            status: "ran",
+            via: "native",
+            value: { kind: "microphone", status: "denied" },
+            skipped: [],
+        });
+        const open = spyOn(gt.windows, "open").mockResolvedValue({
+            status: "unreachable",
+            skipped: [{
+                way: "native",
+                code: "app-missing",
+                reason: "missing app",
+                fix: { command: "repair-fixture", sentence: "Install it." },
+            }],
+            manual: null,
+        });
+        const err = spyOn(ui, "err").mockImplementation(() => {});
+        try {
+            await runPermissions(["request", "microphone"]);
+            expect(open.mock.calls).toEqual([
+                [{ window: "--permission-dialog", args: ["microphone"], activate: true, wait: true }],
+            ]);
+            expect(err.mock.calls).toEqual([["missing app\nrepair-fixture"]]);
+            expect(status).toHaveBeenCalledTimes(1);
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = exitCode;
+            err.mockRestore();
+            open.mockRestore();
+            status.mockRestore();
+        }
+    });
+
+    it("prints the failed installation need before opening a privacy pane or Finder", async () => {
+        const exitCode = process.exitCode;
+        const isTest = spyOn(LIVE_FACTS, "isTest").mockReturnValue(false);
+        const bundle = spyOn(LIVE_FACTS, "appBundle").mockReturnValue({
+            installed: false, routingOff: false, path: "/fixture/missing.app",
+        });
+        const err = spyOn(ui, "err").mockImplementation(() => {});
+        try {
+            await runPermissions(["open", "--pane", "accessibility"]);
+            expect(err.mock.calls).toEqual([
+                ["app.installed: GenesisTools.app is not installed at /fixture/missing.app\ntools macos permissions build"],
+            ]);
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = exitCode;
+            err.mockRestore();
+            bundle.mockRestore();
+            isTest.mockRestore();
+        }
+    });
+});
 
 describe("pickCodesignIdentity", () => {
     it("prefers Developer ID over Apple Development", () => {

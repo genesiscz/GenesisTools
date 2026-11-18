@@ -2,17 +2,17 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { defineAction, defineArea, type Fix, type FixDecision } from "@genesiscz/utils/genesis-tools/actions/define";
 import { defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
-import {
-    APP_FACES,
-    type AppFaceFlag,
-    type AppPartId,
-} from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { APP_FACES } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import { Need, type NeedSpec } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { z } from "zod";
 
-const FACE_FLAGS = Object.keys(APP_FACES) as [AppFaceFlag, ...AppFaceFlag[]];
+// The short-lived permission dialog is a host command, outside the lifecycle table of app faces.
+const OPEN_WINDOWS = { ...APP_FACES, "--permission-dialog": { part: null } } as const;
+type OpenWindowFlag = keyof typeof OPEN_WINDOWS;
+const FACE_FLAGS = Object.keys(OPEN_WINDOWS) as [OpenWindowFlag, ...OpenWindowFlag[]];
 
 /** `open` returns once Launch Services handed the flags over; a slower answer means it hangs. */
 const OPEN_TIMEOUT_MS = 15_000;
@@ -30,21 +30,23 @@ export function reviewResourcesProblem(bundle: string): string | undefined {
     return undefined;
 }
 
-function partOf(flag: AppFaceFlag): AppPartId | null {
-    return APP_FACES[flag].part;
-}
-
 /** The needs of opening a face: macOS, the bundle, the part that ships the face, and a person who can see it. */
-function openNeeds(flag: AppFaceFlag): NeedSpec[] {
-    const part = partOf(flag);
+function openNeeds(flag: OpenWindowFlag): NeedSpec[] {
+    const part = OPEN_WINDOWS[flag].part;
     return [Need.platform.darwin, Need.app.installed, ...(part ? [Need.app.part(part)] : []), Need.person.display];
 }
 
 /** The argv of `open`: `-n` hands the flags to a running face too, `-g` keeps the caller in front. */
-export function windowOpenArgv(params: { window: AppFaceFlag; args: readonly string[]; activate: boolean }): string[] {
+export function windowOpenArgv(params: {
+    window: OpenWindowFlag;
+    args: readonly string[];
+    activate: boolean;
+    wait?: boolean;
+}): string[] {
     return [
         "/usr/bin/open",
         "-n",
+        ...(params.wait ? ["-W"] : []),
         ...(params.activate ? [] : ["-g"]),
         genesisAppBundlePath(),
         "--args",
@@ -57,6 +59,7 @@ const openArgs = z.object({
     window: z.enum(FACE_FLAGS),
     args: z.array(z.string()).default([]),
     activate: z.boolean().default(true),
+    wait: z.boolean().optional(),
 });
 
 const fixPolicy = z.enum(["skip", "offer", "build"]);
@@ -88,12 +91,15 @@ export const windows = defineArea({
 
                     logger.debug({ window: ctx.args.window, args: ctx.args.args }, "windows.open: opening a face");
                     const argv = windowOpenArgv(ctx.args);
-                    const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: OPEN_TIMEOUT_MS });
+                    const proc = Bun.spawn(argv, {
+                        stdout: "ignore",
+                        stderr: "pipe",
+                        timeout: ctx.args.wait ? ctx.timeoutMs : Math.min(OPEN_TIMEOUT_MS, ctx.timeoutMs),
+                    });
+                    const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
 
-                    if (proc.exitCode !== 0) {
-                        throw new Error(
-                            `open exited ${proc.exitCode}: ${new TextDecoder().decode(proc.stderr).trim()}`
-                        );
+                    if (code !== 0) {
+                        throw new Error(`open exited ${code}: ${stderr.trim()}`);
                     }
 
                     return { window: ctx.args.window, opened: true as const };
@@ -109,7 +115,7 @@ export const windows = defineArea({
 
                 return policy === "offer" ? ctx.offerBuild(part) : ctx.skip();
             },
-            manual: (args) => `open -n ${genesisAppBundlePath()} --args ${[args.window, ...args.args].join(" ")}`,
+            manual: (args) => windowOpenArgv(args).map(shellWord).join(" "),
         }),
     },
 });
