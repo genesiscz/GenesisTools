@@ -237,10 +237,18 @@ capture without a restart, and frames reach the socket as they land. A recorder 
 capture. The OCR backlog, the summary and the collect run on the shared job runner (`@genesiscz/utils/jobs`) as
 `progress` notifications. `stop` answers after them, or at once with `{wait: false}` and the job id.
 
-Sound is off by default (the transcript source records it). `capture.recorders.native.audio` (`sources`,
-`micDevice`) or `record start --audio` turn it on. One capture per piece records it as `--audio-sidecar` `.m4a`
-files, moved to `audio/`, with muted spans in `audio.jsonl`. Peekaboo records one display at a time (its
-ScreenCaptureKit lock), so `displays: "all"` falls back to the main display with a warning.
+The native recorder captures microphone and system sound by default. Its `session` mode writes 60-second
+sound files alongside the screen recording, so sound continues when a frame piece restarts. Set `sources`
+and `micDevice` under `capture.recorders.native.audio` to choose the inputs, or use `record start --audio`
+to override the sources for one recording.
+
+Set `capture.recorders.native.audio.mode` to `pieces` to save the fallback choice. In this mode one screen
+capture per piece records the sound. The recorder also falls back to pieces if the sound session cannot
+start, or if it fails again within a minute of a restart. Both modes keep their `.m4a` files in `audio/`.
+In `audio.jsonl`, `mutedSpans` marks intentional mutes and `lostSpans` marks gaps in the captured samples.
+
+Peekaboo records one display at a time (its ScreenCaptureKit lock), so `displays: "all"` falls back to the main
+display with a warning.
 
 The `recording` block of the record has a schema (`RecordingBlock` in `src/utils/meetings/record.ts`): `spans` (from,
 to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `bytes` (every frame in `frames/`, also
