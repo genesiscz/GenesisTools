@@ -1,4 +1,5 @@
 import type { readLivePermissions } from "@app/control/lib/permissions";
+// lint-rules-ignore: the recording grant card is a field of the hub widget state, and widget storage has no src/utils home yet
 import { mutateWidgetState } from "@app/hub/lib/widget/storage";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 
