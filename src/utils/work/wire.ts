@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { ITEM_STATES, ITEM_TYPES, SEVERITIES } from "./model/vocab";
+import { NOTIFY_ACTIONS, NOTIFY_LEVELS } from "./rules/config";
 
 const state = z.enum(ITEM_STATES);
 const type = z.enum(ITEM_TYPES);
@@ -83,3 +84,38 @@ export function replySchemaOf(data: z.ZodType) {
             .optional(),
     });
 }
+
+const layerTrail = z.array(z.object({ layer: z.string(), value: z.unknown().optional() }));
+
+/** `config`: per type, its field rules and write roles (values of any shape) and its notify levels (typed). */
+export const configResultSchema = z.object({
+    project: z.string(),
+    sources: z.array(z.object({ layer: z.string(), path: z.string().nullable() })),
+    rows: z.array(
+        z.object({
+            type,
+            fields: z.array(
+                z.object({
+                    field: z.string(),
+                    resolved: z.object({ value: z.unknown(), from: z.string(), layers: layerTrail }),
+                })
+            ),
+            writes: z.array(
+                z.object({
+                    verb: z.string(),
+                    resolved: z.object({ value: z.unknown(), from: z.string(), layers: layerTrail }),
+                })
+            ),
+            notify: z.array(
+                z.object({
+                    action: z.enum(NOTIFY_ACTIONS),
+                    resolved: z.object({
+                        level: z.enum(NOTIFY_LEVELS),
+                        from: z.string(),
+                        layers: z.array(z.object({ layer: z.string(), value: z.enum(NOTIFY_LEVELS).optional() })),
+                    }),
+                })
+            ),
+        })
+    ),
+});

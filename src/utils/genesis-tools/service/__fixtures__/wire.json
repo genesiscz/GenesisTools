@@ -601,7 +601,11 @@
         "v": 1,
         "verb": "fixture",
         "ok": true,
-        "data": null,
+        "data": {
+          "project": "fixture",
+          "sources": [],
+          "rows": []
+        },
         "diagnostics": [],
         "next": [],
         "dryRun": true,

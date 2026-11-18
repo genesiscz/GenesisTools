@@ -54,7 +54,7 @@ describe("the wire schemas of the read methods match what the handlers return", 
                 context: async () => ({}) as never,
             };
 
-            for (const method of ["list", "tree", "triage"] as const) {
+            for (const method of ["list", "tree", "triage", "config"] as const) {
                 const reply = await callWork(method, {}, session);
                 expect(reply.ok).toBe(true);
                 const parsed = workMethods[method].result.safeParse(reply.ok ? reply.data : null);
