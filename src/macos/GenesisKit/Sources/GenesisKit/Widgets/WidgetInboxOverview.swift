@@ -1,9 +1,15 @@
 import SwiftUI
 
-/// The inbox button's view: inbox items from every session in one list, the waiting ones first. A row opens in place
+/// The inbox button's view: inbox items from every session in one list, in the chosen order. A row opens in place
 /// to show its session and the way to that session's whole inbox (with the entry open) and its cmux pane.
 struct WidgetInboxOverview: View {
     @ObservedObject var model: WidgetModel
+    /// The host supplies its fitted scroll view so that the reader and the arrival button surround the viewport.
+    var viewport: (AnyView) -> AnyView = { $0 }
+    @State private var belowTop = false
+    @State private var readingBoundary: WidgetInboxItem?
+    @State private var visibleOpenID: String?
+    @State private var orderAnchor: String?
     /// The filter picked here; until then the one the `overviewFilter` setting opens with.
     @State private var filterPick: String?
     @State private var openID: String?
@@ -24,28 +30,49 @@ struct WidgetInboxOverview: View {
         }
     }
 
-    /// Items under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
     private var grouped: Bool { model.preferences.inboxGrouping == "session" }
-
-    /// The rows in the order they are drawn: grouped under their sessions, or the one list.
-    private func drawnOrder(_ items: [WidgetInboxItem]) -> [WidgetInboxItem] {
-        grouped ? Self.groups(items).flatMap(\.items) : items
-    }
+    private var feed: Bool { model.preferences.inboxGrouping == "feed" }
 
     var body: some View {
         let items = items
+        let feedRows = WidgetFeedReadingPlace.split(model.inboxFeeds[filter], at: readingBoundary)
+        let drawn = feed ? feedRows.runs.flatMap(\.items) : grouped ? Self.groups(items).flatMap(\.items) : items
         let _ = RenderProbe.hit("widget.overview")
-        // Inside the pane's scroll view: the proxy scrolls the row the keys chose into view.
         ScrollViewReader { proxy in
-            list(items)
+            viewport(AnyView(list(items, runs: feedRows.runs)))
+                .overlay(alignment: .top) {
+                    if feed, feedRows.pending > 0 {
+                        Button(Plural.count(feedRows.pending, "new item")) {
+                            readingBoundary = nil
+                            proxy.scrollTo("widget.overview.top", anchor: .top)
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .buttonStyle(.genHoverPlain())
+                        .padding(.horizontal, 6)
+                        .background(SessionPalette.blue.opacity(0.18), in: Capsule())
+                        .padding(.top, 2)
+                    }
+                }
+                .onChange(of: model.preferences.inboxGrouping) { _, _ in
+                    readingBoundary = feed && belowTop ? model.inboxFeeds[filter].first?.items.first : nil
+                    if let id = orderAnchor ?? visibleOpenID, id == openID { proxy.scrollTo(id, anchor: .top) }
+                    orderAnchor = nil
+                }
+                .onChange(of: model.preferences.inboxFeedRuns) { _, _ in
+                    if feed, let id = orderAnchor ?? visibleOpenID, id == openID { proxy.scrollTo(id, anchor: .top) }
+                    orderAnchor = nil
+                }
+                .onChange(of: filter) { _, _ in
+                    readingBoundary = feed && belowTop ? model.inboxFeeds[filter].first?.items.first : nil
+                }
                 .onChange(of: model.listKey) { _, key in
                     guard let key else { return }
-                    handle(key.kind, alternate: key.alternate, rows: drawnOrder(items), proxy: proxy)
+                    handle(key.kind, alternate: key.alternate, rows: drawn, proxy: proxy)
                 }
                 .onChange(of: focusID) { _, id in model.inboxOverviewHasFocus = id != nil }
                 // A row that left the list (a filter, the grouping or a snapshot) cannot keep the keys' highlight, or
                 // Return would still answer it.
-                .onChange(of: drawnOrder(items).map(\.id)) { _, ids in
+                .onChange(of: drawn.map(\.id)) { _, ids in
                     if let id = focusID, !ids.contains(id) {
                         focusID = nil
                         focusedOption = nil
@@ -156,7 +183,7 @@ struct WidgetInboxOverview: View {
         model.sendStaged([item.sourceId], known: [item])
     }
 
-    private func list(_ items: [WidgetInboxItem]) -> some View {
+    private func list(_ items: [WidgetInboxItem], runs: [WidgetFeedRun]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(
@@ -167,16 +194,17 @@ struct WidgetInboxOverview: View {
                         filterPick = value
                     }), minSegmentWidth: 70, identifier: "widget.overview.filter")
                 Spacer(minLength: 4)
-                IconButton(systemName: grouped ? "list.bullet" : "rectangle.3.group",
-                           tooltip: grouped ? "Show one list" : "Group the items by session") {
-                    model.holdAgentFit()
-                    model.writePreferences { $0.inboxGrouping = grouped ? "list" : "session" }
-                }.accessibilityLabel(grouped ? "Show one list" : "Group by session")
+                orderMenu
                 if model.inboxCount > 0 {
                     Button("Mark all read", action: model.markAllRead)
                         .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
                         .instantTooltip("Answers become read; older questions and decisions stop counting. Nothing is deleted.")
                 }
+            }
+            .id("widget.overview.top")
+            .onGeometryChange(for: Bool.self, of: { $0.frame(in: .scrollView).minY < -1 }) { scrolled in
+                belowTop = scrolled
+                readingBoundary = feed && scrolled ? model.inboxFeeds[filter].first?.items.first : nil
             }
             if items.isEmpty {
                 VStack(spacing: 10) {
@@ -187,10 +215,19 @@ struct WidgetInboxOverview: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity).padding(.vertical, 28)
             } else {
-                Text(Self.summary(items)).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Self.summary(items) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if grouped {
+                    if feed {
+                        ForEach(runs) { run in
+                            Section {
+                                ForEach(run.items, id: \.id) { item in row(item) }
+                            } header: {
+                                WidgetFeedRunHeader(run: run, model: model).equatable()
+                                    .padding(.top, run.id == runs.first?.id ? 0 : 8)
+                            }
+                        }
+                    } else if grouped {
                         ForEach(Self.groups(items), id: \.key) { group in
                             Section {
                                 ForEach(group.items, id: \.id) { item in row(item) }
@@ -208,6 +245,36 @@ struct WidgetInboxOverview: View {
                 }
             }
         }
+    }
+
+    private var orderMenu: some View {
+        let order = model.preferences.inboxGrouping
+        return MenuButton(items: {
+            var choices: [MenuButtonItem] = [("feed", "Newest first"), ("session", "By session"), ("list", "One list")]
+                .map { value, title in
+                    .action(title, checked: value == order) {
+                        guard order != value else { return }
+                        orderAnchor = visibleOpenID
+                        model.holdAgentFit()
+                        model.writePreferences { $0.inboxGrouping = value }
+                    }
+                }
+            if feed {
+                let perProject = model.preferences.inboxFeedRuns == "project"
+                choices += [.divider, .action("Feed headers per project", checked: perProject) {
+                    orderAnchor = visibleOpenID
+                    model.holdAgentFit()
+                    model.writePreferences { $0.inboxFeedRuns = perProject ? "session" : "project" }
+                }]
+            }
+            return choices
+        }) {
+            Label(feed ? "Newest" : grouped ? "Sessions" : "List", systemImage: "line.3.horizontal.decrease")
+                .font(.system(size: 11)).lineLimit(1)
+        }
+        .instantTooltip("Order of the inbox list")
+        .accessibilityLabel("Order of the inbox list")
+        .accessibilityIdentifier("widget.overview.grouping")
     }
 
     /// The sessions in the order their first entry appears (the waiting ones first), each with its entries.
@@ -262,8 +329,16 @@ struct WidgetInboxOverview: View {
     private func row(_ item: WidgetInboxItem) -> some View {
         let open = openID == item.id
         let focused = focusID == item.id
-        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, grouped: grouped,
+        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, grouped: grouped || feed,
                                 focusedOption: focusedOption, toggle: { toggle(item) })
+            .onGeometryChange(for: Bool.self, of: { geometry in
+                guard open, let viewport = geometry.bounds(of: .scrollView) else { return false }
+                return CGRect(origin: .zero, size: geometry.size).intersects(viewport)
+            }) { visible in
+                if visible { visibleOpenID = item.id }
+                else if visibleOpenID == item.id { visibleOpenID = nil }
+            }
+            .onDisappear { if visibleOpenID == item.id { visibleOpenID = nil } }
     }
 
     static func title(_ item: WidgetInboxItem) -> String {

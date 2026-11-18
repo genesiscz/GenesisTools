@@ -1,0 +1,105 @@
+import AppKit
+import SwiftUI
+import XCTest
+@testable import GenesisKit
+
+@MainActor
+final class WidgetInboxFeedTests: XCTestCase {
+    private let alpha = WidgetInboxRender.session("alpha", project: "Orchard")
+    private let beta = WidgetInboxRender.session("beta", project: "Meadow")
+    private let gamma = WidgetInboxRender.session("gamma", project: "Meadow")
+
+    /// D1 from A, a note from B, a todo from C, then D5 and D6 from A. The two returns to A are separate headers.
+    private var items: [WidgetInboxItem] {
+        [
+            .init(id: "decision:d1", sourceId: "d1", kind: "decision", key: alpha.key,
+                  at: 5000, needsAnswer: true, title: "Pick a basket", number: 1),
+            .init(message: .init(text: "The pears are ready."), id: "answer:m", sourceId: "m",
+                  kind: "answer", key: beta.key, at: 4000, needsAnswer: false, title: "Delivery note", tag: "message"),
+            .init(id: "todo:t", sourceId: "t", kind: "todo", key: gamma.key, at: 3000,
+                  needsAnswer: false, title: "Sort the crates"),
+            .init(id: "decision:d5", sourceId: "d5", kind: "decision", key: alpha.key,
+                  at: 2000, needsAnswer: true, title: "Choose a shelf", number: 5),
+            .init(id: "decision:d6", sourceId: "d6", kind: "decision", key: alpha.key,
+                  at: 1000, needsAnswer: true, title: "Choose a label", number: 6),
+        ]
+    }
+
+    private func makeModel(order: String = "feed", view: String = "sessions") throws -> WidgetModel {
+        var prefs = WidgetPreferences.hubDefaults
+        prefs.inboxGrouping = order
+        prefs.previewView = view
+        prefs.previewFilter = "active"
+        return try WidgetInboxRender.model(sessions: [alpha, beta, gamma], items: items, preferences: prefs)
+    }
+
+    func testD1NoteTodoD5D6FormFourConsecutiveSessionRuns() {
+        let runs = WidgetInboxFeed.runs(items.reversed(), by: "session") { _ in nil }
+        XCTAssertEqual(runs.map(\.runKey), [alpha.key, beta.key, gamma.key, alpha.key])
+        XCTAssertEqual(runs.map { $0.items.count }, [1, 1, 1, 2])
+        XCTAssertEqual(runs.map(\.id), [alpha.key + "|decision:d1", beta.key + "|answer:m",
+                                        gamma.key + "|todo:t", alpha.key + "|decision:d5"])
+        XCTAssertEqual(runs.flatMap(\.items), items)
+    }
+
+    func testProjectRunsCoalesceNeighboursAndWaitingNeverChangesTheChronology() throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        let runs = WidgetInboxFeed.runs(model.inboxOverviewItems, by: "project") { model.session(forKey: $0.key)?.project }
+        XCTAssertEqual(runs.map(\.runKey), ["project/Orchard", "project/Meadow", "project/Orchard"])
+        XCTAssertEqual(runs.map { $0.items.count }, [1, 2, 2])
+        XCTAssertEqual(runs.flatMap(\.items), items, "The newer note comes before the two older waiting decisions")
+        XCTAssertEqual(model.inboxFeeds["needs"].map { $0.items.map(\.sourceId) }, [["d1", "d5", "d6"]])
+    }
+
+    func testExternalMessagesUseTheirSenderAndEqualTimesUseTheItemID() {
+        var note = items[1]
+        note.message?.origin = "External"
+        note.at = items[0].at
+        for mode in ["session", "project"] {
+            let runs = WidgetInboxFeed.runs([items[0], note], by: mode) { _ in "" }
+            XCTAssertEqual(runs.map(\.runKey), ["sender/External", alpha.key])
+            XCTAssertEqual(runs.first?.items.first?.id, "answer:m")
+        }
+    }
+
+    func testNewItemsKeepThePreviousFirstRunAndRowsInPlaceUntilRevealed() {
+        let old = WidgetInboxFeed.runs(items, by: "session") { _ in nil }
+        var arrival = items[0]
+        arrival.id = "decision:new"
+        arrival.at += 1
+        let fresh = WidgetInboxFeed.runs(items + [arrival], by: "session") { _ in nil }
+        let held = WidgetFeedReadingPlace.split(fresh, at: items[0])
+        XCTAssertEqual(held.pending, 1)
+        XCTAssertEqual(held.runs, old)
+        XCTAssertEqual(WidgetFeedReadingPlace.split(fresh, at: nil).runs.first?.items.first, arrival)
+    }
+
+    func testTheOverviewDrawsTheFourHeadersAndTheirItemsInOrder() throws {
+        let size = CGSize(width: 460, height: 640)
+        for order in ["session", "feed"] {
+            let model = try makeModel(order: order)
+            defer { model.stop() }
+            let list = WidgetInboxOverview(model: model, viewport: { content in AnyView(ScrollView { content }) })
+            let lines = try WidgetInboxRender.draw(list, size: size, name: order == "feed" ? "feed-after" : "feed-before")
+            if order == "session" {
+                XCTAssertTrue(lines.joined().contains("Alpha"), lines.description)
+            } else {
+                assertOrder(["Orchard", "Pick a basket", "Meadow", "Delivery note", "Meadow", "Sort the crates",
+                             "Orchard", "Choose a shelf", "Choose a label"], in: lines)
+            }
+        }
+    }
+
+    private func assertOrder(_ labels: [String], in lines: [String], file: StaticString = #filePath, line: UInt = #line) {
+        let text = lines.joined(separator: " ")
+        var rest = text[...]
+        for label in labels {
+            guard let range = rest.range(of: label, options: .caseInsensitive) else {
+                XCTFail("Missing or out of order: \(label) in \(text)", file: file, line: line)
+                return
+            }
+            rest = rest[range.upperBound...]
+        }
+    }
+}

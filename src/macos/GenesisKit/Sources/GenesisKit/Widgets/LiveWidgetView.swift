@@ -244,18 +244,11 @@ public struct LiveWidgetView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.inboxOverview {
                 if model.stagedView == nil { WidgetStagedChip(model: model) }
-                ScrollView {
-                    Group {
-                        if model.stagedView != nil { WidgetStagedList(model: model) } else { WidgetInboxOverview(model: model) }
-                    }
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
-                        .scrollOverflowContent()
-                        .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
+                if model.stagedView != nil {
+                    overviewScroll { WidgetStagedList(model: model) }
+                } else {
+                    WidgetInboxOverview(model: model, viewport: { content in AnyView(overviewScroll { content }) })
                 }
-                .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
-                .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
-                .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
-                .scrollOverflowHints()
             } else if model.selected == nil {
                 if model.inbox.sessions.isEmpty {
                     VStack(spacing: 10) {
@@ -374,6 +367,19 @@ public struct LiveWidgetView: View {
             }
             Color.clear.frame(height: 0).id("outgoing-end")
         }
+    }
+
+    private func overviewScroll(@ViewBuilder content: () -> some View) -> some View {
+        ScrollView {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+                .scrollOverflowContent()
+                .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
+        }
+        .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
+        .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
+        .scrollOverflowHints()
     }
 
     /// The pane needs its chrome plus the whole scroll document; without a list (connecting, nothing selected) a
