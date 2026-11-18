@@ -93,6 +93,16 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertEqual(ListenVoicesEditor.offeredPeople([present, absent], row: row, everybody: true), [present.name, absent.name])
     }
 
+    func testPinPlacementInputsCoverPinsZoomWidthLanesAndCaptions() {
+        let pins = [TimelinePin(id: "a", sec: 10, text: "First", state: .question), TimelinePin(id: "b", sec: 11, text: "Second", state: .open)]
+        let input = TimelinePinLayout(pins: pins, view: 0...100, width: 400, lanes: 1, showsText: false)
+        XCTAssertEqual(input.make(), PinCluster.clusters(pins, in: 0...100, width: 400))
+        XCTAssertNotEqual(input, TimelinePinLayout(pins: pins, view: 0...20, width: 400, lanes: 1, showsText: false))
+        XCTAssertNotEqual(input, TimelinePinLayout(pins: [], view: 0...100, width: 400, lanes: 1, showsText: false))
+        let lanes = TimelinePinLayout(pins: pins, view: 0...100, width: 800, lanes: 2, showsText: true)
+        XCTAssertEqual(lanes.make(), PinCluster.laid(pins, in: 0...100, width: 800, lanes: 2, markWidth: 72))
+    }
+
     func testPatchPreservesEveryOptionalRowAndEvidenceField() throws {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.8,"priority":0.9,"group":"rules","occurrences":3,"reach":0.7,"comment":"Keep the source","what":"Who?","parts":[],"choices":[],"edit":"answer","needs":"listen","sources":[],"target":{"kind":"item","id":"q"},"answer":"Earlier","decision":{"token":"earlier","actor":{"kind":"window"},"by":"you","action":"answer","reason":"Checked","question":"q","at":"2026-01-01T00:00:00Z"}}"#.utf8))
         let hidden = ReviewRows.Hidden(lowPriority: 2, minPriority: 0.5)
