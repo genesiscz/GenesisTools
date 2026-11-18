@@ -8,7 +8,12 @@ import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-re
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { ancestorPids } from "../lib/decision/frontmost";
-import { ffmpegSegmentJoiner, movieLengthMs, nativeSegmentRecorder } from "../lib/recording-native";
+import {
+    ffmpegSegmentJoiner,
+    movieLengthMs,
+    nativeSegmentRecorder,
+    SESSION_MOTION_THRESHOLD,
+} from "../lib/recording-native";
 import {
     parseRecordingCommand,
     RECORDING_SESSION_MAX_SECONDS,
@@ -32,6 +37,7 @@ interface SessionFlags {
     target?: string;
     excludeWindowIds?: string;
     fps?: string;
+    idleFps?: string;
     /** Commander's `--no-indicator`: true unless the flag is given. */
     indicator?: boolean;
     maxSeconds?: string;
@@ -76,6 +82,8 @@ function humanLine(event: RecordingSessionEvent): string {
             return `${event.state} (${event.reason}) · ${describeRecordingTarget(event.target)} · ${Math.round(event.elapsedMs / 1000)} s`;
         case "elapsed":
             return `${Math.round(event.elapsedMs / 1000)} s`;
+        case "rates":
+            return `${event.activeFps} fps, ${event.idleFps} while still, ${event.threshold}% change`;
         case "segment":
             return `segment ${event.index}: ${Math.round(event.durationMs / 1000)} s`;
         case "done":
@@ -136,7 +144,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
     capture
         .command("session")
         .description(
-            "A recording you control while it runs: JSONL commands on stdin (pause, resume, switch, restart, stop, discard), JSONL events on stdout"
+            "A recording you control while it runs: JSONL commands on stdin (pause, resume, switch, restart, stop, discard, rates), JSONL events on stdout"
         )
         .option("--json", "Events as JSON lines on stdout")
         .option("--stop-on-stdin", "Read commands from stdin; its end stops and keeps the recording")
@@ -146,6 +154,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
         )
         .option("--exclude-window-ids <ids>", "CG window ids the movie never shows (the host's own controls)")
         .option("--fps <n>", "Frame rate while something moves, 0.5–120", "60")
+        .option("--idle-fps <n>", "Frame rate while still, 0.1–5 (default: keep the active frame rate)")
         .option("--no-indicator", "Hide the red border around what is recorded (never in the movie either way)")
         .option("--max-seconds <n>", `Longest recording, 1–${RECORDING_SESSION_MAX_SECONDS} s`)
         .option("--output <path>", "Where the joined movie goes (default ~/.genesis-tools/control/recordings/)")
@@ -202,14 +211,16 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 // The default output and every session folder live here, so the folder is owner only.
                 await mkdir(recordingsDir(), { recursive: true, mode: 0o700 });
                 await chmod(recordingsDir(), 0o700);
+                const activeFps = boundedNumber(flags.fps, "--fps", 0.5, 120) ?? 60;
+                const idleFps = Math.min(boundedNumber(flags.idleFps, "--idle-fps", 0.1, 5) ?? activeFps, activeFps);
                 session = new RecordingSession({
                     target,
+                    rates: { activeFps, idleFps, threshold: SESSION_MOTION_THRESHOLD },
                     directory: recordingsDir(`session-${randomUUID()}`),
                     // The suffix keeps two sessions that start in the same second from saving over each other.
                     output: flags.output ?? recordingsDir(`recording-${stamp()}-${randomUUID().slice(0, 8)}.mp4`),
                     recorder: nativeSegmentRecorder({
                         excludeWindowIds: parseIds(flags.excludeWindowIds),
-                        fps: boundedNumber(flags.fps, "--fps", 0.5, 120),
                         indicator: flags.indicator,
                     }),
                     join: ffmpegSegmentJoiner,
@@ -262,9 +273,16 @@ export function registerCaptureSessionCommands(capture: Command): void {
                                   }
 
                                   // The same RecorderControl call the socket makes; a refusal is no failure here.
-                                  void applyRecordingCommand(activeControl, command).catch((error: unknown) => {
-                                      if (!(error instanceof RpcError)) {
-                                          emit({ event: "error", message: String(error), fatal: false });
+                                  void applyRecordingCommand(activeControl, command, (rates) =>
+                                      emit({ event: "rates", ...rates })
+                                  ).catch((error: unknown) => {
+                                      if (command.cmd === "rates" || !(error instanceof RpcError)) {
+                                          emit({
+                                              event: "error",
+                                              message: String(error),
+                                              code: "command-refused",
+                                              fatal: false,
+                                          });
                                       }
 
                                       log.debug({ error, command: command.cmd }, "session command refused");

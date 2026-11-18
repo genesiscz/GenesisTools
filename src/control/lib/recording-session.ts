@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recorderSettingsSchema } from "@genesiscz/utils/screen-recorder/control";
 import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -43,9 +44,16 @@ export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("stop") }),
     z.object({ cmd: z.literal("discard") }),
     z.object({ cmd: z.literal("switch"), target: recordingTargetSchema }),
+    z.object({
+        cmd: z.literal("rates"),
+        activeFps: recorderSettingsSchema.shape.activeFps,
+        idleFps: z.union([z.literal(0), recorderSettingsSchema.shape.idleFps]),
+        threshold: recorderSettingsSchema.shape.threshold.optional(),
+    }),
 ]);
 
 export type RecordingCommand = z.infer<typeof recordingCommandSchema>;
+type LifecycleCommand = Exclude<RecordingCommand, { cmd: "rates" }>;
 
 /** One stdin line as a session command, or the reason it is not one. */
 export function parseRecordingCommand(line: string): RecordingCommand | { error: string } {
@@ -78,6 +86,7 @@ export type RecordingSessionEvent =
           limitMs: number;
       }
     | { event: "elapsed"; elapsedMs: number; limitMs: number }
+    | ({ event: "rates" } & MovieRates)
     | {
           event: "segment";
           index: number;
@@ -315,7 +324,7 @@ export class RecordingSession {
         });
     }
 
-    command(command: RecordingCommand): Promise<void> {
+    command(command: LifecycleCommand): Promise<void> {
         return this.enqueue(() => this.apply(command));
     }
 
@@ -435,7 +444,7 @@ export class RecordingSession {
         return next;
     }
 
-    private async apply(command: RecordingCommand): Promise<void> {
+    private async apply(command: LifecycleCommand): Promise<void> {
         log.debug({ command: command.cmd, state: this.state, segments: this.segments.length }, "recording command");
         if (this.state === "finishing") {
             this.options.emit({ event: "error", message: "The recording is already being saved.", fatal: false });
