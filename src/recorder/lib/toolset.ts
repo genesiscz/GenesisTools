@@ -10,6 +10,7 @@ import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
+import { type AudioLane, audioLanesOf } from "@genesiscz/utils/recording-editor/audio-lanes";
 import {
     checkProject,
     type EditFacts,
@@ -23,6 +24,7 @@ import { MOVIE_EVENT_KINDS, type MovieEventKind, type Tap, tapSchema } from "@ge
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
+import { layerOrderOf, type MediaLayer } from "@genesiscz/utils/recording-editor/layers";
 import { transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
 import { cardsLeadUs, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
 import {
@@ -76,6 +78,7 @@ import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
 import { duplicateRecording } from "./duplicate";
 import {
+    audioFactsOf,
     defaultExportName,
     EXPORT_FORMATS,
     type ExportFormat,
@@ -195,7 +198,7 @@ const demoParamsSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, transitions, lenses, tilt, warnings? }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, layers?, transitions, lenses, tilt, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult =
@@ -247,6 +250,16 @@ function opParams(tag: EditOp["op"]): z.ZodObject {
 
 /** The method of a plain edit op: `edit()` with the op's own params. */
 const opEdit = (tag: EditOp["op"], doc: string, positional?: string[]) => edit(tag, opParams(tag), doc, positional);
+
+function editById(tag: "audioLane" | "layer", doc: string) {
+    const fields = opParams(tag);
+    return edit(tag, fields.pick({ id: true }).extend({ changes: fields.omit({ id: true }) }), doc, ["id", "changes"]);
+}
+
+const layerAddFields = opParams("layerAdd");
+type LayerAddOptions = Omit<Extract<EditOp, { op: "layerAdd" }>, "op" | "file" | "kind"> & {
+    kind?: MediaLayer["kind"];
+};
 
 const movieMethods = [
     defineMethod({
@@ -360,13 +373,65 @@ const movieMethods = [
     opEdit("volume", "Sets the volume, 0 to 2.", ["volume"]),
     opEdit(
         "mute",
-        "Mutes an audio track (0 is the first). A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track. muted: false unmutes it, as unmute(track) does.",
+        `Mutes an audio track (0 is the first), including its saved movie-track lane. Use audioLane(id, { muted: true }) for a separate microphone or system file. A missing track or a movie without sound is refused. Pass false to unmute, as unmute(track) does. Returns the edit summary from the mute op in ${toolCommand("recorder apply")}.`,
         ["track", "muted"]
     ),
     edit("unmute", z.object({ track: z.number().int().nonnegative() }).strict(), "Unmutes an audio track.", ["track"]),
-    edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }).strict(), "Several ops at once, saved once.", [
-        "ops",
-    ]),
+    defineMethod({
+        name: "audioLanes",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ id, source, file?, track?, offsetMs, muted, volume, name }[]",
+        doc: `Lists the sound lanes with their display names and mix settings. Reading an old edit leaves its mix unwritten. Use an id with audioLane or ${toolCommand("recorder apply")} with the audioLane op.`,
+        effect: "read",
+    }),
+    editById(
+        "audioLane",
+        `Mutes, sets volume (0–2), or renames one sound lane. Returns the edit summary from the audioLane op in ${toolCommand("recorder apply")}.`
+    ),
+    defineMethod({
+        name: "layers",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: '{ id, kind: "camera" | "image" | "video" }[]',
+        doc: `Lists camera, image and video layer ids from bottom to top. Use an id with layer or ${toolCommand("recorder apply")} with the layer op.`,
+        effect: "read",
+    }),
+    defineMethod({
+        name: "addLayer",
+        // The service resolves a param named "file" against the caller's cwd. A layer's bare file lives beside the movie.
+        params: z.strictObject({
+            layerFile: layerAddFields.shape.file,
+            options: layerAddFields.omit({ file: true }).partial({ kind: true }).optional(),
+        }),
+        positional: ["layerFile", "options"],
+        result: z.string(),
+        resultName: "string",
+        doc: `Adds an image or video above the existing layers and returns its id. A bare file name is beside the movie. Set options.kind when the extension does not identify the media. startUs and endUs are source microseconds. Runs the layerAdd op from ${toolCommand("recorder apply")}.`,
+        effect: "reversible",
+    }),
+    editById(
+        "layer",
+        `Changes a layer's placement, visibility, shape or source times (microseconds). Hiding the camera keeps its recording. Returns the edit summary from the layer op in ${toolCommand("recorder apply")}.`
+    ),
+    edit(
+        "moveLayer",
+        opParams("layerMove"),
+        `Moves a layer to top, bottom, up, down or a numeric index (0 is the bottom). Returns the edit summary from the layerMove op in ${toolCommand("recorder apply")}.`,
+        ["id", "to"]
+    ),
+    edit(
+        "removeLayer",
+        opParams("layerRemove"),
+        `Removes a media layer. For the camera use layer("camera", { hidden: true }). Returns the edit summary from the layerRemove op in ${toolCommand("recorder apply")}.`,
+        ["id"]
+    ),
+    edit(
+        "apply",
+        z.object({ ops: z.array(editOpSchema).min(1) }).strict(),
+        "Several ops at once, saved once. A single layerAdd also returns the new layerId.",
+        ["ops"]
+    ),
     edit(
         "undo",
         z.object({ all: z.boolean().optional() }).strict(),
@@ -1474,6 +1539,34 @@ function briefOf(project: EditProject, path: string) {
     };
 }
 
+function soundLaneName(lane: AudioLane): string {
+    if (lane.name) {
+        return lane.name;
+    }
+
+    switch (lane.source) {
+        case "mic":
+            return "Microphone";
+        case "system":
+            return "System sound";
+        case "movie":
+            return lane.track === undefined ? "Movie track" : `Movie track ${lane.track + 1}`;
+        case "music":
+            return "Music";
+        case "voiceover":
+            return "Voiceover";
+    }
+}
+
+function layerKindOf(file: string): MediaLayer["kind"] {
+    const kind = Bun.file(file).type.split("/")[0];
+    if (kind === "image" || kind === "video") {
+        return kind;
+    }
+
+    throw new Error('addLayer cannot infer the file type. Set options.kind to "image" or "video".');
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -1546,9 +1639,13 @@ export class Movie {
     private async change(ops: EditOp[]) {
         const before = await openProject(this.recording);
         const edited = await editProject(this.recording, ops);
+        // layerAdd appends its layer. Take the id from this committed edit, before another writer can add one.
+        const addedLayer =
+            ops.length === 1 && ops[0].op === "layerAdd" ? edited.project.layers?.media.at(-1) : undefined;
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
             ...briefOf(edited.project, edited.path),
+            ...(addedLayer ? { layerId: addedLayer.id } : {}),
             // R5 6: the summary is the edit AFTER this call; changed says what this call did.
             changed: changedParts(before.project, edited.project),
             ...(edited.removedIdleUs
@@ -1819,6 +1916,44 @@ export class Movie {
 
     async unmute(track: number) {
         return this.change([{ op: "mute", track, muted: false }]);
+    }
+
+    async audioLanes() {
+        const { project, audioFacts } = await openProject(this.recording);
+        const lanes =
+            project.audio.lanes ?? audioLanesOf(project, audioFacts ?? (await audioFactsOf(project.source.video)));
+        return lanes.map((lane) => ({ ...lane, name: soundLaneName(lane) }));
+    }
+
+    async audioLane(id: string, changes: Omit<Extract<EditOp, { op: "audioLane" }>, "op" | "id">) {
+        return this.apply([{ ...changes, op: "audioLane", id }]);
+    }
+
+    async layers() {
+        const { project } = await openProject(this.recording);
+        return layerOrderOf(project);
+    }
+
+    async addLayer(file: string, options: LayerAddOptions = {}): Promise<string> {
+        const kind = options.kind ?? layerKindOf(file);
+        const result = await this.apply([{ ...options, op: "layerAdd", file, kind }]);
+        if (!result.layerId) {
+            throw new Error("layerAdd returned an edit without the new layer");
+        }
+
+        return result.layerId;
+    }
+
+    async layer(id: string, changes: Omit<Extract<EditOp, { op: "layer" }>, "op" | "id">) {
+        return this.apply([{ ...changes, op: "layer", id }]);
+    }
+
+    async moveLayer(id: string, to: Extract<EditOp, { op: "layerMove" }>["to"]) {
+        return this.apply([{ op: "layerMove", id, to }]);
+    }
+
+    async removeLayer(id: string) {
+        return this.apply([{ op: "layerRemove", id }]);
     }
 
     async apply(ops: EditOp[]) {
