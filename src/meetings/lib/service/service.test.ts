@@ -3168,6 +3168,8 @@ function normalized(examples: Example[]): unknown {
     return SafeJSON.parse(
         SafeJSON.stringify(examples, { strict: true })
             .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
+            // A missing meeting names the store it searched: the run's sandbox home.
+            .replace(/ in \/[^ "]*?\. List them/g, " in <meetings>. List them")
             .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
             .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
             // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
@@ -3250,6 +3252,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 examples: SafeJSON.parse(
                     SafeJSON.stringify(captured, { strict: true })
                         .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
+                        .replace(/ in \/[^ "]*?\. List them/g, " in <meetings>. List them")
                         .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
                         .replace(
                             /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
