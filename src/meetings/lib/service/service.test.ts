@@ -146,7 +146,7 @@ test("threshold preview changes a 79% term at its two times and keeps decisions 
     });
     const preview = await client.call("meeting.thresholds.preview", {
         meeting: REVIEW.id,
-        values: { "term.applyAbove": 0.7 },
+        values: { "term.applyAbove": 0.8 },
     });
     expect(preview.changes).toContainEqual(
         expect.objectContaining({
@@ -154,9 +154,9 @@ test("threshold preview changes a 79% term at its two times and keeps decisions 
             change: "changed",
             atSec: 9,
             text: "Read the blenwick now.",
-            before: expect.objectContaining({ status: "suggested", confidence: 0.79 }),
-            after: expect.objectContaining({ status: "applied", confidence: 0.79 }),
-            reason: expect.stringContaining("0.8 → 0.7"),
+            before: expect.objectContaining({ status: "applied", confidence: 0.79 }),
+            after: expect.objectContaining({ status: "suggested", confidence: 0.79 }),
+            reason: expect.stringContaining("0.7 → 0.8"),
         })
     );
     expect(preview.changes.filter((row) => row.kind === "transcript line").map((row) => row.atSec)).toEqual([9, 22]);
@@ -216,13 +216,13 @@ test("threshold CLI lists sources, previews without saving and commits multiple 
         expect(String(result.mock.lastCall?.[0])).toContain("project Atlas dictionary.fuzzy.suggest");
         await run(["--set", "fuzzy.suggest=0.7", "--preview"]);
         expect(readFileSync(config.path)).toEqual(bytes);
-        await expect(run(["--set", "term.applyAbove=0.7", "words.minOccurrences=1"])).rejects.toThrow(
+        await expect(run(["--set", "term.applyAbove=0.8", "words.minOccurrences=1"])).rejects.toThrow(
             "words.minOccurrences"
         );
         expect(readFileSync(config.path)).toEqual(bytes);
-        await run(["--set", "term.applyAbove=0.7", "--set", "words.minOccurrences=4"]);
+        await run(["--set", "term.applyAbove=0.8", "--set", "words.minOccurrences=4"]);
         expect((await new MeetingsConfigStore(config.storage).read()).global.suggest).toMatchObject({
-            terms: { applyAbove: 0.7 },
+            terms: { applyAbove: 0.8 },
             words: { minOccurrences: 4 },
         });
     } finally {

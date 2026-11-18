@@ -632,7 +632,7 @@ const storedConfigSchema = z
                         terms: z
                             .object({
                                 /** With suggestions included, apply a proposed term at this confidence. */
-                                applyAbove: z.number().min(0).max(1).default(0.8),
+                                applyAbove: z.number().min(0).max(1).default(0.7),
                                 phonetic: z
                                     .number()
                                     .min(0)

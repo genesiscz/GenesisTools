@@ -44,7 +44,7 @@ describe("meetings config", () => {
         await config.storage.setConfig({ version: 7, global: { language: "cs" } });
         const bytes = fs.readFileSync(config.path);
         expect((await config.read()).global.suggest.terms).toEqual({
-            applyAbove: 0.8,
+            applyAbove: 0.7,
             phonetic: 0.7,
             unknownCandidate: 0.8,
             fuzzy: { apply: 0.95, suggest: 0.8 },
