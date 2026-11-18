@@ -19,6 +19,9 @@ struct PersonStayEditor: View {
     @State private var busy = false
     @State private var failure: MeetingsCLI.Failure?
     @State private var search: PeopleSearch?
+    /// The join and the leave the editor opened with, as seconds and as the text the fields showed: an untouched field
+    /// saves the exact seconds, not its text rounded to a tenth.
+    private let opened: (from: Double?, fromText: String, to: Double?, toText: String)
 
     /// `window`: a join and leave to start from (a dragged handle of a person with several stays).
     init(detail: MeetingDetailModel, original: PersonStay?, window: ClosedRange<Double>? = nil, duration: Double?,
@@ -28,9 +31,11 @@ struct PersonStayEditor: View {
         self.duration = duration
         self.close = close
         let start = original ?? PersonStay(name: "", fromSec: nil, toSec: nil, atMic: true, via: nil, stays: 0)
+        let from = window?.lowerBound ?? start.fromSec, to = window?.upperBound ?? start.toSec
+        opened = (from, from.map(ListenPresenceStrip.clock) ?? "", to, to.map(ListenPresenceStrip.clock) ?? "")
         _name = State(initialValue: start.name)
-        _from = State(initialValue: (window?.lowerBound ?? start.fromSec).map(ListenPresenceStrip.clock) ?? "")
-        _to = State(initialValue: (window?.upperBound ?? start.toSec).map(ListenPresenceStrip.clock) ?? "")
+        _from = State(initialValue: opened.fromText)
+        _to = State(initialValue: opened.toText)
         _atMic = State(initialValue: start.atMic)
         _via = State(initialValue: start.via ?? "")
     }
@@ -40,8 +45,9 @@ struct PersonStayEditor: View {
     }
 
     private var draft: PersonStay {
-        PersonStay(name: name.trimmingCharacters(in: .whitespaces), fromSec: PersonStay.Clock(from).value,
-                   toSec: PersonStay.Clock(to).value, atMic: atMic,
+        PersonStay(name: name.trimmingCharacters(in: .whitespaces),
+                   fromSec: from == opened.fromText ? opened.from : PersonStay.Clock(from).value,
+                   toSec: to == opened.toText ? opened.to : PersonStay.Clock(to).value, atMic: atMic,
                    via: via.trimmingCharacters(in: .whitespaces).isEmpty ? nil : via.trimmingCharacters(in: .whitespaces),
                    stays: original?.stays ?? 0)
     }
@@ -116,6 +122,7 @@ struct PersonStayEditor: View {
     private var person: some View {
         if name.isEmpty || search != nil {
             PersonPicker(people: search?.people ?? [], query: $name, sources: search?.sources ?? [], title: "Who",
+                         prompt: "Search people or type a new name",
                          addRule: MeetingsPreferences.People.offerNew.value(), visibleRows: 4,
                          pick: { picked in name = picked.name; search?.cancel(); search = nil },
                          addNew: { typed in name = typed; search?.cancel(); search = nil },
