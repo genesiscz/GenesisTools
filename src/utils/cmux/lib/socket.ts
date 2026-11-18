@@ -169,6 +169,11 @@ export interface PaneListPane {
     cell_width_px?: number;
     cell_height_px?: number;
     pixel_frame: { x: number; y: number; width: number; height: number };
+    /**
+     * Set only on a Dock pane (the right sidebar terminals cmux builds from `dock.json`), which `paneList` drops.
+     * cmux 0.65.1 lists it beside the splits with no geometry and no tabs, and reports it as the focused pane.
+     */
+    dock_scope?: string;
 }
 
 export interface PaneListResponse {
@@ -181,15 +186,34 @@ export interface PaneListResponse {
     container_frame: { width: number; height: number };
 }
 
-/** Read pane geometry through the CLI and reject a response belonging to another workspace. */
+/**
+ * Read the split panes of a workspace through the CLI and reject a response belonging to another workspace.
+ *
+ * Dock panes are dropped: they are not splits, so nothing here can measure, split or rebuild one, and cmux rebuilds
+ * the Dock from its config by itself. On 2026-11-18 an empty global Dock pane without `pixel_frame` crashed
+ * `restore-after-restart`'s live capture, and as the focused pane it would have taken a launch's anchor.
+ */
 export async function paneList(workspace: string): Promise<PaneListResponse> {
     // Raw pane.list can ignore workspace and return the focused workspace. The
     // CLI honors the target and now preserves the geometry used by restore.
     // `--id-format both` makes it echo the workspace UUID, so a UUID request is checkable too.
-    const layout = await runCmuxJSON<PaneListResponse>(["--id-format", "both", "list-panes", "--workspace", workspace]);
-    assertLayoutIsFor(workspace, layout);
+    const raw = await runCmuxJSON<PaneListResponse>(["--id-format", "both", "list-panes", "--workspace", workspace]);
+    assertLayoutIsFor(workspace, raw);
 
-    return layout;
+    const docks = raw.panes.filter((pane) => pane.dock_scope !== undefined);
+    if (docks.length === 0) {
+        return raw;
+    }
+
+    logger.debug(
+        {
+            workspace,
+            docks: docks.map((pane) => ({ ref: pane.ref, scope: pane.dock_scope, tabs: pane.surface_count })),
+        },
+        "[socket] list-panes: dropped Dock panes, which are not splits"
+    );
+
+    return { ...raw, panes: raw.panes.filter((pane) => pane.dock_scope === undefined) };
 }
 
 /**

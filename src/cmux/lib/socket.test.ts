@@ -22,6 +22,48 @@ describe("cmux socket RPC params", () => {
         }
     });
 
+    test("paneList drops a Dock pane, which has no geometry and claims the focus", async () => {
+        const split = {
+            id: "8A3C2B10-0000-4000-8000-000000000001",
+            ref: "pane:1",
+            index: 0,
+            surface_count: 1,
+            surface_ids: ["8A3C2B10-0000-4000-8000-0000000000A1"],
+            surface_refs: ["surface:1"],
+            selected_surface_id: "8A3C2B10-0000-4000-8000-0000000000A1",
+            selected_surface_ref: "surface:1",
+            focused: false,
+            columns: 112,
+            rows: 30,
+            pixel_frame: { x: 0, y: 0, width: 1600, height: 1000 },
+        };
+        // cmux 0.65.1, 2026-11-18: the global Dock pane, field for field.
+        const dock = {
+            dock_scope: "global",
+            focused: true,
+            id: "8A3C2B10-0000-4000-8000-000000000002",
+            index: 1,
+            ref: "pane:2",
+            selected_surface_id: null,
+            selected_surface_ref: null,
+            surface_count: 0,
+            surface_ids: [],
+            surface_refs: [],
+        };
+        const layout = {
+            workspace_ref: "workspace:5",
+            window_ref: "window:2",
+            panes: [split, dock],
+            container_frame: { width: 1816, height: 1262 },
+        };
+        const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue(layout);
+        try {
+            expect((await socket.paneList("workspace:5")).panes).toEqual([split]);
+        } finally {
+            cliSpy.mockRestore();
+        }
+    });
+
     test("paneList rejects a response for another workspace", async () => {
         const layout = { workspace_ref: "workspace:1", panes: [] };
         const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue(layout);
