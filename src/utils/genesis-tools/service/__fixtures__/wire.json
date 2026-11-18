@@ -573,11 +573,10 @@
     "result": []
   },
   {
-    "method": "requests.answer",
+    "method": "requests.present",
     "params": {
       "id": "fixture",
-      "status": "done",
-      "reason": null
+      "takesFocus": true
     },
     "result": {
       "id": "fixture",

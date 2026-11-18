@@ -135,15 +135,12 @@ export const serviceMethods = [
         effect: "read",
     },
     {
-        name: "requests.answer",
-        params: z.object({
-            id: z.string(),
-            status: z.enum(["done", "declined"]),
-            reason: z.string().nullable().default(null),
-        }),
+        name: "requests.present",
+        params: z.object({ id: z.string(), takesFocus: z.boolean().optional() }),
         result: requestOutcomeSchema,
-        doc: "Record the person's answer once",
+        doc: "Show a waiting request to the person and record their answer once",
         effect: "reversible",
+        reaches: ["user"] as const,
     },
     {
         name: "requests.withdraw",

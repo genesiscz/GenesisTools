@@ -360,9 +360,7 @@ test("a notice goes through isolated RPC in both directions, emits events, and r
         expect(events.filter((e) => e === "request.changed").length).toBeGreaterThanOrEqual(3);
         await client.call("person.notice", input);
         expect(presentations).toBe(1);
-        await expect(client.call("requests.answer", { id: input.id, status: "declined" })).resolves.toMatchObject({
-            status: "done",
-        });
+        await expect(client.call("requests.present", { id: input.id })).resolves.toMatchObject({ status: "done" });
         await expect(
             client.call("requests.post", { input: { kind: "root", title: "No", reason: "No" } })
         ).rejects.toThrow();
@@ -425,7 +423,7 @@ test("a subscribed face receives each worker and service settlement transition e
         });
         await face.call("subscribe", { events: ["request.changed"] });
         await face.call("requests.post", { input: { ...input, id: serviceId } });
-        await face.call("requests.answer", { id: serviceId, status: "done" });
+        await face.call("requests.withdraw", { id: serviceId });
         await worker.settle(input.id, "done", null, { via: "notification", method: "click" });
         await withTimeout(settled.promise, 2_000, new Error("worker settlement never reached the face"));
 
@@ -435,7 +433,7 @@ test("a subscribed face receives each worker and service settlement transition e
         await face.call("unsubscribe");
         const local = changes.filter((view) => view.id === serviceId);
         const external = changes.filter((view) => view.id === input.id);
-        expect(local.map((view) => view.state)).toEqual(["waiting", "accepted", "done"]);
+        expect(local.map((view) => view.state)).toEqual(["waiting", "withdrawn"]);
         expect(external.map((view) => view.state)).toEqual(["accepted", "done"]);
         expect(local.at(-1)).toEqual(worker.get(serviceId) ?? undefined);
         expect(external.at(-1)).toEqual(worker.get(input.id) ?? undefined);
@@ -700,4 +698,64 @@ test("one worker at a time presents a waiting request, and a settled request is 
         claimed: false,
         view: { state: "withdrawn" },
     });
+});
+
+test("a client cannot hand in a person's answer; the service records what its own presentation returned", async () => {
+    const dir = scratch();
+    const start = await startGenesisToolsService({
+        dir,
+        deps: { facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true } },
+    });
+    if (start.status !== "started") {
+        throw new Error("fixture service did not start");
+    }
+
+    const shown: PersonRequest[] = [];
+    const face = await RpcSocketClient.connect({
+        socket: start.host.entry.socket,
+        logScope: "fixture",
+        label: "fixture face",
+        onRequest: async (incoming) => {
+            const request = requestSchema.parse(incoming.params);
+            shown.push(request);
+            return { id: request.id, status: "declined", reason: null };
+        },
+    });
+    const client = await connectGenesisToolsService({ dir });
+    if (!client) {
+        throw new Error("fixture client did not connect");
+    }
+
+    try {
+        await face.call("hello", { methods: ["request.present"] });
+        await client.call("requests.post", { input });
+        await expect(client.call("requests.answer", { id: input.id, status: "done" })).rejects.toThrow();
+        expect(createRequestJournal({ dir: join(dir, "requests") }).get(input.id)?.state).toBe("waiting");
+
+        await expect(client.call("requests.present", { id: input.id })).resolves.toMatchObject({
+            status: "declined",
+            via: "app-window",
+        });
+        expect(shown.map((request) => request.takesFocus)).toEqual([true]);
+        expect(await client.call("requests.present", { id: input.id })).toMatchObject({ status: "declined" });
+        expect(shown).toHaveLength(1);
+
+        // An automatic presentation follows the focus setting; a click on the notification asks for focus.
+        await client.call("config.set", { path: "person.dialog", value: { takesFocus: false } });
+        for (const id of ["notice:quiet", "notice:clicked"]) {
+            await client.call("requests.post", { input: { ...input, id } });
+        }
+
+        await client.call("requests.present", { id: "notice:quiet" });
+        await client.call("requests.present", { id: "notice:clicked", takesFocus: true });
+        expect(shown.slice(1).map((request) => [request.id, request.takesFocus])).toEqual([
+            ["notice:quiet", false],
+            ["notice:clicked", true],
+        ]);
+    } finally {
+        client.close();
+        face.close();
+        start.host.stop("test complete");
+        await start.host.stopped;
+    }
 });
