@@ -690,6 +690,35 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertGreaterThan(fake.count("config.read"), previous, "live meeting events do not carry external config changes")
     }
 
+    func testPersonUndoWritesToTheOriginalMeetingAfterItsPaneCloses() async throws {
+        try writeServiceEntry()
+        let method = MeetingsAPI.MeetingPeopleEdit.name
+        let stay = PersonStay(name: "Robin Example", fromSec: 0, toSec: 30, atMic: false, via: nil, stays: 1)
+        fake.answers[method] = try XCTUnwrap(MeetingsFixture.reply(method, params: [
+            "meeting": Self.design, "action": "remove", "name": stay.name
+        ]))
+        let service = makeService()
+        defer { service.disconnect() }
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        var detail: MeetingDetailModel? = MeetingDetailModel(id: Self.design, window: nil, notices: notices, service: service)
+        weak var closedPane = detail
+        try await detail?.removePersonStay(stay)
+        detail?.cancelReads()
+        detail = nil
+        try await until("the originating pane is released") { closedPane == nil }
+
+        let notice = try XCTUnwrap(notices.notices.first)
+        notices.press(try XCTUnwrap(notice.actions.first), of: notice.id)
+        try await until("the Undo replaces the removal notice") {
+            notices.notice(notice.id)?.text.hasPrefix("Undone:") == true
+        }
+        let writes = try fake.received.filter { $0["method"] as? String == method }.map { request in
+            try MeetingsService.decode(MeetingsAPI.MeetingPeopleEdit.Params.self, XCTUnwrap(request["params"]))
+        }
+        XCTAssertEqual(writes, [stay.params(meeting: Self.design, remove: true), stay.params(meeting: Self.design)])
+        XCTAssertNil(notices.waiting[notice.id])
+    }
+
     func testAReconnectedWindowRefreshesExternalSettings() async throws {
         try writeServiceEntry()
         let service = makeService()

@@ -420,6 +420,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let model = MeetingsWindowModel()
             // A picture with the panel open must not change what the real window opens with.
             model.remembersPanel = false
+            model.sidePanelOpen = request.sidePanel
             // A picture of a playing Moment (`--play`) makes no sound.
             model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
             // The requested meeting is the selection before the list lands, so the list's first meeting is never read
@@ -465,21 +466,31 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     detail.suggestProgress = step
                 }
             }
-            if let name = request.undoPerson, let detail = model.detail {
+            if let name = request.undoPerson {
                 // What Remove and its notice's Undo leave: the person goes, Undo puts them back, and the picture shows
                 // the notice once the undo answered.
+                guard canonicalHome(GenesisToolsHome.home()) != canonicalHome(NSHomeDirectory()),
+                      let detail = model.detail, request.meeting == detail.id,
+                      let record = detail.record.value, record.id == detail.id, record.copySource != nil,
+                      record.participants?.contains(where: { $0.name == name }) == true else {
+                    FileHandle.standardError.write(Data("meetings snapshot: --undo-person needs an existing participant of an explicit --meeting copy in an isolated GENESIS_TOOLS_HOME\n".utf8))
+                    exit(1)
+                }
                 do {
-                    try await detail.removePersonStay(PersonStay.of(name, in: detail.record.value))
+                    try await detail.removePersonStay(PersonStay.of(name, in: record))
                 } catch {
                     FileHandle.standardError.write(Data("meetings snapshot: removing \(name) failed: \(error)\n".utf8))
                     exit(1)
                 }
-                if let notice = detail.notices.notices.last, let undo = notice.actions.first(where: { $0.label == "Undo" }) {
-                    detail.notices.press(undo, of: notice.id)
-                    let settled = await waitUntil(10) { detail.notices.waiting[notice.id] == nil }
-                    let text = detail.notices.notice(notice.id)?.text ?? "gone"
-                    FileHandle.standardError.write(Data("meetings snapshot: the undo notice reads \"\(text)\", \(settled ? "settled" : "still waiting after 10 s")\n".utf8))
+                guard let notice = detail.notices.notices.last, let undo = notice.actions.first(where: { $0.label == "Undo" }) else {
+                    FileHandle.standardError.write(Data("meetings snapshot: removing the participant produced no Undo action\n".utf8))
+                    exit(1)
                 }
+                detail.notices.press(undo, of: notice.id)
+                let settled = await waitUntil(10) { detail.notices.waiting[notice.id] == nil }
+                let text = detail.notices.notice(notice.id)?.text ?? "gone"
+                FileHandle.standardError.write(Data("meetings snapshot: the undo notice reads \"\(text)\", \(settled ? "settled" : "still waiting after 10 s")\n".utf8))
+                guard settled, text.hasPrefix("Undone:") else { exit(1) }
             }
             if let text = request.notice, let detail = model.detail {
                 detail.notices.push(StackedNotice(text: text, actions: [.undo { [weak notices = detail.notices] id in
