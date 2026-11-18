@@ -44,6 +44,16 @@ export async function connectGenesisToolsService(
     return client;
 }
 
+/** The service's deadline for one action call: the action's budget plus 10 s, never under 130 s. */
+export function serviceActionDeadlineMs(actionTimeoutMs: number | undefined): number {
+    return Math.max(130_000, (actionTimeoutMs ?? 120_000) + 10_000);
+}
+
+/** How long a client waits for one action call: 10 s past the service's deadline, so the service always answers first. */
+export function serviceActionClientTimeoutMs(actionTimeoutMs: number | undefined): number {
+    return serviceActionDeadlineMs(actionTimeoutMs) + 10_000;
+}
+
 export async function callRunningService(
     method: string,
     params: unknown,

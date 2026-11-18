@@ -1,5 +1,6 @@
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import type { ActionOutcome } from "@genesiscz/utils/genesis-tools/actions/define";
+import { person } from "@genesiscz/utils/genesis-tools/areas/person";
 import { createRequestJournal, requestViewSchema } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import {
     type PersonRequest,
@@ -8,14 +9,20 @@ import {
     requestOutcomeSchema,
 } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { windows } from "@genesiscz/utils/genesis-tools/areas/windows";
-import { callRunningService, ensureGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/clients";
+import {
+    callRunningService,
+    ensureGenesisToolsService,
+    serviceActionClientTimeoutMs,
+} from "@genesiscz/utils/genesis-tools/service/clients";
 import { out } from "@genesiscz/utils/logger";
 import type { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { type Command, Option } from "commander";
 
 async function showRequestWindow(client: RpcSocketClient, request: PersonRequest): Promise<RequestOutcome> {
-    const raw = await client.call("person.showWindow", request, { timeoutMs: 120_000 });
+    const raw = await client.call("person.showWindow", request, {
+        timeoutMs: serviceActionClientTimeoutMs(person.actions.showWindow.timeoutMs),
+    });
     const outcome = requestOutcomeSchema.parse(
         typeof raw === "object" && raw !== null && "value" in raw
             ? raw.value
@@ -77,7 +84,7 @@ export function registerRequestCommand(program: Command): void {
                         openWindow: options.fromNotification
                             ? (target) =>
                                   client.call<ActionOutcome<unknown>>("windows.open", target, {
-                                      timeoutMs: (windows.actions.open.timeoutMs ?? 120_000) + 10_000,
+                                      timeoutMs: serviceActionClientTimeoutMs(windows.actions.open.timeoutMs),
                                   })
                             : undefined,
                         showRequest: (request) => showRequestWindow(client, request),
