@@ -121,6 +121,23 @@ describe("the synchronous app.installed need", () => {
     });
 });
 
+describe("the app.rpc need reads saved method lists of this build only", () => {
+    test("a list saved with no build does not answer for a known build, a list of this build does", async () => {
+        const env = appNeedFixture({ methods: null });
+        const at = env.now().toISOString();
+        await env.state.report("app", "rpcMethods", { value: ["request.present"], at, source: "app" });
+        expect(await checkNeed(Need.app.rpc("request.present"), env)).toMatchObject({ ok: false, from: "probe" });
+
+        await env.state.report("app", "rpcMethods", {
+            value: ["request.present"],
+            at,
+            source: "app",
+            build: "fixture",
+        });
+        expect(await checkNeed(Need.app.rpc("request.present"), env)).toEqual({ ok: true, from: "state" });
+    });
+});
+
 describe("runAreaAction", () => {
     test("tries the ways in order and names why each one was skipped", async () => {
         const events: unknown[] = [];

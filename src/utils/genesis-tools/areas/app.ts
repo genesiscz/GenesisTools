@@ -24,6 +24,8 @@ export const app = defineArea({
             native: {
                 needs: [Need.platform.darwin, Need.app.installed],
                 run: async (ctx) => {
+                    // Read before the call: a rebuild during it must not file this build's methods under the next one.
+                    const manifest = ctx.facts.appManifest();
                     const reply = await ctx.app.rpc("rpc.hello");
 
                     if (!reply.ok) {
@@ -35,7 +37,7 @@ export const app = defineArea({
                         value: value.methods,
                         at: new Date().toISOString(),
                         source: "app",
-                        ...(ctx.facts.appManifest() ? { build: ctx.facts.appManifest()!.buildId } : {}),
+                        ...(manifest ? { build: manifest.buildId } : {}),
                     });
                     return value;
                 },
