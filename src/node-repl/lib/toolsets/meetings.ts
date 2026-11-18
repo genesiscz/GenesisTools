@@ -6,6 +6,7 @@ import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/li
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
+import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
@@ -37,6 +38,7 @@ import {
     lines,
     list,
     locate,
+    type look,
     meetingsToolsetApi,
     overview,
     prepareListen,
@@ -151,6 +153,7 @@ export class MeetingsToolset extends ReplToolset {
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
                 locate: (refText: string) =>
                     locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
+                look: async (input: z.input<typeof look.params>) => lookMeeting(store, input),
                 overview: async (input: z.input<typeof overview.params> = {}) => {
                     const { days } = overview.params.parse(input);
                     return meetingsOverview({

@@ -14,6 +14,7 @@ import {
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { meetingTimeRangeSchema } from "../moment-schema";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
 import { listenPrepare, meetingPeopleEdit, meetingVoice, momentSave, voiceEnrol } from "./api";
 
@@ -55,6 +56,14 @@ export const open = defineMethod({
     resultName: "Meeting",
     effect: "read",
     doc: 'Open a stored meeting by id, a unique prefix, "last", or wisprflow:<id>. meetings.open("last").',
+});
+export const look = defineMethod({
+    name: "look",
+    params: meetingTimeRangeSchema,
+    result: z.unknown(),
+    resultName: "{ meeting, fromSec, toSec, lines, attendance, questions, items, screen }",
+    effect: "read",
+    doc: `Read the transcript lines, speaker and voice evidence, attendance stays, open questions, items and screen text changes within inclusive transcript times (seconds, MM:SS or H:MM:SS). Same result as ${toolCommand("meetings", "look")} <meeting> --from <time> --to <time> --json.`,
 });
 export const info = defineMethod({
     name: "info",
@@ -626,6 +635,7 @@ export const meetingsToolsetApi = defineApi({
         list,
         open,
         locate,
+        look,
         overview,
         projectsLabels,
         projectsPair,
