@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
 import { runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
@@ -19,7 +20,14 @@ import {
 import { genesisToolsApi, requestPresentApi } from "../../service/api";
 import { connectGenesisToolsService } from "../../service/clients";
 import { startGenesisToolsService } from "../../service/host";
-import { createRequestJournal, type RequestEvent, requestEventSchema, stateOf } from "./journal";
+import {
+    createRequestJournal,
+    type RequestEvent,
+    requestEventSchema,
+    type RequestView,
+    requestViewSchema,
+    stateOf,
+} from "./journal";
 import { type PersonRequest, presentPostedRequest, requestSchema } from "./request";
 import { notifyRequest, presentInApp, presentInSystemDialog, presentInTerminal, type RequestContext } from "./surfaces";
 
@@ -312,6 +320,81 @@ test("a notice goes through isolated RPC in both directions, emits events, and r
     } finally {
         client.close();
         face.close();
+        start.host.stop("test complete");
+        await start.host.stopped;
+    }
+});
+
+test("a subscribed face receives each worker and service settlement transition exactly once", async () => {
+    const dir = scratch();
+    const worker = createRequestJournal({ dir: join(dir, "requests"), now });
+    await worker.post({ input });
+    const serviceId = "notice:service";
+    const nextId = "notice:next";
+    const hostCall = mock((): never => {
+        throw new Error("A journal change reached the app");
+    });
+    const start = await startGenesisToolsService({
+        dir,
+        idleMs: 100,
+        checkEveryMs: 200,
+        deps: { app: { rpc: hostCall } },
+    });
+    if (start.status !== "started") {
+        throw new Error("fixture service did not start");
+    }
+
+    let face: RpcSocketClient | null = null;
+    try {
+        face = await connectGenesisToolsService({ dir });
+        if (!face) {
+            throw new Error("fixture face did not connect");
+        }
+
+        const changes: RequestView[] = [];
+        const settled = Promise.withResolvers<void>();
+        const nextPost = Promise.withResolvers<void>();
+        face.onNotification((event) => {
+            if (event.method !== "request.changed") {
+                return;
+            }
+
+            const view = requestViewSchema.parse(event.params);
+            changes.push(view);
+
+            if (view.id === input.id && view.state === "done") {
+                settled.resolve();
+            }
+
+            if (view.id === nextId) {
+                nextPost.resolve();
+            }
+        });
+        await face.call("subscribe", { events: ["request.changed"] });
+        await face.call("requests.post", { input: { ...input, id: serviceId } });
+        await face.call("requests.answer", { id: serviceId, status: "done" });
+        await worker.settle(input.id, "done", null, { via: "notification", method: "click" });
+        await withTimeout(settled.promise, 2_000, new Error("worker settlement never reached the face"));
+
+        // Wait for a second scan and drain its notifications before counting duplicates.
+        await worker.post({ input: { ...input, id: nextId } });
+        await withTimeout(nextPost.promise, 2_000, new Error("next worker post never reached the face"));
+        await face.call("unsubscribe");
+        const local = changes.filter((view) => view.id === serviceId);
+        const external = changes.filter((view) => view.id === input.id);
+        expect(local.map((view) => view.state)).toEqual(["waiting", "accepted", "done"]);
+        expect(external.map((view) => view.state)).toEqual(["accepted", "done"]);
+        expect(local.at(-1)).toEqual(worker.get(serviceId));
+        expect(external.at(-1)).toEqual(worker.get(input.id));
+
+        await worker.withdraw(nextId);
+        face.close();
+        face = null;
+        const stopped = await withTimeout(start.host.stopped, 2_000, new Error("journal watcher prevented idle exit"));
+        expect(stopped).toBe("idle");
+        expect(hostCall).not.toHaveBeenCalled();
+    } finally {
+        face?.close();
         start.host.stop("test complete");
         await start.host.stopped;
     }

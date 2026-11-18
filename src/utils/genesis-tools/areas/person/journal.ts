@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -148,9 +148,13 @@ export interface RequestJournal {
     onChange(listener: (view: RequestView) => void): () => void;
 }
 
+interface FileRequestJournal extends RequestJournal {
+    followChanges(listener: (view: RequestView) => void, pollFallbackMs: number): () => void;
+}
+
 export function createRequestJournal(
     options: { dir?: string; now?: () => Date; alive?: (pid: number) => boolean } = {}
-): RequestJournal {
+): FileRequestJournal {
     const dir = options.dir ?? toolDataDir("genesis-tools", "requests");
     const now = options.now ?? (() => new Date());
     const listeners = new Set<(view: RequestView) => void>();
@@ -179,14 +183,16 @@ export function createRequestJournal(
                 return [requestEventSchema.parse(raw)];
             });
     }
-    function read(id: string): RequestView | null {
-        const all = events(id);
+    function viewOf(id: string, all: RequestEvent[]): RequestView | null {
         const first = all.find((event) => event.type === "posted");
         if (first?.type === "posted" && first.request.id !== id) {
             throw new Error("The journal belongs to another request");
         }
         const started = all.findLast((event) => event.type === "started");
         return stateOf(all, options.alive ?? ((pid) => isProcessAliveSince(pid, started ? Date.parse(started.at) : 0)));
+    }
+    function read(id: string): RequestView | null {
+        return viewOf(id, events(id));
     }
     function emit(id: string): void {
         const view = read(id);
@@ -196,7 +202,62 @@ export function createRequestJournal(
             }
         }
     }
-    const journal: RequestJournal = {
+    function journalFiles(): string[] {
+        return existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".jsonl")) : [];
+    }
+    function idFromFile(name: string): string {
+        return decodeURIComponent(name.slice(0, -".jsonl".length));
+    }
+    function followChanges(listener: (view: RequestView) => void, pollFallbackMs: number): () => void {
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const reported = new Map<string, number>();
+        const scannedSizes = new Map<string, number>();
+
+        // Local appends and coalesced folder events share one cursor per append-only journal.
+        function publish(view: RequestView): void {
+            const count = view.events.length;
+            const previous = reported.get(view.id) ?? 0;
+            for (let length = previous + 1; length <= count; length++) {
+                const next = length === count ? view : viewOf(view.id, view.events.slice(0, length));
+                reported.set(view.id, length);
+
+                if (next) {
+                    listener(next);
+                }
+            }
+        }
+
+        function scan(visit: (view: RequestView) => void): void {
+            for (const name of journalFiles()) {
+                try {
+                    const size = statSync(join(dir, name)).size;
+                    if (scannedSizes.get(name) === size) {
+                        continue;
+                    }
+
+                    const view = read(idFromFile(name));
+                    if (view) {
+                        visit(view);
+                    }
+
+                    scannedSizes.set(name, size);
+                } catch (error) {
+                    logger.warn({ error, name }, "Could not follow a request journal");
+                }
+            }
+        }
+
+        scan((view) => reported.set(view.id, view.events.length));
+        const off = journal.onChange(publish);
+        const controller = new AbortController();
+        void watchFileFeed({ path: dir, signal: controller.signal, pollFallbackMs, onChange: () => scan(publish) });
+        return () => {
+            controller.abort();
+            off();
+        };
+    }
+    const journal: FileRequestJournal = {
+        followChanges,
         post: async (options) => (await journal.postOnce(options)).view,
         postOnce: async ({ input }) => {
             const request = requestSchema.parse({ ...input, createdAt: now().toISOString() });
@@ -223,14 +284,10 @@ export function createRequestJournal(
         },
         get: read,
         list: () =>
-            !existsSync(dir)
-                ? []
-                : readdirSync(dir)
-                      .filter((name) => name.endsWith(".jsonl"))
-                      .flatMap((name) => {
-                          const view = read(decodeURIComponent(name.slice(0, -6)));
-                          return view ? [view] : [];
-                      }),
+            journalFiles().flatMap((name) => {
+                const view = read(idFromFile(name));
+                return view ? [view] : [];
+            }),
         append: (id, event) => {
             if (event.type === "posted" && event.request.id !== id) {
                 throw new Error("Cannot append a different request id");
