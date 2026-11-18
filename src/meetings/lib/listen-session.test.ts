@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
-import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingItem, type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
@@ -29,6 +30,7 @@ import {
     type QuestionItem,
     questionView,
     questionWarnings,
+    wordQuestions,
 } from "./questions";
 import { sineToneSound } from "./tone-sound";
 
@@ -194,6 +196,44 @@ describe("listen session", () => {
         await expect(session(adapter).run()).rejects.toBe(error);
         expect(readAnswerEvents(logPath).at(-1)).toMatchObject({ event: "round-end", reason: "aborted" });
         expect(adapter.notes.at(-1)).toMatchObject({ kind: "ended", reason: "aborted" });
+    });
+
+    test("listen asks speakers before words and orders new and legacy word priorities by occurrence count", async () => {
+        const unknown = (heard: string, occurrences: number) => ({
+            heard,
+            rules: [MeetingRule.UnknownWord],
+            evidence: { occurrences },
+        });
+        const fx = await fixture([
+            term("i1", 10, unknown("nerpix", 2)),
+            term("i2", 20, unknown("vemlet", 5)),
+            term("i3", 30, unknown("pilvek", 8)),
+            term("i4", 40, unknown("dralvik", 31)),
+            question("i5", { ...unknown("zolvik", 9), about: "term", group: "words", priority: 9 }),
+            question("i6", { priority: 1, fromSec: 50, toSec: 55 }),
+        ]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "suggest word questions" }, (record) => {
+            const suggested = wordQuestions(record.items, { transcript, points: [], listenBelow: 0.6 }, 2);
+            for (const word of suggested) {
+                record.items.push({ ...word, id: nextId("i", record.items), suggestedAt: now });
+            }
+        });
+
+        const adapter = new ScriptedAdapter(["skip", "skip", "skip", "skip", "skip", "skip"]);
+        expect(await fx.session(adapter).run()).toBe("done");
+        const asked = adapter.asked.map(({ question }) => [
+            question.heard ?? question.about,
+            question.priority,
+            question.evidence?.occurrences,
+        ]);
+        expect(asked).toEqual([
+            ["speaker", 1, undefined],
+            ["dralvik", 3, 31],
+            ["zolvik", 9, 9],
+            ["pilvek", 3, 8],
+            ["vemlet", 2, 5],
+            ["nerpix", 1, 2],
+        ]);
     });
 
     test("an answer to a word question fills the forms that start with the same heard word", async () => {

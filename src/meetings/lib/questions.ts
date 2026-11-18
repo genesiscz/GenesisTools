@@ -298,6 +298,15 @@ export function heardTimes(item: Pick<MeetingItem, "evidence">): number {
     return typeof occurrences === "number" ? occurrences : 1;
 }
 
+/** The priority filter uses three bands; listen orders words within them by their exact occurrence count. */
+function wordPriority(occurrences: number): number {
+    if (occurrences >= 8) {
+        return 3;
+    }
+
+    return occurrences >= 4 ? 2 : 1;
+}
+
 /**
  * One question of the group `words` per unknown word form heard `minOccurrences` times or more (the owner's answer to
  * M3): a suggested term with nothing proposed, a known time, and no question that decides it already. One answer
@@ -330,7 +339,7 @@ export function wordQuestions(items: MeetingItem[], context: QuestionContext, mi
                 question: `What is "${item.heard}"? It is heard ${occurrences} times.`,
                 choices: [],
                 ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
-                priority: occurrences,
+                priority: wordPriority(occurrences),
                 evidence: { occurrences, impact: Math.log2(1 + occurrences), ...heard.evidence },
             };
         });
@@ -904,7 +913,7 @@ export function dictionaryQuestion(options: {
         choices: [...DICTIONARY_CHOICES],
         decides: [],
         rules: [],
-        priority: occurrences,
+        priority: wordPriority(occurrences),
         evidence: { fixed, occurrences, item: term.id },
     };
 }
