@@ -372,25 +372,24 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
             .environment(\.meetingDetail, detail))
     }
     if let sheet = request.sheet, sheet.hasPrefix("selection:") {
-        let bounds = sheet.dropFirst(10).split(separator: "-").compactMap { Int($0) }
-        guard bounds.count == 2, bounds[0] <= bounds[1] else { return nil }
+        let bounds = sheet.dropFirst("selection:".count).split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 2, let first = Int(bounds[0]), let last = Int(bounds[1]), first >= 0, first <= last else { return nil }
         if case .idle = detail.transcript { detail.loadTranscript() }
         _ = await waitUntil(60) { detail.transcript.value != nil || detail.transcript.failure != nil }
         if case .idle = detail.rows { detail.loadRows() }
         _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
         let entries = detail.transcript.value?.entries ?? []
+        guard entries.indices.contains(last) else { return nil }
         let projection = TranscriptPaneProjection.make(.init(entries: entries, applyAbove: 70, items: detail.record.value?.items ?? [],
                                                              evidence: detail.rows.value?.lineEvidence ?? [],
                                                              durationSec: model.meeting(detail.id)?.durationSec))
-        let range = bounds[0]...bounds[1]
+        let range = first...last
         let selection = Set(projection.built.flatMap(\.lines).filter { range.contains($0.index) }.map(\.id))
         FileHandle.standardError.write(Data("meetings snapshot: selection of \(selection.count) of \(entries.count) lines, \(detail.record.value?.items.count ?? 0) items\n".utf8))
-        let span = HubPerf.begin("meetings.transcript.selection", "\(selection.count) of \(entries.count) lines")
-        let facts = TranscriptSelectionFacts.make(.init(open: true, selection: selection, built: projection.built, shown: projection.shown,
+        let facts = TranscriptSelectionFacts.make(.init(selection: selection, built: projection.built, shown: projection.shown,
                                                         entries: entries, voice: detail.record.value?.evidence?.voice?.lines ?? [:],
                                                         evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [],
                                                         ruleNames: model.ruleNames ?? [:]))
-        span.end()
         return facts.map { AnyView(TranscriptSelectionPopover(detail: detail, facts: $0, clipSec: 5, clear: {})) }
     }
     if let sheet = request.sheet, sheet.hasPrefix("person:") {
@@ -567,7 +566,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                 // time of ten redraws (`meetings.transcript.selection.redraw … main busy`).
                 for round in 1...10 {
                     HubMainBusy.measure("meetings.transcript.selection.redraw")
-                    if round % 2 == 1 { detail.busy.insert("snapshot.redraw") } else { detail.busy.remove("snapshot.redraw") }
+                    if round % 2 == 1 { detail.busy.insert("clip.save") } else { detail.busy.remove("clip.save") }
                     try? await Task.sleep(for: .milliseconds(700))
                 }
             }

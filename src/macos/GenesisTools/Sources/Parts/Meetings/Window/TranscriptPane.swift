@@ -81,10 +81,7 @@ struct TranscriptBlocksPane: View {
     /// "Who was there" open or folded, remembered across meetings; folded at first, so the lines get the room.
     @AppStorage("meetings.transcript.presenceOpen") private var presenceOpen = false
     @State private var projection: TranscriptPaneProjection?
-    /// What the selection popover shows, made when the selection or what it reads changes (w_av97ayas), never in a
-    /// body; and the input it was made from.
-    @State private var selectionFacts: TranscriptSelectionFacts?
-    @State private var selectionFactsInput: TranscriptSelectionFacts.Input?
+    @State private var selectionCache = TranscriptSelectionFacts.Cache()
 
     /// The popovers of the header's "…" menu, anchored on it.
     enum PaneSheet: String, Identifiable {
@@ -188,7 +185,7 @@ struct TranscriptBlocksPane: View {
             span.end()
         }
         // The selection's facts follow a reload of the record, the rows or the lines while the popover is open.
-        .onChange(of: selectionInput) { _, input in refreshSelection(input) }
+        .onChange(of: selectionInput) { _, input in selectionCache.update(input) }
         .onAppear {
             detail.restoreRowsForReopen()
             detail.ensureComments()
@@ -419,7 +416,7 @@ struct TranscriptBlocksPane: View {
         anchor = line
         popoverLine = selection.isEmpty ? nil : line.id
         // In the click, so the popover opens with its content: made after the next body, it opened empty first.
-        refreshSelection(selectionInput)
+        selectionCache.update(selectionInput)
     }
 
     private func selectWords(_ line: TranscriptBlockLine, _ range: NSRange) {
@@ -428,23 +425,16 @@ struct TranscriptBlocksPane: View {
         selection = [line.id]
         anchor = line
         popoverLine = line.id
-        refreshSelection(selectionInput)
+        selectionCache.update(selectionInput)
     }
 
     /// What the popover's facts are made from: the selection while the popover is open, and the data it reads.
-    private var selectionInput: TranscriptSelectionFacts.Input {
-        .init(open: popoverLine != nil, selection: selection, words: wordSelection, built: projection?.built ?? [],
-              shown: projection?.shown ?? [], entries: entries, voice: detail.record.value?.evidence?.voice?.lines ?? [:],
-              evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [],
-              ruleNames: detail.window?.ruleNames ?? [:])
-    }
-
-    private func refreshSelection(_ input: TranscriptSelectionFacts.Input) {
-        guard input != selectionFactsInput else { return }
-        selectionFactsInput = input
-        let span = HubPerf.begin("meetings.transcript.selection", "\(input.selection.count) of \(input.entries.count) lines")
-        selectionFacts = TranscriptSelectionFacts.make(input)
-        span.end()
+    private var selectionInput: TranscriptSelectionFacts.Input? {
+        guard popoverLine != nil else { return nil }
+        return .init(selection: selection, words: wordSelection, built: projection?.built ?? [],
+                     shown: projection?.shown ?? [], entries: entries, voice: detail.record.value?.evidence?.voice?.lines ?? [:],
+                     evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [],
+                     ruleNames: detail.window?.ruleNames ?? [:])
     }
 
     private var selectedLines: [TranscriptBlockLine] {
@@ -453,7 +443,7 @@ struct TranscriptBlocksPane: View {
 
     /// Built only while the selection popover is open, from the facts made for the selection.
     private func popover() -> AnyView {
-        guard let selectionFacts else { return AnyView(EmptyView()) }
+        guard let selectionFacts = selectionCache.facts else { return AnyView(EmptyView()) }
         return AnyView(TranscriptSelectionPopover(detail: detail, facts: selectionFacts, clipSec: clipSec, clear: clearSelection))
     }
 
@@ -462,7 +452,7 @@ struct TranscriptBlocksPane: View {
         selection = []
         anchor = nil
         popoverLine = nil
-        refreshSelection(selectionInput)
+        selectionCache.update(nil)
     }
 
     // MARK: Staged comments (G60)
@@ -509,17 +499,11 @@ struct TranscriptBlocksPane: View {
     }
 }
 
-/// What the transcript pane draws, made when one of its inputs changes (window audit M11). Before, the pane's body ran
-/// the line marks (every line against every hint, term and comment range), built every block, counted the bands, summed
-/// the words and filtered the items for the spot check on each redraw: a keystroke in the Word timings form, a line
-/// selection, a popover toggle.
 /// What the selection popover shows, made once per change of the selection or of what it reads (w_av97ayas): the
 /// popover's body filtered every built line and, per selected line, every item and every line's evidence on each
 /// redraw while it was open.
 struct TranscriptSelectionFacts: Equatable {
     struct Input: Equatable {
-        /// The popover is open; closed, there are no facts to make.
-        var open = false
         var selection: Set<String> = []
         var words: TranscriptSelection?
         var built: [TranscriptBlock] = []
@@ -530,6 +514,18 @@ struct TranscriptSelectionFacts: Equatable {
         var evidence: [WindowLineEvidence] = []
         var items: [MeetingItem] = []
         var ruleNames: [String: String] = [:]
+    }
+
+    struct Cache {
+        private var input: Input?
+        private(set) var facts: TranscriptSelectionFacts?
+
+        @MainActor
+        mutating func update(_ next: Input?, using make: @MainActor (Input) -> TranscriptSelectionFacts? = TranscriptSelectionFacts.make) {
+            guard next != input else { return }
+            input = next
+            facts = next.flatMap { make($0) }
+        }
     }
 
     /// One selected line's notes: its voice scores, and what the acoustic evidence says about it.
@@ -548,7 +544,9 @@ struct TranscriptSelectionFacts: Equatable {
 
     @MainActor
     static func make(_ input: Input) -> Self? {
-        guard input.open, !input.selection.isEmpty || input.words != nil else { return nil }
+        guard !input.selection.isEmpty || input.words != nil else { return nil }
+        let span = HubPerf.begin("meetings.transcript.selection", "\(input.selection.count) of \(input.entries.count) lines")
+        defer { span.end() }
         let lines = input.built.flatMap(\.lines).filter { input.selection.contains($0.id) }
         guard let selection = input.words ?? TranscriptSelection.lines(lines) else { return nil }
         let evidence = Dictionary(input.evidence.map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
@@ -615,6 +613,7 @@ struct TranscriptSelectionPopover: View {
     }
 }
 
+/// What the transcript pane draws, made when one of its inputs changes (window audit M11).
 struct TranscriptPaneProjection: Equatable {
     struct Input: Equatable {
         var entries: [TranscriptLine] = []

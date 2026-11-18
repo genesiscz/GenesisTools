@@ -202,17 +202,33 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertEqual(ids.count, 3)
         let evidence = try JSONDecoder().decode([WindowLineEvidence].self,
                                                 from: Data(#"[{"index":1,"startSec":20,"endSec":21,"callRms":0}]"#.utf8))
-        var input = TranscriptSelectionFacts.Input(open: true, selection: Set(ids.prefix(2)), built: built, shown: shown, entries: entries,
-                                                    evidence: evidence, items: all, ruleNames: ["roster-solo": "Only one person was in the call."])
-        let facts = try XCTUnwrap(TranscriptSelectionFacts.make(input))
+        var input = TranscriptSelectionFacts.Input(selection: Set(ids.prefix(2)), built: built, shown: shown, entries: entries,
+                                                   evidence: evidence, items: all, ruleNames: ["roster-solo": "Only one person was in the call."])
+        var cache = TranscriptSelectionFacts.Cache()
+        var builds = 0
+        func update(_ next: TranscriptSelectionFacts.Input?) {
+            cache.update(next) { builds += 1; return TranscriptSelectionFacts.make($0) }
+        }
+        for _ in 0..<10 { update(input) }
+        XCTAssertEqual(builds, 1)
+        let facts = try XCTUnwrap(cache.facts)
         XCTAssertEqual(facts.lines.map(\.id), Array(ids.prefix(2)), "the selected lines in transcript order")
         XCTAssertEqual(facts.speakerEvidence, TranscriptBlocksPane.lineEvidence(Array(shown.prefix(2)), items: all, ruleNames: input.ruleNames),
                        "the speaker ranges taken out once give the sentences the popover gave from every item")
         XCTAssertEqual(facts.speakerEvidence, ["Named by the speaker range 00:05 to 00:30. Only one person was in the call."])
         XCTAssertEqual(facts.notes.map(\.id), [ids[1]], "only the line with evidence has notes")
         XCTAssertEqual(facts.notes.first?.acoustic, ["Call level (RMS): 0.0000"])
-        input.open = false
-        XCTAssertNil(TranscriptSelectionFacts.make(input), "a closed popover makes nothing")
+        input.evidence = []
+        update(input)
+        XCTAssertEqual(builds, 2)
+        XCTAssertEqual(cache.facts?.notes, [])
+        input.selection = [ids[2]]
+        update(input)
+        XCTAssertEqual(builds, 3)
+        XCTAssertEqual(cache.facts?.lines.map(\.id), [ids[2]])
+        update(nil)
+        XCTAssertNil(cache.facts)
+        XCTAssertEqual(builds, 3, "closing the popover releases the input without rebuilding")
     }
 
     /// C2, T7: the indicator's reason in words, in the popover too.
