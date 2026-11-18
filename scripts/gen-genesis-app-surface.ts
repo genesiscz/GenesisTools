@@ -10,11 +10,11 @@
  */
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { APP_PARTS, type AppPart, HOST_FACES, HOST_WINDOW_FACE } from "@app/macos/lib/permissions/parts";
 import {
     parseSwiftRpcMethods,
     RPC_METHODS_SWIFT_FILE,
 } from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
+import { APP_PARTS, type AppPart, HOST_FACES, HOST_WINDOW_FACE } from "../src/macos/lib/permissions/parts";
 import { writeOrCheckGenerated } from "./gen-harness-swift";
 
 const ROOT = resolve(import.meta.dirname, "..");
