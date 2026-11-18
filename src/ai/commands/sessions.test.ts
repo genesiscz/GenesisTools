@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -31,6 +31,53 @@ afterEach(() => {
 });
 
 describe("sessions range flags", () => {
+    test("cold comparison reads the resumed agent and makes an unknown comparison price explicit", async () => {
+        const root = mkdtempSync(join(tmpdir(), "cold-cli-"));
+        const path = join(root, "session.jsonl");
+        writeFileSync(path, "");
+        const agents = join(root, "session", "subagents");
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+            join(agents, "agent-helper.jsonl"),
+            [0, 7]
+                .map((minute) =>
+                    SafeJSON.stringify({
+                        type: "assistant",
+                        timestamp: new Date(minute * 60_000).toISOString(),
+                        message: {
+                            id: `call-${minute}`,
+                            model: "fixture",
+                            stop_reason: "end_turn",
+                            usage: { cache_creation: { ephemeral_5m_input_tokens: 100 } },
+                        },
+                    })
+                )
+                .join("\n")
+        );
+        const output = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            expect(
+                (
+                    await run([
+                        "sessions",
+                        "resumes",
+                        path,
+                        "--provider",
+                        "claude",
+                        "--no-main",
+                        "--cold",
+                        "--price-model",
+                        "fixture-unpriced",
+                    ])
+                ).errors
+            ).toEqual([]);
+            const rendered = output.mock.calls.flat().join("\n");
+            expect(rendered).toContain("Cold resumes after 295s: 1");
+            expect(rendered).toContain("no price for fixture-unpriced");
+        } finally {
+            output.mockRestore();
+        }
+    });
     test("context exposes the five report sections and exports queryable source and carry dimensions", async () => {
         const dir = mkdtempSync(join(tmpdir(), "context-cli-"));
         const path = join(dir, "session.jsonl");
@@ -82,6 +129,13 @@ describe("sessions range flags", () => {
                     firstCallContext: 100,
                     peakContext: 150,
                     cacheRead: 200,
+                    input: 0,
+                    cacheWrite: 0,
+                    output: 0,
+                    estimatedAtSegmentEnds: 0,
+                    measuredAtSegmentEnds: 0,
+                    excluded: {},
+                    bashResults: { count: 0, tokens: 0, bigCount: 0, bigTokens: 0 },
                     toolCalls: {},
                     compactions: 0,
                     items: [{ path, line: 1, at, source: "instructions", key: "rules.md", tokens: 11, carryCalls: 3 }],

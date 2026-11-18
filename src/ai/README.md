@@ -499,6 +499,10 @@ tools ai sessions grep <session-id> <query> [--limit 500] [--json]
 tools ai sessions subagents [session-id] [--json]
 tools ai sessions subagents --all [--since 24h] [--limit <n>] [--session <id>] [--agent <id>]
 tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] [--json]
+tools ai sessions resumes <session-id> [--waits] [--min-gap 60] [--json]
+tools ai sessions resumes --since 14d --ttl-only
+tools ai sessions resumes --since 14d --no-main --cold
+tools ai sessions context <session-id> [--no-agents] [--items 20] [--record-metrics] [--json]
 ```
 
 - Every verb takes `--provider claude|grok|codex`; without it the provider is detected.
@@ -520,6 +524,26 @@ tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] 
   losses with their cause, and the longest gaps. A fact a harness does not record is listed under `unsupported` with
   its reason. `--json` prints `{ schema: "sessions.report@1", session, report }`.
 - The report's calls are the session's own and those of every agent transcript it has (the agents it and its agents started, and the agents of its Workflow tool runs), each call once by its id across the files (`sessionCallsWithAgents`). The cost line names how many agent transcripts were read. The cache losses and the gaps read the main loop only. Read from the lead's transcript alone, a Claude session with agents printed sub-agents $0, because Claude Code writes each agent's calls into the agent's own file.
+
+`resumes` times each pause from the previous response's final block to the input that triggered the next call.
+It marks a resume when the previous response ended the turn. A hit reads at least 90% of the previous context
+plus output, a miss reads at most 10%, and a partial hit falls between. The lifetime table groups pauses of a
+minute or longer by loop kind, model and recorded write lifetime. Compactions and model changes are excluded.
+`--since` reads main sessions by modification time from the history index. Codex and Grok report their reader limits.
+
+`subagents <session-id>` shows time since the agent transcript changed and the last known context size.
+It marks a possible cache miss for an inactive agent above 300,000 tokens after more than five minutes.
+The mods guard records its decision in `agent.resume` and an observed result in `agent.resume.result`.
+
+`context` estimates tokens from characters divided by four and uses 2,000 tokens per image. Carry is estimated
+tokens multiplied by model calls that carried the item before compaction. The report gives the loop,
+transcript path and physical line. Line 0 identifies the system and tools estimate inferred from the first call.
+`--record-metrics` appends one `context.item` event per item. Each export has its own snapshot ID, so repeated
+exports of a growing session can be compared by filtering on that ID.
+
+```bash
+tools metrics query agent-context context.item --group-by session,source --where snapshot=<snapshot-id>
+```
 
 #### `ai sessions subagents` and `ai sessions workflows`: a session's agents and its Workflow tool runs
 

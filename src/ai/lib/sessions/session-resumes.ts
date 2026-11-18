@@ -6,6 +6,7 @@ import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
+import { addColdEvidence, type ColdEvidence, renderCold } from "./cold-resumes";
 
 const MINUTE = 60_000;
 const edges = [1, 4, 5, 6, 15, 55, 60, 65];
@@ -57,6 +58,11 @@ export function addLifetimeEvidence(table: Map<string, Lifetime>, loops: LoopRes
 }
 
 interface ResumeOptions {
+    cold?: boolean;
+    top: number;
+    idleSeconds: number;
+    freshStart: number;
+    priceModel: string;
     provider?: AccountProviderAlias;
     sinceMs?: number;
     project?: string;
@@ -98,6 +104,7 @@ async function targets(ids: string[], opts: ResumeOptions): Promise<ResolvedTran
 export async function printResumes(ids: string[], opts: ResumeOptions): Promise<void> {
     const selected = await targets(ids, opts);
     const table = new Map<string, Lifetime>();
+    const cold: ColdEvidence = { edges: new Map(), samples: [] };
     const sessions: Array<{ sessionId: string; path: string; provider: string; loops: LoopResumes[] }> = [];
     const unavailable: Array<{ sessionId: string; provider: string; reason: string }> = [];
     for (const session of selected) {
@@ -116,6 +123,10 @@ export async function printResumes(ids: string[], opts: ResumeOptions): Promise<
             loop.pauses = loop.pauses.filter((pause) => pause.gapMs >= opts.minGapMs);
         }
         addLifetimeEvidence(table, facts.items);
+        if (opts.cold && !opts.json) {
+            addColdEvidence(cold, facts.items, session.provider, opts.idleSeconds);
+            continue;
+        }
         if (opts.ttlOnly) {
             continue;
         }
@@ -130,22 +141,25 @@ export async function printResumes(ids: string[], opts: ResumeOptions): Promise<
         }
 
         out.println(`Session ${session.sessionId}`);
-        const rows = facts.items.flatMap((loop) =>
-            loop.pauses
-                .filter((p) => p.resumed || opts.waits)
-                .map((p) => [
-                    loop.kind,
-                    loop.id,
-                    p.model,
-                    p.at,
-                    formatDuration(p.gapMs),
-                    p.resumed ? "resume" : "wait",
-                    p.cause,
-                    p.outcome,
-                    String(p.rewrittenTokens),
-                    [p.compacted && "compacted", p.modelChanged && "model changed"].filter(Boolean).join(", "),
-                ])
-        );
+        const rows = facts.items
+            .filter((loop) => loop.pauses.some((pause) => pause.resumed || opts.waits))
+            .slice(0, opts.top)
+            .flatMap((loop) =>
+                loop.pauses
+                    .filter((p) => p.resumed || opts.waits)
+                    .map((p) => [
+                        loop.kind,
+                        loop.id,
+                        p.model,
+                        p.at,
+                        formatDuration(p.gapMs),
+                        p.resumed ? "resume" : "wait",
+                        p.cause,
+                        p.outcome,
+                        String(p.rewrittenTokens),
+                        [p.compacted && "compacted", p.modelChanged && "model changed"].filter(Boolean).join(", "),
+                    ])
+            );
         out.println(
             rows.length
                 ? formatTable(rows, [
@@ -173,6 +187,14 @@ export async function printResumes(ids: string[], opts: ResumeOptions): Promise<
             ...(opts.ttlOnly ? {} : { sessions }),
             ttl,
         });
+        return;
+    }
+
+    if (opts.cold) {
+        out.println(renderCold(cold, opts));
+        for (const reason of new Set(unavailable.map((item) => item.reason))) {
+            out.println(reason);
+        }
         return;
     }
 

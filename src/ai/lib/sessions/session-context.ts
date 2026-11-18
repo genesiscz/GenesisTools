@@ -123,6 +123,7 @@ export function contextReport(loops: LoopContext[], largest: number) {
 
 export function spoolContextItems(options: { sessionId: string; loops: LoopContext[]; dir?: string }) {
     const snapshot = randomUUID();
+    const exportedAt = Date.now();
     const lines: string[] = [];
     let events = 0;
     const flush = () => {
@@ -136,7 +137,7 @@ export function spoolContextItems(options: { sessionId: string; loops: LoopConte
                     project: "agent-context",
                     metric: "context.item",
                     value: item.tokens,
-                    at: item.at ?? undefined,
+                    at: item.at ?? exportedAt,
                     dims: {
                         session: options.sessionId,
                         loop: loop.id,

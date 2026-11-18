@@ -143,7 +143,7 @@ describe("the analysis members of the three readers", () => {
             { type: "user", isCompactSummary: true, message: { content: "summary!" } },
             assistant("three", 50, []),
         ];
-        writeFileSync(path, "\n" + rows.map((row) => SafeJSON.stringify(row)).join("\n"));
+        writeFileSync(path, `\n${rows.map((row) => SafeJSON.stringify(row)).join("\n")}`);
         const agents = join(path, "..", "lead", "subagents");
         mkdirSync(agents, { recursive: true });
         writeFileSync(
@@ -156,6 +156,8 @@ describe("the analysis members of the three readers", () => {
             throw new Error(facts.reason);
         }
         const [main, mate] = facts.items;
+        expect(main.excluded.hook_success).toBeGreaterThan(100);
+        expect(main.bashResults).toEqual({ count: 1, tokens: 10, bigCount: 0, bigTokens: 0 });
         expect(main).toMatchObject({
             calls: 3,
             firstCallContext: 1000,
