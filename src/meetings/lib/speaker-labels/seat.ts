@@ -59,12 +59,18 @@ export const seatLabeler: SpeakerLabeler = {
                 applyAbove: context.applyAbove,
             });
             const person =
-                people.length === 1 && through >= line.toSec && confidence !== undefined ? people[0] : undefined;
+                people.length === 1 &&
+                through >= line.toSec &&
+                confidence !== undefined &&
+                (!line.eligible || (line.eligible.length === 1 && sameName(line.eligible[0]!, people[0]!)))
+                    ? people[0]
+                    : undefined;
             return {
                 labeler: "seat",
                 index: line.index,
                 seat: line.seat,
                 ...(person ? { person } : {}),
+                ...(person && line.rosterOnly ? { reviewOnly: true } : {}),
                 ...(person && confidence !== ATTENDANCE_CONFIDENCE ? { score: confidence } : {}),
                 reason: person ? "seat-of-one" : people.length > 1 ? "seat-shared" : "seat-unknown",
             };

@@ -18,6 +18,7 @@ import { formatClock, type TranscriptFormat } from "@genesiscz/utils/transcribe/
 import { termFixPattern } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { openQuestions } from "./questions";
+import { needsSpeakerReview } from "./speaker-scores";
 import { diagnoseTermAddress } from "./term-address";
 
 /**
@@ -42,7 +43,8 @@ function unclearPassages(
         item.status === "suggested" &&
         !applied(item) &&
         !asked.has(item.id) &&
-        (item.confidence ?? 1) < (item.kind === "term" ? (opts.termBelow ?? opts.below) : opts.below);
+        (needsSpeakerReview(item) ||
+            (item.confidence ?? 1) < (item.kind === "term" ? (opts.termBelow ?? opts.below) : opts.below));
     // A low term the rules have a guess for is marked wherever it was heard, even unasked. An unknown word with no
     // guess is often plain spoken Czech no dictionary has ("byznysák"): it stays text unless it is asked.
     const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
@@ -193,10 +195,10 @@ export function correctionsOf(
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
         item.status === "confirmed" ||
-        (opts.include?.includes(item.id) === true && item.status !== "rejected") ||
+        (opts.include?.includes(item.id) === true && item.status !== "rejected" && !needsSpeakerReview(item)) ||
         (opts.withSuggested === true &&
             item.status === "suggested" &&
-            item.evidence?.reason !== "exclusion" &&
+            !needsSpeakerReview(item) &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
             (item.confidence === undefined || item.confidence >= (item.kind === "term" ? termApplyAbove : applyAbove)));
     const used = record.items
@@ -407,7 +409,7 @@ export function correctTranscript(options: {
                 (options.withSuggested || options.include?.includes(proposal?.id ?? "")) &&
                 !assigned &&
                 proposal?.status === "suggested" &&
-                proposal.evidence?.reason !== "exclusion" &&
+                !needsSpeakerReview(proposal) &&
                 proposal.speaker &&
                 proposal.rules.includes(MeetingRule.VoiceEmbedding);
             const score = typeof proposal?.evidence?.score === "number" ? proposal.evidence.score : confidence;

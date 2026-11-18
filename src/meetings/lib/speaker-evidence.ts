@@ -1,20 +1,131 @@
 import { logger } from "@genesiscz/utils/logger";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { activeSeatPeople, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
+import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { type LineEvidence, presentAt, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { callMutes } from "./call-mutes";
 import type { NewItem } from "./new-item";
+import { type Eligibility, isStrongCallForNaming, speakersFor } from "./speaker-eligibility";
 import { assessIndicator } from "./speaker-indicator";
 import { ATTENDANCE_CONFIDENCE, ENERGY_CALL_LEANS, ENERGY_MIC_LEANS, seatConfidence } from "./speaker-labels/seat";
 import { addPolish, lineTallies, type SamePerson, type SpeakerScore, scoreCandidates } from "./speaker-scores";
 
 const { log } = logger.scoped("meetings-suggest");
+
+type SourceRange = { label: string; fromSec: number; toSec: number; evidence?: Record<string, unknown> };
+
+/** One evaluation of the full source spans against one snapshot of presence. */
+export class LineSpeakers {
+    private readonly rows = new Map<number, LineEvidence>();
+    private readonly byLabel = new Map<string, LineEvidence[]>();
+    readonly eligibility = new Map<number, Eligibility>();
+    readonly assessment: ReturnType<typeof assessIndicator>;
+
+    constructor(options: {
+        lines: LineEvidence[];
+        record: MeetingRecord;
+        meeting: SourceMeeting;
+        presence?: Presence[];
+        selfName?: string;
+        people?: string[];
+    }) {
+        const { lines, record, meeting, presence, selfName } = options;
+        this.assessment = assessIndicator({
+            lines,
+            selfName: selfName ?? "",
+            roomPeople: wholeMeetingRoomPeople(record.seats),
+        });
+        const selfStays = presence?.map((stay) => (stay.self && selfName ? { ...stay, name: selfName } : stay));
+        const people = [
+            ...new Set([
+                ...record.participants.map((p) => p.name),
+                ...meeting.participants.map((p) => p.name),
+                ...(!presence?.length
+                    ? meeting.speakers.filter((p) => p.origin === "platform").map((p) => p.name)
+                    : []),
+                ...Object.values(record.speakers.labels),
+                ...(options.people ?? []),
+                ...record.items.flatMap((item) =>
+                    item.kind === "speaker-range"
+                        ? [...(item.candidates ?? []), ...(item.speaker ? [item.speaker] : [])]
+                        : []
+                ),
+                ...lines.flatMap((line) => [
+                    ...(line.present ?? []),
+                    ...Object.keys(line.speaking),
+                    ...(line.muted ?? []),
+                    ...(line.liveName ? [line.liveName] : []),
+                    ...(line.voice?.person ? [line.voice.person] : []),
+                ]),
+            ]),
+        ];
+        for (const line of lines) {
+            this.rows.set(line.index, line);
+            const group = this.byLabel.get(line.label) ?? [];
+            group.push(line);
+            this.byLabel.set(line.label, group);
+            this.eligibility.set(
+                line.index,
+                speakersFor(
+                    { index: line.index, fromSec: line.startSec, toSec: line.endSec },
+                    {
+                        ...line,
+                        seats: record.seats,
+                        people,
+                        selfName,
+                        callStays: selfStays,
+                        ignoredIndicator: this.assessment.ignored.has(line.index),
+                    }
+                )
+            );
+        }
+    }
+
+    linesFor(range: SourceRange): LineEvidence[] {
+        const index = range.evidence?.transcriptLine;
+        if (typeof index === "number") {
+            const row = this.rows.get(index);
+            return row ? [row] : [];
+        }
+        return (this.byLabel.get(range.label) ?? []).filter(
+            (row) => row.startSec >= range.fromSec && row.startSec <= range.toSec
+        );
+    }
+
+    key(index: number): string {
+        const row = this.eligibility.get(index);
+        const line = this.rows.get(index);
+        return row
+            ? [
+                  row.channel.side,
+                  row.channel.strong,
+                  row.reviewOnly,
+                  line?.speakingUnknown,
+                  this.assessment.ignored.has(index),
+                  ...row.choices,
+              ].join("|")
+            : "";
+    }
+
+    unknownCall(index: number): boolean {
+        return (
+            this.eligibility.get(index)?.channel.side === "call" &&
+            (this.rows.get(index)?.speakingUnknown === true || this.assessment.ignored.has(index))
+        );
+    }
+
+    choices(indices: readonly number[]): string[] | undefined {
+        const [first, ...others] = indices.flatMap((i) => this.eligibility.get(i) ?? []);
+        return first?.choices.filter((name) =>
+            others.every((row) => row.choices.some((other) => sameName(name, other)))
+        );
+    }
+}
 
 /** A range's `evidence.candidateScores`, or nothing when no candidate has evidence. */
 export function scoresEvidence(scores: SpeakerScore[]): { candidateScores?: SpeakerScore[] } {
@@ -73,6 +184,7 @@ export interface EvidenceFinding {
     echo?: boolean;
     /** The tagged channel and the calibrated energy disagree: no other rule may name a winner over it. */
     conflict?: boolean;
+    elimination?: boolean;
 }
 
 /** The microphone alone never proves the user spoke (Martin, 2026-11-02): loud speakers can reach it. */
@@ -163,6 +275,7 @@ function findingFor(options: {
     line: LineEvidence;
     selfName: string;
     isSelfLabel: boolean;
+    eligible: Eligibility;
     /** The platform-named labels other than this line's that have a line within `OWN_LABEL_SEC` of it (R17). */
     ownLabelNearby: string[];
     /** The platform named the line's label after a person. */
@@ -170,12 +283,7 @@ function findingFor(options: {
 }): EvidenceFinding | undefined {
     const { line, selfName, isSelfLabel, ownLabelNearby } = options;
     const voicePerson = line.voice?.quality === "matched" ? line.voice.person : undefined;
-    if (
-        voicePerson &&
-        !sameName(voicePerson, line.label) &&
-        !line.muted?.some((name) => sameName(name, voicePerson)) &&
-        (!line.present || line.present.some((name) => sameName(name, voicePerson)))
-    ) {
+    if (voicePerson && options.eligible.choices.some((name) => sameName(name, voicePerson))) {
         return {
             speaker: voicePerson,
             confidence: 0.9,
@@ -194,7 +302,9 @@ function findingFor(options: {
     }
 
     // RM: a person muted through the whole line did not speak it.
-    const muted = (name: string) => line.muted?.some((person) => sameName(person, name)) === true;
+    const muted = (name: string) =>
+        callMutes(line).some((person) => sameName(person, name)) &&
+        !options.eligible.choices.some((person) => sameName(person, name));
     const selfMuted = muted(selfName);
 
     // R4.3: a sure energy share is the user's line whatever the segments, E3 or E4 say, and never the user's below.
@@ -646,25 +756,30 @@ function localVoiceFinding(options: {
     found: EvidenceFinding | undefined;
     platformLabel: boolean;
     indicatorIgnored: boolean;
-    remoteCandidates: string[];
-    roomPeople: string[];
+    eligible: Eligibility;
+    mappedCall: boolean;
 }): EvidenceFinding | undefined {
     const { line, selfName, voices, found } = options;
 
-    const muted = line.muted ?? [];
-    const remote = options.remoteCandidates.filter((name) => !muted.some((person) => sameName(person, name)));
-    const room = [selfName, ...options.roomPeople.filter((name) => !sameName(name, selfName))];
+    const choices = options.eligible.choices;
     if (
-        options.platformLabel &&
-        !options.isSelfLabel &&
-        (line.micShare ?? 0) >= 0.65 &&
-        line.energyMic !== undefined &&
-        line.energyMic <= 0.35
+        found?.speaker &&
+        found.rules.includes(MeetingRule.SpeakingIndicator) &&
+        choices.some((person) => sameName(person, found.speaker!)) &&
+        options.eligible.channel.side === "call"
     ) {
-        // Opposing channel measurements do not independently confirm the platform's label.
+        return found;
+    }
+
+    if (
+        options.eligible.channel.side === "mixed" &&
+        line.micShare !== undefined &&
+        line.energyMic !== undefined &&
+        (line.micShare - 0.5) * (line.energyMic - 0.5) < 0
+    ) {
         return {
-            candidates: [...new Set([...room, ...remote, line.label])],
-            rules: [MeetingRule.Channel, MeetingRule.Energy, MeetingRule.LocalVoice],
+            candidates: options.eligible.choices,
+            rules: [MeetingRule.Channel, MeetingRule.Energy],
             confidence: 0.4,
             listen: true,
             conflict: true,
@@ -678,40 +793,42 @@ function localVoiceFinding(options: {
         (line.acoustic?.cleanMicShare ?? 1) < 0.65
     ) {
         return {
-            candidates: [...new Set([...room, ...remote])],
+            candidates: choices,
             rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
             confidence: 0.4,
             listen: true,
             echo: true,
         };
     }
-    if (room.length > 1 && (line.energyMic ?? line.micShare ?? 0) >= 0.65 && (line.echo ?? 0) < ECHO_SIMILARITY) {
+    if ((options.eligible.channel.side === "mic" || options.mappedCall) && choices.length > 1) {
         return {
-            candidates: room,
+            candidates: choices,
             rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
             confidence: 0.4,
+            listen: true,
+            echo: (line.echo ?? 0) >= ECHO_SIMILARITY,
+        };
+    }
+    if (
+        choices.length === 1 &&
+        callMutes(line).some((name) => !choices.some((other) => sameName(name, other))) &&
+        options.eligible.channel.side === "call"
+    ) {
+        return {
+            ...(isStrongCallForNaming(options.eligible.channel) ? { speaker: choices[0] } : { candidates: choices }),
+            rules: [MeetingRule.Channel, MeetingRule.Attendance, MeetingRule.Muted],
+            confidence: ATTENDANCE_CONFIDENCE,
+            elimination: true,
             listen: true,
         };
     }
     if (
-        line.present &&
-        remote.length === 1 &&
-        options.remoteCandidates.length > remote.length &&
-        (line.energyMic ?? line.micShare ?? 1) <= 0.35
-    ) {
-        return {
-            speaker: remote[0],
-            rules: [MeetingRule.Channel, MeetingRule.Attendance, MeetingRule.Muted],
-            confidence: ATTENDANCE_CONFIDENCE,
-        };
-    }
-    if (
         (options.indicatorIgnored ||
-            (line.speakingUnknown && Object.keys(line.speaking).length === 0 && remote.length >= 2)) &&
-        (line.energyMic ?? line.micShare ?? 1) <= 0.35
+            (line.speakingUnknown && Object.keys(line.speaking).length === 0 && choices.length >= 2)) &&
+        isStrongCallForNaming(options.eligible.channel)
     ) {
         return {
-            candidates: remote,
+            candidates: choices,
             rules: [MeetingRule.Channel],
             confidence: 0.4,
             listen: true,
@@ -785,6 +902,7 @@ export function evidenceItems(options: {
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voiceMatches?: Readonly<Record<string, VoiceMatch>>;
+    speakers?: LineSpeakers;
     /** The current pass can enrol an independently identified line before neighbouring findings are grouped. */
     onIndicator?: (index: number, person: string, confidence: number) => void;
     /** The record's items: an agent's speaker ranges over the same lines score their speaker (the polish). */
@@ -792,9 +910,14 @@ export function evidenceItems(options: {
     samePerson?: SamePerson;
     record: MeetingRecord;
 }): { items: NewItem[]; swaps: SwapStretch[] } {
-    const selfName = options.evidence.selfName;
+    const selfName = options.evidence.selfName ?? options.record.participants.find((person) => person.self)?.name;
 
-    if (!selfName || (options.evidence.segments.length === 0 && !options.voiceMatches)) {
+    if (
+        !selfName ||
+        (options.evidence.segments.length === 0 &&
+            !options.voiceMatches &&
+            !options.lines.some((line) => line.voice?.quality === "matched" || line.energyMic !== undefined))
+    ) {
         log.debug({ selfName, segments: options.evidence.segments.length }, "no channel evidence");
         return { items: [], swaps: [] };
     }
@@ -808,12 +931,9 @@ export function evidenceItems(options: {
         renameSelf && presence
             ? options.lines.map((line) => ({ ...line, present: presentAt(presence, line.startSec) }))
             : options.lines;
+    const speakers = options.speakers ?? new LineSpeakers({ ...options, presence, selfName, lines: measured });
     const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
-    const assessment = assessIndicator({
-        lines: measured,
-        selfName,
-        roomPeople: wholeMeetingRoomPeople(options.record.seats),
-    });
+    const assessment = speakers.assessment;
     const stuck = assessment.ignored;
     const lines = measured.map((line) => {
         const shown = stuck.has(line.index) ? { ...line, speaking: {}, liveName: undefined } : line;
@@ -851,6 +971,7 @@ export function evidenceItems(options: {
                 lines: open.lines,
                 selfName,
                 nearby: open.nearby,
+                eligibility: speakers.eligibility,
                 micHolds: micSure,
                 samePerson: options.samePerson,
             });
@@ -860,8 +981,9 @@ export function evidenceItems(options: {
                 fromSec: open.item.fromSec,
                 toSec: open.endSec,
             });
+            const eligible = speakers.eligibility.get(open.lines[0]!.index)!;
             const candidateScores = scoreCandidates({
-                tallies: tallies.tallies,
+                tallies: tallies.tallies.filter((tally) => eligible.choices.some((name) => sameName(name, tally.name))),
                 lines: open.lines.length,
                 label: open.item.label,
                 speaker: open.item.speaker,
@@ -923,10 +1045,11 @@ export function evidenceItems(options: {
             }
 
             if (item.speaker === selfName) {
-                const room = microphoneCandidates(options.record, item.fromSec);
+                const swapLine = swapLines.find((line) => line.label === item.label && line.startSec === item.fromSec);
+                const room = swapLine ? (speakers.eligibility.get(swapLine.index)?.choices ?? []) : [];
                 if (room.length > 1) {
                     delete item.speaker;
-                    item.candidates = [selfName, ...room.filter((name) => !sameName(name, selfName))];
+                    item.candidates = room;
                     item.confidence = 0.4;
                 }
             }
@@ -938,6 +1061,7 @@ export function evidenceItems(options: {
                 const scores = scoreCandidates({
                     tallies: lineTallies({
                         lines: [line],
+                        eligibility: speakers.eligibility,
                         selfName,
                         nearby: [],
                         micHolds: micSure,
@@ -1014,14 +1138,7 @@ export function evidenceItems(options: {
                 continue;
             }
             const voice = options.voiceMatches?.[String(line.index)];
-            const present =
-                !presence ||
-                presence.some(
-                    (stay) =>
-                        sameName(stay.name, voice?.person ?? "") &&
-                        line.startSec >= stay.fromSec &&
-                        line.startSec < stay.toSec
-                );
+            const eligible = speakers.eligibility.get(line.index)!;
             const confirmed = options.items?.some(
                 (item) =>
                     item.kind === "speaker-range" &&
@@ -1034,10 +1151,8 @@ export function evidenceItems(options: {
                 !confirmed &&
                 voice?.quality === "matched" &&
                 voice.person &&
-                !callMutes(line).some((name) => sameName(name, voice.person!)) &&
-                !sameName(voice.person, selfName) &&
-                present &&
-                (line.energyMic ?? line.micShare ?? 1) <= 0.35
+                eligible.choices.some((name) => sameName(name, voice.person!)) &&
+                eligible.channel.strong
             ) {
                 close();
                 items.push({
@@ -1071,11 +1186,11 @@ export function evidenceItems(options: {
                 isSelfLabel,
                 platformLabel: platformLabels.has(label),
                 ownLabelNearby: nearby,
+                eligible,
             });
             // A confirmed voice match (its presence and mute checks passed in findingFor) names the person outright: the
             // channel and label fallbacks of R18 and R19 never replace it.
-            const activeRoom =
-                options.record.seats && activeSeatPeople({ seats: options.record.seats, atSec: line.startSec }).room;
+
             const finding = found?.rules.includes(MeetingRule.Voice)
                 ? found
                 : localVoiceFinding({
@@ -1083,25 +1198,29 @@ export function evidenceItems(options: {
                       selfName,
                       isSelfLabel,
                       voices,
+                      eligible,
                       platformLabel: platformLabels.has(label),
-                      roomPeople: microphoneCandidates(options.record, line.startSec),
+                      mappedCall:
+                          eligible.channel.side === "call" &&
+                          speakingNames(line).length === 1 &&
+                          !!options.record.seats?.microphones?.some(
+                              (group) => group.deviceId && sameName(group.deviceId, speakingNames(line)[0]!)
+                          ),
                       indicatorIgnored: stuck.has(line.index),
-                      remoteCandidates: (
-                          line.present ??
-                          assessment.candidates
-                              .filter((person) => person.fromSec <= line.startSec)
-                              .map((person) => person.name)
-                      ).filter(
-                          (name) => !sameName(name, selfName) && !activeRoom?.some((person) => sameName(name, person))
-                      ),
+
                       unusable: within(unusable, line.startSec),
                       found,
                   });
 
             // A range holds only consecutive lines with its finding: a line without one stays its label's.
-            if (!finding) {
+            if (!finding || (finding.speaker && !eligible.choices.some((name) => sameName(name, finding.speaker!)))) {
                 close();
                 continue;
+            }
+            if (finding.candidates) {
+                finding.candidates = finding.candidates.filter((name) =>
+                    eligible.choices.some((other) => sameName(name, other))
+                );
             }
             if (
                 finding.speaker &&
@@ -1114,7 +1233,7 @@ export function evidenceItems(options: {
             }
 
             // A voice finding and a channel finding stay apart, so a range's rules and voice evidence fit every line.
-            const key = `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}|${finding.rules.includes(MeetingRule.Voice) ? "voice" : ""}|${finding.conflict ? "conflict" : ""}`;
+            const key = `${speakers.key(line.index)}|${finding.elimination ?? false}|${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}|${finding.rules.includes(MeetingRule.Voice) ? "voice" : ""}|${finding.conflict ? "conflict" : ""}`;
 
             if (open && open.key === key && line.startSec - open.item.toSec < EVIDENCE_GAP_SEC) {
                 open.item.toSec = line.startSec;
@@ -1145,7 +1264,13 @@ export function evidenceItems(options: {
                     confidence: finding.confidence,
                     rules: finding.rules,
                     evidence: {
-                        channel: finding.speaker === selfName ? "mic" : "system",
+                        channel: eligible.channel.side === "mic" ? "mic" : "system",
+                        ...(finding.elimination ? { reviewOnly: true, reason: "mute-elimination" } : {}),
+                        ...(eligible.channel.side === "call" &&
+                        !finding.speaker &&
+                        (line.speakingUnknown || stuck.has(line.index))
+                            ? { sharedCallUnknown: true }
+                            : {}),
                         ...(finding.conflict ? { channelConflict: true } : {}),
                         ...(stuck.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                         ...(stuck.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),

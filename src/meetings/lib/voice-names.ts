@@ -9,7 +9,13 @@ import type { LabelContext, LineLabel } from "./speaker-labels/types";
 
 type VoiceSettings = MeetingsConfig["global"]["speakerLabels"]["voice"];
 export type VoiceGate = VoiceSettings["gate"];
-export type VoiceLine = LineEmbedding & { seat: Seat; track: TrackKind; fromSec?: number; toSec?: number };
+export type VoiceLine = LineEmbedding & {
+    seat: Seat;
+    track: TrackKind;
+    fromSec?: number;
+    toSec?: number;
+    eligible?: string[];
+};
 type ReadyVoice = Extract<ChannelEmbedding, { quality: "ready" }>;
 type Stay = LabelContext["attended"][number];
 
@@ -294,7 +300,10 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
         const present = new Map(
             touching.filter((stay) => stay.fromSec <= fromSec && stay.toSec >= toSec).map((stay) => [stay.person, stay])
         );
-        const candidates = [...present.keys()]
+        const eligiblePeople = [...present.keys()].filter(
+            (person) => !line.eligible || line.eligible.some((name) => sameName(name, person))
+        );
+        const candidates = eligiblePeople
             .flatMap((person) => {
                 const profile = profiles.get(profileKey(person, target));
                 const score = profile && profileScore(profile, target);
@@ -303,14 +312,15 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             .sort((a, b) => b.score - a.score);
         const [first, second] = candidates;
         const missing = [...present.values()].filter(
-            (stay) => !candidates.some((sample) => sample.person === stay.person)
+            (stay) =>
+                eligiblePeople.includes(stay.person) && !candidates.some((sample) => sample.person === stay.person)
         );
         const unknown = missing[0];
         if (!first) {
             return {
                 ...base,
                 reason: unknown ? "unsampled-present" : "no-rival-sample",
-                ...(unknown ? { next: { person: unknown.person, score: 0 } } : {}),
+                ...(unknown && missing.length === 1 ? { next: { person: unknown.person, score: 0 } } : {}),
             };
         }
         const scored = { ...base, score: first.score, ...(second ? { next: second } : {}) };
@@ -325,9 +335,10 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             !enrolled.has(unknown.person) &&
             !options.certain?.has(line.index) &&
             touching.every((stay) => present.has(stay.person)) &&
+            (!line.eligible ||
+                line.eligible.every((name) => eligiblePeople.some((person) => sameName(person, name)))) &&
             margin > 0 &&
-            margin >= exclusion.margin &&
-            applyAbove > 0
+            margin >= exclusion.margin
         ) {
             let closest = first;
             for (const candidate of candidates) {
@@ -347,7 +358,11 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             }
         }
         if (unknown && first.score < gate.unsampledScore) {
-            return { ...scored, next: { person: unknown.person, score: 0 }, reason: "unsampled-present" };
+            return {
+                ...scored,
+                ...(missing.length === 1 ? { next: { person: unknown.person, score: 0 } } : {}),
+                reason: "unsampled-present",
+            };
         }
         if (!second && first.score < gate.loneScore) {
             return { ...scored, reason: "no-rival-sample" };

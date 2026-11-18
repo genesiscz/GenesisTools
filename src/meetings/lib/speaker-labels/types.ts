@@ -23,6 +23,7 @@ export interface LineLabel {
     seat: Seat;
     person?: string;
     score?: number;
+    reviewOnly?: boolean;
     /** Distance below the voice match threshold for the closest enrolled seat-mate. */
     margin?: number;
     next?: { person: string; score: number };
@@ -44,7 +45,15 @@ export interface LineLabel {
 }
 
 export interface LabelContext {
-    lines: readonly { index: number; fromSec: number; toSec: number; seat: Seat; energyMic?: number }[];
+    lines: readonly {
+        index: number;
+        fromSec: number;
+        toSec: number;
+        seat: Seat;
+        energyMic?: number;
+        eligible?: string[];
+        rosterOnly?: boolean;
+    }[];
     /** People who attended, with the seat each holds in this meeting and the time they were there. */
     attended: readonly { person: string; seat: Seat | undefined; fromSec: number; toSec: number }[];
     /** A caller-supplied track selection. The voice labeler opens the meeting's sound on demand otherwise. */

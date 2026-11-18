@@ -2614,6 +2614,29 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         }
     });
 
+    test("R3 the meeting handle describes and calls the read-only suggestion preview", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Preview", start: "2026-11-02T17:00:00Z", createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+        const runner = await import("@app/meetings/lib/suggest-run");
+        const result = {
+            changes: { meeting: record.id, expected: "fixture", fresh: [], updated: [], stays: [] },
+            warnings: [],
+        };
+        const preview = spyOn(runner, "previewSuggestions").mockResolvedValue(result);
+        try {
+            const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+                meetings: { open(ref: string): { items: { preview(input?: unknown): Promise<unknown> } } };
+            };
+            expect(await meetings.open(record.id).items.preview({ rules: ["terms"] })).toEqual(result);
+            expect(preview.mock.calls[0]?.[0].rules).toEqual(["terms"]);
+            expect(new MeetingStore().read(record.id)?.items).toEqual([]);
+        } finally {
+            preview.mockRestore();
+        }
+    });
+
     test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {
         const record = await new MeetingStore().create(
             { title: "Suggest", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },

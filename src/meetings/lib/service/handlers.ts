@@ -19,7 +19,6 @@ import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
-import { MutedCallLines } from "../call-mutes";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
@@ -28,6 +27,7 @@ import { missingMeetingMessage } from "../shared";
 import { preservedSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
+import { LineSpeakers } from "../speaker-evidence";
 import { assessIndicator } from "../speaker-indicator";
 import { correctTranscript } from "../transcript-corrections";
 import { meetingVoices } from "../voice";
@@ -268,34 +268,8 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.seats.suggest": async (params) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
-            const { decidedSeatRanges, suggestSeats } = await import("../seat-suggest");
-            const ranges = decidedSeatRanges(record);
-            let lines: LineEvidence[] = [];
-            if (ranges.length && sourceRefOf(record)) {
-                const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
-                const [transcript, share] = await Promise.all([
-                    opened
-                        .meeting()
-                        .then((meeting) => meeting.transcript)
-                        .catch((error: unknown) => {
-                            log.warn({ error, meeting: record.id }, "seat suggestions without transcript lines");
-                            return [];
-                        }),
-                    opened
-                        .energy()
-                        .then((energy) => energy.share)
-                        .catch((error: unknown) => {
-                            log.warn({ error, meeting: record.id }, "seat suggestions without channel energy");
-                            return undefined;
-                        }),
-                ]);
-                lines = lineEvidence(transcript, { segments: [], speaking: [] }, undefined, share);
-            }
-            return {
-                meeting: record.id,
-                current: record.seats ?? null,
-                suggestion: suggestSeats({ record, ranges, lines, room: params.room, remote: params.remote }),
-            };
+            const { seatSuggestion } = await import("./seat-handlers");
+            return seatSuggestion({ store, record, linked: deps.linkedSource?.(record), params });
         },
         "meeting.thresholds.preview": async (params, context) => {
             const store = storeOf();
@@ -339,19 +313,18 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             const record = recordOf(store, params.meeting);
             const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
             const { addQualityQuestions, qualityVoiceFeatures } = await import("../listen-quality");
-            const entries = (await opened.meeting()).transcript;
+            const meeting = await opened.meeting();
+            const entries = meeting.transcript;
             const evidence = await opened.evidence().catch((error: unknown) => {
                 log.debug({ error, meeting: record.id }, "roster readings unavailable for sampled questions");
                 return null;
             });
-            let callMutes: MutedCallLines | undefined;
-            if (evidence?.speaking.some((read) => read.muted?.length)) {
-                const energy = await opened.energy().catch((error: unknown) => {
-                    log.debug({ error, meeting: record.id }, "using channel segments for sampled questions");
-                    return undefined;
-                });
-                callMutes = new MutedCallLines(lineEvidence(entries, evidence, undefined, energy?.share));
-            }
+            const energy = await opened.energy().catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "using channel segments for sampled questions");
+                return undefined;
+            });
+            const presence = await opened.presence();
+            const lines = lineEvidence(entries, evidence ?? { segments: [], speaking: [] }, presence, energy?.share);
             const features = params.group === "long-stretch" ? await qualityVoiceFeatures(opened) : undefined;
             const below =
                 params.group === "long-stretch"
@@ -364,7 +337,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 questions = addQualityQuestions({
                     record: current,
                     entries,
-                    callMutes,
+                    speakers: new LineSpeakers({
+                        lines,
+                        record: current,
+                        meeting,
+                        presence,
+                        selfName: current.participants.find((p) => p.self)?.name ?? evidence?.selfName,
+                    }),
                     features,
                     spotCheck: params.group === "spot-check" ? (params.count ?? 20) : undefined,
                     longStretchWords: params.group === "long-stretch" ? (params.words ?? 50) : undefined,

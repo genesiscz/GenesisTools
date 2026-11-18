@@ -6,9 +6,10 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { seatSpan } from "@genesiscz/utils/meetings/seats";
 import { readVoiceLibrary, type VoiceLibrarySnapshot } from "@genesiscz/utils/meetings/voice-library";
 import { profiler } from "@genesiscz/utils/profile";
-import { lineChannelShares } from "@genesiscz/utils/transcribe/evidence";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { OpenedMeeting } from "../opened-meeting";
+import { LineSpeakers } from "../speaker-evidence";
 import type { VoiceLine } from "../voice-names";
 import { ENERGY_CALL_LEANS } from "./seat";
 import type { LabelContext, LineLabel, SpeakerLabeler, SpeakerLabelerId } from "./types";
@@ -53,6 +54,17 @@ export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLab
     return [...byLine]
         .sort(([a], [b]) => a - b)
         .map(([, labels]) => {
+            const matched = labels.find(
+                (label) => label.labeler === "voice" && label.reason === "named" && label.person
+            );
+            if (
+                matched &&
+                !labels.some(
+                    (label) => label.reason === "seat-of-one" && label.person && sameName(label.person, matched.person!)
+                )
+            ) {
+                return matched;
+            }
             const veto = labels.find((label) => label.reason === "not-the-seat-person");
             if (veto) {
                 return veto;
@@ -73,7 +85,12 @@ export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLab
         });
 }
 
-async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[], measuredEnergy?: AcousticShare) {
+async function labelContext(
+    opened: OpenedMeeting,
+    voiceEnabled: boolean,
+    storedPresence?: Presence[],
+    measuredEnergy?: AcousticShare
+) {
     const meeting = await opened.meeting();
     const evidence = await prof.measureAsync("speakers.evidence", () => opened.evidence());
     const energy = measuredEnergy ?? (await prof.measureAsync("speakers.energy", () => opened.energy())).share;
@@ -83,25 +100,23 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[], 
     const ownMic = record.seats?.microphones?.find((group) => group.id === "self");
     for (const row of record.seats?.room ?? []) {
         const { name, fromSec = 0, toSec = Infinity } = seatSpan(row);
+        if (
+            record.seats?.microphones?.some(
+                (group) =>
+                    group.id !== "self" && group.deviceId && group.people.some((person) => sameName(person, name))
+            )
+        ) {
+            attended.push({ person: name, seat: "call", fromSec, toSec });
+        }
         if (!ownMic || ownMic.people.some((person) => sameName(person, name))) {
             attended.push({ person: name, seat: "mic", fromSec, toSec });
         }
     }
     for (const row of record.seats?.remote ?? []) {
         const { name, fromSec = 0, toSec = Infinity } = row;
-        const calls = presence?.filter((stay) => sameName(stay.name, name)) ?? [];
-        if (calls.length) {
-            for (const call of calls) {
-                const start = Math.max(fromSec, call.fromSec);
-                const end = Math.min(toSec, call.toSec);
-                if (start < end) {
-                    attended.push({ person: name, seat: "call", fromSec: start, toSec: end });
-                }
-            }
-        } else if (
-            fromSec < toSec &&
-            !record.participants.some((p) => sameName(p.name, name) && p.stays?.length === 0)
-        ) {
+        // A mapped input may transmit this occupant outside their personal call stay.
+        // speakersFor intersects the appropriate account and the physical occupancy for each line.
+        if (fromSec < toSec && !record.participants.some((p) => sameName(p.name, name) && p.stays?.length === 0)) {
             attended.push({ person: name, seat: "call", fromSec, toSec });
         }
     }
@@ -121,13 +136,26 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[], 
             toSec: stay.toSec,
         });
     }
+    const measured = lineEvidence(
+        meeting.transcript,
+        evidence ?? { segments: [], speaking: [] },
+        presence,
+        voiceEnabled ? energy : energy && ((from, to) => energy(from, to) ?? energy.raw?.(from, to))
+    );
+    const speakers = new LineSpeakers({
+        lines: measured,
+        record,
+        meeting,
+        presence,
+        selfName: record.participants.find((p) => p.self)?.name ?? evidence?.selfName,
+    });
     const context: LabelContext = {
         lines: prof.measure("speakers.line-evidence", () =>
-            lineChannelShares({
-                entries: meeting.transcript,
-                segments: evidence?.segments ?? [],
-                energy,
-            }).flatMap(({ index, fromSec, toSec, share, energyMic }): LabelContext["lines"][number][] => {
+            measured.flatMap((line): LabelContext["lines"][number][] => {
+                const { index, startSec: fromSec, endSec: toSec } = line;
+                const energyMic = line.energyMic ?? line.energyMicRaw;
+                const share = energyMic ?? line.micShare;
+                const eligibility = speakers.eligibility.get(index)!;
                 // A missing channel or an exact tie establishes neither seat.
                 if (share === undefined || share === ENERGY_CALL_LEANS) {
                     return [];
@@ -140,6 +168,12 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[], 
                         toSec,
                         seat: share > ENERGY_CALL_LEANS ? "mic" : "call",
                         energyMic,
+                        eligible: eligibility.channel.side === "mixed" ? [] : eligibility.choices,
+                        rosterOnly:
+                            eligibility.channel.side === "call" &&
+                            eligibility.choices.length === 1 &&
+                            (!record.seats?.remote.some((row) => sameName(row.name, eligibility.choices[0]!)) ||
+                                eligibility.excluded.some((row) => row.reason.includes("muted"))),
                     },
                 ];
             })
@@ -161,10 +195,12 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[], 
             context,
             seats,
             applyAbove,
+            speakers,
+            measured,
         });
         const seatOwners = new Map<number, string>();
         for (const label of seats) {
-            if (label.reason === "seat-of-one" && label.person) {
+            if (label.reason === "seat-of-one" && label.person && !label.reviewOnly) {
                 seatOwners.set(label.index, label.person);
             }
         }
@@ -184,7 +220,12 @@ export async function proposeSpeakerLabels(
     if (!enabled.length) {
         return [];
     }
-    const { context, forVoice } = await labelContext(opened, storedPresence, options.energyMicShare);
+    const { context, forVoice } = await labelContext(
+        opened,
+        settings.voice.enabled,
+        storedPresence,
+        options.energyMicShare
+    );
     const applyAbove = options.applyAbove ?? (await opened.config()).global.suggest.applyAbove;
     const byLabeler = new Map<SpeakerLabelerId, LineLabel[]>();
 
@@ -243,15 +284,16 @@ export async function preparePreviewLabels(options: {
     settings: MeetingsConfig["global"]["speakerLabels"];
     presence?: Presence[];
     signal?: AbortSignal;
+    measuredEnergy?: AcousticShare;
     /** Both sides of one threshold preview score against the same voice library snapshot. */
     voiceLibrary?: () => VoiceLibrarySnapshot;
 }) {
-    const { opened, settings, presence, signal } = options;
+    const { opened, settings, presence, signal, measuredEnergy } = options;
     type VoiceSettings = typeof settings.voice;
     if (!settings.seat.enabled && !settings.voice.enabled) {
         return (_voice: VoiceSettings, _applyAbove: number): LineLabel[] => [];
     }
-    const { context, forVoice } = await labelContext(opened, presence);
+    const { context, forVoice } = await labelContext(opened, settings.voice.enabled, presence, measuredEnergy);
     const seat = settings.seat.enabled ? await LABELERS.seat(opened, settings) : undefined;
     const seatsAt = (applyAbove: number) => seat?.propose({ ...context, applyAbove }) ?? [];
     if (!settings.voice.enabled || !context.project || !context.attended.some((stay) => stay.seat)) {
