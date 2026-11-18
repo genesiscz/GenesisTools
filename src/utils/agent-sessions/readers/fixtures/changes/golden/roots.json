@@ -1,0 +1,148 @@
+{
+  "1": {
+    "session": "10000005-1111-4111-8111-111111111111",
+    "turn": "p8",
+    "turns": [
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme-tools/build/worktree/src",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "root"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000005-1111-4111-8111-111111111111.jsonl"
+  },
+  "2": {
+    "session": "10000005-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme-tools/a",
+        "beforeOid": null,
+        "afterOid": "27fa34919ae70aa0d7eaccdfbf393cfc440e7d25",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "other"
+        ]
+      },
+      {
+        "path": "/work/acme-tools/build/worktree/src",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "root"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000005-1111-4111-8111-111111111111.jsonl"
+  },
+  "3": {
+    "session": "10000005-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme-tools/a",
+        "beforeOid": null,
+        "afterOid": "27fa34919ae70aa0d7eaccdfbf393cfc440e7d25",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "other"
+        ]
+      },
+      {
+        "path": "/work/acme-tools/build/worktree/src",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "root"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000005-1111-4111-8111-111111111111.jsonl"
+  },
+  "4": {
+    "session": "10000005-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme-tools/a",
+        "beforeOid": null,
+        "afterOid": "27fa34919ae70aa0d7eaccdfbf393cfc440e7d25",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "other"
+        ]
+      },
+      {
+        "path": "/work/acme-tools/build/worktree/src",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "root"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000005-1111-4111-8111-111111111111.jsonl"
+  }
+}

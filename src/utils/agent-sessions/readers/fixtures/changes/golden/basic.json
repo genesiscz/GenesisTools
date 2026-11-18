@@ -1,0 +1,344 @@
+{
+  "1": {
+    "session": "10000000-1111-4111-8111-111111111111",
+    "turn": "p8",
+    "turns": [
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/bun.lock",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "medium",
+        "toolUseIds": [
+          "install"
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "path": "/work/acme/node_modules/example",
+        "reason": "build-output",
+        "via": "bash"
+      }
+    ],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000000-1111-4111-8111-111111111111.jsonl"
+  },
+  "2": {
+    "session": "10000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p7",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/bun.lock",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "medium",
+        "toolUseIds": [
+          "install"
+        ]
+      },
+      {
+        "path": "/work/acme/out",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "named"
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "path": "/work/acme/node_modules/example",
+        "reason": "build-output",
+        "via": "bash"
+      }
+    ],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000000-1111-4111-8111-111111111111.jsonl"
+  },
+  "3": {
+    "session": "10000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p4",
+      "p7",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/bun.lock",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "medium",
+        "toolUseIds": [
+          "install"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-2",
+        "beforeOid": null,
+        "afterOid": null,
+        "status": "modified",
+        "source": "edit",
+        "skipped": "no-before-state",
+        "via": "notebook",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-2"
+        ]
+      },
+      {
+        "path": "/work/acme/out",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "named"
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "path": "/work/acme/node_modules/example",
+        "reason": "build-output",
+        "via": "bash"
+      }
+    ],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000000-1111-4111-8111-111111111111.jsonl"
+  },
+  "6": {
+    "session": "10000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p2",
+      "p3",
+      "p4",
+      "p7",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/a",
+        "beforeOid": null,
+        "afterOid": "f4ab424cbbfec1bdb61eb5678e872df297c3b24d",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "create"
+        ]
+      },
+      {
+        "path": "/work/acme/bun.lock",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "medium",
+        "toolUseIds": [
+          "install"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-0",
+        "beforeOid": "489ce0f857e7634a0eb9f328265a3e91fad49f61",
+        "afterOid": "3e5126c4e761fd09582fc517918a1601b218dff0",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-0"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-1",
+        "beforeOid": "489ce0f857e7634a0eb9f328265a3e91fad49f61",
+        "afterOid": "3e5126c4e761fd09582fc517918a1601b218dff0",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-1"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-2",
+        "beforeOid": null,
+        "afterOid": null,
+        "status": "modified",
+        "source": "edit",
+        "skipped": "no-before-state",
+        "via": "notebook",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-2"
+        ]
+      },
+      {
+        "path": "/work/acme/out",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "named"
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "path": "/work/acme/node_modules/example",
+        "reason": "build-output",
+        "via": "bash"
+      }
+    ],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000000-1111-4111-8111-111111111111.jsonl"
+  },
+  "8": {
+    "session": "10000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p2",
+      "p3",
+      "p4",
+      "p7",
+      "p8"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/a",
+        "beforeOid": null,
+        "afterOid": "f4ab424cbbfec1bdb61eb5678e872df297c3b24d",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "create"
+        ]
+      },
+      {
+        "path": "/work/acme/bun.lock",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "medium",
+        "toolUseIds": [
+          "install"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-0",
+        "beforeOid": "489ce0f857e7634a0eb9f328265a3e91fad49f61",
+        "afterOid": "3e5126c4e761fd09582fc517918a1601b218dff0",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-0"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-1",
+        "beforeOid": "489ce0f857e7634a0eb9f328265a3e91fad49f61",
+        "afterOid": "3e5126c4e761fd09582fc517918a1601b218dff0",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-1"
+        ]
+      },
+      {
+        "path": "/work/acme/edit-2",
+        "beforeOid": null,
+        "afterOid": null,
+        "status": "modified",
+        "source": "edit",
+        "skipped": "no-before-state",
+        "via": "notebook",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-2"
+        ]
+      },
+      {
+        "path": "/work/acme/out",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "named"
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "path": "/work/acme/node_modules/example",
+        "reason": "build-output",
+        "via": "bash"
+      }
+    ],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000000-1111-4111-8111-111111111111.jsonl"
+  }
+}

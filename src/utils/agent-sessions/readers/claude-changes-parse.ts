@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
-import { CLAUDE_DIR } from "@genesiscz/utils/claude/projects";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { applyReplacement, fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
 import type { SessionToolCall, SessionTranscript, SessionTurn } from "@genesiscz/utils/session-changes/types";
 import { claudeSubagentTranscripts } from "./claude-paths";
@@ -580,7 +580,7 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
 
 /** Reads one of Claude's checkpoint backups of a session by file name, or returns null. */
 export function backupReader(sessionId: string): (name: string) => string | null {
-    const backups = join(CLAUDE_DIR, "file-history", sessionId);
+    const backups = join(nativeHome("claude"), "file-history", sessionId);
     return (name) => {
         const path = join(backups, basename(name));
 
