@@ -217,10 +217,16 @@ struct PersonPicker: View {
                             addRow(offeredName).id(shownPeople.count)
                         }
                         if offersEverybody {
-                            Button("Show everybody") { showEverybody = true; highlighted = nil }
-                                .buttonStyle(.genHoverRow()).frame(height: Self.rowHeight)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == rowCount - 1 ? KitTheme.accent.opacity(0.18) : .clear))
+                            Text("Show everybody")
+                                .font(.system(size: 13))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .frame(height: Self.rowHeight)
+                                .contentShape(Rectangle())
+                                .background(Self.highlight(highlighted == rowCount - 1))
+                                .rowButton(cornerRadius: Self.rowCorner) { showEverybody = true; highlighted = nil }
                                 .instantTooltip("Include people who were outside the call at this time")
+                                .accessibilityIdentifier("meetings.personPicker.everybody")
                                 .id(rowCount - 1)
                         }
                     }
@@ -233,26 +239,34 @@ struct PersonPicker: View {
     }
 
     private func addRow(_ name: String) -> some View {
-        Button { addNew?(name) } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "person.badge.plus")
-                    .font(.system(size: 13))
-                    .foregroundStyle(KitTheme.accent)
-                    .frame(width: 22)
-                Text("Add ‘\(name)’ as new speaker")
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: Self.rowHeight)
-            .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == shownPeople.count ? KitTheme.accent.opacity(0.18) : .clear))
+        HStack(spacing: 8) {
+            Image(systemName: "person.badge.plus")
+                .font(.system(size: 13))
+                .foregroundStyle(KitTheme.accent)
+                .frame(width: 22)
+            Text("Add ‘\(name)’ as new speaker")
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.genHoverRow())
+        .padding(.horizontal, 8)
+        .frame(height: Self.rowHeight)
+        .contentShape(Rectangle())
+        .background(Self.highlight(highlighted == shownPeople.count))
+        .rowButton(cornerRadius: Self.rowCorner) { addNew?(name) }
         .accessibilityLabel("Add \(name) as new speaker")
         .accessibilityIdentifier("meetings.personPicker.add")
+    }
+
+    /// Every row of the picker is the kit's row button (`rowButton`): a real button, so the pointer, Return, VoiceOver
+    /// and an agent's AXPress all reach it. A known person's row was a button wrapped in
+    /// `.accessibilityElement(children: .ignore)`, which hid its press: it offered only AXScrollToVisible (w_uoa9ame8).
+    static let rowCorner: CGFloat = 6
+
+    /// The row Up and Down moved to.
+    static func highlight(_ on: Bool) -> some View {
+        RoundedRectangle(cornerRadius: rowCorner).fill(on ? KitTheme.accent.opacity(0.18) : .clear)
     }
 
     private func move(_ step: Int) {
@@ -286,37 +300,40 @@ struct PersonPickerRow: View {
 
     var body: some View {
         // lint-rules-ignore: short list (at most 20 people a search returns, in a lazy stack)
-        Button(action: action) {
-            HStack(spacing: 8) {
-                PersonAvatarView(person: person)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(use ? "Use \(person.name)" : person.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .lineLimit(1)
-                        if person.isSelf {
-                            Text("you").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                    }
-                    Text(PeopleText.address(person))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            PersonAvatarView(person: person)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(use ? "Use \(person.name)" : person.name)
+                        .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                    if person.isSelf {
+                        Text("you").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 0)
+                Text(PeopleText.address(person))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .padding(.horizontal, 8)
-            .frame(height: PersonPicker.rowHeight)
-            .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted ? KitTheme.accent.opacity(0.18) : .clear))
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.genHoverRow())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel([use ? "Use \(person.name)" : person.name, person.isSelf ? "you" : nil, PeopleText.address(person), person.rank.title]
-            .compactMap { $0 }.joined(separator: ", "))
-        .accessibilityAddTraits(highlighted ? [.isButton, .isSelected] : .isButton)
+        .padding(.horizontal, 8)
+        .frame(height: PersonPicker.rowHeight)
+        .contentShape(Rectangle())
+        .background(PersonPicker.highlight(highlighted))
+        // The kit's row button, as the add row: the press stays on the element (PersonPicker.rowCorner).
+        .rowButton(cornerRadius: PersonPicker.rowCorner, action)
+        .accessibilityLabel(Self.spoken(person, use: use))
+        .accessibilityAddTraits(highlighted ? .isSelected : [])
         .accessibilityIdentifier("meetings.personPicker.row.\(person.id)")
+    }
+
+    /// What VoiceOver and an agent read for the row: the name, "you", the address and the rank.
+    static func spoken(_ person: KnownPerson, use: Bool) -> String {
+        [use ? "Use \(person.name)" : person.name, person.isSelf ? "you" : nil, PeopleText.address(person), person.rank.title]
+            .compactMap { $0 }.joined(separator: ", ")
     }
 }
 
