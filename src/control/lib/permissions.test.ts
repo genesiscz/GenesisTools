@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TccRow } from "@app/macos/lib/permissions/tcc";
+import { checkAppInstalled } from "@genesiscz/utils/genesis-tools/capability/needs";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import { fitColumnWidths } from "./output-format";
 import { type PermissionRequestBoundary, type RequestableGrant, requestPermissions } from "./permission-request";
 import {
@@ -11,6 +13,7 @@ import {
     collectProblems,
     type ResponsibleRoute,
     refineRoute,
+    responsibleRoute,
 } from "./permissions";
 
 const APP = "com.genesiscz.genesistools";
@@ -45,8 +48,6 @@ const appMissing: ResponsibleRoute = {
 };
 
 const noRows = { readable: true, rows: [] };
-
-const commandLineTools = { kind: "command-line-tools", developerDir: "/Library/Developer/CommandLineTools" } as const;
 
 function live(overrides: Partial<AxLivePermissions> = {}): AxLivePermissions {
     return {
@@ -218,15 +219,17 @@ describe("collectProblems", () => {
         expect(collectProblems({ route, checks, live: probe })).toEqual([]);
     });
 
-    // Regression test: #447 D10 — the launcher being off is a warning that proposes the build, with the Xcode steps
-    test("an unrouted run whose host holds every grant is warned, with the build proposal", () => {
+    test("an unrouted host with every grant gets the install need's reason and fix", () => {
         const probe = terminalProbe();
-        const route = refineRoute({ ...appMissing, toolchain: commandLineTools }, probe);
+        const installed = checkAppInstalled(appNeedFixture({ installed: false }));
+        const route = refineRoute(appMissing, probe);
         const checks = buildChecks({ route, live: probe, system: terminalSystem, user: terminalUser });
-        const [unwrapped] = collectFindings({ route, checks });
+        const [unwrapped] = collectFindings({ route, checks }, installed);
 
         expect(unwrapped).toContain("Terminal (com.apple.Terminal), pid 1940 holds every grant tools control needs");
-        expect(unwrapped).toContain("install Xcode");
+        expect(unwrapped).toContain(
+            "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."
+        );
     });
 
     test("an unrouted run inside a GenesisTools.app session does not offer GenesisTools.app as an improvement", () => {
@@ -426,19 +429,16 @@ describe("collectProblems", () => {
         expect(unwrapped).not.toContain("GENESIS_TOOLS_NO_APP");
     });
 
-    // Regression test: #447 / #445 — on a Command Line Tools-only Mac, "build GenesisTools.app" ends in 133 Swift errors
-    test("with only the Command Line Tools, the build advice says to install Xcode first", () => {
-        const probe = terminalProbe();
-        const route = refineRoute(
-            {
-                ...appMissing,
-                toolchain: { kind: "command-line-tools", developerDir: "/Library/Developer/CommandLineTools" },
-            },
-            probe
-        );
+    test("an unwrapped host missing grants gets the install fix, and a routed host gets no build advice", () => {
+        const probe = terminalProbe({ accessibility: false });
+        const route = refineRoute(appMissing, probe);
         const checks = buildChecks({ route, live: probe, system: noRows, user: noRows });
-
-        expect(collectFindings({ route, checks })[0]).toContain("install Xcode");
+        const missing = checkAppInstalled(appNeedFixture({ installed: false }));
+        expect(collectFindings({ route, checks }, missing)[0]).toContain(
+            "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."
+        );
+        const ready = checkAppInstalled(appNeedFixture());
+        expect(collectFindings({ route: responsibleRoute(ready), checks: [] }, ready)).toEqual([]);
     });
 
     test("a launcher that macOS did not hold responsible is reported, not hidden", () => {

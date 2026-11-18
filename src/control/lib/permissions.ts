@@ -21,15 +21,15 @@ import {
 } from "@app/macos/lib/permissions/tcc";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { checkAppInstalled, describeNeedFailure, type NeedResult } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     GENESIS_APP_BUNDLE_ID,
-    installedGenesisAppLauncher,
+    genesisAppLauncherPath,
     isGenesisAppDisabledByMarker,
     wrapWithGenesisApp,
 } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
 import { runAx } from "./runner";
 
 export type GrantStatus = "granted" | "denied" | "not-determined" | "unknown";
@@ -79,10 +79,9 @@ export interface ResponsibleHolder {
 /** Why native spawns run without the launcher: each has a different fix. */
 export type UnroutedCause = "env" | "marker" | "missing";
 
-const UNROUTED_REASONS: Record<UnroutedCause, string> = {
+const UNROUTED_REASONS = {
     env: "GENESIS_TOOLS_NO_APP=1 is set",
     marker: "the launcher is switched off",
-    missing: "GenesisTools.app is not installed",
 };
 
 export interface ResponsibleRoute {
@@ -94,8 +93,6 @@ export interface ResponsibleRoute {
     reason?: string;
     cause?: UnroutedCause;
     holder: ResponsibleHolder;
-    /** Decides whether "build GenesisTools.app" can work here; detected when absent. */
-    toolchain?: XcodeToolchain;
 }
 
 /** `ax-tool permissions`: the live grant state of the process `tools control` actually spawns. */
@@ -217,12 +214,10 @@ export function describeHolder(holder: ResponsibleHolder): string {
     return id && id !== name ? `${name} (${id})` : name;
 }
 
-export function responsibleRoute(): ResponsibleRoute {
-    const launcher = installedGenesisAppLauncher();
-
-    if (launcher) {
+export function responsibleRoute(installed = checkAppInstalled()): ResponsibleRoute {
+    if (installed.ok) {
         return {
-            launcher,
+            launcher: genesisAppLauncherPath(),
             routed: true,
             identity: `GenesisTools.app (${GENESIS_APP_BUNDLE_ID})`,
             bundleId: GENESIS_APP_BUNDLE_ID,
@@ -242,7 +237,7 @@ export function responsibleRoute(): ResponsibleRoute {
         routed: false,
         identity: host ? `the terminal or host app (${host})` : "the process that launched tools (no bundle)",
         bundleId: host,
-        reason: UNROUTED_REASONS[cause],
+        reason: cause === "missing" ? installed.reason : UNROUTED_REASONS[cause],
         cause,
         holder: { bundleId: host, viaGenesisApp: false },
     };
@@ -510,7 +505,7 @@ function grantProblem(check: PermissionCheck, holder: ResponsibleHolder): string
 }
 
 /** How to get the launcher back for this run, or how to live without it: whole sentences. */
-function launcherFix(route: ResponsibleRoute): string {
+function launcherFix(route: ResponsibleRoute, installed: NeedResult): string {
     const name = holderName(route.holder);
 
     switch (route.cause) {
@@ -518,20 +513,25 @@ function launcherFix(route: ResponsibleRoute): string {
             return `Fix: unset GENESIS_TOOLS_NO_APP, or turn the grants below on for ${name}.`;
         case "marker":
             return `Fix: \`${toolCommand("macos permissions enable")}\`, or turn the grants below on for ${name}.`;
-        default:
-            return `Fix: turn the grants below on for ${name}, or build GenesisTools.app so one identity holds them for every terminal and agent. ${genesisAppBuildHint(route.toolchain)}`;
+        default: {
+            const alternative =
+                !installed.ok && installed.fix
+                    ? ", or build GenesisTools.app so one identity holds them for every terminal and agent"
+                    : "";
+            return `Fix: turn the grants below on for ${name}${alternative}. ${describeNeedFailure(installed)}`.trimEnd();
+        }
     }
 }
 
 /** The one step that puts GenesisTools.app back in front of every native spawn, as a sentence. */
-function restoreLauncher(route: ResponsibleRoute): string {
+function restoreLauncher(route: ResponsibleRoute, installed: NeedResult): string {
     switch (route.cause) {
         case "env":
             return "Unset GENESIS_TOOLS_NO_APP to use it.";
         case "marker":
             return `Turn its launcher back on with \`${toolCommand("macos permissions enable")}\`.`;
         default:
-            return genesisAppBuildHint(route.toolchain);
+            return describeNeedFailure(installed);
     }
 }
 
@@ -546,17 +546,20 @@ function versionedFolder(path: string | undefined): string | undefined {
  * self-updating host, so a host that installs every version into a new folder loses its grants
  * on each update while TCC still lists the old path as allowed.
  */
-export function collectFindings({ route, checks }: { route: ResponsibleRoute; checks: PermissionCheck[] }): string[] {
+export function collectFindings(
+    { route, checks }: { route: ResponsibleRoute; checks: PermissionCheck[] },
+    installed = checkAppInstalled()
+): string[] {
     const findings: string[] = [];
 
     if (!route.routed) {
-        findings.push(unwrappedFinding(route, checks));
+        findings.push(unwrappedFinding(route, checks, installed));
         const version = versionedFolder(route.holder.path);
 
         if (version) {
             const name = holderName(route.holder);
             findings.push(
-                `${name} runs from a versioned folder (…/${version}/…), and macOS ties a grant to that exact path, so the next ${name} update drops every grant given to it. GenesisTools.app keeps one identity across updates. ${restoreLauncher(route)}`
+                `${name} runs from a versioned folder (…/${version}/…), and macOS ties a grant to that exact path, so the next ${name} update drops every grant given to it. GenesisTools.app keeps one identity across updates. ${restoreLauncher(route, installed)}`.trimEnd()
             );
         }
     }
@@ -584,21 +587,24 @@ function isAskedOnFirstUse(check: PermissionCheck): boolean {
  * a failure: a Mac with only the Command Line Tools cannot build GenesisTools.app at all, and its
  * doctor used to exit 1 forever. The missing grants themselves stay problems.
  */
-function unwrappedFinding(route: ResponsibleRoute, checks: PermissionCheck[]): string {
-    const unwrapped = `ax-tool, peekaboo and osascript run unwrapped (${route.reason})`;
+function unwrappedFinding(route: ResponsibleRoute, checks: PermissionCheck[], installed: NeedResult): string {
+    const unwrapped =
+        route.cause === "missing"
+            ? "ax-tool, peekaboo and osascript run unwrapped"
+            : `ax-tool, peekaboo and osascript run unwrapped (${route.reason})`;
     const allHeld =
         checks.length > 0 && checks.every((check) => check.status === "granted" || isAskedOnFirstUse(check));
 
     if (!allHeld) {
-        return `${unwrapped}, so their grants follow ${route.identity}. ${launcherFix(route)}`;
+        return `${unwrapped}, so their grants follow ${route.identity}. ${launcherFix(route, installed)}`;
     }
 
     // A process tree started under the app keeps its identity even with the launcher bypassed.
     if (route.holder.viaGenesisApp) {
-        return `${unwrapped}, but this process tree started under ${route.identity}, which holds every grant ${toolCommand("control")} needs. ${launcherFix(route)}`;
+        return `${unwrapped}, but this process tree started under ${route.identity}, which holds every grant ${toolCommand("control")} needs. ${launcherFix(route, installed)}`;
     }
 
-    return `${unwrapped}, and ${route.identity} holds every grant ${toolCommand("control")} needs, so it works. GenesisTools.app would hold them once for every terminal and agent. ${restoreLauncher(route)}`;
+    return `${unwrapped}, and ${route.identity} holds every grant ${toolCommand("control")} needs, so it works. GenesisTools.app would hold them once for every terminal and agent. ${restoreLauncher(route, installed)}`.trimEnd();
 }
 
 /** The verdict line when nothing is missing. */
@@ -648,7 +654,8 @@ function readTcc(route: ResponsibleRoute): {
 
 export function controlDoctor(): ControlDoctorReport {
     const { live, error } = readLivePermissions();
-    const route = refineRoute(responsibleRoute(), live);
+    const installed = checkAppInstalled();
+    const route = refineRoute(responsibleRoute(installed), live);
     const { system, user } = readTcc(route);
     const checks = buildChecks({ route, live, system, user });
     logger.debug({ routed: route.routed, live, problems: checks.map((c) => `${c.id}:${c.status}`) }, "control doctor");
@@ -660,7 +667,7 @@ export function controlDoctor(): ControlDoctorReport {
         checks,
         routes: capabilityRoutes(route),
         problems: collectProblems({ route, checks, live, liveError: error }),
-        findings: collectFindings({ route, checks }),
+        findings: collectFindings({ route, checks }, installed),
     };
 }
 
