@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
 import { runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
@@ -19,7 +20,7 @@ import { genesisToolsApi, requestPresentApi } from "../../service/api";
 import { connectGenesisToolsService } from "../../service/clients";
 import { startGenesisToolsService } from "../../service/host";
 import { createRequestJournal, type RequestEvent, requestEventSchema, stateOf } from "./journal";
-import { requestSchema } from "./request";
+import { type PersonRequest, requestSchema } from "./request";
 import { notifyRequest, presentInApp, presentInSystemDialog, presentInTerminal, type RequestContext } from "./surfaces";
 
 const input = {
@@ -119,6 +120,57 @@ test("a caller deadline returns pending, leaves the request open, and a later an
     expect((await waiting).status).toBe("obsolete");
 });
 
+test("windowNotice posts once per caller id and returns after the configured delivery", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir: join(dir, "requests"), now });
+    const deliver = () =>
+        mock(({ args }: { args: PersonRequest }) => ({ id: args.id, status: "pending" as const, reason: null }));
+    const notify = deliver();
+    const ask = deliver();
+    const actions = AREAS.person.actions;
+    const registry = {
+        ...AREAS,
+        person: {
+            ...AREAS.person,
+            actions: {
+                ...actions,
+                notifyThenAsk: { ...actions.notifyThenAsk, native: notify },
+                askNow: { ...actions.askNow, native: ask },
+            },
+        },
+    };
+    const config = createConfigStore({ registry, file: join(dir, "config.json") });
+    const wait = mock(async () => {
+        throw new Error("A posted notice must not wait for an answer");
+    });
+    const deps = liveEngineDeps(registry, {
+        config,
+        facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false },
+        service: {
+            journal: { ...journal, wait },
+            hasClient: () => false,
+            present: async () => {
+                throw new Error("Only the fake delivery should run");
+            },
+        },
+    });
+    const args = { id: input.id, title: input.title, reason: input.reason, open };
+    const post = (id: string) => runAreaAction(registry, "person.windowNotice", { ...args, id }, deps);
+    expect(config.get("person.windowNotice.delivery")).toBe("notifyThenAsk");
+    expect(actions.windowNotice.args.safeParse(input).success).toBe(false);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        expect(await post(args.id)).toMatchObject({ status: "ran", value: { id: args.id, status: "pending" } });
+    }
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(journal.get(args.id)?.request).toMatchObject({ ...args, kind: "notice" });
+
+    await config.set("person.windowNotice.delivery", "askNow");
+    expect(await post("notice:second")).toMatchObject({ status: "ran", value: { status: "pending" } });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+});
+
 test("all live effects refuse the test process before a host call", async () => {
     const ctx = {} as RequestContext;
     for (const surface of [presentInApp, presentInSystemDialog, presentInTerminal, notifyRequest]) {
@@ -130,6 +182,9 @@ test("all live effects refuse the test process before a host call", async () => 
     const result = await runAreaAction(AREAS, "person.notice", input, liveEngineDeps(AREAS));
     expect(result.status).toBe("unreachable");
     expect(result.skipped[0]?.reason).toContain("in-test");
+    const notice = await runAreaAction(AREAS, "person.windowNotice", { ...input, open }, liveEngineDeps(AREAS));
+    expect(notice.status).toBe("unreachable");
+    expect(notice.skipped[0]?.reason).toContain("in-test");
 });
 
 test("a notice goes through isolated RPC in both directions, emits events, and reopens settled", async () => {

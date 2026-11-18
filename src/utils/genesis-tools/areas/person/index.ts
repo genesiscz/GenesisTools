@@ -1,7 +1,7 @@
 import { type ActionOutcome, defineAction, defineArea, type Pass } from "@genesiscz/utils/genesis-tools/actions/define";
 import { Need } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { Delivery, personConfigSchema } from "./deliveries";
-import { notice } from "./presets";
+import { notice, windowNotice } from "./presets";
 import { defineRequest, noticeInputSchema, type RequestOutcome, requestOutcomeSchema, requestSchema } from "./request";
 import { notifyRequest, notifyViaChannels, presentInApp, presentInSystemDialog, printRequest } from "./surfaces";
 
@@ -25,6 +25,7 @@ export const person = defineArea({
             build: (args) => args,
         }),
         notice,
+        windowNotice,
         showWindow: defineAction({
             summary: "Present a request using a connected face, the app, a system dialog or this terminal",
             args: requestSchema,
