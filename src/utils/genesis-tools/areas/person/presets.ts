@@ -1,15 +1,18 @@
-import { z } from "zod";
 import { Delivery } from "./deliveries";
-import { defineRequest } from "./request";
+import { defineRequest, noticeInputSchema } from "./request";
 
 export const notice = defineRequest({
     summary: "Ask a person to acknowledge a notice",
-    args: z.object({
-        id: z.string().regex(/^[a-zA-Z0-9:._-]{1,500}$/),
-        title: z.string().min(1).max(200),
-        reason: z.string().min(1).max(20_000),
-    }),
+    args: noticeInputSchema.pick({ id: true, title: true, reason: true }),
     delivery: Delivery.askElseNotify,
     wait: "settled",
+    build: (args) => ({ kind: "notice", ...args }),
+});
+
+export const windowNotice = defineRequest({
+    summary: "Post a notice whose click opens a GenesisTools window",
+    args: noticeInputSchema.omit({ kind: true }).required({ open: true }),
+    delivery: Delivery.notifyThenAsk,
+    wait: "posted",
     build: (args) => ({ kind: "notice", ...args }),
 });
