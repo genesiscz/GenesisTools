@@ -106,7 +106,7 @@ final class RecorderFailureNoticeTests: XCTestCase {
             shown.append(report)
             retry?()
         }
-        RecorderNotice.outlets.alert = { text, more in alerts.append("\(text) | \(more ?? "-")") }
+        RecorderNotice.outlets.alert = { text, more, _ in alerts.append("\(text) | \(more ?? "-")") }
         let failure = ToolsRunner.EarlyFailure(argv: ["recorder", "start"], status: 1, output: Self.output, logFile: "/tmp/x.log",
                                                logLine: 1)
         RecorderNotice.startFailed(failure, defaults: defaults) { retried += 1 }
@@ -117,6 +117,32 @@ final class RecorderFailureNoticeTests: XCTestCase {
         RecorderNotice.startFailed(failure, defaults: defaults) { retried += 1 }
         XCTAssertEqual(alerts.count, 1)
         XCTAssertTrue(alerts[0].hasPrefix("The camera was asked for, but it did not start"))
+    }
+
+    func testFailedStopOffersRetryForTheSameTakeInBothStyles() async {
+        for style in ["notice", "alert"] {
+            defaults.set(style, forKey: RecorderFailureStyle.key)
+            var retry: (@MainActor () -> Void)?
+            var headline = ""
+            RecorderNotice.outlets.notice = { report, action in headline = report.headline; retry = action }
+            RecorderNotice.outlets.alert = { text, _, action in headline = text; retry = action }
+            let finished = expectation(description: "same stop request retried")
+            var attempts = 0
+            await RecorderShortcutActions.stop(id: "take-27", defaults: defaults) {
+                attempts += 1
+                if attempts == 1 {
+                    if style == "alert" { throw RecordingEngineError.unsupported("Socket closed") }
+                    return ["state": "stopping"]
+                }
+                finished.fulfill()
+                return ["state": "stopped"]
+            }
+            XCTAssertTrue(headline.contains("take-27"))
+            XCTAssertNotNil(retry)
+            retry?()
+            await fulfillment(of: [finished], timeout: 1)
+            XCTAssertEqual(attempts, 2)
+        }
     }
 
     func testTheNoticeSettingsDefaultToOpenUnderTheItemAndNeverClosing() {

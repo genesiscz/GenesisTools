@@ -136,7 +136,7 @@ final class RecorderSettingsTests: XCTestCase {
         defaults.set("alert", forKey: RecorderFailureStyle.key)
         var detail: String?
         var outlets = recordingOutlets { _ in }
-        outlets.alert = { _, more in detail = more }
+        outlets.alert = { _, more, _ in detail = more }
         RecorderNotice.outlets = outlets
         RecorderNotice.failure(FailureReport(title: "Recorder", headline: "The request failed.",
                                             log: "", stack: "Error: failed\n    at originalThrow (recorder.ts:4:2)"), defaults: defaults)
@@ -253,7 +253,7 @@ final class RecorderSettingsTests: XCTestCase {
                                   alertAnswer: String? = nil) -> RecorderNoticeOutlets {
         RecorderNoticeOutlets(
             notice: { report, _ in record("notice: \(report.headline) | \(report.hasLog ? report.log : "-")") },
-            alert: { record("alert: \($0) | \($1 ?? "-")") },
+            alert: { text, more, _ in record("alert: \(text) | \(more ?? "-")") },
             note: { record("note: \($0) | \($1)") },
             beep: { record("beep") },
             titlePanel: { request, done in
