@@ -981,7 +981,8 @@ Formatting is Biome with a 120-column line width and 4-space indent. Imports are
 module specifier, named imports are sorted case-insensitively inside the braces, and the
 pre-commit hook runs `biome check --write --staged`. Pre-push typechecks affected projects one at a time across
 linked worktrees, using `tsc-rs` on PATH or the checkout’s `tsc`. A Rust-only TS5115 recursion diagnostic is
-rechecked with the checkout compiler. Run roster audits explicitly with `bun run lint:rules` and
+rechecked with the checkout compiler. Automatic repo lint checks the pushed diff, including when the checker
+itself changes. Run full-tree and roster audits explicitly with `bun run lint:rules` and
 `bun scripts/ci/rosters/generate.ts --check --tree`.
 
 ### Adding a tool
