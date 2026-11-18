@@ -10,6 +10,9 @@ struct MeetingsRootView: View {
     @State private var dockHeight: CGFloat = 0
     /// The window's width: below `panelHidesListBelow` the open settings panel hides the meetings list (G53).
     @State private var windowWidth: CGFloat = 0
+    /// The three columns' visibility: below `sidebarHidesBelow` the sidebar steps aside (`.doubleColumn`), and the
+    /// toolbar's sidebar button shows it again or hides it, as in any Mac app (w_21k9ux1b).
+    @State private var columns: NavigationSplitViewVisibility = .all
     @State private var serviceFailure: MeetingsCLI.Failure?
 
     var body: some View {
@@ -20,8 +23,6 @@ struct MeetingsRootView: View {
                 contactsPanes
             } else if Self.panelHidesList(width: windowWidth, panelOpen: model.sidePanelOpen && model.detail != nil) {
                 meetingWithPanel
-            } else if Self.sidebarHides(width: windowWidth) {
-                listAndMeeting
             } else {
                 panes
             }
@@ -51,6 +52,8 @@ struct MeetingsRootView: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+            // Only a crossing of the width moves the sidebar, so the reader's own choice holds inside each band.
+            .onChange(of: Self.sidebarHides(width: windowWidth)) { _, hides in columns = Self.columns(sidebarHides: hides) }
             // Last, so the dock and the sheets above take the look too.
             .meetingsLook()
     }
@@ -81,26 +84,23 @@ struct MeetingsRootView: View {
 
     /// Below this window width the sidebar column steps aside and its places are a menu at the top of the list (window
     /// audit H5): at the 900 pt minimum the sidebar and the list left the meeting about 335 pt, so its chips wrapped to
-    /// three rows and its tabs dropped their glyphs. Two columns, as `meetingWithPanel`: a split view's column
-    /// visibility did not hide a column in the snapshot window.
+    /// three rows and its tabs dropped their glyphs. The three columns stay one split view whose visibility hides the
+    /// sidebar, so the toolbar's sidebar button shows and hides the sidebar; a two-column layout here made that button
+    /// fold the meeting list instead (w_21k9ux1b).
     static let sidebarHidesBelow: CGFloat = 1150
 
     static func sidebarHides(width: CGFloat) -> Bool {
         width > 0 && width < sidebarHidesBelow
     }
 
-    /// The meetings of the place (with the places as a menu) | the open meeting, for a window too narrow for the sidebar.
-    private var listAndMeeting: some View {
-        NavigationSplitView {
-            MeetingsListPane(model: model, showsPlaces: true)
-                .safeAreaPadding(.bottom, dockHeight)
-                .heightFromWindow()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 420)
-        } detail: {
-            // In two columns the meeting's title stood in the toolbar beside the window's own title, as in
-            // `meetingWithPanel`; the header says it in full.
-            openMeeting.modifier(NoToolbarTitle())
-        }
+    /// The columns a width crossing sets: the list and the meeting below `sidebarHidesBelow`, all three above it.
+    static func columns(sidebarHides: Bool) -> NavigationSplitViewVisibility {
+        sidebarHides ? .doubleColumn : .all
+    }
+
+    /// The places stand as a menu above the list while the sidebar that holds them is hidden.
+    static func listShowsPlaces(_ columns: NavigationSplitViewVisibility) -> Bool {
+        columns == .doubleColumn || columns == .detailOnly
     }
 
     private var openMeeting: some View {
@@ -158,12 +158,12 @@ struct MeetingsRootView: View {
     }
 
     private var panes: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             MeetingsSidebar(model: model)
                 .safeAreaPadding(.bottom, dockHeight)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } content: {
-            MeetingsListPane(model: model)
+            MeetingsListPane(model: model, showsPlaces: Self.listShowsPlaces(columns))
                 .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
                 .navigationSplitViewColumnWidth(min: 260, ideal: 340, max: 480)
@@ -341,7 +341,7 @@ private struct MeetingsSidebar: View {
 
 private struct MeetingsListPane: View {
     @Bindable var model: MeetingsWindowModel
-    /// The sidebar's places as a menu above the list, while the sidebar column is hidden (`sidebarHides`).
+    /// The sidebar's places as a menu above the list, while the sidebar column is hidden (`listShowsPlaces`).
     var showsPlaces = false
 
     var body: some View {
