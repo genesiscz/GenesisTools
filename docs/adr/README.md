@@ -32,7 +32,7 @@ Plan `.claude/plans/2026-11-18-MeetingsRoomAndCallPresence.md`.
 | 0014 | [Ask one module who could have spoken a line](0014-speaker-eligibility.md) | Accepted | 2026-11-18 | J2 / R2–R3 |
 | 0015 | [Use explicit mute counts as a seat editor hint](0015-mute-seat-hint.md) | Accepted | 2026-11-18 | J3 / R2 |
 | 0016 | [Promote echo pairing on the evidence of one recording](0016-echo-pairing-promotion.md) | Superseded | 2026-11-18 | J4 / original t2 · `h_hxt7a56g:t2` |
-| 0017 | [Require evidence across reference meetings before pairing echoes](0017-echo-pairing-evidence.md) | Proposed | 2026-11-18 | J4 / current t2 · `h_hxt7a56g:t2` |
+| 0017 | [Require evidence across reference meetings before pairing echoes](0017-echo-pairing-evidence.md) | Accepted | 2026-11-18 | J4 / current t2 · `h_hxt7a56g:t2` |
 | 0018 | [Infer a seat only from independent positive voice matches](0018-voice-seat-hints.md) | Accepted | 2026-11-18 | J5 / R4 |
 | 0019 | [Rank shared-microphone speakers by positive evidence](0019-shared-mic-questions.md) | Accepted | 2026-11-18 | J6 / R3–R4 |
 | 0020 | [Ask the owner to identify shared room devices](0020-shared-device-accounts.md) | Proposed | 2026-11-18 | J7 / current t3 · `h_hxt7a56g:t3` |
