@@ -151,6 +151,8 @@ export interface TaskPatch {
     priority?: TaskPriority | null;
     missedRun?: MissedRunPolicy | null;
     description?: string;
+    /** The shell command the task runs; replaces the old one whole. */
+    command?: string;
 }
 
 /** Every reason the patch cannot be applied, as sentences; empty when it can. */
@@ -177,6 +179,10 @@ export function validateTaskPatch(patch: TaskPatch): string[] {
 
     if (patch.priority !== undefined && patch.priority !== null && !TASK_PRIORITIES.includes(patch.priority)) {
         errors.push(`priority must be one of ${TASK_PRIORITIES.join(", ")}; got ${patch.priority}`);
+    }
+
+    if (patch.command !== undefined && patch.command.trim() === "") {
+        errors.push("command must not be empty");
     }
 
     const missed = patch.missedRun;
@@ -249,6 +255,10 @@ function applyPatch(task: DaemonTask, patch: TaskPatch): void {
 
     if (patch.description !== undefined) {
         task.description = patch.description;
+    }
+
+    if (patch.command !== undefined) {
+        task.command = patch.command;
     }
 }
 
