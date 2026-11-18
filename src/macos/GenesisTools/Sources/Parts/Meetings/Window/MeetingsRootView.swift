@@ -20,6 +20,8 @@ struct MeetingsRootView: View {
                 contactsPanes
             } else if Self.panelHidesList(width: windowWidth, panelOpen: model.sidePanelOpen && model.detail != nil) {
                 meetingWithPanel
+            } else if Self.sidebarHides(width: windowWidth) {
+                listAndMeeting
             } else {
                 panes
             }
@@ -77,6 +79,46 @@ struct MeetingsRootView: View {
         panelOpen && width > 0 && width < panelHidesListBelow
     }
 
+    /// Below this window width the sidebar column steps aside and its places are a menu at the top of the list (window
+    /// audit H5): at the 900 pt minimum the sidebar and the list left the meeting about 335 pt, so its chips wrapped to
+    /// three rows and its tabs dropped their glyphs. Two columns, as `meetingWithPanel`: a split view's column
+    /// visibility did not hide a column in the snapshot window.
+    static let sidebarHidesBelow: CGFloat = 1150
+
+    static func sidebarHides(width: CGFloat) -> Bool {
+        width > 0 && width < sidebarHidesBelow
+    }
+
+    /// The meetings of the place (with the places as a menu) | the open meeting, for a window too narrow for the sidebar.
+    private var listAndMeeting: some View {
+        NavigationSplitView {
+            MeetingsListPane(model: model, showsPlaces: true)
+                .safeAreaPadding(.bottom, dockHeight)
+                .heightFromWindow()
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 420)
+        } detail: {
+            // In two columns the meeting's title stood in the toolbar beside the window's own title, as in
+            // `meetingWithPanel`; the header says it in full.
+            openMeeting.modifier(NoToolbarTitle())
+        }
+    }
+
+    private var openMeeting: some View {
+        Group {
+            if let detail = model.detail {
+                MeetingDetailView(detail: detail, window: model)
+                    .environment(\.meetingDetail, detail)
+                    .id(detail.id)
+            } else {
+                EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
+            }
+        }
+        .heightFromWindow()
+        .toolbar {
+            if model.detail != nil { SidePanelToolbar(model: model) }
+        }
+    }
+
     /// Sidebar | the open meeting with the settings panel, for a window too narrow for the list beside them.
     private var meetingWithPanel: some View {
         NavigationSplitView {
@@ -124,21 +166,9 @@ struct MeetingsRootView: View {
             MeetingsListPane(model: model)
                 .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
-                .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 340, max: 480)
         } detail: {
-            Group {
-                if let detail = model.detail {
-                    MeetingDetailView(detail: detail, window: model)
-                        .environment(\.meetingDetail, detail)
-                        .id(detail.id)
-                } else {
-                    EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
-                }
-            }
-            .heightFromWindow()
-            .toolbar {
-                if model.detail != nil { SidePanelToolbar(model: model) }
-            }
+            openMeeting
         }
         // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
     }
@@ -311,9 +341,15 @@ private struct MeetingsSidebar: View {
 
 private struct MeetingsListPane: View {
     @Bindable var model: MeetingsWindowModel
+    /// The sidebar's places as a menu above the list, while the sidebar column is hidden (`sidebarHides`).
+    var showsPlaces = false
 
     var body: some View {
         VStack(spacing: 0) {
+            if showsPlaces {
+                MeetingsPlacesMenu(model: model, title: title)
+                Divider()
+            }
             if case .project(let name) = model.place {
                 // A failed config read is not an empty project: the summary shows only data that was read.
                 if let unread = MeetingsUnread.of([(.projectSettings, model.settings.failure)]).first {
@@ -406,6 +442,65 @@ private struct MeetingsListPane: View {
     }
 }
 
+/// The sidebar's places in one menu: Needs you, All meetings, All people and each project, with their counts. Built
+/// at the click (`MenuButton`).
+private struct MeetingsPlacesMenu: View {
+    @Bindable var model: MeetingsWindowModel
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            MenuButton(style: .genHoverPlain(), items: { items() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: symbol).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(verbatim: title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .frame(minHeight: 22)
+                .contentShape(Rectangle())
+            }
+            .instantTooltip("Show another place: Needs you, all meetings, the people or a project")
+            .accessibilityLabel("Place: \(title)")
+            .accessibilityIdentifier("meetings.places")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+    }
+
+    private var symbol: String {
+        switch model.place {
+        case .needs: return "exclamationmark.bubble"
+        case .all: return "calendar"
+        case .contacts: return "person.crop.circle"
+        case .project: return "folder"
+        }
+    }
+
+    private func items() -> [MenuButtonItem] {
+        let overview = model.overview.value
+        func counted(_ title: String, _ count: Int?) -> String {
+            guard let count, count > 0 else { return title }
+            return "\(title)  \(count)"
+        }
+        var items: [MenuButtonItem] = [
+            .action(counted("Needs you", overview?.needsYou.total), checked: model.place == .needs) { model.go(.needs) },
+            .action(counted("All meetings", overview?.meetings.count), checked: model.place == .all) { model.go(.all) },
+            .action("All people") { model.go(.contacts) },
+        ]
+        let projects = overview?.projects ?? []
+        if !projects.isEmpty {
+            items.append(.divider)
+            items.append(.note("Projects"))
+            items += projects.map { project in
+                .action(counted(project.name, project.meetings), checked: model.place == .project(project.name)) {
+                    model.go(.project(project.name))
+                }
+            }
+        }
+        return items
+    }
+}
+
 /// The meetings of the place, one section per day, newest first. Up and Down move the selection (the List's own keys).
 private struct MeetingsByDayList: View {
     @Bindable var model: MeetingsWindowModel
@@ -492,7 +587,9 @@ struct MeetingBadgesView: View {
 
     var body: some View {
         let badges = meeting.badges
-        if let audio = meeting.sourceAudio {
+        // A list row only: every meeting keeps its sound now (P14), so in the header the badge said the same thing on
+        // every meeting and took a place in its one chip line.
+        if let audio = meeting.sourceAudio, open == nil {
             Badge("Audio preserved", color: KitPalette.added, symbol: "waveform")
                 .instantTooltip("Permanent source audio: \(audio.bytes) bytes")
                 .accessibilityIdentifier("meetings.sourceAudio.preserved")
@@ -541,10 +638,13 @@ private struct NeedsYouList: View {
             List(selection: Binding(get: { needs.row(for: model.needsSelection) },
                                     set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
                 ForEach(needs.groups, id: \.title) { group in
-                    Section(group.title) {
+                    // "Suggestions" count those at or above the apply line on every surface; the line is said once,
+                    // here, instead of at the end of every row (window audit L1).
+                    Section(group.title == MeetingsOverview.NeedsYou.readyTitle
+                            ? "\(group.title) at \(Int(overview.applyAbove * 100)) % or more" : group.title) {
                         ForEach(group.rows, id: \.id) { row in
                             if let meeting = model.meeting(row.id) {
-                                NeedsRow(meeting: meeting, reason: row.reason(applyAbove: overview.applyAbove)).tag(row.tag)
+                                NeedsRow(meeting: meeting, reason: row.reason()).tag(row.tag)
                             }
                         }
                     }
@@ -572,14 +672,14 @@ extension MeetingsOverview.NeedsYou {
         /// The selection tag: "q:<id>" and "s:<id>" open Items, a bare id opens the meeting's first tab.
         var tag: String { questions > 0 ? "q:" + id : suggestions > 0 ? "s:" + id : id }
 
-        /// The row's second line. One need reads in full; several read short, so the line fits the column.
-        func reason(applyAbove: Double) -> String {
-            let above = "at \(Int(applyAbove * 100)) % or more"
+        /// The row's second line. One need reads in full; several read short, so the line fits the column. A
+        /// suggestion is one at or above the apply line, which the list says once in a section title.
+        func reason() -> String {
             let needs = [noProject, questions > 0, suggestions > 0].filter { $0 }.count
             var parts: [String] = []
             if noProject { parts.append("Choose its project") }
             if questions > 0 { parts.append(Plural.count(questions, "question") + (needs == 1 ? " to answer by ear" : "")) }
-            if suggestions > 0 { parts.append(Plural.count(suggestions, "suggestion") + (needs == 3 ? "" : " " + above)) }
+            if suggestions > 0 { parts.append(Plural.count(suggestions, "suggestion") + (needs == 1 ? " to confirm" : "")) }
             return parts.joined(separator: " · ")
         }
     }
@@ -588,6 +688,8 @@ extension MeetingsOverview.NeedsYou {
         let title: String
         let rows: [Row]
     }
+
+    static let readyTitle = "Ready to confirm"
 
     /// The list's groups in its order. A meeting stands in the first group it belongs to.
     var groups: [Group] {
@@ -602,7 +704,7 @@ extension MeetingsOverview.NeedsYou {
         }
         return [Group(title: "Without a project", rows: rows(noProject)),
                 Group(title: "Questions to answer", rows: rows(questions.map(\.id))),
-                Group(title: "Ready to confirm", rows: rows(suggestions.map(\.id)))].filter { !$0.rows.isEmpty }
+                Group(title: Self.readyTitle, rows: rows(suggestions.map(\.id)))].filter { !$0.rows.isEmpty }
     }
 
     /// The row of the open meeting. A row is tagged "q:<id>", "s:<id>" or the bare id, and a meeting opened by its id

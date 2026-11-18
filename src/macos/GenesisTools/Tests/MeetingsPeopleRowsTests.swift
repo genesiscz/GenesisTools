@@ -37,8 +37,8 @@ final class MeetingsPeopleRowsTests: XCTestCase {
         XCTAssertNil(ListenPresenceStrip.window(from: "20", to: "10", duration: 100))
     }
     func testC11WarningSurvivesWithoutWindowSuggestAndC13KeepsEngineSentence() {
-        XCTAssertEqual(MeetingRoomPeopleView.peopleWarnings(attendance: "Attendance not found", suggested: []), ["Attendance not found"])
-        XCTAssertEqual(MeetingRoomPeopleView.peopleWarnings(attendance: "Attendance not found", suggested: ["Attendance not found"]), ["Attendance not found"])
+        XCTAssertEqual(MeetingPeopleChip.peopleWarnings(attendance: "Attendance not found", suggested: []), ["Attendance not found"])
+        XCTAssertEqual(MeetingPeopleChip.peopleWarnings(attendance: "Attendance not found", suggested: ["Attendance not found"]), ["Attendance not found"])
         XCTAssertEqual(asFailure(MeetingsCLI.Failure(sentence: "Join must precede leave", detail: "engine")).sentence, "Join must precede leave")
     }
     func testC22OnlyExceptionalServiceStateHasANotice() {

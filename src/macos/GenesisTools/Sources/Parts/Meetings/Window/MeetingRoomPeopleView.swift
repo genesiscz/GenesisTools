@@ -1,6 +1,11 @@
 import SwiftUI
 
-struct MeetingRoomPeopleView: View {
+/// The meeting's people as one chip of the header's chip line (H1 of the 2026-11-18 window audit): "4 people", a menu
+/// that edits each one or adds someone, and the attendance warnings in its hue and tooltip. Before, the names, a voice
+/// count, a channel picker and two voice buttons stood in a strip of their own under the header and were cut at the
+/// window's right edge; the voice tools are a sheet of the header's "…" menu now (`MeetingVoiceToolsSheet`), and who
+/// was there when is the transcript's "Who was there" strip.
+struct MeetingPeopleChip: View {
     @Bindable var detail: MeetingDetailModel
     @State private var name = ""
     @State private var from = "0"
@@ -8,73 +13,35 @@ struct MeetingRoomPeopleView: View {
     @State private var atMic = true
     @State private var owner = ""
     @State private var failure: String?
-    @State private var voiceStatus: String?
     @State private var busy = false
-    @State private var voice: [MeetingsAPI.Voice.Line] = []
-    @State private var count = 3
-    @State private var channel = 0
-    @State private var departures: [String] = []
     @State private var warnings: [String] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let source = detail.record.value?.copySource {
-                Text("Copy of \(source)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            }
-            ForEach(departures, id: \.self) { text in
-                Text(text).font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(warnings, id: \.self) { warning in
-                HStack {
-                    Text(verbatim: warning).font(.caption).foregroundStyle(.orange)
-                    Button("Add people by hand") { edit("") }
-                }
-            }
-            ScrollView(.horizontal) {
-                HStack {
-                    ForEach(detail.record.value?.participants ?? [], id: \.name) { person in
-                        Button(person.name) { edit(person.name) }.buttonStyle(.borderless)
-                    }
-                    Button("Add person", systemImage: "person.badge.plus") { edit("") }
-                        .accessibilityIdentifier("meetings.people.add")
-                    Stepper("\(count) voices", value: $count, in: 1...16).fixedSize()
-                    Picker("Channel", selection: $channel) { Text("Left").tag(0); Text("Right").tag(1) }.fixedSize()
-                    Button("Voice features") { readVoice() }.disabled(busy)
-                    Button("Enrol remote voices") {
-                        Task {
-                            busy = true
-                            defer { busy = false }
-                            do {
-                                let result = try await detail.enrolListenVoices()
-                                voiceStatus = "\(result.matched) matched, \(result.unknown) unknown, \(result.samples) enrolment samples"
-                            } catch { failure = error.localizedDescription }
-                        }
-                    }.disabled(busy)
-                }.font(.caption)
-            }
-            ForEach(detail.record.value?.seats?.microphones ?? [], id: \.id) { group in
-                Text("\(group.id == "self" ? "At microphone" : "Via " + (group.deviceId ?? group.id)): \(group.people.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
-            if let voiceStatus { Text(voiceStatus).font(.caption).foregroundStyle(.secondary) }
-            if !voice.isEmpty {
-                DisclosureGroup("Voice features, \(voice.count) lines, raw physical channels") {
-                    ScrollView {
-                        LazyVStack(alignment: .leading) {
-                            ForEach(voice, id: \.index) { line in
-                                Text(voiceText(line)).font(.caption.monospaced()).textSelection(.enabled)
-                            }
-                        }
-                    }.frame(maxHeight: 180)
-                }
-            }
-        }.padding(.horizontal, 16)
+        let people = detail.record.value?.participants ?? []
+        MenuButton(style: .genHoverPlain(), items: { menu(people.map(\.name)) }) {
+            MeetingDetailView.pickerLabel(symbol: warnings.isEmpty ? "person.2" : "person.fill.questionmark",
+                                          text: people.isEmpty ? "No people" : Plural.count(people.count, "person", "people"),
+                                          warn: !warnings.isEmpty)
+        }
+        .disabled(detail.record.value == nil)
+        .instantTooltip(warnings.isEmpty ? "Who took part: edit someone's join and leave, or add a person"
+                                         : warnings.joined(separator: " ") + " Add or edit the people here.")
+        .accessibilityLabel(warnings.isEmpty ? "People, \(people.count)" : "People, \(people.count), needs a check")
+        .accessibilityIdentifier("meetings.people.add")
         .task { if case .idle = detail.rows { detail.loadRows() } }
-        .onChange(of: detail.record.value, initial: true) { _, record in departures = record?.items.compactMap(\.departureText) ?? [] }
         .onChange(of: detail.rows.value?.attendanceWarning, initial: true) { _, _ in updateWarnings() }
         .onChange(of: detail.suggestionWarnings, initial: true) { _, _ in updateWarnings() }
         .sheet(isPresented: $detail.showingMeetingPeopleEditor) { editor }
+    }
+
+    /// Built at the click (`MenuButton`), so the body never walks the people.
+    private func menu(_ names: [String]) -> [MenuButtonItem] {
+        var items: [MenuButtonItem] = warnings.map { .note($0) }
+        if !warnings.isEmpty { items.append(.divider) }
+        items += names.map { person in .action("\(person)…") { edit(person) } }
+        if !names.isEmpty { items.append(.divider) }
+        items.append(.action("Add a person…") { edit("") })
+        return items
     }
 
     private func updateWarnings() {
@@ -82,15 +49,6 @@ struct MeetingRoomPeopleView: View {
     }
     static func peopleWarnings(attendance: String?, suggested: [String]) -> [String] {
         Array(Set(suggested + (attendance.map { [$0] } ?? []))).sorted()
-    }
-
-    private func voiceText(_ line: MeetingsAPI.Voice.Line) -> String {
-        let values = line.channels.enumerated().map { i, c in
-            let pitch = c.pitchHz.map { String(Int($0)) + " Hz" } ?? "unvoiced"
-            return "\(i == 0 ? "L" : "R") RMS \(c.rms.formatted(.number.precision(.fractionLength(3)))), low \(c.lowBandShare.formatted(.percent)), tilt \(c.tilt.formatted(.number.precision(.fractionLength(2)))), pitch \(pitch)"
-        }.joined(separator: " | ")
-        let cluster = line.cluster.map { " | voice \($0.id + 1), \($0.speaker ?? "unnamed"), \(Int($0.confidence * 100))%" } ?? ""
-        return "Line \(line.index + 1): " + values + cluster
     }
 
     private func edit(_ person: String) {
@@ -136,15 +94,130 @@ struct MeetingRoomPeopleView: View {
             } catch { failure = asFailure(error).sentence }
         }
     }
+}
 
-    private func readVoice() {
-        busy = true; failure = nil
-        Task {
-            defer { busy = false }
-            do {
-                guard let service = detail.service else { throw NSError(domain: "Meetings", code: 1, userInfo: [NSLocalizedDescriptionKey: "Start the Meetings service to measure voice features."]) }
-                voice = try await service.call(MeetingsAPI.Voice.self, .init(meeting: detail.id, voices: count, channel: channel), timeout: 190)
-            } catch { failure = error.localizedDescription }
+/// "Voice tools…" of the header's "…" menu: the voice features of the sound per line, and the enrolment of the remote
+/// voices. They are tools for checking the voice pass, so they open on demand instead of standing in every meeting's
+/// header. A failure stays here with its sentence, Retry and Details.
+struct MeetingVoiceToolsSheet: View {
+    @Bindable var detail: MeetingDetailModel
+    let close: () -> Void
+    @State private var count = 3
+    @State private var channel = 0
+    @State private var running: Job?
+    @State private var failure: (job: Job, error: MeetingsCLI.Failure)?
+    @State private var enrolled: String?
+    @State private var voice: [MeetingsAPI.Voice.Line] = []
+    @State private var linesOpen = false
+
+    enum Job: Equatable { case measure, enrol }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Voice tools").font(.headline)
+                Text("Check what the voice pass hears in this meeting's sound.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            section(.measure, title: "Voice features",
+                    text: "Splits one channel of the sound into voices and measures each line: loudness, low band, tilt and pitch.") {
+                KitNumberField("Voices to split", value: $count, in: 1...16, suffix: .counted("voice"), size: .small,
+                               identifier: "meetings.voice.count")
+                MenuButton(style: .genHoverPlain(), items: {
+                    [.action("Left channel", checked: channel == 0) { channel = 0 },
+                     .action("Right channel", checked: channel == 1) { channel = 1 }]
+                }) {
+                    MeetingDetailView.pickerLabel(symbol: "speaker.wave.2", text: channel == 0 ? "Left channel" : "Right channel", warn: false)
+                }
+                .instantTooltip("The channel of the sound to measure")
+                .accessibilityLabel("Channel, \(channel == 0 ? "left" : "right")")
+            } result: {
+                if !voice.isEmpty {
+                    GenDisclosure(isExpanded: $linesOpen, minHeight: 22, identifier: "meetings.voice.lines") {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 2) {
+                                ForEach(voice, id: \.index) { line in
+                                    Text(verbatim: Self.voiceText(line)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 180)
+                    } label: {
+                        Text(verbatim: "Measured \(Plural.count(voice.count, "line"))").font(.system(size: 12))
+                    }
+                }
+            }
+            Divider()
+            section(.enrol, title: "Remote voices",
+                    text: "Matches the remote voices to the people's saved voice samples and keeps the new samples.") {
+                EmptyView()
+            } result: {
+                if let enrolled { Text(verbatim: enrolled).font(.system(size: 12)).foregroundStyle(.secondary) }
+            }
+            HStack {
+                Spacer()
+                Button("Done", action: close).keyboardShortcut(.defaultAction)
+            }
         }
+        .padding(16)
+        .frame(width: 460)
+    }
+
+    private func section<Controls: View, Result: View>(_ job: Job, title: String, text: String,
+                                                      @ViewBuilder controls: () -> Controls,
+                                                      @ViewBuilder result: () -> Result) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(text).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                controls()
+                Spacer(minLength: 8)
+                if running == job { ProgressView().controlSize(.small) }
+                GhostButton(job == .measure ? (running == job ? "Measuring…" : "Measure") : (running == job ? "Enrolling…" : "Enrol"),
+                            symbol: job == .measure ? "waveform" : "person.wave.2",
+                            tooltip: job == .measure ? "Measure the voice features of every line" : "Enrol the remote voices of this meeting",
+                            identifier: job == .measure ? "meetings.voice.measure" : "meetings.voice.enrol") { run(job) }
+                    .disabled(running != nil)
+            }
+            if failure?.job == job, let error = failure?.error {
+                NoticePill(text: error.sentence, more: error.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { run(job) }, error.detailsFix { run(job) }],
+                           dismiss: { failure = nil })
+            }
+            result()
+        }
+    }
+
+    private func run(_ job: Job) {
+        guard running == nil else { return }
+        running = job
+        failure = nil
+        Task {
+            defer { running = nil }
+            do {
+                switch job {
+                case .measure:
+                    guard let service = detail.service else {
+                        throw MeetingsCLI.Failure(sentence: "Start the Meetings service to measure voice features.", detail: "No Meetings service answers this window.")
+                    }
+                    voice = try await service.call(MeetingsAPI.Voice.self, .init(meeting: detail.id, voices: count, channel: channel), timeout: 190)
+                    linesOpen = true
+                case .enrol:
+                    let result = try await detail.enrolListenVoices()
+                    enrolled = "\(result.matched) matched, \(result.unknown) unknown, \(Plural.count(result.samples, "sample")) kept"
+                }
+            } catch {
+                failure = (job, asFailure(error))
+            }
+        }
+    }
+
+    static func voiceText(_ line: MeetingsAPI.Voice.Line) -> String {
+        let values = line.channels.enumerated().map { i, c in
+            let pitch = c.pitchHz.map { String(Int($0)) + " Hz" } ?? "unvoiced"
+            return "\(i == 0 ? "L" : "R") RMS \(c.rms.formatted(.number.precision(.fractionLength(3)))), low \(c.lowBandShare.formatted(.percent)), tilt \(c.tilt.formatted(.number.precision(.fractionLength(2)))), pitch \(pitch)"
+        }.joined(separator: " | ")
+        let cluster = line.cluster.map { " | voice \($0.id + 1), \($0.speaker ?? "unnamed"), \(Int($0.confidence * 100))%" } ?? ""
+        return "Line \(line.index + 1): " + values + cluster
     }
 }
