@@ -522,9 +522,9 @@ describe("suggest attendance resilience", () => {
         }
     });
 
-    test.each(["Missing chat", "Ambiguous chat"])(
-        "explicit Teams %s warns with candidates and persists unrelated suggestions",
-        async (reason) => {
+    test.each(["none", "ambiguous"] as const)(
+        "Teams attendance resolution %s shares its first three candidates with suggest and the stored warning",
+        async (status) => {
             const cli = await import("@genesiscz/utils/cli");
             const { runSuggest } = await import("./suggest-run");
             const { store, record } = await newRecord();
@@ -542,24 +542,22 @@ describe("suggest attendance resilience", () => {
             });
             const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
             const collect = spyOn(opened, "collectWhenIncomplete").mockResolvedValue(record);
-            const exec = spyOn(cli, "execTool").mockImplementation(async (args) =>
-                args.includes("list")
-                    ? {
-                          success: true,
-                          exitCode: 0,
-                          stdout: SafeJSON.stringify([
-                              { id: "chat-a", title: "Planning A", lastMessageTime: Date.parse(record.start) },
-                              { id: "chat-b", title: "Planning B", lastMessageTime: Date.parse(record.start) + 1000 },
-                          ]),
-                          stderr: "",
-                      }
-                    : {
-                          success: false,
-                          exitCode: 1,
-                          stdout: `${reason}. Could not resolve a single meeting chat. Pass --id.`,
-                          stderr: "",
-                      }
-            );
+            const candidates =
+                status === "none"
+                    ? []
+                    : ["chat-a", "chat-b", "chat-c", "chat-d"].map((id, i) => ({
+                          id,
+                          title: "Paper Kite Review",
+                          lastCallAt: i === 2 ? null : new Date(Date.parse(record.start) - i * 60_000).toISOString(),
+                          participantCount: i + 2,
+                          command: `tools ms-teams meetings attendance --id ${id}`,
+                      }));
+            const exec = spyOn(cli, "execTool").mockResolvedValue({
+                success: false,
+                exitCode: 1,
+                stdout: SafeJSON.stringify({ status, candidates }),
+                stderr: "reader diagnostic on stderr",
+            });
             try {
                 const result = await runSuggest({
                     store,
@@ -568,9 +566,25 @@ describe("suggest attendance resilience", () => {
                     attendance: "teams",
                     wordCheck: "off",
                 });
-                expect(result.warnings.join("\n")).toContain("attendance unavailable");
-                expect(result.warnings.join("\n")).toContain("chat-a  Planning A");
-                expect(result.warnings.join("\n")).toContain("chat-b  Planning B");
+                const warning = result.warnings.find((line) => line.includes("attendance unavailable"));
+                expect(warning).toBeDefined();
+                expect(warning).toBe(attendanceWarning(new MeetingStore(store.storage).read(record.id)!));
+                expect(warning).not.toContain("reader diagnostic on stderr");
+                expect(exec.mock.calls.some(([args]) => args.includes("list"))).toBe(false);
+                if (status === "ambiguous") {
+                    for (const candidate of candidates.slice(0, 3)) {
+                        expect(warning).toContain(candidate.title);
+                        expect(warning).toContain(candidate.command);
+                        expect(warning).toContain(`${candidate.participantCount} participants`);
+                    }
+                    expect(warning).toContain("last call unknown");
+                    expect(warning).toContain("--attendance-id");
+                    expect(warning!.indexOf("chat-a")).toBeLessThan(warning!.indexOf("chat-b"));
+                    expect(warning!.indexOf("chat-b")).toBeLessThan(warning!.indexOf("chat-c"));
+                    expect(warning).not.toContain("chat-d");
+                } else {
+                    expect(warning).toContain("No matching meeting chats");
+                }
                 expect(result.fresh.length).toBeGreaterThan(0);
                 expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(result.fresh);
             } finally {
