@@ -254,6 +254,7 @@ describe("meetings config", () => {
         expect(config.version).toBe(7);
         expect(config.global.suggest.words).toEqual({ minOccurrences: 2 });
         expect(config.global.speakerLabels).toEqual({
+            channels: { minSeparation: 0.3 },
             seat: { enabled: true },
             voice: {
                 enabled: true,
@@ -301,6 +302,8 @@ describe("meetings config", () => {
             { suggest: { words: { minOccurrences: 51 } } },
             { suggest: { words: { minOccurrences: 2.5 } } },
             { speakerLabels: { seat: { enabled: "yes" } } },
+            { speakerLabels: { channels: { minSeparation: -0.01 } } },
+            { speakerLabels: { channels: { minSeparation: 1.01 } } },
             { speakerLabels: { voice: { enabled: 1 } } },
             { speakerLabels: { voice: { gate: { score: -0.1 } } } },
             { speakerLabels: { voice: { gate: { score: 1.1 } } } },
@@ -1235,14 +1238,67 @@ describe("calibrateChannels", () => {
         expect(micShare(energyOf("right"), "right-mic", 0, 2)).toBeCloseTo(0.99, 2);
     });
 
-    test("a microphone that hears the call through loudspeakers still names its side; one that hears it as loud does not", () => {
+    test("the call can bleed onto the microphone while the two tagged distributions still separate", () => {
         // The call at a third of its loudness on the microphone's side: the call segments' left share is 0.25.
         expect(calibrateChannels(energyOf("left", 167), segments)).toMatchObject({
             layout: "left-mic",
             systemMedian: 0.25,
         });
         expect(calibrateChannels(energyOf("right", 167), segments).layout).toBe("right-mic");
-        expect(calibrateChannels(energyOf("left", 400), segments).layout).toBe("unknown");
+        expect(calibrateChannels(energyOf("left", 400), segments).layout).toBe("left-mic");
+    });
+
+    function taggedShares(mic: number, system: number) {
+        const left = new Float32Array(1200).fill(1000 * mic, 0, 600).fill(1000 * system, 600);
+        return { left, right: left.map((rms) => 1000 - rms) };
+    }
+
+    test("mic 0.55 and call 0.10 identify the channel in either order", () => {
+        expect(calibrateChannels(taggedShares(0.55, 0.1), segments)).toMatchObject({
+            layout: "left-mic",
+            micMedian: 0.55,
+            systemMedian: 0.1,
+        });
+        expect(calibrateChannels(taggedShares(0.45, 0.9), segments).layout).toBe("right-mic");
+        expect(calibrateChannels(taggedShares(0.55, 0.1), segments, { minSeparation: 0.5 }).layout).toBe("unknown");
+    });
+
+    test("mic 0.50 and call 0.45 stay unknown until their measured gap meets the configured minimum", () => {
+        const energy = taggedShares(0.5, 0.45);
+        expect(calibrateChannels(energy, segments, { sourceLayout: "left-mic" }).layout).toBe("unknown");
+        expect(calibrateChannels(energy, segments, { minSeparation: 0.04 }).layout).toBe("left-mic");
+        expect(calibrateChannels(energyOf("both"), segments, { minSeparation: 0 }).layout).toBe("unknown");
+    });
+
+    test("a block tagged simultaneously as mic and call cannot vote for either channel", () => {
+        // In each 8 s exchange the remote voice interrupts at 2 s, while the mic tag continues until 5 s.
+        const tagged = Array.from({ length: 24 }, (_, i) => [
+            { startSec: 8 * i, endSec: 8 * i + 5, channel: "mic" },
+            { startSec: 8 * i + 2, endSec: 8 * i + 8, channel: "system" },
+        ]).flat();
+        const left = Float32Array.from({ length: 24 * 80 }, (_, i) => (i % 80 < 20 ? 1000 : 100));
+        const right = left.map((_, i) => (i % 80 < 20 ? 0 : 4000));
+        expect(calibrateChannels({ left, right }, tagged)).toMatchObject({
+            layout: "left-mic",
+            micMedian: 1,
+            systemMedian: 0.024,
+            segments: { mic: 24, system: 24 },
+        });
+    });
+
+    test("without tags, dominant windows verify the source channel order; one active side or mono cannot", () => {
+        const energy = energyOf("left");
+        for (const sourceLayout of ["left-mic", "right-mic"] as const) {
+            expect(calibrateChannels(energy, [], { sourceLayout })).toMatchObject({
+                layout: sourceLayout,
+                segments: { mic: 0, system: 0 },
+            });
+            expect(calibrateChannels(energyOf("both"), [], { sourceLayout }).layout).toBe("unknown");
+            expect(calibrateChannels({ ...energy, right: new Float32Array(1200) }, [], { sourceLayout }).layout).toBe(
+                "unknown"
+            );
+        }
+        expect(calibrateChannels(energy, []).layout).toBe("unknown");
     });
 
     test("a mono recording, or too few tagged segments, leaves the layout unknown and the share out", () => {

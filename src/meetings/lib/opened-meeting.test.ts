@@ -145,6 +145,46 @@ describe("OpenedMeeting", () => {
         expect(store.read(record.id)?.history).toHaveLength(1);
     });
 
+    test("opening cached audio applies the channel separation setting and the source's stereo order", async () => {
+        const { store, record } = await newRecord();
+        const audioPath = join(store.folder(record.id), "planning.wav");
+        writeFileSync(audioPath, "fixture");
+        const folder = join(store.folder(record.id), "evidence");
+        mkdirSync(folder, { recursive: true });
+        const left = new Float32Array(1200).fill(550, 0, 600).fill(100, 600);
+        const cache = join(folder, "energy.bin");
+        writeFileSync(cache, Buffer.from(new Float32Array([...left, ...left.map((v) => 1000 - v)]).buffer));
+        const evidence: MeetingEvidence = {
+            audioPath,
+            speaking: [],
+            files: [],
+            sourceLayout: "left-mic",
+            segments: Array.from({ length: 60 }, (_, i) => ({
+                startSec: i * 2,
+                endSec: i * 2 + 2,
+                channel: i < 30 ? "mic" : "system",
+            })),
+        };
+        const read = async (minSeparation: number) => {
+            const config = meetingsConfigSchema.parse({ global: { speakerLabels: { channels: { minSeparation } } } });
+            const opened = OpenedMeeting.of(
+                store,
+                record,
+                { source: fakeSource({ evidence }), sourceMeetingId: "abc" },
+                config
+            );
+            return (await opened.energy()).calibration?.layout;
+        };
+        expect(await read(0.3)).toBe("left-mic");
+        expect(await read(0.5)).toBe("unknown");
+
+        evidence.segments = [];
+        const split = new Float32Array(1200).fill(1000, 0, 600);
+        writeFileSync(cache, Buffer.from(new Float32Array([...split, ...split.map((v) => 1000 - v)]).buffer));
+        expect(await read(0.3)).toBe("left-mic");
+        expect(new MeetingStore(store.storage).read(record.id)?.evidence?.channels).toBeUndefined();
+    });
+
     test("reading the source, evidence, presence and energy never writes the record", async () => {
         const { store, record } = await newRecord({
             attendance: {
