@@ -26,7 +26,7 @@ function parseCpuTimeSamples(raw: string): Map<number, CpuTimeSample> {
         }
 
         const pid = Number.parseInt(match[1], 10);
-        samples.set(pid, { pid, cpuMs, command: match[3].trim() });
+        samples.set(pid, { pid, cpuMs, command: match[3].trim(), startMs: null });
     }
 
     return samples;
@@ -74,6 +74,16 @@ describe("spinningProcesses", () => {
         const after = parseCpuTimeSamples("  77   0:02.00 /bin/new");
 
         expect(spinningProcesses(before, after, 1_000, 25)).toEqual([]);
+    });
+
+    it("does not judge a pid that a new process with the same command took over between the samples", () => {
+        const sample = (cpuMs: number, startMs: number) =>
+            new Map([[77, { pid: 77, cpuMs, command: "/bin/worker", startMs }]]);
+
+        expect(spinningProcesses(sample(10, 1_000), sample(510, 2_000), 1_500, 25)).toEqual([]);
+        expect(spinningProcesses(sample(10, 1_000), sample(510, 1_000), 1_500, 25).map((found) => found.pid)).toEqual([
+            77,
+        ]);
     });
 });
 
