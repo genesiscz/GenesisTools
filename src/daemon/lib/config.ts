@@ -43,10 +43,11 @@ export function getPidFile(): string {
 }
 
 /**
- * The working folder of every task: an empty folder nothing writes into. GenesisTools.app refuses to remember, or to
- * auto-allow, a vault-key request from a bun process whose working folder changed after it started, because a
- * self-deleting bunfig.toml preload looks exactly like that (`untrustedBunfigPreloads` in VaultUnlock.swift). The home
- * folder changes every few seconds, so in it 24 of 1771 usage polls (2026-11-16..17) put up a Touch ID window.
+ * The parent of every run's working folder. Each run starts in an empty folder of its own below it (`runTask`), which
+ * no other run writes into. GenesisTools.app refuses to remember, or to auto-allow, a vault-key request from a bun
+ * process whose working folder changed after it started, because a self-deleting bunfig.toml preload looks exactly
+ * like that (`untrustedBunfigPreloads` in VaultUnlock.swift). The home folder changes every few seconds, so in it 24
+ * of 1771 usage polls (2026-11-16..17) put up a Touch ID window.
  */
 export function taskWorkingDir(): string {
     return join(resolveBaseDir(), "task-cwd");

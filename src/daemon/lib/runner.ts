@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmdirSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { launcherConfigForSavedCommand } from "@genesiscz/utils/bun/launcher-config";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
@@ -108,6 +108,24 @@ export function runUsage(raw: ReturnType<Bun.Subprocess["resourceUsage"]>): RunU
     return { userMs, systemMs, cpuMs: userMs + systemMs, maxRssMb: Math.round(Number(raw.maxRSS) / 1_048_576) };
 }
 
+/**
+ * Removes a run's working folder when the run left it empty. Files a task wrote there stay, with a warning naming the
+ * folder: they are the task's output, and no later run starts in that folder.
+ */
+function releaseRunWorkingDir(cwd: string, taskName: string): void {
+    try {
+        rmdirSync(cwd);
+    } catch (error) {
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+
+        if (code === "ENOTEMPTY" || code === "EEXIST") {
+            logger.warn({ task: taskName, cwd }, "[daemon] the task left files in its working folder; they stay there");
+        } else {
+            logger.warn({ task: taskName, cwd, error }, "[daemon] the run's working folder could not be removed");
+        }
+    }
+}
+
 export async function runTask(
     task: DaemonTask,
     attempt: number,
@@ -148,7 +166,8 @@ export async function runTask(
     // it, killing the Bun.spawn child only reaps `sh`; a runaway grandchild
     // survives, holds the stdout pipe open, and hangs the result forever.
     const inherited = env.getProcessEnv();
-    const cwd = taskWorkingDir();
+    // A folder of this run's own, new and empty: what one run writes there never reaches another task or a later run.
+    const cwd = join(taskWorkingDir(), `${taskLogDirName(task.name)}-${runId}`);
     mkdirSync(cwd, { recursive: true });
     const proc = Bun.spawn(argv, {
         cwd,
@@ -220,6 +239,7 @@ export async function runTask(
     const duration_ms = Date.now() - startMs;
     const exitCode = timedOut ? null : rawExitCode;
     const usage = runUsage(proc.resourceUsage());
+    releaseRunWorkingDir(cwd, task.name);
 
     appendJsonl(logFile, {
         type: "exit",
