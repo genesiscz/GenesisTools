@@ -41,10 +41,12 @@ export async function connectGenesisToolsService(
     if (isTestProcess() && (!options.dir || options.dir === genesisToolsServiceDir())) {
         return null;
     }
+
     const entry = readLiveServiceEntry(options.dir ?? genesisToolsServiceDir());
     if (!entry) {
         return null;
     }
+
     const client = await RpcSocketClient.connect({
         socket: entry.socket,
         label: "GenesisTools service",
@@ -85,6 +87,7 @@ export async function callRunningService(
     if (!client) {
         return { called: false };
     }
+
     try {
         return { called: true, value: await client.call(method, params, { timeoutMs }) };
     } finally {
@@ -96,6 +99,7 @@ export async function ensureGenesisToolsService(): Promise<RpcSocketClient> {
     if (isTestProcess()) {
         throw new Error("in-test: a test process never starts the GenesisTools service");
     }
+
     const dir = genesisToolsServiceDir();
     const launched = await launchService({
         dir,
@@ -107,9 +111,11 @@ export async function ensureGenesisToolsService(): Promise<RpcSocketClient> {
     if (launched.status === "failed") {
         throw new Error(launched.reason);
     }
+
     const client = await connectGenesisToolsService();
     if (!client) {
         throw new Error("GenesisTools service exited during connection");
     }
+
     return client;
 }
