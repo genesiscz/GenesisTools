@@ -8466,7 +8466,15 @@ public struct ConfigPersonWindowNotice: Codable, Sendable {
 @MainActor
 public final class GenesisToolsRPC {
     public static let shared = GenesisToolsRPC()
-    public var timeoutSeconds: TimeInterval = 130
+    /// The wait of a call that runs no action: past the service's default call bound.
+    public var timeoutSeconds: TimeInterval = 140
+    /// The actions whose budget is not the default two minutes.
+    private static let actionBudgetsMs: [String: Int] = ["app.build": 600000, "windows.open": 600000]
+    /// How long a client waits for an action call: the budget the service runs it with, plus the service's grace to answer
+    /// and the same again, so the service's own expiry answer always arrives first (serviceActionClientTimeoutMs).
+    static func actionClientTimeout(_ id: String, override: Int? = nil) -> TimeInterval {
+        TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000) + 20000) / 1000
+    }
     /// Once per published connection that the service ends (a restart, a crash); not after `close()`.
     public var onDisconnect: (() -> Void)?
     private var peer: JSONRPCSocketClient?
@@ -8570,46 +8578,46 @@ public final class GenesisToolsRPC {
     @MainActor public final class App {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func hello(_ params: AppHelloParams) async throws -> AppHelloResult { try await owner.call("app.hello", params, timeout: 130) }
-        public func rpc(_ params: AppRpcParams) async throws -> AppRpcResult { try await owner.call("app.rpc", params, timeout: 130) }
-        public func build(_ params: AppBuildParams) async throws -> AppBuildResult { try await owner.call("app.build", params, timeout: 610) }
+        public func hello(_ params: AppHelloParams) async throws -> AppHelloResult { try await owner.call("app.hello", params, timeout: 140) }
+        public func rpc(_ params: AppRpcParams) async throws -> AppRpcResult { try await owner.call("app.rpc", params, timeout: 140) }
+        public func build(_ params: AppBuildParams) async throws -> AppBuildResult { try await owner.call("app.build", params, timeout: 620) }
     }
     public lazy var windows = Windows(owner: self)
     @MainActor public final class Windows {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func open(_ params: WindowsOpenParams) async throws -> WindowsOpenResult { try await owner.call("windows.open", params, timeout: 610) }
+        public func open(_ params: WindowsOpenParams) async throws -> WindowsOpenResult { try await owner.call("windows.open", params, timeout: 620) }
     }
     public lazy var person = Person(owner: self)
     @MainActor public final class Person {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func ask(_ params: PersonAskParams) async throws -> PersonAskResult { try await owner.call("person.ask", params, timeout: 130) }
-        public func confirm(_ params: PersonConfirmParams) async throws -> PersonConfirmResult { try await owner.call("person.confirm", params, timeout: 130) }
-        public func notice(_ params: PersonNoticeParams) async throws -> PersonNoticeResult { try await owner.call("person.notice", params, timeout: 130) }
-        public func windowNotice(_ params: PersonWindowNoticeParams) async throws -> PersonWindowNoticeResult { try await owner.call("person.windowNotice", params, timeout: 130) }
-        public func showWindow(_ params: PersonShowWindowParams) async throws -> PersonShowWindowResult { try await owner.call("person.showWindow", params, timeout: 130) }
-        public func notifyThenAsk(_ params: PersonNotifyThenAskParams) async throws -> PersonNotifyThenAskResult { try await owner.call("person.notifyThenAsk", params, timeout: 130) }
-        public func askNow(_ params: PersonAskNowParams) async throws -> PersonAskNowResult { try await owner.call("person.askNow", params, timeout: 130) }
-        public func askElseNotify(_ params: PersonAskElseNotifyParams) async throws -> PersonAskElseNotifyResult { try await owner.call("person.askElseNotify", params, timeout: 130) }
+        public func ask(_ params: PersonAskParams) async throws -> PersonAskResult { try await owner.call("person.ask", params, timeout: 140) }
+        public func confirm(_ params: PersonConfirmParams) async throws -> PersonConfirmResult { try await owner.call("person.confirm", params, timeout: 140) }
+        public func notice(_ params: PersonNoticeParams) async throws -> PersonNoticeResult { try await owner.call("person.notice", params, timeout: 140) }
+        public func windowNotice(_ params: PersonWindowNoticeParams) async throws -> PersonWindowNoticeResult { try await owner.call("person.windowNotice", params, timeout: 140) }
+        public func showWindow(_ params: PersonShowWindowParams) async throws -> PersonShowWindowResult { try await owner.call("person.showWindow", params, timeout: 140) }
+        public func notifyThenAsk(_ params: PersonNotifyThenAskParams) async throws -> PersonNotifyThenAskResult { try await owner.call("person.notifyThenAsk", params, timeout: 140) }
+        public func askNow(_ params: PersonAskNowParams) async throws -> PersonAskNowResult { try await owner.call("person.askNow", params, timeout: 140) }
+        public func askElseNotify(_ params: PersonAskElseNotifyParams) async throws -> PersonAskElseNotifyResult { try await owner.call("person.askElseNotify", params, timeout: 140) }
     }
     public lazy var terminal = Terminal(owner: self)
     @MainActor public final class Terminal {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func prompt(_ params: TerminalPromptParams) async throws -> TerminalPromptResult { try await owner.call("terminal.prompt", params, timeout: 130) }
-        public func runVisibly(_ params: TerminalRunVisiblyParams) async throws -> TerminalRunVisiblyResult { try await owner.call("terminal.runVisibly", params, timeout: 130) }
+        public func prompt(_ params: TerminalPromptParams) async throws -> TerminalPromptResult { try await owner.call("terminal.prompt", params, timeout: 140) }
+        public func runVisibly(_ params: TerminalRunVisiblyParams) async throws -> TerminalRunVisiblyResult { try await owner.call("terminal.runVisibly", params, timeout: 140) }
     }
     public lazy var permissions = Permissions(owner: self)
     @MainActor public final class Permissions {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func openTerminalRequest(_ params: PermissionsOpenTerminalRequestParams) async throws -> PermissionsOpenTerminalRequestResult { try await owner.call("permissions.openTerminalRequest", params, timeout: 130) }
-        public func status(_ params: PermissionsStatusParams) async throws -> PermissionsStatusResult { try await owner.call("permissions.status", params, timeout: 130) }
-        public func require(_ params: PermissionsRequireParams) async throws -> PermissionsRequireResult { try await owner.call("permissions.require", params, timeout: 130) }
+        public func openTerminalRequest(_ params: PermissionsOpenTerminalRequestParams) async throws -> PermissionsOpenTerminalRequestResult { try await owner.call("permissions.openTerminalRequest", params, timeout: 140) }
+        public func status(_ params: PermissionsStatusParams) async throws -> PermissionsStatusResult { try await owner.call("permissions.status", params, timeout: 140) }
+        public func require(_ params: PermissionsRequireParams) async throws -> PermissionsRequireResult { try await owner.call("permissions.require", params, timeout: 140) }
     }
     public func hello(_ params: HelloParams) async throws -> HelloResult { try await call("hello", params) }
-    public func actionsRun(_ params: ActionsRunParams) async throws -> ActionsRunResult { try await call("actions.run", params) }
+    public func actionsRun(_ params: ActionsRunParams) async throws -> ActionsRunResult { try await call("actions.run", params, timeout: GenesisToolsRPC.actionClientTimeout(params.id, override: params.timeoutMs)) }
     public func actionsExplain(_ params: ActionsExplainParams) async throws -> ActionsExplainResult { try await call("actions.explain", params) }
     public func configGet(_ params: ConfigGetParams) async throws -> GenesisToolsJSON { try await call("config.get", params) }
     public func configSet(_ params: ConfigSetParams) async throws -> ConfigSetResult { try await call("config.set", params) }
@@ -8618,7 +8626,7 @@ public final class GenesisToolsRPC {
     public func requestsPost(_ params: RequestsPostParams) async throws -> RequestsPostResult { try await call("requests.post", params) }
     public func requestsGet(_ params: RequestsGetParams) async throws -> RequestsGetResult? { try await call("requests.get", params) }
     public func requestsList(_ params: RequestsListParams) async throws -> [RequestsListResultItem] { try await call("requests.list", params) }
-    public func requestsPresent(_ params: RequestsPresentParams) async throws -> RequestsPresentResult { try await call("requests.present", params) }
+    public func requestsPresent(_ params: RequestsPresentParams) async throws -> RequestsPresentResult { try await call("requests.present", params, timeout: GenesisToolsRPC.actionClientTimeout("person.showWindow")) }
     public func requestsWithdraw(_ params: RequestsWithdrawParams) async throws -> RequestsWithdrawResult { try await call("requests.withdraw", params) }
     public lazy var events = Events(owner: self)
     @MainActor public final class Events {
