@@ -113,19 +113,9 @@ function echoScore(segments: EvidenceSegment[]): number | undefined {
     return best;
 }
 
-/** E1 channel, E3 speaking indicator and E4 live name for every timed line, plus E2 attendance when given. */
-export function lineEvidence(
-    entries: TranscriptEntry[],
-    evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
-    presence?: Presence[],
-    /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
-    energyMicShare?: AcousticShare,
-    /** Only the lines that start in this window are measured; each keeps its index in the whole transcript. */
-    options: { window?: { fromSec: number; toSec: number } } = {}
-): LineEvidence[] {
+function timedLines(entries: TranscriptEntry[], window?: { fromSec: number; toSec: number }) {
     const lines = new TranscriptLines(entries);
-    const { window } = options;
-    const timed = entries.flatMap((entry, at) => {
+    return entries.flatMap((entry, at) => {
         if (
             window &&
             (entry.startSec === undefined || entry.startSec < window.fromSec || entry.startSec > window.toSec)
@@ -136,40 +126,79 @@ export function lineEvidence(
         const span = lines.span(at);
         return span ? [{ entry, span, index: at }] : [];
     });
+}
 
-    return timed.map(({ entry, span, index }) => {
-        const startSec = entry.startSec!;
-        const fromSec = span.fromSec;
-        const endSec = span.toSec;
-        const overlap = new Map<string, { sec: number; liveName?: string; voiceId?: number; longest: number }>();
-        const touching: EvidenceSegment[] = [];
+function channelOverlap(segments: EvidenceSegment[], span: { fromSec: number; toSec: number }) {
+    const overlap = new Map<string, { sec: number; liveName?: string; voiceId?: number; longest: number }>();
+    const touching: EvidenceSegment[] = [];
 
-        for (const segment of evidence.segments) {
-            const sec = Math.min(endSec, segment.endSec) - Math.max(fromSec, segment.startSec);
+    for (const segment of segments) {
+        const sec = Math.min(span.toSec, segment.endSec) - Math.max(span.fromSec, segment.startSec);
 
-            if (sec <= 0) {
-                continue;
-            }
-
-            touching.push(segment);
-            const identity = segment.channel === "mic" ? SELF : (segment.liveName ?? "?");
-            const seen = overlap.get(identity);
-            const longer = sec > (seen?.longest ?? 0);
-            overlap.set(identity, {
-                sec: (seen?.sec ?? 0) + sec,
-                liveName: segment.liveName ?? seen?.liveName,
-                voiceId: longer ? segment.voiceId : seen?.voiceId,
-                longest: longer ? sec : (seen?.longest ?? 0),
-            });
+        if (sec <= 0) {
+            continue;
         }
 
+        touching.push(segment);
+        const identity = segment.channel === "mic" ? SELF : (segment.liveName ?? "?");
+        const seen = overlap.get(identity);
+        const longer = sec > (seen?.longest ?? 0);
+        overlap.set(identity, {
+            sec: (seen?.sec ?? 0) + sec,
+            liveName: segment.liveName ?? seen?.liveName,
+            voiceId: longer ? segment.voiceId : seen?.voiceId,
+            longest: longer ? sec : (seen?.longest ?? 0),
+        });
+    }
+
+    const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
+    return { overlap, touching, total, micShare: total > 0 ? (overlap.get(SELF)?.sec ?? 0) / total : undefined };
+}
+
+/** Seat labels need only the channel overlap, falling back to calibrated energy when no segment covers the line. */
+export function lineChannelShares({
+    entries,
+    segments,
+    energy,
+}: {
+    entries: TranscriptEntry[];
+    segments: EvidenceSegment[];
+    energy?: AcousticShare;
+}) {
+    return timedLines(entries).map(({ span, index }) => ({
+        index,
+        ...span,
+        share: channelOverlap(segments, span).micShare ?? energy?.(span.fromSec, span.toSec),
+    }));
+}
+
+export function presentAt(presence: Presence[], startSec: number): string[] {
+    return [
+        ...new Set(
+            presence.filter((stay) => startSec >= stay.fromSec && startSec < stay.toSec).map((stay) => stay.name)
+        ),
+    ];
+}
+
+/** E1 channel, E3 speaking indicator and E4 live name for every timed line, plus E2 attendance when given. */
+export function lineEvidence(
+    entries: TranscriptEntry[],
+    evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
+    presence?: Presence[],
+    energyMicShare?: AcousticShare,
+    /** Only the lines that start in this window are measured; each keeps its index in the whole transcript. */
+    options: { window?: { fromSec: number; toSec: number } } = {}
+): LineEvidence[] {
+    return timedLines(entries, options.window).map(({ entry, span, index }) => {
+        const startSec = entry.startSec!;
+        const { fromSec, toSec: endSec } = span;
+        const { overlap, touching, total, micShare } = channelOverlap(evidence.segments, span);
         const echo = echoScore(touching);
         const energyMic = energyMicShare?.(fromSec, endSec);
         const energyMicRaw = energyMicShare?.raw?.(fromSec, endSec);
         const acoustic = energyMicShare?.acoustic?.(fromSec, endSec);
         const voice = energyMicShare?.voice?.(fromSec, endSec);
 
-        const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
         const ranked = [...overlap.entries()].sort((a, b) => b[1].sec - a[1].sec);
         const tie = ranked.length > 1 && total > 0 && (ranked[0]![1].sec - ranked[1]![1].sec) / total < TIE_SHARE;
         const [winner, best] = tie ? [] : (ranked[0] ?? []);
@@ -219,17 +248,13 @@ export function lineEvidence(
         ];
         const muted = counted[0]?.muted?.filter((name) => counted.every((reading) => reading.muted?.includes(name)));
 
-        const present = presence
-            ?.filter((stay) => startSec >= stay.fromSec && startSec < stay.toSec)
-            .map((stay) => stay.name);
-
         return {
             index,
             startSec,
             endSec,
             label: entry.speaker,
             text: entry.text,
-            ...(total > 0 ? { micShare: (overlap.get(SELF)?.sec ?? 0) / total } : {}),
+            ...(micShare !== undefined ? { micShare } : {}),
             ...(winner && best ? { winner, winnerShare: best.sec / total } : {}),
             ...(tie ? { tie: true } : {}),
             ...(winner && winner !== SELF && best?.liveName ? { liveName: best.liveName } : {}),
@@ -238,7 +263,7 @@ export function lineEvidence(
                 !validAtStart ||
                 atStart?.speakingUnknown === true ||
                 readings.some((reading) => reading.speakingUnknown),
-            ...(present ? { present: [...new Set(present)] } : {}),
+            ...(presence ? { present: presentAt(presence, startSec) } : {}),
             ...(entry.speakerId !== undefined ? { refinedSpeakerId: entry.speakerId } : {}),
             ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),
             ...(echo !== undefined ? { echo } : {}),

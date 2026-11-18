@@ -12,10 +12,13 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { backgroundPrefix } from "@genesiscz/utils/process/priority";
+import { profiler } from "@genesiscz/utils/profile";
 import type { OpenedMeeting } from "../opened-meeting";
-import { type MeetingSound, measureSoundClock, meetingSound, readSoundInputs, saveSoundClock } from "../sound";
+import { type MeetingSound, measureSoundClock, meetingSound, readSoundClock, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
 import type { LabelContext, SpeakerLabeler } from "./types";
+
+const prof = profiler.scope("meetings-suggest");
 
 /** How a voice worker starts: an argv prefix, and whether it takes itself out of background as its first act. */
 export interface VoiceWorkerStart {
@@ -62,7 +65,8 @@ export const voiceProgressForMeeting = new WeakMap<OpenedMeeting, VoiceProgress>
 
 /** Batches spans on the same file/channel while retaining transcript-clock times on the resulting line. */
 export async function embedSeatLines(
-    context: Pick<LabelContext, "lines" | "sound"> & {
+    context: Pick<LabelContext, "lines"> & {
+        sound: MeetingSound;
         cachePath?: string;
         config?: MeetingsConfig;
         onProgress?: VoiceProgress;
@@ -80,7 +84,6 @@ export async function embedSeatLines(
         }
     >();
     const result: VoiceLine[] = [];
-    const worker = await voiceWorkerSettings(context.config);
     for (const line of context.lines) {
         const slice = context.sound.slice({ ...line, purpose: "voice" });
         if (!slice) {
@@ -94,6 +97,12 @@ export async function embedSeatLines(
         groups.set(key, group);
     }
     let completed = result.length;
+    // Sampling idle cores takes a second in auto mode. No worker is started for uncovered lines.
+    if (!groups.size) {
+        context.onProgress?.(completed, context.lines.length);
+        return result.sort((a, b) => a.index - b.index);
+    }
+    const worker = await prof.measureAsync("voices.worker-settings", () => voiceWorkerSettings(context.config));
     context.onProgress?.(completed, context.lines.length);
     for (const group of groups.values()) {
         group.lines.sort((a, b) => a.slice.fileFromSec - b.slice.fileFromSec);
@@ -143,19 +152,27 @@ export function voiceLabeler(options: {
             if (!Object.keys(store.people).length) {
                 return [];
             }
-            let sound = context.sound;
-            if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
-                const inputs = await readSoundInputs(options.opened);
-                if (inputs.clock) {
-                    sound = meetingSound(inputs);
-                } else if (inputs.tracks === "best") {
-                    const measured = await measureSoundClock(inputs);
-                    if (measured) {
-                        saveSoundClock(inputs.folder, measured.clock);
-                        sound = meetingSound({ ...inputs, clock: measured.clock });
+            let sound =
+                context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => options.opened.sound()));
+            {
+                using _clock = prof.section("speakers.sound-clock");
+                // Read-only previews supply their own sound without stamp tracks.
+                if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
+                    const inputs = await options.opened.soundInputs();
+                    // Another run may have saved the measurement since this snapshot was opened.
+                    const clock = readSoundClock(inputs.folder);
+                    if (clock) {
+                        sound = meetingSound({ ...inputs, clock });
+                    } else if (inputs.tracks === "best") {
+                        const measured = await measureSoundClock(inputs);
+                        if (measured) {
+                            saveSoundClock(inputs.folder, measured.clock);
+                            sound = meetingSound({ ...inputs, clock: measured.clock });
+                        }
                     }
                 }
             }
+            using _pass = prof.section("voices.pass");
             return nameByVoice({
                 ...options.settings,
                 store,

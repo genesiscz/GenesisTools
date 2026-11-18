@@ -94,6 +94,22 @@ function scene(slots: Slot[]): {
 
 const ranges = (items: ReturnType<typeof suggestItems>) => items.filter((item) => item.kind === "speaker-range");
 
+test("one acoustic observation per line serves the evidence rules", () => {
+    const fixture = scene([
+        { label: "Guest", mic: 0.1 },
+        { label: "Guest", mic: 0.2 },
+    ]);
+    const observations: number[] = [];
+    const share = Object.assign(fixture.share, {
+        acoustic: (fromSec: number) => {
+            observations.push(fromSec);
+            return undefined;
+        },
+    });
+    suggestItems({ ...base, ...fixture, energyMicShare: share });
+    expect(observations).toEqual([0, 10]);
+});
+
 describe("a call channel that stays silent (the call played through the room)", () => {
     test("silentCallSpans finds 5 min or more where the microphone holds all the speech", () => {
         const share = (fromSec: number) => (fromSec < 600 ? 1 : fromSec % 10 < 5 ? 0.95 : 0.02);

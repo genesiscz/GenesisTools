@@ -423,7 +423,7 @@ export async function readSoundInputs(opened: OpenedMeeting): Promise<SoundInput
 
 /** The meeting's sound; `OpenedMeeting.sound()` memoises it. */
 export async function loadMeetingSound(opened: OpenedMeeting): Promise<MeetingSound> {
-    return meetingSound(await readSoundInputs(opened));
+    return meetingSound(await opened.soundInputs());
 }
 
 /** One recorder piece measured against the source: the stamp, the measured second 0 and whether the peak was clear. */
