@@ -21,6 +21,7 @@ import {
     AGENT_HARNESSES,
     type AgentHarness,
     type AgentNode,
+    type AgentParent,
     type AgentsTree,
     DEFAULT_AGENTS_LIMIT,
     DEFAULT_AGENTS_SINCE_HOURS,
