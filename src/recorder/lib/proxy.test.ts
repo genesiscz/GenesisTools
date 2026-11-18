@@ -629,8 +629,15 @@ describe("recording sound facts", () => {
             const opened = await edits.openProject(movie);
             expect(existsSync(edit)).toBe(false);
             const expected = [
-                { id: "mic", source: "mic", file: micTrack.path, offsetMs: -35, muted: false, volume: 1 },
-                { id: "system", source: "system", file: systemTrack.path, offsetMs: 120, muted: false, volume: 1 },
+                { id: "mic", source: "mic" as const, file: micTrack.path, offsetMs: -35, muted: false, volume: 1 },
+                {
+                    id: "system",
+                    source: "system" as const,
+                    file: systemTrack.path,
+                    offsetMs: 120,
+                    muted: false,
+                    volume: 1,
+                },
             ];
             expect(opened.project.audio.lanes).toEqual(expected);
             await edits.editProject(movie, [{ op: "volume", volume: 0.8 }]);
