@@ -1,7 +1,9 @@
+import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import { sha256Json } from "@genesiscz/utils/hash";
 import type { DecisionActor, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { shellWord } from "@genesiscz/utils/shell/quote";
+import { sandboxInstalled } from "@genesiscz/utils/storage/real-home-guard";
 import { errorText, TOOL } from "./shared";
 
 /** The part of the person area the meetings tools call. */
@@ -31,6 +33,11 @@ export async function requestMeetingQuestionReview(options: {
 
     // A click opens the Items tab. The command stays in the text for the request window and for a terminal.
     const command = `${TOOL} window ${shellWord(record.id)} --tab items`;
+    // A sandbox home (GENESIS_TOOLS_HOME elsewhere: probes, measures, copies) must not reach the real person:
+    // the app and its notifications are shared by every home on this Mac.
+    if (!options.gt && sandboxInstalled()) {
+        return `Sandbox home ${env.tools.getHome()}: no review request was sent. Open Items with ${command}`;
+    }
     try {
         const gt = options.gt ?? (await import("@genesiscz/utils/genesis-tools")).gt;
         const outcome = await gt.person.windowNotice({
