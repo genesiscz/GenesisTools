@@ -14,6 +14,7 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 import { lineVoiceSchema } from "@genesiscz/utils/meetings/voice-features";
 import {
     alignedWordSchema,
@@ -1426,6 +1427,30 @@ const dictionaryTest = defineMethod({
     effect: "read",
 });
 
+const seatNames = z.array(z.string().trim().min(1)).optional();
+const meetingSeatsSuggest = defineMethod({
+    name: "meeting.seats.suggest",
+    params: z.object({ meeting: meetingRef, room: seatNames, remote: seatNames }).strict(),
+    result: z.object({
+        meeting: z.string(),
+        current: meetingSeatsSchema.nullable(),
+        suggestion: z.object({
+            seats: meetingSeatsSchema,
+            people: z.array(
+                z.object({
+                    name: z.string(),
+                    seat: z.enum(["room", "remote", "unsure"]),
+                    reason: z.string(),
+                    confidence: z.number().min(0).max(1),
+                })
+            ),
+        }),
+    }),
+    resultName: "{ meeting, current, suggestion: { seats, people } }",
+    doc: "Preview room and remote seats from decided speakers, channel energy and call attendance. Optional room and remote names override the preview. Unsure people have reasons and no seat.",
+    effect: "read",
+});
+
 const meetingSuggest = defineMethod({
     name: "meeting.suggest",
     params: z.object({ meeting: meetingRef, attendance: z.string().optional() }).strict(),
@@ -1685,6 +1710,7 @@ export const meetingsApi = defineApi({
         meetingLink,
         meetingVoice,
         meetingSuggest,
+        meetingSeatsSuggest,
         transcript,
         wordTimingsGenerate,
         revisions,

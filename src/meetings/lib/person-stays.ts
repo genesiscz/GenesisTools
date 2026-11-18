@@ -36,7 +36,7 @@ interface BaselineStay {
  * presence, the answers a question offers): their hand-corrected stays, else the platform's attendance, else their
  * stored stays, else from when the roster first saw them. Undefined when the record knows nothing of them.
  */
-function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | undefined {
+export function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | undefined {
     const person = record.participants.find((one) => sameName(one.name, name));
     const attendance = record.attendance?.people.filter((stay) => sameName(stay.name, name));
 

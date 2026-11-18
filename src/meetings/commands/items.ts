@@ -45,7 +45,7 @@ import { missingProjectWarning, projectRequired, resolveProject } from "../lib/p
 import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
+import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL } from "../lib/shared";
 import { localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
@@ -272,6 +272,7 @@ async function suggest(
     const quiet = isQuietOutput(opts.json ? "json" : undefined) || !process.stderr.isTTY;
     const spinner = quiet ? createQuietSpinner() : p.spinner();
     let voiceLabel: string | undefined;
+    hintIfSeatsUnset(record);
     try {
         const { fresh, retired, warnings } = await runSuggest({
             store,

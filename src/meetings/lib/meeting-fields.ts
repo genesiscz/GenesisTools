@@ -8,6 +8,7 @@ import { resolveProject } from "./project";
 export interface MeetingFieldsChange {
     title?: string;
     seats?: MeetingSeats;
+    seatsIfAbsent?: true;
     project?: string;
     /** Added to the meeting and to its project's labels. */
     labels?: string[];
@@ -20,6 +21,7 @@ const MEETING_FIELDS: { [K in keyof Required<MeetingFieldsChange>]: K } = {
     project: "project",
     title: "title",
     seats: "seats",
+    seatsIfAbsent: "seatsIfAbsent",
     labels: "labels",
     unlabel: "unlabel",
 };
@@ -110,6 +112,7 @@ export async function setMeetingFields(options: {
         action: {
             kind: "set",
             ...(change.seats ? { seats: change.seats } : {}),
+            ...(change.seatsIfAbsent ? { seatsIfAbsent: true } : {}),
             ...(project ? { project } : {}),
             ...(change.title ? { title: change.title } : {}),
             ...(labels.length > 0 ? { labels } : {}),

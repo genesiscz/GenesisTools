@@ -26,6 +26,7 @@ import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { compactEvidence, rawMeeting } from "./lib/raw";
 import { rejectFilterIds } from "./lib/reject-filter";
+import { decidedSeatRanges, suggestSeats } from "./lib/seat-suggest";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
 import { correctTranscript } from "./lib/transcript-corrections";
@@ -95,6 +96,134 @@ function scene(slots: Slot[]): {
 }
 
 const ranges = (items: ReturnType<typeof suggestItems>) => items.filter((item) => item.kind === "speaker-range");
+
+describe("seat suggestions", () => {
+    test("self wins, decided microphone lines override a muted roster, and a range alone can seat a person", () => {
+        const row = (name: string) => ({ name, from: ["platform-roster"] });
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [
+                ...record.participants,
+                row("Indigo"),
+                row("Fern"),
+                row("Lake"),
+                row("Pine"),
+                { ...row("Reed"), stays: [{ fromSec: 5.5, toSec: 17.25, source: "platform-roster" }] },
+            ],
+            evidence: {
+                indicator: [
+                    { tSec: 6, speaking: [], muted: ["Indigo", "Lake"] },
+                    { tSec: 7, speaking: [], muted: ["Indigo", "Lake", "Pine"] },
+                ],
+            },
+        });
+        const channels = [
+            [USER, 0.1],
+            ["Indigo", 0.8],
+            ["Amber", 0.9],
+            ["Reed", 0.1],
+        ] as const;
+        const result = suggestSeats({
+            record: meeting,
+            ranges: channels.map(([person]) => ({ label: person, person, fromSec: 6, toSec: 10 })),
+            lines: channels.flatMap(([label, energyMicRaw]) =>
+                Array.from({ length: 5 }, (_, i) => ({ startSec: 6 + i, label, energyMicRaw }))
+            ),
+        });
+        expect(result.seats).toEqual({
+            room: [USER, "Indigo", "Amber"],
+            remote: [{ name: "Fern" }, { name: "Pine" }, { name: "Reed", fromSec: 5.5, toSec: 17.25 }],
+        });
+        expect(result.people.find((p) => p.name === "Lake")).toMatchObject({
+            seat: "unsure",
+            reason: "Muted on all 2 roster reads while present.",
+        });
+        expect(result.people.find((p) => p.name === "Reed")?.reason).toBe("5 of 5 decided lines on the call.");
+    });
+
+    test("only reads during each recorded stay count, including the join and excluding the leave", () => {
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [],
+            attendance: {
+                from: "fixture",
+                people: [
+                    { name: "Wren", fromSec: 10, toSec: 20 },
+                    { name: "Wren", fromSec: 30, toSec: 40 },
+                ],
+            },
+            evidence: {
+                indicator: [9, 10, 20, 25, 30, 40].map((tSec) => ({
+                    tSec,
+                    speaking: [],
+                    muted: [10, 30].includes(tSec) ? ["Wren"] : [],
+                })),
+            },
+        });
+        const input = { record: meeting, ranges: [], lines: [] };
+        expect(suggestSeats(input).people[0]).toMatchObject({
+            seat: "unsure",
+            reason: "Muted on all 2 roster reads while present.",
+        });
+        expect(suggestSeats({ ...input, remote: ["wren"] }).seats.remote).toEqual([
+            { name: "Wren", fromSec: 10, toSec: 40 },
+        ]);
+    });
+
+    test.each([
+        ["room", [0.66, 0.66, 0.66, 0.65, undefined]],
+        ["remote", [0.34, 0.34, 0.34, 0.35, undefined]],
+        ["unsure", [0.99, 0.99, 0.99, 0.99]],
+        ["unsure", [0.99, 0.99, 0.65, 0.35, 0.35]],
+        ["unsure", [0.34, 0.34, undefined, undefined, undefined]],
+    ] as const)("decided lines yield %s for shares %j", (seat, shares) => {
+        const input = {
+            record,
+            ranges: [{ label: "S1", fromSec: 0, toSec: 7, person: "Moss" }],
+            lines: shares.map((energyMicRaw, startSec) => ({ label: "S1", startSec, energyMicRaw })),
+        };
+        expect(suggestSeats(input).people.find((person) => person.name === "Moss")?.seat).toBe(seat);
+    });
+
+    test("a line votes once for its latest assignment; a proposal, rejection, machine decision or split casts no vote", () => {
+        const range = {
+            label: "S1",
+            kind: "speaker-range",
+            fromSec: 0,
+            toSec: 4,
+            status: "confirmed",
+            suggestedAt: START,
+        };
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [],
+            items: [
+                { ...range, id: "i1", speaker: "Fern" },
+                { ...range, id: "i2", label: "S2", speaker: "Pine", status: "suggested" },
+                { ...range, id: "i3", label: "S3", speaker: "Ash", status: "rejected" },
+                { ...range, id: "i4", label: "S4", speaker: "Elm", voices: ["Elm", "Ivy"] },
+                {
+                    ...range,
+                    id: "i5",
+                    label: "S5",
+                    speaker: "Reed",
+                    decision: {
+                        token: "t",
+                        previous: { status: "suggested" },
+                        actor: { kind: "rule", rule: "fixture" },
+                    },
+                },
+            ],
+            speakers: { assignments: [{ id: "a1", label: "S1", person: "Lake", fromSec: 0, toSec: 4, at: START }] },
+        });
+        const lines = ["S1", "S2", "S3", "S4", "S5"].flatMap((label) =>
+            Array.from({ length: 5 }, (_, startSec) => ({ label, startSec, energyMicRaw: 1 }))
+        );
+        expect(suggestSeats({ record: meeting, ranges: decidedSeatRanges(meeting), lines }).people).toEqual([
+            { name: "Lake", seat: "room", reason: "5 of 5 decided lines on the microphone.", confidence: 1 },
+        ]);
+    });
+});
 
 describe("sparse roster mute readings on the call", () => {
     const reed = "Reed Example";

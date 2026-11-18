@@ -336,6 +336,7 @@ test("suggest updates one terminal spinner and keeps piped and JSON results quie
         stop: (label) => messages.push(`stop ${label}`),
     });
     const json = spyOn(out, "result").mockImplementation(() => {});
+    const warning = spyOn(ui, "warn").mockImplementation(() => {});
     const stdoutTTY = process.stdout.isTTY;
     const stderrTTY = process.stderr.isTTY;
     try {
@@ -358,12 +359,100 @@ test("suggest updates one terminal spinner and keeps piped and JSON results quie
             "stop Voices: 2 of 2 lines",
         ]);
         expect(json).toHaveBeenCalledWith("[]");
+        const hint = `Seats are not set, so voice naming is off. Run: tools meetings seats ${record.id} --apply`;
+        expect(warning.mock.calls.filter(([message]) => message === hint)).toHaveLength(3);
+        expect(store.read(record.id)?.seats).toBeUndefined();
+        await store.update(record.id, { command: "test", change: "seat the recorder" }, (current) => {
+            current.seats = { room: ["Wren"], remote: [] };
+        });
+        warning.mockClear();
+        const seated = new Command().exitOverride();
+        await registerRequestedTrees({ program: seated, registrars: MEETINGS_REGISTRARS, requested: "suggest" });
+        await seated.parseAsync(["suggest", record.id, "--json"], { from: "user" });
+        expect(warning).not.toHaveBeenCalledWith(hint);
     } finally {
         Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: stdoutTTY });
         Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: stderrTTY });
         json.mockRestore();
+        warning.mockRestore();
         spinner.mockRestore();
         run.mockRestore();
+    }
+});
+
+test("seats JSON previews, applies once, omits unsure people and replaces only by request", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Seat preview",
+            start: "2026-01-01T12:00:00Z",
+            createdBy: "new",
+            participants: [
+                { name: "Reed", self: true, from: [] },
+                { name: "Lake Finch", from: ["platform-roster"] },
+            ],
+            evidence: { indicator: [{ tSec: 1, speaking: [], muted: ["Lake Finch"] }] },
+        },
+        { command: "test", change: "seats fixture" }
+    );
+    const before = readFileSync(store.path(record.id));
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    async function run(...flags: string[]) {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "seats" });
+        printed.mockClear();
+        await program.parseAsync(["seats", record.id, "--json", ...flags], { from: "user" });
+        expect(printed).toHaveBeenCalledTimes(1);
+        return SafeJSON.parse(String(printed.mock.calls[0]?.[0]), { strict: true });
+    }
+    try {
+        const suggestion = {
+            seats: { room: ["Reed"], remote: [] },
+            people: [
+                { name: "Reed", seat: "room", reason: "Recording participant (self).", confidence: 1 },
+                {
+                    name: "Lake Finch",
+                    seat: "unsure",
+                    reason: "Muted on the only roster read while present.",
+                    confidence: 0,
+                },
+            ],
+        };
+        expect(await run()).toEqual({
+            meeting: record.id,
+            current: null,
+            suggestion,
+            saved: false,
+            unresolved: [
+                {
+                    name: "Lake Finch",
+                    room: `tools meetings seats ${record.id} --apply --room 'Lake Finch'`,
+                    remote: `tools meetings seats ${record.id} --apply --remote 'Lake Finch'`,
+                },
+            ],
+        });
+        expect(readFileSync(store.path(record.id))).toEqual(before);
+        expect(await run("--apply")).toMatchObject({ saved: true });
+        expect(new MeetingStore().read(record.id)?.seats).toEqual(suggestion.seats);
+        const applied = readFileSync(store.path(record.id));
+        expect(await run("--apply", "--remote", "Reed")).toMatchObject({ current: suggestion.seats, saved: false });
+        expect(readFileSync(store.path(record.id))).toEqual(applied);
+        // Another user could save after the preview. The write checks the latest record under its lock.
+        await expect(
+            new DecisionJournal({ store }).apply({
+                meeting: record.id,
+                actor: { kind: "cli" },
+                action: { kind: "set", seatsIfAbsent: true, seats: { room: [], remote: [{ name: "Reed" }] } },
+            })
+        ).rejects.toThrow("Seats are already set");
+        expect(readFileSync(store.path(record.id))).toEqual(applied);
+        expect(await run("--replace", "--room", "Lake Finch", "--remote", "Reed")).toMatchObject({
+            saved: true,
+            unresolved: [],
+        });
+        expect(new MeetingStore().read(record.id)?.seats).toEqual({ room: ["Lake Finch"], remote: [{ name: "Reed" }] });
+    } finally {
+        printed.mockRestore();
     }
 });
 

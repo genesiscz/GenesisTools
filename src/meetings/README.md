@@ -795,6 +795,12 @@ A desktop check after the parent installs the reconciled app must verify two ind
 
 ### Seats, project roles and channel attribution
 
+`tools meetings seats <meeting>` previews who sat at the room microphone and who joined the call. The table gives the reason for each person. The recorder is in the room. For other speakers a channel needs at least 60% of five or more decided lines, with raw microphone share above 0.65 for room or below 0.35 for remote. A call roster entry with no decided lines suggests remote unless every read while present shows the person muted. A calendar invite alone leaves the seat unsure.
+
+Use `--apply` to save the suggested seats once. Use `--room "River Example"` or `--remote "Lake Example"` to apply a hand choice over the suggestion. Both keep existing seats unless you pass `--replace`, which replaces the entire seating plan, including microphone groups. Unsure people stay unseated. Remote seats use the first join and final leave on the transcript clock. The original roster keeps each separate stay.
+
+`--json` returns the resolved meeting ID, `current` (seats before the command, or null), `suggestion` (seats and each person's name, seat, reason and numeric confidence), `saved`, and `unresolved` with room and remote commands. The window reads the same preview through `meeting.seats.suggest`. In the meeting header, **Seats not set: voice naming is off** opens the editor. **Use suggestion** saves the selected seats.
+
 Store confirmed seating with `tools meetings set <meeting> --seats '<json>'` or `meeting.set({seats})`. The shared shape is `{room: string[], remote: {name, label?, fromSec?, toSec?}[], microphones?: {id, label?, people: string[], deviceId?}[]}`. A microphone group contains only room people or only remote people. ID `self` is the owner's microphone; `deviceId` identifies the device owner. Join is inclusive, leave exclusive. Old remote strings load as named remote seats without changing the source file.
 
 `tools meetings projects people <project> --person <name> --role <role> --alias <names...>` edits explicit project details. The role column and `evidence --raw` show them. Unknown roles stay unknown. Notes never become roles.

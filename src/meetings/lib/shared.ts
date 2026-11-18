@@ -2,10 +2,17 @@ import { formatMissingEnumHelp, isInteractive, suggestCommand } from "@genesiscz
 import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 
 export const TOOL = "tools meetings";
+
+export function hintIfSeatsUnset(record: Pick<MeetingRecord, "id" | "seats">): void {
+    if (!record.seats) {
+        ui.warn(`Seats are not set, so voice naming is off. Run: ${TOOL} seats ${record.id} --apply`);
+    }
+}
 
 /**
  * `--json` is the short form of `--format json`, as on every other meetings command (MC19). The `--format` value for

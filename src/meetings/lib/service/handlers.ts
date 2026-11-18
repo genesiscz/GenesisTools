@@ -260,6 +260,38 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             return params.full ? records : records.map(meetingListRow);
         },
         "meeting.show": (params) => recordOf(storeOf(), params.ref),
+        "meeting.seats.suggest": async (params) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const { decidedSeatRanges, suggestSeats } = await import("../seat-suggest");
+            const ranges = decidedSeatRanges(record);
+            let lines: LineEvidence[] = [];
+            if (ranges.length && sourceRefOf(record)) {
+                const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+                const [transcript, share] = await Promise.all([
+                    opened
+                        .meeting()
+                        .then((meeting) => meeting.transcript)
+                        .catch((error: unknown) => {
+                            log.warn({ error, meeting: record.id }, "seat suggestions without transcript lines");
+                            return [];
+                        }),
+                    opened
+                        .energy()
+                        .then((energy) => energy.share)
+                        .catch((error: unknown) => {
+                            log.warn({ error, meeting: record.id }, "seat suggestions without channel energy");
+                            return undefined;
+                        }),
+                ]);
+                lines = lineEvidence(transcript, { segments: [], speaking: [] }, undefined, share);
+            }
+            return {
+                meeting: record.id,
+                current: record.seats ?? null,
+                suggestion: suggestSeats({ record, ranges, lines, room: params.room, remote: params.remote }),
+            };
+        },
         "meeting.suggest": async (params, context) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
