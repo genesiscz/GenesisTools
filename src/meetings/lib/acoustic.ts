@@ -18,7 +18,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { OpenedMeeting } from "./opened-meeting";
 import type { LinkedSource } from "./sources";
-import { VOICE_WORKER_PREFIX } from "./speaker-labels/voice";
+import { voiceWorkerSettings } from "./speaker-labels/voice";
 
 /** The meeting an acoustic call reads, with the source the caller opens it with (the service's; the record's own). */
 export interface AcousticTarget {
@@ -69,7 +69,7 @@ export async function voiceMeeting(
     try {
         voice = await embedVoice({
             audioPath,
-            workerPrefix: VOICE_WORKER_PREFIX,
+            workerPrefix: (await voiceWorkerSettings()).prefix,
             channel: options.channel,
             fromSec: options.fromSec,
             toSec: options.toSec,
@@ -227,7 +227,7 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
         spans.sort((a, b) => a.fromSec - b.fromSec);
         const embeddings = await embedVoiceLines({
             audioPath,
-            workerPrefix: VOICE_WORKER_PREFIX,
+            workerPrefix: (await voiceWorkerSettings()).prefix,
             spans,
             channels: [{ channel, track: channel === (layout === "left-mic" ? 0 : 1) ? "raw-mic" : "isolated-call" }],
             cachePath: join(folder, "voice-lines.json"),

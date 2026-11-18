@@ -1,15 +1,36 @@
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { taskArgv } from "@app/daemon/lib/runner";
-import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import {
+    type MeetingsConfig,
+    MeetingsConfigStore,
+    type VoiceComputePriority,
+    voiceWorkerCount,
+} from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines } from "@genesiscz/utils/meetings/voice";
 import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import { priorityShellArgv } from "@genesiscz/utils/process/priority";
 import type { OpenedMeeting } from "../opened-meeting";
 import { type MeetingSound, measureSoundClock, meetingSound, readSoundInputs, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
 import type { LabelContext, SpeakerLabeler } from "./types";
 
-export const VOICE_WORKER_PREFIX = [...taskArgv('exec "$@"', "low"), "voice-worker"];
+/**
+ * The argv prefix that starts a voice worker at `priority`. `normal` clears any background state the caller inherited
+ * (a service started by launchd), so the worker runs on the fast cores; `background` is `taskpolicy -b`.
+ */
+export function voiceWorkerPrefix(priority: VoiceComputePriority): string[] {
+    return [...priorityShellArgv('exec "$@"', priority === "background" ? "low" : "high"), "voice-worker"];
+}
+
+/** How a voice pass runs here, from `speakerLabels.voice.compute` (the store's config when none is passed). */
+export async function voiceWorkerSettings(config?: MeetingsConfig): Promise<{ prefix: string[]; workers: number }> {
+    const compute = (config ?? (await new MeetingsConfigStore().read())).global.speakerLabels.voice.compute;
+    return {
+        prefix: voiceWorkerPrefix(compute.priority),
+        workers: voiceWorkerCount(compute.workers, availableParallelism()),
+    };
+}
 
 /** Batches spans on the same file/channel while retaining transcript-clock times on the resulting line. */
 export async function embedSeatLines(
@@ -27,6 +48,7 @@ export async function embedSeatLines(
         }
     >();
     const result: VoiceLine[] = [];
+    const { prefix } = await voiceWorkerSettings();
     for (const line of context.lines) {
         const slice = context.sound.slice({ ...line, purpose: "voice" });
         if (!slice) {
@@ -44,7 +66,7 @@ export async function embedSeatLines(
         const embeddings = await embedVoiceLines({
             audioPath: group.path,
             cachePath: context.cachePath,
-            workerPrefix: VOICE_WORKER_PREFIX,
+            workerPrefix: prefix,
             spans: group.lines.map(({ line, slice }) => ({
                 index: line.index,
                 fromSec: slice.fileFromSec,
