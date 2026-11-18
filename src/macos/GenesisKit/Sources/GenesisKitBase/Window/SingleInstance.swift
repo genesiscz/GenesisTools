@@ -81,6 +81,12 @@ public final class SingleInstance: @unchecked Sendable {
         return pid
     }
 
+    /// The pid for observing the other instance's exit. An unlocked file outlives its owner.
+    public var runningPID: pid_t? {
+        guard let pid = holderPid, isRunningElsewhere else { return nil }
+        return pid
+    }
+
     /// Hands `args` to the process that holds the lock. True when it answered. False when it never did (busy or
     /// hung): the caller still exits, since a second window would break the one-window rule for as long as the
     /// first one lives, and says how to get a working one back.

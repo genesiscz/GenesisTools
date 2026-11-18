@@ -71,7 +71,10 @@ func registerLinkedParts() {
     #if GENESIS_PART_RECORDER
     AppParts.register(part: "recorder", faces: ["--recorder": runRecorder])
     #if GENESIS_PART_WIDGET
-    MainActor.assumeIsolated { AppMenuBar.recorderMenu = RecorderMenu.makeAppSubmenu }
+    MainActor.assumeIsolated {
+        AppMenuBar.recorderMenu = makeRecorderAppSubmenu
+        AppMenuBar.keepRecorder = { RecorderKeeper.shared.setEnabled($0) }
+    }
     #endif
     #endif
     #if GENESIS_PART_MEETINGS

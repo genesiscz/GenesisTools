@@ -1,12 +1,22 @@
 import AVFoundation
 import AppKit
 
+@MainActor private let appSubmenu = RecorderMenu(routesToRecorder: true)
+
+/// The widget calls this in its own process. Windows and capture commands go to the single recorder face.
+@MainActor package func makeRecorderAppSubmenu() -> NSMenu { appSubmenu.makeMenu() }
+
 /// The recorder's menu bar item, always there while the face runs: record the screen, open a recording or a movie
 /// in the editor, the latest recordings with a thumbnail each, the recordings folder, and quit. The list is read
 /// when the menu opens, on a background queue; the menu shows the previous read until the new one lands.
 @MainActor
-package final class RecorderMenu: NSObject, NSMenuDelegate {
+final class RecorderMenu: NSObject, NSMenuDelegate {
     static let shared = RecorderMenu()
+
+    init(routesToRecorder: Bool = false) {
+        self.routesToRecorder = routesToRecorder
+        super.init()
+    }
 
     struct Recent: Equatable {
         let folder: URL
@@ -39,7 +49,7 @@ package final class RecorderMenu: NSObject, NSMenuDelegate {
 
     private var item: NSStatusItem?
     private weak var displayedMenu: NSMenu?
-    private var routesToRecorder = false
+    private let routesToRecorder: Bool
     private var recents: [Recent] = []
     private var thumbnails: [URL: NSImage] = [:]
     private var reading = false
@@ -116,12 +126,6 @@ package final class RecorderMenu: NSObject, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkOnScreen() }
     }
 
-    /// The widget calls this in its own process. Windows and capture commands go to the single recorder face.
-    package static func makeAppSubmenu() -> NSMenu {
-        shared.routesToRecorder = true
-        return shared.makeMenu()
-    }
-
     func makeMenu() -> NSMenu {
         let menu = NSMenu(title: "Recorder")
         menu.autoenablesItems = false
@@ -168,8 +172,7 @@ package final class RecorderMenu: NSObject, NSMenuDelegate {
         return .shown
     }
 
-    /// The menu, its toggles and Recent live only in this item. When macOS keeps it off the bar, say so once on this
-    /// Mac and name the other ways in, instead of a menu that silently cannot be reached (review 2026-11-06).
+    /// When macOS keeps this item off the bar, say so once and name the other ways into the capture picker.
     private func checkOnScreen(defaults: UserDefaults = .standard) {
         guard let item else { return }
         let window = item.button?.window
@@ -255,7 +258,11 @@ package final class RecorderMenu: NSObject, NSMenuDelegate {
         actions.toolTip = "Each recent recording opens a menu: open, copy the movie or a GIF, show in Finder, rename, its meeting, Trash. Off, a click opens the editor."
         menu.addItem(actions)
         menu.addItem(.separator())
-        menu.addItem(row("Quit Recorder", symbol: nil, action: #selector(quit), key: "q"))
+        let quit = row("Quit Recorder", symbol: nil, action: #selector(quit), key: "q")
+        if AppParts.isLinked("widget"), MenuBarSettings.separateRecorder() {
+            quit.toolTip = "While the separate Recorder item is on, the running widget restarts Recorder after it quits."
+        }
+        menu.addItem(quit)
     }
 
     private func row(_ title: String, symbol: String?, action: Selector, key: String) -> NSMenuItem {
@@ -432,6 +439,7 @@ package final class RecorderMenu: NSObject, NSMenuDelegate {
 
     func run(_ command: Command) {
         if routesToRecorder {
+            if command == .quit, recorderInstance.runningPID == nil { return }
             FaceLaunch.start(["--recorder", "--menu-command", command.rawValue], activates: false) { error in
                 RecorderNotice.failure("Could not open Recorder.", more: error.localizedDescription)
             }
@@ -443,7 +451,9 @@ package final class RecorderMenu: NSObject, NSMenuDelegate {
         case .picker: CapturePicker.shared.show()
         case .openRecording: chooseRecording()
         case .library: LibraryWindow.shared.show(focus: true)
-        case .quit: exit(0)
+        case .quit:
+            FaceLifecycle.recorderExiting(code: 0)
+            exit(0)
         }
     }
 

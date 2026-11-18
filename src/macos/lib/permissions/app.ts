@@ -71,7 +71,7 @@ import {
     partsForBuild,
     scratchName,
 } from "./parts";
-import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
+import { captureRelaunch, linkRelayAmong, type RelaunchCapture, relaunchPlan, runRelaunch } from "./relaunch";
 import { createSwiftProgressReporter } from "./swift-progress";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
@@ -2220,22 +2220,25 @@ async function reapStaleAppFaces({
     const listing = readAppFaceProcesses();
     if (listing.length === 0) {
         logger.debug("could not list processes; skipping the stale-face reap");
-        return;
     }
 
     const stale = staleAppFacePids(listing, launcher);
 
+    // The long-lived faces among them, with their exact argv, recorded before anything is killed.
+    const required = relaunch ? relaunchPlan([], null, parts) : [];
+    let reopen: RelaunchCapture = { steps: required, relay: required.length > 0, unrestorable: [], recordDirs: [] };
+
     if (stale.length === 0) {
+        if (required.length > 0) {
+            runRelaunch(reopen, step);
+        }
         return;
     }
-
-    // The long-lived faces among them, with their exact argv, recorded before anything is killed.
-    let reopen: RelaunchCapture = { steps: [], relay: false, unrestorable: [], recordDirs: [] };
 
     if (relaunch) {
         // A failed capture only costs the reopen; the reap below must still run.
         try {
-            reopen = captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale });
+            reopen = captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale, parts });
         } catch (err) {
             // The relay decision needs only the listing, so a relay that was running still comes back.
             const relay = linkRelayAmong({
@@ -2243,7 +2246,7 @@ async function reapStaleAppFaces({
                 launcherPath: launcher,
                 stalePids: new Set(stale),
             });
-            reopen = { steps: [], relay, unrestorable: [], recordDirs: [] };
+            reopen.relay ||= relay;
             logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
         }
     } else {

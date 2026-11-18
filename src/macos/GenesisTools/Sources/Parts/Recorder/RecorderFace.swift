@@ -11,7 +11,7 @@ import SwiftUI
 // GenesisTools --recorder --edit <path> --snapshot <png> [--width <pt>] [--height <pt>] [--at <seconds>] [--tab zoom|clip|hide|style|audio|export] [--select-zoom <n>|--select-clip <n>] [--part <from>-<to>] [--range <from>-<to>] [--comment <n>]
 //   Draws the editor off screen into a PNG and exits (verification without a screen).
 
-private let recorderInstance = SingleInstance(
+let recorderInstance = SingleInstance(
     name: "recorder",
     lockFile: NativePreview.hubFile("recorder.lock"),
     notificationPrefix: NativePreview.namespace + ".recorder",
@@ -144,6 +144,7 @@ package func runRecorder(_ args: [String]) -> Never {
     if !recorderInstance.claim() {
         exit(recorderInstance.forward(args) ? 0 : 1)
     }
+    FaceLifecycle.logRecorderExits()
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -165,6 +166,7 @@ package func runRecorder(_ args: [String]) -> Never {
         request.openWindows()
         app.run()
     }
+    FaceLifecycle.recorderExiting(code: 0)
     exit(0)
 }
 
@@ -177,7 +179,8 @@ extension RecorderRequest {
         }
         if library { LibraryWindow.shared.show(focus: focus) }
         if picker { CapturePicker.shared.show(focus: focus) }
-        if let menuCommand { RecorderMenu.shared.run(menuCommand) }
+        // A forwarded command must acknowledge its sender before opening a modal panel or quitting.
+        if let menuCommand { DispatchQueue.main.async { RecorderMenu.shared.run(menuCommand) } }
     }
 }
 
