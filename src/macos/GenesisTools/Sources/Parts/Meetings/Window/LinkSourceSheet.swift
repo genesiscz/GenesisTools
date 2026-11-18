@@ -7,10 +7,18 @@ import SwiftUI
 struct LinkSourceSheet: View {
     @Bindable var detail: MeetingDetailModel
     let close: () -> Void
-    @State private var list: Loadable<MeetingsAPI.MeetingSourcesNear.Result> = .idle
+    @State private var list: Loadable<MeetingsAPI.MeetingSourcesNear.Result>
     @State private var picked: String?
     @State private var linking = false
     @State private var failure: MeetingsCLI.Failure?
+
+    /// `list`: a list read already (a snapshot); idle reads it when the sheet shows.
+    init(detail: MeetingDetailModel, list: Loadable<MeetingsAPI.MeetingSourcesNear.Result> = .idle, close: @escaping () -> Void) {
+        self.detail = detail
+        self.close = close
+        _list = State(initialValue: list)
+        _picked = State(initialValue: list.value?.meetings.first { $0.linkedTo == nil }?.ref)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,7 +44,7 @@ struct LinkSourceSheet: View {
         }
         .padding(16)
         .frame(width: 480)
-        .task { await read() }
+        .task { if case .idle = list { await read() } }
     }
 
     private var subtitle: String {

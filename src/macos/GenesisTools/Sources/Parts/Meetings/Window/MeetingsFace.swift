@@ -66,7 +66,8 @@ struct MeetingsRequest {
     var edit: String?
     /// `--notice <text>`: a notice with an Undo, as an answer leaves one.
     var notice: String?
-    /// `--card <row id>` and `--sheet history[:<row id>]` or `--sheet voice-tools[:details]` or `--sheet word-timings`: a snapshot of that part alone.
+    /// `--card <row id>` and `--sheet history[:<row id>]` or `--sheet voice-tools[:details]`, `--sheet word-timings`, `--sheet link-source` or `--sheet person:<name>`
+    /// (`person:` alone adds one): a snapshot of that part alone.
     var card: String?
     var sheet: String?
     /// `--suggest-progress <fraction>,<label>`: a snapshot of the Items tab while a suggest run reports that step (the
@@ -345,6 +346,17 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
                                          language: WordTimingOptions.languageWords(choice, code: code),
                                          openSettings: {}, cancel: {}, generate: {}))
     }
+    if request.sheet == "link-source" {
+        // The list read first, so the picture shows the meetings, not the read.
+        let list: Loadable<MeetingsAPI.MeetingSourcesNear.Result>
+        do { list = .loaded(try await detail.sourceMeetingsNear()) } catch { list = .failed(asFailure(error), previous: nil) }
+        return AnyView(LinkSourceSheet(detail: detail, list: list, close: {}))
+    }
+    if let sheet = request.sheet, sheet.hasPrefix("person:") {
+        let name = String(sheet.dropFirst(7))
+        return AnyView(PersonStayEditor(detail: detail, original: name.isEmpty ? nil : PersonStay.of(name, in: detail.record.value),
+                                        duration: model.meeting(detail.id)?.durationSec, close: {}))
+    }
     return nil
 }
 
@@ -456,7 +468,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let window: NSWindow
             if request.card != nil || request.sheet != nil {
                 guard let part = await meetingsSnapshotPart(request, model: model) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools or word-timings)\n".utf8))
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source or person:<name>)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)
