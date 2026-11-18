@@ -565,7 +565,7 @@ export function sameName(a: string, b: string): boolean {
     );
 }
 
-function presentAt(presence: Presence[], sec: number): Presence[] {
+function staysAround(presence: Presence[], sec: number): Presence[] {
     return presence.filter(
         (stay) => sec >= stay.fromSec - PRESENCE_TOLERANCE_SEC && sec <= stay.toSec + PRESENCE_TOLERANCE_SEC
     );
@@ -582,7 +582,7 @@ function possiblyPresentAt(presence: Presence[], sec: number): Presence[] {
 /** Close times form one range; with `presence`, a range also ends where the set of people in the call changes. */
 function toRanges(times: number[], presence?: Presence[]): PresenceRange[] {
     const ranges: PresenceRange[] = [];
-    const poolAt = (sec: number) => [...new Set(presentAt(presence ?? [], sec).map((stay) => stay.name))].sort();
+    const poolAt = (sec: number) => [...new Set(staysAround(presence ?? [], sec).map((stay) => stay.name))].sort();
 
     for (const sec of times) {
         const last = ranges.at(-1);
@@ -675,7 +675,7 @@ function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presen
             }
 
             const person = [...here][0]!;
-            const confirmed = presentAt(presence, sec).filter((candidate) => candidate.name === person);
+            const confirmed = staysAround(presence, sec).filter((candidate) => candidate.name === person);
 
             if (confirmed.length === 0 || confirmed.some((stay) => stays.includes(stay))) {
                 continue;
