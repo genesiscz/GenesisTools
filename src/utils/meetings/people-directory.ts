@@ -60,6 +60,9 @@ export interface PeopleQuery {
 /** One place that names people. A source that cannot read says why; it never answers an empty list for a refusal. */
 export interface PeopleSource {
     readonly kind: PersonSourceKind;
+    /** Complete sources ignore text and limit. Live sources check their backing files on every picker read.
+     * Other sources can only reuse the exact text and limit they answered. */
+    readonly pickerCache?: "complete" | "live";
     people(query: PeopleQuery): Promise<SourceAnswer>;
 }
 
@@ -474,6 +477,7 @@ export function peopleOfMeeting(record: MeetingRecord, options: { calendar: bool
  */
 export class MeetingsPeopleSource implements PeopleSource {
     readonly kind = "meetings" as const;
+    readonly pickerCache = "live" as const;
     private readonly cache = new Map<string, { stamp: string; people: SourcePerson[] }>();
 
     constructor(private readonly options: { store: MeetingStore; calendar: boolean }) {}
@@ -531,6 +535,7 @@ export class MeetingsPeopleSource implements PeopleSource {
 /** The people the projects pair (`projects.<p>.match.people` in the config). */
 export class ProjectsPeopleSource implements PeopleSource {
     readonly kind = "projects" as const;
+    readonly pickerCache = "complete" as const;
 
     constructor(private readonly config: MeetingsConfig) {}
 
@@ -573,6 +578,75 @@ export interface PeopleDirectoryOptions {
     off?: Array<{ kind: PersonSourceKind; reason: string }>;
 }
 
+async function readSource(source: PeopleSource, query: PeopleQuery): Promise<SourceAnswer> {
+    try {
+        return await source.people(query);
+    } catch (error) {
+        log.warn({ kind: source.kind, error }, "a people source failed");
+        return { state: "failed", reason: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+// Picker answers expire ten seconds after the source responds. Hits never extend that time.
+// An unfinished read may be shared for at most the same ten seconds.
+const PICKER_ANSWER_MS = 10_000;
+const MAX_PICKER_QUERIES = 32;
+const pickerAnswers = new WeakMap<object, Map<string, { answer: Promise<SourceAnswer>; expiresAt: number }>>();
+
+async function readPickerSource(source: PeopleSource, query: PeopleQuery): Promise<SourceAnswer> {
+    if (source.kind === "own" || source.pickerCache === "live") {
+        return readSource(source, query);
+    }
+
+    let owner: object = source;
+    if (source.kind === "contacts") {
+        const { ContactsPeopleSource } = await import("./people-contacts");
+        if (source instanceof ContactsPeopleSource && source.people === ContactsPeopleSource.prototype.people) {
+            // The service constructs an adapter per request. Only adapters of the same reader share an address book.
+            // biome-ignore lint/complexity/useLiteralKeys: the Contacts adapter keeps its reader private.
+            owner = source["reader"];
+        }
+    }
+
+    let entries = pickerAnswers.get(owner);
+
+    if (!entries) {
+        entries = new Map();
+        pickerAnswers.set(owner, entries);
+    }
+
+    // Contacts can discard nameless cards after the native limit. Even a short page cannot prove completeness.
+    const key = source.pickerCache === "complete" ? "" : `${query.limit}:${query.text}`;
+    const cached = entries.get(key);
+    const now = Date.now();
+
+    if (cached && now < cached.expiresAt) {
+        return cached.answer;
+    }
+
+    entries.delete(key);
+
+    if (entries.size >= MAX_PICKER_QUERIES) {
+        const oldest = entries.keys().next();
+        if (!oldest.done) {
+            entries.delete(oldest.value);
+        }
+    }
+
+    const entry = { answer: readSource(source, query), expiresAt: now + PICKER_ANSWER_MS };
+    entries.set(key, entry);
+    const answer = await entry.answer;
+    entry.expiresAt = Date.now() + PICKER_ANSWER_MS;
+
+    if (answer.state === "refused" && entries.get(key) === entry) {
+        // Once the picker observes a revoked grant, earlier searches must not bring its people back.
+        entries.clear();
+        entries.set(key, entry);
+    }
+
+    return answer;
+}
+
 /** The directory itself: grouping, merges, hides, ranking, and the book's writes. */
 export class PeopleDirectory {
     constructor(private readonly options: PeopleDirectoryOptions) {}
@@ -583,7 +657,7 @@ export class PeopleDirectory {
 
     /** The people that match `query` (folded: case and accents ignored), ranked for the meeting and moment given. */
     async known(query: string, options: KnownOptions = {}): Promise<KnownPeople> {
-        const { identities, sources } = await this.identities(query, options);
+        const { identities, sources } = await this.identities(query, options, readPickerSource);
         const text = foldText(query);
         const matched = identities
             .filter((identity) => textMatches(identity, text) && (options.includeHidden || !identity.hidden))
@@ -756,7 +830,8 @@ export class PeopleDirectory {
 
     private async identities(
         query: string,
-        options: KnownOptions
+        options: KnownOptions,
+        read = readSource
     ): Promise<{ identities: Identity[]; sources: SourceStatus[] }> {
         const wanted = options.kinds;
         const limit = Math.max(options.limit ?? DEFAULT_LIMIT, DEFAULT_LIMIT);
@@ -768,15 +843,7 @@ export class PeopleDirectory {
                 .split(/\s+/u)
                 .sort((a, b) => b.length - a.length)[0] ?? "";
         const answers = await Promise.all(
-            asked.map(async (source) => {
-                try {
-                    return { source, answer: await source.people({ text: sourceText, limit }) };
-                } catch (error) {
-                    log.warn({ kind: source.kind, error }, "a people source failed");
-                    const reason = error instanceof Error ? error.message : String(error);
-                    return { source, answer: { state: "failed" as const, reason } };
-                }
-            })
+            asked.map(async (source) => ({ source, answer: await read(source, { text: sourceText, limit }) }))
         );
         const identities = new IdentityGroups();
 
