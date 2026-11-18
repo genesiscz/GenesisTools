@@ -455,10 +455,18 @@ struct TranscriptBlockLineView: View {
                     .instantTooltip("A staged comment covers this line")
             }
             Spacer(minLength: 0)
+        }
+        // Over the line's last words, taking no width (U8): beside the text it took about 90 pt, so the text wrapped
+        // again and every line below jumped on each hover.
+        .overlay(alignment: .bottomTrailing) {
             if hovering, let start = line.startSec {
                 Text(verbatim: "Play from \(MeetingsFormat.clock(start))")
                     .font(.system(size: 11)).foregroundStyle(Color.accentColor)
-                    .transition(.opacity)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .windowBackgroundColor)))
+                    .fixedSize()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
         .contentShape(Rectangle())
