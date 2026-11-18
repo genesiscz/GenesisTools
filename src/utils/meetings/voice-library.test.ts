@@ -34,7 +34,7 @@ function print(n: number): VoicePrint {
         track: n % 2 ? "system" : "source-mic",
         fromSec: n,
         toSec: n + 1.25,
-        embedding: [n * -0.03125, 0, n + 0.125],
+        embedding: [-0.125 - n * 0.03125, 0, n + 0.125],
         confirmedAt: "2026-10-10T14:00:00Z",
         ...(n % 2 ? { question: `i${n}` } : {}),
     };
@@ -44,16 +44,12 @@ function legacy(project: string, samples: VoicePrint[], owner: VoiceOwner = { na
     const dir = toolDataDir("meetings", "voices");
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `${project}.json`);
-    const bytes =
-        SafeJSON.stringify(
-            {
-                version: 1,
-                model: voiceModel,
-                people: { [owner.name]: { ...(owner.email ? { email: owner.email } : {}), samples } },
-            },
-            null,
-            2
-        ) + "\n";
+    const document = {
+        version: 1,
+        model: voiceModel,
+        people: { [owner.name]: { ...(owner.email ? { email: owner.email } : {}), samples } },
+    };
+    const bytes = `${SafeJSON.stringify(document, null, 2)}\n`;
     atomicWriteFileSync(file, bytes);
     return { file, bytes };
 }
@@ -131,6 +127,9 @@ test("colliding IDs compare the whole original tuple and keep distinct identical
     expect(readVoiceLibrary(options).library.samples.map((s) => s.id)).toEqual([ids[1], ids[2], ids[0]]);
     upgradeVoiceLibrary(options);
     expect(persisted().imports[0]!.rows.map((r) => r.occurrence)).toEqual([0, 1, 0]);
+    const duplicated = readFileSync(libraryPath());
+    expect(() => addVoicePrint("garden", first.name, a, model)).toThrow("attachment conflict");
+    expect(readFileSync(libraryPath())).toEqual(duplicated);
     expect(removeVoicePrint("garden", first.name)).toBe(3);
     const late = legacy("garden", [b, a, a, a]);
     expect(readVoiceLibrary(options).library.samples).toHaveLength(1);
@@ -281,6 +280,7 @@ test("checked insertion reuses its persisted receipt and prediction holds out on
     expect(inserted.status).toBe("added");
     const saved = readFileSync(libraryPath());
     expect(insertVoiceSample(input)).toEqual({ ...inserted, status: "already-present" });
+    expect(insertVoiceSample({ ...input, owner: second, decision: undefined }).status).toBe("conflict");
     expect(insertVoiceSample({ ...input, print: { ...p, embedding: [4, 8] } }).status).toBe("conflict");
     expect(readFileSync(libraryPath())).toEqual(saved);
     const other = (print: VoicePrint, related: Partial<typeof source> = {}) =>

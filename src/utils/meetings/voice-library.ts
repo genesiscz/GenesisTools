@@ -187,7 +187,7 @@ function sameLine(a: SampleSource, b: SampleSource): boolean {
 }
 
 function ownerKey(owner: VoiceOwner): string {
-    return owner.email ? `email:${owner.email.toLowerCase()}` : `name:${nameKey(owner.name) || owner.name}`;
+    return owner.email ? `email:${owner.email.toLowerCase()}` : `name:${owner.name}`;
 }
 
 function refused(library: LibraryV2, source: SampleSource, owner: VoiceOwner): Refusal | undefined {
@@ -384,7 +384,8 @@ function transact<T>(
                 library.revision++;
                 voiceLibrarySchema.parse(library);
                 const bytes = SafeJSON.stringify(library);
-                const publish = options.publish ?? ((path, data) => atomicWriteFileSync(path, data, { mode: 0o600 }));
+                const publish: NonNullable<MigrationOptions["publish"]> =
+                    options.publish ?? ((path, data) => atomicWriteFileSync(path, data, { mode: 0o600 }));
                 publish(file, bytes);
                 if (readFileSync(file, "utf8") !== bytes) {
                     throw new Error(`Voice library publication did not verify at ${file}`);
@@ -654,6 +655,19 @@ function insertLocked(
             s.toSec === print.toSec
     );
     const prior = matches[0];
+    if (prior && matches.length > 1) {
+        return { changed: false, result: { status: "conflict", id: prior.id, revision: library.revision } };
+    }
+    const occupied = library.samples.find(
+        (s) =>
+            s.project === project &&
+            sameLine(s.source, source) &&
+            ownerKey(s.owner) !== ownerKey(owner) &&
+            !refused(library, s.source, s.owner)
+    );
+    if (occupied) {
+        return { changed: false, result: { status: "conflict", id: occupied.id, revision: library.revision } };
+    }
     const unchanged =
         prior &&
         sameLine(prior.source, source) &&
@@ -666,12 +680,13 @@ function insertLocked(
         };
     }
     const id: SampleId = prior?.id ?? `vs_${randomUUID()}`;
-    const writeSample = !unchanged || (replace && matches.length > 1);
+    const writeSample = !unchanged;
     const changed = writeSample || !!decision;
     const nextRevision = changed ? library.revision + 1 : library.revision;
     if (writeSample) {
-        const replaced = new Set(matches.map((s) => s.id));
-        library.samples = library.samples.filter((s) => !replaced.has(s.id));
+        if (prior) {
+            library.samples = library.samples.filter((s) => s.id !== prior.id);
+        }
         library.model = model;
         library.samples.push({
             ...print,
@@ -718,16 +733,13 @@ export function voicePrintKey(person: string, print: VoicePrint): string {
     return SafeJSON.stringify([nameKey(person), print.meeting, print.sourceSha, print.fromSec, print.toSec]);
 }
 
-function legacyOwner(library: LibraryV2, project: string, name: string): VoiceOwner {
-    const owners = new Map(
-        library.samples
-            .filter((s) => s.project === project && s.owner.name === name)
-            .map((s) => [ownerKey(s.owner), s.owner])
+function requireUnambiguousName(library: LibraryV2, project: string, name: string): void {
+    const owners = new Set(
+        library.samples.filter((s) => s.project === project && s.owner.name === name).map((s) => ownerKey(s.owner))
     );
     if (owners.size > 1) {
         throw new Error(`More than one person named '${name}' in project '${project}'; select a sample ID`);
     }
-    return owners.values().next().value ?? { name };
 }
 
 /** The old add/backfill pair remains a single atomic transaction, including its missing-at-preview check. */
@@ -752,11 +764,12 @@ export function addProjectVoicePrints(input: {
         }
         let changed = false;
         for (const change of input.changes) {
+            requireUnambiguousName(library, project, change.person);
             const insertion = insertLocked(
                 library,
                 {
                     project,
-                    owner: legacyOwner(library, project, change.person),
+                    owner: { name: change.person },
                     print: change.after,
                     model: change.model ?? (library.model || input.defaultModel()),
                     source: sourceForVoicePrint(change.after),
@@ -767,6 +780,11 @@ export function addProjectVoicePrints(input: {
             );
             if (insertion.result.status === "refused") {
                 throw new Error(`Voice sample refused: ${insertion.result.reason}`);
+            }
+            if (insertion.result.status === "conflict") {
+                throw new Error(
+                    `Voice attachment conflict in project '${project}' at ${insertion.result.id}; select a sample ID`
+                );
             }
             changed ||= insertion.changed;
         }
@@ -781,7 +799,7 @@ export function removeProjectVoicePrint(
 ): number {
     projectNameSchema.parse(project);
     return transact((library) => {
-        legacyOwner(library, project, person);
+        requireUnambiguousName(library, project, person);
         const before = library.samples.length;
         library.samples = library.samples.filter(
             (s) =>
