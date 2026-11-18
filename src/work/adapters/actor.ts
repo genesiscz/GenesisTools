@@ -29,3 +29,26 @@ export function actorHere(options: { model?: boolean } = {}): { actor: Actor; pr
     };
     return { actor, project };
 }
+
+/**
+ * The owner at a surface of this Mac (the hub, the widget), when a call comes through the actions service: the
+ * service's own environment names whoever started it, never the person who clicked.
+ */
+export function ownerAtSurface(project: string, surface: string): { actor: Actor; project: string } {
+    return {
+        actor: {
+            kind: "owner",
+            harness: surface,
+            sessionId: null,
+            sessionTitle: null,
+            model: null,
+            host: null,
+            subagentId: null,
+            project,
+            repoRoot: null,
+            branch: null,
+            commitSha: null,
+        },
+        project,
+    };
+}

@@ -12,6 +12,11 @@ export interface WorkDoorCall {
     request?: string;
     dryRun?: boolean;
     ownerSaid?: string;
+    /**
+     * Set by the `work` area when the call came through the actions service from a person at a surface (the hub):
+     * the write is the owner's, in this project. Absent: the caller is this process, as for the CLI.
+     */
+    atSurface?: { project: string };
 }
 
 export interface WorkDoor {
