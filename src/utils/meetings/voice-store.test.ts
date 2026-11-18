@@ -1,8 +1,18 @@
-import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { addVoicePrint, readVoiceStore, removeVoicePrint, type VoicePrint, voiceStoreSchema } from "./voice-store";
+import { addVoicePrint, readVoiceStore, removeVoicePrint, type VoicePrint } from "./voice-store";
+
+let restoreHome: string;
+beforeEach(() => {
+    restoreHome = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "project-voices-")));
+});
+afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", restoreHome));
 
 const print: VoicePrint = {
     meeting: "planning",
@@ -25,11 +35,19 @@ test("project prints persist, reopen, deduplicate and remove without leaking acr
         { ...print, seat: "call", track: "source-call" },
         "fixture-model"
     );
-    const disk = voiceStoreSchema.parse(
-        SafeJSON.parse(readFileSync(toolDataDir("meetings", "voices", "voice-store-fixture.json"), "utf8"))
-    );
-    expect(disk.model).toBe("fixture-model");
-    expect(disk.people["Alice Example"]?.samples).toEqual([{ ...print, embedding: [0.8, 0.2] }]);
+    const disk = SafeJSON.parse(readFileSync(toolDataDir("meetings", "voice-library", "library.json"), "utf8"));
+    expect(disk).toMatchObject({
+        version: 2,
+        model: "fixture-model",
+        samples: [
+            { project: "voice-store-fixture", owner: { name: "Alice Example" }, embedding: [0.8, 0.2] },
+            { project: "voice-store-fixture", owner: { name: "Bob Example" }, track: "source-call" },
+        ],
+    });
+    expect(existsSync(toolDataDir("meetings", "voices", "voice-store-fixture.json"))).toBe(false);
+    expect(readVoiceStore("voice-store-fixture").people["Alice Example"]?.samples).toEqual([
+        { ...print, embedding: [0.8, 0.2] },
+    ]);
     expect(readVoiceStore("other-voice-project").people).toEqual({});
     expect(removeVoicePrint("voice-store-fixture", "Alice Example", { meeting: "another", fromSec: 2 })).toBe(0);
     expect(removeVoicePrint("voice-store-fixture", "Alice Example", { meeting: "planning", fromSec: 2 })).toBe(1);
