@@ -87,6 +87,7 @@ import {
     clonePartner,
     compressedSince,
     DITTO_WRITER,
+    hasTextHeader,
     type NativeCompressionEntry,
     openInodes,
     plan as planTransparent,
@@ -97,6 +98,7 @@ import {
     type Candidate as TransparentCandidate,
 } from "./transparent";
 import { migrateTransparentConfig } from "./transparent-config";
+import { encodedSampleBytes, storedCompressionAlgorithm } from "./transparent-native";
 import { applyTransparent } from "./transparent-run";
 import { compressStream, createVerifiedZstdBatch, createVerifiedZstdWriter, ZstdVerificationError } from "./verified";
 import { readSeekTable, readZstdFrames, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
@@ -2491,6 +2493,69 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         );
         expect(outcome.note).toContain("too-big");
         expect(statSync(c.path).ino).toBe(c.ino);
+    });
+    it("samples LZVN with the native LZVN encoder", () => {
+        const input = Buffer.from(logText(4096));
+        const output = Buffer.alloc(input.length * 2);
+        const library = dlopen("/usr/lib/libcompression.dylib", {
+            compression_encode_buffer: {
+                args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u32],
+                returns: FFIType.u64,
+            },
+        });
+        try {
+            const encode = (code: number) =>
+                Number(
+                    library.symbols.compression_encode_buffer(output, output.length, input, input.length, null, code)
+                );
+            const lzvn = encode(0x900);
+            expect(lzvn).toBeGreaterThan(0);
+            expect(lzvn).not.toBe(encode(0x100));
+            expect(encodedSampleBytes(input, "lzvn")).toBe(lzvn);
+        } finally {
+            library.close();
+        }
+    });
+    for (const algorithm of ["zlib", "lzvn", "lzfse"] as const) {
+        const binary = Bun.which("afsctool");
+        it.skipIf(!binary)(
+            `preserves ${algorithm} bytes, mtime and compression across a clone and append`,
+            async () => {
+                const c = fixture(algorithm);
+                const bytes = readFileSync(c.path);
+                const mtime = statSync(c.path, { bigint: true }).mtimeNs;
+                const result = settleTransparent(
+                    await swapTransparent(c, afsctoolWriter(algorithm, binary!)),
+                    new Set()
+                );
+                expect(result.status).toBe("compressed");
+                const copy = `${c.path}.clone`;
+                expect(Bun.spawnSync(["/bin/cp", "-cp", c.path, copy], { env: env.getProcessEnv() }).exitCode).toBe(0);
+                for (const path of [c.path, copy]) {
+                    expect(storedCompressionAlgorithm(path)).toBe(algorithm);
+                    expect(statSync(path, { bigint: true }).mtimeNs).toBe(mtime);
+                    expect(readFileSync(path)).toEqual(bytes);
+                }
+                expect(getCloneId(copy)).toBeTruthy();
+                expect(getCloneId(copy)).toBe(getCloneId(c.path));
+                appendFileSync(copy, "\nlate");
+                expect(readFileSync(copy)).toEqual(Buffer.concat([bytes, Buffer.from("\nlate")]));
+                expect(fileFlags(copy)! & 0x20).toBe(0);
+                expect(storedCompressionAlgorithm(c.path)).toBe(algorithm);
+                expect(readFileSync(c.path)).toEqual(bytes);
+            }
+        );
+    }
+    it("excludes compressible binary content behind a text extension from estimates", () => {
+        const c = fixture("misnamed");
+        expect(hasTextHeader(c)).toBe(true);
+        const padding = Buffer.alloc(64 * 1024);
+        for (const magic of ["SQLite format 3\0", "PK\x03\x04", "GIF89a"]) {
+            const bytes = Buffer.concat([Buffer.from(magic), padding]);
+            writeFileSync(c.path, bytes);
+            expect(hasTextHeader({ ...c, size: bytes.length })).toBe(false);
+            expect(sampleRatio(c.path, bytes.length)).toBe(Number.POSITIVE_INFINITY);
+        }
     });
     it("refreshes two clone partners to shared compressed blocks and preserves divergent bytes", async () => {
         const c = fixture("partners");

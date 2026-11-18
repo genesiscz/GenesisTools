@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 // lint-rules-ignore: compress intentionally reuses du's native read-only metadata walker instead of implementing a second filesystem scan.
 import { listCompressionFiles, listCompressionListing } from "@app/du/lib/engine";
 import {
+    hasTextHeader,
     type Mirror,
     openPaths,
     plan,
@@ -143,8 +144,10 @@ export async function runTransparentPaths({
         maxBytes: writer.maxBytes,
     });
     const held = first.candidates.length > 0 ? await openPaths() : new Set<string>();
-    const candidates = first.candidates.filter((candidate) => !held.has(candidate.path));
-    first.skips.open += first.candidates.length - candidates.length;
+    const closed = first.candidates.filter((candidate) => !held.has(candidate.path));
+    first.skips.open += first.candidates.length - closed.length;
+    const candidates = closed.filter(hasTextHeader);
+    first.skips["other-type"] += closed.length - candidates.length;
     const partners = indexedPartners([
         ...new Set(candidates.map((candidate) => candidate.cloneId ?? "").filter(Boolean)),
     ]);

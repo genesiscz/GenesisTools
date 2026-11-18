@@ -52,6 +52,14 @@ is `ditto --noclone --hfsCompression`, which emits LZVN on the measured macOS 27
 The stored decmpfs type is checked before replacement; a writer producing another algorithm is refused.
 Oversized files remain untouched and appear in `skips.too-big` and `tooBigBytes`. Transcripts are never split.
 
+Ordinary macOS readers can read these files because the kernel has a decoder for their decmpfs type.
+The November 12 benchmark on macOS 27.2 observed zlib type 4, LZVN type 8 and LZFSE type 12.
+Apple's XNU header describes decoder registration. The installed AppleFSCompressionTypeZlib personality
+advertises types 3/4, 7/8, 9/10 and 11/12. It advertises no Zstandard decoder.
+Transparent Zstandard for ordinary readers would require another filesystem layer or kernel support.
+The sampler uses libcompression's in-memory LZVN encoder (selector `0x900` on this OS).
+[`decmpfs.h` in Apple XNU](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/decmpfs.h)
+
 The plan uses the native `tools du` walker for size, allocation, flags, link count, inode, exact mtime and clone ID.
 The walker gets the size floor and the extensions, so it returns only files that can be candidates plus every
 `.cold-*` transaction remnant (any size); the result's `discoveryFiltered` counts the regular files it left out.
@@ -87,7 +95,9 @@ Configuration lives in the GenesisTools configuration under `du.compress`:
 ```
 
 An absent configuration loads the existing Claude roots and mirror as defaults in memory. Other harness roots are
-opt-in after writer evidence; SQLite is excluded by the extension filter. `tools du compressed`,
+opt-in after writer evidence. Known SQLite extensions are excluded. The plan also reads up to 4 KiB from each
+otherwise eligible file and checks its signature, so renaming a database to `.jsonl` cannot put it in the plan.
+`tools du compressed`,
 `tools du clonesize --compressed` and `tools du compressible` are read-only consumers. The optional daily
 `du-cold-compress` task registers disabled through `tools du compression-schedule` and requires explicit operator
 approval before it is enabled.
