@@ -217,6 +217,28 @@ describe("runAreaAction", () => {
         expect(seen).toEqual(["changed"]);
     });
 
+    test("a result shaped like a pass is a result; only ctx.pass skips the way", async () => {
+        const shaped = defineArea({
+            area: "shaped",
+            summary: "",
+            actions: {
+                act: defineAction({
+                    summary: "",
+                    args: z.object({}),
+                    result: z.object({ pass: z.boolean(), reason: z.string() }),
+                    native: () => ({ pass: true, reason: "the exam" }),
+                }),
+            },
+        });
+        const config = createConfigStore({
+            registry: { shaped },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-")), "config.json"),
+        });
+        const outcome = await runAreaAction({ shaped }, "shaped.act", {}, deps({ config }));
+
+        expect(outcome).toMatchObject({ status: "ran", via: "native", value: { pass: true, reason: "the exam" } });
+    });
+
     test("native runs when its needs hold, and a missing way list ends unreachable with the manual text", async () => {
         const facts = fakeFacts({ appManifest: () => ({ buildId: "b1", parts: ["hub"], rpcMethods: null }) });
         const ran = await runAreaAction(REGISTRY, "demo.greet", { name: "bob" }, deps({ facts }));
