@@ -1,12 +1,11 @@
 import {
     executeHandoffActions,
-    getHandoff,
     type HandoffDeps,
-    listHandoffs,
     type PostHandoffResponse,
     postHandoff,
 } from "@app/handoff/executor";
 import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
+import { workHandoffReader } from "@app/handoff/work-reader";
 import { linkFor, type PlannedLink, planMintedLink } from "@genesiscz/utils/browser-router/links";
 import { cmuxLaunchUrl } from "@genesiscz/utils/browser-router/presets";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
@@ -131,11 +130,11 @@ export async function handleHandoffPost(args: HandoffPostArgs, deps: HandoffDeps
 }
 
 export async function handleHandoffGet(args: HandoffGetArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(getHandoff({ ...args, include: args.include ?? COMPACT_GET_INCLUDE }, deps));
+    return render(workHandoffReader.getHandoff({ ...args, include: args.include ?? COMPACT_GET_INCLUDE }, deps));
 }
 
 export async function handleHandoffList(args: HandoffListArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(listHandoffs(args, deps));
+    return render(workHandoffReader.listHandoffs(args, deps));
 }
 
 export async function handleHandoffAction(args: HandoffActionArgs, deps: HandoffDeps = {}): Promise<string> {
