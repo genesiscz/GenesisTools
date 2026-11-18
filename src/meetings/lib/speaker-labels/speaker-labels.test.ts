@@ -275,7 +275,7 @@ describe("suggest runner word settings", () => {
         });
     });
 
-    test("a test process posts nothing real: without a fake the person area refuses and the run only warns", async () => {
+    test("a test process posts nothing real: without a fake the sandbox home sends no request and the run only warns", async () => {
         const { store, record, opened, meeting, config } = await runnerFixture();
         config.global.suggest.words.minOccurrences = 1;
         const check: WordCheck = {
@@ -299,7 +299,7 @@ describe("suggest runner word settings", () => {
         });
         expect(result.fresh.some((item) => item.kind === "question")).toBe(true);
         expect(dispatch).not.toHaveBeenCalled();
-        expect(result.warnings).toEqual([expect.stringContaining("The meeting review request could not reach you")]);
+        expect(result.warnings).toEqual([expect.stringContaining("no review request was sent")]);
     });
 
     test("twelve open word questions leave room for a long-stretch question", async () => {
