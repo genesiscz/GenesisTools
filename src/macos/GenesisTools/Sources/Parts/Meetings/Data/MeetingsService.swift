@@ -570,13 +570,20 @@ final class MeetingsService {
         for handler in listeners.values { handler(signal) }
     }
 
+    /// The one deadline of every call: how long the service may stay silent on it. The service sends a running call's
+    /// newest `$/progress` step again every 15 s (`MEETINGS_CALL_BEAT_MS` in src/meetings/lib/service/service.ts), and
+    /// each step starts this wait again (`JSONRPCSocketClient`), so a long call (a cold voice pass: 116 s on a 172-minute
+    /// meeting, about 400 s in the background) ends by its answer, and a service that hangs still fails the call after
+    /// a minute (w_gu80y4mc: a fixed 120 s cut a suggest off while the service went on working).
+    static let silenceLimit: TimeInterval = 60
+
     /// Calls one method. Throws `Unavailable` when the service does not answer it or answers a shape this app cannot
     /// decode (the caller runs the command), the
     /// `MeetingsCLI.Failure` the command would have thrown when the service refuses it (its `code` is the refusal's
     /// `data.code`, `no-transcript-source` and the like), and `CancellationError` when the task was cancelled (the
     /// service hears `$/cancel`). `onProgress` hears each `$/progress` the service sends for the call, on the main actor
     /// and before the answer.
-    func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = 60,
+    func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = silenceLimit,
                                         onProgress: (@MainActor (MeetingsCallProgress) -> Void)? = nil) async throws -> M.Result {
         let decision = M.Result.self == DecisionResult.self
         if decision { rowsRefresh.beginWrite() }
@@ -1006,6 +1013,8 @@ final class MeetingsService {
         let pending = PendingRequest()
         let progress: ((JSONRPCSocketClient.CallProgress) -> Void)? = onProgress.map { handler in
             { step in
+                // A beat before the first step carries nothing: it keeps the call alive and leaves the shown words.
+                guard step.fraction != nil || step.label != nil else { return }
                 let value = MeetingsCallProgress(fraction: step.fraction, label: step.label)
                 DispatchQueue.main.async { MainActor.assumeIsolated { handler(value) } }
             }
