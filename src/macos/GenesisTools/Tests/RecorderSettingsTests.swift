@@ -1,5 +1,5 @@
 import SwiftUI
-import GenesisKit
+@testable import GenesisKit
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -7,8 +7,32 @@ import XCTest
 /// camera preview shows, what an idle shortcut does), and the page's bindings writing the keys the readers read.
 @MainActor
 final class RecorderSettingsTests: XCTestCase {
-    func testFrameRateHelpDistinguishesSavedAndLiveChanges() {
-        let help = RecorderSettingsPages.frameRateHelp
+    func testFrameRateHelpDistinguishesSavedAndLiveChanges() async throws {
+        let model = RecorderSettingsModel(defaults: defaults, broadcasts: false)
+        let page = try XCTUnwrap(RecorderSettingsPages.section(model: model).pages.first)
+        let found = expectation(description: "frame-rate row mounted")
+        var detail: String?
+        let probing = FrameProbe.enabled
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = probing; FrameProbe.reset() }
+        let view = page.content().environment(\.nativeSettingsIndexing, true)
+            .frame(width: 640).fixedSize(horizontal: false, vertical: true)
+            .frameProbe("recorder.settings.recordingPage")
+            .onPreferenceChange(NativeSettingsSearchKey.self) { rows in
+                if detail == nil, let text = rows.first(where: { $0.title == "Frame rate" })?.detail {
+                    detail = text
+                    found.fulfill()
+                }
+            }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 640, height: 700), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: view)
+        window.orderInForSnapshot()
+        defer { window.close() }
+        await fulfillment(of: [found], timeout: 4)
+        XCTAssertNotNil(FrameProbe.frames["recorder.settings.recordingPage"])
+        let help = try XCTUnwrap(detail)
         XCTAssertTrue(help.contains("next recording"))
         XCTAssertTrue(help.contains("running movie keeps its current rate"))
         XCTAssertTrue(help.contains("recording control bar"))
