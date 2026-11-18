@@ -163,10 +163,57 @@ final class JSONRPCCallbackTests: XCTestCase {
 
 @MainActor
 final class GenesisToolsRPCConnectTests: XCTestCase {
+    /// A killed service leaves its socket file behind and nobody listens on it: connect starts the service once and
+    /// reaches the new one, instead of failing on the stale file until someone runs `serve --detach` by hand.
+    func testAStaleSocketFileStartsTheServiceAndConnectsAgain() async throws {
+        let files = FileManager.default
+        let path = "/tmp/gt-stale-\(UUID().uuidString.prefix(8)).sock"
+        try Self.leaveStaleSocket(at: path)
+        defer { try? files.removeItem(atPath: path) }
+        XCTAssertTrue(files.fileExists(atPath: path))
+        let fresh = FakeRPCPeer()
+        try fresh.start()
+        defer { fresh.stop() }
+        var starts = 0
+        let rpc = GenesisToolsRPC(path: path, startService: {
+            starts += 1
+            // What `serve --detach` does: the new service replaces the stale file with its own socket.
+            try files.removeItem(atPath: path)
+            try files.createSymbolicLink(atPath: path, withDestinationPath: fresh.path)
+        })
+        defer { rpc.close() }
+        let answering = Task.detached {
+            for method in ["hello", "subscribe"] {
+                let line = try fresh.line { $0["method"] as? String == method }
+                fresh.send(["jsonrpc": "2.0", "id": line["id"] ?? NSNull(), "result": [String: Any]()])
+            }
+        }
+        try await rpc.connect()
+        try await answering.value
+        XCTAssertEqual(starts, 1)
+    }
+
     /// The client waits past the service's bound for an action call, so the service's own expiry answer arrives first.
     func testActionCallsWaitPastTheServicesBound() {
         XCTAssertEqual(GenesisToolsRPC.actionClientTimeout("person.ask"), 140)
         XCTAssertEqual(GenesisToolsRPC.actionClientTimeout("windows.open"), 620)
         XCTAssertEqual(GenesisToolsRPC.actionClientTimeout("windows.open", override: 5_000), 25)
+    }
+
+    /// Binds a Unix socket at `path` and closes it without removing the file, as a service that was killed does.
+    private static func leaveStaleSocket(at path: String) throws {
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        defer { Darwin.close(descriptor) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &address.sun_path) { raw in
+            raw.copyBytes(from: bytes)
+            raw[bytes.count] = 0
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        guard bound == 0 else { throw POSIXError(.EADDRINUSE) }
     }
 }

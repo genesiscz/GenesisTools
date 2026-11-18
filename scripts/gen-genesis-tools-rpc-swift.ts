@@ -354,7 +354,15 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
         let finish: (Error?) -> Void
     }
     private var listeners: [String: [UUID: Listener]] = [:]
-    public init(path: String = GenesisToolsHome.path("genesis-tools/service.sock")) { self.path = path }
+    /// Starts the service and returns once it listens: \`genesis-tools serve --detach\` unless a test passes its own.
+    private let startService: @MainActor () async throws -> Void
+    public init(
+        path: String = GenesisToolsHome.path("genesis-tools/service.sock"),
+        startService: (@MainActor () async throws -> Void)? = nil
+    ) {
+        self.path = path
+        self.startService = startService ?? GenesisToolsRPC.serveDetached
+    }
     public func connect() async throws { _ = try await ready() }
     private func ready() async throws -> JSONRPCSocketClient {
         if let peer { return peer }
@@ -364,15 +372,19 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
         defer { if connecting == attempt { connecting = nil } }
         return try await attempt.value
     }
-    /// Starts the service when its socket is missing, and publishes the connection only after \`hello\` and \`subscribe\`.
+    /// Starts the service when its socket is missing or refuses the connection, and publishes the connection only after
+    /// \`hello\` and \`subscribe\`.
     private func open() async throws -> JSONRPCSocketClient {
-        if !FileManager.default.fileExists(atPath: path) {
-            let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
-            let started = try await bridge.run(subcommand: "genesis-tools", args: ["serve", "--detach"], timeoutSeconds: 20)
-            guard started.exitCode == 0 else { throw ToolsBridgeError.refused(started.stderr) }
-        }
+        if !FileManager.default.fileExists(atPath: path) { try await startService() }
         let opened = JSONRPCSocketClient(path: path)
-        try opened.connect()
+        do {
+            try opened.connect()
+        } catch {
+            // A service that was killed leaves its socket file behind. \`serve --detach\` starts a new one, which
+            // replaces the file, so the second connect reaches it; a second failure is the caller's error.
+            try await startService()
+            try opened.connect()
+        }
         var announced = Set(handlers.keys)
         for (name, handler) in handlers { opened.answer(name, with: handler) }
         opened.onClose = { [weak self, weak opened] in
@@ -403,6 +415,11 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
         }
         peer = opened
         return opened
+    }
+    private static func serveDetached() async throws {
+        let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
+        let started = try await bridge.run(subcommand: "genesis-tools", args: ["serve", "--detach"], timeoutSeconds: 20)
+        guard started.exitCode == 0 else { throw ToolsBridgeError.refused(started.stderr) }
     }
     public func close() {
         connecting?.cancel()
