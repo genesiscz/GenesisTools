@@ -452,8 +452,7 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
                        detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both.",
                        actionTitle: link == nil ? (noSource.showScreen == nil ? nil : "Show the screen recording") : "Link a meeting…",
                        action: link ?? noSource.showScreen,
-                       secondaryTitle: link == nil || noSource.showScreen == nil ? nil : "Show the screen recording",
-                       secondarySymbol: "display", secondaryAction: link == nil ? nil : noSource.showScreen)
+                       secondary: link == nil ? nil : noSource.showScreen.map { EmptyState.Secondary("Show the screen recording", symbol: "display", perform: $0) })
                 .sheet(isPresented: $linking) {
                     if let meeting = noSource.linkTo { LinkSourceSheet(detail: meeting) { linking = false } }
                 }

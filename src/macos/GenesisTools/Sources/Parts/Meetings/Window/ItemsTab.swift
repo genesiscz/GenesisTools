@@ -202,9 +202,7 @@ struct ItemsTab: View {
                 if detail.isBusy("suggest") {
                     SuggestRunView(progress: detail.suggestProgress)
                 } else {
-                    EmptyState(symbol: "checklist", text: "No items yet",
-                               detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
-                               actionTitle: hasTranscript ? "Suggest items" : nil) { suggest() }
+                    ItemsEmptyState(hasTranscript: hasTranscript) { suggest() }
                 }
                 }
             } else if projection.ready {
@@ -563,6 +561,19 @@ final class RowLayout {
         defer { top = newTop }
         guard let top, abs(newTop - top) > 0.5 else { return false }
         return !windowScrolls
+    }
+}
+
+/// The Items tab with nothing to list: "No items yet" and, with a transcript, the button that runs the rules. Its own
+/// view, so a test draws the call the tab makes (w_xow4oigk: the button vanished while the words stayed).
+struct ItemsEmptyState: View {
+    let hasTranscript: Bool
+    let suggest: () -> Void
+
+    var body: some View {
+        EmptyState(symbol: "checklist", text: "No items yet",
+                   detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
+                   actionTitle: hasTranscript ? "Suggest items" : nil, action: suggest)
     }
 }
 
