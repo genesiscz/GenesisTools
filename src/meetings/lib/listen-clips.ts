@@ -36,8 +36,8 @@ export async function clipSettings(listen: ListenSettings, pads: ListenPads): Pr
 
 /**
  * The clip of one question, the same for the terminal and for `listen --clip-out`: the question's Moment (moment.ts)
- * as `cutClip` takes it. A word question plays the spot of its own occurrence, a speaker question only the asked
- * voice from the tone on, and a word keeps the pads of audio before and after it.
+ * as `cutClip` takes it. A word plays its own occurrence, a split part its quoted words, and a speaker question
+ * the passages its answer decides.
  */
 export function questionClip(
     options: {
@@ -137,6 +137,7 @@ export interface WrittenClip {
     /** The pad after the stretch, only when it differs from `padSec` (`playback.listen.padAfterSec`). */
     padAfterSec?: number;
     toneAtSec?: number;
+    gapNote?: string;
 }
 
 /**
@@ -174,6 +175,7 @@ export async function writeQuestionClips(
             padSec: plan.padSec,
             ...(plan.padAfterSec === undefined ? {} : { padAfterSec: plan.padAfterSec }),
             ...(plan.toneAtSec === undefined ? {} : { toneAtSec: plan.toneAtSec }),
+            ...(plan.gapNote ? { gapNote: plan.gapNote } : {}),
         });
     }
 
