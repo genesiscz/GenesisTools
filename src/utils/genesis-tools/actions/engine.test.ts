@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigStore, resolveConfig } from "@genesiscz/utils/genesis-tools/actions/config";
@@ -20,7 +20,7 @@ import {
     Need,
     type NeedSpec,
 } from "@genesiscz/utils/genesis-tools/capability/needs";
-import { connectGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/clients";
+import { connectGenesisToolsService, genesisToolsSourceRoot } from "@genesiscz/utils/genesis-tools/service/clients";
 import { startGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/host";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -649,6 +649,7 @@ describe("the service client", () => {
         const value = { protocol: 1, bundleId: "example.fixture", version: "1", build: "fixture", methods: [] };
         const start = await startGenesisToolsService({
             dir,
+            sourceRoot: genesisToolsSourceRoot(),
             deps: {
                 facts: fakeFacts(),
                 app: {
@@ -664,6 +665,8 @@ describe("the service client", () => {
             throw new Error("fixture service did not start");
         }
 
+        expect(existsSync(join(genesisToolsSourceRoot(), "src/utils/genesis-tools/service/clients.ts"))).toBe(true);
+        expect(start.host.entry.sourceRoot).toBe(genesisToolsSourceRoot());
         const client = await connectGenesisToolsService({ dir });
 
         try {
