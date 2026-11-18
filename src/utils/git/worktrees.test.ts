@@ -87,6 +87,15 @@ describe("cleanupBlockers: each rule blocks, and its absence does not", () => {
         ]);
     });
 
+    test('a lock blocker starts with "Locked:", the prefix build-purge lifts a stale lock by', () => {
+        const text = (locked: string) =>
+            cleanupBlockers(facts({ locked }))
+                .filter((b) => b.kind === "locked")
+                .map((b) => b.text);
+        expect(text("agent 4242 holds it")).toEqual(["Locked: agent 4242 holds it"]);
+        expect(text("")).toEqual(["Locked: no reason given"]);
+    });
+
     test("uncommitted work: tracked changes, untracked entries, an unreadable status", () => {
         expect(kinds({ changedCount: 2, changed: ["a.ts", "b.ts"] })).toEqual(["changed"]);
         expect(kinds({ untrackedCount: 1, untracked: ["notes.md"] })).toEqual(["untracked"]);
