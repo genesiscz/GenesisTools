@@ -25,8 +25,13 @@ struct ReviewRowView: View, Equatable {
     var choiceKeys = true
     /// The row's draft in its editor, for "Use mine instead".
     var draft: String?
-    @State private var editingVoices = false
-    @State private var writingListenComment = false
+    /// "Something else…" or "Two voices…" of the answers' More menu, a popover on that menu.
+    @State private var morePopover: MorePopover?
+
+    enum MorePopover: String, Identifiable {
+        case comment, voices
+        var id: String { rawValue }
+    }
     /// The row is in `detail.changingRows`: its answer is being changed.
     var changingAnswer = false
     /// Which of `foldedShapes` a folded row draws (`foldedFit`, from the list's width).
@@ -345,32 +350,82 @@ struct ReviewRowView: View, Equatable {
         return nil
     }
 
-    /// The choices as buttons, each with its number key (G23) and the engine's confidence in secondary digits (R49).
+    /// The answers a question card keeps out of the first row (window audit H4): "None of these" and "Several voices"
+    /// are rare, so they sit in the More menu with "Two voices…" and "Something else…". A rare one the engine suggests
+    /// or an answer already given stays a button, so the state is never hidden.
+    static let rareRoles: Set<String> = ["none", "split"]
+
+    /// The choices as buttons, each with its number key (G23) and the engine's confidence in secondary digits (R49): the
+    /// names first in the engine's order, then "Somebody else…" and More, and Skip last, set apart. The number keys keep
+    /// the engine's order of all choices, also those in More, whose items name their key.
     private var choices: some View {
-        WrapLayout(spacing: 6, lineSpacing: 6) {
-            ForEach(Array(row.choices.enumerated()), id: \.element.id) { index, choice in
-                ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
-                             number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
-                    detail.choose(choice, on: row)
+        let numbered = Array(row.choices.enumerated())
+        let inMore = numbered.filter { Self.rareRoles.contains($0.element.role) && DecisionState.of($0.element, in: row) == .plain }
+        let skip = numbered.first { $0.element.role == "skip" }
+        let shown = numbered.filter { item in item.element.role != "skip" && !inMore.contains { $0.offset == item.offset } }
+        let speakerQuestion = row.isQuestion && asksSpeaker
+        return HStack(alignment: .top, spacing: 12) {
+            WrapLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(shown, id: \.element.id) { index, choice in choiceButton(choice, index: index) }
+                if speakerQuestion {
+                    GhostButton("Somebody else…", symbol: "person.crop.circle.badge.questionmark", tooltip: "Search for the person") { detail.edit(row) }
+                }
+                // A speaker question has its "Somebody else…" above; a second one beside it did the same thing.
+                if row.edit != "none", !speakerQuestion {
+                    GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
+                        detail.edit(row)
+                    }
+                    .disabled(busy)
+                }
+                if !inMore.isEmpty || speakerQuestion {
+                    moreMenu(inMore, speakerQuestion: speakerQuestion)
                 }
             }
-            if row.isQuestion && asksSpeaker {
-                GhostButton("Somebody else…", symbol: "person.crop.circle.badge.questionmark", tooltip: "Search for the person") { detail.edit(row) }
-                GhostButton("Something else…", symbol: "text.bubble", tooltip: "Comment and keep the question open") { writingListenComment = true }
-                    .popover(isPresented: $writingListenComment) {
-                        ListenCommentEditor(row: row, detail: detail) { writingListenComment = false }
-                    }
-                GhostButton("Two voices…", symbol: "person.2", tooltip: "Choose speakers in order and the word split") { editingVoices = true }
-                    .popover(isPresented: $editingVoices) {
-                        ListenVoicesEditor(row: row, detail: detail) { editingVoices = false }
-                    }
+            if let skip {
+                Spacer(minLength: 0)
+                choiceButton(skip.element, index: skip.offset)
             }
-            // A speaker question has its "Somebody else…" above; a second one beside it did the same thing.
-            if row.edit != "none", !(row.isQuestion && asksSpeaker) {
-                GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
-                    detail.edit(row)
-                }
-                .disabled(busy)
+        }
+    }
+
+    private func choiceButton(_ choice: RowChoice, index: Int) -> some View {
+        ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
+                     number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
+            detail.choose(choice, on: row)
+        }
+    }
+
+    /// "More ▾": the rare answers with their number keys, and for a speaker question "Two voices…" and "Something
+    /// else…", which open their editor as a popover on this button.
+    private func moreMenu(_ rare: [(offset: Int, element: RowChoice)], speakerQuestion: Bool) -> some View {
+        MenuButton(style: .genHoverPlain(), items: {
+            var items: [MenuButtonItem] = rare.map { index, choice in
+                let key = choiceKeys && index < 9 ? "  (\(index + 1))" : ""
+                return .action(choice.label + key, enabled: !busy) { detail.choose(choice, on: row) }
+            }
+            if speakerQuestion {
+                if !items.isEmpty { items.append(.divider) }
+                items.append(.action("Two voices…", enabled: !busy) { morePopover = .voices })
+                items.append(.action("Something else…") { morePopover = .comment })
+            }
+            return items
+        }) {
+            HStack(spacing: 4) {
+                Text("More").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 22)
+            .contentShape(Rectangle())
+        }
+        .instantTooltip(speakerQuestion ? "More answers: none of these, several voices, two voices with the word split, or a comment"
+                                        : "More answers")
+        .accessibilityLabel("More answers")
+        .accessibilityIdentifier("meetings.row.more")
+        .popover(item: $morePopover, arrowEdge: .bottom) { popover in
+            switch popover {
+            case .comment: ListenCommentEditor(row: row, detail: detail) { morePopover = nil }
+            case .voices: ListenVoicesEditor(row: row, detail: detail) { morePopover = nil }
             }
         }
     }
