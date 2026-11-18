@@ -323,7 +323,6 @@ struct PersonPickerRow: View {
     let action: () -> Void
 
     var body: some View {
-        // lint-rules-ignore: short list (at most 20 people a search returns, in a lazy stack)
         HStack(spacing: 8) {
             PersonAvatarView(person: person)
             VStack(alignment: .leading, spacing: 1) {
@@ -352,6 +351,8 @@ struct PersonPickerRow: View {
         .accessibilityLabel(Self.spoken(person, use: use))
         .accessibilityAddTraits(highlighted ? .isSelected : [])
         .accessibilityIdentifier("meetings.personPicker.row.\(person.id)")
+        // Live under the pointer or while highlighted: at rest the row is a resting button, as in every kit list.
+        .liveRow(selected: highlighted)
     }
 
     /// What VoiceOver and an agent read for the row: the name, "you", the address and the rank.
