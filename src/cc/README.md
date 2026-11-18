@@ -182,8 +182,9 @@ The full manual for each of these commands is [`tools claude`](../claude/README.
   "Claude Code". So a wrapper function in your rc file wins over the plain binary. The answer is cached for 7 days,
   and an edit of `~/.zshrc` (or `~/.bashrc`) clears it.
 - A wrapper that exists but fails or does not answer in 3 seconds (during a Claude Code update, for example) gets a
-  second try. If it stays silent, the next candidate starts this one session and the answer is not cached, so the
-  next launch asks again. An alias is not a wrapper: the launch is `exec <command>`, which does not expand an alias.
+  second try once a later candidate answers. If it stays silent, that later candidate starts the session and the
+  answer is cached for one minute only, so a launch a minute later asks again. When no later candidate answers
+  either, the silent wrapper is not asked again and the launch uses plain `claude`. An alias is not a wrapper: the launch is `exec <command>`, which does not expand an alias.
 - `GENESIS_TOOLS_HOME` replaces the home folder for GenesisTools data: the files go to `$GENESIS_TOOLS_HOME/.genesis-tools/`
   instead of `~/.genesis-tools/`.
 - Cost: the resume path reads only local history and the running processes. A launch uses your Claude

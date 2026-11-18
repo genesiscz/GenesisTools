@@ -11,6 +11,7 @@ import {
     findClaudeCommand,
     findClaudeExecutable,
     pickClaudeCommand,
+    probeScript,
 } from "./index";
 
 describe("findClaudeCommand timeout cleanup", () => {
@@ -123,6 +124,31 @@ describe("findClaudeCommand probe verdicts", () => {
 
         expect(await findClaudeCommand()).toBe("wrapper");
         expect(calls).toEqual(["wrapper", "compiler", "binary", "wrapper"]);
+    });
+});
+
+describe("probeScript in a real shell", () => {
+    async function run(prelude: string, candidate: string): Promise<{ exitCode: number; stdout: string }> {
+        const proc = Bun.spawn({
+            cmd: ["bash", "-c", `shopt -s expand_aliases\n${prelude}\n${probeScript(candidate)}`],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const stdout = await new Response(proc.stdout).text();
+        return { exitCode: await proc.exited, stdout };
+    }
+
+    test("an alias counts as not defined, because exec does not expand it", async () => {
+        expect((await run("alias fakeclaude='echo Claude Code'", "fakeclaude")).exitCode).toBe(97);
+    });
+
+    test("an undefined name exits 97", async () => {
+        expect((await run(":", "gt-no-such-claude-wrapper")).exitCode).toBe(97);
+    });
+
+    test("a function that prints Claude Code answers", async () => {
+        const result = await run("fakeclaude() { echo '9.9.9 (Claude Code)'; }", "fakeclaude");
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Claude Code");
     });
 });
 

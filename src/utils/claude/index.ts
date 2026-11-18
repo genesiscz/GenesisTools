@@ -107,9 +107,16 @@ interface ResolvedCommandCache {
     rcPath: string | null;
     rcMtimeMs: number | null;
     cachedAt: number;
+    /** How long this pick holds; absent means the 7-day TTL. A pick behind a silent wrapper holds one minute. */
+    ttlMs?: number;
 }
 
 const RESOLVED_COMMAND_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * A pick made while an earlier wrapper gave no answer: short, so a wrapper that recovers (a Claude Code update ended)
+ * wins again within a minute, while one that never answers costs its probe timeouts once a minute, not on every launch.
+ */
+const UNSETTLED_COMMAND_CACHE_TTL_MS = 60 * 1000;
 const RESOLVED_COMMAND_CACHE_VERSION = 2;
 
 function resolvedCommandCachePath(): string {
@@ -156,7 +163,7 @@ function readResolvedCommandCache(shell: string): string | null {
             return null;
         }
 
-        if (Date.now() - cache.cachedAt > RESOLVED_COMMAND_CACHE_TTL_MS) {
+        if (Date.now() - cache.cachedAt > (cache.ttlMs ?? RESOLVED_COMMAND_CACHE_TTL_MS)) {
             return null;
         }
 
@@ -173,7 +180,7 @@ function readResolvedCommandCache(shell: string): string | null {
     }
 }
 
-function writeResolvedCommandCache(command: string, shell: string): void {
+function writeResolvedCommandCache(command: string, shell: string, ttlMs?: number): void {
     try {
         const path = resolvedCommandCachePath();
         mkdirSync(dirname(path), { recursive: true });
@@ -185,6 +192,7 @@ function writeResolvedCommandCache(command: string, shell: string): void {
             rcPath,
             rcMtimeMs: rcMtimeMs(rcPath),
             cachedAt: Date.now(),
+            ...(ttlMs === undefined ? {} : { ttlMs }),
         };
         writeFileSync(path, SafeJSON.stringify(cache, null, 2));
         logger.debug({ command, shell }, "[findClaudeCommand] cached resolved command");
@@ -206,8 +214,9 @@ const NOT_DEFINED_EXIT = 97;
 /**
  * `command -v` answers for a function and for a file. An alias counts as not defined, because the launch is
  * `exec <command>` and a shell does not expand an alias there.
+ * @internal exported for tests
  */
-function probeScript(candidate: string): string {
+export function probeScript(candidate: string): string {
     const defined = `case "$(command -v '${candidate}' 2>/dev/null)" in ''|alias\\ *) exit ${NOT_DEFINED_EXIT};; esac`;
     return `${defined}; '${candidate}' --version 2>&1`;
 }
@@ -318,10 +327,12 @@ export async function findClaudeCommand(): Promise<string> {
     if (!picked.settled) {
         logger.warn(
             { command: picked.command, candidates, shell },
-            "[findClaudeCommand] an earlier candidate gave no answer, so this pick is not cached"
+            "[findClaudeCommand] an earlier candidate gave no answer, so this pick is cached for one minute only"
         );
-    } else if (!findClaudeCommandTestHooks) {
-        writeResolvedCommandCache(picked.command, shell);
+    }
+
+    if (!findClaudeCommandTestHooks) {
+        writeResolvedCommandCache(picked.command, shell, picked.settled ? undefined : UNSETTLED_COMMAND_CACHE_TTL_MS);
     }
 
     return picked.command;
