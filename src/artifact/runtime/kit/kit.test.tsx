@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parsePatch } from "diff";
-import { act, useState } from "react";
+import { act, type ReactNode, Suspense, startTransition, use, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
 import { SERIES_COLOR } from "./charts";
 import { contrastRatio, parseCssColor, readableInlineInk, readableTextOn } from "./color";
@@ -11,6 +12,8 @@ import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
 import { type EditableColumn, type EditableRow, EditableTable, editableCellError, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
+import { ImageCompare, ImageCompareModeSwitch, ImageCompareProvider } from "./image-compare";
+import { createIdleCache, IMAGE_LOAD_DEADLINE_MS } from "./image-compare/load";
 import { LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
 import { MD_BODY_CLASS, MD_DOCUMENT_CLASS, Md, MdViewer } from "./md";
@@ -31,7 +34,7 @@ import {
 import { matchRoute } from "./router";
 import { moveItem, type SortableItem, SortableList, type SortableMove } from "./sortable";
 import { asciiTreeRows, Compare, JsonView, MappingList, Steps, TreeView, treeFromPaths } from "./structure";
-import { mountDom } from "./test-dom";
+import { type DomHarness, mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
 import { placeTooltip, Tooltip, useTooltip } from "./tooltip";
 import { CapacityGrid, capacityStatus, Heatmap, Meter, meterTone, SegmentBar, Sparkline, sparklinePath } from "./viz";
@@ -2938,4 +2941,1270 @@ describe("design pages", () => {
             }
         }
     });
+});
+
+// ─── ImageCompare ───
+
+/**
+ * An <img> stand-in for jsdom: "fake://WxH/name" loads with that natural size, "stall://" never answers (a response
+ * that hangs), anything else fails.
+ */
+class FakeImage {
+    crossOrigin = "";
+    decoding = "";
+    naturalWidth = 0;
+    naturalHeight = 0;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    #src = "";
+
+    get src(): string {
+        return this.#src;
+    }
+
+    set src(value: string) {
+        this.#src = value;
+
+        if (value.startsWith("stall://")) {
+            return;
+        }
+
+        const size = /^fake:\/\/(\d+)x(\d+)\//.exec(value);
+        // A timer of the page window, so a wait in settleUntil wakes when the image answers.
+        window.setTimeout(() => {
+            if (!size) {
+                this.onerror?.();
+                return;
+            }
+
+            this.naturalWidth = Number(size[1]);
+            this.naturalHeight = Number(size[2]);
+            this.onload?.();
+        }, 0);
+    }
+}
+
+/**
+ * White pixels; a name with "changed" adds an 8 x 6 navy block at (12, 30). A name with "page" draws text-like bars,
+ * moved by (3, 12) when the name also says "shifted", so the alignment has something to find.
+ */
+function fakePixels(src: string, width: number, height: number): Uint8ClampedArray {
+    const data = new Uint8ClampedArray(width * height * 4).fill(255);
+
+    if (src.includes("page")) {
+        const dx = src.includes("shifted") ? 3 : 0;
+        const dy = src.includes("shifted") ? 12 : 0;
+
+        for (let line = 0; line * 14 + 16 < height; line++) {
+            const left = 12 + ((line * 37) % 29) + dx;
+            const length = 20 + ((line * 53) % (width - 80));
+
+            for (let y = Math.max(0, 10 + line * 14 + dy); y < Math.min(height, 17 + line * 14 + dy); y++) {
+                for (let x = Math.max(0, left); x < Math.min(width, left + length); x++) {
+                    data.set([40, 40, 48, 255], (y * width + x) * 4);
+                }
+            }
+        }
+    }
+
+    if (src.includes("changed")) {
+        for (let y = 30; y < 36; y++) {
+            for (let x = 12; x < 20; x++) {
+                data.set([20, 30, 120, 255], (y * width + x) * 4);
+            }
+        }
+    }
+
+    // "dots": a 6 x 6 navy block every 40 px down the image, each its own region.
+    if (src.includes("dots")) {
+        for (let top = 10; top + 6 <= height; top += 40) {
+            for (let y = top; y < top + 6; y++) {
+                for (let x = 12; x < 18; x++) {
+                    data.set([20, 30, 120, 255], (y * width + x) * 4);
+                }
+            }
+        }
+    }
+
+    return data;
+}
+
+class FakeImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+
+    constructor(data: Uint8ClampedArray, width: number, height: number) {
+        // The browser refuses a buffer of the wrong length; so does this stand-in.
+        if (data.length !== width * height * 4) {
+            throw new RangeError(`ImageData: ${data.length} bytes for ${width} x ${height}`);
+        }
+
+        this.data = data;
+        this.width = width;
+        this.height = height;
+    }
+}
+
+/** True once the comparison left "Loading the images...": every image has its size, or failed. */
+function imagesSettled(scope: Element): boolean {
+    return !(scope.textContent ?? "").includes("Loading the images...");
+}
+
+/**
+ * jsdom has neither image decoding nor a 2D canvas; these stand-ins let the real diff path run. `prepare` runs on the
+ * fresh window before the first render (stored picks, theme tokens, held timers); the mount then waits until `ready`
+ * holds (default: the images are loaded). `painted` holds every pixel buffer a canvas received, newest last.
+ */
+async function mountImageCompare(
+    node: ReactNode,
+    {
+        prepare,
+        ready = imagesSettled,
+    }: { prepare?: (window: DomHarness["window"]) => void; ready?: (scope: Element) => boolean } = {}
+) {
+    const dom = await mountDom(null);
+    const saved = { Image: globalThis.Image, ImageData: globalThis.ImageData };
+    const painted: FakeImageData[] = [];
+    // Puts the browser globals back even when the unmount throws.
+    const restore = async () => {
+        try {
+            await dom.unmount();
+        } finally {
+            Object.assign(globalThis, saved);
+        }
+    };
+    Object.assign(globalThis, { Image: FakeImage, ImageData: FakeImageData });
+    Object.assign(dom.window, { Image: FakeImage });
+    countTimerRuns(dom.window);
+    // Every pane is 600 px wide, so fit and the zoom buttons have a size to work with.
+    Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+        configurable: true,
+        value() {
+            let source = "";
+
+            return {
+                drawImage(image: { src: string }) {
+                    source = image.src;
+                },
+                fillRect() {},
+                getImageData(_x: number, _y: number, width: number, height: number) {
+                    return { data: fakePixels(source, width, height) };
+                },
+                putImageData(data: FakeImageData) {
+                    painted.push(data);
+                },
+            };
+        },
+    });
+
+    try {
+        prepare?.(dom.window);
+        await dom.render(node);
+        await settleUntil(() => ready(dom.container), "the comparison to be ready");
+    } catch (error) {
+        // A mount that fails cleans up after itself: the caller never got `restore`.
+        await restore().catch((cleanup: unknown) => {
+            throw new AggregateError([error, cleanup], "The comparison failed to mount, and its cleanup failed too.");
+        });
+        throw error;
+    }
+
+    const text = (scope: Element = dom.container) => scope.textContent ?? "";
+    const radio = (label: string, scope: ParentNode = dom.container) =>
+        [...scope.querySelectorAll('[role="radio"]')].find((element) => element.textContent === label);
+    const button = (label: string, scope: ParentNode = dom.container) =>
+        [...scope.querySelectorAll("button")].find(
+            (element) => element.getAttribute("aria-label") === label || element.textContent === label
+        );
+
+    return { dom, text, radio, button, restore, painted };
+}
+
+/**
+ * The runs of the page timers: every timer a mounted comparison sets on its window (an image that answers, the load
+ * deadline, the wait before a computation, the idle callback), each counted after its handler ran. In these tests
+ * nothing on the page changes except in one of them or in an `act` the test runs itself.
+ */
+const pageTimers = { runs: 0, waiting: new Set<() => void>() };
+
+/** Counts each run of `window`'s timers in `pageTimers` and wakes every wait. */
+function countTimerRuns(window: DomHarness["window"]): void {
+    const setTimer = window.setTimeout.bind(window);
+
+    Object.assign(window, {
+        setTimeout: (handler: () => void, delay = 0) =>
+            setTimer(() => {
+                try {
+                    handler();
+                } finally {
+                    pageTimers.runs += 1;
+
+                    for (const wake of [...pageTimers.waiting]) {
+                        wake();
+                    }
+                }
+            }, delay),
+    });
+}
+
+/** The run count once a page timer ran past `seen` runs, or after `ms` when none did. */
+function nextTimerRun(seen: number, ms: number): Promise<number> {
+    if (pageTimers.runs !== seen) {
+        return Promise.resolve(pageTimers.runs);
+    }
+
+    return new Promise((resolve) => {
+        const wake = (): void => {
+            clearTimeout(deadline);
+            pageTimers.waiting.delete(wake);
+            resolve(pageTimers.runs);
+        };
+        const deadline = setTimeout(wake, ms);
+        pageTimers.waiting.add(wake);
+    });
+}
+
+/**
+ * Flushes React until `check` holds, and fails naming `what` after `deadlineMs`. Each look follows an `act` that
+ * ends when the next page timer has run, because React applies the update that timer made when the act ends; between
+ * two runs nothing changes, so the wait wakes on the run and never on a short clock.
+ */
+async function settleUntil(check: () => boolean, what: string, deadlineMs = 5_000): Promise<void> {
+    const deadline = Date.now() + deadlineMs;
+    let seen = pageTimers.runs;
+
+    while (!check()) {
+        const left = deadline - Date.now();
+
+        if (left <= 0) {
+            throw new Error(`Gave up after ${deadlineMs} ms waiting for ${what}.`);
+        }
+
+        // A run during the act's own flush is past `seen`, so the next look comes at once.
+        await act(async () => {
+            seen = await nextTimerRun(seen, left);
+        });
+    }
+}
+
+/** What a comparison shows while its images load or a pixel mode works; none of it stays once the mode is done. */
+const BUSY_TEXT = ["Loading the images...", "Reading the pixels...", "Computing the", "Updating for the new settings"];
+
+/**
+ * Waits until the comparison's pixel mode shows its result: the pair decoded, the diff or heat map computed, and none
+ * of it stale. It reads the global `document`, which `mountDom` points at the latest mounted window.
+ */
+async function settlePixels(): Promise<void> {
+    await settleUntil(
+        () => !BUSY_TEXT.some((busy) => (document.body.textContent ?? "").includes(busy)),
+        "the pixel mode's result"
+    );
+}
+
+/**
+ * Holds back every window timer of `ms` in `held` (its id to its handler), so the test fires it when it is ready
+ * instead of racing real time. Every other timer runs as usual, and clearing a held timer drops it.
+ */
+function holdTimers(window: DomHarness["window"], ms: number, held: Map<number, () => void>): void {
+    const setTimer = window.setTimeout.bind(window);
+    const clearTimer = window.clearTimeout.bind(window);
+    let nextId = 0;
+
+    Object.assign(window, {
+        setTimeout: (handler: () => void, delay = 0) => {
+            if (delay !== ms) {
+                return setTimer(handler, delay);
+            }
+
+            nextId -= 1;
+            held.set(nextId, handler);
+
+            return nextId;
+        },
+        clearTimeout: (id?: number) => {
+            if (id === undefined || !held.delete(id)) {
+                clearTimer(id);
+            }
+        },
+    });
+}
+
+/** Runs every held timer once inside `act`, so what it sets renders before the next assertion. */
+async function fireHeld(held: Map<number, () => void>): Promise<void> {
+    await act(async () => {
+        for (const [id, handler] of [...held]) {
+            held.delete(id);
+            handler();
+        }
+    });
+}
+
+/** Where the first pane draws its canvas (pane pixels) and at which scale, and the canvas size it draws. */
+function paneView(container: ParentNode): { x: number; y: number; scale: number; width: number; height: number } {
+    const layer = container.querySelector<HTMLElement>('[role="group"][tabindex="0"] .origin-top-left');
+    const value = "(-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?)";
+    const match = new RegExp(`translate\\(${value}px, ${value}px\\) scale\\(${value}\\)`).exec(
+        layer?.style.transform ?? ""
+    );
+
+    return {
+        x: Number(match?.[1]),
+        y: Number(match?.[2]),
+        scale: Number(match?.[3]),
+        width: Number.parseFloat(layer?.style.width ?? ""),
+        height: Number.parseFloat(layer?.style.height ?? ""),
+    };
+}
+
+/** A keydown that the page may still act on, and whether the comparison took it. */
+async function keyTaken(dom: DomHarness, target: Element | null, key: string): Promise<boolean> {
+    const event = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    await dom.fire(target, event);
+
+    return event.defaultPrevented;
+}
+
+describe("ImageCompare", () => {
+    test("every mode renders, the slider keys move the handle, Space flips Blink and the diff boxes its region", async () => {
+        const { dom, text, radio, button, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://120x80/plain-a" }}
+                after={{ src: "fake://120x90/changed-a" }}
+                caption="A *caption*"
+            />
+        );
+
+        try {
+            expect(text()).toContain("Sizes differ: Before 120 x 80, After 120 x 90");
+            expect(dom.container.querySelectorAll('[role="radio"]').length).toBe(6);
+            expect(dom.container.querySelectorAll("img").length).toBe(2);
+            expect(dom.container.querySelector("figcaption em")?.textContent).toBe("caption");
+
+            await dom.click(radio("Slider"));
+            const slider = () => dom.container.querySelector('[role="slider"]');
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("50");
+            await dom.press(slider(), "ArrowRight");
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("52");
+            await dom.fire(
+                slider(),
+                new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true })
+            );
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("42");
+            await dom.press(slider(), "Home");
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("0");
+
+            await dom.click(radio("Blink"));
+            expect(text()).toContain("A: Before");
+            await dom.press(dom.container.querySelector('[role="group"][tabindex="0"]'), " ");
+            expect(text()).toContain("B: After");
+
+            await dom.click(radio("Fade"));
+            expect(dom.container.querySelector('input[type="range"]')).not.toBeNull();
+            expect(text()).toContain("After opacity");
+
+            await dom.click(radio("Diff"));
+            await settlePixels();
+            // 48 block pixels plus the 10 rows only After has (120 x 10).
+            expect(text()).toContain("11.6% of pixels differ (1,248)");
+            const boxes = [...dom.container.querySelectorAll("[data-region]")];
+            expect(boxes.map((box) => box.getAttribute("title"))).toEqual([
+                "Region 1: 48 changed pixels",
+                "Region 2: 1,200 changed pixels",
+            ]);
+            // The numbers sit in the gutter beside the stage, never on the image; the boxes carry none.
+            expect(boxes.map((box) => box.textContent)).toEqual(["", ""]);
+            const numbers = [...dom.container.querySelectorAll("[data-region-label]")];
+            expect(numbers.map((label) => label.textContent)).toEqual(["1", "2"]);
+            expect(dom.container.querySelectorAll("[data-region-leader]").length).toBe(2);
+            // A leader hides no image pixel: past a short tick at its box's edge it runs only through the empty pane
+            // beside the image and the gutter. The leaders' SVG starts at the pane's 1 px border.
+            const view = paneView(dom.container);
+            const [imageLeft, imageRight] = [view.x + 1, view.x + view.width * view.scale + 1];
+            const leaders = [
+                ...(dom.container.querySelector("[data-region-leader]")?.closest("svg")?.querySelectorAll("line") ??
+                    []),
+            ];
+            expect(leaders.length).toBeGreaterThan(0);
+
+            for (const line of leaders) {
+                const [from, to] = [Number(line.getAttribute("x1")), Number(line.getAttribute("x2"))].sort(
+                    (p, q) => p - q
+                );
+                expect(Math.max(0, Math.min(to, imageRight) - Math.max(from, imageLeft))).toBeLessThanOrEqual(6);
+            }
+
+            await dom.click(button("Next region"));
+            expect(text()).toContain("Region 1 of 2");
+            // The region view zooms in; Fit returns to the first view, and a zoom step from there is 125%.
+            expect(text()).not.toContain("-100%+");
+            await dom.click(button("Fit"));
+            expect(text()).toContain("-100%+");
+            await dom.click(button("Zoom in"));
+            expect(text()).toContain("-125%+");
+
+            // The regions list: a click on a number zooms to that region.
+            expect(dom.container.querySelector("table")?.textContent).toContain("1,200");
+            await dom.click(button("Zoom to region 2"));
+            expect(text()).toContain("Region 2 of 2");
+            expect(text()).not.toContain("-125%+");
+            expect(button("Download diff PNG")?.disabled).toBe(false);
+
+            await dom.click(radio("Heat"));
+            await settlePixels();
+            expect(text()).toContain("% of pixels changed colour");
+            expect(text()).toContain("Large change");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the page switch drives every comparison until one picks its own mode, and Follow page returns it", async () => {
+        const { dom, radio, button, text, restore } = await mountImageCompare(
+            <ImageCompareProvider storageKey="kit-test.image-compare">
+                <ImageCompareModeSwitch />
+                <ImageCompare before={{ src: "fake://60x40/plain-b" }} after={{ src: "fake://60x40/plain-c" }} />
+                <ImageCompare before={{ src: "fake://60x40/plain-d" }} after={{ src: "fake://60x40/plain-e" }} />
+            </ImageCompareProvider>
+        );
+
+        try {
+            const figures = () => [...dom.container.querySelectorAll("figure")];
+            const pageSwitch = dom.container.querySelector('[role="radiogroup"]') ?? dom.container;
+
+            await dom.click(radio("Slider", pageSwitch));
+            expect(dom.container.querySelectorAll('[role="slider"]').length).toBe(2);
+
+            await dom.click(radio("Blink", figures()[0]));
+            expect(text(figures()[0])).toContain("Follow page");
+            await dom.click(radio("Fade", pageSwitch));
+            expect(text(figures()[0])).toContain("A: Before");
+            expect(text(figures()[1])).toContain("After opacity");
+
+            await dom.click(button("Follow page", figures()[0]));
+            expect(text(figures()[0])).toContain("After opacity");
+            expect(text(figures()[0])).not.toContain("Follow page");
+
+            // The page threshold shows only for a pixel mode.
+            expect(text(pageSwitch.parentElement?.parentElement ?? dom.container)).not.toContain("Threshold");
+            await dom.click(radio("Diff", pageSwitch));
+            expect(text(pageSwitch.parentElement?.parentElement ?? dom.container)).toContain("Threshold");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("three images get A and B selects, the keys pick modes and step B, and a select keeps its own keys", async () => {
+        const { dom, radio, text, restore } = await mountImageCompare(
+            <ImageCompare
+                images={[
+                    { src: "fake://80x60/plain-f", label: "First" },
+                    { src: "fake://80x60/plain-g", label: "Second" },
+                    { src: "fake://80x60/plain-h", label: "Third" },
+                ]}
+            />
+        );
+
+        try {
+            const selects = () => [...dom.container.querySelectorAll("select")];
+            const pane = () => dom.container.querySelector('[role="group"]');
+            const checked = () => dom.container.querySelector('[role="radio"][aria-checked="true"]')?.textContent;
+            expect(selects().map((select) => select.value)).toEqual(["0", "1"]);
+            expect(text()).toContain("[ and ] step image B");
+
+            await dom.press(pane(), "]");
+            expect(selects()[1].value).toBe("2");
+            expect(text()).toContain("Third");
+            // B skips A on its way round.
+            await dom.press(pane(), "]");
+            expect(selects()[1].value).toBe("1");
+            await dom.press(pane(), "[");
+            expect(selects()[1].value).toBe("2");
+
+            await dom.press(pane(), "2");
+            expect(checked()).toBe("Slider");
+            await dom.press(dom.container.querySelector('[role="slider"]'), "5");
+            expect(checked()).toBe("Diff");
+            // A key typed into a select never reaches the comparison.
+            await dom.press(selects()[0], "3");
+            expect(checked()).toBe("Diff");
+            expect(radio("Heat")).toBeDefined();
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a pair moved by a few pixels is found, said, and diffed aligned until Align is turned off", async () => {
+        const { dom, text, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://160x200/page-a" }}
+                after={{ src: "fake://160x200/page-shifted" }}
+                defaultMode="diff"
+            />
+        );
+
+        try {
+            await settlePixels();
+            expect(text()).toContain("After is shifted by +3, +12 px");
+            expect(text()).toContain("on the aligned pair");
+            const heat = [...dom.container.querySelectorAll('[role="radio"]')].find((r) => r.textContent === "Heat");
+            await dom.click(heat);
+            await settlePixels();
+            expect(text()).toContain("% of pixels changed colour on the aligned pair");
+
+            // Each mode draws its own controls, so the Align toggle is looked up in Heat's row.
+            const align = [...dom.container.querySelectorAll("label")].find((label) => label.textContent === "Align");
+            await dom.click(align?.querySelector("input"));
+            await settlePixels();
+            expect(text()).not.toContain("on the aligned pair");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a shared pixel computation runs for every caller still waiting, whichever caller started it", async () => {
+        const dom = await mountDom(null);
+
+        try {
+            const cache = createIdleCache<string>(4);
+            let runs = 0;
+            const compute = (): string => {
+                runs++;
+                return "diff";
+            };
+
+            // The first caller leaves before the browser goes idle; the second still gets the work, done once.
+            const first = new AbortController();
+            const second = new AbortController();
+            const left = cache.run({ key: "pair", compute, signal: first.signal });
+            const stays = cache.run({ key: "pair", compute, signal: second.signal });
+            first.abort();
+            expect((await stays)?.value).toBe("diff");
+            expect(await left).toBeNull();
+            expect(runs).toBe(1);
+
+            // A caller that comes back to a job every caller had left still gets it.
+            const gone = new AbortController();
+            const back = new AbortController();
+            const abandoned = cache.run({ key: "other", compute, signal: gone.signal });
+            gone.abort();
+            expect((await cache.run({ key: "other", compute, signal: back.signal }))?.value).toBe("diff");
+            expect(await abandoned).toBeNull();
+
+            // When every caller left, nothing runs and nothing is kept.
+            const alone = new AbortController();
+            const skipped = cache.run({ key: "third", compute, signal: alone.signal });
+            alone.abort();
+            expect(await skipped).toBeNull();
+            expect(cache.peek("third")).toBeUndefined();
+            expect(runs).toBe(2);
+        } finally {
+            await dom.unmount();
+        }
+    });
+
+    test("while a new diff or heat map computes, the old one stays at its own shift, says so, and the PNG waits", async () => {
+        const { dom, text, radio, button, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://160x200/page-c" }}
+                after={{ src: "fake://160x200/page-shifted-c" }}
+                defaultMode="diff"
+            />
+        );
+
+        try {
+            const underlay = () => dom.container.querySelector<HTMLImageElement>('[role="group"][tabindex="0"] img');
+            const align = () =>
+                [...dom.container.querySelectorAll("label")]
+                    .find((label) => label.textContent === "Align")
+                    ?.querySelector("input");
+            const download = () => button("Download diff PNG");
+
+            await settlePixels();
+            expect(text()).toContain("on the aligned pair");
+            expect(underlay()?.style.left).toBe("-3px");
+            expect(download()?.disabled).toBe(false);
+
+            // Align off: until the unshifted diff is ready, the aligned one stays drawn where it was computed.
+            await dom.click(align());
+            expect(underlay()?.style.left).toBe("-3px");
+            expect(underlay()?.style.top).toBe("-12px");
+            expect(text()).toContain("on the aligned pair");
+            expect(text()).toContain("Updating for the new settings");
+            expect(download()?.disabled).toBe(true);
+
+            await settlePixels();
+            expect(underlay()?.style.left).toBe("0px");
+            expect(text()).not.toContain("on the aligned pair");
+            expect(text()).not.toContain("Updating for the new settings");
+            expect(download()?.disabled).toBe(false);
+
+            // Heat, the other way round: Align on keeps the unshifted map until the aligned one is ready.
+            await dom.click(radio("Heat"));
+            await settlePixels();
+            expect(text()).toContain("inside only one image: largest");
+            await dom.click(align());
+            expect(underlay()?.style.left).toBe("0px");
+            expect(text()).toContain("inside only one image: largest");
+            expect(text()).toContain("Updating for the new settings");
+
+            await settlePixels();
+            expect(underlay()?.style.left).toBe("-3px");
+            expect(text()).toContain("% of pixels changed colour on the aligned pair");
+            expect(text()).not.toContain("Updating for the new settings");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a new id or page storage key reads that comparison's or that page's saved picks at once", async () => {
+        const checked = (scope: ParentNode) => scope.querySelector('[role="radio"][aria-checked="true"]')?.textContent;
+        const pair = { before: { src: "fake://40x30/plain-m" }, after: { src: "fake://40x30/plain-n" } };
+
+        function ItemSwitcher() {
+            const [id, setId] = useState("kit-item-one");
+
+            return (
+                <>
+                    <button type="button" onClick={() => setId("kit-item-two")}>
+                        Next item
+                    </button>
+                    <ImageCompare id={id} {...pair} />
+                </>
+            );
+        }
+
+        const item = await mountImageCompare(<ItemSwitcher />, {
+            prepare: (window) => {
+                window.localStorage.setItem("artifact.image-compare:item:kit-item-two:mode", "fade");
+            },
+        });
+
+        try {
+            expect(checked(item.dom.container)).toBe("Side by side");
+            await item.dom.click(item.radio("Blink"));
+            await item.dom.click(item.button("Next item"));
+            expect(checked(item.dom.container)).toBe("Fade");
+            await item.dom.click(item.radio("Slider"));
+            const stored = item.dom.window.localStorage;
+            expect(stored.getItem("artifact.image-compare:item:kit-item-one:mode")).toBe("blink");
+            expect(stored.getItem("artifact.image-compare:item:kit-item-two:mode")).toBe("slider");
+        } finally {
+            await item.restore();
+        }
+
+        function PageSwitcher() {
+            const [storageKey, setStorageKey] = useState("kit-test.page-one");
+
+            return (
+                <>
+                    <button type="button" onClick={() => setStorageKey("kit-test.page-two")}>
+                        Next page
+                    </button>
+                    <ImageCompareProvider storageKey={storageKey}>
+                        <ImageCompareModeSwitch />
+                        <ImageCompare {...pair} />
+                    </ImageCompareProvider>
+                </>
+            );
+        }
+
+        const page = await mountImageCompare(<PageSwitcher />, {
+            prepare: (window) => {
+                window.localStorage.setItem("kit-test.page-two:mode", "blink");
+            },
+        });
+
+        try {
+            const pageSwitch = () => page.dom.container.querySelector('[role="radiogroup"]') ?? page.dom.container;
+            await page.dom.click(page.radio("Fade", pageSwitch()));
+            await page.dom.click(page.button("Next page"));
+            expect(checked(pageSwitch())).toBe("Blink");
+            expect(page.text()).toContain("A: Before");
+            expect(page.dom.window.localStorage.getItem("kit-test.page-one:mode")).toBe("fade");
+        } finally {
+            await page.restore();
+        }
+    }, 20_000);
+
+    test("an image whose response hangs fails at the load deadline instead of loading forever", async () => {
+        // The load deadline's timers are held, so the test fires the deadline itself instead of racing it.
+        const held = new Map<number, () => void>();
+        const { text, restore } = await mountImageCompare(
+            <ImageCompare before={{ src: "fake://40x30/plain-s" }} after={{ src: "stall://hangs" }} />,
+            {
+                prepare: (window) => holdTimers(window, IMAGE_LOAD_DEADLINE_MS, held),
+                ready: (scope) => (scope.textContent ?? "").includes("Loading the images..."),
+            }
+        );
+
+        try {
+            // Before loads and clears its deadline; After's response hangs, so only its deadline is left.
+            await settleUntil(() => held.size === 1, "Before to load");
+            expect(text()).toContain("Loading the images...");
+
+            await fireHeld(held);
+            await settleUntil(() => !text().includes("Loading the images..."), "the deadline to end the load");
+            expect(text()).toContain("The image did not load: After.");
+            expect(text()).not.toContain("did not load: Before");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the automatic blink flips at the interval the user sets", async () => {
+        // Timers of 200 ms are held: Auto arms one only when the interval the user set is the one it uses.
+        const held = new Map<number, () => void>();
+        const { dom, text, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://40x30/plain-k" }}
+                after={{ src: "fake://40x30/plain-l" }}
+                defaultMode="blink"
+            />,
+            { prepare: (window) => holdTimers(window, 200, held) }
+        );
+
+        try {
+            const control = (name: string) =>
+                [...dom.container.querySelectorAll("label")]
+                    .find((label) => label.textContent?.startsWith(name))
+                    ?.querySelector("input");
+            expect(control("Interval")?.value).toBe("700");
+            await dom.type(control("Interval"), "200");
+            expect(held.size).toBe(0);
+            await dom.click(control("Auto"));
+            expect(text()).toContain("A: Before");
+            expect(held.size).toBe(1);
+
+            await fireHeld(held);
+            expect(text()).toContain("B: After");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the A and B picks of a comparison with an id survive a reload, and a pick that is gone falls back", async () => {
+        const picksKey = "artifact.image-compare:item:kit-picks:picks";
+        const image = (name: string, label: string) => ({ src: `fake://80x60/plain-${name}`, label });
+        const three = [image("p1", "First"), image("p2", "Second"), image("p3", "Third")];
+        const selects = (scope: ParentNode) => [...scope.querySelectorAll("select")].map((select) => select.value);
+        let saved: string | null = null;
+
+        const first = await mountImageCompare(<ImageCompare id="kit-picks" images={three} />);
+
+        try {
+            await first.dom.press(first.dom.container.querySelector('[role="group"]'), "]");
+            expect(selects(first.dom.container)).toEqual(["0", "2"]);
+            saved = first.dom.window.localStorage.getItem(picksKey);
+            expect(saved).not.toBeNull();
+        } finally {
+            await first.restore();
+        }
+
+        // A reload: a fresh window with the same storage.
+        const keep = (window: DomHarness["window"]) => window.localStorage.setItem(picksKey, saved ?? "");
+        const reload = await mountImageCompare(<ImageCompare id="kit-picks" images={three} />, { prepare: keep });
+
+        try {
+            expect(selects(reload.dom.container)).toEqual(["0", "2"]);
+        } finally {
+            await reload.restore();
+        }
+
+        // "Third" is no longer among the images: the first two.
+        const changed = [three[0], three[1], image("p4", "Fourth")];
+        const gone = await mountImageCompare(<ImageCompare id="kit-picks" images={changed} />, { prepare: keep });
+
+        try {
+            expect(selects(gone.dom.container)).toEqual(["0", "1"]);
+        } finally {
+            await gone.restore();
+        }
+
+        // Without an id nothing is saved.
+        const anonymous = await mountImageCompare(<ImageCompare images={three} />);
+
+        try {
+            await anonymous.dom.press(anonymous.dom.container.querySelector('[role="group"]'), "]");
+            expect(selects(anonymous.dom.container)).toEqual(["0", "2"]);
+            expect(anonymous.dom.window.localStorage.length).toBe(0);
+        } finally {
+            await anonymous.restore();
+        }
+    }, 20_000);
+
+    test("an image whose label has a line break can be picked as B, and the pick survives a reload", async () => {
+        const picksKey = "artifact.image-compare:item:kit-break:picks";
+        const images = [
+            { src: "fake://80x60/plain-q1", label: "First" },
+            { src: "fake://80x60/plain-q2", label: "Second" },
+            { src: "fake://80x60/plain-q3", label: "Third\nwith a note" },
+        ];
+        const selects = (scope: ParentNode) => [...scope.querySelectorAll("select")].map((select) => select.value);
+        let saved: string | null = null;
+        const first = await mountImageCompare(<ImageCompare id="kit-break" images={images} />);
+
+        try {
+            await first.dom.press(first.dom.container.querySelector('[role="group"]'), "]");
+            expect(selects(first.dom.container)).toEqual(["0", "2"]);
+            saved = first.dom.window.localStorage.getItem(picksKey);
+        } finally {
+            await first.restore();
+        }
+
+        const reload = await mountImageCompare(<ImageCompare id="kit-break" images={images} />, {
+            prepare: (window) => window.localStorage.setItem(picksKey, saved ?? ""),
+        });
+
+        try {
+            expect(selects(reload.dom.container)).toEqual(["0", "2"]);
+        } finally {
+            await reload.restore();
+        }
+    }, 20_000);
+
+    test("a diff the shared cache let go stays current on its comparison when the page draws again", async () => {
+        // Seven diffs on one page, one more than the shared diff cache keeps, so the first one's entry leaves it.
+        const pairs = Array.from({ length: 7 }, (_, i) => ({
+            before: { src: `fake://80x60/plain-ev${i}` },
+            after: { src: `fake://80x60/changed-ev${i}` },
+        }));
+        const Page = ({ round }: { round: number }) => (
+            <>
+                {pairs.map((pair) => (
+                    <ImageCompare key={pair.before.src} {...pair} caption={`Round ${round}`} defaultMode="diff" />
+                ))}
+            </>
+        );
+        const { dom, text, restore } = await mountImageCompare(<Page round={1} />);
+        const working = BUSY_TEXT.filter((busy) => !busy.startsWith("Updating"));
+
+        try {
+            await settleUntil(() => !working.some((busy) => text().includes(busy)), "every diff to be computed");
+            await dom.render(<Page round={2} />);
+            expect(text()).not.toContain("Updating for the new settings");
+            const downloads = [...dom.container.querySelectorAll("button")].filter((button) =>
+                button.textContent?.includes("Download diff PNG")
+            );
+            expect(downloads.map((button) => button.disabled)).toEqual(pairs.map(() => false));
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the blink interval and the diff underlay opacity start at the props and change on the comparison", async () => {
+        const { dom, radio, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://60x40/plain-u" }}
+                after={{ src: "fake://60x40/changed-u" }}
+                defaultMode="blink"
+                blinkInterval={1200}
+                diffUnderlayOpacity={0.25}
+            />
+        );
+
+        try {
+            const control = (name: string) =>
+                [...dom.container.querySelectorAll("label")]
+                    .find((label) => label.textContent?.startsWith(name))
+                    ?.querySelector("input");
+            const underlay = () => dom.container.querySelector<HTMLImageElement>('[role="group"][tabindex="0"] img');
+            expect(control("Interval")?.value).toBe("1200");
+
+            await dom.click(radio("Diff"));
+            await settlePixels();
+            expect(control("Underlay opacity")?.value).toBe("25");
+            expect(underlay()?.style.opacity).toBe("0.25");
+            await dom.type(control("Underlay opacity"), "60");
+            expect(underlay()?.style.opacity).toBe("0.6");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a heat map made under one theme is never shown with another theme's ramp", async () => {
+        const pair = { before: { src: "fake://40x40/plain-t" }, after: { src: "fake://40x40/changed-t" } };
+        const theme = (rgb: string) => (window: DomHarness["window"]) => {
+            for (const token of ["--info", "--ok", "--warn", "--err"]) {
+                window.document.documentElement.style.setProperty(token, rgb);
+            }
+        };
+        /** The colour the last painted map gave the changed block at (12, 30). */
+        const block = (painted: FakeImageData[]) => {
+            const at = (30 * 40 + 12) * 4;
+
+            return [...(painted.at(-1)?.data.slice(at, at + 3) ?? [])];
+        };
+
+        const light = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, {
+            prepare: theme("rgb(200, 10, 30)"),
+        });
+
+        try {
+            await settlePixels();
+            expect(block(light.painted)).toEqual([200, 10, 30]);
+        } finally {
+            await light.restore();
+        }
+
+        const dark = await mountImageCompare(<ImageCompare {...pair} defaultMode="heat" />, {
+            prepare: theme("rgb(10, 200, 30)"),
+        });
+
+        try {
+            await settlePixels();
+            expect(block(dark.painted)).toEqual([10, 200, 30]);
+        } finally {
+            await dark.restore();
+        }
+    }, 20_000);
+
+    test("a short stage with more changed regions than its gutter holds numbers what fits and counts the rest", async () => {
+        // Ten blocks 40 px apart on a 400 px tall pair, fitted into a 100 px stage: the gutter holds five 16 px marks.
+        const { dom, text, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://120x400/plain-v" }}
+                after={{ src: "fake://120x400/dots-v" }}
+                defaultMode="diff"
+                maxHeight={100}
+            />
+        );
+
+        try {
+            await settlePixels();
+            expect(text()).toContain("10 regions");
+            // The marks' tops are pane y plus the pane's 1 px border.
+            const tops = [...dom.container.querySelectorAll<HTMLElement>("[data-region-label], [data-region-more]")]
+                .map((mark) => Number.parseFloat(mark.style.top))
+                .sort((p, q) => p - q);
+
+            for (let i = 1; i < tops.length; i++) {
+                expect(tops[i] - tops[i - 1]).toBeGreaterThanOrEqual(16);
+            }
+
+            expect(tops.every((top) => top >= 1 && top + 16 <= 101)).toBe(true);
+            const shown = dom.container.querySelectorAll("[data-region-label]").length;
+            expect(shown).toBe(4);
+            expect(dom.container.querySelector("[data-region-more]")?.textContent).toBe("+6");
+            expect(dom.container.querySelectorAll("[data-region-leader]").length).toBe(4);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the A and B picks follow their images when the images prop is reordered or loses one", async () => {
+        const image = (name: string, label: string) => ({ src: `fake://80x60/plain-${name}`, label });
+        const three = [image("q1", "First"), image("q2", "Second"), image("q3", "Third")];
+
+        function ListSwitcher() {
+            const [list, setList] = useState(three);
+
+            return (
+                <>
+                    <button type="button" onClick={() => setList([three[2], three[0], three[1]])}>
+                        Reorder
+                    </button>
+                    <button type="button" onClick={() => setList([three[0], three[1]])}>
+                        Two left
+                    </button>
+                    <ImageCompare id="kit-list" images={list} />
+                </>
+            );
+        }
+
+        const { dom, button, restore } = await mountImageCompare(<ListSwitcher />);
+
+        try {
+            const selects = () => [...dom.container.querySelectorAll("select")];
+            const shown = () =>
+                [...dom.container.querySelectorAll('[role="group"] img')].map((img) => img.getAttribute("alt"));
+            const pickA = selects()[0];
+            pickA.value = "2";
+            await dom.fire(pickA, new dom.window.Event("change", { bubbles: true }));
+            expect(selects().map((select) => select.value)).toEqual(["2", "1"]);
+            expect(shown()).toEqual(["Third", "Second"]);
+
+            // Reordered: A is still Third and B still Second, at their new places in the list.
+            await dom.click(button("Reorder"));
+            expect(selects().map((select) => select.value)).toEqual(["0", "2"]);
+            expect(shown()).toEqual(["Third", "Second"]);
+            expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-list:picks")).toBe(
+                SafeJSON.stringify(["Third", "Second"])
+            );
+
+            // Third is gone: the first two, never one image on both sides.
+            await dom.click(button("Two left"));
+            expect(shown()).toEqual(["First", "Second"]);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("after a picked image leaves the list under the same id, stepping B saves picks that exist", async () => {
+        const image = (name: string, label: string) => ({ src: `fake://80x60/plain-${name}`, label });
+        const four = [image("s1", "First"), image("s2", "Second"), image("s3", "Third"), image("s4", "Fourth")];
+
+        function ListShrinker() {
+            const [list, setList] = useState(four);
+
+            return (
+                <>
+                    <button type="button" onClick={() => setList(four.slice(0, 3))}>
+                        Drop the fourth
+                    </button>
+                    <ImageCompare id="kit-shrink" images={list} />
+                </>
+            );
+        }
+
+        const { dom, button, restore } = await mountImageCompare(<ListShrinker />);
+        const errors: unknown[] = [];
+        dom.window.addEventListener("error", (event) => errors.push(event.error));
+
+        try {
+            const selects = () => [...dom.container.querySelectorAll("select")];
+            const choose = async (index: number, value: string) => {
+                const select = selects()[index];
+                select.value = value;
+                await dom.fire(select, new dom.window.Event("change", { bubbles: true }));
+            };
+            await choose(0, "3");
+            await choose(1, "0");
+            expect(selects().map((select) => select.value)).toEqual(["3", "0"]);
+
+            // Fourth (A) is gone: the first two.
+            await dom.click(button("Drop the fourth"));
+            expect(selects().map((select) => select.value)).toEqual(["0", "1"]);
+
+            // ] steps B past A and saves the two images the comparison shows, never a label past the list's end.
+            await dom.press(dom.container.querySelector('[role="group"]'), "]");
+            expect(errors).toEqual([]);
+            expect(selects().map((select) => select.value)).toEqual(["0", "2"]);
+            expect(dom.window.localStorage.getItem("artifact.image-compare:item:kit-shrink:picks")).toBe(
+                SafeJSON.stringify(["First", "Third"])
+            );
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a region's zoom and the zoom label use the aligned canvas the diff stage shows", async () => {
+        // Before is the page moved by +3, +12 px, so After sits at (3, 12) on a 163 x 232 aligned canvas; the common
+        // canvas is only 160 x 220. After's 20 extra rows are the one region, and its last 12 rows lie below 220.
+        const { dom, text, button, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://160x200/page-shifted-y" }}
+                after={{ src: "fake://160x220/page-y" }}
+                defaultMode="diff"
+                maxHeight={116}
+            />
+        );
+
+        try {
+            await settlePixels();
+            expect(text()).toContain("After is shifted by -3, -12 px");
+            const box = dom.container.querySelector<HTMLElement>('[data-region="1"]');
+            const region = {
+                top: Number.parseFloat(box?.style.top ?? ""),
+                height: Number.parseFloat(box?.style.height ?? ""),
+            };
+            expect(region.top + region.height).toBe(232);
+
+            // The table's number zooms until the region shows whole, its last rows included.
+            await dom.click(button("Zoom to region 1"));
+            const zoomed = paneView(dom.container);
+            expect(zoomed.y + region.top * zoomed.scale).toBeGreaterThanOrEqual(-1e-6);
+            expect(zoomed.y + (region.top + region.height) * zoomed.scale).toBeLessThanOrEqual(116 + 1e-6);
+
+            // Fit draws the 232 px tall canvas into the 116 px stage at 50%, and the label says so.
+            await dom.click(button("Fit"));
+            expect(paneView(dom.container).scale).toBe(0.5);
+            expect(dom.container.querySelector('[role="toolbar"][aria-label="Zoom"] span')?.textContent).toBe("50%");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("the arrow keys pan a zoomed image with the stage focused, and the slider handle keeps its own arrows", async () => {
+        const { dom, restore } = await mountImageCompare(
+            <ImageCompare
+                before={{ src: "fake://120x400/plain-w" }}
+                after={{ src: "fake://120x400/plain-x" }}
+                defaultMode="slider"
+                maxHeight={100}
+            />
+        );
+
+        try {
+            const pane = () => dom.container.querySelector('[role="group"][tabindex="0"]');
+            const slider = () => dom.container.querySelector('[role="slider"]');
+
+            // At fit the whole image shows: an arrow has nothing to pan, so the page keeps it.
+            expect(await keyTaken(dom, pane(), "ArrowDown")).toBe(false);
+
+            for (let i = 0; i < 3; i++) {
+                await dom.press(pane(), "+");
+            }
+
+            const zoomed = paneView(dom.container);
+            expect(await keyTaken(dom, pane(), "ArrowDown")).toBe(true);
+            // ArrowDown shows what is below: the image moves up.
+            expect(paneView(dom.container).y).toBeLessThan(zoomed.y);
+            expect(await keyTaken(dom, pane(), "ArrowUp")).toBe(true);
+            expect(paneView(dom.container).y).toBeCloseTo(zoomed.y);
+
+            // On the handle, an arrow moves the handle and never the view.
+            await dom.press(slider(), "ArrowDown");
+            expect(slider()?.getAttribute("aria-valuenow")).toBe("48");
+            expect(paneView(dom.container).y).toBeCloseTo(zoomed.y);
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("with an id, the blink interval and the diff underlay opacity a user sets survive a reload", async () => {
+        const settingsKey = "artifact.image-compare:item:kit-saved:settings";
+        const pair = { before: { src: "fake://60x40/plain-z" }, after: { src: "fake://60x40/changed-z" } };
+        const control = (scope: ParentNode, name: string) =>
+            [...scope.querySelectorAll("label")]
+                .find((label) => label.textContent?.startsWith(name))
+                ?.querySelector("input");
+        let saved: string | null = null;
+
+        const first = await mountImageCompare(<ImageCompare id="kit-saved" {...pair} defaultMode="blink" />);
+
+        try {
+            await first.dom.type(control(first.dom.container, "Interval"), "1500");
+            await first.dom.click(first.radio("Diff"));
+            await first.dom.type(control(first.dom.container, "Underlay opacity"), "60");
+            saved = first.dom.window.localStorage.getItem(settingsKey);
+            expect(saved === null ? null : SafeJSON.parse(saved, { strict: true })).toEqual({
+                "blink.interval": 1500,
+                "diff.underlayOpacity": 0.6,
+            });
+        } finally {
+            await first.restore();
+        }
+
+        // A reload: a fresh window with the same storage. The saved mode (Diff) comes back too.
+        const reload = await mountImageCompare(<ImageCompare id="kit-saved" {...pair} defaultMode="blink" />, {
+            prepare: (window) => {
+                window.localStorage.setItem(settingsKey, saved ?? "");
+                window.localStorage.setItem("artifact.image-compare:item:kit-saved:mode", "diff");
+            },
+        });
+
+        try {
+            expect(control(reload.dom.container, "Underlay opacity")?.value).toBe("60");
+            await reload.dom.click(reload.radio("Blink"));
+            expect(control(reload.dom.container, "Interval")?.value).toBe("1500");
+        } finally {
+            await reload.restore();
+        }
+
+        // Without an id the value changes, and nothing is saved.
+        const anonymous = await mountImageCompare(<ImageCompare {...pair} defaultMode="blink" />);
+
+        try {
+            await anonymous.dom.type(control(anonymous.dom.container, "Interval"), "1500");
+            expect(control(anonymous.dom.container, "Interval")?.value).toBe("1500");
+            expect(anonymous.dom.window.localStorage.length).toBe(0);
+        } finally {
+            await anonymous.restore();
+        }
+    }, 20_000);
+
+    test("a setting changed while a new id waits in a transition is saved for the comparison on screen only", async () => {
+        const settingsKey = (id: string) => `artifact.image-compare:item:${id}:settings`;
+        const pair = { before: { src: "fake://60x40/plain-t" }, after: { src: "fake://60x40/changed-t" } };
+        const never = new Promise<never>(() => {});
+        // Suspends under the second id, so the render with that id never commits and the first comparison stays.
+        const Gate = ({ hold }: { hold: boolean }) => (hold ? use(never) : null);
+
+        function Switcher() {
+            const [id, setId] = useState("kit-carry-one");
+
+            return (
+                <>
+                    <button type="button" onClick={() => startTransition(() => setId("kit-carry-two"))}>
+                        Next item
+                    </button>
+                    <Suspense fallback={null}>
+                        <ImageCompare id={id} {...pair} defaultMode="blink" />
+                        <Gate hold={id === "kit-carry-two"} />
+                    </Suspense>
+                </>
+            );
+        }
+
+        const { dom, button, restore } = await mountImageCompare(<Switcher />, {
+            prepare: (window) =>
+                window.localStorage.setItem(
+                    settingsKey("kit-carry-two"),
+                    SafeJSON.stringify({ "diff.underlayOpacity": 0.9 })
+                ),
+        });
+        const saved = (id: string) => {
+            const stored = dom.window.localStorage.getItem(settingsKey(id));
+
+            return stored === null ? null : SafeJSON.parse(stored, { strict: true });
+        };
+
+        try {
+            await dom.click(button("Next item"));
+            const interval = [...dom.container.querySelectorAll("label")]
+                .find((label) => label.textContent?.startsWith("Interval"))
+                ?.querySelector("input");
+            await dom.type(interval, "1500");
+
+            // Only the interval, under the first id: the second comparison's opacity stays its own.
+            expect(saved("kit-carry-one")).toEqual({ "blink.interval": 1500 });
+            expect(saved("kit-carry-two")).toEqual({ "diff.underlayOpacity": 0.9 });
+        } finally {
+            await restore();
+        }
+    }, 20_000);
+
+    test("a new image B drops the old pair's active region and its failed PNG note", async () => {
+        const { dom, text, button, restore } = await mountImageCompare(
+            <ImageCompare
+                images={[
+                    { src: "fake://120x80/plain-r1", label: "First" },
+                    { src: "fake://120x90/changed-r2", label: "Second" },
+                    { src: "fake://120x100/plain-r3", label: "Third" },
+                ]}
+                defaultMode="diff"
+            />,
+            {
+                prepare: (window) => {
+                    // The browser cannot make the PNG.
+                    Object.defineProperty(window.HTMLCanvasElement.prototype, "toBlob", {
+                        configurable: true,
+                        value(done: (blob: Blob | null) => void) {
+                            done(null);
+                        },
+                    });
+                },
+            }
+        );
+
+        try {
+            await settlePixels();
+            await dom.click(button("Next region"));
+            expect(text()).toContain("Region 1 of 2");
+            await dom.click(button("Download diff PNG"));
+            expect(text()).toContain("The browser could not make the PNG.");
+
+            // Third differs from First only in its 20 extra rows: no region of the new diff is where the picked one
+            // was, and the note was about the old diff's PNG.
+            await dom.press(dom.container.querySelector('[role="group"]'), "]");
+            await settlePixels();
+            expect(text()).toContain("1 region");
+            expect(text()).not.toContain("Region 1 of 1");
+            expect(text()).not.toContain("could not make the PNG");
+        } finally {
+            await restore();
+        }
+    }, 20_000);
 });
