@@ -246,13 +246,20 @@ export interface ChannelCalibrationOptions {
     minSeparation?: number;
     sourceLayout?: Exclude<ChannelLayout, "unknown">;
     reportSourceShare?: boolean;
+    /** Loud 100 ms windows each channel needs before the source layout counts as verified. Meetings keep the default; a live test passes fewer. */
+    minSourceWindows?: number;
 }
 
 /** Tags establish the order in either direction. Without usable tags, separated audio can verify a source's order. */
 export function calibrateChannels(
     energy: ChannelEnergy,
     segments: TaggedSpan[],
-    { minSeparation = DEFAULT_CHANNEL_MIN_SEPARATION, sourceLayout, reportSourceShare }: ChannelCalibrationOptions = {}
+    {
+        minSeparation = DEFAULT_CHANNEL_MIN_SEPARATION,
+        sourceLayout,
+        reportSourceShare,
+        minSourceWindows,
+    }: ChannelCalibrationOptions = {}
 ): ChannelCalibration {
     const shares = uncontestedShares(energy, segments);
     const counted = { mic: shares.mic.length, system: shares.system.length };
@@ -268,7 +275,7 @@ export function calibrateChannels(
         if (sourceLayout) {
             const { share: left, count: leftCount } = loudWindowShare(energy.left, energy);
             const { share: right, count: rightCount } = loudWindowShare(energy.right, energy);
-            const required = CALIBRATION_MIN_SEC * CALIBRATION_MIN_SEGMENTS * ENERGY_BLOCKS_PER_SEC;
+            const required = minSourceWindows ?? CALIBRATION_MIN_SEC * CALIBRATION_MIN_SEGMENTS * ENERGY_BLOCKS_PER_SEC;
             if (reportSourceShare) {
                 sourceMicShare = sourceLayout === "left-mic" ? left : right === undefined ? undefined : 1 - right;
             }
