@@ -38,8 +38,7 @@ async function showRequestWindow(client: RpcSocketClient, request: PersonRequest
 export function registerRequestCommand(program: Command): void {
     const request = program
         .command("request")
-        .description("Inspect, present or withdraw a person request")
-        .option("--json", "print JSON");
+        .description("Inspect, present or withdraw a person request (every subcommand prints JSON)");
     request.command("list").action(async () => {
         const remote = await callRunningService("requests.list", {});
         out.result(remote.called ? remote.value : createRequestJournal().list().slice(-100));
