@@ -381,6 +381,15 @@ describe("config resolution", () => {
         expect(resolveConfig(file, demo, "greet")).toEqual({ tone: "t", loud: true });
         expect(resolveConfig(file, demo)).toEqual({ tone: "t" });
     });
+
+    test("a stored value its schema refuses keeps the default, and a key no schema names is left out", () => {
+        const file = {
+            version: 1 as const,
+            areas: { demo: { tone: 5, gone: "x", actions: { greet: { loud: "yes", tone: "action" } } } },
+        };
+        expect(resolveConfig(file, demo, "greet")).toEqual({ tone: "action", loud: false });
+        expect(resolveConfig(file, demo)).toEqual({ tone: "area-default" });
+    });
 });
 
 describe("state file", () => {
