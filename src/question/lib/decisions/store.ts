@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -1864,9 +1865,12 @@ export function storedTodoRows(store: string = workDbPath()): DecisionRecord[] {
         return [];
     }
 
-    return withWorkDb(store, (db) => readSessionTodos(db).rows).flatMap((row): DecisionRecord[] =>
-        isStoredDecision(row) ? [row] : []
-    );
+    return withWorkDb(store, readStoredTodoRows);
+}
+
+/** A widget snapshot already has a read-only connection to this store. */
+export function readStoredTodoRows(db: Database): DecisionRecord[] {
+    return readSessionTodos(db).rows.flatMap((row): DecisionRecord[] => (isStoredDecision(row) ? [row] : []));
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {

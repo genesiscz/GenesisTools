@@ -211,6 +211,18 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
             }
+            NativeSettingsCard("Tasks") {
+                NativeSettingsRow("Claimed handoffs", detail: "Choose how handoffs claimed by sessions on this Mac appear in Tasks.") {
+                    Picker("Claimed handoffs", selection: Binding(
+                        get: { prefs.tasks?.handoffs ?? .folded },
+                        set: { value in write { $0.tasks = WidgetTasksPreferences(handoffs: value) } })) {
+                        Text("Folded").tag(WidgetHandoffDisplay.folded)
+                        Text("Expanded").tag(WidgetHandoffDisplay.expanded)
+                        Text("Hidden").tag(WidgetHandoffDisplay.hidden)
+                    }.labelsHidden().pickerStyle(.segmented)
+                }
+            }
+            .nativeSettingsAnchor("tasks")
             NativeSettingsCard("Shape") {
                 NativeSettingsRow("Side style", detail: "Classic keeps a compact monochrome rail with its handle below.") {
                     Picker("Side style", selection: field(\.sideStyle)) {

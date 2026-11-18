@@ -148,13 +148,15 @@ export function openSessionsReader(
 const recentOpenSessionIds = openSessionsReader((psTimeoutMs) => openAgentSessionIds(undefined, { psTimeoutMs }));
 
 /** A failed process listing leaves every parent to its transcript clock: nothing is marked open. */
-async function readOpenSessions(options: HubAgentsOptions): Promise<Set<string>> {
+export async function readOpenSessions(
+    options: Pick<HubAgentsOptions, "session" | "openSessions"> & { psTimeoutMs?: number }
+): Promise<Set<string>> {
     try {
         if (options.openSessions) {
             return await options.openSessions();
         }
 
-        return await recentOpenSessionIds(options.session ? SESSION_PS_TIMEOUT_MS : undefined);
+        return await recentOpenSessionIds(options.psTimeoutMs ?? (options.session ? SESSION_PS_TIMEOUT_MS : undefined));
     } catch (error) {
         logger.warn({ error }, "[hub agents] the process list is unavailable; no session is marked open");
         return new Set();

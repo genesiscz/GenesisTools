@@ -118,6 +118,12 @@ export const widgetPreferencesSchema = z.object({
     dialogAnswer: z.enum(["press", "refuse"]).default("press"),
     /** Width in points of the rail's hover list (the agents preview). */
     previewWidth: z.number().min(260).max(560).default(324),
+    tasks: z
+        .object({
+            /** How claimed handoffs appear when Tasks opens. An unset preference starts each handoff folded. */
+            handoffs: z.enum(["folded", "expanded", "hidden"]).optional(),
+        })
+        .optional(),
     /**
      * The Usage module's own preferences. Optional with no default, so a state saved before the module keeps its
      * bytes; the widget reads a missing key as its default.

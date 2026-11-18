@@ -5,7 +5,7 @@ import type { Command } from "commander";
 import {
     createWidgetTask,
     editWidgetTask,
-    listWidgetTasks,
+    listLiveWidgetTasks,
     updateWidgetTask,
     WIDGET_TASK_ACTIONS,
     WIDGET_TASK_SCOPES,
@@ -22,7 +22,7 @@ export function registerWidgetTasks(widget: Command): void {
         .option("--project <project...>", "Exact stored project names")
         .option("--session <identity...>", "Exact provider:session identities")
         .option("--limit <count>", "Maximum rows (1–250)", Number, 200)
-        .action(async (options) => {
+        .action(async (options, command: Command) => {
             const scope = await pickEnumFlag({
                 tool: "tools",
                 subcommand: ["hub", "widget", "tasks", "list"],
@@ -37,7 +37,8 @@ export function registerWidgetTasks(widget: Command): void {
                 return;
             }
             out.result(
-                listWidgetTasks({
+                await listLiveWidgetTasks({
+                    root: command.optsWithGlobals().stateRoot,
                     filters: { scope, projects: options.project, sessions: options.session, limit: options.limit },
                 })
             );

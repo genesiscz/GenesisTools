@@ -1,11 +1,13 @@
 import SwiftUI
 
 public extension WidgetTasksStore {
-    func taskModule() -> WidgetModuleDescriptor {
+    func taskModule(handoffs: @escaping () -> WidgetHandoffDisplay = { .folded },
+                    openHandoffSettings: (() -> Void)? = nil) -> WidgetModuleDescriptor {
         WidgetModuleDescriptor(
             id: "tasks", title: "Tasks", symbol: "checklist", tint: .mint,
             summary: { "\(self.activeCount) active tasks" }, visibilityChanged: { self.visibilityChanged($0) }
-        ) { WidgetTasksModuleView(store: self, presentation: $0) }
+        ) { WidgetTasksModuleView(store: self, presentation: $0, handoffDisplay: handoffs(),
+                                  openHandoffSettings: openHandoffSettings) }
     }
 }
 
@@ -13,6 +15,8 @@ public extension WidgetTasksStore {
 struct WidgetTasksModuleView: View {
     @ObservedObject var store: WidgetTasksStore
     let presentation: WidgetModulePresentation
+    var handoffDisplay: WidgetHandoffDisplay = .folded
+    var openHandoffSettings: (() -> Void)?
 
     var body: some View {
         Group {
@@ -31,6 +35,7 @@ struct WidgetTasksModuleView: View {
                         feedback
                         inventory
                     } else {
+                        handoffSection
                         preview
                     }
                 }
@@ -40,6 +45,15 @@ struct WidgetTasksModuleView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tasks-widget")
+    }
+
+    @ViewBuilder private var handoffSection: some View {
+        if handoffDisplay != .hidden, let handoffs = store.claimedHandoffs,
+           presentation == .expanded || !handoffs.isEmpty {
+            WidgetClaimedHandoffSection(handoffs: handoffs, initiallyExpanded: handoffDisplay == .expanded,
+                                        openSettings: openHandoffSettings)
+                .id(handoffDisplay)
+        }
     }
 
     private var header: some View {
@@ -77,7 +91,7 @@ struct WidgetTasksModuleView: View {
     @ViewBuilder private var preview: some View {
         if store.isLoading && store.tasks.isEmpty {
             Label("Loading your tasks…", systemImage: "ellipsis").font(.caption)
-        } else if store.tasks.isEmpty {
+        } else if store.tasks.isEmpty && !hasShownHandoffs {
             Text("Nothing waiting. Open Tasks to add one.").font(.caption).foregroundStyle(.secondary)
         }
         VStack(alignment: .leading, spacing: 4) {
@@ -97,6 +111,10 @@ struct WidgetTasksModuleView: View {
         if let error = store.error {
             FailureInline(message: error, outcome: "The tasks did not load", action: "Load the tasks", area: "widget", identifier: "widget.tasks.failure")
         }
+    }
+
+    private var hasShownHandoffs: Bool {
+        handoffDisplay != .hidden && store.claimedHandoffs?.isEmpty == false
     }
 
     private var filters: some View {
@@ -172,7 +190,8 @@ struct WidgetTasksModuleView: View {
     private var inventory: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
-                if store.tasks.isEmpty && store.recent.isEmpty && !store.isLoading {
+                handoffSection
+                if store.tasks.isEmpty && store.recent.isEmpty && !store.isLoading && !hasShownHandoffs {
                     VStack(spacing: 10) {
                         Image(systemName: "checklist").font(.system(size: 30, weight: .light)).foregroundStyle(.mint.opacity(0.75))
                         Text(store.scope == "active" ? "Nothing waiting here" : "No tasks match this view")

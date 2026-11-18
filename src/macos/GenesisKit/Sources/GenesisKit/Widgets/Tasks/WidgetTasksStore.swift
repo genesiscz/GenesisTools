@@ -25,7 +25,7 @@ public final class WidgetTasksStore: ObservableObject {
     private let openSession: (WidgetSession, String) -> Void
     private var cache: [String: WidgetTaskSnapshot] = [:]
     private var watcher: DirectoryWatcher?
-    private var watchedPath: String?
+    private var watchedPaths: Set<String> = []
     private var visible = false
     /// The decision log changes with every agent's decision, stage and answer, several times a second in a burst: the
     /// list reloads at most once a second for it, and the burst's last change always gets its reload.
@@ -35,16 +35,18 @@ public final class WidgetTasksStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var reconcileTask: Task<Void, Never>?
     private var refreshID: UUID?
+    private var sourceChangedDuringRefresh = false
     private var mutations: [String: (id: UUID, work: Task<Void, Never>)] = [:]
     private var createTask: Task<Void, Never>?
     private var mutationFailure: String?
     private var displayedKey: String?
 
-    public init(binaryPath: String, sessions: @escaping () -> [WidgetSession],
+    public init(binaryPath: String, stateRoot: String? = nil, sessions: @escaping () -> [WidgetSession],
                 openSession: @escaping (WidgetSession, String) -> Void) {
         let bridge = ToolsBridge(binaryPath: binaryPath)
+        let prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["tasks"]
         request = { args in
-            let result = try await bridge.run(subcommand: "hub", args: ["widget", "tasks"] + args, timeoutSeconds: 15)
+            let result = try await bridge.run(subcommand: "hub", args: prefix + args, timeoutSeconds: 15)
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1200))) }
             return Data(result.stdout.utf8)
         }
@@ -65,6 +67,7 @@ public final class WidgetTasksStore: ObservableObject {
     public var workCounts: [WidgetWorkCount] {
         (snapshot?.work ?? []).filter { (project.isEmpty || $0.project == project) && !$0.summary.isEmpty }
     }
+    var claimedHandoffs: [WidgetClaimedHandoff]? { displayedKey == queryKey ? snapshot?.claimedHandoffs : nil }
     public var activeCount: Int { snapshot?.activeCount ?? 0 }
     public var isMutating: Bool { !mutatingIDs.isEmpty }
     public var projects: [String] { snapshot?.projects ?? [] }
@@ -81,6 +84,7 @@ public final class WidgetTasksStore: ObservableObject {
         visible = presentation.map { $0 != .compact } ?? false
         if visible { refresh() }
         else {
+            sourceChangedDuringRefresh = false
             trailingReload?.cancel()
             trailingReload = nil
             refreshID = nil
@@ -132,6 +136,10 @@ public final class WidgetTasksStore: ObservableObject {
                 if self.refreshID == identity {
                     self.isLoading = false
                     self.refreshTask = nil
+                    if self.sourceChangedDuringRefresh {
+                        self.sourceChangedDuringRefresh = false
+                        self.sourceChanged()
+                    }
                 }
             }
             do {
@@ -147,7 +155,7 @@ public final class WidgetTasksStore: ObservableObject {
                 let shown = Set(value.tasks.map(\.id))
                 if self.recent.contains(where: { shown.contains($0.id) }) { self.recent.removeAll { shown.contains($0.id) } }
                 self.error = self.mutationFailure
-                self.watch(value.sourcePath)
+                self.watch([value.sourcePath] + (value.additionalSourcePaths ?? []))
                 self.reconcileRecent(key: key, filters: filters)
             } catch {
                 if !Task.isCancelled, !self.stopped, self.refreshID == identity { self.report(error) }
@@ -189,13 +197,16 @@ public final class WidgetTasksStore: ObservableObject {
         if let undo, latest(undo.task) != undo.task { self.undo = nil }
     }
 
-    private func watch(_ path: String) {
-        guard watchedPath != path else { return }
+    private func watch(_ paths: [String]) {
+        let resolved = Set(paths.map {
+            DirectoryWatcher.normalizedEventPath(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path)
+        })
+        guard watchedPaths != resolved else { return }
         watcher?.stop()
-        watchedPath = path
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        watcher = DirectoryWatcher(paths: [(resolved as NSString).deletingLastPathComponent], latency: 0.2,
-                                   accepts: { $0 == resolved }) { [weak self] _ in
+        watchedPaths = resolved
+        let folders = Set(resolved.map { ($0 as NSString).deletingLastPathComponent })
+        watcher = DirectoryWatcher(paths: Array(folders), latency: 0.2,
+                                   accepts: { resolved.contains($0) }) { [weak self] _ in
             MainActor.assumeIsolated { self?.sourceChanged() }
         }
     }
@@ -204,6 +215,11 @@ public final class WidgetTasksStore: ObservableObject {
         guard !stopped else { return }
         cache.removeAll(keepingCapacity: true)
         guard visible else { return }
+        // A host lookup can outlast the next roster update. Let it reach the screen, then reread what changed.
+        if refreshTask != nil {
+            sourceChangedDuringRefresh = true
+            return
+        }
         let wait = 1 - Date().timeIntervalSince(lastSourceReload)
         if wait <= 0 {
             trailingReload?.cancel()
