@@ -70,6 +70,15 @@ describe("windowFaceKind", () => {
         expect(plan.map((step) => step.argv)).toEqual([["--recorder", "--no-activate"]]);
     });
 
+    it("starts a missing recorder after install only when its part is linked, without focusing it", () => {
+        const args = (faces: WindowFace[], parts: string[]) =>
+            relaunchPlan(faces, null, parts).map((step) => step.argv);
+        expect(args([], ["recorder"])).toEqual([["--recorder", "--no-activate"]]);
+        expect(args([], ["widget"])).toEqual([]);
+        const running: WindowFace = { pid: 7, kind: "recorder", argv: ["--recorder"], lossless: true };
+        expect(args([running], ["recorder"])).toEqual([["--recorder", "--no-activate"]]);
+    });
+
     it("skips short-lived faces, link routers and scripted runs", () => {
         expect(windowFaceKind(["--rpc", "{}"])).toBeNull();
         expect(windowFaceKind(["--notify"])).toBeNull();
