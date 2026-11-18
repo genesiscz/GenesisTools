@@ -213,7 +213,7 @@ final class HubPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let section = HubSettingsPages.section(preferences: preferences(defaults, name))
         XCTAssertEqual(section.title, "Hub")
-        XCTAssertEqual(section.pages.map(\.id), [HubSettingsPages.appearancePageID, HubSettingsPages.panesPageID, HubSettingsPages.historyPageID])
+        XCTAssertEqual(section.pages.map(\.id), [HubSettingsPages.appearancePageID, HubSettingsPages.panesPageID, HubSettingsPages.inboxPageID, HubSettingsPages.historyPageID])
         let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
         let clicky = ClickyModel(defaults: defaults, previewOnly: true, appearance: appearance, observeSystemEvents: false)
         let widget = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults, appearance: appearance)
