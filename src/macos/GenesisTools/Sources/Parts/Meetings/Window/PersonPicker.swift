@@ -116,6 +116,8 @@ struct PersonPicker: View {
     let pick: (KnownPerson) -> Void
     /// "Add 'X' as new speaker": omitted when this picker can only select existing people.
     var addNew: ((String) -> Void)?
+    /// A question can take the typed answer even when it matches an existing person's name or alias.
+    var answerAsTyped: ((String) -> Void)?
     /// Esc.
     var cancel: () -> Void = {}
     /// The Contacts grant button when Contacts refused access; nil hides it.
@@ -171,11 +173,16 @@ struct PersonPicker: View {
         .onChange(of: showEverybody) { _, _ in updatePeople() }
         .onChange(of: restrictToPresent) { _, _ in updatePeople() }
         .onChange(of: addRule) { _, _ in updatePeople() }
+        .onChange(of: answerAsTyped != nil) { _, _ in updatePeople() }
     }
 
     private func updatePeople() {
         shownPeople = PeopleText.questionPeople(people, choices: preferredNames, query: query, hideAbsent: restrictToPresent && !showEverybody)
-        offeredName = newName
+        if answerAsTyped != nil {
+            offeredName = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : query
+        } else {
+            offeredName = newName
+        }
     }
 
     private var searchField: some View {
@@ -214,7 +221,7 @@ struct PersonPicker: View {
                                 .id(index)
                         }
                         if let offeredName {
-                            addRow(offeredName).id(shownPeople.count)
+                            typedRow(offeredName).id(shownPeople.count)
                         }
                         if offersEverybody {
                             Text("Show everybody")
@@ -278,15 +285,32 @@ struct PersonPicker: View {
         }
     }
 
-    /// Return picks the highlighted row. With nothing highlighted, it adds the typed name only when that is the one
+    @ViewBuilder
+    private func typedRow(_ text: String) -> some View {
+        if let answerAsTyped {
+            Text("Use ‘\(text)’ as typed")
+                .font(.system(size: 13))
+                .lineLimit(1).truncationMode(.middle)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: Self.rowHeight)
+                .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == shownPeople.count ? KitTheme.accent.opacity(0.18) : .clear))
+                .rowButton(cornerRadius: 6) { answerAsTyped(text) }
+                .accessibilityIdentifier("meetings.personPicker.asTyped")
+        } else {
+            addRow(text)
+        }
+    }
+
+    /// Return picks the highlighted row. With nothing highlighted, it takes the typed name only when that is the one
     /// row offered; it never picks the first person by itself (nothing is preselected).
     private func submit() {
         if let row = highlighted {
             if row < shownPeople.count { pick(shownPeople[row]) }
             else if offersEverybody && row == rowCount - 1 { showEverybody = true; highlighted = nil }
-            else if let offeredName { addNew?(offeredName) }
+            else if let offeredName { (answerAsTyped ?? addNew)?(offeredName) }
         } else if shownPeople.isEmpty, let offeredName {
-            addNew?(offeredName)
+            (answerAsTyped ?? addNew)?(offeredName)
         }
     }
 }
@@ -352,7 +376,8 @@ struct QuestionPersonPicker: View {
             title: "Whose voice is this", addRule: MeetingsPreferences.People.offerNew.value(),
             preferredNames: preferredNames,
             restrictToPresent: row.startSec != nil,
-            pick: { confirm($0.name) }, addNew: confirm, cancel: cancel,
+            pick: { confirm($0.name) }, addNew: row.isQuestion ? nil : confirm,
+            answerAsTyped: row.isQuestion ? confirm : nil, cancel: cancel,
             grantContacts: detail.window.map { window in { window.people.grantContacts() } })
             .onAppear { let next = detail.peopleSearch(atSec: row.startSec); search = next; next.ask(name, after: .zero) }
             .onChange(of: name) { _, now in search?.ask(now) }

@@ -1551,6 +1551,35 @@ extension MeetingsServiceTests {
 }
 
 extension MeetingsServiceTests {
+    func testOnlyAQuestionOffersTheMatchedPersonAndTheLiteralAnswer() throws {
+        try writeServiceEntry()
+        let person = KnownPerson(id: "alice", name: "Alice Example", sources: [.meetings], rank: .present)
+        let typed = "Example Alice"
+        fake.answers[MeetingsAPI.PeopleKnown.name] = ["result": [
+            "query": typed, "people": [try MeetingsService.paramsObject(person)], "sources": [], "total": 1,
+        ] as [String: Any]]
+        let service = makeService()
+        defer { service.disconnect() }
+        let detail = MeetingDetailModel(id: "practice", window: nil, service: service)
+        let question = try JSONDecoder().decode(ReviewRow.self, from: Data(#"""
+        {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who speaks?","parts":[],
+         "choices":[{"value":"Alice Example","label":"Alice Example","role":"suggested","action":{"kind":"answer","answer":"Alice Example"}}],
+         "edit":"answer","needs":"listen","sources":[],"target":{"kind":"item","id":"q1"}}
+        """#.utf8))
+        let answer = QuestionPersonPicker(row: question, detail: detail, name: .constant(typed), confirm: { _ in })
+        let shown = try MeetingQuestionPicture.text(answer, name: "I2-question-typed", native: true)
+        let words = shown.split { !$0.isLetter }.joined(separator: " ")
+        XCTAssertTrue(words.contains("Use Alice Example"), shown)
+        XCTAssertTrue(words.contains("Use Example Alice as typed"), shown)
+        XCTAssertFalse(words.contains("as new speaker"), shown)
+
+        let contacts = PersonPicker(people: [person], query: .constant(typed), pick: { _ in }, addNew: { _ in })
+        let contactText = try MeetingQuestionPicture.text(contacts, name: "I2-contacts-match", native: true)
+        XCTAssertTrue(contactText.contains("Use Alice Example"), contactText)
+        XCTAssertFalse(contactText.contains("as typed"), contactText)
+        XCTAssertFalse(contactText.contains("as new speaker"), contactText)
+    }
+
     /// F10, G-PPL-5: the Contacts view is a place of the window; the open meeting stays open for the way back.
     func testContactsIsAPlaceThatKeepsTheOpenMeeting() async throws {
         try writeServiceEntry()
