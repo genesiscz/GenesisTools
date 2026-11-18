@@ -130,8 +130,13 @@ final class MediaFeed: @unchecked Sendable {
 }
 
 struct RenderWarnings {
+    struct Entry: Hashable {
+        let file: URL
+        let message: String
+    }
+
     private var files = Set<URL>()
-    private(set) var messages: [String] = []
+    private(set) var entries: [Entry] = []
 
     mutating func skipped(_ url: URL) {
         warn(url, "Skipped \(url.lastPathComponent). The file is missing or unreadable.")
@@ -142,8 +147,9 @@ struct RenderWarnings {
     }
 
     private mutating func warn(_ url: URL, _ message: String) {
-        guard files.insert(url.standardizedFileURL).inserted else { return }
-        messages.append(message)
+        let file = url.standardizedFileURL
+        guard files.insert(file).inserted else { return }
+        entries.append(Entry(file: file, message: message))
         HubPerf.log("recorder: \(message)")
     }
 }

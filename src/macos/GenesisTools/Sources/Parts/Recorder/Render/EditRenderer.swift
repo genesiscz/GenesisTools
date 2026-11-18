@@ -772,7 +772,7 @@ struct EditRenderer {
         /// One frame at the rate the movie plays (`exportFps`), in µs.
         let frameUs: Int64
         /// Missing inputs, in discovery order, once per file even if it supplied both picture and sound.
-        let warnings: [String]
+        let warnings: [RenderWarnings.Entry]
     }
 
     enum RenderError: LocalizedError {
@@ -1252,7 +1252,7 @@ struct EditRenderer {
             audioMix = mix
         }
         return Rendered(composition: composition, videoComposition: videoComposition, audioMix: audioMix, renderSize: size,
-                        frameUs: frameUs(fps: fps), warnings: warnings.messages)
+                        frameUs: frameUs(fps: fps), warnings: warnings.entries)
     }
 }
 

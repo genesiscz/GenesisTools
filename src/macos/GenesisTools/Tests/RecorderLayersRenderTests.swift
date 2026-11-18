@@ -276,7 +276,7 @@ final class RecorderLayersRenderTests: XCTestCase {
         let rendered = try await render(edit)
         XCTAssertTrue(rendered.composition.tracks(withMediaType: .audio).isEmpty, "the skipped mic must not restore the mixed proxy")
         XCTAssertEqual(rendered.warnings.count, 1)
-        XCTAssertTrue(rendered.warnings.first?.contains(file) == true)
+        XCTAssertEqual(rendered.warnings.first?.file.lastPathComponent, file)
         let url = dir.appendingPathComponent("edited.mp4")
         _ = try await EditExporter.export(project: edit, to: url) { _ in }
         let result = AVURLAsset(url: url)
