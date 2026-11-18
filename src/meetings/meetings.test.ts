@@ -1244,14 +1244,16 @@ test.each([
         const ack = spyOn(await import("./lib/recorder-shared"), "recorderAcknowledged").mockReturnValue(true);
         const watcher = spyOn(await import("./lib/watcher"), "ensureWatcher").mockResolvedValue("started");
         const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
+        // The store stays in the fixture; only the question "is this the default store?" answers as the case says.
+        // An env.testing HOME override does not reach os.homedir(), which sandboxInstalled() compares with.
+        const sandbox = spyOn(
+            await import("@genesiscz/utils/storage/real-home-guard"),
+            "sandboxInstalled"
+        ).mockReturnValue(store === "scratch");
         try {
             const program = new Command();
             registerRecordCommands(program);
-            // Keep the store in the fixture, even when it doubles as the user's default home.
-            const home = store === "default" ? { HOME: scratch, USERPROFILE: scratch } : {};
-            await env.testing.withOverrides(home, async () => {
-                await program.parseAsync(["record", "start", "--meeting", meeting.id, "--yes"], { from: "user" });
-            });
+            await program.parseAsync(["record", "start", "--meeting", meeting.id, "--yes"], { from: "user" });
 
             expect(spawn.mock.calls).toEqual([[["meetings", "record", "run", meeting.id]]]);
             expect(watcher).toHaveBeenCalledTimes(starts);
@@ -1260,6 +1262,7 @@ test.each([
             const notice = "Watcher autostart is off for this store, so start it with `tools meetings watch`.\n";
             expect(lines.filter((line) => line.includes("tools meetings watch"))).toEqual(starts ? [] : [notice]);
         } finally {
+            sandbox.mockRestore();
             stderr.mockRestore();
             watcher.mockRestore();
             ack.mockRestore();
