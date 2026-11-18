@@ -91,7 +91,7 @@ for (const { name, build } of fixtures) {
                         initialTurns,
                         onRound: (r) => rounds.push(r),
                     });
-                    expect(rounds.some((r) => r.fallback === "F3")).toBe(false);
+                    expect(rounds.some((r) => r.fallback?.startsWith("F3"))).toBe(false);
                     if (name !== "grok" && count > lastChangedTurns(full, f.turns + 2).length) {
                         expect(rounds.at(-1)?.fallback).toBe("F1");
                     }

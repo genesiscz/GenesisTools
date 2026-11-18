@@ -27,7 +27,7 @@ interface Cache {
     lines?: LineFold<string[]>;
 }
 const windows = changesCache<Cache>("session-changes codex windows");
-const markers = ['"task_started"', '"turn_context"', '"FileChange"'].map((s) => Buffer.from(s));
+const markers = ["\\u", '"task_started"', '"turn_context"', '"FileChange"'].map((s) => Buffer.from(s));
 
 export function codexChangesWindow(sessionId: string, request: ChangesWindowRequest): ChangesWindowRead | null {
     const path = findCodexRollout(sessionId);
@@ -36,6 +36,7 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
     }
     try {
         if (path.endsWith(".zst") || statSync(path).size < CHUNK_BYTES) {
+            windows.delete(path);
             return { supported: false, reason: "F5: small or compressed rollout" };
         }
         const cache = windows.get(path, () => ({}));
@@ -85,14 +86,19 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
             start = Math.min(start, offset);
         }
         // Hold changes with a trailing turn id, even an item recorded before its turn started.
-        for (const [id, offset] of facts.firstChange) {
-            if ((facts.ledger.get(id)?.offset ?? Infinity) >= start) {
-                start = Math.min(start, offset);
+        let previousStart: number;
+        do {
+            previousStart = start;
+            while (index > 0 && ledger[index].offset > start) {
+                index--;
             }
-        }
-        while (index > 0 && ledger[index].offset > start) {
-            index--;
-        }
+            start = ledger[index]?.offset ?? 0;
+            for (const [id, offset] of facts.firstChange) {
+                if ((facts.ledger.get(id)?.offset ?? Infinity) >= start) {
+                    start = Math.min(start, offset);
+                }
+            }
+        } while (index > 0 && start < previousStart);
         const cut = ledger[index];
         const earlierTurns = new Set(ledger.slice(0, index).map((entry) => entry.id));
         const complete = index === 0;

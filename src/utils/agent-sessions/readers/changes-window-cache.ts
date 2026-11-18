@@ -1,5 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 
 export const CHUNK_BYTES = 8 * 1024 * 1024;
@@ -91,6 +92,13 @@ export function advanceLines<T>(options: {
             }
             const data = chunk.subarray(0, count);
             let from = 0;
+            const newline = data.lastIndexOf(10);
+            if (newline !== -1) {
+                for (const fragment of fragments) {
+                    prefix.update(fragment);
+                }
+                prefix.update(data.subarray(0, newline + 1));
+            }
             for (let end = data.indexOf(10); end !== -1; end = data.indexOf(10, from)) {
                 const last = data.subarray(from, end);
                 const bytes = fragments.length ? Buffer.concat([...fragments, last]) : last;
@@ -102,11 +110,18 @@ export function advanceLines<T>(options: {
             if (from < count) {
                 fragments.push(data.subarray(from));
             }
-            prefix.update(data);
             offset += count;
         }
         if (fragments.length) {
-            throw new Error("transcript ends without a newline");
+            let complete = true;
+            try {
+                SafeJSON.parse(Buffer.concat(fragments).toString("utf8"), { strict: true });
+            } catch {
+                complete = false;
+            }
+            if (complete) {
+                throw new Error("complete transcript record without its newline");
+            }
         }
         const mark = prefix.finish();
         if (!mark.stable) {

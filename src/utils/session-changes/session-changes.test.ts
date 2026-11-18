@@ -947,7 +947,7 @@ describe("window dependencies", () => {
         earlierTurns: new Set(["p1"]),
         shellCalls: new Set(["old-shell", "run"]),
         editedDirs: [],
-        writersOf: (path) => (path === REPO + "/run.sh" ? [{ callId: "script", at: ms(1), wildcard: false }] : []),
+        writersOf: (path) => (path === `${REPO}/run.sh` ? [{ callId: "script", at: ms(1), wildcard: false }] : []),
         complete: false,
         windowTurns: 1,
         sessionTurns: 2,
@@ -963,8 +963,8 @@ describe("window dependencies", () => {
 
     it("covers a missing named shell only for rows outside earlier turns", () => {
         const log = [
-            row("p1", REPO + "/ignored", 1, { toolUseId: "old-shell" }),
-            row("orphan", REPO + "/found", 11, { toolUseId: "old-shell" }),
+            row("p1", `${REPO}/ignored`, 1, { toolUseId: "old-shell" }),
+            row("orphan", `${REPO}/found`, 11, { toolUseId: "old-shell" }),
         ];
         const answer = computeChanges(
             { sessionId: "rows", log, transcript, repoRoot },

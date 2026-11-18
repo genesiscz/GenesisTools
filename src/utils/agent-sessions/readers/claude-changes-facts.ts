@@ -100,11 +100,11 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 knownPrompt &&
                 commonSuccess &&
                 (resultPos < 0 || fastId) &&
+                !(fastId && facts.errorIds.has(fastId)) &&
                 !bytes.includes(UNICODE)
             ) {
                 if (fastId) {
-                    // Overcounting an id in a nested field can only force the full reader.
-                    facts.duplicateIds ||= facts.resultIds.has(fastId);
+                    // A possible cross-file result forces its file open if the cut holds the call.
                     facts.resultIds.add(fastId);
                 }
                 return;
@@ -159,7 +159,6 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 const block = object(raw);
                 if (block?.type === "tool_result" && typeof block.tool_use_id === "string") {
                     const id = block.tool_use_id;
-                    facts.duplicateIds ||= facts.resultIds.has(id);
                     facts.resultIds.add(id);
                     if (block.is_error === true) {
                         facts.errorIds.add(id);
@@ -219,40 +218,47 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
     const errors = new Set<string>();
     const scripts = new Set<string>();
     const shellCalls = new Set<string>();
-    const seenResults = new Set<string>();
     let ambiguous = false;
     for (const { state } of files.values()) {
         for (const cwd of state.cwds) {
             cwds.add(cwd);
         }
-        for (const id of state.errorIds) {
-            errors.add(id);
-        }
         for (const name of state.heredocScripts) {
             scripts.add(name);
         }
         ambiguous ||= state.duplicateIds;
-        for (const id of state.resultIds) {
-            ambiguous ||= seenResults.has(id);
-            seenResults.add(id);
-        }
     }
     const calls = new Map<string, { path: string; offset: number }>();
+    const fileDirs = new Map<string, string>();
+    const scriptNames = [...scripts];
     const dirs = new Set<string>();
     const writers = new Map<string, WindowWriter[]>();
     const wildcards: WindowWriter[] = [];
     for (const [path, { state }] of files) {
+        // As in merge(): apply this file's cross-file results before inserting its own calls.
+        for (const id of state.resultIds) {
+            if (calls.has(id) && !state.calls.has(id)) {
+                if (state.errorIds.has(id)) {
+                    errors.add(id);
+                } else {
+                    errors.delete(id);
+                }
+            }
+        }
         for (const call of state.calls.values()) {
             ambiguous ||= calls.has(call.id);
             calls.set(call.id, { path, offset: call.offset });
-            if (call.dir && !errors.has(call.id)) {
-                dirs.add(call.dir);
+            if (call.dir) {
+                fileDirs.set(call.id, call.dir);
+                if (state.errorIds.has(call.id)) {
+                    errors.add(call.id);
+                }
             }
             if (call.kind === "shell") {
                 shellCalls.add(call.id);
             }
             const wildcard =
-                call.wildcard || (call.command !== null && [...scripts].some((name) => call.command?.includes(name)));
+                call.wildcard || (call.command !== null && scriptNames.some((name) => call.command?.includes(name)));
             const writer = { callId: call.id, at: call.at, wildcard };
             if (wildcard) {
                 wildcards.push(writer);
@@ -263,6 +269,11 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
                     writers.set(target, list);
                 }
             }
+        }
+    }
+    for (const [id, dir] of fileDirs) {
+        if (!errors.has(id)) {
+            dirs.add(dir);
         }
     }
     const byTime = (a: WindowWriter, b: WindowWriter) => (a.at ?? 0) - (b.at ?? 0);
