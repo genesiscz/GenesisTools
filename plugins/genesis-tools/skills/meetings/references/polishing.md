@@ -127,8 +127,9 @@ use), or the macOS checker with `--word-check macos` when it has Slovak. A langu
   before, the sentence with the term highlighted as `==term==`, sentence after). Propose the fixes at 70 % and above;
   the user confirms. A confirmed fix goes into the project dictionary with `tools meetings dictionary add <heard>
   <correct> --type fix --project <name>` (`term` for a correct word the check should know, `keep` for a real word the
-  tool wrongly flags, `abbr` for a substitution), so the next meeting starts with it. Add each inflected form you met
-  until the dictionary has fuzzy matching.
+  tool wrongly flags, `abbr` for a substitution). Ask the user before adding the entry. Try the inflected form
+  with `tools meetings dictionary test "<phrase>" --project <name>`. The threshold preview shows which fuzzy
+  matches a proposed setting would change in this meeting.
 
 ## Removals
 
