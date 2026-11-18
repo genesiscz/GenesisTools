@@ -214,7 +214,7 @@ export async function preparePreviewLabels(
     }
     const { voiceLabeler } = await import("./voice");
     let embeddings: { model: string; lines: Promise<VoiceLine[]> } | undefined;
-    const readLines = (inputs: LabelContext, model: string) => {
+    const previewLines = (inputs: LabelContext, model: string) => {
         if (embeddings?.model !== model) {
             embeddings = { model, lines: previewVoiceLines(opened, inputs, model, signal) };
         }
@@ -222,7 +222,7 @@ export async function preparePreviewLabels(
     };
     return async (voice: VoiceSettings, applyAbove: number) => {
         const inputs = await forVoice(labels.get("seat") ?? [], applyAbove);
-        labels.set("voice", await voiceLabeler({ opened, settings: voice, readLines }).propose(inputs));
+        labels.set("voice", await voiceLabeler({ opened, settings: voice, readLines: previewLines }).propose(inputs));
         return mergeLineLabels(labels);
     };
 }

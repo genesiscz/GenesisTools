@@ -1102,7 +1102,9 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     set: {
         mutate: (record, action) => {
             if (action.seats && action.seatsIfAbsent && record.seats) {
-                throw new Error(`Seats are already set. To replace them: tools meetings seats ${record.id} --replace`);
+                throw new Error(
+                    `Seats are already set. To replace them: ${toolCommand("meetings seats", record.id, "--replace")}`
+                );
             }
             const labels = action.labels ?? [];
             const unlabel = action.unlabel ?? [];
