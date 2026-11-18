@@ -2611,7 +2611,10 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { command: "new", change: "fixture" }
         );
         const runner = await import("@app/meetings/lib/suggest-run");
-        const result = { changes: { meeting: record.id, fresh: [], updated: [], stays: [] }, warnings: [] };
+        const result = {
+            changes: { meeting: record.id, expected: "fixture", fresh: [], updated: [], stays: [] },
+            warnings: [],
+        };
         const preview = spyOn(runner, "previewSuggestions").mockResolvedValue(result);
         try {
             const { meetings } = (await new MeetingsToolset().load(ctx)) as {

@@ -51,6 +51,7 @@ import {
     meetingsToolsetApi,
     overview,
     prepareListen,
+    preview,
     projectsLabels,
     projectsPair,
     projectsPeople,
@@ -78,7 +79,7 @@ import {
 } from "@app/meetings/lib/service/toolset-api";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
-import { runSuggest } from "@app/meetings/lib/suggest-run";
+import { previewSuggestions, runSuggest } from "@app/meetings/lib/suggest-run";
 import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
@@ -571,6 +572,10 @@ export class MeetingsToolset extends ReplToolset {
                         warnings,
                         token: decided.entry?.token ?? null,
                     };
+                },
+                preview: async (input: z.input<typeof preview.params> = {}) => {
+                    const { rules = [...SUGGEST_RULES] } = preview.params.parse(input);
+                    return previewSuggestions({ store, record: current(), rules });
                 },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
                     const options = suggest.params.parse(input);

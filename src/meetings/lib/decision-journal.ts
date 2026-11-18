@@ -86,6 +86,7 @@ import {
     renameJoinsWarning,
     revertAssignments,
 } from "./speaker-assign";
+import { needsSpeakerReview } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
 import {
     prepareAnsweredVoiceSamples,
@@ -452,12 +453,12 @@ function decideItems(
                 });
             } else if (
                 item.kind === "speaker-range" &&
-                item.evidence?.reason === "exclusion" &&
-                minConfidence !== undefined
+                needsSpeakerReview(item) &&
+                (minConfidence !== undefined || action.items.length !== 1)
             ) {
                 skipped.push({
                     id: item.id,
-                    reason: "A voice exclusion needs an individual speaker decision.",
+                    reason: "An exclusion needs an individual speaker decision.",
                     needs: "listen",
                 });
             } else if (item.kind === "speaker-range" && inputNeeded(item) === "speaker" && !speaker) {

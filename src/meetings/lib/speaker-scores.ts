@@ -3,6 +3,8 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { callMutes } from "./call-mutes";
+import type { Eligibility } from "./speaker-eligibility";
 
 /**
  * Typed confidence for the people a speaker range could be (G31, the speaker half of R49). The suggest pipeline writes
@@ -44,6 +46,27 @@ export const speakerScoreSchema = z.object({
     evidence: z.array(speakerEvidenceSchema),
 });
 export type SpeakerScore = z.infer<typeof speakerScoreSchema>;
+
+/** Older automatic ranges predate the explicit marker. RM plus attendance alone eliminated the other accounts. */
+export function needsSpeakerReview(item: Pick<MeetingItem, "kind" | "rules" | "evidence">): boolean {
+    if (item.kind !== "speaker-range") {
+        return false;
+    }
+    const evidence = item.evidence;
+    if (typeof evidence?.reviewOnly === "boolean") {
+        return evidence.reviewOnly;
+    }
+    return (
+        evidence?.reason === "exclusion" ||
+        (item.rules.includes(MeetingRule.Muted) &&
+            item.rules.includes(MeetingRule.Attendance) &&
+            item.rules.every((rule) =>
+                [MeetingRule.Channel, MeetingRule.Energy, MeetingRule.Attendance, MeetingRule.Muted].some(
+                    (allowed) => allowed === rule
+                )
+            ))
+    );
+}
 
 /**
  * The weights the others' shares are made of, each per share of the range's lines. Calibrated on the two recorded
@@ -185,6 +208,7 @@ export function lineTallies(options: {
     nearby: string[][];
     /** The user's microphone holds the line (a sure energy share, else the live segments). */
     micHolds: (line: LineEvidence) => boolean;
+    eligibility?: ReadonlyMap<number, Eligibility>;
     samePerson?: SamePerson;
 }): CandidateTallies {
     const tallies = new CandidateTallies({ selfName: options.selfName, samePerson: options.samePerson });
@@ -194,31 +218,41 @@ export function lineTallies(options: {
     const once = (names: Iterable<string>) => new Set([...names].map((name) => tallies.of(name)));
 
     for (const line of options.lines) {
-        const muted = (name: string) => line.muted?.some((person) => sameName(person, name)) === true;
+        const eligibility = options.eligibility?.get(line.index);
+        const allows = (name: string) => !eligibility || eligibility.choices.some((other) => sameName(name, other));
+        const mutedAccounts = callMutes(line).filter((name) => !eligibility || !allows(name));
+        const muted = (name: string) => mutedAccounts.some((person) => sameName(person, name));
 
-        if (options.micHolds(line)) {
+        if (options.micHolds(line) && allows(options.selfName) && (!eligibility || eligibility.choices.length === 1)) {
             const rule = line.energyMic !== undefined ? MeetingRule.Energy : MeetingRule.Channel;
             const self = tallies.of(options.selfName);
             self.mic.set(rule, (self.mic.get(rule) ?? 0) + 1);
         }
 
         const shown = Object.entries(line.speaking).flatMap(([name, readings]) =>
-            readings > 0 && !muted(name) && !sameName(name, options.selfName) ? [name] : []
+            !line.speakingUnknown && readings > 0 && allows(name) && !muted(name) && !sameName(name, options.selfName)
+                ? [name]
+                : []
         );
 
         for (const tally of once(shown)) {
             tally.shown += 1;
         }
 
-        if (line.liveName && !muted(line.liveName) && !sameName(line.liveName, options.selfName)) {
+        if (
+            line.liveName &&
+            allows(line.liveName) &&
+            !muted(line.liveName) &&
+            !sameName(line.liveName, options.selfName)
+        ) {
             tallies.of(line.liveName).live += 1;
         }
 
-        for (const tally of once(line.present ?? [])) {
+        for (const tally of once((line.present ?? []).filter(allows))) {
             tally.roster = (tally.roster ?? 0) + 1;
         }
 
-        for (const tally of once(line.muted ?? [])) {
+        for (const tally of once(mutedAccounts)) {
             tally.muted += 1;
         }
     }

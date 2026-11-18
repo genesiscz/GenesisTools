@@ -228,6 +228,7 @@ export class OpenedMeeting {
             const matchedVoices = matchedCallVoices(record, lines);
             const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence: roster }).hints;
             const departures = identifiedDepartures({
+                record,
                 hints,
                 lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
                 selfName,
@@ -272,6 +273,7 @@ export class OpenedMeeting {
         const lines = lineEvidence(meeting.transcript, evidence, presence, (await this.energy()).share);
         const matchedVoices = matchedCallVoices(this.current, lines);
         const departures = identifiedDepartures({
+            record: this.current,
             hints,
             lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
             selfName,

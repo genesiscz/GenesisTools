@@ -9,6 +9,9 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { callMutes, type MutedCallLines } from "./call-mutes";
 import { personKey, personPresent } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
+import { channelFor, isStrongCallForNaming } from "./speaker-eligibility";
+import type { LineSpeakers } from "./speaker-evidence";
+import { needsSpeakerReview } from "./speaker-scores";
 import { questionOwnedItems } from "./transcript-corrections";
 
 export async function qualityVoiceFeatures(opened: OpenedMeeting): Promise<LineVoice[]> {
@@ -31,6 +34,8 @@ export function addQualityQuestions(options: {
     below?: number;
     features?: readonly LineVoice[];
     callMutes?: MutedCallLines;
+    speakers?: LineSpeakers;
+    now?: string;
     channel?: number;
 }): string[] {
     const lines = qualityLines(options.record, options.entries);
@@ -58,13 +63,29 @@ export function addQualityQuestions(options: {
     const ids: string[] = [];
     const itemsById = new Map(options.record.items.map((item) => [item.id, item]));
     for (const { group, parts } of groups) {
+        const split: QualityLine[][] = [];
         for (const part of parts) {
+            let previous: string | undefined;
+            for (const line of part) {
+                const key = options.speakers?.key(line.index) ?? "";
+                if (previous !== key) {
+                    split.push([]);
+                    previous = key;
+                }
+                split.at(-1)!.push(line);
+            }
+        }
+        for (const part of split) {
             const confidence = part.reduce((lowest, line) => Math.min(lowest, line.confidence), 1);
             const fromSec = part[0]!.fromSec,
                 toSec = part.at(-1)!.fromSec;
             const first = part[0]!;
             const excluded = options.callMutes?.forIndices(part.map((line) => line.index)) ?? [];
-            const eligible = (name: string) => !excluded.some((other) => sameName(other, name));
+            const allowed = options.speakers?.choices(part.map((line) => line.index));
+            const eligible = (name: string) =>
+                allowed
+                    ? allowed.some((other) => sameName(other, name))
+                    : !excluded.some((other) => sameName(other, name));
             const sharedStart =
                 options.entries[first.index - 1]?.startSec === fromSec ||
                 options.entries[first.index + 1]?.startSec === fromSec;
@@ -122,11 +143,12 @@ export function addQualityQuestions(options: {
                     ...new Set([
                         ...part.flatMap((line) => line.speaker ?? []),
                         ...options.record.participants.map((person) => person.name),
+                        ...(allowed ?? []),
                     ]),
                 ].filter(eligible),
                 decides,
                 rules: [],
-                suggestedAt: new Date().toISOString(),
+                suggestedAt: options.now ?? new Date().toISOString(),
                 evidence: {
                     words: part.reduce((sum, line) => sum + line.words, 0),
                     originalSpeaker: first.speaker,
@@ -185,11 +207,14 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
             speaker: item?.kind === "speaker-range" ? item.speaker : undefined,
             item: item?.id,
             confirmed: assigned === true || item?.status === "confirmed",
-            ...(item && item.status !== "confirmed" && questionOwned.has(item.id) ? { questionOwned: true } : {}),
+            ...(item && item.status !== "confirmed" && (questionOwned.has(item.id) || needsSpeakerReview(item))
+                ? { questionOwned: true }
+                : {}),
             asked: record.items.some(
                 (question) =>
                     question.kind === "question" &&
                     question.about === "speaker" &&
+                    question.evidence?.retired !== "speaker-eligibility" &&
                     (entry.startSec ?? -1) >= question.fromSec &&
                     (entry.startSec ?? Infinity) <= question.toSec
             ),
@@ -310,6 +335,7 @@ export function clipProgress(options: {
 export function uncertainSharedCallRanges(options: {
     record: MeetingRecord;
     lines: readonly LineEvidence[];
+    speakers?: LineSpeakers;
 }): Array<Omit<Extract<MeetingItem, { kind: "speaker-range" }>, "id" | "suggestedAt">> {
     const result: Array<Omit<Extract<MeetingItem, { kind: "speaker-range" }>, "id" | "suggestedAt">> = [];
     let priorIndex = -2;
@@ -332,9 +358,12 @@ export function uncertainSharedCallRanges(options: {
                 ? [sourcePerson.name]
                 : []),
         ];
+        const allowed = options.speakers?.eligibility.get(line.index)?.choices;
         const candidates = names.filter(
             (name, index) =>
-                !callMutes(line).some((other) => sameName(other, name)) &&
+                (allowed
+                    ? allowed.some((other) => sameName(other, name))
+                    : !callMutes(line).some((other) => sameName(other, name))) &&
                 names.findIndex((other) => personKey(other) === personKey(name)) === index
         );
         const confirmed = options.record.items.some(
@@ -349,7 +378,7 @@ export function uncertainSharedCallRanges(options: {
         if (
             !line.speakingUnknown ||
             candidates.length < 2 ||
-            (line.energyMic ?? line.micShare ?? 1) > 0.35 ||
+            !isStrongCallForNaming(channelFor(line)) ||
             confirmed ||
             matched
         ) {

@@ -17,17 +17,17 @@ import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { MutedCallLines } from "./call-mutes";
+
 import { contextEntryText } from "./context-file";
 import { indicatorGaps } from "./indicator-facts";
-import { addQualityQuestions } from "./listen-quality";
+
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingReviewDoor, requestMeetingQuestionReview } from "./person-door";
 import { errorText } from "./shared";
 import { preparePreviewLabels, proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
-import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
+import { applySuggestionChanges, planSuggestions, type SuggestInputs, type SuggestRule } from "./suggest";
 import { anchoredMeetingVoices } from "./voice";
 import { VOICE_PASS_HISTORY } from "./voice-readiness";
 import type { WordCheckChoice } from "./word-check";
@@ -159,7 +159,8 @@ export async function runSuggest(options: {
         )
     );
     const config = await prof.measureAsync("config", () => opened.config());
-    const { inputs, features } = await readSuggestInputs(opened, collected, config, options, warnings, false);
+    const snapshot = store.read(record.id) ?? collected;
+    const { inputs, features } = await readSuggestInputs(opened, snapshot, config, options, warnings, false);
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
     try {
@@ -169,9 +170,15 @@ export async function runSuggest(options: {
             command: "suggest",
             change: ranVoicePass ? VOICE_PASS_HISTORY : "suggest findings and questions",
         };
+        const changes = configuredPlan(inputs, config, features);
         await store.update(record.id, history, (current) => {
+            options.signal?.throwIfAborted();
             using _mutate = prof.section("save.compute");
-            ({ fresh, retired } = applySuggestionRun(current, inputs, config, features));
+            applySuggestionChanges(current, changes);
+            fresh = changes.fresh.filter((item) => !item.evidence?.qualitySource);
+            retired = changes.updated
+                .filter(({ before, after }) => before.status === "suggested" && after.status === "rejected")
+                .map(({ id }) => id);
         });
     } finally {
         inputs.wordCheck?.dispose();
@@ -326,9 +333,11 @@ async function readSuggestInputs(
         }
     }
 
-    const inputs: Parameters<typeof suggestItems>[0] = {
-        measuredLines: evidence
-            ? prof.measure("rules.line-evidence", () => lineEvidence(meeting.transcript, evidence, presence, share))
+    const inputs: SuggestInputs = {
+        measuredLines: needsSpeakerInputs
+            ? prof.measure("rules.line-evidence", () =>
+                  lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }, presence, share)
+              )
             : [],
         localSpeech: prof.measure("evidence.local-speech-history", () =>
             localSpeechDuring({ start: meeting.start, end: meeting.end })
@@ -430,10 +439,10 @@ export async function previewSuggestionRuns(
         const run = (config: MeetingsConfig, labels: typeof inputs.labels, presence: typeof inputs.presence) => {
             signal?.throwIfAborted();
             const copy = structuredClone(seed);
-            applySuggestionRun(
-                copy,
+            const changes = configuredPlan(
                 {
                     ...inputs,
+                    record: copy,
                     presence,
                     measuredLines:
                         inputs.evidence && presence !== inputs.presence
@@ -446,10 +455,17 @@ export async function previewSuggestionRuns(
                 config,
                 features
             );
+            applySuggestionChanges(copy, changes);
             return copy;
         };
         signal?.throwIfAborted();
-        const scoreLabels = await preparePreviewLabels(opened, current.global.speakerLabels, inputs.presence, signal);
+        const scoreLabels = await preparePreviewLabels(
+            opened,
+            current.global.speakerLabels,
+            inputs.presence,
+            signal,
+            inputs.energyMicShare
+        );
         const labels = await scoreLabels(current.global.speakerLabels.voice, current.global.suggest.applyAbove);
         const before = run(current, labels, inputs.presence);
         const staysChanged = draft.global.suggest.leaveSilenceMinutes !== current.global.suggest.leaveSilenceMinutes;
@@ -457,7 +473,13 @@ export async function previewSuggestionRuns(
         const presence = staysChanged ? await next.presence() : inputs.presence;
         let afterLabels = labels;
         if (staysChanged) {
-            const score = await preparePreviewLabels(next, draft.global.speakerLabels, presence, signal);
+            const score = await preparePreviewLabels(
+                next,
+                draft.global.speakerLabels,
+                presence,
+                signal,
+                inputs.energyMicShare
+            );
             afterLabels = await score(draft.global.speakerLabels.voice, draft.global.suggest.applyAbove);
         } else if (
             current.global.suggest.applyAbove !== draft.global.suggest.applyAbove ||
@@ -471,71 +493,49 @@ export async function previewSuggestionRuns(
     }
 }
 
-/** Both a locked save and a preview on a detached record run these same rules. */
-function applySuggestionRun(
-    current: MeetingRecord,
-    inputs: Parameters<typeof suggestItems>[0],
-    config: MeetingsConfig,
-    features?: LineVoice[]
-) {
-    const retired: string[] = [];
-    const known = knownWord(inputs.wordCheck);
-    // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
-    if (inputs.rules.includes("terms")) {
-        using _retire = prof.section("terms.retire");
-        const settled = settledTermItems({
-            record: current,
-            dictionary: inputs.dictionary,
-            known,
-            minOccurrences: config.global.suggest.words.minOccurrences,
-            unknownCandidate: config.global.suggest.terms.unknownCandidate,
-        });
-
-        for (const item of current.items) {
-            const reason = settled.get(item.id);
-
-            if (reason) {
-                item.status = "rejected";
-                item.decidedAt = inputs.now;
-                item.evidence = { ...item.evidence, retired: reason };
-            }
-        }
-
-        retired.push(...settled.keys());
-    }
-    const suggested = current.items.filter((item) => item.status === "suggested");
-    const fresh = prof.measure("suggestItems", () =>
-        suggestItems({
+function configuredPlan(inputs: SuggestInputs, config: MeetingsConfig, features?: LineVoice[]) {
+    return prof.measure("suggestItems", () =>
+        planSuggestions({
             ...inputs,
-            record: current,
             applyAbove: config.global.suggest.applyAbove,
             termThresholds: config.global.suggest.terms,
             listenBelow: config.global.suggest.listenBelow,
             questionBudget: config.global.suggest.questionCap,
             minPriority: config.global.playback.listen.minPriority,
             wordQuestions: { minOccurrences: config.global.suggest.words.minOccurrences },
+            retireTerms: true,
+            quality: { longStretchWords: config.global.suggest.longStretchWords, features },
         })
     );
-    retired.push(...suggested.filter((item) => item.status === "rejected").map((item) => item.id));
-    current.items.push(...fresh);
-    if (!inputs.rules.includes("evidence")) {
-        return { fresh, retired };
+}
+
+/** Preview the next suggest on this exact saved record, keeping pending items and their IDs. */
+export async function previewSuggestions(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    rules: SuggestRule[];
+    signal?: AbortSignal;
+}) {
+    const opened = OpenedMeeting.of(options.store, options.record);
+    const config = await opened.config();
+    const warnings: string[] = [];
+    const { inputs, features } = await readSuggestInputs(opened, options.record, config, options, warnings, true);
+    try {
+        options.signal?.throwIfAborted();
+        if (options.rules.some((rule) => rule !== "terms")) {
+            const score = await preparePreviewLabels(
+                opened,
+                config.global.speakerLabels,
+                inputs.presence,
+                options.signal,
+                inputs.energyMicShare
+            );
+            inputs.labels = await score(config.global.speakerLabels.voice, config.global.suggest.applyAbove);
+        }
+        return { changes: configuredPlan(inputs, config, features), warnings };
+    } finally {
+        inputs.wordCheck?.dispose();
     }
-    using _quality = prof.section("evidence.quality");
-    const before = current.items.length;
-    const quality = new Set(
-        addQualityQuestions({
-            record: current,
-            entries: inputs.meeting.transcript,
-            callMutes: new MutedCallLines(inputs.measuredLines ?? []),
-            longStretchWords: config.global.suggest.longStretchWords,
-            below: Math.max(0.7, config.global.suggest.applyAbove),
-            features,
-            channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
-        })
-    );
-    fresh.push(...current.items.slice(before).filter((item) => quality.has(item.id)));
-    return { fresh, retired };
 }
 
 /** What the term rules cannot read as the meeting saw it: a context file that is gone, or changed with no commit. */

@@ -280,6 +280,14 @@ export const suggest = defineMethod({
     effect: "reversible",
     doc: `Run ${toolCommand("meetings", "suggest")} with any of ${SUGGEST_RULES.join(", ")} (default all). Returns fresh items, retired item IDs and warnings, including an unavailable word check. With attendance "teams", a warning lists up to three matching chats by last call. Pass attendanceId to select one.`,
 });
+export const preview = defineMethod({
+    name: "items.preview",
+    params: z.object({ rules: z.array(z.enum(SUGGEST_RULES)).optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ changes: { meeting, fresh, updated, stays }, warnings }",
+    effect: "read",
+    doc: `Preview the next ${toolCommand("meetings", "suggest")} on saved evidence. Returns new items, existing item edits with before values, and participant stay edits. To save, call items.suggest with the same rules.`,
+});
 export const decide = {
     result: z.unknown(),
     resultName: "{ decided: string[], skipped: { id, reason, needs }[], token }",
@@ -855,6 +863,7 @@ export const meetingsToolsetApi = defineApi({
                 byChannel,
                 add,
                 suggest,
+                preview,
                 confirm,
                 reject,
                 reopen,

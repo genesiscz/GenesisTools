@@ -11,6 +11,7 @@ import {
     sameName,
 } from "@genesiscz/utils/transcribe/speakers";
 import { ARRIVAL_WINDOW_SEC, FROM_START_SEC } from "./arrival";
+import { channelFor, isStrongCallForNaming, speakersFor } from "./speaker-eligibility";
 import type { LineLabel } from "./speaker-labels/types";
 
 export interface IdentifiedDeparture {
@@ -60,6 +61,7 @@ export function matchedCallVoices(
 }
 
 interface DepartureEvidence {
+    record?: MeetingRecord;
     hints: SpeakerHint[];
     lines: LineEvidence[];
     selfName: string;
@@ -71,7 +73,7 @@ interface DepartureEvidence {
     speaking?: readonly SpeakingObservation[];
 }
 
-const onCall = (line: LineEvidence) => (line.energyMic ?? line.micShare ?? 1) < 0.35;
+const onCall = (line: LineEvidence) => isStrongCallForNaming(channelFor(line));
 
 /** The first return to the caller's label must be a short sign-off; the other side must answer the exchange. */
 function closingOf({ lines, intent }: { lines: LineEvidence[]; intent: LineEvidence }): LineEvidence | undefined {
@@ -196,6 +198,23 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
         // An indicator assessed as stuck names nobody: not as the one shown speaking, and without attendance not as
         // the only candidate either, since then the candidates would come from that same indicator.
         const ignored = options.ignoredIndicator?.has(line.index) ?? false;
+        const eligibility =
+            options.record &&
+            speakersFor(
+                { index: line.index, fromSec: atSec, toSec: line.endSec },
+                {
+                    ...line,
+                    selfName: options.selfName,
+                    seats: options.record.seats,
+                    people: options.record.participants.map((p) => p.name),
+                    callStays: options.presence,
+                    ignoredIndicator: ignored,
+                }
+            );
+        const allowed = (name: string) =>
+            eligibility
+                ? eligibility.choices.some((other) => sameName(other, name))
+                : !line.muted?.some((other) => sameName(other, name));
         const candidates = [
             ...new Set(present?.map((stay) => stay.name) ?? (ignored ? [] : Object.keys(line.speaking).filter(remote))),
         ];
@@ -233,12 +252,12 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
                 !matched &&
                 isLeavePhrase(line.text) &&
                 exchangeDeparture({ options, line, present });
-            if (exchange) {
+            if (exchange && allowed(exchange.name)) {
                 departures.push(exchange);
             }
             continue;
         }
-        if (sameName(name, options.selfName) || line.muted?.some((person) => sameName(person, name))) {
+        if (sameName(name, options.selfName) || !allowed(name)) {
             continue;
         }
         departures.push({

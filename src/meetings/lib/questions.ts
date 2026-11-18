@@ -18,7 +18,8 @@ import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transc
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { MutedCallLines } from "./call-mutes";
 import { parsePersonAnswer, personPresent, recordPeople, sentenceSegments } from "./listen-answers";
-import { anchorScores, speakerScoresOf } from "./speaker-scores";
+import type { LineSpeakers } from "./speaker-evidence";
+import { anchorScores, needsSpeakerReview, speakerScoresOf } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
@@ -56,6 +57,7 @@ const IMPACT = { decision: 3, cited: 3, owner: 2 } as const;
 export interface QuestionContext {
     listenBelow: number;
     callMutes?: MutedCallLines;
+    speakers?: LineSpeakers;
     /** Canonical candidate names from the meeting roster and people added to this meeting. */
     candidates?: readonly string[];
     /** Who was in the call, the user under their own name (`CallTimeline.named`, as `OpenedMeeting.presence` gives it). */
@@ -159,6 +161,138 @@ export function presenceAt(presence: Presence[] | undefined, atSec: number): { p
     return { present, absent };
 }
 
+function speakerChoices(
+    names: readonly string[],
+    allowed: string[] | undefined,
+    excluded: readonly string[]
+): string[] {
+    return [...names, ...(allowed ?? [])].filter(
+        (name, index, all) =>
+            name &&
+            (allowed
+                ? allowed.some((other) => sameName(name, other))
+                : !excluded.some((other) => sameName(name, other))) &&
+            all.findIndex((other) => sameName(name, other)) === index
+    );
+}
+
+/** Voice exclusions, stranger stretches and roster eliminations need a direct listen even on a short line. */
+export function groupSpeakerQuestions(
+    items: MeetingItem[],
+    asked: Set<string>,
+    context: QuestionContext
+): NewQuestion[] {
+    const groups: RangeItem[][] = [];
+    let previousKey: string | undefined;
+    for (const item of items) {
+        if (item.kind !== "speaker-range" || item.status !== "suggested" || asked.has(item.id)) {
+            continue;
+        }
+        const ev = item.evidence;
+        const stretch = ev?.strangerStretch ?? ev?.exclusionStretch;
+        if (typeof stretch !== "number" && ev?.reviewOnly !== true) {
+            continue;
+        }
+        const indices = context.speakers?.linesFor(item).map((line) => line.index) ?? [];
+        const key = [
+            ev?.reason,
+            stretch ?? item.id,
+            ev?.exclusionPerson ?? ev?.seatPerson,
+            ...new Set(indices.map((i) => context.speakers?.key(i))),
+        ].join("|");
+        if (key !== previousKey) {
+            groups.push([]);
+        }
+        groups.at(-1)!.push(item);
+        previousKey = key;
+    }
+    return groups.map((ranges) => {
+        const first = ranges[0]!;
+        const owner = first.evidence?.seatPerson;
+        const person = first.evidence?.exclusionPerson ?? first.speaker ?? first.candidates?.[0];
+        const stranger = first.evidence?.reason === "not-the-seat-person";
+        const fromSec = Math.min(...ranges.map((r) => r.fromSec));
+        const indices = ranges.flatMap((r) => context.speakers?.linesFor(r).map((line) => line.index) ?? []);
+        const choices = speakerChoices(
+            [
+                ...(typeof person === "string" ? [person] : []),
+                ...(typeof owner === "string" ? [owner] : []),
+                ...ranges.flatMap((r) => r.candidates ?? []),
+                ...(context.candidates ?? []),
+            ],
+            context.speakers?.choices(indices),
+            presenceAt(context.presence, fromSec).absent
+        );
+        return {
+            kind: "question",
+            status: "suggested",
+            about: "speaker",
+            group: "rules",
+            fromSec,
+            toSec: Math.max(
+                ...ranges.map((r) => (typeof r.evidence?.endSec === "number" ? r.evidence.endSec : r.toSec))
+            ),
+            question: stranger
+                ? `This does not sound like ${owner}. Who is speaking?`
+                : `Is ${person} speaking here, or someone else?`,
+            choices,
+            decides: ranges.map((r) => r.id),
+            rules: first.rules,
+            evidence: {
+                reason: first.evidence?.reason,
+                ...(stranger ? { seatPerson: owner } : { reviewOnly: true, margin: first.evidence?.margin }),
+            },
+        };
+    });
+}
+
+/** Re-evaluate still-open generated questions when old targets split or acquire a different set of speakers. */
+export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionContext) {
+    const speakers = context.speakers;
+    if (!speakers) {
+        return;
+    }
+    const byId = new Map(items.map((item) => [item.id, item]));
+    for (const question of items) {
+        if (
+            question.kind !== "question" ||
+            question.about !== "speaker" ||
+            question.status !== "suggested" ||
+            question.decision ||
+            question.rules.includes(MeetingRule.Agent) ||
+            question.rules.includes(MeetingRule.User)
+        ) {
+            continue;
+        }
+        const ranges = question.decides.flatMap((id) => {
+            const target = byId.get(id);
+            return target?.kind === "speaker-range" ? [target] : [];
+        });
+        const indices = ranges.flatMap((r) => speakers.linesFor(r).map((row) => row.index));
+        const allowed = speakers.choices(indices);
+        if (!allowed) {
+            continue;
+        }
+        if (
+            ranges.some((r) => r.status === "rejected" && r.evidence?.retired) ||
+            (new Set(indices.map((i) => speakers.key(i))).size > 1 && ranges.length > 1)
+        ) {
+            question.status = "rejected";
+            question.evidence = { ...question.evidence, retired: "speaker-eligibility" };
+            continue;
+        }
+        const choices = speakerChoices(question.choices, allowed, []);
+        if (!Bun.deepEquals(choices, question.choices)) {
+            question.choices = choices;
+            delete question.signature;
+        }
+        if (ranges.some(needsSpeakerReview)) {
+            delete question.signature;
+            question.evidence = { ...question.evidence, reviewOnly: true };
+        }
+    }
+}
+
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
     const low =
         item.evidence?.listen === true || (item.confidence !== undefined && item.confidence < context.listenBelow);
@@ -188,16 +322,17 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         const { present, absent } = presenceAt(context.presence, item.fromSec);
         const excluded = [...absent, ...(context.callMutes?.forRange(item) ?? [])];
         // The people the range's typed scores weigh come last, so the first two choices (the signature) stay as before.
-        const choices = [
-            ...(item.speaker ? [item.speaker] : []),
-            ...(item.candidates ?? []),
-            ...present,
-            ...(context.candidates ?? []),
-            ...speakerScoresOf(item).map((score) => score.speaker),
-        ].filter(
-            (name, index, names) =>
-                !excluded.some((other) => sameName(name, other)) &&
-                names.findIndex((other) => sameName(name, other)) === index
+        const indices = context.speakers?.linesFor(item).map((line) => line.index) ?? [];
+        const choices = speakerChoices(
+            [
+                ...(item.speaker ? [item.speaker] : []),
+                ...(item.candidates ?? []),
+                ...present,
+                ...(context.candidates ?? []),
+                ...speakerScoresOf(item).map((score) => score.speaker),
+            ],
+            context.speakers?.choices(indices),
+            excluded
         );
 
         if (choices.length < 2) {
@@ -421,7 +556,12 @@ export function propagateAnswer(
     answered: QuestionItem,
     options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
 ): string[] {
-    if (answered.about !== "speaker" || !answered.signature || options.answer.toLowerCase() === NONE_OF_THESE) {
+    if (
+        answered.about !== "speaker" ||
+        !answered.signature ||
+        answered.evidence?.reviewOnly === true ||
+        options.answer.toLowerCase() === NONE_OF_THESE
+    ) {
         return [];
     }
 
@@ -440,6 +580,7 @@ export function propagateAnswer(
             question.id === answered.id ||
             options.except?.includes(question.id) ||
             question.signature !== answered.signature ||
+            question.evidence?.reviewOnly === true ||
             !offers ||
             !Array.isArray(otherLabels) ||
             otherLabels.length !== 1 ||
@@ -502,6 +643,7 @@ export function propagateAnswer(
             options.except?.includes(item.id) ||
             item.label !== labels[0] ||
             item.evidence?.signature !== answered.signature ||
+            needsSpeakerReview(item) ||
             !Array.isArray(item.evidence?.choices) ||
             !item.evidence.choices.some((name) => typeof name === "string" && sameName(name, options.answer))
         ) {
@@ -720,8 +862,10 @@ export function answerQuestion(
         question.about === "speaker" && !options.knownSpeaker && answer.toLowerCase() !== NONE_OF_THESE
             ? parsePersonAnswer({
                   text: answer,
-                  people: [...question.choices, ...recordPeople(record), ...(options.people ?? [])].filter((name) =>
-                      personPresent(record, name, question.fromSec)
+                  people: [...question.choices, ...recordPeople(record), ...(options.people ?? [])].filter(
+                      (name) =>
+                          question.choices.some((choice) => sameName(choice, name)) ||
+                          personPresent(record, name, question.fromSec)
                   ),
                   self: record.participants.find((person) => person.self)?.name,
               })
@@ -1115,7 +1259,7 @@ export function questionView(
                       item.status === "suggested" &&
                       item.speaker &&
                       question.decides.includes(item.id) &&
-                      item.evidence?.reason !== "exclusion" &&
+                      !needsSpeakerReview(item) &&
                       item.rules.includes(MeetingRule.VoiceEmbedding)
                           ? [
                                 {
