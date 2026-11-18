@@ -28,6 +28,34 @@ if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
     exit 0
 fi
 
+# Every stage runs through scripts/ci/pre-push-profile.ts: wall time, CPU time with child processes, the peak memory
+# of its process tree and its largest process, the load when it started, and the wait between stages. The table
+# prints when the hook ends, pass or fail, and each push is one line in ~/.genesis-tools/logs/pre-push/<day>.jsonl.
+# GT_PRE_PUSH_PROFILE=0 runs the stages bare.
+profile_dir=""
+if [ "${GT_PRE_PUSH_PROFILE:-1}" != "0" ]; then
+    profile_dir=$(bun scripts/ci/pre-push-profile.ts start 2>/dev/null || true)
+fi
+
+profile_report() {
+    rc=$?
+    if [ -n "$profile_dir" ]; then
+        bun scripts/ci/pre-push-profile.ts report "$profile_dir" "$rc" || true
+    fi
+    exit "$rc"
+}
+trap profile_report EXIT
+
+stage() {
+    name="$1"
+    shift
+    if [ -n "$profile_dir" ]; then
+        bun scripts/ci/pre-push-profile.ts run "$profile_dir" "$name" -- "$@"
+    else
+        "$@"
+    fi
+}
+
 # Biome runs on the files this push actually changes, not `biome check .`:
 # CI lints the committed checkout only, so untracked local scratch files
 # (e.g. scripts/_dump-*.ts from a parallel session) must not block a push.
@@ -37,7 +65,7 @@ fi
 # lives outside the repo, so a runner could only get it as a secret, and a hit
 # would echo the matched values into a public log. Sub-second on 800 needles.
 echo "▶ placeholder-check (local needle list)..."
-bash scripts/ci/placeholder-check.sh
+stage placeholder-check bash scripts/ci/placeholder-check.sh
 stage_done
 
 echo "▶ biome (push-range files)..."
@@ -64,7 +92,7 @@ if [ -n "$changed" ]; then
     # on "No files were processed" — so a push touching only ignored files could
     # never land. Verified 2026-08-27 that the flag still fails on real lint
     # errors (a file with 2 findings exits 1 with the flag set).
-    printf '%s\n' "$changed" | xargs bunx biome check --no-errors-on-unmatched
+    printf '%s\n' "$changed" | stage biome xargs bunx biome check --no-errors-on-unmatched
 else
     echo "  (no lintable files in push range)"
 fi
@@ -72,21 +100,21 @@ stage_done
 
 echo "▶ repo lint rules (roster audits run on demand)..."
 if [ -n "$range_base" ]; then
-    bun scripts/ci/lint-rules.ts --no-rosters --changed "$range_base"
+    stage lint-rules bun scripts/ci/lint-rules.ts --no-rosters --changed "$range_base"
 else
-    bun scripts/ci/lint-rules.ts --no-rosters
+    stage lint-rules bun scripts/ci/lint-rules.ts --no-rosters
 fi
 stage_done
 
 echo "▶ bun run lint:dashboard..."
-bun run lint:dashboard
+stage lint-dashboard bun run lint:dashboard
 stage_done
 
 # A failed typecheck fails the push. It used to run `bun install` and retry, which turned a
 # real error report into a pass whenever the install happened to fix it, and hid the failure.
 # Only the projects a change since their last passing run can reach, each incremental (scripts/ci/typecheck.ts).
 echo "▶ bun run typecheck --prefer-tsc-rs..."
-if ! bun run typecheck --prefer-tsc-rs; then
+if ! stage typecheck bun run typecheck --prefer-tsc-rs; then
     echo "✖ typecheck failed: push refused. If the errors name a missing module, the dependency tree is"
     echo "  stale: run \`bun install\` and push again."
     exit 1
@@ -114,7 +142,12 @@ run_guard() {
     guard_names="$guard_names $name"
     (
         rc=0
-        "$@" > "$guard_dir/$name.log" 2>&1 &
+        # The wrapper itself is the background job, so the watchdog's kill reaches it and it passes the signal on.
+        if [ -n "$profile_dir" ]; then
+            bun scripts/ci/pre-push-profile.ts run "$profile_dir" "guard:$name" -- "$@" > "$guard_dir/$name.log" 2>&1 &
+        else
+            "$@" > "$guard_dir/$name.log" 2>&1 &
+        fi
         cmd=$!
         # A guard that ignores SIGTERM gets SIGKILL 5 s later, so `wait` below always returns.
         (sleep "$guard_timeout"; kill "$cmd" 2>/dev/null; sleep 5; kill -9 "$cmd" 2>/dev/null) &

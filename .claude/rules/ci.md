@@ -22,6 +22,11 @@ Loaded by Claude Code when you read, write or edit a file under `.github/`, `scr
   follows imports only, so a hook, a workflow or a shell script never reaches the suite that reads or runs it. A
   `scripts/ci/<name>.sh` selects its sibling `<name>.test.ts` by itself; any other reader is listed by hand.
 - **Git runs the `.githooks/` scripts as config hooks** (`hook.genesis-tools-<name>`, through `/bin/sh -c`), set by `scripts/git/install-hooks.ts` from package.json `prepare`, never through `core.hooksPath`. Git executes a hook-folder file directly, macOS checks the first execution of every new file in syspolicyd, and a worktree's hooks are new files: on 2026-10-14 a stuck syspolicyd froze every such first execution at `_dyld_start`, and a rebase hung 41 minutes. A config hook runs only while `core.hooksPath` is unset, so `git -c core.hooksPath=/dev/null …` still turns every hook off. A new hook needs a `#!` line (its interpreter becomes the command) and one `bun install`. Check what runs with `git hook list <event>`.
+- **The pre-push hook profiles every stage** (`scripts/ci/pre-push-profile.ts`): wall time, CPU time with child
+  processes, the peak memory of the stage's process tree and its largest process, the load at its start and the wait
+  before it. The table prints when the hook ends, pass or fail; each push is one line in
+  `~/.genesis-tools/logs/pre-push/<day>.jsonl`. Read that history before you guess why a push was slow.
+  `GT_PRE_PUSH_PROFILE=0` runs the stages bare. A new stage goes through the hook's `stage <name> <command>`.
 - **Dashboard validation is opt-in.** Enable `dashboards` in the manual CI workflow to check the five standalone
   UI TypeScript projects and run `scripts/ci/dashboard-smoke.ts`. The smoke starts the Vite dashboards on a runner
   with an empty home, fetches `/` and reports the server log on failure. The separate `tool_command_guard` input
