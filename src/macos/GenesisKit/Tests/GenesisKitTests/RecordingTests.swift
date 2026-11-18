@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 @testable import GenesisKit
 import SwiftUI
 import XCTest
@@ -581,35 +580,6 @@ final class WidgetBarRecordingTests: XCTestCase {
         return window
     }
 
-    private func press(_ control: String, in window: NSWindow) async throws {
-        // Let SwiftUI update the enabled state after a target choice or session acknowledgement.
-        await withCheckedContinuation { continuation in
-            RunLoop.main.perform { continuation.resume() }
-        }
-        window.contentView?.layoutSubtreeIfNeeded()
-        window.displayIfNeeded()
-        func value(_ node: AXUIElement, _ name: CFString) -> CFTypeRef? {
-            var result: CFTypeRef?
-            return AXUIElementCopyAttributeValue(node, name, &result) == .success ? result : nil
-        }
-        let identifier = "fixture-bar-\(window.windowNumber)"
-        window.setAccessibilityIdentifier(identifier)
-        let app = AXUIElementCreateApplication(getpid())
-        let windows = value(app, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? []
-        let root = try XCTUnwrap(windows.first { value($0, kAXIdentifierAttribute as CFString) as? String == identifier })
-        var visited = Set<AXUIElement>()
-        func button(_ node: AXUIElement) -> AXUIElement? {
-            guard visited.insert(node).inserted else { return nil }
-            if value(node, kAXIdentifierAttribute as CFString) as? String == "recording.bar.\(control)" { return node }
-            for child in value(node, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? [] {
-                if let found = button(child) { return found }
-            }
-            return nil
-        }
-        let target = try XCTUnwrap(button(root), "Missing bar control \(control)")
-        XCTAssertEqual(AXUIElementPerformAction(target, kAXPressAction as CFString), .success)
-    }
-
     func testShelfEntryOpensSetupWithPickerAndStartsNoSession() async throws {
         _ = NSApplication.shared
         let f = Fixture()
@@ -650,12 +620,13 @@ final class WidgetBarRecordingTests: XCTestCase {
         f.begin()
         try await until("Missing widget targets") { f.listed }
         let pickerID = try XCTUnwrap(f.picker?.windowNumber)
-        let window = f.picker?.parent
+        let window = try bar(f)
+        let host = try RecordingBarTestHost(window, probing: ["record"], test: self)
         XCTAssertTrue(f.recorder.choose { $0.windows.first?.target })
         f.recorder.stopAndUse()
         XCTAssertTrue(f.recorder.stateDescription.contains("phase=setup"), "Choosing edits the draft")
         XCTAssertTrue(f.starts.isEmpty)
-        try await press("record", in: XCTUnwrap(window))
+        try await host.press("record")
         try await until("Record did not start a session") { !f.starts.isEmpty }
         XCTAssertEqual(f.starts.count, 1)
         let args = try XCTUnwrap(f.starts.first)
@@ -668,7 +639,7 @@ final class WidgetBarRecordingTests: XCTestCase {
                        RecordingFixture.targets.windows.first?.target)
         XCTAssertEqual(try argument("--fps"), "60")
         let exclusions = Set(try argument("--exclude-window-ids").split(separator: ",").compactMap { Int($0) })
-        XCTAssertTrue(exclusions.contains(try XCTUnwrap(window).windowNumber))
+        XCTAssertTrue(exclusions.contains(window.windowNumber))
         XCTAssertTrue(exclusions.contains(pickerID))
         f.recorder.stopAndUse()
         XCTAssertTrue(f.channel.sent.isEmpty, "Stop is unavailable until this take has a frame")
@@ -692,14 +663,15 @@ final class WidgetBarRecordingTests: XCTestCase {
         f.begin()
         try await until("Missing widget targets") { f.listed }
         let window = try bar(f)
+        let host = try RecordingBarTestHost(window, probing: ["record", "target", "pause", "resume"], test: self)
         XCTAssertTrue(f.recorder.choose { $0.windows.first?.target })
-        try await press("record", in: window)
+        try await host.press("record")
         try await until("Record did not start") { f.receive != nil }
         let recording = #"{"event":"state","state":"recording"}"#
         let paused = #"{"event":"state","state":"paused","reason":"user"}"#
         f.receive?([recording])
         try await until("Missing first frame") { f.recorder.stateDescription.contains("phase=recording") }
-        try await press("target", in: window)
+        try await host.press("target")
         try await until("No picker pause") { f.channel.sent == [#"{"cmd":"pause"}"#] }
         XCTAssertNil(f.picker, "The switch picker must wait for the pause acknowledgement")
         f.receive?([paused])
@@ -709,17 +681,17 @@ final class WidgetBarRecordingTests: XCTestCase {
         XCTAssertEqual(f.channel.sent.last, #"{"cmd":"switch","target":{"app":"4202","kind":"app","name":"Viewer"}}"#)
         f.receive?([#"{"event":"state","state":"starting","target":{"kind":"app","app":"4202"}}"#, recording])
         try await until("Switch never finished") { f.recorder.stateDescription.contains("phase=recording") }
-        try await press("pause", in: window)
+        try await host.press("pause")
         try await until("No manual pause") { f.channel.sent.count == 3 }
         f.receive?([paused])
         try await until("Manual pause not confirmed") { f.recorder.stateDescription.contains("phase=paused") }
-        try await press("target", in: window)
+        try await host.press("target")
         try await until("No picker while paused") { f.picker != nil }
         XCTAssertTrue(f.recorder.choose { $0.windows.last?.target })
         try await until("Pending target was not selected") { f.recorder.stateDescription.contains("target=Quarterly chart") }
         XCTAssertTrue(f.recorder.stateDescription.contains("phase=paused"))
         XCTAssertEqual(f.channel.sent.count, 3, "Choosing must not resume a manually paused session")
-        try await press("resume", in: window)
+        try await host.press("resume")
         try await until("Resume did not apply the paused choice") { f.channel.sent.count == 4 }
         XCTAssertEqual(f.channel.sent.last, #"{"cmd":"switch","target":{"app":"Viewer","kind":"window","pid":4202,"title":"Quarterly chart","windowIds":[610]}}"#)
         f.receive?([#"{"event":"state","state":"starting","target":{"kind":"window","windowIds":[610]}}"#, recording])
