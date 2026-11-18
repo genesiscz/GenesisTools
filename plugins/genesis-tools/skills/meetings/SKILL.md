@@ -46,6 +46,7 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
    and early-label counts; `meeting.indicatorGaps` names long missing observations. Indicator-only people have origin
    `indicator`. `--format lines` gives a compact legend and 48-character text prefixes with mic %, energy, speaking
    and muted names; read raw JSON for the full text. `localSpeechOutput` identifies matching local audible speech.
+   For one stretch, `tools meetings look <meeting> --from 23:50 --to 25:00 --json` or `meetings.look({ meeting, from: "23:50", to: "25:00" })` returns its lines, speaker evidence, attendance, open questions, items and screen text changes. Both bounds are inclusive.
    Pull the documents the meeting discussed (read-only). Save the version the meeting read with
    `tools meetings context add <meeting> <file> --before-meeting`, or choose a known commit with `--rev <sha>`.
    The first flag uses the meeting start, not its end. Both save the chosen text and full commit inside the record;

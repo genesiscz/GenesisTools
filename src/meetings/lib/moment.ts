@@ -424,6 +424,27 @@ function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLin
     }
 }
 
+/** The spot playback marks, independent of its padding, tone settings and the length of the clip. */
+export function itemMomentSpot({
+    record,
+    item,
+    lines,
+}: {
+    record: MeetingRecord;
+    item: MeetingItem;
+    lines: TranscriptLines;
+}): number | undefined {
+    if (item.kind === "question") {
+        return askedSpotSec(item, lines, questionOccurrence(record, item));
+    }
+
+    if (item.kind === "term") {
+        return item.atSec === undefined ? undefined : itemSpan(record, item, lines).spotSec;
+    }
+
+    return item.kind === "join" ? item.atSec : item.fromSec;
+}
+
 /** A point in a line to seconds: the line found by its address, its time spread over its text. */
 function pointSec(lines: TranscriptLines, point: LinePoint, edge: "from" | "to"): { sec: number; index: number } {
     // Only a spoken line has a span: a hint that names a line with no words falls back to the line at the time.

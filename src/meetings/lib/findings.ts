@@ -1,19 +1,8 @@
 import { type MeetingItem, meetingItemSchema, nextId, QUESTION_TOPICS } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
+import { transcriptTimeSchema as clock } from "./moment-schema";
 
-/** A transcript time: seconds, or "37:43" / "1:02:10". */
-const clock = z.union([z.number().min(0), z.string()]).transform((value, ctx) => {
-    const sec = typeof value === "number" ? value : parseClock(value);
-
-    if (sec === undefined) {
-        ctx.addIssue({ code: "custom", message: `"${value}" is not a transcript time (37:43, 1:02:10 or seconds)` });
-        return z.NEVER;
-    }
-
-    return sec;
-});
 const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
 /** A line's index in the source transcript: tells apart two lines that start in the same second. */
