@@ -8,6 +8,7 @@ import Foundation
 final class ZoomState: @unchecked Sendable {
     private let lock = NSLock()
     private var project: EditProject
+    private var layerOrder: [EditProject.LayerRef]
     private var cursor: CursorTrack?
     private var captions: CaptionTrack?
     /// One frame of the movie the renderer last made (`render` sets it), so the motion blur covers one exported frame.
@@ -17,6 +18,7 @@ final class ZoomState: @unchecked Sendable {
 
     init(project: EditProject, cursor: CursorTrack?) {
         self.project = project
+        layerOrder = project.layerOrder()
         self.cursor = cursor
         captions = CaptionTrack.load(video: project.source.video)
         // R4 10 progress bar: the chapters the recording marked (the edit's own come with each project).
@@ -29,6 +31,9 @@ final class ZoomState: @unchecked Sendable {
 
     func update(_ project: EditProject) {
         lock.lock()
+        if self.project.layers != project.layers || (self.project.camera == nil) != (project.camera == nil) {
+            layerOrder = project.layerOrder()
+        }
         self.project = project
         let frames = sourceFrames
         lock.unlock()
@@ -79,13 +84,6 @@ final class ZoomState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return max(1, project.zooms.map(\.scale).max() ?? 1)
-    }
-
-    /// The camera bubble as the window has it now, so a moved or hidden bubble shows at the next frame.
-    var camera: EditProject.Camera? {
-        lock.lock()
-        defer { lock.unlock() }
-        return project.camera
     }
 
     /// Reads the transcript cache again (after a transcription); true when the movie now has captions.
@@ -157,6 +155,8 @@ final class ZoomState: @unchecked Sendable {
         var motionBlur = 0.0
         // R4 overlays (fx-overlay): the frame's times, for the texts' animations and the progress bar.
         var sourceUs: Int64 = 0
+        var layers: [EditProject.LayerRef] = []
+        var camera: EditProject.Camera?
         var outUs: Int64 = 0
         // R4 10 progress bar
         var progress: ProgressMark?
@@ -187,6 +187,7 @@ final class ZoomState: @unchecked Sendable {
         let project = project
         let cursor = cursor
         let captions = captions
+        let layers = layerOrder
         let frameUs = frameUs
         drawn += 1
         lock.unlock()
@@ -241,6 +242,8 @@ final class ZoomState: @unchecked Sendable {
         look.motionBlur = motionBlur
         // R4 overlays (fx-overlay)
         look.sourceUs = sourceUs
+        look.layers = layers
+        look.camera = project.camera
         look.outUs = outUs
         look.progress = project.progress.flatMap { ProgressMark.at(outUs: outUs, project: project, recorded: recordedMarkers, settings: $0) }
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
@@ -663,6 +666,101 @@ enum MusicMix {
     }
 }
 
+/// Sound timed by the source movie: its own tracks, separate recording files, and an inset video's sound.
+/// All three use the same intersections with the kept clips. Music and voiceovers have their own output clocks.
+private struct SourceAudioMix {
+    let composition: AVMutableComposition
+    let clips: [TimelineMap.Placed]
+    let leadUs: Int64
+    let ramps: [(startUs: Int64, endUs: Int64, from: Double, to: Double)]
+
+    /// A file's time zero is at originUs on the source clock. A looping inset repeats on the picture's period,
+    /// including silence if its sound is shorter or starts later than its picture.
+    func add(_ track: AVAssetTrack, gain: Float, span: Range<Int64>, originUs: Int64 = 0,
+             periodUs: Int64? = nil) async throws -> AVMutableAudioMixInputParameters? {
+        let available = try await track.load(.timeRange)
+        guard available.isValid, available.start.isNumeric, available.end.isNumeric, available.duration > .zero else { return nil }
+        let soundStart = available.start.convertScale(1_000_000, method: .roundHalfAwayFromZero).value
+        let soundEnd = available.end.convertScale(1_000_000, method: .roundHalfAwayFromZero).value
+        var output: AVMutableCompositionTrack?
+
+        func insert(from: Int64, to: Int64, origin: Int64, under placed: TimelineMap.Placed) throws {
+            guard from < to else { return }
+            let part = CMTimeRange(start: EditRenderer.us(from - origin), duration: EditRenderer.us(to - from))
+                .intersection(available)
+            let clip = placed.clip
+            let speed = clip.speed.isFinite && clip.speed > 0 ? clip.speed : 1
+            func at(_ t: Int64) -> CMTime {
+                EditRenderer.us(leadUs + placed.outStartUs + Int64((Double(t - clip.fromUs) / speed).rounded()))
+            }
+            let start = at(from), duration = at(to) - start
+            guard part.duration > .zero, duration > .zero else { return }
+            if output == nil {
+                output = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            }
+            guard let output else { throw EditRenderer.RenderError.badComposition("could not add a sound track") }
+            try output.insertTimeRange(part, of: track, at: start)
+            if speed != 1 {
+                output.scaleTimeRange(CMTimeRange(start: start, duration: part.duration), toDuration: duration)
+            }
+        }
+
+        do {
+            for placed in clips {
+                let clip = placed.clip
+                let start = max(span.lowerBound, clip.fromUs), end = min(span.upperBound, clip.toUs)
+                guard start < end else { continue }
+                var origin = originUs
+                if let periodUs, start > origin { origin += (start - origin) / periodUs * periodUs }
+                repeat {
+                    let from = max(start, origin + soundStart)
+                    let to = min(end, origin + min(soundEnd, periodUs ?? soundEnd))
+                    try insert(from: from, to: to, origin: origin, under: placed)
+                    guard let periodUs else { break }
+                    origin += periodUs
+                } while origin < end
+            }
+        } catch {
+            if let output { composition.removeTrack(output) }
+            throw error
+        }
+        guard let output else { return nil }
+        let parameters = AVMutableAudioMixInputParameters(track: output)
+        if gain == 0 || ramps.isEmpty {
+            let end = EditRenderer.us(leadUs + (clips.last?.outEndUs ?? 0))
+            parameters.setVolumeRamp(fromStartVolume: gain, toEndVolume: gain, timeRange: CMTimeRange(start: .zero, duration: end))
+        } else {
+            parameters.setVolume(gain, at: .zero)
+            for ramp in ramps {
+                parameters.setVolumeRamp(fromStartVolume: gain * Float(ramp.from), toEndVolume: gain * Float(ramp.to),
+                                         timeRange: CMTimeRange(start: EditRenderer.us(ramp.startUs + leadUs),
+                                                                duration: EditRenderer.us(ramp.endUs - ramp.startUs)))
+            }
+        }
+        return parameters
+    }
+
+    func file(_ asset: AVURLAsset, gain: Float, span: Range<Int64>, originUs: Int64, periodUs: Int64? = nil,
+              warnings: inout RenderWarnings) async -> AVMutableAudioMixInputParameters? {
+        guard FileManager.default.fileExists(atPath: asset.url.path) else {
+            warnings.skipped(asset.url)
+            return nil
+        }
+        do {
+            guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+                warnings.noAudio(asset.url)
+                return nil
+            }
+            // A track alone does not retain its source asset through the inserts.
+            defer { withExtendedLifetime(asset) {} }
+            return try await add(track, gain: gain, span: span, originUs: originUs, periodUs: periodUs)
+        } catch {
+            warnings.skipped(asset.url)
+            return nil
+        }
+    }
+}
+
 /// The movie a project plays: the kept clips in order with their speeds, the zoom filter, and the audio levels.
 /// The preview's player item and the export are built from the same `Rendered`, so what plays is what exports.
 struct EditRenderer {
@@ -673,6 +771,8 @@ struct EditRenderer {
         let renderSize: CGSize
         /// One frame at the rate the movie plays (`exportFps`), in µs.
         let frameUs: Int64
+        /// Missing inputs, in discovery order, once per file even if it supplied both picture and sound.
+        let warnings: [String]
     }
 
     enum RenderError: LocalizedError {
@@ -800,11 +900,11 @@ struct EditRenderer {
     }
 
     static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int,
-                       cards: Bool = false, size fixed: EditProject.OutputSize? = nil) async throws -> Rendered {
+                       cards: Bool = false, size fixed: EditProject.OutputSize? = nil,
+                       audioFacts: EditProject.AudioFacts? = nil) async throws -> Rendered {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.noVideoTrack(asset.url.path)
         }
-        let audio = project.audio.include ? try await asset.loadTracks(withMediaType: .audio) : []
         let (stored, nominalFps, transform) = try await video.load(.naturalSize, .nominalFrameRate, .preferredTransform)
         // A movie turned 90° or 270° (a phone clip) plays upright: the composition track takes its turn, and every size
         // below is the upright one, as ffmpeg decodes it and the TypeScript side stores it.
@@ -824,9 +924,6 @@ struct EditRenderer {
             throw RenderError.emptyEdit
         }
         videoOut.preferredTransform = transform
-        let audioOut = audio.compactMap { _ in
-            composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-        }
         var cursor = CMTime.zero
         // R4 9 intro and end cards: the first frame held for the intro's length under it, so the compositor runs.
         let cardSpans = CardSpans(project: project, enabled: cards)
@@ -839,14 +936,6 @@ struct EditRenderer {
         for clip in project.clips where clip.sourceDurationUs > 0 {
             let range = CMTimeRange(start: us(clip.fromUs), duration: us(clip.sourceDurationUs))
             try videoOut.insertTimeRange(range, of: video, at: cursor)
-            for (index, track) in audio.enumerated() {
-                // An audio track shorter than the movie (it started late) still gets the part it has.
-                let available = try await track.load(.timeRange)
-                let part = range.intersection(available)
-                if part.duration > .zero {
-                    try audioOut[index].insertTimeRange(part, of: track, at: cursor + (part.start - range.start))
-                }
-            }
             let placed = CMTimeRange(start: cursor, duration: range.duration)
             let played = us(clip.outputDurationUs)
             if clip.speed != 1 {
@@ -875,7 +964,10 @@ struct EditRenderer {
         try checkSize(fixed, source: natural, aspect: project.frame?.aspect)
         let (picture, size) = (plan.picture, plan.canvas)
         let outputScale = picture.height / natural.height
+        var warnings = RenderWarnings()
+        let media = await MediaLayers(project: project, warnings: &warnings)
         let cameraFeed = await CameraFeed.make(project: project)
+        if let camera = project.camera, cameraFeed == nil { warnings.skipped(camera.movieURL(video: project.source.video)) }
         // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
         // The preview keeps this composition through zoom edits, so each frame sizes the stills by the zooms it has now.
         let stillSize = { TransitionStills.maximumSize(source: natural, picture: picture, zoomScale: zoom.largestZoomScale) }
@@ -1023,8 +1115,8 @@ struct EditRenderer {
             var captionUsed: CGFloat = 0
             if let caption = look.caption {
                 // The camera bubble while it shows, in Core Image space: the caption wraps short of it or lifts above it.
-                let bubble = zoom.camera.flatMap { camera -> CGRect? in
-                    guard cameraFeed != nil, camera.shows(atSourceUs: TimelineMap.sourceTime(atOutput: outUs, in: project)) else { return nil }
+                let bubble = look.camera.flatMap { camera -> CGRect? in
+                    guard cameraFeed != nil, camera.shows(atSourceUs: look.sourceUs) else { return nil }
                     let rect = camera.rect(canvas: size)
                     return CGRect(x: rect.minX, y: size.height - rect.maxY, width: rect.width, height: rect.height)
                 }
@@ -1049,9 +1141,16 @@ struct EditRenderer {
                 result = SpeedBadge.draw(badge, plates: zoom.keyPlates, on: result, size: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
-            if let cameraFeed, let camera = zoom.camera {
-                result = cameraFeed.draw(camera, atSourceUs: TimelineMap.sourceTime(atOutput: outUs, in: project), on: result, canvas: size)
-                    .cropped(to: CGRect(origin: .zero, size: size))
+            for layer in look.layers {
+                switch layer {
+                case .camera:
+                    if let cameraFeed, let camera = look.camera {
+                        result = cameraFeed.draw(camera, atSourceUs: look.sourceUs, on: result, canvas: size)
+                            .cropped(to: CGRect(origin: .zero, size: size))
+                    }
+                case let .media(layer):
+                    result = media.draw(layer, at: look.sourceUs, on: result, canvas: size)
+                }
             }
             if let cursor {
                 result = cursor.composited(over: result).cropped(to: CGRect(origin: .zero, size: size))
@@ -1075,32 +1174,77 @@ struct EditRenderer {
         // sped-up clip packs its frames closer (2× gave 74 fps). Without a timing track `frameDuration` decides.
         videoComposition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
 
-        var inputs: [AVMutableAudioMixInputParameters] = audioOut.enumerated().map { index, track in
-            let parameters = AVMutableAudioMixInputParameters(track: track)
-            let muted = project.audio.mutedTracks.contains(index)
-            let volume = muted ? 0 : Float(project.audio.volume)
-            parameters.setVolume(volume, at: .zero)
-            // A cut joins two places of the sound; a 25 ms dip on each side keeps the jump from clicking.
-            if volume > 0 {
-                for ramp in Declick.ramps(at: Declick.cuts(in: project), lengthUs: project.outputDurationUs) {
-                    parameters.setVolumeRamp(fromStartVolume: volume * Float(ramp.from), toEndVolume: volume * Float(ramp.to),
-                                             timeRange: CMTimeRange(start: us(ramp.startUs + cardSpans.leadUs),
-                                                                    duration: us(ramp.endUs - ramp.startUs)))
+        let tracks = project.audio.include ? try await asset.loadTracks(withMediaType: .audio) : []
+        // A saved edit carries its sidecar identities even when exported without an open editor session.
+        let mixedFrom = audioFacts?.mixedFrom ?? (project.audio.lanes ?? []).compactMap { lane -> EditProject.AudioFacts.Mixed? in
+            guard lane.source == .mic || lane.source == .system, let file = lane.file else { return nil }
+            return .init(source: lane.source, file: file, offsetMs: lane.offsetMs)
+        }
+        let facts = EditProject.AudioFacts(movieTracks: tracks.count, mixedFrom: mixedFrom)
+        let lanes = project.audioLanes(facts: facts)
+        var inputs: [AVMutableAudioMixInputParameters] = []
+        if project.audio.include {
+            let mix = SourceAudioMix(composition: composition, clips: TimelineMap.placed(project), leadUs: cardSpans.leadUs,
+                                     ramps: Declick.ramps(at: Declick.cuts(in: project), lengthUs: project.outputDurationUs))
+            let movieSpan = 0..<project.source.durationUs
+            let played = Set(project.movieTracksPlayed(lanes, facts: facts))
+            for lane in lanes where lane.source != .music && lane.source != .voiceover {
+                let gain = lane.muted ? 0 : Float(lane.volume * project.audio.volume)
+                if let file = lane.file {
+                    if let input = await mix.file(AVURLAsset(url: media.fileURL(file)), gain: gain, span: movieSpan,
+                                                  originUs: Int64(lane.offsetMs) * 1000, warnings: &warnings) {
+                        inputs.append(input)
+                    }
+                } else if let i = lane.track, played.contains(i),
+                          let input = try await mix.add(tracks[i], gain: gain, span: movieSpan) {
+                    inputs.append(input)
                 }
             }
-            return parameters
+            for layer in project.layers?.media ?? [] where layer.kind == .video && layer.videoSound && !layer.hidden {
+                guard layer.endUs > layer.startUs, let feed = media.video(layer) else { continue }
+                let origin = layer.startUs - feed.startUs(for: layer)
+                if let input = await mix.file(feed.asset, gain: Float(project.audio.volume), span: layer.startUs..<layer.endUs,
+                                              originUs: origin, periodUs: layer.loop ? feed.durationUs : nil, warnings: &warnings) {
+                    inputs.append(input)
+                }
+            }
         }
         // R4 9 intro and end cards: the music runs under the cards too; everything the movie times moves by the intro.
-        if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
-                                                                                    project: project, lines: zoom.captionLines,
-                                                                                    offsetUs: cardSpans.leadUs, cards: cardSpans, movieUs: movieUs) {
-            inputs.append(parameters)
+        var soundProject = project
+        soundProject.audio.voiceovers = project.audio.voiceovers?.compactMap { original in
+            var clip = original
+            let url = media.fileURL(clip.file)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                warnings.skipped(url)
+                return nil
+            }
+            clip.file = url.path
+            if let lane = lanes.first(where: { $0.source == .voiceover && $0.id == clip.id }) {
+                clip.volume *= lane.muted ? 0 : lane.volume
+            }
+            return clip
+        }
+        if var music = project.audio.music {
+            music.file = media.fileURL(music.file).path
+            if let lane = lanes.first(where: { $0.source == .music && $0.id == "music" }) {
+                music.volume *= lane.muted ? 0 : lane.volume
+            }
+            var duckingProject = soundProject
+            let silenced = Set(lanes.filter { $0.source == .voiceover && ($0.muted || $0.volume == 0) }.map(\.id))
+            duckingProject.audio.voiceovers?.removeAll { silenced.contains($0.id) }
+            if let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
+                                                       project: duckingProject, lines: zoom.captionLines, offsetUs: cardSpans.leadUs,
+                                                       cards: cardSpans, movieUs: movieUs) {
+                inputs.append(parameters)
+            } else if !FileManager.default.fileExists(atPath: music.file) {
+                warnings.skipped(URL(fileURLWithPath: music.file))
+            }
         }
         if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project, offsetUs: cardSpans.leadUs) {
             inputs.append(parameters)
         }
         // R4 voiceover clips
-        inputs += await VoiceoverMix.add(to: composition, project: project, movieUs: movieUs, cards: cardSpans)
+        inputs += await VoiceoverMix.add(to: composition, project: soundProject, movieUs: movieUs, cards: cardSpans)
         var audioMix: AVAudioMix?
         if !inputs.isEmpty {
             let mix = AVMutableAudioMix()
@@ -1108,7 +1252,7 @@ struct EditRenderer {
             audioMix = mix
         }
         return Rendered(composition: composition, videoComposition: videoComposition, audioMix: audioMix, renderSize: size,
-                        frameUs: frameUs(fps: fps))
+                        frameUs: frameUs(fps: fps), warnings: warnings.messages)
     }
 }
 
@@ -1178,7 +1322,8 @@ final class EditExporter {
     /// `isCancelled` is read every 0.25 s while the session runs; true stops it, removes the partial file and throws a
     /// CancellationError. Both closures run on the main actor; the rest (the cursor track, the composition, the files)
     /// does not.
-    nonisolated static func export(project: EditProject, to url: URL, isCancelled: @escaping @MainActor () -> Bool = { false },
+    nonisolated static func export(project: EditProject, to url: URL, audioFacts: EditProject.AudioFacts? = nil,
+                                   isCancelled: @escaping @MainActor () -> Bool = { false },
                                    onProgress: @escaping @MainActor (Double) -> Void) async throws -> Result {
         let started = Date()
         // Symlinks resolved on both sides (as the CLI's renderInto does), so a link to the movie or /private/tmp is refused.
@@ -1189,7 +1334,7 @@ final class EditExporter {
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
         // R4 9 intro and end cards: only the export plays them.
         let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: project.export.maxHeight,
-                                                     cards: true, size: project.export.size)
+                                                     cards: true, size: project.export.size, audioFacts: audioFacts)
         let preset = project.export.codec == .hevc ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
         guard let session = AVAssetExportSession(asset: rendered.composition, presetName: preset) else {
             throw ExportError.noSession(preset)

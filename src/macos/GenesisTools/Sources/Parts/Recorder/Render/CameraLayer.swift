@@ -2,126 +2,25 @@ import AVFoundation
 import CoreImage
 import CoreImage.CIFilterBuiltins
 
-/// The camera movie's frames for the renderer's Core Image handler, which only gets the screen's picture. One
-/// `AVAssetReader` reads forward, so an export (which asks in order) decodes each camera frame once; a jump back or far
-/// ahead (a seek while previewing) starts a new reader at that time. The handler runs on AVFoundation's own queues, so
-/// every read holds the lock.
-final class CameraFeed: @unchecked Sendable {
-    /// The longest side of a decoded camera frame: a bubble is at most 60% of the short side of a 1080p canvas.
-    static let maxSide = 720
-    /// A jump of more than this ahead starts a new reader instead of decoding every frame between.
-    static let seekAheadUs: Int64 = 2_000_000
+/// The camera keeps its bubble geometry and 720-pixel decode scale when it shares a reader with video layers.
+final class CameraFeed: Sendable {
+    private let feed: MediaFeed
 
-    let camera: EditProject.Camera
-    private let track: AVAssetTrack
-    private let asset: AVURLAsset
-    private let lock = NSLock()
-    private var reader: AVAssetReader?
-    private var output: AVAssetReaderTrackOutput?
-    private var current: (us: Int64, image: CIImage)?
-    private var upcoming: (us: Int64, image: CIImage)?
-    private var finished = false
+    private init(feed: MediaFeed) { self.feed = feed }
 
-    private init(camera: EditProject.Camera, asset: AVURLAsset, track: AVAssetTrack) {
-        self.camera = camera
-        self.asset = asset
-        self.track = track
-    }
-
-    /// Nil when the edit has no camera, the movie is missing or has no video (logged).
     static func make(project: EditProject) async -> CameraFeed? {
         guard let camera = project.camera else { return nil }
         let url = camera.movieURL(video: project.source.video)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            HubPerf.log("recorder: camera movie \(url.path) is missing; no bubble")
-            return nil
-        }
+        // Keep the asset alive for the lifetime of the reader.
         let asset = AVURLAsset(url: url)
-        guard let track = try? await asset.loadTracks(withMediaType: .video).first else {
-            HubPerf.log("recorder: camera movie \(url.path) has no video track; no bubble")
-            return nil
-        }
-        return CameraFeed(camera: camera, asset: asset, track: track)
+        guard let video = try? await asset.loadTracks(withMediaType: .video).first else { return nil }
+        return CameraFeed(feed: MediaFeed(asset: asset, track: video, camera: true))
     }
 
-    /// The bubble over `base` at a source moment, or `base` itself when the bubble is hidden there or the camera has
-    /// no frame for it (before its start, after its end).
-    /// `camera` is the bubble as the window has it now (`ZoomState.camera`); the movie is the one the feed opened.
     func draw(_ camera: EditProject.Camera, atSourceUs sourceUs: Int64, on base: CIImage, canvas: CGSize) -> CIImage {
-        guard camera.shows(atSourceUs: sourceUs), let frame = frame(atCameraUs: camera.cameraUs(atSourceUs: sourceUs))
-        else { return base }
+        guard camera.shows(atSourceUs: sourceUs),
+              let frame = feed.frame(at: camera.cameraUs(atSourceUs: sourceUs)) else { return base }
         return Self.bubble(camera, frame: frame, canvas: canvas).composited(over: base)
-    }
-
-    /// The newest camera frame at or before `us`; nil before the first frame or past the last by more than a frame.
-    func frame(atCameraUs us: Int64) -> CIImage? {
-        guard us >= 0 else { return nil }
-        lock.lock()
-        defer { lock.unlock() }
-        if let current, us < current.us || us - current.us > Self.seekAheadUs {
-            restart(at: us)
-        } else if reader == nil {
-            restart(at: us)
-        }
-        while true {
-            if upcoming == nil { upcoming = read() }
-            guard let next = upcoming, next.us <= us else { break }
-            current = next
-            upcoming = nil
-        }
-        if let current, finished, upcoming == nil, us - current.us > 100_000 { return nil }
-        return current?.image
-    }
-
-    private func restart(at us: Int64) {
-        reader?.cancelReading()
-        current = nil
-        upcoming = nil
-        finished = false
-        guard let reader = try? AVAssetReader(asset: asset) else {
-            finished = true
-            return
-        }
-        // Start a little before, so the frame shown at `us` (the one before it) is read too.
-        let start = max(0, us - 200_000)
-        reader.timeRange = CMTimeRange(start: CMTime(value: start, timescale: 1_000_000), duration: .positiveInfinity)
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        ])
-        output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else {
-            finished = true
-            return
-        }
-        reader.add(output)
-        guard reader.startReading() else {
-            HubPerf.log("recorder: camera reader did not start: \(reader.error?.localizedDescription ?? "no reason")")
-            finished = true
-            return
-        }
-        self.reader = reader
-        self.output = output
-    }
-
-    private func read() -> (us: Int64, image: CIImage)? {
-        guard !finished, let output, let sample = output.copyNextSampleBuffer(),
-              let buffer = CMSampleBufferGetImageBuffer(sample) else {
-            finished = true
-            return nil
-        }
-        let time = CMSampleBufferGetPresentationTimeStamp(sample)
-        // A sample without a time (an unfinished camera.mov) has NaN seconds, and Int64(NaN) traps on a render thread.
-        guard time.isNumeric, time.seconds.isFinite else {
-            finished = true
-            return nil
-        }
-        var image = CIImage(cvPixelBuffer: buffer)
-        let longest = max(image.extent.width, image.extent.height)
-        if longest > CGFloat(Self.maxSide) {
-            let scale = CGFloat(Self.maxSide) / longest
-            image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        }
-        return (Int64((time.seconds * 1_000_000).rounded()), image)
     }
 
     /// The camera frame cut to the bubble's square (aspect fill), mirrored when asked, masked to its shape, with a
