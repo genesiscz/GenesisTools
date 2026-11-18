@@ -20,6 +20,8 @@ struct MeetingDetailView: View {
     /// The sheets of the "…" menu: the seats and microphones, and the voice tools that stood under the header.
     @State private var seatsOpen = false
     @State private var voiceToolsOpen = false
+    /// The title of the meeting this one was copied from, looked up when the record or the list changes, not per redraw.
+    @State private var copyTitle: String?
     @Environment(\.meetingsDockInset) private var dockInset
     @AppStorage(MeetingsPreferences.Panes.transcriptPane.key) private var transcriptPaneSetting =
         MeetingsPreferences.Panes.transcriptPane.defaultValue.rawValue
@@ -78,6 +80,10 @@ struct MeetingDetailView: View {
         .modifier(MenuSheets(detail: detail, seatsOpen: $seatsOpen, voiceToolsOpen: $voiceToolsOpen))
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .onChange(of: detail.rows.value?.rows, initial: true) { _, rows in openRows = rows.map { $0.lazy.filter(\.isOpen).count } }
+        .onChange(of: CopySourceKey(source: detail.record.value?.copySource, meetings: window.overview.value?.meetings.count ?? 0),
+                  initial: true) { _, key in
+            copyTitle = key.source.map { window.meeting($0)?.displayTitle ?? $0 }
+        }
         .onChange(of: detail.record.value?.items, initial: true) { _, items in
             openItems = items.map { $0.lazy.filter { $0.status == "suggested" }.count }
         }
@@ -164,7 +170,7 @@ struct MeetingDetailView: View {
                     Badge("Recording failed", color: KitPalette.removed, symbol: "exclamationmark.triangle")
                         .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
                 }
-                if let source = record?.copySource { copyChip(source) }
+                if let source = record?.copySource { copyChip(source, title: copyTitle ?? source) }
                 if record?.project != nil || detail.tab != .items { projectPicker(record) }
                 labelsPicker(record)
                 MeetingPeopleChip(detail: detail)
@@ -301,8 +307,7 @@ struct MeetingDetailView: View {
 
     /// "Copy of <title>": the meeting this one was duplicated from, one click away. It stood as the source's record id
     /// in a line of its own.
-    private func copyChip(_ source: String) -> some View {
-        let title = window.meeting(source)?.displayTitle ?? source
+    private func copyChip(_ source: String, title: String) -> some View {
         let short = title.count > 34 ? String(title.prefix(32)) + "…" : title
         return Button { window.select(source) } label: {
             Badge("Copy of \(short)", color: KitPalette.dim, symbol: "doc.on.doc")
@@ -336,6 +341,12 @@ struct MeetingDetailView: View {
         case .context: ContextTab(detail: detail)
         }
     }
+}
+
+/// What the copy chip's title depends on: the source id and the list it is looked up in.
+private struct CopySourceKey: Equatable {
+    let source: String?
+    let meetings: Int
 }
 
 /// The sheets of the header's "…" menu: the seats and microphones, and the voice tools.
