@@ -13,7 +13,7 @@ interface Scored {
     score: number;
 }
 
-export function resolveConversation(cache: TeamsCache, query: ShowQuery): ResolveResult {
+export function resolveConversation(cache: TeamsCache, query: ShowQuery & { allMatches?: boolean }): ResolveResult {
     if (query.id) {
         const found = cache.getConversation(query.id);
 
@@ -24,11 +24,14 @@ export function resolveConversation(cache: TeamsCache, query: ShowQuery): Resolv
         return { status: "none", matches: [] };
     }
 
-    const all = cache.listConversations({ limit: 10_000 });
-    const scored: Scored[] = [];
     const nameFold = query.withName ? foldTeamsText(query.withName) : "";
     const topicFold = query.topic ? foldTeamsText(query.topic) : "";
+    if (!nameFold && !topicFold) {
+        return { status: "none", matches: [] };
+    }
 
+    const all = cache.listConversations(query.allMatches ? {} : { limit: 10_000 });
+    const scored: Scored[] = [];
     for (const conversation of all) {
         const score = scoreConversation(conversation, nameFold, topicFold);
 
@@ -47,6 +50,8 @@ export function resolveConversation(cache: TeamsCache, query: ShowQuery): Resolv
 
     const best = scored[0];
     const tied = scored.filter((s) => s.score === best.score);
+    // Attendance ranks all matches by call date. Other readers show the resolver's shortlist.
+    const candidates = (shortlist: Scored[]) => (query.allMatches ? scored : shortlist).map((s) => s.conversation);
 
     if (nameFold) {
         const oneToOnes = scored.filter((s) => isOneToOneId(s.conversation.id, s.conversation.title) && s.score >= 80);
@@ -56,7 +61,7 @@ export function resolveConversation(cache: TeamsCache, query: ShowQuery): Resolv
         }
 
         if (oneToOnes.length > 1) {
-            return { status: "ambiguous", matches: oneToOnes.map((s) => s.conversation) };
+            return { status: "ambiguous", matches: candidates(oneToOnes) };
         }
     }
 
@@ -65,14 +70,14 @@ export function resolveConversation(cache: TeamsCache, query: ShowQuery): Resolv
     }
 
     if (tied.length > 1) {
-        return { status: "ambiguous", matches: tied.map((s) => s.conversation) };
+        return { status: "ambiguous", matches: candidates(tied) };
     }
 
     if (best.score >= 50) {
         return { status: "exact", conversation: best.conversation };
     }
 
-    return { status: "none", matches: scored.slice(0, 8).map((s) => s.conversation) };
+    return { status: "none", matches: candidates(scored.slice(0, 8)) };
 }
 
 function scoreConversation(conversation: ConversationRow, nameFold: string, topicFold: string): number {

@@ -239,9 +239,9 @@ export const suggest = defineMethod({
         })
         .strict(),
     result: z.unknown(),
-    resultName: "{ fresh: items.list rows, warnings }",
+    resultName: "{ fresh: items.list rows, retired: string[], warnings: string[] }",
     effect: "reversible",
-    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
+    doc: `Run ${toolCommand("meetings", "suggest")} with any of ${SUGGEST_RULES.join(", ")} (default all). Returns fresh items, retired item IDs and warnings, including an unavailable word check. With attendance "teams", a warning lists up to three matching chats by last call. Pass attendanceId to select one.`,
 });
 export const decide = {
     result: z.unknown(),

@@ -172,8 +172,8 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
    exits 1 with the `tools meetings set <meeting> --project <name>` command (a terminal shows the project picker
    instead). Attendance uses the linked source's title and
    transcript clock, including for a renamed copy. Unavailable platform attendance warns, skips E2 and saves the
-   other suggestions. A missing or ambiguous Teams chat lists cached candidate titles and IDs; last-message
-   proximity does not prove a chat belongs to this call. Select a known chat with `--attendance-id <threadId>`,
+   other suggestions. If several Teams chats match, the warning shows the first three by last cached call.
+   Each includes the full ID, chat participant count and command to inspect attendance. Select a known chat with `--attendance-id <threadId>`,
    or `meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })` in the REPL. Invalid input and
    unreadable or malformed attendance files still fail. The term rules use each language's configured word check.
    Use `--word-check` to override it for this run. Hunspell dictionaries download on first use.
