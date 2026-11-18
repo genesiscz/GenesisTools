@@ -1619,6 +1619,8 @@ extension MeetingsServiceTests {
         let voice = try MeetingsService.decode(MeetingRecordView.Evidence.Voice.Match.self,
             ["model": "fixture", "quality": "matched", "person": "Bob Example", "reason": "gate passed", "candidates": [["person": "Bob Example", "score": 0.8]]])
         XCTAssertEqual(voice.candidates.first?.score, 0.8)
+        let scores = try MeetingQuestionPicture.text(ListenVoiceScores(match: voice), name: "L19-voice-scores", native: true)
+        XCTAssertTrue(scores.contains("Bob Example"), scores)
         let item = try MeetingsService.decode(MeetingItem.self, ["id": "i1", "kind": "speaker-range", "status": "suggested", "speaker": "Bob Example", "fromSec": 0, "toSec": 0, "rules": ["voice-embedding"]])
         let entry = TranscriptLine(id: "voice-line", startSec: 0, speaker: "Bob Example", text: "A call sentence.")
         XCTAssertTrue(MeetingDetailModel.lineMarks(entries: [entry], hints: [], items: [item], comments: [])[entry.rowID]?.contains(.byVoice) == true)
