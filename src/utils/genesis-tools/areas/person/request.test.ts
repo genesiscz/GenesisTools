@@ -20,7 +20,7 @@ import { genesisToolsApi, requestPresentApi } from "../../service/api";
 import { connectGenesisToolsService } from "../../service/clients";
 import { startGenesisToolsService } from "../../service/host";
 import { createRequestJournal, type RequestEvent, requestEventSchema, stateOf } from "./journal";
-import { type PersonRequest, requestSchema } from "./request";
+import { type PersonRequest, presentPostedRequest, requestSchema } from "./request";
 import { notifyRequest, presentInApp, presentInSystemDialog, presentInTerminal, type RequestContext } from "./surfaces";
 
 const input = {
@@ -182,9 +182,77 @@ test("all live effects refuse the test process before a host call", async () => 
     const result = await runAreaAction(AREAS, "person.notice", input, liveEngineDeps(AREAS));
     expect(result.status).toBe("unreachable");
     expect(result.skipped[0]?.reason).toContain("in-test");
-    const notice = await runAreaAction(AREAS, "person.windowNotice", { ...input, open }, liveEngineDeps(AREAS));
+    const hostCall = mock((): never => {
+        throw new Error("The test process reached the host");
+    });
+    const deps = liveEngineDeps(AREAS, {
+        app: { rpc: hostCall },
+        facts: { ...LIVE_FACTS, platform: () => "darwin", appBundle: hostCall, hasDisplay: hostCall },
+    });
+    const notice = await runAreaAction(AREAS, "person.windowNotice", { ...input, open }, deps);
     expect(notice.status).toBe("unreachable");
     expect(notice.skipped[0]?.reason).toContain("in-test");
+    const window = await runAreaAction(AREAS, "windows.open", open, deps);
+    expect(window.status).toBe("unreachable");
+    expect(window.skipped[0]?.code).toBe("in-test");
+    expect(hostCall).not.toHaveBeenCalled();
+});
+
+test("the click worker opens the exact target and records one successful notification click", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    const view = await journal.post({ input: { ...input, open } });
+    const openWindow = mock(async () => ({ status: "ran" as const, via: "native" as const, value: {}, skipped: [] }));
+    const showRequest = mock(async () => {
+        throw new Error("An opened target should finish the request");
+    });
+    const worker = { view, journal, openWindow, showRequest };
+    const outcome = await presentPostedRequest(worker);
+    const reopened = createRequestJournal({ dir }).get(input.id)!;
+    expect(openWindow).toHaveBeenCalledWith(open);
+    expect(outcome).toMatchObject({ status: "done", via: "notification", method: "click", exitCode: 0 });
+    expect(reopened.outcome).toEqual(outcome);
+    expect(reopened.events.map((entry) => entry.type)).toEqual(["posted", "accepted", "finished"]);
+    expect(reopened.events[1]).toMatchObject({ type: "accepted", via: "notification", method: "click" });
+    expect(reopened.events[2]).toMatchObject({ type: "finished", exitCode: 0 });
+    expect(await presentPostedRequest({ ...worker, view: reopened })).toEqual(outcome);
+    expect(openWindow).toHaveBeenCalledTimes(1);
+    expect(showRequest).not.toHaveBeenCalled();
+});
+
+test("an unreachable target falls back to the request window and a legacy notice goes straight there", async () => {
+    const journal = createRequestJournal({ dir: scratch(), now });
+    const openWindow = mock(async () => ({ status: "unreachable" as const, skipped: [], manual: null }));
+    const showRequest = mock(async (request: PersonRequest) => ({
+        id: request.id,
+        status: "pending" as const,
+        reason: null,
+    }));
+    for (const notice of [{ ...input, open }, { ...input, id: "notice:legacy" }]) {
+        const view = await journal.post({ input: notice });
+        const outcome = await presentPostedRequest({ view, journal, openWindow, showRequest });
+        expect(openWindow).toHaveBeenCalledTimes(1);
+        expect(showRequest).toHaveBeenLastCalledWith(view.request);
+        expect(outcome).toEqual({ id: notice.id, status: "pending", reason: null });
+        expect(journal.get(notice.id)?.events.map((entry) => entry.type)).toEqual(["posted"]);
+    }
+
+    const view = journal.get(input.id)!;
+    await presentPostedRequest({ view, journal, showRequest });
+    expect(showRequest).toHaveBeenLastCalledWith(view.request);
+    expect(showRequest).toHaveBeenCalledTimes(3);
+
+    const withdrawn = await presentPostedRequest({
+        view,
+        journal,
+        openWindow: async () => {
+            await journal.withdraw(view.id);
+            return { status: "unreachable", skipped: [], manual: null };
+        },
+        showRequest,
+    });
+    expect(withdrawn.status).toBe("obsolete");
+    expect(showRequest).toHaveBeenCalledTimes(3);
 });
 
 test("a notice goes through isolated RPC in both directions, emits events, and reopens settled", async () => {

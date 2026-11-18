@@ -1,10 +1,32 @@
 import { spawnToolDetached } from "@genesiscz/utils/cli";
+import type { ActionOutcome } from "@genesiscz/utils/genesis-tools/actions/define";
 import { createRequestJournal, requestViewSchema } from "@genesiscz/utils/genesis-tools/areas/person/journal";
-import { requestOutcomeSchema } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import {
+    type PersonRequest,
+    presentPostedRequest,
+    type RequestOutcome,
+    requestOutcomeSchema,
+} from "@genesiscz/utils/genesis-tools/areas/person/request";
+import { windows } from "@genesiscz/utils/genesis-tools/areas/windows";
 import { callRunningService, ensureGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/clients";
 import { out } from "@genesiscz/utils/logger";
+import type { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
+
+async function showRequestWindow(client: RpcSocketClient, request: PersonRequest): Promise<RequestOutcome> {
+    const raw = await client.call("person.showWindow", request, { timeoutMs: 120_000 });
+    const outcome = requestOutcomeSchema.parse(
+        typeof raw === "object" && raw !== null && "value" in raw
+            ? raw.value
+            : { id: request.id, status: "unreachable", reason: "No request surface could run." }
+    );
+    if (outcome.status === "done" || outcome.status === "declined") {
+        return client.call("requests.answer", { id: request.id, status: outcome.status, reason: outcome.reason });
+    }
+
+    return outcome;
+}
 
 export function registerRequestCommand(program: Command): void {
     const request = program
@@ -34,36 +56,33 @@ export function registerRequestCommand(program: Command): void {
         .argument("<id>")
         .action((id: string) => {
             refuseHostEffectInTest("request worker", "Inject a worker launcher in tests.");
-            spawnToolDetached(["genesis-tools", "request", "run", id], { reparent: true });
+            spawnToolDetached(["genesis-tools", "request", "run", id, "--from-notification"], { reparent: true });
             out.result({ id, opened: true });
         });
     request
         .command("run")
         .argument("<id>")
-        .action(async (id: string) => {
+        .addOption(new Option("--from-notification", "open the window named by a notification click").hideHelp())
+        .action(async (id: string, options: { fromNotification?: boolean }) => {
             const client = await ensureGenesisToolsService();
             try {
                 const view = requestViewSchema.nullable().parse(await client.call("requests.get", { id }));
                 if (!view) {
                     throw new Error(`Request ${id} does not exist.`);
                 }
-                if (view.outcome.status !== "pending") {
-                    out.result(view.outcome);
-                    return;
-                }
-                const raw = await client.call("person.showWindow", view.request, { timeoutMs: 120_000 });
-                const outcome = requestOutcomeSchema.parse(
-                    typeof raw === "object" && raw !== null && "value" in raw
-                        ? raw.value
-                        : { id, status: "unreachable", reason: "No request surface could run." }
+                out.result(
+                    await presentPostedRequest({
+                        view,
+                        journal: createRequestJournal(),
+                        openWindow: options.fromNotification
+                            ? (target) =>
+                                  client.call<ActionOutcome<unknown>>("windows.open", target, {
+                                      timeoutMs: (windows.actions.open.timeoutMs ?? 120_000) + 10_000,
+                                  })
+                            : undefined,
+                        showRequest: (request) => showRequestWindow(client, request),
+                    })
                 );
-                if (outcome.status === "done" || outcome.status === "declined") {
-                    out.result(
-                        await client.call("requests.answer", { id, status: outcome.status, reason: outcome.reason })
-                    );
-                } else {
-                    out.result(outcome);
-                }
             } finally {
                 client.close();
             }
