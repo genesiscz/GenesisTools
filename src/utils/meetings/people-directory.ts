@@ -578,7 +578,7 @@ export interface PeopleDirectoryOptions {
     off?: Array<{ kind: PersonSourceKind; reason: string }>;
 }
 
-async function readSource(source: PeopleSource, query: PeopleQuery): Promise<SourceAnswer> {
+async function askPeopleSource(source: PeopleSource, query: PeopleQuery): Promise<SourceAnswer> {
     try {
         return await source.people(query);
     } catch (error) {
@@ -595,7 +595,7 @@ const pickerAnswers = new WeakMap<object, Map<string, { answer: Promise<SourceAn
 
 async function readPickerSource(source: PeopleSource, query: PeopleQuery): Promise<SourceAnswer> {
     if (source.kind === "own" || source.pickerCache === "live") {
-        return readSource(source, query);
+        return askPeopleSource(source, query);
     }
 
     let owner: object = source;
@@ -633,7 +633,7 @@ async function readPickerSource(source: PeopleSource, query: PeopleQuery): Promi
         }
     }
 
-    const entry = { answer: readSource(source, query), expiresAt: now + PICKER_ANSWER_MS };
+    const entry = { answer: askPeopleSource(source, query), expiresAt: now + PICKER_ANSWER_MS };
     entries.set(key, entry);
     const answer = await entry.answer;
     entry.expiresAt = Date.now() + PICKER_ANSWER_MS;
@@ -831,7 +831,7 @@ export class PeopleDirectory {
     private async identities(
         query: string,
         options: KnownOptions,
-        read = readSource
+        read = askPeopleSource
     ): Promise<{ identities: Identity[]; sources: SourceStatus[] }> {
         const wanted = options.kinds;
         const limit = Math.max(options.limit ?? DEFAULT_LIMIT, DEFAULT_LIMIT);
