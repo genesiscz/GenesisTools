@@ -271,6 +271,7 @@ export async function rowsRead(options: {
             return undefined;
         });
     const minPriority = options.minPriority ?? (await opened.config()).global.playback.listen.minPriority;
+    const applyAbove = options.applyAbove ?? (await opened.config()).global.suggest.applyAbove;
     // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
     const { reviewRows } = await import("./review-rows");
     const rows = reviewRows(record, {
@@ -278,15 +279,15 @@ export async function rowsRead(options: {
         minPriority,
         ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
     });
-    if (options.applyAbove !== undefined) {
-        rows.rows = rows.rows.map((row) =>
+    for (const row of rows.rows) {
+        if (
             row.kind === "speaker-range" &&
             row.status === "suggested" &&
             row.confidence !== undefined &&
-            row.confidence < options.applyAbove!
-                ? { ...row, guess: true }
-                : row
-        );
+            row.confidence < applyAbove
+        ) {
+            row.guess = true;
+        }
     }
     return rows;
 }

@@ -289,6 +289,12 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             const { addQualityQuestions, qualityVoiceFeatures } = await import("../listen-quality");
             const entries = (await opened.meeting()).transcript;
             const features = params.group === "long-stretch" ? await qualityVoiceFeatures(opened) : undefined;
+            const below =
+                params.group === "long-stretch"
+                    ? (params.below ??
+                      (await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read())).global
+                          .suggest.applyAbove)
+                    : undefined;
             let questions: string[] = [];
             await store.update(record.id, { command: "listen", change: "prepare " + params.group }, (current) => {
                 questions = addQualityQuestions({
@@ -298,7 +304,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                     spotCheck: params.group === "spot-check" ? (params.count ?? 20) : undefined,
                     longStretchWords: params.group === "long-stretch" ? (params.words ?? 50) : undefined,
                     // `--apply-above` reaches the long-stretch preparation: a line below it is unsure enough to ask.
-                    below: params.below,
+                    below,
                     channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
                 });
             });

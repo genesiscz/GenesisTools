@@ -129,7 +129,11 @@ function printRow(row: ReviewRow): void {
     const asks = row.parts.find((part) => part.kind === "asks");
     const time = when?.kind === "when" ? `${when.from.text}${when.to ? `–${when.to.text}` : ""}` : "";
     const head = asks?.kind === "asks" ? asks.pieces.map((piece) => piece.text).join("") : row.what;
-    const state = row.decision ? `${row.status} by ${row.decision.by}` : row.status;
+    const state = row.guess
+        ? `guess ${percent(row.confidence)}`
+        : row.decision
+          ? `${row.status} by ${row.decision.by}`
+          : row.status;
     out.println(`${pc.cyan(row.label.padEnd(5))} ${STATUS_COLOR[row.status](state)}  ${pc.dim(time)}  ${head}`);
 
     for (const part of row.parts) {

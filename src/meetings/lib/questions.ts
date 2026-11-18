@@ -26,6 +26,16 @@ export const NONE_OF_THESE = "none of these";
 
 export type QuestionItem = Extract<MeetingItem, { kind: "question" }>;
 export type NewQuestion = Omit<QuestionItem, "id" | "suggestedAt">;
+/** A prepared stretch keeps the lowest confidence of its lines. An older unscored question stays reviewable. */
+export function withinListenThreshold(question: QuestionItem, applyAbove: number | undefined): boolean {
+    return (
+        question.group !== "long-stretch" ||
+        applyAbove === undefined ||
+        question.confidence === undefined ||
+        question.confidence < applyAbove
+    );
+}
+
 type RangeItem = Extract<MeetingItem, { kind: "speaker-range" }>;
 
 /** Items below this confidence are asked by ear, unless the config sets `global.suggest.listenBelow`. */

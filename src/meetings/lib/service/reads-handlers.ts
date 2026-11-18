@@ -43,16 +43,16 @@ export async function readRows(
 > {
     const record = recordOf(store, params.meeting);
     const linked = deps.linkedSource?.(record);
-    const config = deps.config ? await deps.config() : undefined;
+    const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
     const warning = attendanceWarning(record);
     const result = {
         ...(await rowsRead({
             store,
             record,
             ...(linked ? { linked } : {}),
-            ...(config ? { minPriority: config.global.playback.listen.minPriority } : {}),
+            minPriority: config.global.playback.listen.minPriority,
             ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
-            ...(params.applyAbove === undefined ? {} : { applyAbove: params.applyAbove }),
+            applyAbove: params.applyAbove ?? config.global.suggest.applyAbove,
         })),
         ...(warning ? { attendanceWarning: warning } : {}),
     };
