@@ -21,7 +21,12 @@ export const terminal = defineArea({
             result: z.object({ opened: z.literal(true) }),
             native: {
                 needs: [Need.platform.darwin, Need.person.display],
-                run: (ctx) => runVisibly({ argv: ctx.args.argv, timeoutMs: Math.min(15_000, ctx.timeoutMs) }),
+                run: (ctx) =>
+                    runVisibly({
+                        argv: ctx.args.argv,
+                        timeoutMs: Math.min(15_000, ctx.timeoutMs),
+                        signal: ctx.signal,
+                    }),
             },
         }),
     },

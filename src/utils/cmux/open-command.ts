@@ -51,6 +51,11 @@ export interface OpenCommandOptions {
      * open-session` and `tools cmux launch --open` exist to show the new session.
      */
     silent?: boolean;
+    /**
+     * The caller's deadline or cancel. No placement step starts once it aborts, and it is read again right before the
+     * command is typed, so a caller that already gave up never has its command run late.
+     */
+    signal?: AbortSignal;
 }
 
 /** Workspace and surface UUIDs of the terminal a command was opened in. */
@@ -71,6 +76,9 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
     if (options.silent && target.kind === "window" && options.enter === false) {
         throw new Error("cmux cannot type without running into a never-shown workspace (silent with enter: false)");
     }
+
+    // A silent new workspace runs the command as it is created, so this is also its last check before the command.
+    options.signal?.throwIfAborted();
 
     const placed = await prof.measureAsync("place", async (): Promise<OpenedPlace> => {
         switch (target.kind) {
@@ -140,6 +148,7 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
     const payload = `${options.command}${(options.enter ?? true) ? "\n" : ""}`;
 
     if (options.silent) {
+        options.signal?.throwIfAborted();
         await prof.measureAsync("send", () => livePlacementIO().send(placed.workspaceId, placed.surfaceId, payload));
         return placed;
     }
@@ -151,6 +160,7 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
                 surfaceId: placed.surfaceId,
                 payload,
                 windowId: target.kind === "window" ? target.windowId : undefined,
+                signal: options.signal,
             },
             livePlacementIO()
         )
@@ -234,11 +244,14 @@ export interface PlacementIO {
  * (`in_window=false` until the first select — Cmux.md sending-input).
  */
 export async function raiseThenSend(
-    args: { workspaceId: string; surfaceId: string; payload: string; windowId?: string },
+    args: { workspaceId: string; surfaceId: string; payload: string; windowId?: string; signal?: AbortSignal },
     io: PlacementIO
 ): Promise<void> {
+    args.signal?.throwIfAborted();
     await io.selectWorkspace(args.workspaceId);
     await io.sleep(PLACEMENT_SETTLE_MS);
+    // The settle wait is where a short deadline passes: a caller that gave up must not get its command typed now.
+    args.signal?.throwIfAborted();
     await io.send(args.workspaceId, args.surfaceId, args.payload);
 
     const window = args.windowId ?? (await io.identifyWindow?.(args.workspaceId));
