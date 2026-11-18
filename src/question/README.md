@@ -426,6 +426,18 @@ tools question message "Build is green, the hub after the fix:" --image /abs/hub
 tools question message --title "Blocked" --file notes.md
 ```
 
+A service outside Claude, Codex or Grok can post from its own project:
+
+```bash
+tools question message --project-path /srv/orchard --agent orchard-watch \
+  --title "Backup delayed" $'The nightly backup is still running.\n\nNext check in five minutes.'
+```
+
+Pass the repository directory with `--project-path` when the service may start in another directory.
+`--agent` identifies the sender on the card. Without it, a command-line message shows `cli`.
+Use `--title` for a separate heading and pass the markdown as one argument or with `--file`.
+Omit `--session` for a standalone service. Supply it only when the message belongs to an existing session.
+
 Flags: `--image <path>` (repeatable), `--title <title>` (default: the first line of the text), `--file <path>`
 (markdown text), `--agent <label>`, `--session <id>` (only outside Claude, Codex or Grok), `--project-path <path>`
 (relative `--image` and `--file` paths resolve here), `--json`.

@@ -10,7 +10,7 @@ import { prepareWidgetAsset } from "./lib/composer/assets";
 import { widgetDispatcher } from "./lib/composer/dispatch";
 import { processWidgetOutbox } from "./lib/composer/engine";
 import { performWidgetAction } from "./lib/widget/actions";
-import { readWidgetReceiptContext } from "./lib/widget/context";
+import { readWidgetMessageBody, readWidgetReceiptContext } from "./lib/widget/context";
 import { readWidgetText } from "./lib/widget/readback";
 import { oneShotWidgetSources } from "./lib/widget/roster-cache";
 import {
@@ -36,6 +36,12 @@ const widget = program
     .option("--state-root <directory>", "Widget state/assets directory, independent of shared session history");
 registerWidgetTasks(widget);
 registerWidgetVoiceNotes(widget);
+widget
+    .command("message-body <id>")
+    .description("Read one stored inbox message as markdown")
+    .action((id: string) => {
+        out.result(readWidgetMessageBody(id));
+    });
 widget
     .command("pin <session>")
     .requiredOption("--provider <provider>")

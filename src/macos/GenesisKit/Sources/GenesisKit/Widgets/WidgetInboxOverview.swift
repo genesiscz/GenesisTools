@@ -215,8 +215,9 @@ struct WidgetInboxOverview: View {
         var order: [String] = []
         var byKey: [String: [WidgetInboxItem]] = [:]
         for item in items {
-            if byKey[item.key] == nil { order.append(item.key) }
-            byKey[item.key, default: []].append(item)
+            let key = item.message?.origin.map { "sender/" + $0 } ?? item.key
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(item)
         }
         return order.map { ($0, byKey[$0] ?? []) }
     }
@@ -228,7 +229,8 @@ struct WidgetInboxOverview: View {
             if let session {
                 AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 14)
             }
-            Text(session?.title ?? "Unknown session").font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+            Text(items.first?.message?.origin ?? session?.title ?? "Unknown session")
+                .font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
             Text([Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
                 .compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 10)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
@@ -260,11 +262,11 @@ struct WidgetInboxOverview: View {
     private func row(_ item: WidgetInboxItem) -> some View {
         let open = openID == item.id
         let focused = focusID == item.id
-        let session = model.session(forKey: item.key)
+        let session = item.message?.origin == nil ? model.session(forKey: item.key) : nil
         return VStack(alignment: .leading, spacing: 0) {
             WidgetInboxOverviewRow(
                 item: item, open: open, focused: focused, grouped: grouped,
-                sessionTitle: session?.title, stagedLine: stagedLine(item), toggle: { toggle(item) })
+                sessionTitle: item.message?.origin ?? session?.title, stagedLine: stagedLine(item), toggle: { toggle(item) })
                 .equatable()
             if open {
                 detail(item, session: session).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
@@ -330,6 +332,10 @@ struct WidgetInboxOverview: View {
     private func detail(_ item: WidgetInboxItem, session: WidgetSession?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             summary(item)
+            if let message = item.message {
+                WidgetOverviewMessage(message: message, load: { try await model.messageBody(for: item) })
+                    .id(item.id)
+            }
             choices(item)
             if let session {
                 HStack(spacing: 8) {
@@ -343,9 +349,11 @@ struct WidgetInboxOverview: View {
                 }
             }
             HStack(spacing: 8) {
-                Button(item.needsAnswer ? "Answer in its session" : "Open in its session") { model.openInboxItem(item) }
-                    .buttonStyle(.genHover(accent: item.needsAnswer ? .orange : KitTheme.accent))
-                    .accessibilityIdentifier("widget.overview.open." + item.id)
+                if item.message?.origin == nil {
+                    Button(item.needsAnswer ? "Answer in its session" : "Open in its session") { model.openInboxItem(item) }
+                        .buttonStyle(.genHover(accent: item.needsAnswer ? .orange : KitTheme.accent))
+                        .accessibilityIdentifier("widget.overview.open." + item.id)
+                }
                 if let session {
                     Button("Whole inbox") {
                         model.select(session.key)
@@ -375,6 +383,29 @@ struct WidgetInboxOverview: View {
         case "todo": return "Task"
         case "form": return "Question"
         default: return LiveWidgetView.sentenceCase(item.kind)
+        }
+    }
+}
+
+private struct WidgetOverviewMessage: View {
+    let message: WidgetInboxItem.Message
+    let load: () async throws -> String
+    @State private var full: String?
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            let text = full ?? message.text
+            if !text.isEmpty { WidgetMarkdown(text: text) }
+            if let failure {
+                Text(failure).font(.caption).foregroundStyle(.secondary)
+            } else if message.more == true, full == nil {
+                ProgressView().controlSize(.small).accessibilityLabel("Loading the full message")
+            }
+        }.task {
+            guard message.more == true else { return }
+            do { full = try await load() }
+            catch { if !Task.isCancelled { failure = error.localizedDescription } }
         }
     }
 }

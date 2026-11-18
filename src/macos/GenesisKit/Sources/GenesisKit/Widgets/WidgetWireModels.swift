@@ -206,6 +206,7 @@ public enum WidgetCardKind: Codable, Hashable, Sendable, ExpressibleByStringLite
     public var description: String { rawValue }
 }
 public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
+    public var messageOrigin: String? = nil
     public var sourceContext: WidgetSourceContext? = nil
     public var transcriptAnchor: WidgetTranscriptAnchor? = nil
     public var id: String
@@ -746,6 +747,16 @@ public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct WidgetInboxItem: Codable, Equatable, Sendable {
+    public struct Message: Codable, Equatable, Sendable {
+        public var text: String
+        public var more: Bool?
+        public var origin: String?
+    }
+    public var message: Message? = nil
+    var openTitle: String {
+        if message?.origin != nil { return "Read message" }
+        return needsAnswer && (options ?? []).isEmpty ? "Answer in its session" : "Open in its session"
+    }
     public var id: String
     public var sourceId: String
     public var kind: String

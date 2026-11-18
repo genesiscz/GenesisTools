@@ -648,6 +648,9 @@ public struct LiveWidgetView: View {
         // pick).
         let pickUnder = WidgetProposal.placement(card, preferences: preferences)
         VStack(alignment: .leading, spacing: 10) {
+            if let origin = card.messageOrigin {
+                Text(origin).font(.caption).foregroundStyle(.secondary)
+            }
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
             if !card.body.isEmpty {

@@ -108,6 +108,7 @@ export interface WidgetSession {
     agentStatus?: string;
 }
 export interface WidgetCard {
+    messageOrigin?: string;
     transcriptAnchor?: TranscriptAnchor;
     sourceContext?: {
         project?: string;
@@ -292,6 +293,8 @@ export interface WidgetInboxGroup {
     itemTitle?: string | null;
     /** The newest answer's Q→A tag: `message` for an agent message (inbox_send, a tools rm request notice). */
     itemTag?: string | null;
+    messageText?: string | null;
+    sender?: string | null;
     /** Items after the window's `clearedAt`. */
     afterClear: number;
     /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
@@ -340,6 +343,8 @@ export interface WidgetInboxItem {
     count?: number;
     /** `message` when the newest answer is an agent message rather than an answer, so the popup says so. */
     tag?: "message";
+    /** The overview carries a bounded body. Expanding a longer message reads the stored receipt by sourceId. */
+    message?: { text: string; more?: true; origin?: string };
     /** A decision: its options, so the inbox of every session can stage a pick without opening the session. */
     options?: string[];
     recommended?: string;
@@ -409,9 +414,12 @@ export interface WidgetInboxSummary {
  * group's ITEMS against the window (?1 = clearedAt, ?2 = staleBefore), so a new item in a session never brings back
  * the older items "Mark all read" cleared or the stale ones beside it.
  */
-const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS afterClear,
-                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS recentAfterClear,
+const INBOX_GROUP = "PARTITION BY sessionId,provider,externalProject,externalSender";
+const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (${INBOX_GROUP}) AS afterClear,
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (${INBOX_GROUP}) AS recentAfterClear,
                         SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER () AS recentAfterClearTotal`;
+
+const MESSAGE_PREVIEW_CHARS = 800;
 
 function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
     const bounds: [number, number] = [window.clearedAt, window.staleBefore];
@@ -426,17 +434,22 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
                              WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
                         COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
-                        COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle, tag AS itemTag
+                        COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle, tag AS itemTag,
+                        CASE WHEN session_id='unknown' AND tag='message' THEN project END AS externalProject,
+                        CASE WHEN session_id='unknown' AND tag='message' THEN COALESCE(NULLIF(trim(agent_label),''),source) END AS externalSender
                     FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
                         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
                 ), ranked AS (
-                    SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                    SELECT *, COUNT(*) OVER (${INBOX_GROUP}) AS count,
                         ${INBOX_WINDOW_COUNTS},
-                        ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
+                        ROW_NUMBER() OVER (${INBOX_GROUP} ORDER BY at DESC,id DESC) AS position
                     FROM unseen
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,itemTitle,itemTag,afterClear,recentAfterClear,
-                    recentAfterClearTotal
-                  FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
+                ), newest AS (
+                    SELECT * FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
+                ) SELECT newest.id,sessionId,provider,title,newest.project,newest.cwd,at,count,itemTitle,itemTag,afterClear,recentAfterClear,
+                    recentAfterClearTotal, substr(msg.answer_md,1,${MESSAGE_PREVIEW_CHARS + 1}) AS messageText,
+                    COALESCE(NULLIF(trim(msg.agent_label),''),msg.source) AS sender
+                  FROM newest LEFT JOIN entries msg ON itemTag='message' AND msg.id=newest.id ORDER BY at DESC,newest.id DESC
             `)
                 .all(...bounds);
             return {
@@ -753,6 +766,14 @@ function withoutLeadingLine(body: string, title: string): string {
 
     return rest.join("\n").trim();
 }
+
+export function widgetMessageBody(body: string, title: string): string {
+    return withoutLeadingLine(cleanVisibleContext(body), title);
+}
+
+function messageOrigin(project: string, sender?: string | null): string {
+    return [project, sender].filter(Boolean).join(" · ") || "External sender";
+}
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
 }
@@ -984,6 +1005,8 @@ export async function widgetSnapshot({
                   count: 1,
                   itemTitle: row.question,
                   itemTag: row.tag,
+                  messageText: row.tag === "message" ? row.answerMd : undefined,
+                  sender: row.agentLabel?.trim() || row.source,
                   ...inboxWindowCounts([row.ts], inboxWindow),
                   recentAfterClearTotal: rosterRecentAnswers,
               })),
@@ -1427,6 +1450,17 @@ export async function widgetSnapshot({
             continue;
         }
         const title = widgetTitle(row.itemTitle);
+        const message =
+            row.itemTag === "message"
+                ? {
+                      text: widgetMessageBody(
+                          (row.messageText ?? "").slice(0, MESSAGE_PREVIEW_CHARS),
+                          row.itemTitle ?? ""
+                      ),
+                      ...((row.messageText?.length ?? 0) > MESSAGE_PREVIEW_CHARS ? { more: true as const } : {}),
+                      ...(row.sessionId === "unknown" ? { origin: messageOrigin(row.project, row.sender) } : {}),
+                  }
+                : undefined;
         putInbox(
             session,
             {
@@ -1437,7 +1471,7 @@ export async function widgetSnapshot({
                 at: row.at,
                 needsAnswer: false,
                 ...(title ? { title } : {}),
-                ...(row.itemTag === "message" ? { tag: "message" as const } : {}),
+                ...(message ? { tag: "message" as const, message } : {}),
             },
             items
         );
@@ -1687,6 +1721,9 @@ export async function widgetSnapshot({
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
+            ...(row.tag === "message" && row.sessionId === "unknown"
+                ? { messageOrigin: messageOrigin(row.project, row.agentLabel?.trim() || row.source) }
+                : {}),
             transcriptAnchor: row.transcriptAnchor,
             sourceContext: {
                 sessionId: row.sessionId,

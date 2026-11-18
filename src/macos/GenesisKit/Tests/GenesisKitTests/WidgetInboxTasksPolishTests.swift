@@ -2838,6 +2838,24 @@ final class WidgetComposerClickTests: XCTestCase {
         XCTAssertLessThanOrEqual(editorInWindow.maxY, fieldInWindow.maxY + 2, "the first line is inside the field")
     }
 
+    func testStandaloneMessagePopupRendersMultipleBodyLines() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let item = WidgetInboxItem(message: .init(text: "First line\n\nThird line", origin: "Orchard · cli"),
+                                   id: "answer:a", sourceId: "a", kind: "answer", key: "local:unknown:unknown:",
+                                   at: 1, needsAnswer: false, title: "Backup", tag: "message")
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let window = hosted(AnyView(WidgetPeekView(model: model, item: item).frame(width: 310)),
+                            size: NSSize(width: 310, height: 240))
+        defer { window.orderOut(nil); window.close() }
+        pump(0.5)
+        let body = try XCTUnwrap(FrameProbe.frames["widget.peek.message"])
+        XCTAssertGreaterThan(body.height, 30)
+    }
+
     func testAlertContentPreferencesChangeTheRenderedControls() throws {
         _ = NSApplication.shared
         let model = StagingFixture.model()

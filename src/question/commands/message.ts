@@ -16,8 +16,11 @@ export function registerMessageCommand(program: Command): void {
         .option("--image <path>", "a PNG/JPEG/WebP screenshot to attach (repeatable)", collect, [])
         .option("--title <title>", "card title; defaults to the first line of the text")
         .option("--file <path>", "read the message text (markdown) from a file")
-        .option("--agent <label>", "subagent attribution label")
-        .option("--session <id>", "override the session id (only outside Claude, Codex or Grok)")
+        .option("--agent <label>", "sender name shown on the card, such as a monitor or subagent name")
+        .option(
+            "--session <id>",
+            "existing session to attach to outside Claude, Codex or Grok; omit for a standalone sender"
+        )
         .option("--project-path <path>", "source worktree directory; relative --image and --file paths resolve here")
         .option("--json", "print the receipt as JSON")
         .addHelpText(
