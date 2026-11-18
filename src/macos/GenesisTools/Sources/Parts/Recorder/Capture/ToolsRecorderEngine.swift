@@ -454,8 +454,9 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
                let settings = manifest["settings"] as? [String: Any] {
                 setup.camera.enabled = (settings["camera"] as? [String: Any])?["requested"] as? Bool == true
                 setup.drawsCursor = settings["cursor"] as? String == "drawn"
-                if let target = settings["target"] as? [String: Any], target["follow"] as? Bool != true {
-                    if let encoded = try? JSONSerialization.data(withJSONObject: target),
+                if let target = settings["target"] as? [String: Any] {
+                    if target["follow"] as? Bool == true { setup.target = nil }
+                    else if let encoded = try? JSONSerialization.data(withJSONObject: target),
                        let decoded = try? JSONDecoder().decode(RecordingTarget.self, from: encoded) { setup.target = decoded }
                 }
             }

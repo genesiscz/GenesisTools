@@ -1161,6 +1161,38 @@ describe("nativeSegmentRecorder", () => {
         expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }, undefined]);
     });
 
+    it("reads the first captured display and follows atomic replacements from the native movie writer", async () => {
+        const sessionDir = join(root, "following");
+        await mkdir(sessionDir);
+        const status = join(sessionDir, "movie-start.json");
+        const first = { id: 9, name: "Side" };
+        const second = { id: 7, name: "Built-in" };
+        const metadata = (display: typeof first) => SafeJSON.stringify({ firstFrameEpochMs: 1234, display });
+        await writeFile(status, metadata(first));
+        const changed = Promise.withResolvers<typeof first>();
+        const armed: unknown[] = [];
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ onRecording }) => {
+            onRecording?.({ sessionDir });
+            await writeFile(`${status}.new`, metadata(second));
+            await fs.rename(`${status}.new`, status);
+            await withTimeout(changed.promise, 2_000, new Error("no display switch"));
+            return { sessionDir, warnings: [] } as unknown as Awaited<
+                ReturnType<typeof captureRunner.runCapturePlanWithSignal>
+            >;
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: { kind: "display", screenIndex: 0, follow: true },
+            output: join(root, "movie.mp4"),
+            maxSeconds: 10,
+            signal: new AbortController().signal,
+            onRecording: (start) => armed.push(start),
+            onDisplayChanged: (display) => changed.resolve(display),
+        });
+        expect(armed).toEqual([{ firstFrameAt: 1234, display: first }]);
+        expect(result.error).toBeUndefined();
+        expect(await changed.promise).toEqual(second);
+    });
+
     it("publishes the measured segment length for the next marker and camera span", async () => {
         const output = join(root, "segment.mp4");
         await writeFile(output, "movie");
@@ -2180,6 +2212,24 @@ describe("displays.list on a movie recording", () => {
         const recorded = (await control.listDisplays()).filter((display) => display.recorded).map((one) => one.id);
 
         expect(recorded).toEqual([]);
+    });
+
+    it("reports the engine's captured display on first frame and switch, and clears it while rearming", async () => {
+        const target: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };
+        const control = followTestControl(target);
+        const state = { event: "state", reason: "user", target, elapsedMs: 10, limitMs: 900, segments: 1 } as const;
+        for (const display of [
+            { id: 9, name: "Side" },
+            { id: 7, name: "Built-in" },
+        ]) {
+            control.observe({ ...state, state: "recording", display });
+            expect((await control.status()).displays).toEqual([display]);
+            expect((await control.listDisplays()).filter((one) => one.recorded).map((one) => one.id)).toEqual([
+                display.id,
+            ]);
+        }
+        control.observe({ ...state, state: "starting" });
+        expect((await control.status()).displays).toEqual([]);
     });
 
     it("marks the chosen display for a recording that stays on one display", async () => {

@@ -144,9 +144,12 @@ public struct RecordingBarView: View {
             }
             if follows {
                 HStack {
-                    if let display = actions.followedDisplay?.wrappedValue { Text(display.name) }
-                    word("Lock to This Display", "lockDisplay", reason: reason("target", live: caps.liveTargetSwitch)) {
-                        if let display = actions.followedDisplay?.wrappedValue { model.apply(.target(display.target)); return }
+                    let captured = actions.followedDisplay?.wrappedValue
+                    if let captured { Text(captured.name) }
+                    let lockReason = live && captured == nil ? "Waiting for the recorder to report its display." : nil
+                    word("Lock to This Display", "lockDisplay", reason: lockReason ?? reason("target", live: caps.liveTargetSwitch)) {
+                        if let captured { model.apply(.target(captured.target)); return }
+                        guard configuring else { return }
                         let screens = NSScreen.screens
                         guard let index = screens.firstIndex(where: { $0.frame.contains(NSEvent.mouseLocation) }) else { return }
                         model.apply(.target(.display(index: index, name: screens[index].localizedName)))

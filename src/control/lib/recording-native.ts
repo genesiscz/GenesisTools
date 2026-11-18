@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, type FSWatcher, readFileSync, watch } from "node:fs";
 import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -192,7 +192,10 @@ function withRates(options: NativeRecorderOptions, rates: MovieRates | undefined
 /** ax-tool writes this into its session folder at a movie's first frame: when it captured that frame. */
 export const MOVIE_START_FILE = "movie-start.json";
 
-const movieStartSchema = z.object({ firstFrameEpochMs: z.number().positive() });
+const movieStartSchema = z.object({
+    firstFrameEpochMs: z.number().positive(),
+    display: z.object({ id: z.number().int().positive(), name: z.string() }).optional(),
+});
 
 /** The first frame's capture time from the recorder's folder; undefined when the ax-tool wrote none (an older one). */
 function movieStartOf(sessionDir: string): SegmentStart | undefined {
@@ -203,10 +206,10 @@ function movieStartOf(sessionDir: string): SegmentStart | undefined {
     }
 
     try {
-        const { firstFrameEpochMs } = movieStartSchema.parse(
+        const { firstFrameEpochMs, display } = movieStartSchema.parse(
             SafeJSON.parse(readFileSync(path, "utf8"), { strict: true })
         );
-        return { firstFrameAt: firstFrameEpochMs };
+        return { firstFrameAt: firstFrameEpochMs, ...(display ? { display } : {}) };
     } catch (error) {
         log.warn(
             { error, path },
@@ -219,14 +222,44 @@ function movieStartOf(sessionDir: string): SegmentStart | undefined {
 /** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
-        async record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }): Promise<SegmentResult> {
+        async record({
+            target,
+            rates,
+            output,
+            maxSeconds,
+            signal,
+            onRecording,
+            onDisplayChanged,
+            onPreparing,
+        }): Promise<SegmentResult> {
             const capture = segmentCaptureSpec({ target, output, maxSeconds, options: withRates(options, rates) });
             let sessionDir: string | undefined;
+            let displayWatch: FSWatcher | undefined;
             try {
                 const result = await runCapturePlanWithSignal({
                     plan: { capture, actions: [] },
                     signal,
-                    onRecording: (started) => onRecording(started ? movieStartOf(started.sessionDir) : undefined),
+                    onRecording: (started) => {
+                        if (started && target.kind === "display" && target.follow && onDisplayChanged) {
+                            // The writer atomically replaces the file after ScreenCaptureKit accepts a switch.
+                            // Watch its directory before reading it so a switch while arming cannot be missed.
+                            try {
+                                displayWatch = watch(started.sessionDir, (_event, file) => {
+                                    if (file !== MOVIE_START_FILE && file !== null) {
+                                        return;
+                                    }
+                                    const display = movieStartOf(started.sessionDir)?.display;
+                                    if (display) {
+                                        onDisplayChanged(display);
+                                    }
+                                });
+                                displayWatch.on("error", (error) => log.warn({ error }, "movie display watch ended"));
+                            } catch (error) {
+                                log.warn({ error }, "could not watch the movie's display");
+                            }
+                        }
+                        onRecording(started ? movieStartOf(started.sessionDir) : undefined);
+                    },
                     onPreparing,
                 });
                 sessionDir = result.sessionDir;
@@ -301,6 +334,7 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                     code,
                 };
             } finally {
+                displayWatch?.close();
                 // The recorder writes its PNG frames and metadata into a session folder of its own; the movie is
                 // the product, so the folder goes with the run.
                 if (sessionDir) {
