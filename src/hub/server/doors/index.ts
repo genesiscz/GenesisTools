@@ -38,7 +38,7 @@ export const HUB_SERVER_DOORS: readonly Door[] = [
     offEventLoop(agentsToolChangesDoor),
     offEventLoop(agentsTurnChangesDoor),
     forecastDoor,
-    procsDoor,
+    offEventLoop(procsDoor, () => laneRunner("agents")),
     stuckDoor,
     inboxDoor,
     repoDoor,
