@@ -22,6 +22,32 @@ enum MeetingsAPI {
         struct Params: Codable, Equatable { var meeting: String; var attendance: String? }
         struct Result: Decodable, Equatable { let added: Int; let warnings: [String] }
     }
+    /// `meeting.sources.near`: the source meetings that started near the record's start, nearest first.
+    enum MeetingSourcesNear: MeetingsServiceMethod {
+        static let name = "meeting.sources.near"
+        struct Params: Codable, Equatable { var meeting: String; var hours: Double? }
+        struct Candidate: Decodable, Equatable, Identifiable, Hashable {
+            struct Linked: Decodable, Equatable, Hashable { let id: String; let title: String }
+            /// What `meeting.link` takes: `<source>:<id>`.
+            let ref: String
+            /// The source's name ("Wispr Flow").
+            let source: String
+            let title: String
+            let start: String
+            var end: String?
+            let hasTranscript: Bool
+            /// The record this source meeting is linked to already.
+            var linkedTo: Linked?
+            var id: String { ref }
+        }
+        struct Result: Decodable, Equatable { let meetings: [Candidate]; let unavailable: [String] }
+    }
+    /// `meeting.link`: the source's meeting linked to the record (`tools meetings link`, never asking for a project).
+    enum MeetingLink: MeetingsServiceMethod {
+        static let name = "meeting.link"
+        struct Params: Codable, Equatable { var meeting: String; var source: String }
+        typealias Result = MeetingRecordView
+    }
     /// `rules.names`: every rule's one plain sentence by its id, the words a review row shows for an item's `rules`.
     enum RuleNames: MeetingsServiceMethod {
         static let name = "rules.names"

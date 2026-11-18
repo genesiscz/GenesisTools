@@ -429,6 +429,8 @@ struct NoTranscriptSource {
     let what: String
     /// Opens the Screen tab; nil when the meeting has no screen recording either.
     let showScreen: (() -> Void)?
+    /// The meeting a source can be linked to ("Link a meeting…"); nil where nothing can link one.
+    var linkTo: MeetingDetailModel? = nil
 
     static let code = "no-transcript-source"
 }
@@ -440,13 +442,21 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
     let retry: () -> Void
     var noSource: NoTranscriptSource? = nil
     @ViewBuilder let content: (Value) -> Content
+    @State private var linking = false
 
     var body: some View {
         if let noSource, state.failure?.code == NoTranscriptSource.code {
+            // Linking is the next step; the screen recording is the other way on, when there is one (audit M9).
+            let link: (() -> Void)? = noSource.linkTo == nil ? nil : { linking = true }
             EmptyState(symbol: "waveform.slash", text: "This meeting has no \(noSource.what)",
-                       // The window has no link action, so the text names the command: it said only that linking helps.
-                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both. Link it in a terminal:\ntools meetings link <meeting> wisprflow:<id>",
-                       actionTitle: noSource.showScreen == nil ? nil : "Show the screen recording", action: noSource.showScreen)
+                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both.",
+                       actionTitle: link == nil ? (noSource.showScreen == nil ? nil : "Show the screen recording") : "Link a meeting…",
+                       action: link ?? noSource.showScreen,
+                       secondaryTitle: link == nil || noSource.showScreen == nil ? nil : "Show the screen recording",
+                       secondarySymbol: "display", secondaryAction: link == nil ? nil : noSource.showScreen)
+                .sheet(isPresented: $linking) {
+                    if let meeting = noSource.linkTo { LinkSourceSheet(detail: meeting) { linking = false } }
+                }
         } else {
             pane
         }
