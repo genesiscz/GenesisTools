@@ -108,13 +108,15 @@ export async function notifyRequest(ctx: RequestContext): Promise<RequestOutcome
 
 export async function notifyViaChannels(ctx: RequestContext): Promise<RequestOutcome | Pass> {
     refuseHostEffectInTest("request notification channels", "Inject notification channels in tests.");
-    const { dispatchNotification, notificationsConfig, CHANNEL_NAMES } = await import("@genesiscz/utils/notifications");
+    const { dispatchNotificationReport, notificationsConfig, CHANNEL_NAMES } = await import(
+        "@genesiscz/utils/notifications"
+    );
     const channels = await notificationsConfig.getChannels("genesis-tools");
     const { unconfiguredChannel } = await import("@genesiscz/utils/notifications/dispatch");
     if (!CHANNEL_NAMES.some((name) => channels[name].enabled && !unconfiguredChannel(name, channels))) {
         return ctx.pass("No notification channel is enabled.");
     }
-    const posted = await dispatchNotification({
+    const report = await dispatchNotificationReport({
         app: "genesis-tools",
         id: ctx.args.id,
         title: ctx.args.title,
@@ -122,13 +124,21 @@ export async function notifyViaChannels(ctx: RequestContext): Promise<RequestOut
         execute: genesisToolsRequestOpenCommand(ctx.args.id),
         sound: personConfigSchema.parse(ctx.areaConfig).notification.sound,
     });
-    return posted
+    if (report.sent.length === 0) {
+        // Nothing reached the person: the next way prints the command that opens the request.
+        return ctx.pass("Every enabled notification channel failed to send the request.");
+    }
+    return report.delivered
         ? {
               id: ctx.args.id,
               status: "pending",
               reason: "The request was handed to the configured notification channels.",
           }
-        : { id: ctx.args.id, status: "pending", reason: "Some notification channels failed; the request stays open." };
+        : {
+              id: ctx.args.id,
+              status: "pending",
+              reason: `Only ${report.sent.join(", ")} sent the request; it stays open.`,
+          };
 }
 
 export async function printRequest(ctx: RequestContext): Promise<RequestOutcome | Pass> {
