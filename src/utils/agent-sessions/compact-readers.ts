@@ -1,4 +1,4 @@
-import { deferredReadChanges, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
+import { deferredReadChanges, deferredReadChangesWindow, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
 import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
@@ -23,6 +23,7 @@ import { grokDialog } from "./readers/grok-dialog";
 import { discoverGrokHistorySources, grokClassifyPath } from "./readers/grok-discovery";
 import { readGrokStatistics } from "./readers/grok-statistics";
 import { grokMidWork } from "./readers/grok-turn-state";
+import { noChangesWindow } from "./testing/no-backward-read";
 import type { AgentKind, NativeSessionReader } from "./types";
 import { noWorkflowReader } from "./workflow-types";
 
@@ -50,6 +51,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     classifyPath: claudeClassifyPath,
     readSpawnLink: claudeReadSpawnLink,
     midWork: claudeMidWork,
+    readChangesWindow: noChangesWindow("built in phase 7"),
     readChanges: deferredReadChanges(import.meta, "./readers/claude-changes", "claudeSessionChanges"),
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
     // which comes from an earlier row, never enters the searched text).
@@ -79,6 +81,7 @@ export const codexHistoryReader = createCompactHistoryReader({
     classifyPath: codexClassifyPath,
     readSpawnLink: readCodexSpawnLink,
     midWork: codexMidWork,
+    readChangesWindow: deferredReadChangesWindow(import.meta, "./readers/codex-changes-window", "codexChangesWindow"),
     readChanges: deferredReadChanges(import.meta, "./readers/codex-changes", "codexSessionChanges"),
     searchMetadata: true,
     // Metadata comes from the first header plus the state sidecars; a record never replays a header.
@@ -104,6 +107,7 @@ export const grokHistoryReader = createCompactHistoryReader({
     midWork: grokMidWork,
     // No Grok transcript parser reads file changes: a Grok session is judged from the change log alone.
     readChanges: () => null,
+    readChangesWindow: noChangesWindow("Grok changes are recorded in the change log alone"),
     searchMetadata: true,
     ...createGrokHistoryOperations(),
     readStatistics: readGrokStatistics,

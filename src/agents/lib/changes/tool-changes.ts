@@ -6,6 +6,7 @@ import {
     type ComputedSessionChanges,
     type ExcludedFile,
     lastChangedTurns,
+    loadRecentSessionChanges,
     loadSessionChanges,
     mergeTurnFiles,
     storeBlobs,
@@ -201,7 +202,10 @@ export async function sessionTurnChanges(input: {
     count?: number;
 }): Promise<SessionTurnChanges | { error: string }> {
     const { session, file, options, count } = input;
-    const changes = loadSessionChanges({ sessionId: session, log: input.rows });
+    const changes =
+        count !== undefined && !options.turn && !options.tool
+            ? loadRecentSessionChanges({ sessionId: session, count, log: input.rows })
+            : loadSessionChanges({ sessionId: session, log: input.rows });
 
     if (!changes.transcriptPath && !existsSync(file) && !(await isKnownSession(session))) {
         // An empty list would read as "this session changed nothing", for a mistyped id too.

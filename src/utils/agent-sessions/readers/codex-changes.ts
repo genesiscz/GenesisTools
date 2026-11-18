@@ -163,6 +163,64 @@ function fillStates(changes: CodexChange[], calls: SessionToolCall[], readFile: 
     }
 }
 
+interface RolloutVisitor {
+    turn(id: string, at: string | null): void;
+    prompt(text: string): void;
+    context(cwd: string): void;
+    change(change: CodexChange): void;
+}
+
+export function visitRolloutLine(line: string, cwd: string | null, visit: RolloutVisitor): void {
+    if (!line.trim()) {
+        return;
+    }
+
+    let row: Json | null;
+
+    try {
+        row = record(SafeJSON.parse(line, { strict: true }));
+    } catch (error) {
+        log.debug({ error }, "unreadable rollout line skipped");
+        return;
+    }
+
+    const payload = record(row?.payload);
+
+    if (!row || !payload) {
+        return;
+    }
+
+    const at = typeof row.timestamp === "string" ? Date.parse(row.timestamp) : Number.NaN;
+    const when = Number.isNaN(at) ? null : at;
+
+    if (row.type === "turn_context" && text(payload.cwd)) {
+        visit.context(text(payload.cwd) ?? "");
+        return;
+    }
+
+    if (row.type === "event_msg" && payload.type === "task_started" && text(payload.turn_id)) {
+        const turnId = text(payload.turn_id) ?? "";
+        visit.turn(turnId, text(row.timestamp));
+        return;
+    }
+
+    if (row.type === "response_item" && payload.type === "message" && payload.role === "user") {
+        const prompt = promptText(payload);
+
+        if (prompt) {
+            visit.prompt(prompt);
+        }
+
+        return;
+    }
+
+    if (row.type === "event_msg" && payload.type === "item_completed") {
+        for (const change of changesOf(payload, when, cwd)) {
+            visit.change(change);
+        }
+    }
+}
+
 /**
  * A Codex rollout as a session transcript: each `task_started` is a turn, and each path of a
  * completed `FileChange` item is one file-tool call (an add is a Write, an update or a delete an
@@ -171,64 +229,35 @@ function fillStates(changes: CodexChange[], calls: SessionToolCall[], readFile: 
  */
 export function parseCodexRollout(
     sessionId: string,
-    content: string,
-    readFile: (path: string) => string | null = readCurrent
+    content: string | Iterable<string>,
+    readFile: (path: string) => string | null = readCurrent,
+    initialCwd: string | null = null
 ): SessionTranscript {
     const turns = new Map<string, SessionTurn>();
     const cwds = new Set<string>();
     const changes: CodexChange[] = [];
-    let currentTurn: SessionTurn | null = null;
-    let cwd: string | null = null;
-
-    for (const line of content.split("\n")) {
-        if (!line.trim()) {
-            continue;
-        }
-
-        let row: Json | null;
-
-        try {
-            row = record(SafeJSON.parse(line, { strict: true }));
-        } catch (error) {
-            log.debug({ error }, "unreadable rollout line skipped");
-            continue;
-        }
-
-        const payload = record(row?.payload);
-
-        if (!row || !payload) {
-            continue;
-        }
-
-        const at = typeof row.timestamp === "string" ? Date.parse(row.timestamp) : Number.NaN;
-        const when = Number.isNaN(at) ? null : at;
-
-        if (row.type === "turn_context" && text(payload.cwd)) {
-            cwd = text(payload.cwd);
-            cwds.add(cwd ?? "");
-            continue;
-        }
-
-        if (row.type === "event_msg" && payload.type === "task_started" && text(payload.turn_id)) {
-            const turnId = text(payload.turn_id) ?? "";
-            currentTurn = { turnId, index: turns.size, at: text(row.timestamp), prompt: "" };
-            turns.set(turnId, currentTurn);
-            continue;
-        }
-
-        if (row.type === "response_item" && payload.type === "message" && payload.role === "user") {
-            const prompt = promptText(payload);
-
-            if (prompt && currentTurn && !currentTurn.prompt) {
-                currentTurn.prompt = prompt;
+    let current: SessionTurn | undefined;
+    let cwd = initialCwd;
+    const visitor: RolloutVisitor = {
+        turn(turnId, at) {
+            current = { turnId, at, index: turns.size, prompt: "" };
+            turns.set(turnId, current);
+        },
+        prompt(text) {
+            if (current && !current.prompt) {
+                current.prompt = text;
             }
-
-            continue;
-        }
-
-        if (row.type === "event_msg" && payload.type === "item_completed") {
-            changes.push(...changesOf(payload, when, cwd));
-        }
+        },
+        context(next) {
+            cwd = next;
+            cwds.add(next);
+        },
+        change(change) {
+            changes.push(change);
+        },
+    };
+    for (const line of typeof content === "string" ? content.split("\n") : content) {
+        visitRolloutLine(line, cwd, visitor);
     }
 
     const calls: SessionToolCall[] = changes.map((change) => ({

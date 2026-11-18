@@ -478,6 +478,7 @@ export const env = {
     },
 
     agents: {
+        verifyChangesWindow: () => isFlag("GENESIS_TOOLS_CHANGES_VERIFY"),
         /** AGENTS_HOOKS_DISABLE=1 is the emergency stop: every `tools agents` hook exits 0 at once. */
         areHooksDisabled: () => getRaw("AGENTS_HOOKS_DISABLE") === "1",
         /** GENESIS_TOOLS_AGENT names the agent of this session (for example `Fable`, `Codex`), for tools that sign its work. */
