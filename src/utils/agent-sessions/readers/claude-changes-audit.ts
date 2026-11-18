@@ -181,15 +181,7 @@ export function auditClaudeFacts(path: string) {
         shellCalls: isDeepStrictEqual([...facts.shellCalls], shellCalls),
         calls: isDeepStrictEqual(
             [...facts.calls.keys()],
-            full.calls
-                .filter(
-                    (call) =>
-                        fileToolVia(call.name) ||
-                        isShellTool(call.name) ||
-                        call.name === "Task" ||
-                        call.name === "Agent"
-                )
-                .map((call) => call.id)
+            full.calls.filter((call) => fileToolVia(call.name) || isShellTool(call.name)).map((call) => call.id)
         ),
     };
 }

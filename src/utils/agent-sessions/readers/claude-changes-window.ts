@@ -131,6 +131,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
         const held = new Set(main.state.calls.keys());
         const unmatched = [...main.unmatched];
         let phantomCapable = 0;
+        let missingLauncher = false;
         let bytesParsed = main.consumed - cut.offset;
         let bytesTotal = mainFacts.size;
         const oldIndex = index;
@@ -172,9 +173,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
                 !held.has(file.parentToolUseId) &&
                 [...fold.state.calls.values()].some((call) => !isMainTurn(call.turnId))
             ) {
-                if (!coverCall(file.parentToolUseId)) {
-                    return { supported: false, reason: "F3: phantom subagent with an unknown launching call" };
-                }
+                missingLauncher = true;
             }
             for (const id of fold.state.calls.keys()) {
                 held.add(id);
@@ -202,6 +201,9 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
         }
         if (oldIndex !== index) {
             continue;
+        }
+        if (missingLauncher) {
+            return { supported: false, reason: "F3: phantom subagent with a launching call outside the window" };
         }
         // A moved or copied transcript may have a checkpoint even before the preceding prompt. Its message
         // still identifies it exactly. Widen the backup-only lookbehind to the first such checkpoint.
