@@ -264,6 +264,7 @@ describe("meetings config", () => {
                 compute: { priority: "normal", workers: "auto" },
                 sampleScope: "all",
                 outlierBelow: 0.5,
+                supportOnSeatLines: true,
             },
         });
         expect(config.global.capture.audioRetentionDays).toBeUndefined();
@@ -291,6 +292,7 @@ describe("meetings config", () => {
             compute: { priority: "normal", workers: "auto" },
             sampleScope: "all",
             outlierBelow: 0.5,
+            supportOnSeatLines: true,
         });
         expect(set.capture.audioRetentionDays).toBe(90);
         expect(set.playback.tracks).toBe("source");
