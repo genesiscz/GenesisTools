@@ -21,6 +21,10 @@ const check: WordCheck = {
 };
 
 describe("meeting term regressions", () => {
+    test("a zero phonetic threshold still needs a vocabulary candidate", () => {
+        expect(findSuspectTerms({ entries: [entry("zelnworp")], vocab: [], minConfidence: 0 })).toEqual([]);
+    });
+
     test("automatic terms: a Czech verb at the end of a run stays a separate word", () => {
         const vocab = [
             { term: "Zeln.Bylox", source: "dictionary" },
