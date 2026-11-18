@@ -1,228 +1,57 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { spawnToolDetached, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { foldText, OCR_BOX_LEVELS, type OcrBoxLevel } from "@genesiscz/utils/macos/ocr-boxes";
-import { calendarAround } from "@genesiscz/utils/meetings/calendar";
-import {
-    DISPLAY_POLICIES,
-    type DisplayPolicy,
-    languageSettings,
-    MeetingsConfigStore,
-} from "@genesiscz/utils/meetings/config";
+import { DISPLAY_POLICIES, languageSettings, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import {
     AUDIO_SOURCES,
-    type AudioSource,
     type RecorderSettingsPatch,
     type RecorderStatus,
     RpcError,
 } from "@genesiscz/utils/screen-recorder/control";
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import { collectAndReport } from "../lib/collect";
 import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
-import { ensureScreenRecording } from "../lib/grants";
-import { linkSource } from "../lib/link";
-import { resolveProject } from "../lib/project";
-import { runRecorder, stateDisplays } from "../lib/recorder";
 import {
-    framesOnDisk,
-    meetingLiveId,
-    readRecorderState,
-    recorderAcknowledged,
-    requestRecorderStop,
-} from "../lib/recorder-shared";
+    parseAudioSources,
+    parseDisplayPolicy,
+    type StartOptions,
+    startMeetingRecording,
+    waitForRecorder,
+} from "../lib/record-start";
+import { runRecorder, stateDisplays } from "../lib/recorder";
+import { framesOnDisk, meetingLiveId, readRecorderState, requestRecorderStop } from "../lib/recorder-shared";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { ensureWatcher, shouldStartWatcherForRecording } from "../lib/watcher";
 import { captureCostRead, windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
 
-/** How long `record start` waits for the recorder to report, and `record stop` for it to convert its last frames. */
-const START_WAIT_MS = 15_000;
 const STOP_WAIT_MS = 75_000;
 
-/** `all`, `follow-focus`, `main` or a screen index; undefined when the text is none of them. */
-/** `mic,system` as audio sources; undefined when a part is none of them. */
-export function parseAudioSources(raw: string): AudioSource[] | undefined {
-    const parts = raw
-        .split(",")
-        .map((part) => part.trim())
-        .filter(Boolean);
-    return parts.every((part): part is AudioSource => (AUDIO_SOURCES as readonly string[]).includes(part))
-        ? [...new Set(parts)]
-        : undefined;
-}
+export { parseAudioSources, parseDisplayPolicy };
 
-export function parseDisplayPolicy(raw: string): DisplayPolicy | undefined {
-    if ((DISPLAY_POLICIES as readonly string[]).includes(raw)) {
-        return raw as DisplayPolicy;
-    }
-
-    const index = Number(raw);
-    return /^\d+$/.test(raw) && Number.isInteger(index) ? index : undefined;
-}
-const WAIT_STEP_MS = 500;
-
-async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-
-    while (Date.now() < deadline) {
-        if (check()) {
-            return true;
-        }
-
-        await Bun.sleep(Math.min(WAIT_STEP_MS, deadline - Date.now()));
-    }
-
-    return check();
-}
-
-/** The meeting to record: named, built from a source, or new (with the calendar event around now). */
-async function meetingToRecord(
-    store: MeetingStore,
-    opts: { meeting?: string; source?: string; title?: string; project?: string; yes?: boolean }
-): Promise<MeetingRecord> {
-    const config = new MeetingsConfigStore();
-
-    if (opts.meeting) {
-        const record = store.resolve(opts.meeting);
-
-        if (!record) {
-            throw new Error(`No meeting "${opts.meeting}" (${TOOL} list)`);
-        }
-
-        return record;
-    }
-
-    if (opts.source) {
-        const { record } = await linkSource({
-            store,
-            config,
-            sourceRef: opts.source,
-            project: opts.project,
-            command: "record start",
-            createdBy: "record",
-            quiet: opts.yes,
-        });
-        return record;
-    }
-
-    const now = new Date();
-    const calendar = await calendarAround(now);
-    const title = opts.title ?? calendar?.title ?? `Meeting ${localTime(now.toISOString()).slice(11)}`;
-    const { project } = await resolveProject({
-        config,
-        flag: opts.project,
-        facts: { title, calendar: calendar?.calendar },
-        quiet: opts.yes,
-    });
-
-    return store.create(
-        {
-            title,
-            start: now.toISOString(),
-            createdBy: "record",
-            ...(project ? { project } : {}),
-            ...(calendar ? { calendar } : {}),
-        },
-        {
-            command: "record start",
-            change: `created "${title}"${calendar ? ` from calendar ${calendar.calendar ?? ""}` : ""}`,
-        }
-    );
-}
-
-async function start(opts: {
-    meeting?: string;
-    source?: string;
-    title?: string;
-    project?: string;
-    display?: string;
-    audio?: string;
-    yes?: boolean;
-}): Promise<void> {
-    const store = new MeetingStore();
-    const current = readRecorderState(store);
-    const audio = opts.audio === undefined ? [] : parseAudioSources(opts.audio);
-
-    if (audio === undefined) {
-        fail(`--audio ${opts.audio} is not a list of ${AUDIO_SOURCES.join(", ")} (for example mic,system).`);
-        return;
-    }
-
-    if (current.running) {
-        fail(`Already recording ${current.state?.meetingId ?? "a meeting"}. Stop it first: ${TOOL} record stop`);
-        return;
-    }
-
-    const display = opts.display === undefined ? undefined : parseDisplayPolicy(opts.display);
-
-    if (opts.display !== undefined && display === undefined) {
-        fail(`--display ${opts.display} is none of ${DISPLAY_POLICIES.join(", ")} or a screen index (0, 1, 2 …).`);
-        return;
-    }
-
+async function start(opts: StartOptions): Promise<void> {
     try {
-        const {
-            global: { capture },
-        } = await new MeetingsConfigStore().read();
-        const sources = opts.audio === undefined ? capture.recorders.native.audio.sources : audio;
-        const canKeepSound = capture.soundWithoutScreen && sources.length > 0;
-        const grant = await ensureScreenRecording({ quiet: opts.yes, allowSoundOnly: canKeepSound });
-
-        if (!grant.granted && !canKeepSound) {
-            fail(grant.message ?? `Screen Recording is not granted to ${grant.identity}.`);
-            return;
-        }
-
-        const record = await meetingToRecord(store, opts);
-        const startedAfter = Date.now();
-        const pid = spawnToolDetached([
-            "meetings",
-            "record",
-            "run",
-            record.id,
-            ...(!grant.granted ? ["--without-screen", grant.message ?? "Screen Recording is unavailable"] : []),
-            ...(display !== undefined ? ["--display", String(display)] : []),
-            ...(audio.length > 0 ? ["--audio", audio.join(",")] : []),
-        ]);
-        log.info({ meeting: record.id, pid, identity: grant.identity }, "recorder started");
-        const reported = await waitFor(
-            () => recorderAcknowledged({ current: readRecorderState(store), meetingId: record.id, startedAfter }),
-            START_WAIT_MS
-        );
-
-        if (!reported) {
-            fail(
-                `The recorder did not report within ${START_WAIT_MS / 1000} s. Its log: ${toolCommand("genesis-tools", "logs", "day", "--tool", "meetings")}`
+        const result = await startMeetingRecording(opts);
+        if (result.watcherOff) {
+            ui.raw(
+                `Watcher autostart is off for this store, so start it with \`${toolCommand("meetings", "watch")}\`.`
             );
-            return;
         }
-
-        try {
-            if (await shouldStartWatcherForRecording()) {
-                await ensureWatcher();
-            } else {
-                const watch = toolCommand("meetings", "watch");
-                ui.raw(`Watcher autostart is off for this store, so start it with \`${watch}\`.`);
-            }
-        } catch (err) {
-            log.warn({ err, meeting: record.id }, "recording started, but its recovery watcher did not start");
-        }
-
         ui.ok(
-            `Recording ${grant.granted ? "the screen" : `sound only (${grant.message})`} for ${record.id}${record.project ? ` (project ${record.project})` : ""}, as ${grant.identity}.`
+            `Recording ${result.withoutScreen ? `sound only (${result.partial})` : "the screen"} for ${result.meeting}${result.project ? ` (project ${result.project})` : ""}, as ${result.identity}.`
         );
         ui.dim(`Pause: ${TOOL} record pause · stop: ${TOOL} record stop · status: ${TOOL} record status`);
     } catch (err) {
@@ -427,7 +256,7 @@ async function stop(opts: { meeting?: string; startedAt?: string }): Promise<voi
         return;
     }
 
-    const stopped = await waitFor(() => !readRecorderState(store).running, STOP_WAIT_MS);
+    const stopped = await waitForRecorder(() => !readRecorderState(store).running, STOP_WAIT_MS);
 
     if (!stopped) {
         fail(`The recorder is still running after ${STOP_WAIT_MS / 1000} s (pid ${current.state?.pid}).`);
@@ -818,6 +647,7 @@ export function registerRecordCommands(program: Command): void {
         )
         .option("--audio <sources>", "also record sound beside the frames: mic, system or mic,system (.m4a in audio/)")
         .option("-y, --yes", "never prompt (project, permissions)")
+        .addOption(new Option("--from-watcher").hideHelp())
         .action(start);
 
     record

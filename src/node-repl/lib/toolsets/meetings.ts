@@ -11,6 +11,7 @@ import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
+import { startMeetingRecording } from "@app/meetings/lib/record-start";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
 import { reviewRow } from "@app/meetings/lib/review-rows";
@@ -27,6 +28,7 @@ import {
     assignAsk,
     audioApply,
     audioPlan,
+    autostartMethod,
     type backfillVoices,
     commentRead,
     commentWithdraw,
@@ -53,6 +55,7 @@ import {
     projectsPreview,
     projectsUnpair,
     recordingMark,
+    recordStart,
     ref,
     reject,
     rename,
@@ -77,6 +80,7 @@ import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
+import { recordingAutostart } from "@app/meetings/lib/watcher";
 import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -197,6 +201,10 @@ export class MeetingsToolset extends ReplToolset {
                     apply: async (plan: z.input<typeof audioApply.params>["plan"]) =>
                         applyLocalSourceAudio({ plan: audioApply.params.parse({ plan }).plan, store }),
                 },
+                recordStart: (input: z.input<typeof recordStart.params> = {}) =>
+                    startMeetingRecording({ ...recordStart.params.parse(input), yes: true }, store),
+                autostart: (mode?: z.input<typeof autostartMethod.params>["mode"]) =>
+                    recordingAutostart(autostartMethod.params.parse({ mode }).mode, store),
                 list: (input: z.input<typeof list.params> = {}) => {
                     const { project } = list.params.parse(input);
                     return store

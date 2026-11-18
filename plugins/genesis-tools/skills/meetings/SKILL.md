@@ -12,6 +12,10 @@ turns one meeting into ONE polished file that a developer can trust, and keeps e
 The tools do the mechanics (`tools meetings`, with `tools wisprflow` for the export); `src/meetings/README.md` lists
 every command. The judgement lives here.
 
+Start capture with `tools meetings record start` or `meetings.recordStart({ meeting })` in the node REPL.
+`tools meetings autostart` and `meetings.autostart()` report the latest failed or partial start, its time and delivery.
+`meetings.config.get("global.capture.soundWithoutScreen")` reads the sound-only fallback setting (default on).
+
 ## Two modes
 
 - **Three-pass, the default when an agent runs this skill.** The tool gathers the facts and judges nothing; the agent

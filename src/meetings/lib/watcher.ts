@@ -6,6 +6,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import { sandboxInstalled } from "@genesiscz/utils/storage/real-home-guard";
 import { hasOpenAssignSteps } from "./assign";
+import { lastStartFailure } from "./start-failures";
 import { hasRecordingToWatch, hasSourceAudioToWatch, watchedSourceId } from "./watch";
 
 /**
@@ -45,6 +46,21 @@ export function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
 }
 
 let inFlight: Promise<"started" | "running" | "disabled"> | undefined;
+
+/** Shared by the autostart command and the meetings REPL. Status only reads. */
+export async function recordingAutostart(mode: "on" | "off" | "status" = "status", store = new MeetingStore()) {
+    const configStore = new MeetingsConfigStore(store.storage);
+    if (mode !== "status") {
+        await configStore.setAutoRecord(mode === "on");
+    }
+    const config = await configStore.read();
+    const enabled = config.sources[watchedSourceId(config)].autoRecord.enabled;
+    if (enabled && mode === "on") {
+        await ensureWatcher();
+    }
+    const running = inspectPidFile(watcherPidPath(store)).status === "live";
+    return { enabled, running, lastFailure: lastStartFailure(store) };
+}
 
 async function startWatcher(): Promise<"started" | "running" | "disabled"> {
     const config = await new MeetingsConfigStore().read();

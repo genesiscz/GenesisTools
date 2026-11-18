@@ -1,3 +1,4 @@
+import { readLivePermissions } from "@app/control/lib/permissions";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
@@ -15,6 +16,7 @@ import { pruneCapturesDaily } from "./retention";
 import { preservedSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
 import { liveSourceMeetingId, localSourceAudio, meetingSource, sourceRefOf } from "./sources";
+import { deliverStartFailures, startFailureDelivery } from "./start-failures";
 import {
     type AutoRecording,
     clearAuto,
@@ -70,16 +72,32 @@ export interface WatchDeps {
     lastActivityAt: (meetingId: string) => number | undefined;
     /** Ends a recording whose recorder died and that is not started again: status stopped, its span `interrupted`. */
     endInterrupted: (meetingId: string, at: string) => Promise<void>;
-    notify: (note: WatchNote) => Promise<void>;
+    notify: (note: WatchNote) => Promise<boolean | void>;
+    inbox: typeof startFailureDelivery.inbox;
+    grants: typeof readLivePermissions;
+    logStart: (fields: {
+        meeting: string;
+        viaGenesisApp: boolean | null;
+        responsibleName: string | null;
+        screenRecording: boolean | null;
+        microphone: boolean | null;
+        error?: string;
+    }) => void;
+    wantsMicrophone: () => Promise<boolean>;
 }
 
 function defaultDeps(store: MeetingStore): WatchDeps {
-    let watched: Promise<{ id: MeetingSourceId; settings: AutoRecordSettings }> | undefined;
+    let watched: Promise<{ id: MeetingSourceId; settings: AutoRecordSettings; wantsMicrophone: boolean }> | undefined;
     // One config read per look: every part of this look follows the same source.
     const current = () =>
         (watched ??= new MeetingsConfigStore().read().then((config) => {
             const id = watchedSourceId(config);
-            return { id, settings: config.sources[id].autoRecord };
+            const capture = config.global.capture;
+            return {
+                id,
+                settings: config.sources[id].autoRecord,
+                wantsMicrophone: capture.backend === "native" && capture.recorders.native.audio.sources.includes("mic"),
+            };
         }));
 
     return {
@@ -118,13 +136,77 @@ function defaultDeps(store: MeetingStore): WatchDeps {
                 }
             });
         },
+        inbox: startFailureDelivery.inbox,
+        grants: readLivePermissions,
+        logStart: (fields) => log.info(fields, "live grants at recording start"),
+        wantsMicrophone: async () => (await current()).wantsMicrophone,
         notify: async (note) => {
-            // The group names the source in the notification ledger (`tools notify history --source meetings`).
-            await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
-                log.warn({ err }, "notification failed")
-            );
+            try {
+                return (await sendNotification({ ...note, group: "meetings" })).confirmed;
+            } catch (err) {
+                log.warn({ err }, "notification failed");
+                return false;
+            }
         },
     };
+}
+
+function delivery(deps: WatchDeps) {
+    return {
+        inbox: deps.inbox,
+        banner: async (title: string, subtitle: string, message: string) =>
+            (await deps.notify({ title, subtitle, message })) === true,
+    };
+}
+
+async function startFromWatch(
+    store: MeetingStore,
+    deps: WatchDeps,
+    mode: "--meeting" | "--source",
+    ref: string,
+    title: string,
+    now: number
+) {
+    const { live, error } = deps.grants();
+    deps.logStart({
+        meeting: ref,
+        viaGenesisApp: live?.viaGenesisApp ?? null,
+        responsibleName: live?.responsibleName ?? null,
+        screenRecording: live?.screenRecording ?? null,
+        microphone: live?.microphone ?? null,
+        error,
+    });
+    const result = await deps
+        .run(["meetings", "record", "start", mode, ref, "--yes", "--from-watcher"])
+        .catch((err: unknown) => ({
+            success: false,
+            exitCode: null,
+            stderr: err instanceof Error ? err.message : String(err),
+        }));
+    const state = result.success ? deps.recorder().state : undefined;
+    const micMissing = live?.microphone === false && (await deps.wantsMicrophone());
+    const problem = result.success
+        ? state?.withoutScreen
+            ? (state.warning ?? state.withoutScreen)
+            : micMissing
+              ? "Microphone access is not granted."
+              : undefined
+        : result.stderr.trim().split("\n").filter(Boolean).at(-1) ||
+          `Recording start exited ${result.exitCode ?? "without a status"}.`;
+    if (problem) {
+        const record = mode === "--meeting" ? store.read(ref) : undefined;
+        const source = record && sourceRefOf(record);
+        const key = source ? `${source.sourceId}:${source.sourceMeetingId}` : ref;
+        await deliverStartFailures(
+            store,
+            { key, meeting: record?.title || title, problem, partial: result.success },
+            delivery(deps),
+            now
+        ).catch((err: unknown) =>
+            log.error({ err, meeting: ref, problem }, "could not persist the recording start alert")
+        );
+    }
+    return { ...result, partial: result.success && !!problem };
 }
 
 /** A running recorder needs monitoring; an unclosed orphan needs one recovery or expiry look. */
@@ -192,7 +274,7 @@ async function resumeInterrupted(options: {
     }
 
     resumeTries.set(state.meetingId, now);
-    const result = await deps.run(["meetings", "record", "start", "--meeting", state.meetingId, "--yes"]);
+    const result = await startFromWatch(store, deps, "--meeting", state.meetingId, live?.title || state.meetingId, now);
     log.info({ meeting: state.meetingId, exitCode: result.exitCode }, "interrupted recording started again");
     const restarted = result.success ? deps.recorder().state : undefined;
 
@@ -227,7 +309,7 @@ async function retryFailed(options: {
         return "idle";
     }
 
-    const result = await deps.run(["meetings", "record", "start", "--meeting", auto.meetingId, "--yes"]);
+    const result = await startFromWatch(store, deps, "--meeting", auto.meetingId, auto.meetingId, now);
     log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "failed recording started again");
     const restarted = result.success ? deps.recorder().state : undefined;
     writeAuto(store, {
@@ -355,6 +437,9 @@ export async function watchOnce(
     const deps: WatchDeps = { ...defaultDeps(store), ...options.deps };
     const now = options.now ?? Date.now();
     const settings = await deps.settings();
+    await deliverStartFailures(store, undefined, delivery(deps), now).catch((err: unknown) =>
+        log.error({ err }, "could not retry recording start alerts")
+    );
     const audioPending = await archiveWithinBudget(
         store,
         deps.archiveAudio,
@@ -492,24 +577,11 @@ export async function watchOnce(
             : "idle";
     }
 
-    const result = await deps.run([
-        "meetings",
-        "record",
-        "start",
-        "--source",
-        `${source.id}:${live.sourceMeetingId}`,
-        "--yes",
-    ]);
+    const title = live.title.trim() || `${source.label} meeting since ${localTime(live.startedAt).slice(11)}`;
+    const result = await startFromWatch(store, deps, "--source", `${source.id}:${live.sourceMeetingId}`, title, now);
     log.info({ live, exitCode: result.exitCode, stderr: result.stderr.slice(-400) }, "auto recording start");
 
     if (!result.success) {
-        if (settings.notify) {
-            await deps.notify({
-                title: "Meeting not recorded",
-                message: result.stderr.split("\n").at(-1) || "The screen recording did not start.",
-            });
-        }
-
         // Remember the meeting, so a missing grant does not retry and notify every 15 s.
         writeAuto(store, { sourceMeetingId: live.sourceMeetingId, startedAt: new Date(now).toISOString() });
         return "failed";
@@ -524,9 +596,7 @@ export async function watchOnce(
         startedAt: new Date(now).toISOString(),
     });
 
-    if (settings.notify) {
-        // A source may name a meeting only after it ends (Wispr does), so a live one may have no title yet.
-        const title = live.title.trim() || `${source.label} meeting since ${localTime(live.startedAt).slice(11)}`;
+    if (settings.notify && !result.partial) {
         await deps.notify({
             title: "Recording the screen",
             subtitle: title,

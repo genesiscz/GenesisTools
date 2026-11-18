@@ -13,13 +13,14 @@ const WINDOW_POLL_MS = 2_000;
 
 export interface GrantOutcome {
     granted: boolean;
+    microphone?: boolean;
     /** Who captures: GenesisTools.app, or the terminal that started `tools`. */
     identity: string;
     /** What to do when it is not granted, ready to print. */
     message?: string;
 }
 
-function identityNow(): { identity: string; granted: boolean | undefined; error?: string } {
+function identityNow(): { identity: string; granted: boolean | undefined; microphone?: boolean; error?: string } {
     const { live, error } = readLivePermissions();
 
     if (!live) {
@@ -32,7 +33,7 @@ function identityNow(): { identity: string; granted: boolean | undefined; error?
     }
 
     const identity = live.viaGenesisApp ? "GenesisTools.app" : (live.responsibleName ?? "this terminal");
-    return { identity, granted: live.screenRecording };
+    return { identity, granted: live.screenRecording, microphone: live.microphone };
 }
 
 /**
@@ -72,7 +73,7 @@ export async function ensureScreenRecording(
     const first = identityNow();
 
     if (first.granted) {
-        return { granted: true, identity: first.identity };
+        return { granted: true, identity: first.identity, microphone: first.microphone };
     }
 
     if (options.allowSoundOnly || first.granted === undefined) {
@@ -97,7 +98,7 @@ export async function ensureScreenRecording(
     let second = identityNow();
 
     if (second.granted) {
-        return { granted: true, identity: second.identity };
+        return { granted: true, identity: second.identity, microphone: second.microphone };
     }
 
     if (appInstalled) {
@@ -107,7 +108,7 @@ export async function ensureScreenRecording(
         second = third;
 
         if (third.granted) {
-            return { granted: true, identity: third.identity };
+            return { granted: true, identity: third.identity, microphone: third.microphone };
         }
     }
 

@@ -1643,6 +1643,13 @@ test("record start chooses frames only on a positive live grant and preserves th
             screenRecording: true,
         };
         const grant = spyOn(await import("@app/control/lib/permissions"), "readLivePermissions");
+        const inbox = spyOn(await import("@app/question/lib/message"), "sendInboxMessage").mockRejectedValue(
+            new Error("fixture inbox offline")
+        );
+        const banner = spyOn(
+            await import("@genesiscz/utils/macos/notifications"),
+            "sendNotification"
+        ).mockRejectedValue(new Error("fixture notifications offline"));
         const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockReturnValue(42);
         const ack = spyOn(await import("./lib/recorder-shared"), "recorderAcknowledged").mockReturnValue(true);
         const oldExit = process.exitCode;
@@ -1671,6 +1678,8 @@ test("record start chooses frames only on a positive live grant and preserves th
             }
         } finally {
             process.exitCode = oldExit;
+            inbox.mockRestore();
+            banner.mockRestore();
             ack.mockRestore();
             spawn.mockRestore();
             grant.mockRestore();
@@ -1697,6 +1706,20 @@ describe("watchOnce", () => {
         const refreshed: string[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
+            grants: () => ({
+                live: {
+                    accessibility: true,
+                    screenRecording: true,
+                    viaGenesisApp: true,
+                    responsiblePid: 42,
+                    responsibleBundleId: "org.example.fixture",
+                    responsiblePath: "/fixture",
+                    responsibleName: "Fixture",
+                    microphone: true,
+                },
+            }),
+            wantsMicrophone: async () => true,
+            inbox: async () => "fixture-inbox-id",
             archiveAudio: async () => false,
             refresh: async (meetingId, sourceRef) => {
                 refreshed.push(`${meetingId} ${sourceRef}`);
@@ -1939,7 +1962,9 @@ describe("watchOnce", () => {
         });
 
         expect(await watchOnce(recent.store, { deps: recent.deps, now })).toBe("started");
-        expect(recent.runs).toEqual([["meetings", "record", "start", "--meeting", "m-dead-recent", "--yes"]]);
+        expect(recent.runs).toEqual([
+            ["meetings", "record", "start", "--meeting", "m-dead-recent", "--yes", "--from-watcher"],
+        ]);
         // A start that died again at once is not repeated within RESUME_GAP_MS.
         expect(await watchOnce(recent.store, { deps: recent.deps, now: now + 10_000 })).toBe("idle");
         expect(recent.runs).toHaveLength(1);
@@ -1983,7 +2008,7 @@ describe("watchOnce", () => {
 
         expect(await watchOnce(h.store, later(60))).toBe("idle");
         expect(await watchOnce(h.store, later(160))).toBe("started");
-        expect(h.runs.at(-1)).toEqual(["meetings", "record", "start", "--meeting", "m1", "--yes"]);
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "start", "--meeting", "m1", "--yes", "--from-watcher"]);
         expect(h.notes).toEqual(["Recording the screen"]);
 
         await h.deps.run?.(["meetings", "record", "stop"]);
@@ -2023,7 +2048,9 @@ describe("watchOnce", () => {
         });
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 10_000 })).toBe("idle");
-        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", state.meetingId, "--yes"]]);
+        expect(h.runs).toEqual([
+            ["meetings", "record", "start", "--meeting", state.meetingId, "--yes", "--from-watcher"],
+        ]);
         recording = { status: "stopped", stopReason: "requested" };
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 120_000 })).toBe("disabled");
         expect(h.runs).toHaveLength(1);
@@ -2135,7 +2162,7 @@ describe("watchOnce", () => {
         h.deps.recorder = () => readRecorderState(h.store);
         expect(hasRecordingToWatch(h.store)).toBe(true);
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
-        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", created.id, "--yes"]]);
+        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", created.id, "--yes", "--from-watcher"]]);
         await h.store.update(created.id, { command: "test", change: "explicit stop" }, (record) => {
             record.recording = { ...record.recording, status: "stopped", stopReason: "requested" };
         });
@@ -2186,7 +2213,9 @@ describe("watchOnce", () => {
         const h = harness();
 
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
-        expect(h.runs).toEqual([["meetings", "record", "start", "--source", "wisprflow:w1", "--yes"]]);
+        expect(h.runs).toEqual([
+            ["meetings", "record", "start", "--source", "wisprflow:w1", "--yes", "--from-watcher"],
+        ]);
         expect(h.notes).toEqual(["Recording the screen"]);
         // A click must do something: a stop button, and a subtitle even before Wispr names the meeting.
         expect(h.posted[0]?.actions).toEqual([expect.objectContaining({ id: "stop", title: "Stop recording" })]);
@@ -2315,6 +2344,81 @@ describe("watchOnce", () => {
         await watchOnce(h.store, { deps: h.deps, now: now + 45_000 });
         expect(h.refreshed.filter((one) => one.endsWith("wisprflow:w1"))).toHaveLength(before + 1);
         expect(readAuto(h.store)?.sourceMeetingId).toBe("w2");
+    });
+
+    test("failed start logs live grants, posts one inbox message and retries only the unconfirmed banner", async () => {
+        const fields: unknown[] = [];
+        const messages: string[] = [];
+        let banners = 0;
+        const h = harness({
+            run: async () => ({ success: false, exitCode: 1, stderr: "Screen Recording permission failed\n" }),
+            inbox: async (title, text) => {
+                messages.push(`${title}\n${text}`);
+                return "receipt";
+            },
+            notify: async () => ++banners > 1,
+            logStart: (entry) => {
+                fields.push(entry);
+            },
+        });
+        const options = { deps: h.deps, now };
+        expect(await watchOnce(h.store, options)).toBe("failed");
+        expect(fields).toEqual([
+            expect.objectContaining({
+                viaGenesisApp: true,
+                responsibleName: "Fixture",
+                screenRecording: true,
+                microphone: true,
+            }),
+        ]);
+        const { recordingAutostart } = await import("./lib/watcher");
+        const reopened = new MeetingStore(h.store.storage);
+        expect((await recordingAutostart("status", reopened)).lastFailure).toMatchObject({
+            meeting: "Planning",
+            at: new Date(now).toISOString(),
+            inboxId: "receipt",
+            confirmed: false,
+        });
+        await watchOnce(reopened, { ...options, now: now + 60_000 });
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toContain("Planning: Screen Recording permission failed");
+        expect(messages[0]).toContain("tools macos permissions ui");
+        expect(banners).toBe(2);
+        expect((await recordingAutostart("status", reopened)).lastFailure?.confirmed).toBe(true);
+    });
+
+    test("sound-only autostart posts one partial-start notice and records who owns the running recorder", async () => {
+        const messages: string[] = [];
+        let running = false;
+        const h = harness({
+            run: async () => {
+                running = true;
+                return { success: true, exitCode: 0, stderr: "" };
+            },
+            recorder: () =>
+                running
+                    ? {
+                          running,
+                          state: {
+                              meetingId: "orchard",
+                              startedAt: live.startedAt,
+                              pid: 42,
+                              display: "main",
+                              frames: 0,
+                              bytes: 0,
+                              withoutScreen: "Screen Recording is not granted.",
+                          },
+                      }
+                    : { running },
+            inbox: async (_, text) => {
+                messages.push(text);
+                return "partial-inbox";
+            },
+        });
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("recording");
+        expect(messages).toHaveLength(1);
+        expect(h.notes).toEqual(["Meeting recording is incomplete"]);
     });
 
     test("a start that failed (no grant) is not retried for the same meeting", async () => {
