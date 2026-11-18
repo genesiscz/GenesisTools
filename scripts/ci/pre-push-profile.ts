@@ -6,17 +6,20 @@
  *
  *   bun scripts/ci/pre-push-profile.ts start                       prints a run folder (the hook keeps it)
  *   bun scripts/ci/pre-push-profile.ts run <dir> <stage> -- <cmd>  runs one stage, exits with its code
- *   bun scripts/ci/pre-push-profile.ts report <dir> [exit code]    prints the table, appends the run to the history
+ *   bun scripts/ci/pre-push-profile.ts report <dir> [exit] [ref] [sha]  prints the table, appends the run to the
+ *                                                                    history, removes <dir>
  *
  * History: ~/.genesis-tools/logs/pre-push/<YYYY-MM-DD>.jsonl, one JSON line per push. GT_PRE_PUSH_PROFILE=0 in the
  * hook turns the wrapper off.
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, freemem, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { dayLogsDir } from "@genesiscz/utils/logger/day-logs";
 import { descendantPids, readProcessesWithUsage } from "@genesiscz/utils/process/processes";
+import { formatTable } from "@genesiscz/utils/table";
+import { spawnWithDeadline } from "./spawn-deadline";
 
 /** How often the memory of a stage's process tree is sampled. */
 const SAMPLE_MS = 500;
@@ -94,8 +97,13 @@ async function runStage(dir: string, stage: string, argv: string[]): Promise<num
         userMs: usage ? Number(usage.cpuTime.user) / 1000 : 0,
         systemMs: usage ? Number(usage.cpuTime.system) / 1000 : 0,
         peakTreeMB: sampled ? Math.round(peakTreeBytes / 1_048_576) : null,
-        peakProcessMB: sampled ? Math.round(peakProcessBytes / 1_048_576) : null,
-        peakProcess,
+        // A stage too short for any sample still has its own process's peak from the kernel (not its children's).
+        peakProcessMB: sampled
+            ? Math.round(peakProcessBytes / 1_048_576)
+            : usage
+              ? Math.round(Number(usage.maxRSS) / 1_048_576)
+              : null,
+        peakProcess: sampled ? peakProcess : (argv[0] ?? ""),
         load1AtStart: Math.round(load1AtStart * 100) / 100,
         freeMBAtStart,
     };
@@ -114,13 +122,24 @@ function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** One git lookup for the history line, bounded: the report runs in the hook's EXIT trap, after the verdict. */
 function git(args: string[]): string {
-    return Bun.spawnSync(["git", ...args], { stderr: "ignore" })
-        .stdout.toString()
-        .trim();
+    try {
+        const run = spawnWithDeadline(["git", ...args], { timeoutMs: 10_000 });
+        return run.exitCode === 0 ? run.stdout.toString().trim() : "";
+    } catch (error) {
+        console.error(`pre-push-profile: git ${args.join(" ")}: ${error instanceof Error ? error.message : error}`);
+        return "";
+    }
 }
 
-function report(dir: string, hookExit: number): void {
+/** The ref and commit the push sends, from the hook's pre-push input; HEAD when the hook did not pass them. */
+interface PushedRef {
+    ref?: string;
+    sha?: string;
+}
+
+function report(dir: string, hookExit: number, pushed: PushedRef = {}): void {
     const startedMs = Number(readFileSync(join(dir, "started"), "utf8"));
     const path = join(dir, "stages.jsonl");
     const stages: StageRecord[] = existsSync(path)
@@ -154,13 +173,10 @@ function report(dir: string, hookExit: number): void {
             `${s.exitCode}`,
         ]);
     }
-    const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
-    const line = (cells: string[]) => cells.map((c, i) => c.padEnd(widths[i])).join("  ");
     const totalCpu = stages.reduce((sum, s) => sum + s.userMs + s.systemMs, 0);
     const lines = [
         `── pre-push profile (${cores} cores; cpu% is the share of one core) ──`,
-        line(header),
-        ...rows.map(line),
+        formatTable(rows, header, { maxColWidth: 40 }),
         `total ${seconds(endMs - startedMs)} wall, ${seconds(totalCpu)} cpu, ${seconds(endMs - lastEnd)} after the last stage`,
     ];
     console.log(lines.join("\n"));
@@ -173,8 +189,8 @@ function report(dir: string, hookExit: number): void {
         wallMs: endMs - startedMs,
         exitCode: hookExit,
         cwd: process.cwd(),
-        branch: git(["rev-parse", "--abbrev-ref", "HEAD"]),
-        head: git(["rev-parse", "--short=10", "HEAD"]),
+        branch: pushed.ref?.replace(/^refs\/heads\//, "") || git(["rev-parse", "--abbrev-ref", "HEAD"]),
+        head: pushed.sha?.slice(0, 10) || git(["rev-parse", "--short=10", "HEAD"]),
         cores,
         stages,
     };
@@ -195,13 +211,20 @@ if (command === "start") {
     }
     process.exit(await runStage(dir, stage, argv));
 } else if (command === "report") {
-    const [dir, exit] = rest;
+    const [dir, exit, ref, sha] = rest;
     if (!dir) {
-        console.error("usage: pre-push-profile.ts report <dir> [exit code]");
+        console.error("usage: pre-push-profile.ts report <dir> [exit code] [pushed ref] [pushed sha]");
         process.exit(2);
     }
-    report(dir, Number(exit ?? 0));
+    try {
+        report(dir, Number(exit ?? 0), { ref, sha });
+    } finally {
+        // The run's folder only fed this report; the day's history line is the record.
+        rmSync(dir, { recursive: true, force: true });
+    }
 } else {
-    console.error("usage: pre-push-profile.ts start | run <dir> <stage> -- <command...> | report <dir> [exit code]");
+    console.error(
+        "usage: pre-push-profile.ts start | run <dir> <stage> -- <command...> | report <dir> [exit code] [ref] [sha]"
+    );
     process.exit(2);
 }

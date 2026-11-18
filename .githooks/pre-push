@@ -40,7 +40,7 @@ fi
 profile_report() {
     rc=$?
     if [ -n "$profile_dir" ]; then
-        bun scripts/ci/pre-push-profile.ts report "$profile_dir" "$rc" || true
+        bun scripts/ci/pre-push-profile.ts report "$profile_dir" "$rc" "$local_ref" "$local_sha" || true
     fi
     exit "$rc"
 }
