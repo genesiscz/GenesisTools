@@ -1,14 +1,38 @@
 import { cpuMeta, profiler } from "@genesiscz/utils/profile";
-import { readWidgetRoster, refreshWidgetIndex, WidgetRosterReads, widgetRosterPaths } from "./roster-index";
+import {
+    readWidgetRoster,
+    refreshWidgetIndex,
+    WIDGET_EXACT_PATHS_LIMIT,
+    type WidgetRoster,
+    WidgetRosterReads,
+    widgetRosterPaths,
+} from "./roster-index";
+import { streamWidgetRoster, updateRosterPaths } from "./roster-pages";
 import type { WidgetRosterReply, WidgetRosterRequest } from "./roster-reader";
 
 declare const self: Worker;
 const prof = profiler.scope("widget");
 const reads = new WidgetRosterReads();
+let previous: WidgetRoster | undefined;
+let pendingPage: { id: number; resume: () => void } | undefined;
 
-self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
-    const { id, index = [], paths = {}, onlyIfChanged = false } = event.data;
+self.onmessage = async (event: MessageEvent<WidgetRosterRequest | { id: number; received: true }>) => {
+    if ("received" in event.data) {
+        if (pendingPage?.id === event.data.id) {
+            pendingPage.resume();
+            pendingPage = undefined;
+        }
+        return;
+    }
+    const { id, index = [], paths = {}, parentPaths = [], onlyIfChanged = false } = event.data;
     try {
+        let exact =
+            (onlyIfChanged || parentPaths.length > 0) &&
+            !reads.needed(false) &&
+            index.every((scope) => {
+                const files = paths[scope];
+                return files && files.length > 0 && files.length <= WIDGET_EXACT_PATHS_LIMIT;
+            });
         if (index.length > 0) {
             // Resident, so the walk and transcript caches stay warm: a refresh here costs a fraction of a new
             // `hub widget discover` process, which paid every cold cache on each run.
@@ -17,7 +41,12 @@ self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
             await prof.measureAsync(
                 "background index",
                 async () => {
-                    changed = await refreshWidgetIndex(new Set(index), { paths: widgetRosterPaths(paths) });
+                    changed = await refreshWidgetIndex(new Set(index), {
+                        paths: widgetRosterPaths(paths),
+                        onWholeListing: () => {
+                            exact = false;
+                        },
+                    });
                 },
                 () => ({ ...cpu?.(), scopes: index.join(","), exact: Object.values(paths).flat().length, changed })
             );
@@ -28,9 +57,36 @@ self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
             }
         }
 
-        reads.reading();
-        const { rows, agents } = await prof.measureAsync("background roster", () => readWidgetRoster());
-        self.postMessage({ id, ok: true, rows, agents } satisfies WidgetRosterReply);
+        const sameIndex = reads.reading();
+        const roster = await prof.measureAsync(
+            "background roster",
+            async () => {
+                if (!previous?.rows.length) {
+                    const revision = crypto.randomUUID();
+                    return streamWidgetRoster(
+                        (page) =>
+                            new Promise<void>((resume) => {
+                                pendingPage = { id, resume };
+                                self.postMessage({ id, ok: true, page, revision } satisfies WidgetRosterReply);
+                            })
+                    );
+                }
+                if (exact && sameIndex) {
+                    const update = await updateRosterPaths(
+                        previous,
+                        [...parentPaths, ...Object.values(paths).flat()],
+                        Date.now()
+                    );
+                    if (update) {
+                        return update;
+                    }
+                }
+                return readWidgetRoster();
+            },
+            cpuMeta()
+        );
+        previous = roster;
+        self.postMessage({ id, ok: true, ...roster } satisfies WidgetRosterReply);
     } catch (error) {
         self.postMessage({
             id,

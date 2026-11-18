@@ -121,7 +121,8 @@ export async function watchWidget({
                             sessions: async () => roster?.rows ?? [],
                             agents: async () => roster?.agents ?? { generatedAt: "", parents: [], orphans: [] },
                             rosterStatus: () => ({
-                                loading: !roster?.agents.generatedAt && (roster?.loading ?? true),
+                                loading:
+                                    !!roster?.backfill || (!roster?.agents.generatedAt && (roster?.loading ?? true)),
                                 error: roster?.error,
                             }),
                         },
@@ -324,11 +325,11 @@ export async function watchWidget({
                         }
                         // One-shot snapshots (the settings page) read this instead of rebuilding the tree cold.
                         if (roster && !roster.error && roster.agents.generatedAt) {
-                            const { rows, agents } = roster;
+                            const { rows, agents, backfill } = roster;
                             // A run that found the same sessions and agents (the safety read of an idle roster)
                             // rebuilds no second snapshot and rewrites no 1.1 MB cache; the cache still gets a
                             // heartbeat write so its readers see a live writer.
-                            const fingerprint = widgetRosterFingerprint({ rows, agents });
+                            const fingerprint = widgetRosterFingerprint({ rows, agents, backfill });
                             const now = Date.now();
                             const unchanged =
                                 rosterShown !== undefined &&
@@ -346,11 +347,12 @@ export async function watchWidget({
                             // Kept so shutdown waits for it inside the worker lock: one landing after a replacement
                             // watch took the lock would put this older roster over that watch's newer one. Writes
                             // run in order (roster-cache.ts), so the latest settles after every earlier one.
-                            rosterCacheWrite = writeRosterCache({ root: directory, roster: { rows, agents } }).catch(
-                                (error) => {
-                                    logger.debug({ error }, "Widget roster cache not written");
-                                }
-                            );
+                            rosterCacheWrite = writeRosterCache({
+                                root: directory,
+                                roster: { rows, agents, backfill },
+                            }).catch((error) => {
+                                logger.debug({ error }, "Widget roster cache not written");
+                            });
                             if (unchanged) {
                                 return;
                             }
@@ -361,6 +363,10 @@ export async function watchWidget({
                         }
 
                         void requestRefresh();
+                        if (roster?.backfill) {
+                            // One outstanding page. Even a slow snapshot writer cannot accumulate a queue of copies.
+                            return Promise.all([refreshing, rosterCacheWrite]).then(() => undefined);
+                        }
                     },
                 });
                 // The first read of a fresh worker takes seconds; until it lands, show what the previous watch of this
@@ -567,10 +573,16 @@ async function watchSessionRoots({
         // The changed files by scope, so the roster refreshes those transcripts instead of the scope's whole listing.
         const paths = new Map<WidgetRosterScope, Set<string>>();
         let read = false;
-        let listed: Set<string> | undefined;
+        const parentPaths = new Set<string>();
+        let listed: Map<string, string> | undefined;
         const listedParent = (sessionId: string) => {
-            listed ??= new Set(roster.agents.parents.map((parent) => parent.sessionId));
-            return listed.has(sessionId);
+            listed ??= new Map(roster.agents.parents.map((parent) => [parent.sessionId, parent.filePath]));
+            const file = listed.get(sessionId);
+            if (!file) {
+                return false;
+            }
+            parentPaths.add(file);
+            return true;
         };
         for (const event of events) {
             const change = widgetRosterChange({ path: event.path, roots, listedParent });
@@ -582,7 +594,7 @@ async function watchSessionRoots({
             }
         }
         if (read || scopes.size > 0) {
-            roster.request(scopes, { read, paths });
+            roster.request(scopes, { read, paths, parentPaths: parentPaths.size ? parentPaths : undefined });
         }
     };
     const all = [...new Set([...roots.claude, ...roots.codex, ...roots.grok])];

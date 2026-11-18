@@ -200,6 +200,23 @@ enum AgentTree {
 
 /// The `tools hub agents` doors. Blocking: call off the main thread.
 enum AgentsSource {
+    static let publicationURL: URL = {
+        let root = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
+            ?? SettingsModel.toolsHome + "/.genesis-tools/hub/widget"
+        return URL(fileURLWithPath: root).resolvingSymlinksInPath().appendingPathComponent("roster-cache.json")
+    }()
+
+    static func published(_ data: Data, now: Date = Date()) -> AgentsEnvelope? {
+        struct Publication: Decodable {
+            let version: Int
+            let writtenAt: Double
+            let agents: AgentsEnvelope
+        }
+        guard let file = try? JSONDecoder().decode(Publication.self, from: data), file.version == 1,
+              (0...90_000).contains(now.timeIntervalSince1970 * 1000 - file.writtenAt)
+        else { return nil }
+        return file.agents
+    }
     /// `GENESIS_HUB_AGENTS_FIXTURE=<file>`: the list from a file of the contract's shape instead of the CLI.
     static let fixture = ProcessInfo.processInfo.environment["GENESIS_HUB_AGENTS_FIXTURE"]
     /// The last whole list, painted when the mode opens while the CLI answers (Hub/HubSWR.swift).
@@ -210,7 +227,11 @@ enum AgentsSource {
             return try decode(Data(contentsOf: URL(fileURLWithPath: fixture)))
         }
 
-        let args = ["hub", "agents", "--json"] + (session.map { ["--session", $0] } ?? [])
+        if session == nil, let data = try? Data(contentsOf: publicationURL), let tree = published(data) {
+            return tree
+        }
+        // The shared roster covers seven days and 150 parents, also when there is no widget publishing it.
+        let args = ["hub", "agents", "--json"] + (session.map { ["--session", $0] } ?? ["--since", "7d", "--limit", "150"])
         return try query(args)
     }
 
@@ -273,6 +294,7 @@ enum AgentWatch {
 
     /// Sub-agent transcripts and metas, team inboxes, worker metas and transcripts; nothing else.
     static func matters(_ path: String) -> Bool {
+        if path == AgentsSource.publicationURL.path { return true }
         if path.contains("/subagents/") || path.contains("/inboxes/") {
             return path.hasSuffix(".jsonl") || path.hasSuffix(".json")
         }
@@ -821,6 +843,7 @@ final class HubAgentsModel: ObservableObject {
     private func watchedPaths() -> [String] {
         guard active else { return [] }
         var paths = Set(Self.workerFolders)
+        paths.insert(AgentsSource.publicationURL.deletingLastPathComponent().path)
         for parent in parents where isOpen(parent) || selectedParent?.sessionId == parent.sessionId {
             if let folder = parent.sessionFolder {
                 paths.insert(folder)
