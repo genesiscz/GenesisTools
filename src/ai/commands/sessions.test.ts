@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { drainSpool } from "@genesiscz/utils/metrics/spool";
+import { MetricsStore } from "@genesiscz/utils/metrics/store";
 import { Command } from "commander";
+import { spoolContextItems } from "../lib/sessions/session-context";
 import { registerSessionsCommands, resumeAdvice } from "./sessions";
 
 async function run(args: string[]): Promise<{ exitCode: typeof process.exitCode; errors: string[] }> {
@@ -28,6 +31,110 @@ afterEach(() => {
 });
 
 describe("sessions range flags", () => {
+    test("context exposes the five report sections and exports queryable source and carry dimensions", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "context-cli-"));
+        const path = join(dir, "session.jsonl");
+        const at = "2025-01-01T00:00:00Z";
+        writeFileSync(
+            path,
+            [
+                { type: "user", timestamp: at, message: { content: "test" } },
+                {
+                    type: "assistant",
+                    timestamp: at,
+                    message: { id: "one", model: "model", usage: { input_tokens: 10 } },
+                },
+            ]
+                .map((row) => SafeJSON.stringify(row))
+                .join("\n")
+        );
+        const result = spyOn(out, "result").mockImplementation(() => {});
+        try {
+            expect((await run(["sessions", "context", path, "--provider", "claude", "--json"])).errors).toEqual([]);
+            expect(result.mock.calls[0]?.[0]).toMatchObject({
+                supported: true,
+                mainBySource: expect.any(Array),
+                mainPushed: [{ source: "system-prompt+tools" }],
+                startByType: [],
+                agentsByCacheRead: [],
+                largestItems: [
+                    { loop: "session", line: 1, carry: 1 },
+                    { line: 0, carry: 0 },
+                ],
+            });
+            expect(result.mock.calls[0]?.[0]).not.toHaveProperty("metrics");
+        } finally {
+            result.mockRestore();
+        }
+
+        const { snapshot, events } = spoolContextItems({
+            sessionId: "lead",
+            dir,
+            loops: [
+                {
+                    id: "helper",
+                    kind: "subagent",
+                    files: [path],
+                    agentType: "reviewer",
+                    teamName: null,
+                    model: "model",
+                    calls: 4,
+                    firstCallContext: 100,
+                    peakContext: 150,
+                    cacheRead: 200,
+                    toolCalls: {},
+                    compactions: 0,
+                    items: [{ path, line: 1, at, source: "instructions", key: "rules.md", tokens: 11, carryCalls: 3 }],
+                },
+            ],
+        });
+        expect(events).toBe(1);
+        const db = join(dir, "metrics.db");
+        const writer = MetricsStore.open({ path: db });
+        try {
+            expect(drainSpool(writer, { dir })).toMatchObject({ events: 1, bad: 0 });
+        } finally {
+            writer.close();
+        }
+        const reopened = MetricsStore.open({ path: db });
+        try {
+            expect(
+                reopened.query({
+                    project: "agent-context",
+                    metric: "context.item",
+                    groupBy: [
+                        "session",
+                        "loop",
+                        "kind",
+                        "agentType",
+                        "model",
+                        "source",
+                        "key",
+                        "carryCalls",
+                        "snapshot",
+                    ],
+                    aggregates: ["count", "sum"],
+                }).rows
+            ).toEqual([
+                {
+                    group: {
+                        session: "lead",
+                        loop: "helper",
+                        kind: "subagent",
+                        agentType: "reviewer",
+                        model: "model",
+                        source: "instructions",
+                        key: "rules.md",
+                        carryCalls: 3,
+                        snapshot,
+                    },
+                    values: { count: 1, sum: 11 },
+                },
+            ]);
+        } finally {
+            reopened.close();
+        }
+    });
     test("resumes --ttl-only groups the observed model and excludes compacted and model-changing gaps", async () => {
         const path = join(mkdtempSync(join(tmpdir(), "resumes-cli-")), "session.jsonl");
         const call = (id: string, minute: number, model: string, read: number) => ({

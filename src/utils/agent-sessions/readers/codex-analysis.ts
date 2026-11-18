@@ -37,6 +37,10 @@ function readingOf(slot: string, value: unknown, t: string): SessionQuotaReading
  * event carries the account's `rate_limits`, so Codex is the one harness whose transcript holds quota readings.
  */
 export const codexAnalysis: SessionAnalysisReader = {
+    contextItems: async () => ({
+        supported: false,
+        reason: "No Codex context-source reader yet; developer and hook rows of a rollout are unmapped",
+    }),
     lastContext: () => null, // No on-disk teammate tail.
     resumes: async () => ({
         supported: false,

@@ -22,6 +22,53 @@ function sinceTime(value: string): number {
 
 export function registerSessionAnalysis(sessions: Command): void {
     sessions
+        .command("context <session-ids...>")
+        .description("Attribute context tokens and carry across model calls to their transcript sources")
+        .addOption(providerOption())
+        .option("--no-agents", "Read the main loop only")
+        .option("--top <n>", "Rows in each source table", "25")
+        .option("--agents-top <n>", "Agents to show by cache read", "15")
+        .option("--items <n>", "Largest individual items by carry", "20")
+        .option("--out <dir>", "Also write the session's JSON and text reports to a directory")
+        .option("--record-metrics", "Append a new context.item snapshot to the metrics spool and report its id")
+        .option("--json", "Print sessions.context@1")
+        .action(
+            async (
+                ids: string[],
+                opts: {
+                    provider?: AccountProviderAlias;
+                    agents: boolean;
+                    top: string;
+                    agentsTop: string;
+                    items: string;
+                    out?: string;
+                    recordMetrics?: boolean;
+                    json?: boolean;
+                }
+            ) => {
+                try {
+                    const count = (name: string, value: string) => {
+                        const n = Number(value);
+                        if (!/^\d+$/.test(value) || !Number.isSafeInteger(n)) {
+                            throw new Error(`${name} needs a nonnegative whole number.`);
+                        }
+                        return n;
+                    };
+                    const { printContext } = await import("../lib/sessions/session-context");
+                    await printContext(ids, {
+                        ...opts,
+                        top: count("--top", opts.top),
+                        agentsTop: count("--agents-top", opts.agentsTop),
+                        items: count("--items", opts.items),
+                    });
+                } catch (error) {
+                    out.printlnErr(error instanceof Error ? error.message : String(error));
+                    process.exitCode = 1;
+                }
+            }
+        );
+
+    sessions
         .command("resumes [session-ids...]")
         .description("Show model-call pauses, cache hits and writes, and observed cache lifetimes")
         .addOption(providerOption())

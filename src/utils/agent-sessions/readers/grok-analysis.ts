@@ -15,6 +15,10 @@ function updatesPath(transcriptPath: string): string {
  * so both members answer that they cannot.
  */
 export const grokAnalysis: SessionAnalysisReader = {
+    contextItems: async () => ({
+        supported: false,
+        reason: "No Grok context-source reader yet; hook_execution rows and per-turn tokens are unmapped",
+    }),
     lastContext: () => null, // No on-disk teammate tail.
     resumes: async () => ({ supported: false, reason: "Grok records per-turn usage and no subagent chat history" }),
     async callTrace(transcriptPath) {

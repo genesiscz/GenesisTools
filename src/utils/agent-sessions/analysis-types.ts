@@ -55,6 +55,29 @@ export interface LoopResumes extends SessionLoop {
     pauses: SessionPause[];
 }
 
+export interface ContextItem {
+    source: string;
+    key: string;
+    path: string;
+    /** Physical line, or 0 for the inferred system prompt and tool definitions. */
+    line: number;
+    at: string | null;
+    /** Estimated from characters / 4, with a flat estimate per image. */
+    tokens: number;
+    carryCalls: number;
+}
+
+export interface LoopContext extends SessionLoop {
+    model: string | null;
+    calls: number;
+    firstCallContext: number | null;
+    peakContext: number | null;
+    cacheRead: number;
+    toolCalls: Record<string, number>;
+    compactions: number;
+    items: ContextItem[];
+}
+
 /** One model call, its tokens split the way every price is: uncached input, cache read, cache write, output. */
 export interface SessionCall {
     /** Dedup key inside the transcript: the message or response id, or a synthesized one. */
@@ -106,6 +129,7 @@ export interface SessionQuotaReading {
 
 /** The analysis facts of one transcript. Each member reads the file it is given and never writes. */
 export interface SessionAnalysisReader {
+    contextItems(transcriptPath: string, selection?: LoopSelection): Promise<SessionFacts<LoopContext>>;
     resumes(transcriptPath: string, selection?: LoopSelection): Promise<SessionFacts<LoopResumes>>;
     /** Latest context after output or compaction in a bounded transcript tail. Null when unknown. */
     lastContext(records: readonly Record<string, unknown>[]): number | null;

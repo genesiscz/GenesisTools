@@ -94,6 +94,105 @@ test("resumes join a workflow revival, time streamed calls, and distinguish wait
 });
 
 describe("the analysis members of the three readers", () => {
+    test("context items keep physical lines, exclude hook receipts, and stop carrying at compaction", async () => {
+        const at = "2025-01-01T00:00:00Z";
+        const assistant = (id: string, read: number, content: unknown[]) => ({
+            type: "assistant",
+            timestamp: at,
+            message: {
+                id,
+                model: "model",
+                usage: { cache_read_input_tokens: read },
+                content,
+            },
+        });
+        const area =
+            "Contents of /repo/first.md (area rules):\n" +
+            "a".repeat(40) +
+            "\nContents of /repo/second.md (area rules):\n" +
+            "b".repeat(60);
+        const path = transcript("lead.jsonl", []);
+        const rows = [
+            {
+                type: "attachment",
+                attachment: { type: "instructions", files: [{ path: "/repo/rules.md", content: "a".repeat(400) }] },
+            },
+            { type: "user", message: { content: "a\u2028bc" } },
+            assistant("one", 1000, [{ type: "tool_use", id: "t", name: "Bash", input: { command: "ls" } }]),
+            assistant("one", 1000, [{ type: "text", text: "done" }]),
+            {
+                type: "user",
+                message: {
+                    content: [
+                        {
+                            type: "tool_result",
+                            tool_use_id: "t",
+                            content: [{ type: "text", text: "r".repeat(40) }, { type: "image" }],
+                        },
+                    ],
+                },
+            },
+            { type: "attachment", attachment: { type: "hook_success", stdout: area } },
+            {
+                type: "attachment",
+                attachment: { type: "hook_additional_context", hookEvent: "PostToolUse", content: [area] },
+            },
+            assistant("two", 2000, []),
+            { type: "system", subtype: "compact_boundary", uuid: "boundary" },
+            { type: "system", subtype: "compact_boundary", uuid: "boundary" },
+            { type: "user", isCompactSummary: true, message: { content: "summary!" } },
+            assistant("three", 50, []),
+        ];
+        writeFileSync(path, "\n" + rows.map((row) => SafeJSON.stringify(row)).join("\n"));
+        const agents = join(path, "..", "lead", "subagents");
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+            join(agents, "agent-mate.meta.json"),
+            SafeJSON.stringify({ teamName: "blue", agentType: "reviewer" })
+        );
+        writeFileSync(join(agents, "agent-mate.jsonl"), SafeJSON.stringify(assistant("mate", 222, [])));
+        const facts = await claudeHistoryReader.analysis.contextItems(path);
+        if (!facts.supported) {
+            throw new Error(facts.reason);
+        }
+        const [main, mate] = facts.items;
+        expect(main).toMatchObject({
+            calls: 3,
+            firstCallContext: 1000,
+            peakContext: 2000,
+            cacheRead: 3050,
+            toolCalls: { Bash: 1 },
+            compactions: 1,
+        });
+        expect(mate).toMatchObject({
+            kind: "teammate",
+            teamName: "blue",
+            agentType: "reviewer",
+            calls: 1,
+            firstCallContext: 222,
+        });
+        expect(main.items[0]).toMatchObject({ source: "system-prompt+tools", line: 0, tokens: 899, carryCalls: 2 });
+        expect(main.items.filter((i) => i.source === "tool_result")).toMatchObject([
+            { line: 6, path, key: "Bash", tokens: 10, carryCalls: 1 },
+            { line: 6, key: "Bash (images)", tokens: 2000, carryCalls: 1 },
+        ]);
+        expect(main.items.filter((i) => i.source === "hook").map((i) => i.key)).toEqual([
+            "area-rules:first.md (PostToolUse)",
+            "area-rules:second.md (PostToolUse)",
+        ]);
+        expect(main.items.some((i) => i.source === "hook_success")).toBe(false);
+        expect(main.items.find((i) => i.source === "compact-summary")).toMatchObject({
+            line: 12,
+            carryCalls: 1,
+            tokens: 2,
+        });
+        for (const reader of [codexHistoryReader, grokHistoryReader]) {
+            expect(await reader.analysis.contextItems(path)).toMatchObject({
+                supported: false,
+                reason: expect.any(String),
+            });
+        }
+    });
     test("Claude: one call per message id, synthetic notices skipped, a compact boundary, no quota readings", async () => {
         const usage = {
             input_tokens: 10,
