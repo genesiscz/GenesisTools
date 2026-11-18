@@ -362,6 +362,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private sound: AudioState;
     private soundSession?: AudioSession;
     private readonly closingSound = new Set<Promise<void>>();
+    private capturesReplacedForSound?: Set<SessionCapture>;
     private startingSound?: Promise<void>;
     private lastSoundRestart = -Infinity;
     /** Whether a continuous sound session ever ran, so the fallback note says "stopped" or "did not start". */
@@ -405,7 +406,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             // A muted source is left out of a new capture, so its start-up buffers never reach the file; unmuting
             // restarts the captures with it. A capture without the microphone gets no microphone device either.
             audio: () => {
-                if (this.soundSession) {
+                if (this.currentSoundPath.path === "session") {
                     return undefined;
                 }
 
@@ -462,7 +463,10 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 },
                 onError: (capture, error, outcome) => {
                     this.closeDisplay(capture);
-                    kind.onError?.(capture, error, outcome);
+                    // A soundless process interrupted before its first frame can exit without a result.
+                    if (!this.capturesReplacedForSound?.has(capture)) {
+                        kind.onError?.(capture, error, outcome);
+                    }
                 },
                 onSettled: (capture) => {
                     // The capture left `running`: the recorded displays drop it now, not at the next frame.
@@ -919,53 +923,28 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     private async startSound(): Promise<void> {
-        const { recorder } = this.config;
+        const { hooks, recorder } = this.config;
 
         if (!recorder.supports.audio || this.sound.sources.length === 0 || this.stopRequested) {
             return;
         }
 
-        this.config.hooks.onSoundPath?.(this.currentSoundPath);
+        hooks.onSoundPath?.(this.currentSoundPath);
 
         if (this.config.audioMode === "pieces") {
             return;
         }
 
-        let refused = false;
-        if (recordsAudioSession(recorder)) {
-            const started = await this.startSoundSession(recorder);
-            this.soundSession = started.session;
-            refused = started.refused;
-        }
-
-        if (!this.soundSession) {
-            if (!refused) {
-                this.fallBackSound("the native recorder has no audio-record command");
-            }
-
+        if (!recordsAudioSession(recorder)) {
+            this.fallBackSound("the native recorder has no audio-record command");
             return;
         }
 
-        this.soundSessionRan = true;
-        this.currentSoundPath = { path: "session", sources: [...this.sound.sources] };
-        this.config.hooks.onSoundPath?.(this.currentSoundPath);
-    }
-
-    /**
-     * A failed session never ends the frames. One immediate restart per minute avoids waiting for a new piece;
-     * a refused restart or another failure within the minute leaves the sound on the pieces.
-     */
-    private async startSoundSession(
-        recorder: FrameRecorder & {
-            startAudioSession(options: RecorderAudioOptions): Promise<AudioSession | undefined>;
-        }
-    ): Promise<{ session: AudioSession | undefined; refused: boolean }> {
-        const { hooks } = this.config;
-        let running = false;
-        let candidate: AudioSession | undefined;
+        let session: AudioSession | undefined;
+        let retired = false;
 
         try {
-            const session = await recorder.startAudioSession({
+            session = await recorder.startAudioSession({
                 folder: this.config.live.folder,
                 outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
                 request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
@@ -974,33 +953,45 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 paused: this.paused,
                 signal: this.soundAbort.signal,
                 onSegment: (segment) => hooks.onAudioSegment?.(segment),
-                onLevels: hooks.onAudioLevels,
-                onWarning: (warning) => this.soundWarning(warning),
+                onLevels:
+                    hooks.onAudioLevels &&
+                    ((block) => {
+                        if (!retired) {
+                            hooks.onAudioLevels?.(block);
+                        }
+                    }),
+                onWarning: (warning) => {
+                    if (!retired) {
+                        this.soundWarning(warning);
+                    }
+                },
                 onFailure: (error) => {
-                    // A failure before the session was ready also rejects the start: the catch below notes it.
-                    if (!running || this.soundAbort.signal.aborted) {
+                    if (retired || this.soundAbort.signal.aborted) {
                         return;
                     }
 
+                    // A retired writer can still deliver its final files. A failure during startup rejects the start.
+                    retired = true;
+                    if (!session) {
+                        return;
+                    }
+
+                    this.soundSession = undefined;
                     log.warn({ error }, "the continuous sound session stopped");
                     // Cleanup has its own deadline. A killed process must not delay opening the replacement.
-                    if (session) {
-                        const closing = session.stop().then(
-                            () => undefined,
-                            (stopError: unknown) => log.debug({ stopError }, "failed audio session cleaned up")
-                        );
-                        this.closingSound.add(closing);
-                        void closing.finally(() => this.closingSound.delete(closing));
-                    }
+                    const closing = session.stop().then(
+                        () => undefined,
+                        (stopError: unknown) => log.debug({ stopError }, "failed audio session cleaned up")
+                    );
+                    this.closingSound.add(closing);
+                    void closing.finally(() => this.closingSound.delete(closing));
                     this.startingSound = this.restartSound(error).catch((restartError: unknown) => {
                         if (!this.soundAbort.signal.aborted) {
-                            this.soundSession = undefined;
                             this.fallBackSound(errorText(restartError));
                         }
                     });
                 },
             });
-            candidate = session;
             if (session) {
                 this.soundAbort.signal.throwIfAborted();
                 if (session.failureReason) {
@@ -1008,10 +999,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 }
                 this.sound = { ...this.sound, sources: [...session.sources] };
             }
-            running = session !== undefined;
-            return { session, refused: false };
         } catch (error) {
-            await candidate
+            retired = true;
+            await session
                 ?.stop()
                 .catch((stopError: unknown) => log.debug({ stopError }, "failed audio setup cleaned up"));
             if (this.soundAbort.signal.aborted) {
@@ -1020,17 +1010,25 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
             log.warn({ error }, "the continuous sound session did not start");
             hooks.onAudioChange?.({ kind: "failure", atMs: Date.now(), reason: errorText(error) });
-            this.soundSession = undefined;
             this.fallBackSound(errorText(error));
-            return { session: undefined, refused: true };
+            return;
         }
+
+        this.soundSession = session;
+        if (!session) {
+            retired = true;
+            this.fallBackSound("the native recorder has no audio-record command");
+            return;
+        }
+
+        this.currentSoundPath = { path: "session", sources: [...this.sound.sources] };
+        hooks.onSoundPath?.(this.currentSoundPath);
     }
 
     private async restartSound(error: Error): Promise<void> {
         this.config.hooks.onAudioChange?.({ kind: "failure", atMs: Date.now(), reason: error.message });
         const now = performance.now();
         if (now - this.lastSoundRestart < 60_000) {
-            this.soundSession = undefined;
             this.fallBackSound(`${error.message}; the sound session already restarted within the last minute`);
             return;
         }
@@ -1057,7 +1055,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         const now = new Date();
         const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
         this.currentSoundPath = { path: "pieces", since: now.toISOString(), reason };
-        if (this.phase === "recording") {
+        if (this.phase === "recording" && this.captures.running.size > 0) {
+            this.capturesReplacedForSound = new Set(this.captures.running.values());
             this.captures.abortAll();
         }
         this.config.hooks.onSoundPath?.(this.currentSoundPath);
@@ -1196,9 +1195,16 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
             this.pieceSec = this.pieceLength();
             // A capture started while the piece runs (a display added over the socket) joins it.
-            return { outcome: await this.captures.runPiece(targets) };
+            const outcome = await this.captures.runPiece(targets);
+            if (outcome.frames === 0 && this.capturesReplacedForSound?.size === outcome.count) {
+                return undefined;
+            }
+
+            return { outcome };
         } catch (error) {
             return { error };
+        } finally {
+            this.capturesReplacedForSound = undefined;
         }
     }
 
