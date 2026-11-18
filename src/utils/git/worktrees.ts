@@ -27,6 +27,8 @@ const SAMPLE = 8;
 const REPO_CONCURRENCY = 4;
 const ENTRY_CONCURRENCY = 4;
 const WORKTREE_REMOVE_TIMEOUT_MS = 120_000;
+/** A local git read of one checkout (status-like): bounded like the hub's checkout reads, so one stuck repo cannot hold a scan for 60 s. */
+const GIT_READ_TIMEOUT_MS = 10_000;
 
 /** Order-preserving map with at most `limit` calls in flight; a slow item never stalls a batch. */
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -502,7 +504,10 @@ async function ignoredTopLevel(path: string): Promise<string[]> {
         return [];
     }
 
-    const res = await createGit({ cwd: path }).executor.exec(["check-ignore", "--", ...names], { cwd: path });
+    const res = await createGit({ cwd: path }).executor.exec(["check-ignore", "--", ...names], {
+        cwd: path,
+        timeout: GIT_READ_TIMEOUT_MS,
+    });
 
     // Exit 1 with no output means "nothing ignored"; anything on stderr is a real failure.
     if (!res.success && res.stderr.trim()) {
@@ -520,7 +525,9 @@ async function commitEpochs(repoRoot: string, heads: string[]): Promise<Map<stri
         return epochs;
     }
 
-    const res = await createGit({ cwd: repoRoot }).executor.exec(["show", "-s", "--format=%H %ct", ...unique]);
+    const res = await createGit({ cwd: repoRoot }).executor.exec(["show", "-s", "--format=%H %ct", ...unique], {
+        timeout: GIT_READ_TIMEOUT_MS,
+    });
 
     if (!res.success) {
         log.debug({ repoRoot, stderr: res.stderr }, "commit dates unreadable");
@@ -593,7 +600,9 @@ async function scanRepo({
         warnings.push(`${repoRoot}: ${baseError}`);
     }
 
-    const stashRes = await git.executor.exec(["stash", "list", "--format=%gd%x00%P%x00%gs"]);
+    const stashRes = await git.executor.exec(["stash", "list", "--format=%gd%x00%P%x00%gs"], {
+        timeout: GIT_READ_TIMEOUT_MS,
+    });
     const stashes = stashRes.success ? parseStashList(stashRes.stdout) : [];
     const stashError = stashRes.success ? null : stashRes.stderr.trim() || "git stash list failed";
     const epochs = await commitEpochs(
@@ -692,11 +701,12 @@ async function mainCheckoutOf(path: string): Promise<string | null> {
         return null;
     }
 
-    const res = await createGit({ cwd: path }).executor.exec([
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    ]);
+    const res = await createGit({ cwd: path }).executor.exec(
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        {
+            timeout: GIT_READ_TIMEOUT_MS,
+        }
+    );
 
     if (!res.success) {
         return null;
