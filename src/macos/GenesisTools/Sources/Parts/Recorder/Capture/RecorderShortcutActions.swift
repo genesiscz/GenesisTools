@@ -26,7 +26,15 @@ enum RecorderShortcutActions {
         case .start:
             CapturePicker.shared.choose(.followPointer)
         case .stop:
-            send("stop", for: action, params: ["wait": false])
+            guard let recording = newest(), let socket = recording.socket else { nothingRunning(action); return }
+            Task {
+                await stop(id: recording.id) {
+                    let client = LiveRecordingRPCClient(path: socket)
+                    defer { client.close() }
+                    try client.connect()
+                    return try await client.call("stop", params: ["wait": true], timeout: 180) as? [String: Any]
+                }
+            }
         case .pause:
             guard let newest = newest(), let command = newest.toggleCommand else {
                 nothingRunning(action)
@@ -35,6 +43,22 @@ enum RecorderShortcutActions {
             send(command.rawValue, for: action)
         case .mark:
             send("marker.add", for: action, params: ["label": "Mark"])
+        }
+    }
+
+    static func stop(id: String, defaults: UserDefaults = .standard,
+                     request: @escaping @MainActor () async throws -> [String: Any]?) async {
+        do {
+            let answer = try await request()
+            guard answer?["state"] as? String == "stopped", answer?["outcome"] as? String != "failed" else {
+                throw RecordingEngineError.unsupported("The recorder did not confirm a successful stop.")
+            }
+        } catch {
+            let report = FailureReport(title: "Stop recording", headline: "Could not confirm Stop for \(id).",
+                                       dayLog: FailureReport.dayLogPath(), log: error.localizedDescription)
+            RecorderNotice.failure(report, retry: {
+                Task { await stop(id: id, defaults: defaults, request: request) }
+            }, defaults: defaults)
         }
     }
 
