@@ -10,8 +10,6 @@ import {
 } from "@genesiscz/utils/fs/move-aside";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { batchCwd, ownLineage } from "@genesiscz/utils/process/cwd";
-import { listProcesses } from "@genesiscz/utils/process/processes";
 import { Storage } from "@genesiscz/utils/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import { type DetectedBase, detectBase } from "./base-detect";
@@ -321,6 +319,39 @@ export function ownerOf(cwd: string, worktreePaths: string[]): string | null {
     return best;
 }
 
+async function readRecentSessions(cutoff: number): Promise<LiveUsers["sessions"]> {
+    const sessions: LiveUsers["sessions"] = [];
+    // Read native metadata directly. Even a backup dry run must see newly started sessions without writing an index.
+    const { resolveHistoryProvider } = await import("@genesiscz/utils/agent-sessions/provider");
+    const { ACCOUNT_PROVIDER_ALIASES } = await import("@genesiscz/utils/ai/providers/alias-list");
+    for (const provider of ACCOUNT_PROVIDER_ALIASES) {
+        const { reader } = resolveHistoryProvider(provider);
+        const found = await reader.discover(reader.roots(), { excludeAgents: true });
+        const problem = found.issues.find((issue) => issue.code !== "root-missing");
+        if (problem) {
+            throw new Error(problem.message);
+        }
+        for (const source of found.sources) {
+            const mtime = statSync(source.filePath).mtimeMs;
+            if (mtime < cutoff) {
+                continue;
+            }
+            const { metadata, complete, issues } = await reader.readMetadata(source);
+            if (!complete || !metadata?.cwd) {
+                throw new Error(issues[0]?.message ?? `Cannot determine the working folder of ${source.filePath}`);
+            }
+            sessions.push({
+                provider,
+                sessionId: metadata.nativeId,
+                title: metadata.customTitle ?? metadata.summary ?? null,
+                cwd: metadata.cwd,
+                mtime,
+            });
+        }
+    }
+    return sessions;
+}
+
 /**
  * One read of the kernel's process table (no `ps`; one where the kernel reader does not work), then libproc for each
  * cwd (microseconds each), plus the agent sessions of the last hour. Another user's process has no command line
@@ -329,10 +360,16 @@ export function ownerOf(cwd: string, worktreePaths: string[]): string | null {
 export async function readLiveUsers({
     liveMinutes,
     includeOwnLineage = false,
+    readSessions = readRecentSessions,
 }: {
     liveMinutes: number;
     includeOwnLineage?: boolean;
+    readSessions?: (cutoff: number) => Promise<LiveUsers["sessions"]>;
 }): Promise<LiveUsers> {
+    const [{ batchCwd, ownLineage }, { listProcesses }] = await Promise.all([
+        import("@genesiscz/utils/process/cwd"),
+        import("@genesiscz/utils/process/processes"),
+    ]);
     const own = includeOwnLineage ? new Set<number>() : ownLineage(32);
     const rows = listProcesses({ commands: false });
     const cwds = batchCwd(rows.map((row) => row.pid));
@@ -345,37 +382,18 @@ export async function readLiveUsers({
     }
 
     const cutoff = Date.now() - liveMinutes * 60_000;
-    const sessions: LiveUsers["sessions"] = [];
+    let sessions: LiveUsers["sessions"] = [];
     let sessionsError: string | null = null;
     try {
-        // Read native metadata directly. Even a backup dry run must see newly started sessions without writing an index.
-        const { resolveHistoryProvider } = await import("@genesiscz/utils/agent-sessions/provider");
-        const { ACCOUNT_PROVIDER_ALIASES } = await import("@genesiscz/utils/ai/providers/alias-list");
-        for (const provider of ACCOUNT_PROVIDER_ALIASES) {
-            const { reader } = resolveHistoryProvider(provider);
-            const found = await reader.discover(reader.roots(), { excludeAgents: true });
-            const problem = found.issues.find((issue) => issue.code !== "root-missing");
-            if (problem) {
-                throw new Error(problem.message);
-            }
-            for (const source of found.sources) {
-                const mtime = statSync(source.filePath).mtimeMs;
-                if (mtime < cutoff) {
-                    continue;
-                }
-                const { metadata, complete, issues } = await reader.readMetadata(source);
-                if (!complete || !metadata?.cwd) {
-                    throw new Error(issues[0]?.message ?? `Cannot determine the working folder of ${source.filePath}`);
-                }
-                sessions.push({
-                    provider,
-                    sessionId: metadata.nativeId,
-                    title: metadata.customTitle ?? metadata.summary ?? null,
-                    cwd: canonicalWorktreePath(metadata.cwd),
-                    mtime,
-                });
-            }
-        }
+        sessions = (await readSessions(cutoff))
+            .filter((row) => row.mtime >= cutoff && row.cwd)
+            .map(({ provider, sessionId, title, mtime, cwd }) => ({
+                provider,
+                sessionId,
+                title,
+                mtime,
+                cwd: canonicalWorktreePath(cwd),
+            }));
     } catch (err) {
         log.warn({ err }, "agent sessions unreadable; every row stays blocked on the session rule");
         sessionsError = err instanceof Error ? err.message : String(err);

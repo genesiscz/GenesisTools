@@ -12,6 +12,7 @@ import {
     MOVE_ASIDE_CONTEXT,
     moveAsideJournalPath,
     moveAsideWorktrees,
+    readLiveUsers,
     removeWorktrees,
     scanWorktrees,
     unresolvedBase,
@@ -107,7 +108,21 @@ export function registerWorktreesCommand(program: Command): void {
         .action(async (repos: string[], opts: ScanFlags) => {
             const report = await scanWorktrees({
                 repos: repos.length > 0 ? repos : [process.cwd()],
-                liveMinutes: opts.liveMinutes,
+                live: await readLiveUsers({
+                    liveMinutes: opts.liveMinutes,
+                    readSessions: async () => {
+                        // Polls share the existing recent listing with the hub roster. Destructive checks read fresh native metadata.
+                        const { listAgentSessionRows, POLLED_LISTING_REUSE_MS } = await import(
+                            "@app/ai/lib/sessions/agent-session-rows"
+                        );
+                        return listAgentSessionRows({
+                            hours: Math.max(1, Math.ceil(opts.liveMinutes / 60)),
+                            withUsage: false,
+                            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+                            failClosed: true,
+                        });
+                    },
+                }),
                 base: opts.base,
                 olderThanDays: opts.olderThan,
             });

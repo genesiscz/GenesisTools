@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { type ExecCallOptions, Executor } from "@genesiscz/utils/cli/executor";
 import { TestRepo } from "./test-repo";
 import { backupWorktree, HASH_OBJECT_BATCH, planWorktreeBackup } from "./worktree-backup";
+import { readLiveUsers } from "./worktrees";
 
 /**
  * One repository for the whole file: a branch worktree with every kind of dirt, a detached worktree with a commit no
@@ -27,6 +28,7 @@ describe("worktree backup", () => {
     let detached: string;
     let spare: string;
     let merged: string;
+    const readUsers = () => readLiveUsers({ liveMinutes: 30, includeOwnLineage: true, readSessions: async () => [] });
     const now = new Date(2026, 10, 9, 12, 0);
     /** Whole seconds, so the mtime a file gets back reads exactly as before. */
     const draftTime = new Date(2026, 0, 1, 0, 0, 0);
@@ -102,6 +104,7 @@ describe("worktree backup", () => {
         const result = await backupWorktree({
             path: dirty,
             remove: true,
+            readUsers,
             note: "fixture feature work",
             backupRoot,
             now,
@@ -177,7 +180,7 @@ describe("worktree backup", () => {
         });
 
         try {
-            const plan = await planWorktreeBackup({ path: detached, remove: true });
+            const plan = await planWorktreeBackup({ path: detached, remove: true, readUsers });
             expect(plan.blockers.some((blocker) => blocker.includes(`(${sleeper.pid})`))).toBe(true);
         } finally {
             sleeper.kill();
@@ -189,6 +192,7 @@ describe("worktree backup", () => {
         const result = await backupWorktree({
             path: spare,
             remove: true,
+            readUsers,
             backupRoot,
             now,
             afterBackup: () => {
@@ -213,6 +217,7 @@ describe("worktree backup", () => {
             const result = await backupWorktree({
                 path: spare,
                 remove: true,
+                readUsers,
                 backupRoot,
                 now,
                 afterBackup: () => {
@@ -246,7 +251,7 @@ describe("worktree backup", () => {
         });
 
         try {
-            const result = await backupWorktree({ path: merged, remove: true, backupRoot, now });
+            const result = await backupWorktree({ path: merged, remove: true, readUsers, backupRoot, now });
 
             expect(result.plan.merges).toBe(1);
             expect(result.proof.treeMatches).toBe(false);
@@ -287,7 +292,7 @@ describe("worktree backup", () => {
 
     it("refuses to remove a locked worktree before writing anything", async () => {
         await repo.git(["worktree", "lock", "--reason", "busy", spare]);
-        const result = await backupWorktree({ path: spare, remove: true, backupRoot, now });
+        const result = await backupWorktree({ path: spare, remove: true, readUsers, backupRoot, now });
 
         expect(result.plan.locked).toBe("busy");
         expect(result.refusal).toContain("locked (busy)");
@@ -478,7 +483,7 @@ describe("worktree backup", () => {
 
             await lone.git(["checkout", "-q", "--orphan", "alone"], { cwd: side });
             await lone.commit({ file: "root.txt", content: "root\n", message: "orphan root", cwd: side });
-            const orphan = await planWorktreeBackup({ path: side, remove: true });
+            const orphan = await planWorktreeBackup({ path: side, remove: true, readUsers });
 
             expect(orphan.base).toBeNull();
             expect(orphan.blockers.some((blocker) => blocker.startsWith("No base commit was found"))).toBe(true);
