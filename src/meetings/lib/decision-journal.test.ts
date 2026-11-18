@@ -756,7 +756,7 @@ describe("decision journal", () => {
     });
 
     test("a word corrected without learn leaves one dictionary question; a person's yes writes the entry, an agent's is refused", async () => {
-        const words = { heard: "zorb", rules: [MeetingRule.UnknownWord], evidence: { occurrences: 3 } };
+        const words = { heard: "zorb", rules: [MeetingRule.UnknownWord], evidence: { occurrences: 31 } };
         const fx = await fixture(
             [term("i1", 5, words), question("i2", { heard: "zorb", choices: [], decides: ["i1"], group: "words" })],
             {},
@@ -788,7 +788,8 @@ describe("decision journal", () => {
                 group: "words",
                 heard: "zorb",
                 choices: ["add", "do not add"],
-                evidence: { fixed: "sorb", occurrences: 3, item: "i1" },
+                priority: 3,
+                evidence: { fixed: "sorb", occurrences: 31, item: "i1" },
             }),
         ]);
         const ask = asks[0]!.id;
