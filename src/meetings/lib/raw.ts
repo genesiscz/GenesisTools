@@ -8,7 +8,7 @@ import type { PairedPerson } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { type MeetingSeats, personForAlias } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { lineEvidence, presentAt } from "@genesiscz/utils/transcribe/evidence";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
@@ -78,7 +78,7 @@ export interface RawMeeting {
 }
 
 /** Who is present at a second: the record's sections when it has them, else the attendance stays. */
-function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec: number): string[] {
+function presentInRecordAt(record: MeetingRecord, presence: Presence[] | undefined, sec: number): string[] {
     const section =
         presence === undefined ? record.sections?.find((part) => sec >= part.fromSec && sec <= part.toSec) : undefined;
 
@@ -86,9 +86,7 @@ function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec:
         return section.present;
     }
 
-    return [
-        ...new Set((presence ?? []).filter((stay) => sec >= stay.fromSec && sec < stay.toSec).map((stay) => stay.name)),
-    ];
+    return presentAt(presence ?? [], sec);
 }
 
 export function rawMeeting(options: {
@@ -224,7 +222,7 @@ export function rawMeeting(options: {
                 muted: line.muted ?? [],
                 ...(assessment.reasons.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                 ...(assessment.reasons.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
-                present: presentAt(record, presence, line.startSec),
+                present: presentInRecordAt(record, presence, line.startSec),
             };
         }),
         ...(options.terms === undefined ? {} : { terms: options.terms }),

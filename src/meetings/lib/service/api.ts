@@ -1483,7 +1483,7 @@ export const meetingLink = defineMethod({
     params: z.object({ meeting: meetingRef, source: z.string().min(1) }).strict(),
     result: meetingRecordSchema,
     resultName: "MeetingRecord",
-    doc: "Link a source's meeting (`<source>:<id>`) to the record: its transcript, people, times and calendar entry, as `tools meetings link` does, without asking for a project.",
+    doc: "Link a source's meeting (`<source>:<id>`) to the record: its transcript, people, times and calendar entry, as the CLI's link command does, without asking for a project.",
     effect: "reversible",
 });
 export const meetingVoice = defineMethod({
