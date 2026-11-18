@@ -57,7 +57,7 @@ struct ListenPresenceStrip: View {
 
     /// "1:37:52.7": the clock to a tenth of a second, the tenth only when it is not zero (a stored 5872.7229999 reads
     /// as 1:37:52.7, never with the float's every digit).
-    static func clock(_ sec: Double) -> String {
+    nonisolated static func clock(_ sec: Double) -> String {
         let tenths = Int((max(0, sec) * 10).rounded())
         return MeetingsFormat.clock(Double(tenths / 10)) + (tenths % 10 > 0 ? ".\(tenths % 10)" : "")
     }
