@@ -103,6 +103,20 @@ async function applyFix(decision: FixDecision, need: NeedSpec, deps: EngineDeps,
     return (await checkNeed(need, { ...env, fresh: true })).ok;
 }
 
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/** A need's answer; a check that throws is a failed need of this way, never a failed action. */
+async function checkedNeed(need: NeedSpec, env: NeedEnv): Promise<NeedResult> {
+    try {
+        return await checkNeed(need, env);
+    } catch (error) {
+        logger.warn({ need: describeNeed(need), error }, "genesis-tools actions: a need check threw");
+        return { ok: false, code: "threw", reason: `the check threw: ${messageOf(error)}`, fix: null, from: "probe" };
+    }
+}
+
 /** The first need of a way that fails (after its fix ran), or null when every need holds. */
 async function firstFailedNeed(params: {
     way: WayName;
@@ -114,7 +128,7 @@ async function firstFailedNeed(params: {
     env: NeedEnv;
 }): Promise<{ need: NeedSpec; result: Extract<NeedResult, { ok: false }> } | null> {
     for (const need of params.needs) {
-        const result = await checkNeed(need, params.env);
+        const result = await checkedNeed(need, params.env);
 
         if (result.ok) {
             continue;
@@ -131,8 +145,17 @@ async function firstFailedNeed(params: {
                 skip: () => SKIP,
             };
 
-            if (await applyFix(params.action.fix(fixContext), need, params.deps, params.env)) {
-                continue;
+            try {
+                if (await applyFix(params.action.fix(fixContext), need, params.deps, params.env)) {
+                    continue;
+                }
+            } catch (error) {
+                // A failed repair leaves the need unmet: this way is skipped and the next one is tried.
+                logger.warn(
+                    { way: params.way, need: describeNeed(need), error },
+                    "genesis-tools actions: a fix failed"
+                );
+                return { need, result: { ...result, reason: `${result.reason}; the fix failed: ${messageOf(error)}` } };
             }
         }
 
@@ -270,7 +293,7 @@ export async function runAreaAction(
             return { status: "ran", via: way, value: checked.data, skipped };
         } catch (error) {
             logger.debug({ id, way, error }, "genesis-tools actions: a way threw");
-            skip(way, "threw", error instanceof Error ? error.message : String(error));
+            skip(way, "threw", messageOf(error));
             if (error instanceof ActionDeadlineError) {
                 if (action.onTimeout) {
                     return {

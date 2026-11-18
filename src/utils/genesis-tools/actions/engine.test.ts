@@ -295,6 +295,21 @@ describe("runAreaAction", () => {
         expect(outcome.status === "ran" && outcome.via).toBe("native");
     });
 
+    test("fix: a build that fails skips the way and the next way runs", async () => {
+        const builder: AppBuilder = {
+            build: async () => {
+                throw new Error("the build broke");
+            },
+            offerBuild: async () => false,
+            buildCommand: () => "build-it",
+        };
+        const outcome = await runAreaAction(REGISTRY, "demo.greet", { name: "gil" }, deps({ builder }));
+
+        expect(outcome.status === "ran" && outcome.via).toBe("fallback.last");
+        expect(outcome.skipped[0]).toMatchObject({ way: "native", code: "part-missing" });
+        expect(outcome.skipped[0]?.reason).toContain("the fix failed: the build broke");
+    });
+
     test("fix: a test process never builds, even with a builder", async () => {
         const builder: AppBuilder = {
             build: async () => {
