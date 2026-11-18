@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
+import { sandboxInstalled } from "@genesiscz/utils/storage/real-home-guard";
 import { hasOpenAssignSteps } from "./assign";
 import { hasRecordingToWatch, hasSourceAudioToWatch, watchedSourceId } from "./watch";
 
@@ -18,6 +19,16 @@ const WATCHER_CLAIM_MS = 15_000;
 
 export function watcherPidPath(store: MeetingStore): string {
     return join(store.root, "watch.pid");
+}
+
+/** Outside the default store, a manual recording starts a watcher only when sources.<id>.autoRecord.enabled is true. */
+export async function shouldStartWatcherForRecording(): Promise<boolean> {
+    if (!sandboxInstalled()) {
+        return true;
+    }
+
+    const config = await new MeetingsConfigStore().read();
+    return config.sources[watchedSourceId(config)].autoRecord.enabled;
 }
 
 /**
