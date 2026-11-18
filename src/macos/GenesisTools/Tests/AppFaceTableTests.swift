@@ -54,7 +54,7 @@ final class AppFaceTableTests: XCTestCase {
     }
 
     func testTheQuitQuestionListsTheFacesInItsOrder() {
-        XCTAssertEqual(PartQuit.faceOrder, ["--widget", "--features", "--hub", "--review", "--markdown", "--meetings", "--window"])
+        XCTAssertEqual(PartQuit.faceOrder, ["--widget", "--features", "--hub", "--review", "--markdown", "--meetings", "--window", "--requests"])
         XCTAssertEqual(Set(PartQuit.faceNames.keys), Set(PartQuit.faceOrder), "every named face has a place in the order")
     }
 
