@@ -706,24 +706,31 @@ public enum WindowsOpenParamsWindow: String, Codable, Sendable {
     case value10 = "--permission-dialog"
 }
 
+public enum WindowsOpenParamsFix: String, Codable, Sendable {
+    case value0 = "skip"
+}
+
 public struct WindowsOpenParams: Codable, Sendable {
     public var `window`: WindowsOpenParamsWindow
     public var `args`: [String]?
     public var `activate`: Bool?
     public var `wait`: Bool?
-    public init(`window`: WindowsOpenParamsWindow, `args`: [String]? = nil, `activate`: Bool? = nil, `wait`: Bool? = nil) {
+    public var `fix`: WindowsOpenParamsFix?
+    public init(`window`: WindowsOpenParamsWindow, `args`: [String]? = nil, `activate`: Bool? = nil, `wait`: Bool? = nil, `fix`: WindowsOpenParamsFix? = nil) {
         self.`window` = `window`
         self.`args` = `args`
         self.`activate` = `activate`
         self.`wait` = `wait`
+        self.`fix` = `fix`
     }
-    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate`; case `wait` }
+    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate`; case `wait`; case `fix` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`window` = try box.decode(WindowsOpenParamsWindow.self, forKey: .`window`)
         self.`args` = try box.decodeIfPresent([String].self, forKey: .`args`)
         self.`activate` = try box.decodeIfPresent(Bool.self, forKey: .`activate`)
         self.`wait` = try box.decodeIfPresent(Bool.self, forKey: .`wait`)
+        self.`fix` = try box.decodeIfPresent(WindowsOpenParamsFix.self, forKey: .`fix`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -731,6 +738,7 @@ public struct WindowsOpenParams: Codable, Sendable {
         try box.encodeIfPresent(`args`, forKey: .`args`)
         try box.encodeIfPresent(`activate`, forKey: .`activate`)
         try box.encodeIfPresent(`wait`, forKey: .`wait`)
+        try box.encodeIfPresent(`fix`, forKey: .`fix`)
     }
 }
 

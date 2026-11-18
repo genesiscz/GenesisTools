@@ -58,14 +58,19 @@ export function windowOpenArgv(params: {
     ];
 }
 
+const fixPolicy = z.enum(["skip", "offer", "build"]);
+
 const openArgs = z.object({
     window: z.enum(FACE_FLAGS),
     args: z.array(z.string()).default([]),
     activate: z.boolean().default(true),
     wait: z.boolean().optional(),
+    /**
+     * `skip`: this call never builds a missing part, whatever `windows.fix` says. A notification click sends it: the
+     * click is killed after 30 s, and the service it reaches may run in a terminal of its own.
+     */
+    fix: z.literal("skip").optional(),
 });
-
-const fixPolicy = z.enum(["skip", "offer", "build"]);
 
 /** The windows of GenesisTools.app: opening a face checks that the installed build ships it. */
 export const windows = defineArea({
@@ -109,12 +114,12 @@ export const windows = defineArea({
                 },
             },
             fix: (ctx): FixDecision => {
-                const policy = ctx.config.fix ?? "offer";
+                const policy = ctx.args.fix ?? ctx.config.fix ?? "offer";
                 const part = ctx.failed.need.kind === "app.part" ? ctx.failed.need.part : null;
 
-                // A notification click runs with no terminal and is killed after 30 s, so it never starts a build
-                // (40 s to over 2 min): the outcome names the fix command instead.
-                if (!ctx.facts.hasTerminal()) {
+                // A notification click is killed after 30 s, so it never starts a build (40 s to over 2 min): it says
+                // so in its args, and a caller with no terminal is treated the same. The outcome names the fix command.
+                if (policy === "skip" || !ctx.facts.hasTerminal()) {
                     return ctx.skip();
                 }
 

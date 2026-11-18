@@ -592,7 +592,7 @@ describe("the real areas", () => {
         ]);
     });
 
-    test("windows.open never builds without a terminal (a notification click), even when the config says build", async () => {
+    test("windows.open never builds for a click or without a terminal, even when the config says build", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-actions-click-"));
         const config = createConfigStore({ registry: AREAS, file: join(dir, "config.json") });
         await config.set("windows.fix", "build");
@@ -616,6 +616,17 @@ describe("the real areas", () => {
         expect(click.status).toBe("unreachable");
         expect(click.skipped[0]?.code).toBe("part-missing");
         expect(click.skipped[0]?.fix?.command).toContain("build-it");
+
+        // A click reached through a service that runs in a terminal: the click's own no-build policy holds.
+        const viaService = await runAreaAction(
+            AREAS,
+            "windows.open",
+            { window: "--hub", fix: "skip" },
+            deps({ config, builder, facts: fakeFacts({ ...noHub, hasTerminal: () => true }) })
+        );
+        expect(builds).toEqual([]);
+        expect(viaService.status).toBe("unreachable");
+        expect(viaService.skipped[0]?.fix?.command).toContain("build-it");
 
         await runAreaAction(
             AREAS,

@@ -191,9 +191,12 @@ export function macosPermissionsCommand(): string {
     return toolCommand("macos permissions");
 }
 
-/** A notification click checks the requested window when the person clicks it. */
+/**
+ * A notification click checks the requested window when the person clicks it. It never builds a missing part: the
+ * service that runs it may have a terminal, but the click has none and is killed after 30 s.
+ */
 export function windowsOpenCommand({ window, args }: { window: AppFaceFlag; args: readonly string[] }): string {
-    const json = SafeJSON.stringify({ window, args }, { strict: true });
+    const json = SafeJSON.stringify({ window, args, fix: "skip" }, { strict: true });
     return toolCommand("genesis-tools action windows.open", "--json", json);
 }
 

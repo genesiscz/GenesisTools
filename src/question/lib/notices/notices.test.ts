@@ -148,10 +148,10 @@ describe("notices", () => {
 describe("decision notices", () => {
     test.if(process.platform === "darwin")("inbox clicks open decisions and questions through windows.open", () => {
         expect(hubItemClickCommand("decision", "d_1", tmpdir())).toBe(
-            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","inbox","--decision","d_1"]}'`
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","inbox","--decision","d_1"],"fix":"skip"}'`
         );
         expect(hubItemClickCommand("question", "ask_2", tmpdir())).toBe(
-            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","inbox","--question","ask_2"]}'`
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","inbox","--question","ask_2"],"fix":"skip"}'`
         );
         expect(hubItemClickCommand("question", "ask_2", "/missing/bundle")).toBeNull();
     });
