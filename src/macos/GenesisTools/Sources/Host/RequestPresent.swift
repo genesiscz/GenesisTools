@@ -188,6 +188,11 @@ func runRequestFace(_ arguments: [String]) -> Never {
     let rpc = GenesisToolsRPC(path: socket)
     residentRequests = rpc
     rpc.serve.requestPresent { params in await RequestPresenter.shared.show(params) }
+    // A face whose service went away renders nothing yet holds the lock: exit, so the next request starts a new face.
+    rpc.onDisconnect = {
+        HubPerf.log("request.face lost its service connection; exiting so a new face can take the lock")
+        app.terminate(nil)
+    }
     Task {
         do { try await rpc.connect() }
         catch { HubPerf.log("request.face connect failed: \(error)"); app.terminate(nil) }
