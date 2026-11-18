@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { gt } from "@genesiscz/utils/genesis-tools";
+import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
+import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { FoundPr, PrBackend } from "./pr";
 import {
@@ -10,6 +14,7 @@ import {
     decideDraft,
     listProposals,
     listProposalsFor,
+    openInApp,
     ProposalError,
     type ProposalIntentDeps,
     parseProposal,
@@ -19,6 +24,7 @@ import {
     reconcileProposal,
     recordDraftSent,
     releaseDraftClaim,
+    reviewWindowStatus,
     saveProposal,
 } from "./proposal";
 import { discardProposal, type ProposalPublishDeps, publishProposal } from "./proposal-publish";
@@ -50,6 +56,37 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe("review proposal", () => {
+    test("a saved proposal opens --review with its path and prints the failed need's fix", async () => {
+        const fix = { command: "repair-review-fixture", sentence: "Install the review part." };
+        const open = mock<typeof gt.windows.open>(async () => ({
+            status: "unreachable",
+            skipped: [{ way: "native", code: "part-missing", reason: "missing hub", fix }],
+            manual: null,
+        }));
+        const warn = mock((_line: string) => {});
+        await openInApp("/fixture/proposals/a b.json", { open, warn });
+        expect(open.mock.calls).toEqual([
+            [{ window: "--review", args: ["--proposal", "/fixture/proposals/a b.json"], activate: true }],
+        ]);
+        expect(warn.mock.calls).toEqual([["missing hub\nrepair-review-fixture"]]);
+    });
+
+    test("review status reports the missing hub part with its build command", async () => {
+        const deps = liveEngineDeps(AREAS, {
+            facts: {
+                ...LIVE_FACTS,
+                isTest: () => false,
+                appBundle: () => ({ installed: true, routingOff: false, path: "/fixture/app" }),
+                appManifest: () => ({ buildId: "fixture", parts: [], rpcMethods: null }),
+            },
+            builder: null,
+        });
+        expect(await reviewWindowStatus(deps)).toMatchObject({
+            available: false,
+            reason: "app.part(hub): the installed build does not link the part hub (it links none)\ntools macos permissions build --add-part hub",
+        });
+    });
+
     test("parses input and never trusts a status from the agent", () => {
         const proposal = parseProposal(input());
 

@@ -1,4 +1,7 @@
-import { defineAction, defineArea, type FixDecision } from "@genesiscz/utils/genesis-tools/actions/define";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { defineAction, defineArea, type Fix, type FixDecision } from "@genesiscz/utils/genesis-tools/actions/define";
+import { defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
 import {
     APP_FACES,
     type AppFaceFlag,
@@ -13,6 +16,19 @@ const FACE_FLAGS = Object.keys(APP_FACES) as [AppFaceFlag, ...AppFaceFlag[]];
 
 /** `open` returns once Launch Services handed the flags over; a slower answer means it hangs. */
 const OPEN_TIMEOUT_MS = 15_000;
+
+export function windowFailureMessage(failure: { reason: string; fix?: Fix | null }): string {
+    return failure.fix ? `${failure.reason}\n${failure.fix.command}` : failure.reason;
+}
+
+/** Some older hub builds lack the diff viewer the review window uses to display a proposal. */
+export function reviewResourcesProblem(bundle: string): string | undefined {
+    if (!existsSync(join(bundle, "Contents", "Resources", "diff-viewer", "index.html"))) {
+        return `GenesisTools.app has no bundled diff viewer.\n${defaultBuildCommand("hub")}`;
+    }
+
+    return undefined;
+}
 
 function partOf(flag: AppFaceFlag): AppPartId | null {
     return APP_FACES[flag].part;
@@ -63,6 +79,13 @@ export const windows = defineArea({
             native: {
                 needs: (args) => openNeeds(args.window),
                 run: async (ctx) => {
+                    if (ctx.args.window === "--review") {
+                        const problem = reviewResourcesProblem(genesisAppBundlePath());
+                        if (problem) {
+                            throw new Error(problem);
+                        }
+                    }
+
                     logger.debug({ window: ctx.args.window, args: ctx.args.args }, "windows.open: opening a face");
                     const argv = windowOpenArgv(ctx.args);
                     const proc = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: OPEN_TIMEOUT_MS });

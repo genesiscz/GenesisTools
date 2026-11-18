@@ -1,15 +1,16 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readManifest } from "@app/macos/lib/permissions/app";
-import { installedParts } from "@app/macos/lib/permissions/parts";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { gt } from "@genesiscz/utils/genesis-tools";
+import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
+import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { reviewResourcesProblem, windowFailureMessage } from "@genesiscz/utils/genesis-tools/areas/windows";
+import { checkNeed, describeNeed, Need } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import { xxhash } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
-import { logger } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath, isGenesisAppBundleInstalled } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { logger, out } from "@genesiscz/utils/logger";
+import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Storage } from "@genesiscz/utils/storage";
 import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
@@ -639,37 +640,42 @@ export function proposalMarkdown(proposal: ReviewProposal): string {
     );
 }
 
-/**
- * The hard gate for other tools (private review skills included): is a GenesisTools.app with the
- * review window installed on this Mac? Checks the bundle and its bundled diff viewer; never builds.
- */
-export function hubStatus(): { available: boolean; bundlePath: string; reason?: string } {
+interface HubStatus {
+    available: boolean;
+    bundlePath: string;
+    reason?: string;
+}
+
+/** Synchronous resource check for openHub, whose face readiness check already verified the bundle and part. */
+export function hubStatus(bundlePath = genesisAppBundlePath()): HubStatus {
+    const reason = reviewResourcesProblem(bundlePath);
+    return reason ? { available: false, bundlePath, reason } : { available: true, bundlePath };
+}
+
+/** The installation gate for review clients. A status query never opens a window or offers a build. */
+export async function reviewWindowStatus(deps = liveEngineDeps(AREAS)): Promise<HubStatus> {
     const bundlePath = genesisAppBundlePath();
-
-    if (!isGenesisAppBundleInstalled(bundlePath)) {
-        return {
-            available: false,
-            bundlePath,
-            reason: `GenesisTools.app is not installed: ${genesisAppBuildHint()}`,
-        };
+    const env = { ...deps, fresh: false, write: false };
+    for (const need of [Need.app.installed, Need.app.part("hub")]) {
+        const result = await checkNeed(need, env);
+        if (!result.ok) {
+            return { available: false, bundlePath, reason: `${describeNeed(need)}: ${windowFailureMessage(result)}` };
+        }
     }
 
-    // A build without the hub part (src/macos/lib/permissions/parts.ts) has no review window and no diff viewer.
-    const manifest = readManifest();
+    return hubStatus(bundlePath);
+}
 
-    if (manifest && !installedParts(manifest).includes("hub")) {
-        return {
-            available: false,
-            bundlePath,
-            reason: `GenesisTools.app was built without the hub part: run ${toolCommand("hub")} to add it`,
-        };
+export async function openInApp(
+    path: string,
+    { open = gt.windows.open, warn = out.log.warn } = {}
+): Promise<void> {
+    const outcome = await open({ window: "--review", args: ["--proposal", path], activate: true });
+    if (outcome.status === "unreachable") {
+        for (const skipped of outcome.skipped) {
+            warn(windowFailureMessage(skipped));
+        }
     }
-
-    if (!existsSync(join(bundlePath, "Contents", "Resources", "diff-viewer", "index.html"))) {
-        return { available: false, bundlePath, reason: "GenesisTools.app predates the review window; rebuild it" };
-    }
-
-    return { available: true, bundlePath };
 }
 
 // M11: the review proposal owns its decisions in TS. The window's clicks, `hub pr publish` and the phone decide,
