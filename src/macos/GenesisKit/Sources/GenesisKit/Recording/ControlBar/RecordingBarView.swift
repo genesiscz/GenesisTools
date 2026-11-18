@@ -238,7 +238,8 @@ public struct RecordingBarView: View {
 
     private var audioReason: String? {
         switch setup.target {
-        case .window, .app: caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
+        case .window: caps.reasonUnavailable["windowAudio"] ?? caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
+        case .app: caps.reasonUnavailable["appAudio"] ?? caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
         default: nil
         }
     }
