@@ -195,6 +195,7 @@ export interface RecorderNote {
 
 /** What the recorder uses beside the store, so a test can replace each part. */
 export interface RecorderDeps {
+    scheduleLevels: (sample: (atMs: number) => void, intervalMs: number) => () => void;
     recorder: FrameRecorder;
     toJpeg: JpegConverter;
     /** Starts the meeting's OCR worker (a process of its own); the recorder never waits on it or fails by it. */
@@ -215,6 +216,10 @@ export function defaultOcrLanguages(): string[] {
 /** The recorder's own parts; `runRecorder` adds the OCR worker start (`ocr-worker.ts` reads the recorder state). */
 export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<RecorderDeps, "startOcr"> {
     return {
+        scheduleLevels(sample, intervalMs) {
+            const timer = setInterval(() => sample(Date.now()), intervalMs);
+            return () => clearInterval(timer);
+        },
         recorder: FRAME_RECORDERS[capture.backend]({
             axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
         }),
@@ -235,6 +240,7 @@ export function errorText(err: unknown): string {
 
 /** What `record run` passes the recorder. */
 export interface RunRecorderOptions {
+    minSeparation?: number;
     store: MeetingStore;
     meetingId: string;
     capture: MeetingsConfig["global"]["capture"];
