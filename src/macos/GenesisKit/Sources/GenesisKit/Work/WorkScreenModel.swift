@@ -15,6 +15,8 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     @Published public private(set) var projects: [String] = []
+    /// The first read of the projects ended, whatever it found: a store with no project settles here.
+    @Published public private(set) var projectsLoaded = false
     @Published public var project: String? { didSet { if project != oldValue { reload() } } }
     @Published public var pane: Pane = .items { didSet { if pane != oldValue { reload() } } }
     @Published public private(set) var snapshot: WorkSnapshotValue?
@@ -93,6 +95,7 @@ public final class WorkScreenModel: ObservableObject {
         } catch {
             failure = error.localizedDescription
         }
+        projectsLoaded = true
     }
 
     public func reload() {

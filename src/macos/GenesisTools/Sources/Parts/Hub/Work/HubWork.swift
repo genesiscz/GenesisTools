@@ -1,3 +1,4 @@
+import Combine
 import GenesisKit
 import SwiftUI
 
@@ -7,6 +8,10 @@ import SwiftUI
 @MainActor
 final class HubWorkModel: ObservableObject {
     let screen: WorkScreenModel
+    /// Called once when the screen has something to show (its first snapshot, a failure, or no project at all): a
+    /// launch with `--mode work` settles there, as the Timeline and Inbox modes settle on their first load.
+    var onLoaded: (() -> Void)? { didSet { watchFirstLoad() } }
+    private var loadWatch: AnyCancellable?
 
     init(source: WorkSource? = nil) {
         screen = WorkScreenModel(source: source ?? LiveWorkSource())
@@ -16,6 +21,19 @@ final class HubWorkModel: ObservableObject {
     }
 
     func activate() { screen.activate() }
+
+    private func watchFirstLoad() {
+        guard onLoaded != nil else { loadWatch = nil; return }
+        let screen = screen
+        loadWatch = screen.$snapshot.combineLatest(screen.$failure, screen.$projectsLoaded)
+            .first { snapshot, failure, loaded in snapshot != nil || failure != nil || (loaded && screen.project == nil) }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                let done = self?.onLoaded
+                self?.onLoaded = nil
+                done?()
+            }
+    }
     func deactivate() { screen.deactivate() }
 }
 

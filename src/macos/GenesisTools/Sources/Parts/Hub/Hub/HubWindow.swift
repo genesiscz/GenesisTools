@@ -1844,6 +1844,15 @@ final class HubModel {
             setMode(.usage)
             onSettled?()
             onSettled = nil
+        } else if initialMode == .work {
+            // The Work mode loads when it opens; a snapshot waits for its first answer.
+            MainActor.assumeIsolated {
+                work.onLoaded = { [weak self] in
+                    self?.onSettled?()
+                    self?.onSettled = nil
+                }
+            }
+            setMode(.work)
         } else if initialMode == .inbox || initialMode == .timeline {
             let settle: () -> Void = { [weak self] in
                 self?.onSettled?()
