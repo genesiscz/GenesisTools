@@ -98,6 +98,7 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let question: String?
     let choices: [String]?
     let answer: String?
+    var comment: String? = nil
     var group: String? = nil
     var decides: [String]? = nil
     let priority: Double?

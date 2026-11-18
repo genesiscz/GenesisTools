@@ -320,6 +320,24 @@ final class MeetingsReviewRowTests: XCTestCase {
                        "the marked row is this decision's row, so the service's complete row replaces it")
     }
 
+    func testACommentOnlyAnswerUpdatesTheOpenCardBeforeTheRowsRead() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        detail.rows = .loaded(try rows())
+        let json = #"""
+        {"token":"comment-1","at":"2026-01-01T10:00:00Z","meeting":"m","actor":{"kind":"window"},
+         "action":{"kind":"answer","question":"q1","answer":"Too much noise"},"question":"q1","decided":[],
+         "changes":[{"id":"q1","before":{"id":"q1","kind":"question","status":"suggested"},
+                     "after":{"id":"q1","kind":"question","status":"suggested","comment":"Too much noise"}}]}
+        """#
+        let entry = try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))
+        detail.markRows(entry)
+        let row = try XCTUnwrap(detail.rows.value?.rows.first)
+        XCTAssertTrue(row.isOpen)
+        XCTAssertNil(row.answer)
+        XCTAssertEqual(row.comment, "Too much noise")
+        XCTAssertEqual(MeetingsWords.entryAction(entry, label: { _ in "Q1" }), "commented on Q1")
+    }
+
     func testTheDecisionPatchUpdatesTheRecordAndAnOldReplyUsesTheReadPath() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         let initial = try rows()
