@@ -53,7 +53,9 @@ export async function startGenesisToolsService(
         throw new Error("in-test: the user's service cannot start in a test");
     }
     const dir = options.dir ?? genesisToolsServiceDir();
+    const checkEveryMs = Math.max(100, options.checkEveryMs ?? 60_000);
     let host: ServiceHost<FaceState> | undefined;
+    let offJournal: (() => void) | undefined;
     const journal = createRequestJournal({ dir: join(dir, "requests") });
     const config = createConfigStore({ registry: AREAS, file: join(dir, "config.json") });
     const state = createStateStore({
@@ -173,7 +175,6 @@ export async function startGenesisToolsService(
         }
     }
     const offConfig = config.onChange((change) => host?.emit("config.changed", { ...change }));
-    const offJournal = journal.onChange((view) => host?.emit("request.changed", view));
     const offEvents = deps.events.on((event) =>
         host?.emit(`${event.area}.${event.event}`, { payload: event.payload, at: event.at })
     );
@@ -190,23 +191,28 @@ export async function startGenesisToolsService(
                 deadlines.get(call.method) ?? 130_000
             ),
         idleMs: options.idleMs ?? 600_000,
-        checkEveryMs: options.checkEveryMs ?? 60_000,
+        checkEveryMs,
         onCheck: () => {
             void repeatNotices();
         },
         keepAlive: { idle: () => journal.list().some((view) => view.outcome.status === "pending") },
         onStopped: () => {
             offConfig();
-            offJournal();
+            offJournal?.();
             offEvents();
         },
     });
     if (started.status === "running") {
         offConfig();
-        offJournal();
         offEvents();
         return { status: "running" };
     }
     host = started.host;
+    try {
+        offJournal = journal.followChanges((view) => started.host.emit("request.changed", view), checkEveryMs);
+    } catch (error) {
+        host.stop("request journal watcher failed to start");
+        throw error;
+    }
     return { status: "started", host, deps };
 }
