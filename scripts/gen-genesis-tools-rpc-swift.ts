@@ -125,7 +125,7 @@ export function renderSwiftSchema(schema: WireSchema, name: string, declarations
         case "boolean":
             return "Bool";
         case "null":
-            return "GenesisToolsJSON";
+            return "GenesisToolsNull";
         case undefined:
             return "GenesisToolsJSON";
         default:
@@ -189,6 +189,17 @@ const JSON_TYPE = `public indirect enum GenesisToolsJSON: Codable, Sendable {
         case let .object(value): try box.encode(value)
         }
     }
+}
+
+/// A JSON null and nothing else: the null arm of a union, so it never takes a value that belongs to another arm.
+public struct GenesisToolsNull: Codable, Sendable, Equatable {
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        guard try decoder.singleValueContainer().decodeNil() else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Expected null"))
+        }
+    }
+    public func encode(to encoder: Encoder) throws { var box = encoder.singleValueContainer(); try box.encodeNil() }
 }`;
 
 export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
