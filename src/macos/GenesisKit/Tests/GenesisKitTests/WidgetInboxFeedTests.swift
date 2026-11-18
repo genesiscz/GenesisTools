@@ -172,6 +172,21 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertTrue(lines.joined(separator: " ").contains("Open in its session"), lines.description)
     }
 
+    /// A session named after its only item (an agent result) names it once, in the row; another title stays in the header.
+    func testARunHeaderDoesNotRepeatItsOnlyItemsTitle() throws {
+        let named = WidgetInboxRender.session("crates", project: "Meadow")
+        let item = WidgetInboxItem(id: "result:r", sourceId: "r", kind: "result", key: named.key, at: 1000,
+                                   needsAnswer: false, title: named.title)
+        let model = try WidgetInboxRender.model(sessions: [named, gamma], items: [item], preferences: .hubDefaults)
+        defer { model.stop() }
+        let run = WidgetFeedRun(id: "r", runKey: named.key, items: [item])
+        XCTAssertNil(WidgetFeedRunHeader(run: run, model: model).subtitle)
+        var other = item
+        other.title = "Sort the crates"
+        let otherRun = WidgetFeedRun(id: "o", runKey: named.key, items: [other])
+        XCTAssertEqual(WidgetFeedRunHeader(run: otherRun, model: model).subtitle, named.title)
+    }
+
     private func assertOrder(_ labels: [String], in lines: [String], file: StaticString = #filePath, line: UInt = #line) {
         let text = lines.joined(separator: " ")
         var rest = text[...]
