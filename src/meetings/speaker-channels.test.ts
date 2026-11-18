@@ -22,13 +22,13 @@ import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evi
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { decimate } from "./lib/acoustic";
 import { planByChannel } from "./lib/by-channel";
+import { callMutes, MutedCallLines } from "./lib/call-mutes";
 import { CallTimeline } from "./lib/call-timeline";
 import { attributeByChannel } from "./lib/channel-operation";
 import { DecisionJournal } from "./lib/decision-journal";
 import { identifiedDepartures } from "./lib/departure";
 import { OpenedMeeting } from "./lib/opened-meeting";
-import { personStays } from "./lib/person-stays";
-import { storedPresentAt } from "./lib/person-stays";
+import { personStays, storedPresentAt } from "./lib/person-stays";
 import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { compactEvidence, rawMeeting } from "./lib/raw";
@@ -219,13 +219,113 @@ describe("seat suggestions", () => {
         });
         expect(result.seats).toEqual({
             room: [USER, "Indigo", "Amber"],
-            remote: [{ name: "Fern" }, { name: "Pine" }, { name: "Reed", fromSec: 5.5, toSec: 17.25 }],
+            remote: [{ name: "Reed", fromSec: 5.5, toSec: 17.25 }],
         });
         expect(result.people.find((p) => p.name === "Lake")).toMatchObject({
             seat: "unsure",
             reason: "Muted on all 2 roster reads while present.",
         });
         expect(result.people.find((p) => p.name === "Reed")?.reason).toBe("5 of 5 decided lines on the call.");
+    });
+
+    test("only explicit mute lists in a stay count, even when two quiet accounts have different physical seats", () => {
+        const people = ["Quill Example", "Lark Example"];
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: people.map((name) => ({ name, from: ["platform-roster"], firstSeenSec: 10 })),
+            evidence: {
+                indicator: [
+                    { tSec: 9, muted: [], speaking: people },
+                    ...Array.from({ length: 10 }, (_, i) => ({
+                        tSec: 10 + i,
+                        muted: i < 9 ? people : [],
+                        speaking: [],
+                    })),
+                    ...Array.from({ length: 100 }, (_, i) => ({ tSec: 20 + i, speaking: [] })),
+                    { tSec: 120, reason: "partial_tree", muted: [], speaking: people },
+                ],
+            },
+        });
+        const input = { record: meeting, ranges: [], lines: [] };
+        const preview = suggestSeats(input);
+        expect(preview.seats).toEqual({ room: [], remote: [] });
+        expect(preview.people).toEqual(
+            people.map((name) => ({
+                name,
+                seat: "unsure",
+                confidence: 0,
+                reason: "Muted on 9 of 10 explicit mute reads while present.",
+            }))
+        );
+        expect(suggestSeats({ ...input, room: [people[0]!], remote: [people[1]!] }).seats).toEqual({
+            room: [people[0]!],
+            remote: [{ name: people[1]!, fromSec: 10 }],
+        });
+
+        const reads = meeting.evidence!.indicator!;
+        reads.push({ tSec: 121, speaking: people, speakingUnknown: true });
+        expect(suggestSeats(input).people).toEqual(preview.people);
+        reads.push({ tSec: 122, speaking: people });
+        const spoke = suggestSeats(input);
+        expect(spoke.people.map((p) => p.reason)).toEqual(
+            people.map(
+                () =>
+                    "Physical seat unknown. 9 of 10 explicit mute lists included this account. Observed speaking on the call."
+            )
+        );
+        expect(spoke.seats).toEqual(preview.seats);
+    });
+
+    test("the 80 percent hint needs explicit coverage and a quiet roster does not establish a physical seat", () => {
+        const name = "Finch Example";
+        const reason = (positive: number, total: number) => {
+            const meeting = meetingRecordSchema.parse({
+                ...record,
+                participants: [{ name, from: ["platform-roster"] }],
+                evidence: {
+                    indicator: Array.from({ length: total }, (_, i) => ({
+                        tSec: i,
+                        speaking: [],
+                        speakingUnknown: true,
+                        muted: i < positive ? [name] : [],
+                    })),
+                },
+            });
+            const result = suggestSeats({ record: meeting, ranges: [], lines: [] });
+            expect(result.people[0]?.seat).toBe("unsure");
+            expect(result.seats.remote).toEqual([]);
+            return result.people[0]?.reason;
+        };
+        expect(reason(4, 5)).toBe("Muted on 4 of 5 explicit mute reads while present.");
+        expect(reason(3, 5)).toBe("Physical seat unknown. 3 of 5 explicit mute lists included this account.");
+        expect(reason(0, 0)).toContain("No explicit mute reads");
+    });
+
+    test("a seat preview keeps saved intervals and device memberships before considering roster or decided-line hints", () => {
+        const name = "Quill Example";
+        const seats = meetingSeatsSchema.parse({
+            room: [{ name, fromSec: 20, toSec: 40 }],
+            remote: [
+                { name, label: "Desk", toSec: 20 },
+                { name, label: "Desk", fromSec: 50 },
+            ],
+            microphones: [
+                { id: "self", people: [name] },
+                { id: "desk", people: [name] },
+            ],
+        });
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            seats: { ...seats, remote: [...seats.remote, { name: "Empty desk", fromSec: 10, toSec: 10 }] },
+            participants: [{ name, from: ["platform-roster"] }],
+        });
+        const result = suggestSeats({
+            record: meeting,
+            ranges: [{ label: "S1", person: name, fromSec: 0, toSec: 10 }],
+            lines: Array.from({ length: 5 }, (_, startSec) => ({ label: "S1", startSec, energyMicRaw: 1 })),
+        });
+        expect(result.seats).toEqual(seats);
+        expect(result.people[0]?.reason).toBe("Saved room and remote intervals.");
     });
 
     test("only reads during each recorded stay count, including the join and excluding the leave", () => {
@@ -275,6 +375,29 @@ describe("seat suggestions", () => {
         };
         expect(reasonFor([])).toMatchObject(expected);
         expect(reasonFor([{ startSec: 1, label: "Moss", energyMicRaw: 0.9 }])).toMatchObject(expected);
+    });
+
+    test("the remote device's attendance covers its occupants after a personal account disconnects", () => {
+        const person = "Pip Example";
+        const device = "Shared desk";
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            seats: {
+                room: [],
+                remote: [{ name: person }],
+                microphones: [{ id: "desk", deviceId: device, people: [person] }],
+            },
+            attendance: {
+                from: "fixture",
+                people: [
+                    { name: person, fromSec: 0, toSec: 10 },
+                    { name: device, fromSec: 5, toSec: 30 },
+                ],
+            },
+        });
+        expect(microphoneCandidates(meeting, 4, "desk")).toEqual([]);
+        expect(microphoneCandidates(meeting, 20, "desk")).toEqual([person]);
+        expect(microphoneCandidates(meeting, 30, "desk")).toEqual([]);
     });
 
     test.each([
@@ -342,6 +465,22 @@ describe("sparse roster mute readings on the call", () => {
     const reed = "Reed Example";
     const lake = "Lake Example";
     const dale = "Dale Example";
+    test("opposed channels cannot veto a person in a line or a sampled range", () => {
+        const line: LineEvidence = {
+            index: 0,
+            startSec: 3,
+            endSec: 5,
+            label: "S1",
+            text: "Yes",
+            speaking: {},
+            muted: [reed],
+            energyMic: 0.2,
+            micShare: 0.7,
+        };
+        expect(callMutes(line)).toEqual([]);
+        expect(new MutedCallLines([line]).forIndices([0])).toEqual([]);
+        expect(callMutes({ ...line, micShare: 0.49 })).toEqual([reed]);
+    });
     const transcriptAt = (startSec: number) => [
         {
             speaker: lake,
@@ -701,6 +840,27 @@ describe("Workshop regression boundaries", () => {
 });
 
 describe("shared indicator and departure APIs", () => {
+    test("opposed channels do not establish the strong call lines of a stuck stretch", () => {
+        const lines: LineEvidence[] = Array.from(
+            { length: 40 },
+            (_, index): LineEvidence => ({
+                index,
+                startSec: index * 20,
+                endSec: index * 20 + 5,
+                label: "S1",
+                text: "Words",
+                present: ["Quill Example", "Lark Example"],
+                speaking: index < 20 ? { "Quill Example": 1 } : {},
+                energyMic: index < 20 ? 0.2 : 0.95,
+                micShare: 0.7,
+            })
+        );
+        expect(assessIndicator({ lines, selfName: USER }).ignored.size).toBe(0);
+        expect(
+            assessIndicator({ lines: lines.map((line) => ({ ...line, micShare: line.energyMic })), selfName: USER })
+                .ignored.size
+        ).toBe(lines.length);
+    });
     test("a late remote join starts a new assessment stretch; one rare hit still supplies a candidate", () => {
         const sample = scene(Array.from({ length: 100 }, () => ({ label: USER, mic: 0.02 })));
         const lines: LineEvidence[] = lineEvidence(

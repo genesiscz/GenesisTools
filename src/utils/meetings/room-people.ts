@@ -12,27 +12,55 @@ export interface MeetingPersonEdit {
     via?: string;
 }
 
+/** Legacy remote rows with equal bounds carry no occupancy, including for the side of a device group. */
+export function withoutEmptyRemoteSeats(seats: MeetingSeats | undefined): MeetingSeats | undefined {
+    const empty = (seat: RemoteSeat) => seat.toSec !== undefined && seat.toSec <= (seat.fromSec ?? 0);
+    if (!seats?.remote.some(empty)) {
+        return seats;
+    }
+    const remote = seats.remote.filter((row) => !empty(row));
+    const remoteNames = new Set(remote.map((row) => nameKey(row.name)));
+    const roomNames = new Set(seats.room.map((row) => nameKey(seatSpan(row).name)));
+    const microphones = seats.microphones?.flatMap((group) => {
+        const seated = group.people.filter(
+            (person) => roomNames.has(nameKey(person)) || remoteNames.has(nameKey(person))
+        );
+        const allInRoom = seated.every((person) => roomNames.has(nameKey(person)));
+        const people =
+            group.id === "self" || allInRoom ? seated : seated.filter((person) => remoteNames.has(nameKey(person)));
+        return people.length ? [{ ...group, people }] : [];
+    });
+    return { ...seats, remote, ...(microphones ? { microphones } : {}) };
+}
+
+/** Only a saved group identifies an endpoint's human occupants. */
+export function mappedMicrophone(seats: MeetingSeats | undefined, endpoint: string) {
+    return seats?.microphones?.find(
+        (group) => group.id === endpoint || (group.deviceId && nameKey(group.deviceId) === nameKey(endpoint))
+    );
+}
+
 /** Occupants of the mapped microphone at this instant. Room occupancy is independent of call attendance. */
 export function microphoneCandidates(record: MeetingRecord, atSec: number, owner = "self"): string[] {
-    if (!record.seats) {
+    const seats = withoutEmptyRemoteSeats(record.seats);
+    if (!seats) {
         return [];
     }
-    const active = activeSeatPeople({ seats: record.seats, atSec });
-    const groups = record.seats.microphones ?? [];
-    const group = groups.find((one) => one.id === owner || one.deviceId === owner);
+    const active = activeSeatPeople({ seats, atSec });
+    const group = mappedMicrophone(seats, owner);
     if (!group) {
         return owner === "self" ? active.room : [];
     }
-    const side = microphoneSide(record.seats, group);
-    const names = new Set((side === "room" ? active.room : active.remote.map((row) => row.name)).map(nameKey));
-    return group.people.filter((name) => {
-        if (!names.has(nameKey(name))) {
-            return false;
+    const side = microphoneSide(seats, group);
+    if (side === "remote" && group.deviceId) {
+        const account = group.deviceId;
+        const stays = record.attendance?.people.filter((stay) => sameName(stay.name, account));
+        if (stays?.length && !stays.some((stay) => atSec >= stay.fromSec && atSec < stay.toSec)) {
+            return [];
         }
-        const stays =
-            side === "remote" ? record.attendance?.people.filter((stay) => sameName(stay.name, name)) : undefined;
-        return !stays?.length || stays.some((stay) => atSec >= stay.fromSec && atSec < stay.toSec);
-    });
+    }
+    const names = new Set((side === "room" ? active.room : active.remote.map((row) => row.name)).map(nameKey));
+    return group.people.filter((name) => names.has(nameKey(name)));
 }
 
 type AttendanceStay = NonNullable<MeetingRecord["attendance"]>["people"][number];
