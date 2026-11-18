@@ -2109,11 +2109,132 @@ describe("the window's REPL methods on the service", () => {
     });
 });
 
+describe("the Movie handle's sound lanes and layer stack", () => {
+    test("audioLane materializes the frames sources and mutes only mic", async () => {
+        const { dir } = await serviceFixture();
+        const root = mkdtempSync(join(tmpdir(), "rs-sound-lanes-"));
+        const path = join(root, "edit.json");
+        const video = join(root, "proxy.mp4");
+        const startedAt = "2026-01-01T12:00:00Z";
+        const tracks = ["mic", "system"].map((source, index) => {
+            const file = join(root, `${source}.m4a`);
+            writeFileSync(file, "audio fixture");
+            return {
+                source,
+                path: file,
+                startOffsetMs: index * 100,
+                startedAtMs: Date.parse(startedAt) + index * 100,
+                durationMs: 1_000,
+                displayId: 1,
+                mutedSpans: [],
+            };
+        });
+        writeFileSync(video, "proxy fixture");
+        writeFileSync(
+            join(root, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "frames",
+                title: "Frames",
+                startedAt,
+                settings: { tracks },
+                displays: [{ id: 1, name: "Display" }],
+                frames: [{ file: "frame.png", atMs: 0, displayId: 1 }],
+            })
+        );
+        const probe = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) =>
+            command.includes("json")
+                ? SafeJSON.stringify({
+                      streams: [
+                          { codec_type: "video", index: 0 },
+                          { codec_type: "audio", index: 1 },
+                      ],
+                  })
+                : "1\n"
+        );
+        closing.push(() => probe.mockRestore());
+        writeProject(path, wholeProject({ video, durationUs: 1_000_000, width: 100, height: 100 }));
+        const before = readFileSync(path, "utf8");
+        const movie = recordingMovie(path, undefined, { dir });
+        expect((await movie.audioLanes()).map(({ name }) => name)).toEqual(["Microphone", "System sound"]);
+        expect(readFileSync(path, "utf8")).toBe(before);
+
+        await movie.audioLane("mic", { muted: true });
+
+        expect(readProject(path).audio.lanes?.map(({ id, muted }) => [id, muted])).toEqual([
+            ["mic", true],
+            ["system", false],
+        ]);
+    });
+
+    test("addLayer returns the id that moveLayer sends below the camera", async () => {
+        const { dir } = await serviceFixture();
+        const path = editFixture("rs-layer-order-");
+        const movie = recordingMovie(path, undefined, { dir });
+        await movie.camera({ file: "camera.mov" });
+        const id = await movie.addLayer("logo.png");
+        expect(typeof id).toBe("string");
+        expect(await movie.layers()).toEqual([
+            { id: "camera", kind: "camera" },
+            { id, kind: "image" },
+        ]);
+        await movie.moveLayer(id, "bottom");
+        expect(await movie.layers()).toEqual([
+            { id, kind: "image" },
+            { id: "camera", kind: "camera" },
+        ]);
+        await movie.layer(id, { opacity: 0.5 });
+        const stack = readProject(path).layers;
+        expect(stack?.order).toEqual([id, "camera"]);
+        expect(stack?.media).toMatchObject([{ id, file: "logo.png", opacity: 0.5 }]);
+        await movie.removeLayer(id);
+        expect(await movie.layers()).toEqual([{ id: "camera", kind: "camera" }]);
+    });
+
+    test("removeLayer refuses the camera with the layerRemove op's text and leaves the edit intact", async () => {
+        const path = editFixture("rs-layer-camera-");
+        const movie = new Movie(path);
+        await movie.camera({ file: "camera.mov" });
+        const before = readFileSync(path, "utf8");
+        await expect(movie.removeLayer("camera")).rejects.toThrow(
+            'layerRemove refused, nothing was saved: the camera cannot be removed; use layer {id: "camera", hidden: true}'
+        );
+        expect(readFileSync(path, "utf8")).toBe(before);
+    });
+
+    test("mute(0) updates the saved track-zero lane and audioLanes reports it by name", async () => {
+        const path = editFixture("rs-layer-mute-");
+        const project = readProject(path);
+        const lanes = [1, 0].map((track) => ({
+            id: `channel-${track}`,
+            track,
+            source: "movie" as const,
+            muted: false,
+            offsetMs: 0,
+            volume: 1,
+        }));
+        writeProject(path, { ...project, audio: { ...project.audio, lanes } });
+        const movie = new Movie(path);
+        await movie.mute(0);
+        expect(readProject(path).audio.lanes).toEqual([lanes[0], { ...lanes[1], muted: true }]);
+        expect((await movie.audioLanes()).map(({ name, muted }) => [name, muted])).toEqual([
+            ["Movie track 2", false],
+            ["Movie track 1", true],
+        ]);
+    });
+});
+
 describe("the movie method of every edit op", () => {
     const window =
         "the editor window's EditOpDiff writes it from a change made in the window, and a REPL caller sends it through apply()";
     /** Ops whose movie method has another name, because the name says what the call does. */
-    const RENAMED: Record<string, string> = { cursorSmooth: "smoothCursor", autoSpeed: "speedBadge" };
+    const RENAMED: Record<string, string> = {
+        cursorSmooth: "smoothCursor",
+        autoSpeed: "speedBadge",
+        layerAdd: "addLayer",
+        layerMove: "moveLayer",
+        layerRemove: "removeLayer",
+    };
     /** Ops with no movie method, each with why. */
     const NO_METHOD: Record<string, string> = {
         audio: `Whether the export plays the recording's sound: ${window}.`,
@@ -2146,6 +2267,23 @@ describe("the movie method of every edit op", () => {
             "movie.duplicate copies the whole recording into a new library recording; the op copies one item of the edit by its id, which a REPL caller sends through apply().",
     };
     const jsonOf = (schema: z.ZodType) => z.toJSONSchema(schema, { io: "input", unrepresentable: "any" });
+
+    /** These positional calls group the op's fields into their second argument. Every field still has to match. */
+    function expectedParams(tag: string, fields: z.ZodObject): z.ZodObject {
+        if (tag === "audioLane" || tag === "layer") {
+            return fields.pick({ id: true }).extend({ changes: fields.omit({ id: true }) });
+        }
+
+        if (tag === "layerAdd") {
+            // addLayer infers kind from the file when the caller omits it.
+            return z.strictObject({
+                layerFile: fields.shape.file,
+                options: fields.omit({ file: true }).partial({ kind: true }).optional(),
+            });
+        }
+
+        return fields;
+    }
 
     test("every op tag has a REPL method and a service method with the op's params, apart from the named ones", () => {
         const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
@@ -2180,7 +2318,8 @@ describe("the movie method of every edit op", () => {
             const taken = jsonOf(method.params);
             const properties = Object.entries(taken.properties ?? {}).filter(([field]) => !extra.includes(field));
             const withoutExtra = extra.length ? { ...taken, properties: Object.fromEntries(properties) } : taken;
-            const same = SafeJSON.stringify(withoutExtra) === SafeJSON.stringify(jsonOf(variant.omit({ op: true })));
+            const expected = expectedParams(tag, variant.omit({ op: true }));
+            const same = SafeJSON.stringify(withoutExtra) === SafeJSON.stringify(jsonOf(expected));
 
             if (tag in OTHER_ACTION ? same : !same) {
                 problems.push(
