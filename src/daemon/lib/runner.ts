@@ -97,15 +97,24 @@ export function taskArgv(command: string, priority: TaskPriority, onDisk?: Prior
     return priorityShellArgv(command, priority, onDisk);
 }
 
-/** Bun's rusage of a reaped child (microseconds, bytes) as the run log's usage record. */
-export function runUsage(raw: ReturnType<Bun.Subprocess["resourceUsage"]>): RunUsage | undefined {
+/**
+ * Bun's rusage of a reaped child (microseconds, bytes) as the run log's usage record, with `wallMs`, the child's own
+ * lifetime on a monotonic clock.
+ */
+export function runUsage(raw: ReturnType<Bun.Subprocess["resourceUsage"]>, wallMs: number): RunUsage | undefined {
     if (!raw) {
         return undefined;
     }
 
     const userMs = Math.round(Number(raw.cpuTime.user) / 1000);
     const systemMs = Math.round(Number(raw.cpuTime.system) / 1000);
-    return { userMs, systemMs, cpuMs: userMs + systemMs, maxRssMb: Math.round(Number(raw.maxRSS) / 1_048_576) };
+    return {
+        userMs,
+        systemMs,
+        cpuMs: userMs + systemMs,
+        maxRssMb: Math.round(Number(raw.maxRSS) / 1_048_576),
+        wallMs: Math.round(wallMs),
+    };
 }
 
 /**
@@ -177,6 +186,7 @@ export async function runTask(
         stdin: "ignore",
         detached: true,
     });
+    const spawnedAt = performance.now();
 
     // POSIX: negative pid signals the whole process group (sh + descendants).
     // pid-verified: negative pid = the process group of a child this function just spawned
@@ -222,6 +232,7 @@ export async function runTask(
     timeoutTimer.unref?.();
 
     const rawExitCode = await proc.exited;
+    const wallMs = performance.now() - spawnedAt;
     exited = true;
     clearTimeout(timeoutTimer);
 
@@ -238,7 +249,7 @@ export async function runTask(
 
     const duration_ms = Date.now() - startMs;
     const exitCode = timedOut ? null : rawExitCode;
-    const usage = runUsage(proc.resourceUsage());
+    const usage = runUsage(proc.resourceUsage(), wallMs);
     releaseRunWorkingDir(cwd, task.name);
 
     appendJsonl(logFile, {

@@ -76,9 +76,14 @@ export interface LogLine {
 export interface RunUsage {
     userMs: number;
     systemMs: number;
-    /** userMs + systemMs; cpuMs / duration_ms is the average number of cores the run kept busy. */
+    /** userMs + systemMs; cpuMs / wallMs is the average number of cores the run kept busy. */
     cpuMs: number;
     maxRssMb: number;
+    /**
+     * Monotonic milliseconds from the spawn to the process's exit, without the wait for its output pipes that
+     * `duration_ms` includes. Absent in logs written before it was added.
+     */
+    wallMs?: number;
 }
 
 export interface LogExit {

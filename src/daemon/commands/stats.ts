@@ -536,9 +536,18 @@ function runCost(run: StatsRun): string {
         return "";
     }
 
-    const cores = run.durationMs ? ` (${(run.cpuMs / run.durationMs).toFixed(1)} cores)` : "";
+    // The process's own lifetime when logged: `durationMs` also holds the wait for its output pipes.
+    const lifetime = run.wallMs ?? run.durationMs;
+    const cores = lifetime ? ` (${(run.cpuMs / lifetime).toFixed(1)} cores)` : "";
     const memory = run.maxRssMb === null ? "" : `, ${run.maxRssMb} MB`;
     return `${formatMs(run.cpuMs)} CPU${cores}${memory}`;
+}
+
+/** Why a run shows no cost: the absence alone does not date it. */
+function missingCost(run: StatsRun): string {
+    return run.status === "unfinished"
+        ? "not logged yet: the run has no exit record"
+        : "not available: its log has no usage record (written before 2026-11-18, or the runtime gave none)";
 }
 
 function renderRunLine(run: StatsRun): void {
@@ -617,8 +626,8 @@ function renderTask(task: TaskStats, stats: DaemonStats): void {
 
     out.println("");
 
-    const table = createBoxTable([...COUNT_HEADERS, ...PERCENTILE_HEADERS]);
-    table.push([...countCells(task), ...percentileCells(task)]);
+    const table = createBoxTable([...COUNT_HEADERS, ...PERCENTILE_HEADERS, "CPU P50", "CPU MAX"]);
+    table.push([...countCells(task), ...percentileCells(task), formatMs(task.cpuP50Ms), formatMs(task.cpuMaxMs)]);
     out.println(table.toString());
 
     if (task.runs === 0) {
@@ -711,7 +720,7 @@ function renderRun(output: RunOutput): void {
     renderCliKeyRow("started", run.startedAt ? formatLocalDateTimeStamp(run.startedAt) : "—");
     renderCliKeyRow("try", String(run.attempt));
     renderCliKeyRow("outcome", `${statusDot(run)} ${pc.dim(formatMs(run.durationMs))}`);
-    renderCliKeyRow("cost", runCost(run) || pc.dim("not logged (a run from before 2026-11-18)"));
+    renderCliKeyRow("cost", runCost(run) || pc.dim(missingCost(run)));
     out.println("");
 
     if (lines.length === 0) {

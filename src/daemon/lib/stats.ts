@@ -96,6 +96,8 @@ export interface StatsRun {
     /** CPU time of the run and the children it waited for; null in logs written before 2026-11-18. */
     cpuMs: number | null;
     maxRssMb: number | null;
+    /** The process's own lifetime (spawn to exit, monotonic); null in logs written before it was recorded. */
+    wallMs: number | null;
     logFile: string;
     /** The last stderr lines, oldest first; null when this report did not read the run's output. */
     stderrTail: string[] | null;
@@ -265,25 +267,30 @@ function readRunEnds(file: string): { meta: Record<string, unknown> | null; exit
     }
 }
 
-function usageNumber(usage: unknown, key: "cpuMs" | "maxRssMb"): number | null {
+/** A logged usage figure; a negative or non-finite one (a damaged log) counts as missing. */
+function usageNumber(usage: unknown, key: "cpuMs" | "maxRssMb" | "wallMs"): number | null {
     if (!isObject(usage)) {
         return null;
     }
 
     const value = usage[key];
-    return typeof value === "number" ? value : null;
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function classify(
     exit: Record<string, unknown> | null
-): Pick<StatsRun, "status" | "exitCode" | "durationMs" | "cpuMs" | "maxRssMb"> {
+): Pick<StatsRun, "status" | "exitCode" | "durationMs" | "cpuMs" | "maxRssMb" | "wallMs"> {
     if (!exit) {
-        return { status: "unfinished", exitCode: null, durationMs: null, cpuMs: null, maxRssMb: null };
+        return { status: "unfinished", exitCode: null, durationMs: null, cpuMs: null, maxRssMb: null, wallMs: null };
     }
 
     const exitCode = typeof exit.code === "number" ? exit.code : null;
     const durationMs = typeof exit.duration_ms === "number" ? exit.duration_ms : null;
-    const cost = { cpuMs: usageNumber(exit.usage, "cpuMs"), maxRssMb: usageNumber(exit.usage, "maxRssMb") };
+    const cost = {
+        cpuMs: usageNumber(exit.usage, "cpuMs"),
+        maxRssMb: usageNumber(exit.usage, "maxRssMb"),
+        wallMs: usageNumber(exit.usage, "wallMs"),
+    };
 
     if (exit.timedOut === true) {
         return { status: "timedOut", exitCode, durationMs, ...cost };
