@@ -269,15 +269,15 @@ people) on each look until the record has an end, for up to 10 min.
 
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
 confirmed items change a transcript. With `--with-suggested`, proposed terms apply at
-`global.suggest.terms.applyAbove` (0.8) and speaker suggestions at `global.suggest.applyAbove` (0.7).
+`global.suggest.terms.applyAbove` and speaker suggestions at `global.suggest.applyAbove`. Both default to 0.7.
 Items without a confidence, such as a person's own correction, also apply. A range owned by an open speaker
 question stays a guess until answered or confirmed.
 
 `tools meetings thresholds <meeting>` lists the effective thresholds, their global values, defaults and sources.
-To see which proposals, questions and transcript lines change when a 79% term can apply, run:
+With the default settings, a 79% term applies. Preview a higher cutoff to see where the term would stop applying.
 
 ```sh
-tools meetings thresholds <meeting> --set term.applyAbove=0.7 --preview
+tools meetings thresholds <meeting> --set term.applyAbove=0.8 --preview
 ```
 
 Add `--json` for the before and after states, line times, text and reasons. The preview compares fresh automatic

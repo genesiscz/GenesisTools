@@ -204,6 +204,7 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
 
 `transcript <meeting> --with-suggested --apply-above 70` keeps lower-confidence voices as percentage marks.
 `transcript <meeting> --probe-thresholds 50,60,70,80` compares applied and open counts without changing the record.
+With `--with-suggested`, proposed terms apply at 70% confidence by default (`term.applyAbove`).
 Term and speaker thresholds are global settings in Settings → Meetings. Open Thresholds from a meeting to preview
 which proposals change there before saving a setting for all meetings. In the CLI, `tools meetings thresholds <meeting>`
 lists the names and current values. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` to

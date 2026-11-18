@@ -22,16 +22,16 @@ final class MeetingsThresholdsTests: XCTestCase {
         let json = """
         {"thresholds":[],"warnings":[],"counts":[{"kind":"term proposal","added":0,"removed":0,"changed":1}],
          "changes":[{"key":"term|blenwick","kind":"term proposal","change":"changed","atSec":9,"text":"Read the blenwick.",
-                     "before":{"status":"suggested","confidence":0.79,"description":"blenwick → Blenwik"},
-                     "after":{"status":"applied","confidence":0.79,"description":"blenwick → Blenwik"},
-                     "reason":"Apply proposed terms 0.8 → 0.7"}]}
+                     "before":{"status":"applied","confidence":0.79,"description":"blenwick → Blenwik"},
+                     "after":{"status":"suggested","confidence":0.79,"description":"blenwick → Blenwik"},
+                     "reason":"Apply proposed terms 0.7 → 0.8"}]}
         """
         let result = try JSONDecoder().decode(MeetingsAPI.ThresholdPreview.Result.self, from: Data(json.utf8))
         let change = try XCTUnwrap(result.changes.first)
         XCTAssertEqual(change.atSec, 9)
         XCTAssertEqual(change.text, "Read the blenwick.")
-        XCTAssertEqual(change.before?.status, "suggested")
-        XCTAssertEqual(change.after?.status, "applied")
+        XCTAssertEqual(change.before?.status, "applied")
+        XCTAssertEqual(change.after?.status, "suggested")
         XCTAssertEqual(result.counts.first?.summary, "1 term proposal changed")
         XCTAssertEqual(MeetingsAPI.ThresholdPreview.name, "meeting.thresholds.preview")
     }
