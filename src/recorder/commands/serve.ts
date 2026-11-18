@@ -76,7 +76,14 @@ async function serve(flags: ServeFlags): Promise<void> {
                 }
 
                 const { service } = start;
-                signal.addEventListener("abort", () => service.stop("signal"), { once: true });
+                const stop = (): void => service.stop("signal");
+                signal.addEventListener("abort", stop, { once: true });
+
+                // A signal that came while the service started fired no event; it still stops the service.
+                if (signal.aborted) {
+                    stop();
+                }
+
                 process.once("exit", () => service.stop("exit"));
                 out.printlnErr(`recorder service listening on ${service.entry.socket} (pid ${process.pid})`);
                 const reason = await service.stopped;
