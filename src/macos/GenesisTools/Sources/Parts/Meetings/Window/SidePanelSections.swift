@@ -371,7 +371,7 @@ enum SidePanelCatalog {
             row(MeetingsPreferences.Notices.passScrollWhenFits, value: MeetingsPreferences.Notices.passScrollWhenFits.value(defaults)),
         ], settingsAnchor: MeetingsSettingsPages.noticesAnchor)
         let timelineOn: [SidePanelValue] = [.flag(true)]
-        let panes = SidePanelSection(id: "panes", title: "Timeline and Panes", rows: [
+        let panes = SidePanelSection(id: "panes", title: "Timeline and panes", rows: [
             row(Panes.timelineShown, value: Panes.timelineShown.value(defaults)),
             row(Panes.hoverDelayMs, value: Panes.hoverDelayMs.value(defaults))
                 .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
@@ -397,7 +397,7 @@ enum SidePanelCatalog {
                          value: .text(MeetingsPreferences.look(defaults).rawValue),
                          defaultValue: .text(MeetingsPreferences.defaultLook.rawValue)),
         ])
-        let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
+        let transcript = SidePanelSection(id: "transcript", title: "Transcript and speakers", rows: [
             SidePanelRow(store: .window(key: MeetingsPreferences.speakerOrderKey), title: "Speakers in order of",
                          detail: "The speaker who talked longest first, or the order the transcript first names them.",
                          choices: [SidePanelChoice(value: .text("spoken"), title: "Most spoken"),
@@ -415,7 +415,7 @@ enum SidePanelCatalog {
             row(Speakers.hintChips, value: Speakers.hintChips.value(defaults)),
         ])
         typealias People = MeetingsPreferences.People
-        let people = SidePanelSection(id: "people", title: "Speaker Names", rows: [
+        let people = SidePanelSection(id: "people", title: "Speaker names", rows: [
             row(People.renameBlur, value: People.renameBlur.value(defaults)),
             row(People.offerNew, value: People.offerNew.value(defaults)),
         ])
@@ -469,7 +469,7 @@ enum SidePanelCatalog {
         let setting = toneSetting(listen.at(["tone", "sound"]))
         let threshold = threshold ?? MeetingsApplyThreshold.shared
         let thresholdRows = threshold.percent != nil || threshold.failure != nil ? [thresholdRow(threshold)] : []
-        return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
+        return SidePanelSection(id: "engine", title: "Clip and tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
             SidePanelRow(store: .engine(path: toneOn), title: "Tone",
                          detail: "A short tone just before the asked spot, in the window and the terminal.",
                          choices: [], value: .flag(flag(["tone", "enabled"]) ?? true), defaultValue: .flag(true)),
