@@ -1,4 +1,5 @@
 import AVFoundation
+import Accelerate
 import CoreAudio
 import CoreMedia
 import Foundation
@@ -79,6 +80,118 @@ func cmdAudioDevices() {
 }
 
 // MARK: - recording
+
+/// Names only. An explicitly selected microphone remains the input even if the system default changes.
+func levelDeviceNames(micID: String?) -> (input: String?, output: String?) {
+    func defaultName(_ selector: AudioObjectPropertySelector) -> String? {
+        guard let id = audioProperty(AudioObjectID(kAudioObjectSystemObject), selector, initial: AudioObjectID(0))
+        else { return nil }
+        return audioString(id, kAudioObjectPropertyName)
+    }
+    let input: String?
+    if let micID { input = AVCaptureDevice(uniqueID: micID)?.localizedName }
+    else { input = defaultName(kAudioHardwarePropertyDefaultInputDevice) }
+    return (input, defaultName(kAudioHardwarePropertyDefaultOutputDevice))
+}
+
+/// Sum squares across every PCM plane, normalized to full scale. Keep the count so unequal buffers have equal
+/// weight per sample. Capture formats not understood here are reported as unavailable.
+func audioSamplePower(_ buffer: CMSampleBuffer) -> (sum: Double, count: Int)? {
+    guard let format = CMSampleBufferGetFormatDescription(buffer),
+          let desc = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+          desc.mFormatID == kAudioFormatLinearPCM, desc.mChannelsPerFrame > 0,
+          desc.mFormatFlags & kAudioFormatFlagIsBigEndian == 0 else { return nil }
+    let list = AudioBufferList.allocate(maximumBuffers: Int(desc.mChannelsPerFrame))
+    defer { free(list.unsafeMutablePointer) }
+    var backing: CMBlockBuffer?
+    guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(buffer, bufferListSizeNeededOut: nil,
+        bufferListOut: list.unsafeMutablePointer, bufferListSize: AudioBufferList.sizeInBytes(maximumBuffers: Int(desc.mChannelsPerFrame)),
+        blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
+        flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, blockBufferOut: &backing) == noErr else { return nil }
+    return withExtendedLifetime(backing) {
+        var sum = 0.0, count = 0
+        let floating = desc.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        for plane in list {
+            guard let data = plane.mData else { continue }
+            if floating && desc.mBitsPerChannel == 32 {
+                let n = Int(plane.mDataByteSize) / 4
+                var power: Float = 0
+                vDSP_svesq(data.assumingMemoryBound(to: Float.self), 1, &power, vDSP_Length(n))
+                sum += Double(power)
+                count += n
+            } else if !floating && desc.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0 {
+                let stride = Int(desc.mBytesPerFrame) / (desc.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 ? Int(desc.mChannelsPerFrame) : 1)
+                guard (1...4).contains(stride), desc.mBitsPerChannel > 0, desc.mBitsPerChannel <= stride * 8 else { return nil }
+                let bytes = data.assumingMemoryBound(to: UInt8.self)
+                let n = Int(plane.mDataByteSize) / stride
+                let bits = desc.mFormatFlags & kAudioFormatFlagIsAlignedHigh == 0 ? Int(desc.mBitsPerChannel) : stride * 8
+                for i in 0..<n {
+                    var word: UInt32 = 0
+                    for j in 0..<stride { word |= UInt32(bytes[i * stride + j]) << (8 * j) }
+                    let sample = Double(Int32(bitPattern: word << (32 - bits))) / 2147483648
+                    sum += sample * sample
+                }
+                count += n
+            } else { return nil }
+        }
+        return count > 0 && sum.isFinite ? (sum, count) : nil
+    }
+}
+
+/// Lives on the same serial queue as the audio inputs. Only aggregate power leaves the process.
+final class AudioLevelMeter {
+    private var sums: [CaptureAudioSource: Double] = [:]
+    private var counts: [CaptureAudioSource: Int] = [:]
+    private var timer: DispatchSourceTimer?
+    private let delivery = DispatchQueue(label: "ax-tool.audio-levels.delivery", qos: .utility)
+    private let deliveryAvailable = DispatchSemaphore(value: 1)
+    // Accessed only on delivery, away from the recording's sample queue.
+    private var devices: (input: String?, output: String?) = (nil, nil)
+    private var lastMicID: String?
+    private var nextDeviceRead = Date.distantPast
+    var micID: String?
+
+    init(queue: DispatchQueue, micID: String?) {
+        self.micID = micID
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        self.timer = timer
+        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100), leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in self?.emit() }
+        timer.resume()
+    }
+
+    deinit { timer?.cancel() }
+
+    func append(_ buffer: CMSampleBuffer, source: CaptureAudioSource, muted: Bool) {
+        guard let power = audioSamplePower(buffer) else { return }
+        counts[source, default: 0] += power.count
+        if !muted { sums[source, default: 0] += power.sum }
+    }
+
+    private func emit() {
+        let now = Date()
+        func rms(_ source: CaptureAudioSource) -> Double? {
+            guard let n = counts[source], n > 0 else { return nil }
+            return sqrt((sums[source] ?? 0) / Double(n))
+        }
+        let mic = rms(.mic), system = rms(.system), selectedMic = micID
+        sums.removeAll(keepingCapacity: true)
+        counts.removeAll(keepingCapacity: true)
+        // Drop a meter update if the supervisor is slow. Neither a blocked pipe nor a device lookup can stall audio.
+        guard deliveryAvailable.wait(timeout: .now()) == .success else { return }
+        delivery.async { [self] in
+            defer { deliveryAvailable.signal() }
+            if now >= nextDeviceRead || selectedMic != lastMicID {
+                devices = levelDeviceNames(micID: selectedMic)
+                lastMicID = selectedMic
+                nextDeviceRead = now.addingTimeInterval(2)
+            }
+            CaptureEvents.emit(["event": "levels", "atMs": now.timeIntervalSince1970 * 1000,
+                                "mic": mic as Any? ?? NSNull(), "system": system as Any? ?? NSNull(),
+                                "input": devices.input as Any? ?? NSNull(), "output": devices.output as Any? ?? NSNull()])
+        }
+    }
+}
 
 private func sampleBufferPeak(_ buffer: CMSampleBuffer) -> Float {
     guard let format = CMSampleBufferGetFormatDescription(buffer),
@@ -398,9 +511,12 @@ final class NativeAudio: NSObject, SCStreamOutput {
     private var movieStart: CMTime?
     private var paused = false
     private var closed = false
+    private(set) var levels: AudioLevelMeter?
 
     init(sources: [CaptureAudioSource], movieInputs: [CaptureAudioSource: AVAssetWriterInput], sidecarDirectory: URL?) {
         self.sources = sources
+        super.init()
+        if CommandLine.arguments.contains("--levels") { levels = AudioLevelMeter(queue: queue, micID: argValue("--mic-device")) }
         for source in sources {
             tracks[source] = AudioTrack(source: source, movieInput: movieInputs[source],
                                         sidecarURL: sidecarDirectory?.appendingPathComponent("audio-\(source.rawValue).m4a"))
@@ -431,6 +547,7 @@ final class NativeAudio: NSObject, SCStreamOutput {
         }
         guard !closed, !paused, sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer), let track = tracks[source] else { return }
         let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        levels?.append(sampleBuffer, source: source, muted: track.muted)
         let buffer: CMSampleBuffer
         if track.muted {
             guard let silent = silentCopy(sampleBuffer) else {

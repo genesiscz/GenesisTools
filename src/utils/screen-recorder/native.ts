@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
+import { audioLevelEvent } from "./audio-levels";
 import { AudioSession, type RecorderAudioOptions } from "./audio-session";
 import { AUDIO_SOURCES, type AudioDevices, type AudioSource } from "./control";
 import { mainDisplay, outputScaleFor, parseDisplayList } from "./displays";
@@ -43,6 +44,8 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "audio-devices",
     "audio-record",
     "--without-screen",
+    "--monitor",
+    "--levels",
     // `--control-stdin` commands, named in the same help text.
     "mute",
     "set-mic",
@@ -274,6 +277,7 @@ export function audioArgv(request: CaptureRequest, flags: ReadonlySet<NativeOpti
         audio.sources.join(","),
         ...(audio.micDeviceId && flags.has("--mic-device") ? ["--mic-device", audio.micDeviceId] : []),
         "--audio-sidecar",
+        ...(request.hooks?.onLevels && flags.has("--levels") ? ["--levels"] : []),
     ];
 }
 
@@ -309,6 +313,7 @@ function salvagedFrames(outDir: string, displayId: number | undefined): CaptureR
 const SWITCH_TIMEOUT_MS = 5_000;
 
 const controlEvent = z.discriminatedUnion("event", [
+    audioLevelEvent,
     z.object({
         event: z.literal("frame"),
         path: z.string(),
@@ -483,6 +488,11 @@ export class NativeLiveCapture implements LiveCapture {
 
         const event = parsed.data;
 
+        if (event.event === "levels") {
+            this.hooks.onLevels?.(event);
+            return;
+        }
+
         if (event.event === "frame") {
             this.hooks.onFrame?.({
                 path: event.path,
@@ -645,7 +655,26 @@ export class NativeFrameRecorder extends FrameRecorder {
         if (options.withoutScreen && !this.flags.has("--without-screen")) {
             throw new CaptureError("unavailable", "Rebuild ax-tool for recording sound without Screen Recording.");
         }
-        return AudioSession.start({ ...options, argv, launch: this.context.launch });
+        return AudioSession.start({
+            ...options,
+            onLevels: this.flags.has("--levels") ? options.onLevels : undefined,
+            argv,
+            launch: this.context.launch,
+        });
+    }
+
+    async monitorLevels(options: Omit<RecorderAudioOptions, "outDir" | "folder">): Promise<AudioSession> {
+        const argv = await this.axTool(options.signal);
+        if (!this.flags.has("--monitor") || !this.flags.has("--levels")) {
+            throw new CaptureError("unavailable", "Rebuild ax-tool to use the microphone test.");
+        }
+        return AudioSession.start({
+            ...options,
+            argv,
+            launch: this.context.launch,
+            withoutScreen: true,
+            monitorOnly: true,
+        });
     }
 
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {

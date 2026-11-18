@@ -1576,6 +1576,7 @@ private final class ScreenStreamHost {
                     _ = self.recorder.changeConfiguration { $0.microphoneCaptureDeviceID = value }
                 }, apply: { try await stream.updateConfiguration(configuration) })
                 self.micDevice = deviceId
+                audio.queue.async { audio.levels?.micID = deviceId }
                 self.emitSettings()
             } catch {
                 CaptureEvents.error("failed", "the stream refused the microphone \(deviceId): \(error.localizedDescription)")

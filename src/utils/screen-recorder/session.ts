@@ -64,6 +64,7 @@ export interface PieceCapturesOptions {
     audio: () => { sources: AudioSource[]; micDeviceId?: string } | undefined;
     audioOwnership: AudioOwnership;
     hooks: {
+        onLevels?: CaptureHooks["onLevels"];
         /** The capture is in `running` (the recorded displays may have changed). */
         onStart?: (capture: SessionCapture) => void;
         onFrame?: (capture: SessionCapture, frame: CapturedFrame) => void;
@@ -114,6 +115,7 @@ export class PieceCaptures {
         outcome.count += 1;
         this.options.hooks.onStart?.(entry);
         const hooks: CaptureHooks = {
+            onLevels: withAudio ? this.options.hooks.onLevels : undefined,
             onFrame: (frame) => this.options.hooks.onFrame?.(entry, frame),
             onLive: (channel) => {
                 entry.live = channel;

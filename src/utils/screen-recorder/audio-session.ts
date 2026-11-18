@@ -19,6 +19,7 @@ import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { signalProcessTree } from "@genesiscz/utils/process/processes";
 import { z } from "zod";
+import { type AudioLevelBlock, audioLevelEvent } from "./audio-levels";
 import { AUDIO_SOURCES, type AudioSource } from "./control";
 import { CaptureError, type CaptureRequest, type FrameRecorder } from "./types";
 
@@ -240,6 +241,7 @@ export async function salvagedAudioTiming(file: string): Promise<{
 }
 
 const eventSchema = z.discriminatedUnion("event", [
+    audioLevelEvent,
     z.object({
         event: z.literal("state"),
         state: z.string(),
@@ -265,7 +267,15 @@ export interface RecorderAudioOptions {
     onSegment?: (segment: AudioSegment) => void;
     onWarning?: (warning: string) => void;
     onFailure?: (error: Error) => void;
+    onLevels?: (block: AudioLevelBlock) => void;
 }
+
+type AudioMonitorOptions = Omit<RecorderAudioOptions, "folder" | "outDir"> & { monitorOnly: true };
+type SessionOptions = (RecorderAudioOptions | AudioMonitorOptions) & {
+    argv: string[];
+    launch?: (argv: string[]) => string[];
+    segmentSec?: number;
+};
 
 /** The native adapter owns the capability; the frame loop never branches on a backend name. */
 export function recordsAudioSession(recorder: FrameRecorder): recorder is FrameRecorder & {
@@ -291,15 +301,11 @@ export class AudioSession {
         void this.stop().catch((error: unknown) => log.warn({ error }, "audio stop failed"));
     };
 
-    private constructor(
-        private readonly options: RecorderAudioOptions & {
-            argv: string[];
-            launch?: (argv: string[]) => string[];
-            segmentSec?: number;
+    private constructor(private readonly options: SessionOptions) {
+        if ("outDir" in options) {
+            mkdirSync(options.outDir, { recursive: true });
+            mkdirSync(join(options.folder, "audio"), { recursive: true });
         }
-    ) {
-        mkdirSync(options.outDir, { recursive: true });
-        mkdirSync(join(options.folder, "audio"), { recursive: true });
         const argv = [
             ...options.argv,
             "audio-record",
@@ -309,8 +315,8 @@ export class AudioSession {
             ...(options.request.micDeviceId ? ["--mic-device", options.request.micDeviceId] : []),
             ...(options.muted?.length ? ["--muted", options.muted.join(",")] : []),
             ...(options.paused ? ["--paused"] : []),
-            "--out",
-            options.outDir,
+            ...("outDir" in options ? ["--out", options.outDir] : ["--monitor"]),
+            ...(options.onLevels ? ["--levels"] : []),
             "--segment-sec",
             String(options.segmentSec ?? 60),
         ];
@@ -336,9 +342,7 @@ export class AudioSession {
         options.signal?.addEventListener("abort", this.abort, { once: true });
     }
 
-    static async start(
-        options: RecorderAudioOptions & { argv: string[]; launch?: (argv: string[]) => string[]; segmentSec?: number }
-    ): Promise<AudioSession> {
+    static async start(options: SessionOptions): Promise<AudioSession> {
         options.signal?.throwIfAborted();
         const session = new AudioSession(options);
         try {
@@ -396,6 +400,9 @@ export class AudioSession {
             );
         }
 
+        if (!("outDir" in this.options)) {
+            throw new Error("a monitor-only session returned a recording segment");
+        }
         const started = segmentStartedSchema.safeParse(raw);
         const row = started.success ? started.data : audioSegmentSchema.parse(raw);
         if (
@@ -430,7 +437,9 @@ export class AudioSession {
             log.debug({ error, line }, "ignoring non-JSON audio stderr");
             return;
         }
-        if (event.event === "warning") {
+        if (event.event === "levels") {
+            this.options.onLevels?.(event);
+        } else if (event.event === "warning") {
             this.warnings.push(event.message);
             this.options.onWarning?.(event.message);
         } else if (event.event === "error") {

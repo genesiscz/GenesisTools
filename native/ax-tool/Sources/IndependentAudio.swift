@@ -38,6 +38,7 @@ final class IndependentAudio: NSObject, AVCaptureAudioDataOutputSampleBufferDele
             session.startRunning()
             guard session.isRunning else { throw audioInputError("Microphone capture did not start.") }
             microphone = session
+            audio.queue.async { [audio, id = device.uniqueID] in audio.levels?.micID = id }
             interruption = NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
                 object: session, queue: nil) { [weak self] note in
                 let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
