@@ -232,6 +232,7 @@ describe("meetings config", () => {
             voice: {
                 enabled: true,
                 gate: { score: 0.45, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
+                exclusion: { enabled: true, margin: 0.15, maxConfidence: 0.69, minLines: 3, coherence: 0.82 },
                 minSeconds: 1.5,
                 compute: { priority: "normal", workers: "auto" },
             },
@@ -243,7 +244,10 @@ describe("meetings config", () => {
         const set = meetingsConfigSchema.parse({
             global: {
                 suggest: { words: { minOccurrences: 5 } },
-                speakerLabels: { seat: { enabled: false }, voice: { gate: { score: 0.55 }, minSeconds: 3 } },
+                speakerLabels: {
+                    seat: { enabled: false },
+                    voice: { gate: { score: 0.55 }, minSeconds: 3, exclusion: { enabled: false, minLines: 5 } },
+                },
                 capture: { audioRetentionDays: 90 },
                 playback: { tracks: "source" },
             },
@@ -253,6 +257,7 @@ describe("meetings config", () => {
         expect(set.speakerLabels.voice).toEqual({
             enabled: true,
             gate: { score: 0.55, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
+            exclusion: { enabled: false, margin: 0.15, maxConfidence: 0.69, minLines: 5, coherence: 0.82 },
             minSeconds: 3,
             compute: { priority: "normal", workers: "auto" },
         });
@@ -274,6 +279,10 @@ describe("meetings config", () => {
             { speakerLabels: { voice: { gate: { unsampledScore: 2 } } } },
             { speakerLabels: { voice: { gate: { strangerScore: -0.01 } } } },
             { speakerLabels: { voice: { gate: { strangerScore: 1.01 } } } },
+            { speakerLabels: { voice: { exclusion: { margin: -0.1 } } } },
+            { speakerLabels: { voice: { exclusion: { minLines: 0 } } } },
+            { speakerLabels: { voice: { exclusion: { coherence: 1.1 } } } },
+            { speakerLabels: { voice: { exclusion: { maxConfidence: 1.1 } } } },
             { speakerLabels: { voice: { minSeconds: -1 } } },
             { speakerLabels: { voice: { minSeconds: 61 } } },
             { speakerLabels: { voice: { compute: { priority: "low" } } } },

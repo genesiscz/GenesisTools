@@ -2594,20 +2594,23 @@ test("voice preview measures in memory, returns refusals and current names, and 
         throw new Error("preview must not save a clock");
     });
     const update = spyOn(store, "update").mockRejectedValue(new Error("preview must not save a record"));
-    const propose = spyOn(labelsModule, "proposeSpeakerLabels").mockImplementation(async (safe, options) => {
-        expect(options.seat.enabled).toBe(false);
-        expect((await safe.sound()).tracks[0]?.clock).toBe("measured");
-        return [
-            {
-                labeler: "voice",
-                index: 0,
-                seat: "mic",
-                score: 0.4,
-                reason: "unsampled-present",
-                next: { person: p6Bob.person, score: 0 },
-            },
-        ];
-    });
+    const propose = spyOn(labelsModule, "proposeSpeakerLabels").mockImplementation(
+        async (safe, settings, _presence, options) => {
+            expect(settings.seat.enabled).toBe(true);
+            expect(options?.voiceOnly).toBe(true);
+            expect((await safe.sound()).tracks[0]?.clock).toBe("measured");
+            return [
+                {
+                    labeler: "voice",
+                    index: 0,
+                    seat: "mic",
+                    score: 0.4,
+                    reason: "unsampled-present",
+                    next: { person: p6Bob.person, score: 0 },
+                },
+            ];
+        }
+    );
     p6VoiceSpies.push(
         saved,
         update,
