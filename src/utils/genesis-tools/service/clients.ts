@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { RequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import type { PersonRequest, RequestOutcome } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import type { ServiceClientMethod } from "@genesiscz/utils/genesis-tools/capability/needs";
@@ -23,6 +24,14 @@ const HELLO_TIMEOUT_MS = 5_000;
 
 export function genesisToolsServiceDir(): string {
     return toolDataDir("genesis-tools");
+}
+
+/**
+ * The checkout this code runs from (src/utils/genesis-tools/service/ is four levels below it), as a decoded path. The
+ * service exits once a module it loaded from here changed, so the next caller starts the new actions and schemas.
+ */
+export function genesisToolsSourceRoot(): string {
+    return fileURLToPath(new URL("../../../../", import.meta.url));
 }
 
 /** An explicit isolated directory is required for transport tests; the user's service is never contacted. */

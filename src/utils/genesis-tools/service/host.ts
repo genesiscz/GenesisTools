@@ -86,7 +86,14 @@ function actionOf(id: string): AnyActionDef | null {
 }
 
 export async function startGenesisToolsService(
-    options: { dir?: string; deps?: Partial<EngineDeps>; idleMs?: number; checkEveryMs?: number } = {}
+    options: {
+        dir?: string;
+        deps?: Partial<EngineDeps>;
+        idleMs?: number;
+        checkEveryMs?: number;
+        /** The checkout to watch: a changed module under it retires the service once no call runs. */
+        sourceRoot?: string;
+    } = {}
 ): Promise<{ status: "running" } | { status: "started"; host: ServiceHost<FaceState>; deps: EngineDeps }> {
     if (isTestProcess() && (!options.dir || options.dir === genesisToolsServiceDir())) {
         throw new Error("in-test: the user's service cannot start in a test");
@@ -294,6 +301,7 @@ export async function startGenesisToolsService(
             ),
         idleMs: options.idleMs ?? 600_000,
         checkEveryMs,
+        sourceRoot: options.sourceRoot,
         onCheck: () => {
             void repeatNotices();
         },

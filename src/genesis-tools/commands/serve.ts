@@ -1,5 +1,5 @@
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
-import { ensureGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/clients";
+import { ensureGenesisToolsService, genesisToolsSourceRoot } from "@genesiscz/utils/genesis-tools/service/clients";
 import { startGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/host";
 import { out } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
@@ -28,12 +28,13 @@ export function registerServeCommand(program: Command): void {
                     async (signal) => {
                         registerCliAppBuilder();
                         registerCliWorkDoor();
-                        const start = await startGenesisToolsService();
+                        const start = await startGenesisToolsService({ sourceRoot: genesisToolsSourceRoot() });
                         if (start.status === "running") {
                             out.printlnErr("A GenesisTools service is already running.");
                             return;
                         }
                         signal.addEventListener("abort", () => start.host.stop("signal"), { once: true });
+
                         process.once("exit", () => start.host.stop("exit"));
                         out.printlnErr(
                             `GenesisTools service listening on ${start.host.entry.socket} (pid ${process.pid})`
