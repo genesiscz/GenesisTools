@@ -1,18 +1,36 @@
+import SwiftUI
 import XCTest
 
 @testable import GenesisKit
 
 final class LiveRecordingStoreTests: XCTestCase {
     @MainActor
-    func testCompactControlsKeepTheirOwnFullWarningWhenPaused() throws {
+    func testCompactControlsKeepTheirOwnFullWarningWhenPaused() async throws {
+        let probing = FrameProbe.enabled
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = probing; FrameProbe.reset() }
         for state in ["recording", "paused"] {
             for id in ["first", "second"] {
-                let warning = "Display disconnected while recording \(id).\nReconnect it to resume."
+                let warning = (1...8).map { "Display \($0) disconnected during \(id)." }.joined(separator: "\n")
                 let data = try JSONSerialization.data(withJSONObject: [
                     "pid": 7, "startedAt": 1762195200000, "id": id, "state": state, "warning": warning,
                 ])
                 let recording = try XCTUnwrap(LiveRecordingStore.decode(data))
-                XCTAssertEqual(LiveRecordingControlsView.messages(for: recording), [warning])
+                FrameProbe.reset()
+                let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 280),
+                                      styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = NSHostingView(rootView:
+                    LiveRecordingControlsView(recording: recording, send: { _ in }, hide: {}).fixedSize())
+                window.orderInForSnapshot()
+                defer { window.close() }
+                let key = "live-recording.message." + warning
+                let deadline = ContinuousClock.now + .seconds(2)
+                while FrameProbe.frames[key] == nil, ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                let frame = try XCTUnwrap(FrameProbe.frames[key], "missing \(state) warning for \(id)")
+                XCTAssertGreaterThan(frame.height, 80, "all eight lines are visible")
             }
         }
     }
