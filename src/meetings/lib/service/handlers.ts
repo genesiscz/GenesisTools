@@ -292,6 +292,20 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 suggestion: suggestSeats({ record, ranges, lines, room: params.room, remote: params.remote }),
             };
         },
+        "meeting.thresholds.preview": async (params, context) => {
+            const store = storeOf();
+            const record = params.meeting ? recordOf(store, params.meeting) : undefined;
+            const configStore = deps.configStore?.() ?? new MeetingsConfigStore();
+            const source =
+                deps.config && !deps.configStore
+                    ? { config: await deps.config(), raw: {} }
+                    : await configStore.readWithSource();
+            const opened = record
+                ? OpenedMeeting.of(store, record, deps.linkedSource?.(record), source.config)
+                : undefined;
+            const { meetingThresholds } = await import("../thresholds");
+            return meetingThresholds({ ...source, opened, values: params.values, signal: context.signal });
+        },
         "meeting.suggest": async (params, context) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);

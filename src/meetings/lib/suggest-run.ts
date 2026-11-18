@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
-import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
+import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { type AcousticShare, collectEcho, echoForRange, readEchoCache } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
-import { type LineVoice, lineVoices, type VoiceFrame } from "@genesiscz/utils/meetings/voice-features";
+import { type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { collectVoiceFrames } from "@genesiscz/utils/meetings/voice-frame-cache";
 import { profiler } from "@genesiscz/utils/profile";
 import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
@@ -21,7 +24,7 @@ import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingReviewDoor, requestMeetingQuestionReview } from "./person-door";
 import { errorText } from "./shared";
-import { proposeSpeakerLabels } from "./speaker-labels";
+import { preparePreviewLabels, proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import { anchoredMeetingVoices } from "./voice";
@@ -120,14 +123,12 @@ export async function runSuggest(options: {
     /** The person area; tests pass a fake. */
     gt?: MeetingReviewDoor;
 }): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
-    const { store, record, rules } = options;
+    const { store, record } = options;
     using _run = prof.section("run");
-    const needsSpeakerInputs = rules.includes("speakers") || rules.includes("evidence");
-    const terms = rules.includes("terms");
     const warnings: string[] = [];
     const opened = prof.measure("open", () => OpenedMeeting.of(store, record));
     let ranVoicePass = false;
-    if (needsSpeakerInputs) {
+    if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
         const { voiceProgressForMeeting, voiceSignalForMeeting } = await import("./speaker-labels/voice");
         let beforeProgress = prof.enabled ? prof.start("before-first-voice-progress") : undefined;
         voiceProgressForMeeting.set(opened, (done, total) => {
@@ -151,8 +152,79 @@ export async function runSuggest(options: {
             options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
         )
     );
-    const meeting = await prof.measureAsync("source-meeting", () => opened.meeting());
     const config = await prof.measureAsync("config", () => opened.config());
+    const { inputs, features } = await readSuggestInputs(opened, collected, config, options, warnings, false);
+    let fresh: MeetingItem[] = [];
+    let retired: string[] = [];
+    try {
+        options.signal?.throwIfAborted();
+        using _save = prof.section("save");
+        const history = {
+            command: "suggest",
+            change: ranVoicePass ? VOICE_PASS_HISTORY : "suggest findings and questions",
+        };
+        await store.update(record.id, history, (current) => {
+            using _mutate = prof.section("save.compute");
+            ({ fresh, retired } = applySuggestionRun(current, inputs, config, features));
+        });
+    } finally {
+        inputs.wordCheck?.dispose();
+    }
+
+    if (options.actor) {
+        using _review = prof.section("review-request");
+        const warning = await requestMeetingQuestionReview({
+            actor: options.actor,
+            runId: randomUUID(),
+            record: store.read(record.id) ?? record,
+            ...(options.gt ? { gt: options.gt } : {}),
+        });
+        if (warning) {
+            warnings.push(warning);
+        }
+    }
+
+    return { fresh, retired, warnings };
+}
+
+// Retain the much smaller per-line features while editing, never the whole recording's pitch frames.
+const featureCache = new FileIdentityCache<{ spans: string; features: Promise<LineVoice[]> }>({ limit: 1 });
+
+async function previewFeatures(path: string, spans: ReturnType<typeof entrySpans>): Promise<LineVoice[]> {
+    const identity = fileIdentity(path);
+    const key = SafeJSON.stringify(spans);
+    const cached = featureCache.get(path, identity);
+    if (cached?.spans === key) {
+        return cached.features;
+    }
+    const features = voiceFrames({ audioPath: path }).then((frames) => lineVoices({ frames, spans }));
+    const entry = { spans: key, features };
+    if (identity) {
+        featureCache.set(path, identity, entry);
+    }
+    try {
+        return await features;
+    } catch (error) {
+        if (featureCache.get(path, identity) === entry) {
+            featureCache.delete(path);
+        }
+        throw error;
+    }
+}
+
+async function readSuggestInputs(
+    opened: OpenedMeeting,
+    collected: MeetingRecord,
+    config: MeetingsConfig,
+    options: { rules: SuggestRule[]; wordCheck?: WordCheckChoice; attendance?: string; attendanceId?: string },
+    warnings: string[],
+    preview: boolean
+) {
+    const { store, record } = opened;
+    const { rules } = options;
+    const needsSpeakerInputs = rules.includes("speakers") || rules.includes("evidence");
+    const terms = rules.includes("terms");
+    const meeting = await prof.measureAsync("source-meeting", () => opened.meeting());
     const evidence = needsSpeakerInputs ? await prof.measureAsync("evidence.read", () => opened.evidence()) : null;
 
     // Only indicator evidence that was read can show a gap: a terms-only run, or a source without it, has none to judge.
@@ -162,23 +234,10 @@ export async function runSuggest(options: {
         }
     }
 
-    let wordCheck: Awaited<ReturnType<OpenedMeeting["wordCheck"]>>["check"];
-
-    if (terms) {
-        warnings.push(...prof.measure("terms.context-warnings", () => contextWarnings(collected)));
-        const check = await prof.measureAsync("terms.word-check", () => opened.wordCheck(options.wordCheck));
-
-        if (!check.check && options.wordCheck !== "off") {
-            warnings.push(
-                `The word check is off (${check.reason}); the term rules skip every word with a Czech letter.`
-            );
-        }
-
-        wordCheck = check.check;
-    }
-
     const presenceRecord = opened.record;
-    const presence = await prof.measureAsync("presence", () => opened.suggestionPresence({ ...options, warnings }));
+    const presence = await prof.measureAsync("presence", () =>
+        preview ? opened.presence() : opened.suggestionPresence({ ...options, warnings })
+    );
     // Labels use stored stays even when this run requested a different attendance source.
     const storedPresence = !options.attendance && opened.record === presenceRecord ? presence : undefined;
     const energy = needsSpeakerInputs ? await prof.measureAsync("energy", () => opened.energy()) : undefined;
@@ -187,13 +246,18 @@ export async function runSuggest(options: {
     const echo =
         rules.includes("evidence") && audioPath && layout && layout !== "unknown"
             ? await prof.measureAsync("evidence.echo", () =>
-                  collectEcho({
+                  (preview ? readEchoCache : collectEcho)({
                       audioPath,
                       cachePath: join(store.folder(record.id), "evidence", "echo.json"),
                       layout,
                   })
               )
             : undefined;
+    if (preview && audioPath && layout && layout !== "unknown" && !echo) {
+        warnings.push(
+            "No saved echo evidence is available. A full run can collect it before scoring speaker proposals."
+        );
+    }
     const share: AcousticShare | undefined = echo
         ? Object.assign(
               (fromSec: number, toSec: number) =>
@@ -207,16 +271,23 @@ export async function runSuggest(options: {
           )
         : energy?.share;
     // One decode and one pitch pass serve both the room voice clustering and the quality questions.
-    let frames: VoiceFrame[] | undefined;
+    let features: LineVoice[] | undefined;
 
     if (rules.includes("evidence")) {
         try {
-            frames = await prof.measureAsync("evidence.voice-frames", async () =>
-                collectVoiceFrames({
-                    audioPath: await opened.audioPath(),
-                    cachePath: join(store.folder(record.id), "evidence", "voice-frames.bin"),
-                })
-            );
+            const path = await opened.audioPath();
+            const spans = entrySpans(meeting.transcript);
+            if (preview) {
+                features = await previewFeatures(path, spans);
+            } else {
+                const frames = await prof.measureAsync("evidence.voice-frames", () =>
+                    collectVoiceFrames({
+                        audioPath: path,
+                        cachePath: join(store.folder(record.id), "evidence", "voice-frames.bin"),
+                    })
+                );
+                features = prof.measure("evidence.line-voices", () => lineVoices({ frames, spans }));
+            }
         } catch (error) {
             log.warn({ error, meeting: record.id }, "voice change points unavailable");
             warnings.push("Voice change points unavailable; long stretches remain open for listening");
@@ -224,13 +295,10 @@ export async function runSuggest(options: {
     }
 
     const roomSize = collected.seats?.room.length ?? 0;
-    // One set of line voice features, on the transcript's own line spans, serves the clustering and the questions.
-    const features = prof.measure("evidence.line-voices", () =>
-        frames ? lineVoices({ frames, spans: entrySpans(meeting.transcript) }) : undefined
-    );
+    const roomFeatures = features;
     let voice: LineVoice[] | undefined;
 
-    if (features && roomSize > 1) {
+    if (roomFeatures && roomSize > 1) {
         // Clustering is optional evidence: without it the shared-device lines keep their candidates.
         try {
             const micChannel = energy?.calibration?.layout === "right-mic" ? 1 : 0;
@@ -238,7 +306,7 @@ export async function runSuggest(options: {
                 anchoredMeetingVoices({
                     record: collected,
                     transcript: meeting.transcript,
-                    features,
+                    features: roomFeatures,
                     voices: roomSize,
                     channel: micChannel,
                     micChannel,
@@ -277,21 +345,17 @@ export async function runSuggest(options: {
             ? { leaveSilenceMinutes: config.global.suggest.leaveSilenceMinutes }
             : {}),
         voice,
-        labels: needsSpeakerInputs
-            ? await prof.measureAsync("speakers.labels", () =>
-                  proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence, {
-                      applyAbove: config.global.suggest.applyAbove,
-                  })
-              )
-            : undefined,
-        listenBelow: config.global.suggest.listenBelow,
-        questionBudget: config.global.suggest.questionCap,
-        minPriority: config.global.playback.listen.minPriority,
+        labels:
+            needsSpeakerInputs && !preview
+                ? await prof.measureAsync("speakers.labels", () =>
+                      proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence, {
+                          applyAbove: config.global.suggest.applyAbove,
+                      })
+                  )
+                : undefined,
         points: await prof.measureAsync("summary-points", () => opened.summaryPoints()),
-        wordCheck,
         sourceLabels: languageSettings(config).render,
         restatedIdentifiers: config.global.suggest.restatedIdentifiers,
-        wordQuestions: { minOccurrences: config.global.suggest.words.minOccurrences },
         ...(needsSpeakerInputs
             ? {
                   samePerson: await prof.measureAsync("speakers.directory", () =>
@@ -301,82 +365,171 @@ export async function runSuggest(options: {
             : {}),
         now: new Date().toISOString(),
     };
-    let fresh: MeetingItem[] = [];
-    let retired: string[] = [];
-    const known = knownWord(wordCheck);
-    // A cancelled run saves nothing: the last moment to stop is before the one write.
-    options.signal?.throwIfAborted();
+    if (terms) {
+        warnings.push(...prof.measure("terms.context-warnings", () => contextWarnings(collected)));
+        const check = await prof.measureAsync("terms.word-check", () => opened.wordCheck(options.wordCheck));
 
-    try {
-        using _save = prof.section("save");
-        const history = {
-            command: "suggest",
-            change: ranVoicePass ? VOICE_PASS_HISTORY : "suggest findings and questions",
-        };
-        await store.update(record.id, history, (current) => {
-            using _mutate = prof.section("save.compute");
-            // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
-            if (terms) {
-                using _retire = prof.section("terms.retire");
-                const settled = settledTermItems({
-                    record: current,
-                    dictionary: inputs.dictionary,
-                    known,
-                    minOccurrences: config.global.suggest.words.minOccurrences,
-                });
-
-                for (const item of current.items) {
-                    const reason = settled.get(item.id);
-
-                    if (reason) {
-                        item.status = "rejected";
-                        item.decidedAt = inputs.now;
-                        item.evidence = { ...item.evidence, retired: reason };
-                    }
-                }
-
-                retired = [...settled.keys()];
-            }
-            const suggested = current.items.filter((item) => item.status === "suggested");
-            fresh = prof.measure("suggestItems", () => suggestItems({ ...inputs, record: current }));
-            retired.push(...suggested.filter((item) => item.status === "rejected").map((item) => item.id));
-            current.items.push(...fresh);
-            if (!rules.includes("evidence")) {
-                return;
-            }
-            using _quality = prof.section("evidence.quality");
-            const before = current.items.length;
-            const quality = new Set(
-                addQualityQuestions({
-                    record: current,
-                    entries: meeting.transcript,
-                    callMutes: new MutedCallLines(inputs.measuredLines ?? []),
-                    longStretchWords: config.global.suggest.longStretchWords,
-                    below: Math.max(0.7, config.global.suggest.applyAbove),
-                    features,
-                    channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
-                })
+        if (!check.check && options.wordCheck !== "off") {
+            warnings.push(
+                `The word check is off (${check.reason}); the term rules skip every word with a Czech letter.`
             );
-            fresh.push(...current.items.slice(before).filter((item) => quality.has(item.id)));
-        });
-    } finally {
-        wordCheck?.dispose();
-    }
-
-    if (options.actor) {
-        using _review = prof.section("review-request");
-        const warning = await requestMeetingQuestionReview({
-            actor: options.actor,
-            runId: randomUUID(),
-            record: store.read(record.id) ?? record,
-            ...(options.gt ? { gt: options.gt } : {}),
-        });
-        if (warning) {
-            warnings.push(warning);
         }
-    }
 
-    return { fresh, retired, warnings };
+        inputs.wordCheck = check.check;
+    }
+    return { inputs, features };
+}
+
+/** Recompute pending automatic findings. Keep every decision, manual item and target of a retained question. */
+function previewSeed(record: MeetingRecord): MeetingRecord {
+    const seed = structuredClone(record);
+    const retained = seed.items.filter(
+        (item) =>
+            item.status !== "suggested" ||
+            item.decision ||
+            (item.rules.length === 0 && !(item.kind === "question" && item.group === "long-stretch")) ||
+            item.rules.includes(MeetingRule.Agent) ||
+            item.rules.includes(MeetingRule.User) ||
+            (item.kind === "question" && item.group === "spot-check")
+    );
+    const keep = new Set(
+        retained.flatMap((item) => (item.kind === "question" ? [item.id, ...item.decides] : [item.id]))
+    );
+    seed.items = seed.items.filter((item) => keep.has(item.id));
+    return seed;
+}
+
+export async function previewSuggestionRuns(
+    opened: OpenedMeeting,
+    current: MeetingsConfig,
+    draft: MeetingsConfig,
+    signal?: AbortSignal
+) {
+    const record = opened.record;
+    const seed = previewSeed(record);
+    const warnings: string[] = [];
+    if (!record.platform || !record.attendance || !record.evidence?.channels) {
+        warnings.push(
+            "Preview uses the evidence already available. A full run can collect additional attendance and channel evidence."
+        );
+    }
+    const { inputs, features } = await readSuggestInputs(
+        opened,
+        seed,
+        current,
+        { rules: ["speakers", "evidence", "terms"] },
+        warnings,
+        true
+    );
+    try {
+        const run = (config: MeetingsConfig, labels: typeof inputs.labels, presence: typeof inputs.presence) => {
+            signal?.throwIfAborted();
+            const copy = structuredClone(seed);
+            applySuggestionRun(
+                copy,
+                {
+                    ...inputs,
+                    presence,
+                    measuredLines:
+                        inputs.evidence && presence !== inputs.presence
+                            ? lineEvidence(inputs.meeting.transcript, inputs.evidence, presence, inputs.energyMicShare)
+                            : inputs.measuredLines,
+                    labels,
+                    dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),
+                    leaveSilenceMinutes: config.global.suggest.leaveSilenceMinutes,
+                },
+                config,
+                features
+            );
+            return copy;
+        };
+        signal?.throwIfAborted();
+        const scoreLabels = await preparePreviewLabels(opened, current.global.speakerLabels, inputs.presence, signal);
+        const labels = await scoreLabels(current.global.speakerLabels.voice, current.global.suggest.applyAbove);
+        const before = run(current, labels, inputs.presence);
+        const staysChanged = draft.global.suggest.leaveSilenceMinutes !== current.global.suggest.leaveSilenceMinutes;
+        const next = staysChanged ? OpenedMeeting.of(opened.store, record, await opened.linked(), draft) : opened;
+        const presence = staysChanged ? await next.presence() : inputs.presence;
+        let afterLabels = labels;
+        if (staysChanged) {
+            const score = await preparePreviewLabels(next, draft.global.speakerLabels, presence, signal);
+            afterLabels = await score(draft.global.speakerLabels.voice, draft.global.suggest.applyAbove);
+        } else if (
+            current.global.suggest.applyAbove !== draft.global.suggest.applyAbove ||
+            !Bun.deepEquals(current.global.speakerLabels.voice, draft.global.speakerLabels.voice)
+        ) {
+            afterLabels = await scoreLabels(draft.global.speakerLabels.voice, draft.global.suggest.applyAbove);
+        }
+        return { before, after: run(draft, afterLabels, presence), transcript: inputs.meeting.transcript, warnings };
+    } finally {
+        inputs.wordCheck?.dispose();
+    }
+}
+
+/** Both a locked save and a preview on a detached record run these same rules. */
+function applySuggestionRun(
+    current: MeetingRecord,
+    inputs: Parameters<typeof suggestItems>[0],
+    config: MeetingsConfig,
+    features?: LineVoice[]
+) {
+    const retired: string[] = [];
+    const known = knownWord(inputs.wordCheck);
+    // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
+    if (inputs.rules.includes("terms")) {
+        using _retire = prof.section("terms.retire");
+        const settled = settledTermItems({
+            record: current,
+            dictionary: inputs.dictionary,
+            known,
+            minOccurrences: config.global.suggest.words.minOccurrences,
+            unknownCandidate: config.global.suggest.terms.unknownCandidate,
+        });
+
+        for (const item of current.items) {
+            const reason = settled.get(item.id);
+
+            if (reason) {
+                item.status = "rejected";
+                item.decidedAt = inputs.now;
+                item.evidence = { ...item.evidence, retired: reason };
+            }
+        }
+
+        retired.push(...settled.keys());
+    }
+    const suggested = current.items.filter((item) => item.status === "suggested");
+    const fresh = prof.measure("suggestItems", () =>
+        suggestItems({
+            ...inputs,
+            record: current,
+            termThresholds: config.global.suggest.terms,
+            listenBelow: config.global.suggest.listenBelow,
+            questionBudget: config.global.suggest.questionCap,
+            minPriority: config.global.playback.listen.minPriority,
+            wordQuestions: { minOccurrences: config.global.suggest.words.minOccurrences },
+        })
+    );
+    retired.push(...suggested.filter((item) => item.status === "rejected").map((item) => item.id));
+    current.items.push(...fresh);
+    if (!inputs.rules.includes("evidence")) {
+        return { fresh, retired };
+    }
+    using _quality = prof.section("evidence.quality");
+    const before = current.items.length;
+    const quality = new Set(
+        addQualityQuestions({
+            record: current,
+            entries: inputs.meeting.transcript,
+            callMutes: new MutedCallLines(inputs.measuredLines ?? []),
+            longStretchWords: config.global.suggest.longStretchWords,
+            below: Math.max(0.7, config.global.suggest.applyAbove),
+            features,
+            channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+        })
+    );
+    fresh.push(...current.items.slice(before).filter((item) => quality.has(item.id)));
+    return { fresh, retired };
 }
 
 /** What the term rules cannot read as the meeting saw it: a context file that is gone, or changed with no commit. */

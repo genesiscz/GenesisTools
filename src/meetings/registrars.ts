@@ -18,6 +18,7 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
         names: ["decide", "suggest", "rows", "items", "confirm", "reject", "reopen", "speakers", "transcript"],
         load: async () => (await import("./commands/items")).registerItemCommands,
     },
+    { names: ["thresholds"], load: async () => (await import("./commands/thresholds")).registerThresholdsCommand },
     { names: ["journal"], load: async () => (await import("./commands/journal")).registerJournalCommand },
     { names: ["evidence"], load: async () => (await import("./commands/evidence")).registerEvidenceCommand },
     { names: ["attendance"], load: async () => (await import("./commands/attendance")).registerAttendanceCommand },

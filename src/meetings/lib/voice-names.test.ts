@@ -18,13 +18,14 @@ import { OpenedMeeting } from "./opened-meeting";
 import { voicesPreview } from "./service/api";
 import * as soundModule from "./sound";
 import { meetingSound } from "./sound";
-import { mergeLineLabels, proposeSpeakerLabels, speakerLabelRule } from "./speaker-labels";
+import { mergeLineLabels, preparePreviewLabels, proposeSpeakerLabels, speakerLabelRule } from "./speaker-labels";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
 import { suggestItems } from "./suggest";
 import { correctionsOf } from "./transcript-corrections";
 import { nameByVoice, type VoiceLine } from "./voice-names";
 import { saveAnsweredVoiceSamples, undoAnsweredVoiceSamples } from "./voice-samples";
+import * as voices from "./voices";
 
 const settings = meetingsConfigSchema.parse({}).global.speakerLabels.voice;
 const alice = { person: "Alice Example", seat: "mic" as const, fromSec: 0, toSec: 100 };
@@ -483,7 +484,24 @@ async function sampledMeeting(project: string) {
     const opened = OpenedMeeting.of(store, record);
     const audio = `${store.folder(record.id)}/fixture.wav`;
     writeFileSync(audio, "fixture audio");
+    const embed = spyOn(voice, "embedVoiceLines").mockImplementation(async (options) =>
+        options.spans.map((span) => ({
+            index: span.index,
+            channels: [
+                {
+                    ...line([1, 0]).channels[0]!,
+                    quality: "ready",
+                    model: "fixture-model",
+                    embedding: [1, 0],
+                    source: { audioPath: audio, size: 13, mtimeMs: 1 },
+                    fromSec: span.fromSec,
+                    toSec: span.toSec,
+                },
+            ],
+        }))
+    );
     spies.push(
+        embed,
         spyOn(opened, "presence").mockResolvedValue([{ name: alice.person, fromSec: 0, toSec: 30 }]),
         spyOn(opened, "energy").mockResolvedValue({}),
         spyOn(opened, "evidence").mockResolvedValue({
@@ -514,25 +532,9 @@ async function sampledMeeting(project: string) {
                 fileFromSec: request.fromSec,
                 fileToSec: request.toSec,
             }),
-        }),
-        spyOn(voice, "embedVoiceLines").mockImplementation(async (options) =>
-            options.spans.map((span) => ({
-                index: span.index,
-                channels: [
-                    {
-                        ...line([1, 0]).channels[0]!,
-                        quality: "ready",
-                        model: "fixture-model",
-                        embedding: [1, 0],
-                        source: { audioPath: audio, size: 13, mtimeMs: 1 },
-                        fromSec: span.fromSec,
-                        toSec: span.toSec,
-                    },
-                ],
-            }))
-        )
+        })
     );
-    return { store, record, opened };
+    return { store, record, opened, embed };
 }
 
 test("voice preview uses this meeting's independent seats, indicators and human decisions without saving samples", async () => {
@@ -609,6 +611,35 @@ test("voice preview uses this meeting's independent seats, indicators and human 
     expect((await preview())[1]?.person).toBe(alice.person);
     record.items[1]!.decision!.actor = { kind: "agent", harness: "fixture", session: null };
     expect(await preview()).toEqual([]);
+    expect(readVoiceStore(record.project!).people).toEqual({});
+});
+
+test("threshold preview rescores a shared seat from local voice evidence without saving embeddings", async () => {
+    const { opened, record, embed } = await sampledMeeting("threshold-seeds-fixture");
+    // Only Alice appears in the source attendance. Bob shares her saved room seat.
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    record.items.push({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        suggestedAt: record.start!,
+        label: "Speaker 1",
+        speaker: alice.person,
+        fromSec: 0,
+        toSec: 5,
+        rules: [MeetingRule.SpeakingIndicator],
+        confidence: 0.75,
+        evidence: { transcriptLine: 0 },
+    });
+    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
+    const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 1 } } } } });
+    spies.push(spyOn(opened, "config").mockResolvedValue(config));
+    const { speakerLabels } = config.global;
+    const score = await preparePreviewLabels(opened, speakerLabels, await opened.presence());
+    expect((await score(speakerLabels.voice, 0.8))[1]?.person).toBeUndefined();
+    expect((await score(speakerLabels.voice, 0.7))[1]).toMatchObject({ person: alice.person, reason: "named" });
+    expect((await score(speakerLabels.voice, 0.72))[1]?.person).toBe(alice.person);
+    expect(embed.mock.calls.map(([options]) => options.cachePath)).toEqual([""]);
     expect(readVoiceStore(record.project!).people).toEqual({});
 });
 

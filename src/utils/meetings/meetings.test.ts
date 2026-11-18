@@ -39,6 +39,32 @@ function store(): MeetingsConfigStore {
 }
 
 describe("meetings config", () => {
+    test("old files load term cutoffs without being rewritten and each dictionary can override one fuzzy cutoff", async () => {
+        const config = store();
+        await config.storage.setConfig({ version: 7, global: { language: "cs" } });
+        const bytes = fs.readFileSync(config.path);
+        expect((await config.read()).global.suggest.terms).toEqual({
+            applyAbove: 0.8,
+            phonetic: 0.7,
+            unknownCandidate: 0.8,
+            fuzzy: { apply: 0.95, suggest: 0.8 },
+        });
+        expect(fs.readFileSync(config.path)).toEqual(bytes);
+        await config.update((raw) => {
+            raw.global = {
+                suggest: { terms: { fuzzy: { apply: 0.9, suggest: 0.7 } } },
+                dictionary: { fuzzy: { apply: 0.92 } },
+            };
+            raw.projects = { example: { dictionary: { fuzzy: { suggest: 0.75 } } } };
+        });
+        const read = await new MeetingsConfigStore(config.storage).read();
+        expect(resolveDictionary(read).fuzzy).toEqual({ apply: 0.92, suggest: 0.7 });
+        expect(resolveDictionary(read, { project: "example" }).fuzzy).toEqual({ apply: 0.92, suggest: 0.75 });
+        expect(
+            resolveDictionary(read, { project: "example", meeting: { fuzzy: { apply: 0.98 }, entries: [] } }).fuzzy
+        ).toEqual({ apply: 0.98, suggest: 0.75 });
+    });
+
     test("native sound mode defaults to pieces, accepts session and refuses other values without changing the file", async () => {
         expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("pieces");
         const config = store();

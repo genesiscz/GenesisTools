@@ -78,8 +78,17 @@ export class OpenedMeeting {
     }
 
     /** Opens a record. `linked` replaces the source the record names (a fake source in tests). */
-    static of(store: MeetingStore, record: MeetingRecord, linked?: LinkedSource): OpenedMeeting {
-        return new OpenedMeeting(store, record, linked);
+    static of(
+        store: MeetingStore,
+        record: MeetingRecord,
+        linked?: LinkedSource,
+        config?: MeetingsConfig
+    ): OpenedMeeting {
+        const opened = new OpenedMeeting(store, record, linked);
+        if (config) {
+            opened.configOnce = Promise.resolve(config);
+        }
+        return opened;
     }
 
     /** The record as the last explicit step left it. */

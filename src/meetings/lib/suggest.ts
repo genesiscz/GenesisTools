@@ -188,7 +188,7 @@ export function knownWord(wordCheck: WordCheck | undefined): (word: string) => b
  * An unknown word with a candidate from the meeting itself at 80 % or more is proposed even when its family is said
  * on purpose (MC5): the suggestion and the retirement of a later run read it the same way.
  */
-function strongMeetingCandidate(heard: string, evidence: unknown): boolean {
+function strongMeetingCandidate(heard: string, evidence: unknown, threshold: number): boolean {
     if (
         !isJsonObject(evidence) ||
         !Array.isArray(evidence.candidateSources) ||
@@ -207,7 +207,7 @@ function strongMeetingCandidate(heard: string, evidence: unknown): boolean {
                     isJsonObject(score) &&
                     score.term === source.term &&
                     typeof score.confidence === "number" &&
-                    score.confidence >= 0.8
+                    score.confidence >= threshold
             )
     );
 }
@@ -593,6 +593,7 @@ export function settledTermItems(options: {
     known?: (word: string) => boolean;
     /** A form heard this often is asked in the group `words`, never retired as said on purpose (default 2). */
     minOccurrences?: number;
+    unknownCandidate?: number;
 }): Map<string, string> {
     const { record } = options;
     const keep = dictionaryKeeps(options.dictionary);
@@ -615,7 +616,7 @@ export function settledTermItems(options: {
             item.rules.includes(MeetingRule.UnknownWord) &&
             onPurpose.has(heard) &&
             heardTimes(item) < (options.minOccurrences ?? DEFAULT_WORD_MIN_OCCURRENCES) &&
-            !strongMeetingCandidate(item.heard, item.evidence)
+            !strongMeetingCandidate(item.heard, item.evidence, options.unknownCandidate ?? 0.8)
         ) {
             settled.set(item.id, `"${item.heard}" is said on purpose (a word family or an English root)`);
         }
@@ -635,8 +636,17 @@ export function settledTermItems(options: {
     return settled;
 }
 
+interface TermThresholds {
+    phonetic: number;
+    unknownCandidate: number;
+}
+
 function termItems(
-    options: TermSources & { wordCheck?: WordCheck; wordQuestions?: { minOccurrences: number } }
+    options: TermSources & {
+        wordCheck?: WordCheck;
+        wordQuestions?: { minOccurrences: number };
+        termThresholds?: TermThresholds;
+    }
 ): NewItem[] {
     const { meeting, dictionary, wordCheck } = options;
     const docs = contextDocuments(options.record);
@@ -644,9 +654,14 @@ function termItems(
     // A word the dictionary keeps, or already replaces (a fix, a term's spoken form), needs no item and no question.
     const keep = dictionaryKeeps(dictionary);
     const context = termsFromText(meeting.title, "title");
-    const suspects = findSuspectTerms({ entries: meeting.transcript, vocab, context, wordCheck }).filter(
-        (suspect) => !keep.has(suspect.heard.toLowerCase())
-    );
+    const unknownCandidate = (options.termThresholds?.unknownCandidate ?? 0.8) * 100;
+    const suspects = findSuspectTerms({
+        entries: meeting.transcript,
+        vocab,
+        context,
+        wordCheck,
+        minConfidence: options.termThresholds && options.termThresholds.phonetic * 100,
+    }).filter((suspect) => !keep.has(suspect.heard.toLowerCase()));
     const heardUnknown = wordCheck
         ? findUnknownWords({
               entries: meeting.transcript,
@@ -667,7 +682,9 @@ function termItems(
     const unknown = heardUnknown.filter(
         (word) =>
             (word.candidates.some(
-                (candidate) => candidate.confidence >= 80 && (candidate.source === "meeting" || acronymStem(word.heard))
+                (candidate) =>
+                    candidate.confidence >= unknownCandidate &&
+                    (candidate.source === "meeting" || acronymStem(word.heard))
             ) ||
                 !onPurpose.has(word.heard.toLowerCase()) ||
                 word.occurrences >= minOccurrences) &&
@@ -762,7 +779,7 @@ function termItems(
         }),
         // Weak phonetic matches remain evidence; an observed one-edit match can be proposed.
         ...unknown.map((word): NewItem => {
-            const proposed = word.candidates.find((candidate) => candidate.confidence >= 80);
+            const proposed = word.candidates.find((candidate) => candidate.confidence >= unknownCandidate);
             return {
                 kind: "term",
                 status: "suggested",
@@ -1902,7 +1919,7 @@ export function evidenceItems(options: {
 }
 
 /** Two items say the same thing: the same kind on the same label, time or word. */
-function itemKey(item: NewItem | MeetingItem): string {
+export function itemKey(item: NewItem | MeetingItem): string {
     if (item.kind === "removal") {
         return `removal|${item.fromSec}|${item.heard}`;
     }
@@ -2211,6 +2228,7 @@ export function suggestItems(options: {
     wordQuestions?: { minOccurrences: number };
     /** No question under this priority (`playback.listen.minPriority`). */
     minPriority?: number;
+    termThresholds?: TermThresholds;
     /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
     wordCheck?: WordCheck;
     /** How a quote names its source (`languages.<global.language>.render`). */

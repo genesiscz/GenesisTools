@@ -268,10 +268,22 @@ people) on each look until the record has an end, for up to 10 min.
 ## Items
 
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
-confirmed items change a transcript. `--with-suggested` previews the rest: it applies a suggested item at
-`global.suggest.applyAbove` (0.7) or more, and one with no confidence (a person's own); a lower one is marked unclear,
-as an open question is. A range owned by an open speaker question stays a guess at every confidence until
-answered or confirmed.
+confirmed items change a transcript. With `--with-suggested`, proposed terms apply at
+`global.suggest.terms.applyAbove` (0.8) and speaker suggestions at `global.suggest.applyAbove` (0.7).
+Items without a confidence, such as a person's own correction, also apply. A range owned by an open speaker
+question stays a guess until answered or confirmed.
+
+`tools meetings thresholds <meeting>` lists the effective thresholds, their global values, defaults and sources.
+To see which proposals, questions and transcript lines change when a 79% term can apply, run:
+
+```sh
+tools meetings thresholds <meeting> --set term.applyAbove=0.7 --preview
+```
+
+Add `--json` for the before and after states, line times, text and reasons. The preview compares fresh automatic
+findings using the meeting's available evidence and preserves decisions and manual items on both copies. Omit
+`--preview` to save the named settings globally in one write. In the window, open **Context → Thresholds…**
+to compare draft values on that meeting. **Save globally** stores only the changed settings.
 
 Suggest uses the linked source's title and transcript clock when it looks up attendance, including for a renamed
 copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. A missing or
@@ -504,7 +516,11 @@ stripped (`jenezetkama` and `jenezetka` share `jenezet`). A level's `fuzzy: { ap
 0.8) decides what happens: at `apply` or above the word is replaced, from `suggest` up to `apply` `suggest` makes a
 term item with the score (rule `dictionary-fuzzy`), below nothing. `--meaning` stores what a term means.
 
-Levels merge in this order, a later one winning: global, the project, the meeting. Abbreviations expand at every
+The global Meetings thresholds `global.suggest.terms.fuzzy` supply the initial values. Each dictionary can
+override either cutoff independently. A meeting dictionary wins over its project, the project wins over the global
+dictionary, and the global dictionary wins over the global Meetings thresholds.
+
+Dictionary entries also merge in order from global to project to meeting. Abbreviations expand at every
 mention by default (`every`); `first` expands only the first mention in a transcript, `off` none.
 
 ## Config

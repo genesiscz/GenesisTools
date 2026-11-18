@@ -53,6 +53,7 @@ import type { MeetingsOverview } from "../overview";
 import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
 import { TRACK_KINDS } from "../sound";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
+import { thresholdsResultSchema, thresholdValuesSchema } from "../threshold-schema";
 import { wordTimingModelIdSchema } from "../word-timing-worker";
 
 /**
@@ -1451,6 +1452,15 @@ const meetingSeatsSuggest = defineMethod({
     effect: "read",
 });
 
+const meetingThresholdsPreview = defineMethod({
+    name: "meeting.thresholds.preview",
+    params: z.object({ meeting: meetingRef.optional(), values: thresholdValuesSchema }).strict(),
+    result: thresholdsResultSchema,
+    resultName: "{ thresholds, changes, counts, warnings }",
+    doc: "Read the global settings and effective thresholds. With a meeting and draft values, compare its automatic proposals and transcript on in-memory copies.",
+    effect: "read",
+});
+
 const meetingSuggest = defineMethod({
     name: "meeting.suggest",
     params: z.object({ meeting: meetingRef, attendance: z.string().optional() }).strict(),
@@ -1715,6 +1725,7 @@ export const meetingsApi = defineApi({
         meetingVoice,
         meetingSuggest,
         meetingSeatsSuggest,
+        meetingThresholdsPreview,
         transcript,
         wordTimingsGenerate,
         revisions,
