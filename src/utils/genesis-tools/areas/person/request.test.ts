@@ -580,8 +580,8 @@ test("a timed-out request action returns pending and keeps its posted request op
             },
         },
     });
-    const result = await runAreaAction(AREAS, "person.notice", input, deps, { timeoutMs: 5 });
-    // The post takes the request's write lock, so it can finish after a deadline this short.
+    // The presentation starts inside the deadline and never answers; the nested delivery shares the action's deadline.
+    const result = await runAreaAction(AREAS, "person.notice", input, deps, { timeoutMs: 1_000 });
     await withTimeout(presented.promise, 2_000, new Error("the request was never presented"));
     expect(
         result.status === "ran" &&
