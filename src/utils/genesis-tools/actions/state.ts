@@ -140,7 +140,12 @@ export function createStateStore(options: StateStoreOptions = {}): StateStore {
             writeFileSync(file, `${SafeJSON.stringify(withValue(current, area, key, value), null, 2)}\n`);
             return value;
         });
-        options.onChange?.({ area, key, value: written });
+        // The value is written; a listener that throws must not tell the caller the report failed.
+        try {
+            options.onChange?.({ area, key, value: written });
+        } catch (error) {
+            logger.warn({ error, area, key }, "genesis-tools state: the change listener threw");
+        }
     }
 
     return {

@@ -233,8 +233,13 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
             writeFileSync(file, `${SafeJSON.stringify(withKey(read(), target, stored), null, 4)}\n`);
         });
 
+        // The value is written; a listener that throws must not tell the caller the set failed.
         for (const listener of listeners) {
-            listener({ path, value: stored });
+            try {
+                listener({ path, value: stored });
+            } catch (error) {
+                logger.warn({ error, path }, "genesis-tools config: a change listener threw");
+            }
         }
     }
 

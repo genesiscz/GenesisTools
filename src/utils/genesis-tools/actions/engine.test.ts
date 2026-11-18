@@ -204,6 +204,19 @@ describe("runAreaAction", () => {
         ]);
     });
 
+    test("a throwing event listener changes neither the delivery to the others nor the way's outcome", async () => {
+        const seen: string[] = [];
+        const bus = createAreaEventBus();
+        bus.on(() => {
+            throw new Error("observer broke");
+        });
+        bus.on((event) => seen.push(event.event));
+        const outcome = await runAreaAction(REGISTRY, "demo.greet", { name: "fay" }, deps({ events: bus }));
+
+        expect(outcome.status === "ran" && outcome.via).toBe("fallback.last");
+        expect(seen).toEqual(["changed"]);
+    });
+
     test("native runs when its needs hold, and a missing way list ends unreachable with the manual text", async () => {
         const facts = fakeFacts({ appManifest: () => ({ buildId: "b1", parts: ["hub"], rpcMethods: null }) });
         const ran = await runAreaAction(REGISTRY, "demo.greet", { name: "bob" }, deps({ facts }));
