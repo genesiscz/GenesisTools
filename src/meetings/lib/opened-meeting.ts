@@ -7,6 +7,7 @@ import { collectEcho } from "@genesiscz/utils/meetings/echo";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import { MEETING_UNCHANGED, type MeetingRecord, type MeetingStore } from "@genesiscz/utils/meetings/record";
+import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -228,8 +229,9 @@ export class OpenedMeeting {
                 presence: roster,
                 speaking: evidence.speaking,
                 matchedVoices,
-                roomPeople: record.seats?.room,
-                ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: record.seats?.room }).ignored,
+                roomPeople: wholeMeetingRoomPeople(record.seats),
+                ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: wholeMeetingRoomPeople(record.seats) })
+                    .ignored,
             });
             return personStays({
                 record,
@@ -271,8 +273,12 @@ export class OpenedMeeting {
             presence,
             speaking: evidence.speaking,
             matchedVoices,
-            roomPeople: this.current.seats?.room,
-            ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: this.current.seats?.room }).ignored,
+            roomPeople: wholeMeetingRoomPeople(this.current.seats),
+            ignoredIndicator: assessIndicator({
+                lines,
+                selfName,
+                roomPeople: wholeMeetingRoomPeople(this.current.seats),
+            }).ignored,
         });
         return presence.map((stay) => {
             // A missing flag is legacy exact attendance (`Presence`): only a bound the platform did not record moves.

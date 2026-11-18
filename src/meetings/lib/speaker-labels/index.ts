@@ -2,6 +2,7 @@ import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { seatSpan } from "@genesiscz/utils/meetings/seats";
 import { readVoiceStore, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { profiler } from "@genesiscz/utils/profile";
 import { lineChannelShares } from "@genesiscz/utils/transcribe/evidence";
@@ -61,19 +62,47 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
     const energy = await prof.measureAsync("speakers.energy", () => opened.energy());
     const record = opened.record;
     const presence = storedPresence ?? (await prof.measureAsync("speakers.presence", () => opened.presence()));
-    // A named room seat can be the only attendance evidence for someone sharing another person's device.
-    const stays = [...(presence ?? [])];
-    const seated = [
-        ...(record.seats?.room.map((name) => ({ name, fromSec: 0, toSec: Infinity })) ?? []),
-        ...(record.seats?.remote ?? []),
-    ];
-    for (const seat of seated) {
-        if (
-            !stays.some((stay) => sameName(stay.name, seat.name)) &&
-            !record.participants.some((p) => sameName(p.name, seat.name) && p.stays?.length === 0)
-        ) {
-            stays.push({ name: seat.name, fromSec: seat.fromSec ?? 0, toSec: seat.toSec ?? Infinity });
+    const attended: LabelContext["attended"][number][] = [];
+    const ownMic = record.seats?.microphones?.find((group) => group.id === "self");
+    for (const row of record.seats?.room ?? []) {
+        const { name, fromSec = 0, toSec = Infinity } = seatSpan(row);
+        if (!ownMic || ownMic.people.some((person) => sameName(person, name))) {
+            attended.push({ person: name, seat: "mic", fromSec, toSec });
         }
+    }
+    for (const row of record.seats?.remote ?? []) {
+        const { name, fromSec = 0, toSec = Infinity } = row;
+        const calls = presence?.filter((stay) => sameName(stay.name, name)) ?? [];
+        if (calls.length) {
+            for (const call of calls) {
+                const start = Math.max(fromSec, call.fromSec);
+                const end = Math.min(toSec, call.toSec);
+                if (start < end) {
+                    attended.push({ person: name, seat: "call", fromSec: start, toSec: end });
+                }
+            }
+        } else if (
+            fromSec < toSec &&
+            !record.participants.some((p) => sameName(p.name, name) && p.stays?.length === 0)
+        ) {
+            attended.push({ person: name, seat: "call", fromSec, toSec });
+        }
+    }
+    // Only participants with no explicit seat inherit the old self/call fallback. Never fill a saved gap.
+    for (const stay of presence ?? []) {
+        if (
+            record.seats?.room.some((row) => sameName(seatSpan(row).name, stay.name)) ||
+            record.seats?.remote.some((row) => sameName(row.name, stay.name))
+        ) {
+            continue;
+        }
+        const self = record.participants.some((person) => person.self && sameName(person.name, stay.name));
+        attended.push({
+            person: stay.name,
+            seat: record.seats ? (self ? "mic" : "call") : undefined,
+            fromSec: stay.fromSec,
+            toSec: stay.toSec,
+        });
     }
     const context: LabelContext = {
         lines: prof.measure("speakers.line-evidence", () =>
@@ -97,24 +126,7 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
                 ];
             })
         ),
-        attended: stays.flatMap((stay): LabelContext["attended"][number][] => {
-            if (record.seats?.room.some((person) => sameName(person, stay.name))) {
-                return [{ person: stay.name, seat: "mic", fromSec: stay.fromSec, toSec: stay.toSec }];
-            }
-
-            const remote = record.seats?.remote.find((person) => sameName(person.name, stay.name));
-            const self = record.participants.some((person) => person.self && sameName(person.name, stay.name));
-            return [
-                {
-                    person: stay.name,
-                    // Saved seats state who is in the room: the owner speaks into the microphone, everybody else
-                    // attends through the call, so a person with no seat entry still shares the call seat.
-                    seat: remote ? "call" : record.seats ? (self ? "mic" : "call") : undefined,
-                    fromSec: Math.max(stay.fromSec, remote?.fromSec ?? stay.fromSec),
-                    toSec: Math.min(stay.toSec, remote?.toSec ?? stay.toSec),
-                },
-            ];
-        }),
+        attended,
         project: record.project,
     };
     async function forVoice(seats: LineLabel[], applyAbove?: number): Promise<LabelContext> {

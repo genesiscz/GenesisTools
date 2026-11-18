@@ -1,6 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { roomSeatNames, seatIntervalsFor } from "@genesiscz/utils/meetings/seats";
 import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Seat } from "./sound";
@@ -8,8 +9,10 @@ import type { Seat } from "./sound";
 export const VOICE_PASS_HISTORY = "suggest findings and questions with voice naming";
 
 export function voiceReadiness(record: MeetingRecord, { seatsHint = true } = {}) {
-    const room = record.seats?.room ?? [];
-    const remote = record.seats?.remote.map((seat) => seat.name) ?? [];
+    const room = roomSeatNames(record.seats);
+    const remote =
+        record.seats?.remote.filter((row) => (row.toSec ?? Infinity) > (row.fromSec ?? 0)).map((seat) => seat.name) ??
+        [];
     const seats = room.length + remote.length > 0;
     const attended = [
         ...room,
@@ -35,14 +38,16 @@ export function voiceReadiness(record: MeetingRecord, { seatsHint = true } = {})
             const prints = enrolled.filter(([person]) => sameName(person, name)).flatMap(([, value]) => value.samples);
             if (seats) {
                 const ownMic = record.participants.some((person) => person.self && sameName(person.name, name));
-                const seat =
-                    room.some((person) => sameName(person, name)) ||
-                    (ownMic && !remote.some((person) => sameName(person, name)))
-                        ? "mic"
-                        : "call";
-                occupied.add(seat);
-                if (prints.some((sample) => sample.seat === seat)) {
-                    covered.add(seat);
+                const intervals = record.seats && seatIntervalsFor(record.seats, name);
+                const sides = new Set<Seat>(intervals?.map((span) => span.side));
+                if (!sides.size && !record.seats?.remote.some((row) => sameName(row.name, name))) {
+                    sides.add(ownMic ? "mic" : "call");
+                }
+                for (const side of sides) {
+                    occupied.add(side);
+                    if (prints.some((sample) => sample.seat === side)) {
+                        covered.add(side);
+                    }
                 }
             }
             return [name, prints.length] as const;

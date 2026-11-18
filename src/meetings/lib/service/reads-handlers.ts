@@ -3,7 +3,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { channelEnergy, ENERGY_BLOCKS_PER_SEC } from "@genesiscz/utils/meetings/energy";
-import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { DEFAULT_SPAN_GAP_SEC, sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -190,22 +191,12 @@ export async function readRows(
             },
         ];
     });
-    // Each measurement is optional on its own: a failed energy read keeps the evidence and presence that did load.
-    const optional = <T>(name: string, read: Promise<T>) =>
-        read.catch((error: unknown) => {
-            logger.debug(
-                { error, meeting: record.id, measurement: name },
-                "a line measurement is unavailable for review rows"
-            );
-            return undefined;
-        });
-    const [evidence, energy, presence] = await Promise.all([
-        optional("evidence", opened.evidence()),
-        optional("energy", opened.energy()),
-        optional("presence", opened.presence()),
-    ]);
-    const atMic = [
-        ...(record.seats?.room ?? []),
+    const facts = await Promise.all([opened.evidence(), opened.energy(), opened.presence()]).catch((error: unknown) => {
+        logger.debug({ error, meeting: record.id }, "line measurements unavailable for review rows");
+        return undefined;
+    });
+    const [evidence, energy, presence] = facts ?? [];
+    const owners = [
         ...record.participants.filter((person) => person.self).map((person) => person.name),
         ...(evidence?.selfName ? [evidence.selfName] : []),
     ];
@@ -220,16 +211,27 @@ export async function readRows(
         presence,
         energy?.share
     ).map((line): WindowLineEvidence => {
-        const skipped = (swapSkips.get(line.startSec) ?? [])
-            .filter((skip) => skip.labels === undefined || skip.labels.includes(line.label))
-            .map((skip) => skip.id);
-        const remotePresent = record.seats
-            ? record.seats.remote.some(
-                  (person) =>
-                      line.startSec >= (person.fromSec ?? 0) &&
-                      (person.toSec === undefined || line.startSec < person.toSec) &&
-                      personPresent(record, person.name, line.startSec)
-              )
+        const skipped = record.items
+            .filter((item) => {
+                const swap = item.evidence?.swap;
+                return (
+                    item.kind === "speaker-range" &&
+                    item.status !== "rejected" &&
+                    typeof swap === "object" &&
+                    swap !== null &&
+                    "skipped" in swap &&
+                    Array.isArray(swap.skipped) &&
+                    swap.skipped.includes(line.startSec) &&
+                    (!("selfLabel" in swap) ||
+                        swap.selfLabel === line.label ||
+                        ("otherLabel" in swap && swap.otherLabel === line.label))
+                );
+            })
+            .map((item) => item.id);
+        const active = record.seats && activeSeatPeople({ seats: record.seats, atSec: line.startSec });
+        const atMic = [...owners, ...(active?.room ?? [])];
+        const remotePresent = active
+            ? active.remote.some((person) => personPresent(record, person.name, line.startSec))
             : presence?.some(
                   (person) =>
                       !person.self &&

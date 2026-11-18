@@ -1,7 +1,7 @@
 import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 /** What `set` changes on a meeting; a field left out stays as it is. */
-import type { MeetingSeats } from "@genesiscz/utils/meetings/seats";
+import { type MeetingSeats, meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 import { callerActor, type Decided, DecisionJournal } from "./decision-journal";
 import { resolveProject } from "./project";
 
@@ -72,6 +72,7 @@ export async function setMeetingFields(options: {
     onApplied?: (snapshot: { before: MeetingRecord; after: MeetingRecord }) => void;
 }): Promise<{ record: MeetingRecord; changes: string[]; decided: Decided }> {
     const { store, config, record, change } = options;
+    const seats = change.seats && meetingSeatsSchema.parse(change.seats);
     const labels = change.labels ?? [];
     const unlabel = change.unlabel ?? [];
 
@@ -111,7 +112,7 @@ export async function setMeetingFields(options: {
         meeting: record.id,
         action: {
             kind: "set",
-            ...(change.seats ? { seats: change.seats } : {}),
+            ...(seats ? { seats } : {}),
             ...(change.seatsIfAbsent ? { seatsIfAbsent: true } : {}),
             ...(project ? { project } : {}),
             ...(change.title ? { title: change.title } : {}),

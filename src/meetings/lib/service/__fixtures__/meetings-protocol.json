@@ -7001,7 +7001,32 @@
         "id": 120,
         "result": {
           "meeting": "2026-11-03-1400-retro",
-          "current": null,
+          "current": {
+            "room": [
+              "Reed Example",
+              {
+                "name": "Fern Example",
+                "fromSec": 60,
+                "toSec": 120
+              }
+            ],
+            "remote": [
+              {
+                "name": "Fern Example",
+                "label": "Guest",
+                "toSec": 60
+              }
+            ],
+            "microphones": [
+              {
+                "id": "self",
+                "people": [
+                  "Reed Example",
+                  "Fern Example"
+                ]
+              }
+            ]
+          },
           "suggestion": {
             "seats": {
               "room": [],

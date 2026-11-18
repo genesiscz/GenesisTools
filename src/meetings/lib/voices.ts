@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { roomSeatNames, seatIntervalsFor } from "@genesiscz/utils/meetings/seats";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import {
     addVoicePrint,
@@ -121,7 +122,7 @@ export async function listProjectVoices(
             ...Object.keys(voiceStore.people),
             ...meetings.flatMap((record) => [
                 ...record.participants.map((person) => person.name),
-                ...(record.seats?.room ?? []),
+                ...roomSeatNames(record.seats),
                 ...(record.seats?.remote.map((person) => person.name) ?? []),
             ]),
         ]);
@@ -170,7 +171,7 @@ export async function listProjectVoices(
                             .filter(
                                 (record) =>
                                     record.participants.some((entry) => sameName(entry.name, person)) ||
-                                    record.seats?.room.some((name) => sameName(name, person)) ||
+                                    roomSeatNames(record.seats).some((name) => sameName(name, person)) ||
                                     record.seats?.remote.some((entry) => sameName(entry.name, person))
                             )
                             .map((record) => record.id),
@@ -385,6 +386,11 @@ export async function addVoiceSample(
     const { lineEvidence } = await import("@genesiscz/utils/transcribe/evidence");
     const stays = (await opened.presence())?.filter((stay) => sameName(stay.name, options.person)) ?? [];
     // Only lines inside the interval can be enrolled, so only lines that start in it are measured.
+    const seated = record.seats && seatIntervalsFor(record.seats, options.person);
+    const hasSavedSeat = Boolean(
+        seated?.length || record.seats?.remote.some((row) => sameName(row.name, options.person))
+    );
+    const self = record.participants.some((person) => person.self && sameName(person.name, options.person));
     const eligible = lineEvidence(
         [...lines.entries],
         evidence ?? { segments: [], speaking: [] },
@@ -393,22 +399,19 @@ export async function addVoiceSample(
         { window: { fromSec: options.fromSec, toSec: options.toSec } }
     ).flatMap((line) => {
         const share = line.micShare ?? line.energyMic;
-        if (
-            share === undefined ||
-            share === 0.5 ||
-            line.startSec < options.fromSec ||
-            line.endSec > options.toSec ||
-            !stays.some((stay) => stay.fromSec <= line.startSec && line.endSec <= stay.toSec)
-        ) {
+        if (share === undefined || share === 0.5 || line.startSec < options.fromSec || line.endSec > options.toSec) {
             return [];
         }
         const seat: Seat = share > 0.5 ? "mic" : "call";
-        const room =
-            record.seats?.room.some((person) => sameName(person, options.person)) ||
-            record.participants.some((person) => person.self && sameName(person.name, options.person));
-        return record.seats && (room ? "mic" : "call") === seat
-            ? [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }]
-            : [];
+        const present = stays.some((stay) => stay.fromSec <= line.startSec && line.endSec <= stay.toSec);
+        const eligibleSeat = hasSavedSeat
+            ? seated?.some(
+                  (span) =>
+                      span.side === seat && span.fromSec <= line.startSec && line.endSec <= (span.toSec ?? Infinity)
+              ) &&
+              (seat === "mic" || present)
+            : record.seats && present && (self ? "mic" : "call") === seat;
+        return eligibleSeat ? [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }] : [];
     });
     const embedded = await embedSeatLines({ lines: eligible, sound: await opened.sound() });
     let samples = 0;

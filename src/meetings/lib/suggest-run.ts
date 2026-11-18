@@ -8,6 +8,7 @@ import { type AcousticShare, collectEcho, echoForRange, readEchoCache } from "@g
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { roomSeatNames } from "@genesiscz/utils/meetings/seats";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { collectVoiceFrames } from "@genesiscz/utils/meetings/voice-frame-cache";
@@ -300,7 +301,7 @@ async function readSuggestInputs(
         }
     }
 
-    const roomSize = collected.seats?.room.length ?? 0;
+    const roomSize = roomSeatNames(collected.seats).length;
     const roomFeatures = features;
     let voice: LineVoice[] | undefined;
 

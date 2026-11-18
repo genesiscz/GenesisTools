@@ -1,4 +1,5 @@
 import type { MeetingParticipant, MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import type { LineEvidence, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { IdentifiedDeparture } from "./departure";
@@ -172,12 +173,7 @@ export function personStays(options: {
                 stay.confidence = event.confidence ?? (event.reason === "attendance" ? 1 : 0.8);
             }
         }
-        if (
-            options.silenceMinutes &&
-            options.callSilent?.length &&
-            !person.self &&
-            !options.record.seats?.room.some((name) => sameName(name, person.name))
-        ) {
+        if (options.silenceMinutes && options.callSilent?.length && !person.self) {
             const lastSec = options.speaking
                 ? options.speaking.findLast(
                       (read) => !read.speakingUnknown && read.speaking.some((name) => sameName(name, person.name))
@@ -187,7 +183,15 @@ export function personStays(options: {
                           !line.speakingUnknown &&
                           Object.keys(line.speaking).some((name) => sameName(name, person.name))
                   )?.endSec;
-            if (lastSec !== undefined) {
+            if (
+                lastSec !== undefined &&
+                !(
+                    options.record.seats &&
+                    activeSeatPeople({ seats: options.record.seats, atSec: lastSec }).room.some((name) =>
+                        sameName(name, person.name)
+                    )
+                )
+            ) {
                 const stay = stays.findLast((one) => endable(one, lastSec));
                 const until = lastSec + options.silenceMinutes * 60;
                 const quiet = options.callSilent.find((span) => span.fromSec <= lastSec + 5 && span.toSec >= until);
