@@ -10,6 +10,9 @@ final class HubWorkModel: ObservableObject {
 
     init(source: WorkSource? = nil) {
         screen = WorkScreenModel(source: source ?? LiveWorkSource())
+        // No reload while nobody can see the hub (Hub/HubVisibility.swift); one when it shows again.
+        screen.setVisible(HubVisibility.shared.visible)
+        HubVisibility.shared.onChange(self) { model, visible in model.screen.setVisible(visible) }
     }
 
     func activate() { screen.activate() }

@@ -39,7 +39,7 @@ public final class WorkScreenModel: ObservableObject {
     private var trailing: Task<Void, Never>?
     /// A change arrived that no reload has read yet.
     private var stale = false
-    private(set) var visible = true
+    public private(set) var visible = true
     /// Reloads that a change of the store started, for tests and the bench.
     private(set) var changeReloads = 0
 
