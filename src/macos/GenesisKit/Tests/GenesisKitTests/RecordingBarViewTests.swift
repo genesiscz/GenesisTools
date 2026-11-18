@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import XCTest
 @testable import GenesisKit
@@ -48,6 +49,7 @@ final class RecordingBarViewTests: XCTestCase {
         model.expanded = false
         let panel = RecordingBarPanel(model: model, actions: RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in }),
                                       defaults: defaults)
+        panel.window.setAccessibilityIdentifier(name)
         panel.window.orderInForSnapshot()
         addTeardownBlock { @MainActor in
             panel.window.orderOut(nil)
@@ -57,20 +59,36 @@ final class RecordingBarViewTests: XCTestCase {
         return Fixture(engine: engine, model: model, panel: panel)
     }
 
-    // Walk the hosted controls themselves, without an external accessibility client or a privacy grant.
-    private func nodes(_ panel: RecordingBarPanel) -> [String: NSAccessibilityProtocol] {
-        panel.window.contentView?.layoutSubtreeIfNeeded()
-        panel.window.displayIfNeeded()
-        var result: [String: NSAccessibilityProtocol] = [:]
-        var seen = Set<ObjectIdentifier>()
-        func walk(_ node: NSAccessibilityProtocol) {
-            guard seen.insert(ObjectIdentifier(node)).inserted else { return }
-            if let id = node.accessibilityIdentifier() { result[id] = node }
-            for child in node.accessibilityChildren() ?? [] {
-                if let element = child as? NSAccessibilityProtocol { walk(element) }
-            }
+    private func attribute(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(node, name as CFString, &value) == .success else { return nil }
+        return value
+    }
+
+    // Read the fixture window as an AX client, as SnapshotViewTree does for hosted SwiftUI views.
+    private func nodes(_ panel: RecordingBarPanel) async throws -> [String: AXUIElement] {
+        let window = panel.window
+        await withCheckedContinuation { continuation in
+            RunLoop.main.perform { continuation.resume() }
         }
-        walk(panel.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+
+        let app = AXUIElementCreateApplication(getpid())
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        let windows = try XCTUnwrap(value as? [AXUIElement], "Reading the test process's AXWindows returned \(status)")
+        let id = try XCTUnwrap(window.accessibilityIdentifier())
+        let root = try XCTUnwrap(windows.first { attribute($0, kAXIdentifierAttribute) as? String == id },
+                                 "AXWindows did not include the recording panel \(id)")
+        var result: [String: AXUIElement] = [:]
+        var seen = Set<AXUIElement>()
+        func walk(_ node: AXUIElement) {
+            guard seen.insert(node).inserted else { return }
+            if let id = attribute(node, kAXIdentifierAttribute) as? String { result[id] = node }
+            for child in attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] { walk(child) }
+        }
+        walk(root)
         return result
     }
 
@@ -94,12 +112,15 @@ final class RecordingBarViewTests: XCTestCase {
         print("recorder snapshot: \(file.path) by \(shot.method) (\(Int(window.frame.width))×\(Int(window.frame.height)) pt)")
     }
 
-    private func assertBar(_ f: Fixture, shows phaseIDs: [String], file: StaticString = #filePath, line: UInt = #line) {
-        let tree = nodes(f.panel)
+    @discardableResult
+    private func assertBar(_ f: Fixture, shows phaseIDs: [String], file: StaticString = #filePath,
+                           line: UInt = #line) async throws -> [String: AXUIElement] {
+        let tree = try await nodes(f.panel)
         XCTAssertEqual(f.panel.window.frame.width, 520, accuracy: 1, file: file, line: line)
         for suffix in ["target", "microphone", "systemAudio", "camera", "frameRate", "expand", "hide"] + phaseIDs {
             XCTAssertNotNil(tree["recording.bar.\(suffix)"], "Missing \(suffix); rendered IDs \(tree.keys.sorted())", file: file, line: line)
         }
+        return tree
     }
 
     private func start(_ f: Fixture) async {
@@ -119,7 +140,7 @@ final class RecordingBarViewTests: XCTestCase {
 
     func testSetupKeepsTheFirstRowAndOffersRecord() async throws {
         let f = fixture()
-        assertBar(f, shows: ["record"])
+        try await assertBar(f, shows: ["record"])
         XCTAssertTrue(f.panel.window.styleMask.contains(.nonactivatingPanel))
         XCTAssertEqual(f.panel.window.sharingType, .none)
         XCTAssertGreaterThan(f.panel.windowID, 0)
@@ -127,24 +148,24 @@ final class RecordingBarViewTests: XCTestCase {
         try await snapshot(f, "setup")
     }
 
-    func testCountdownKeepsTheFirstRowAndOffersCancel() {
+    func testCountdownKeepsTheFirstRowAndOffersCancel() async throws {
         let f = fixture(countdown: 10)
         f.model.record()
-        assertBar(f, shows: ["countdown", "cancel"])
-        f.model.discard()
+        defer { f.model.discard() }
+        try await assertBar(f, shows: ["countdown", "cancel"])
     }
 
-    func testStartingKeepsTheFirstRowWithoutRecordingOrStop() async {
+    func testStartingKeepsTheFirstRowWithoutRecordingOrStop() async throws {
         let f = fixture()
         await start(f)
-        assertBar(f, shows: ["starting", "cancel"])
-        XCTAssertNil(nodes(f.panel)["recording.bar.stop"])
+        let tree = try await assertBar(f, shows: ["starting", "cancel"])
+        XCTAssertNil(tree["recording.bar.stop"])
     }
 
     func testRecordingKeepsTheFirstRowAndOffersPauseAndStop() async throws {
         let f = fixture()
         await firstFrame(f)
-        assertBar(f, shows: ["clock", "pause", "stop"])
+        try await assertBar(f, shows: ["clock", "pause", "stop"])
         try await snapshot(f, "recording")
     }
 
@@ -153,11 +174,11 @@ final class RecordingBarViewTests: XCTestCase {
         await firstFrame(f)
         f.model.pause()
         await f.model.pendingCommand?.value
-        assertBar(f, shows: ["clock", "resume", "stop"])
+        try await assertBar(f, shows: ["clock", "resume", "stop"])
         try await snapshot(f, "paused")
     }
 
-    func testFinishingKeepsTheFirstRowAndShowsSaving() async {
+    func testFinishingKeepsTheFirstRowAndShowsSaving() async throws {
         let f = fixture()
         await firstFrame(f)
         let saving = expectation(description: "Engine is saving the file")
@@ -170,8 +191,10 @@ final class RecordingBarViewTests: XCTestCase {
         }
         f.model.stop()
         await fulfillment(of: [saving], timeout: 2)
-        assertBar(f, shows: ["finishing"])
-        release?.resume()
+        do {
+            defer { release?.resume() }
+            try await assertBar(f, shows: ["finishing"])
+        }
         await f.model.pendingCommand?.value
     }
 
@@ -180,47 +203,50 @@ final class RecordingBarViewTests: XCTestCase {
         await firstFrame(f)
         f.model.stop()
         await f.model.pendingCommand?.value
-        assertBar(f, shows: ["use", "finder", "newRecording"])
+        try await assertBar(f, shows: ["use", "finder", "newRecording"])
         try await snapshot(f, "done")
     }
 
-    func testFailedKeepsTheFirstRowAndShowsTheError() async {
+    func testFailedKeepsTheFirstRowAndShowsTheError() async throws {
         let f = fixture()
         f.engine.failStart = true
         await start(f)
-        assertBar(f, shows: ["failed", "newRecording"])
+        try await assertBar(f, shows: ["failed", "newRecording"])
     }
 
     func testUnavailableCameraExposesTheEngineReasonAndIsDisabled() async throws {
         let f = fixture()
         await firstFrame(f)
-        let camera = try XCTUnwrap(nodes(f.panel)["recording.bar.camera"])
-        XCTAssertFalse(camera.isAccessibilityEnabled())
-        XCTAssertTrue(camera.accessibilityHelp()?.contains("The camera starts with the recording.") == true)
+        let tree = try await nodes(f.panel)
+        let camera = try XCTUnwrap(tree["recording.bar.camera"])
+        XCTAssertEqual(attribute(camera, kAXEnabledAttribute) as? Bool, false)
+        XCTAssertTrue((attribute(camera, kAXHelpAttribute) as? String)?.contains("The camera starts with the recording.") == true)
     }
 
     func testExpansionButtonChangesTheModelAndGrowsTheSameWindow() async throws {
         let f = fixture()
+        let compact = try await nodes(f.panel)
         let height = f.panel.window.frame.height
-        let button = try XCTUnwrap(nodes(f.panel)["recording.bar.expand"])
+        let button = try XCTUnwrap(compact["recording.bar.expand"])
         let growth = expectation(description: "Expanded controls fit inside the panel")
         let resize = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: f.panel.window)
             .first(where: { _ in f.panel.window.frame.height > height }).sink { _ in growth.fulfill() }
         defer { resize.cancel() }
-        XCTAssertTrue(button.accessibilityPerformPress())
+        XCTAssertEqual(AXUIElementPerformAction(button, kAXPressAction as CFString), .success)
         await fulfillment(of: [growth], timeout: 3)
         XCTAssertTrue(f.model.expanded)
-        assertBar(f, shows: ["quality", "stillFrameRate", "threshold", "placement"])
-        let threshold = try XCTUnwrap(nodes(f.panel)["recording.bar.threshold"])
-        XCTAssertFalse(threshold.isAccessibilityEnabled())
-        XCTAssertTrue(threshold.accessibilityHelp()?.contains("active and still frame rates are the same") == true)
+        let expanded = try await assertBar(f, shows: ["quality", "stillFrameRate", "threshold", "placement"])
+        let threshold = try XCTUnwrap(expanded["recording.bar.threshold"])
+        XCTAssertEqual(attribute(threshold, kAXEnabledAttribute) as? Bool, false)
+        XCTAssertTrue((attribute(threshold, kAXHelpAttribute) as? String)?.contains("active and still frame rates are the same") == true)
         try await snapshot(f, "setup-expanded")
         let collapsed = expectation(description: "Original panel height restored")
         let shrink = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: f.panel.window)
             .first(where: { _ in abs(f.panel.window.frame.height - height) < 1 }).sink { _ in collapsed.fulfill() }
         defer { shrink.cancel() }
-        let collapse = try XCTUnwrap(nodes(f.panel)["recording.bar.expand"])
-        XCTAssertTrue(collapse.accessibilityPerformPress())
+        let current = try await nodes(f.panel)
+        let collapse = try XCTUnwrap(current["recording.bar.expand"])
+        XCTAssertEqual(AXUIElementPerformAction(collapse, kAXPressAction as CFString), .success)
         await fulfillment(of: [collapsed], timeout: 3)
         XCTAssertFalse(f.model.expanded)
     }
