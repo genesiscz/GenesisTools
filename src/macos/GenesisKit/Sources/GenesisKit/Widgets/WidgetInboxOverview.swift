@@ -273,7 +273,8 @@ struct WidgetInboxOverview: View {
                 .font(.system(size: 11)).lineLimit(1)
         }
         .instantTooltip("Order of the inbox list")
-        .accessibilityLabel("Order of the inbox list")
+        .accessibilityLabel(feed ? "Order of the inbox list" : grouped ? "Show one list" : "Group by session")
+        .accessibilityHint("Opens the inbox order menu")
         .accessibilityIdentifier("widget.overview.grouping")
     }
 

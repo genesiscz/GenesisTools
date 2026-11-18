@@ -65,6 +65,9 @@ struct AgentWidgetPreview: View {
     let surface: WidgetSurfaceID
     /// The session whose cmux panel was opened from the row's accessibility action (the button itself exists only on the hovered row).
     @State private var cmuxPanelKey: String?
+    @GenReduceMotion private var reduceMotion
+
+    private var showsItems: Bool { model.previewView == "items" }
 
     var body: some View {
         let _ = RenderProbe.hit("widget.preview")
@@ -104,9 +107,9 @@ struct AgentWidgetPreview: View {
 
             HStack(spacing: 6) {
                 GenSegmentedTabs(
-                    "Show", items: WidgetPreviewChoices.filters.map { .init($0.value, $0.title) },
-                    selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
-                    minSegmentWidth: 70, identifier: "widget.preview.filter")
+                    "Show", items: WidgetPreviewChoices.filters.map { .init($0.value, $0.title) } + [.init("items", "Items")],
+                    selection: Binding(get: { model.previewSegment }, set: model.choosePreviewSegment),
+                    minSegmentWidth: 64, identifier: "widget.preview.filter", fillsWidth: true)
                 Spacer(minLength: 4)
                 // The order is named beside its icon, so reading it needs no hover (Martin, 2026-10-25).
                 Button {
@@ -126,18 +129,27 @@ struct AgentWidgetPreview: View {
                 .instantTooltip(sortTooltip)
                 .accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
                 .accessibilityHint("Click for the next order")
+                .opacity(showsItems ? 0 : 1)
+                .disabled(showsItems)
+                .allowsHitTesting(!showsItems)
+                .accessibilityHidden(showsItems)
                 IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
                            size: 10.5) {
                     model.showSettingsPage?("widgets.sessions#inbox-preview")
                 }.accessibilityLabel("Inbox preview settings")
-            }.padding(.horizontal, 5).padding(.bottom, 3)
+            }
+            .padding(.horizontal, 5).padding(.bottom, 3)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("widget.preview.view")
 
-            if model.previewList.isEmpty && model.snapshot == nil {
+            if model.snapshot == nil {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading sessions").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(showsItems ? "Loading inbox items" : "Loading sessions").font(.system(size: 11)).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
                     .accessibilityElement(children: .combine)
+            } else if showsItems {
+                itemsView
             } else if model.previewList.isEmpty {
                 HStack(spacing: 12) {
                     GenesisWidgetMark()
@@ -182,10 +194,56 @@ struct AgentWidgetPreview: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Like the row button's own popover: while it is open the edge panel must not collapse.
         .onChange(of: cmuxPanelKey) { _, key in model.cmuxPopoverOpen = key != nil }
-        .onDisappear { if cmuxPanelKey != nil { model.cmuxPopoverOpen = false } }
+        .onDisappear {
+            if cmuxPanelKey != nil { model.cmuxPopoverOpen = false }
+            model.closePreviewEntry()
+        }
+        .onChange(of: showsItems) { _, items in
+            if items { cmuxPanelKey = nil } else { model.closePreviewEntry() }
+        }
+        .onChange(of: model.inboxGeneration) { _, _ in
+            if let id = model.previewOpenItemID, !model.inboxOverviewItems.contains(where: { $0.id == id }) {
+                model.closePreviewEntry()
+            }
+        }
         // A row that leaves the list takes its popover along; its key must not hold the panel open.
         .onChange(of: model.previewList.map(\.key)) { _, keys in
             if let key = cmuxPanelKey, !keys.contains(key) { cmuxPanelKey = nil }
+        }
+    }
+
+    @ViewBuilder private var itemsView: some View {
+        if model.inboxFeeds.all.isEmpty {
+            HStack(spacing: 12) {
+                GenesisWidgetMark()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Nothing new in the inbox.").font(.system(size: 13, weight: .medium))
+                    Text("Questions, answers and finished work from every session land here.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
+        } else {
+            FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
+                         measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(model.inboxFeeds.all) { run in
+                        Section {
+                            ForEach(run.items, id: \.id) { item in
+                                let open = model.previewOpenItemID == item.id
+                                WidgetInboxEntry(model: model, item: item, open: open, focused: false,
+                                                 grouped: true, compact: true, surface: surface) {
+                                    GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                                        model.togglePreviewEntry(item)
+                                    }
+                                }
+                            }
+                        } header: {
+                            WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
+                                .padding(.top, run.id == model.inboxFeeds.all.first?.id ? 0 : 8)
+                        }
+                    }
+                }
+            }
         }
     }
 
