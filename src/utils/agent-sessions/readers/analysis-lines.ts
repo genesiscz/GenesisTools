@@ -10,11 +10,16 @@ import type { SessionCall, SessionFacts } from "../analysis-types";
  * (missing, unreadable, or failed midway), or undefined when every line was read: a reader turns that reason into
  * `{ supported: false, reason }`, never into an empty or partial list that reads as a real one.
  */
-export async function forEachTranscriptLine(path: string, visit: (line: string) => void): Promise<string | undefined> {
+export async function forEachTranscriptLine(
+    path: string,
+    visit: (line: string, lineNumber: number) => void
+): Promise<string | undefined> {
     try {
+        let lineNumber = 0;
         for await (const line of readLines(path)) {
+            lineNumber++;
             if (line.trim()) {
-                visit(line);
+                visit(line, lineNumber);
             }
         }
 

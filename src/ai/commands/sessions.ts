@@ -12,22 +12,33 @@ import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { registerSessionAnalysis } from "./sessions-analysis";
 import { registerSessionsReportCommand } from "./sessions-report";
 import { registerSessionsWorkflowsCommand } from "./sessions-workflows";
 
-function subagentRow(agent: SessionSubagent): string {
+export function resumeAdvice(agent: Pick<SessionSubagent, "lastAt" | "state" | "contextTokens">, now: number) {
+    const idleMs = Math.max(0, now - Date.parse(agent.lastAt));
+    const contextTokens = agent.contextTokens ?? null;
+    const coldLarge =
+        contextTokens === null ? null : agent.state !== "running" && idleMs > 300_000 && contextTokens > 300_000;
+    return { idleMs, contextTokens, coldLarge };
+}
+
+type ListedAgent = SessionSubagent & ReturnType<typeof resumeAdvice>;
+
+function subagentRow(agent: ListedAgent): string {
     const label = agent.workflow
         ? [agent.workflow.phase, agent.workflow.label ?? agent.id].filter(Boolean).join(": ")
         : [agent.name, agent.description ?? agent.agentType].filter(Boolean).join(": ");
     const model = agent.workflow ? `  ${agent.transcriptModel ?? agent.model ?? ""}` : "";
-    return `${agent.state.padEnd(8)} ${agent.lastAt}  ${label}${model}`.trimEnd();
+    return `${agent.state.padEnd(8)} ${agent.lastAt}  idle ${formatDuration(agent.idleMs)}  ctx ${agent.contextTokens ?? "?"}  ${label || agent.id}${model}${agent.coldLarge ? "  cache miss likely" : ""}`.trimEnd();
 }
 
 /**
  * One session's agents: the ones it and its agents started, then the agents of each Workflow tool run under their
  * run. A session with no run prints what it always printed.
  */
-function printSessionAgents(result: SessionAgents): void {
+function printSessionAgents(result: Omit<SessionAgents, "subagents"> & { subagents: ListedAgent[] }): void {
     const direct = result.subagents.filter((agent) => agent.workflow === null);
     const inRuns = result.subagents.length - direct.length;
     const runs = result.workflowRuns;
@@ -284,7 +295,12 @@ export function registerSessionsCommands(program: Command): void {
 
                 try {
                     const resolved = await resolveTranscript(sessionId, {}, parseProvider(opts.provider));
-                    const result = await listSessionAgents(resolved);
+                    const listed = await listSessionAgents(resolved);
+                    const now = Date.now();
+                    const result = {
+                        ...listed,
+                        subagents: listed.subagents.map((agent) => ({ ...agent, ...resumeAdvice(agent, now) })),
+                    };
                     if (opts.json) {
                         out.result(result);
                         return;
@@ -299,5 +315,6 @@ export function registerSessionsCommands(program: Command): void {
         );
 
     registerSessionsReportCommand(sessions);
+    registerSessionAnalysis(sessions);
     registerSessionsWorkflowsCommand(sessions);
 }

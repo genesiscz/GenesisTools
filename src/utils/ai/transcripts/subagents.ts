@@ -75,6 +75,8 @@ export interface SessionSubagent {
     startedAt: string | null;
     /** When its transcript was last written. */
     lastAt: string;
+    /** Last call's input plus output, or post-compaction size. Null when the bounded tail cannot answer. */
+    contextTokens?: number | null;
     state: SubagentState;
     /** The size of every file in `files`. */
     bytes: number;
@@ -302,7 +304,8 @@ function readAgentFresh(
         const tail = readSlice(fd, tailStart, stat.size - tailStart);
         const { first, records } = headAndTail(head, tail);
         const meta = readClaudeSubagentMeta(claudeSubagentFiles(dir, id).meta);
-        const working = resolveHistoryProvider("claude").reader.midWork(records);
+        const reader = resolveHistoryProvider("claude").reader;
+        const working = reader.midWork(records);
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
         const runId = claudeWorkflowRunOf(filePath);
         const agent: Omit<SessionSubagent, "state"> = {
@@ -323,6 +326,7 @@ function readAgentFresh(
             spawnPrompt: promptText(first, promptChars),
             startedAt: text(first?.timestamp),
             lastAt: new Date(stat.mtimeMs).toISOString(),
+            contextTokens: reader.analysis.lastContext(records),
             bytes: stat.size,
             filePath,
             files: [filePath],
@@ -381,6 +385,7 @@ function mergeAgentFiles(parts: SessionSubagent[]): SessionSubagent {
         isFork: parts.some((part) => part.isFork),
         transcriptModel: newest.transcriptModel ?? firstOf("transcriptModel"),
         lastAt: newest.lastAt,
+        contextTokens: newest.contextTokens,
         state: newest.state,
         bytes: parts.reduce((sum, part) => sum + part.bytes, 0),
         filePath: newest.filePath,
