@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import GenesisKit
+@testable import GenesisKitBase
 
 /// The client as every `tools` service's peer: an error answer keeps its `data` when the call asks for it (the Meetings
 /// service names each refusal in `data.code`), and the recorder's old name is the same type.
