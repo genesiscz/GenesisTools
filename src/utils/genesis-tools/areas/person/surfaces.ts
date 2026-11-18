@@ -35,17 +35,26 @@ export async function presentInSystemDialog(ctx: RequestContext): Promise<Reques
         stderr: "pipe",
         timeout,
     });
-    const [exitCode, stdout, stderr] = await Promise.all([
+    const [, stdout, stderr] = await Promise.all([
         proc.exited,
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
     ]);
-    if (exitCode !== 0 && stderr.trim()) {
-        return ctx.pass(`System dialog failed: ${stderr.trim()}`);
+    // `exited` resolves 143 for a process the timeout killed; `exitCode` stays null for it, so a deadline reads as one.
+    const answer = dialog.answer({ exitCode: proc.exitCode, stdout, stderr });
+    if (answer === "gave-up") {
+        return {
+            id: ctx.args.id,
+            status: "pending",
+            reason: "The system dialog was not answered before its deadline.",
+        };
+    }
+    if (answer === "failed") {
+        return ctx.pass(`System dialog failed: ${stderr.trim() || `exit ${proc.exitCode}`}`);
     }
     return {
         id: ctx.args.id,
-        status: dialog.approved({ exitCode, stdout }) ? "done" : "declined",
+        status: answer === "approved" ? "done" : "declined",
         reason: null,
         via: "system-dialog",
         method: "click",
