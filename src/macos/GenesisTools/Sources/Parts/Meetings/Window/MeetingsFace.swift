@@ -158,6 +158,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     /// The first window keeps the saved frame and answers forwarded requests; an extra one cascades from the key window.
     let primary: Bool
     private var window: NSWindow?
+    private var startFailureListening: MeetingsService.Listening?
     let model = MeetingsWindowModel()
 
     init(primary: Bool) {
@@ -188,6 +189,9 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
             window.delegate = self
             if primary { window.setFrameAutosaveName("GenesisToolsMeetings") }
             self.window = window
+            startFailureListening = model.service?.listenForStartFailure { [weak model = model] failure in
+                model?.notices.push(.meetingsFailure(failure))
+            }
             model.load()
         }
         apply(request, to: model)
@@ -208,6 +212,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         if request.sidePanel { model.sidePanelOpen = true }
         if let meeting = request.meeting {
             model.select(meeting, tab: request.tab)
+            model.detail?.restoreRowsForReopen()
         } else if let tab = request.tab {
             model.detail?.show(tab)
         }

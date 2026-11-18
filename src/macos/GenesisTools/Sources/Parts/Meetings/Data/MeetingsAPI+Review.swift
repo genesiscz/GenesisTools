@@ -454,7 +454,7 @@ extension MeetingsAPI {
     enum MeetingRows: MeetingsServiceMethod {
         static let name = "meeting.rows"
 
-        struct Params: Codable, Equatable {
+        struct Params: Codable, Hashable {
             var meeting: String
             /// `show` keeps the open questions under the priority line; nil or `hide` counts them.
             var lowPriority: String?
@@ -853,6 +853,24 @@ struct QuestionDetails: Decodable, Equatable {
     let decidedLines: [Line]
     let impact: Impact
     let raisedLines: [Line]?
+}
+
+extension MeetingDetailModel {
+    /// A reopened pane draws its last rows while its existing read refreshes them. Failures keep their Details.
+    var rowsForReopen: Loadable<ReviewRows> {
+        guard rows.value == nil,
+              let saved = service?.rowsRefresh.cached(.init(meeting: id, lowPriority: MeetingsPreferences.Rows.lowPriority.value(defaults) == .show ? "show" : nil)) else { return rows }
+        if let failure = rows.failure { return .failed(failure, previous: saved) }
+        return .loading(previous: saved)
+    }
+
+    func restoreRowsForReopen() {
+        let unread = rows == .idle
+        if rows.value == nil, let saved = rowsForReopen.value {
+            rows = .loading(previous: saved)
+            if unread { readRows(quiet: true) }
+        }
+    }
 }
 
 /// A decision's changed rows. Before values protect rows that a later decision changed while this reply travelled.

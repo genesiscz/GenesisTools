@@ -467,12 +467,15 @@ final class MeetingsService {
     private var lastStart: Date?
     private var failedStarts = 0
     private var starting: Task<Void, Never>?
+    private var startFailureListeners: [UUID: @MainActor (MeetingsCLI.Failure) -> Void] = [:]
+    private var startFailureReported = false
     private var subscription: MeetingsAPI.Subscribe.Params?
     /// Connects again while a subscription is kept and no connection is open (`resumeSubscription`).
     private var resuming: Task<Void, Never>?
     private var restoreFailures = 0
     private var callsInFlight = 0
     private var idleGeneration = 0
+    let rowsRefresh = MeetingsRowsRefresh()
 
     /// Who hears the subscription's events and its state, on the main actor (`listen`).
     private var listeners: [UUID: @MainActor (MeetingsServiceSignal) -> Void] = [:]
@@ -497,6 +500,11 @@ final class MeetingsService {
         let id = UUID()
         listeners[id] = handler
         return Listening { [weak self] in self?.listeners[id] = nil }
+    }
+
+    func listenForStartFailure(_ handler: @escaping @MainActor (MeetingsCLI.Failure) -> Void) -> Listening {
+        let id = UUID(); startFailureListeners[id] = handler
+        return Listening { [weak self] in self?.startFailureListeners[id] = nil }
     }
 
     /// A listener's hold: `cancel()` or its release stops the events.
@@ -526,6 +534,9 @@ final class MeetingsService {
     /// `data.code`, `no-transcript-source` and the like), and `CancellationError` when the task was cancelled (the
     /// service hears `$/cancel`).
     func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = 60) async throws -> M.Result {
+        let decision = M.Result.self == DecisionResult.self
+        if decision { rowsRefresh.beginWrite() }
+        defer { if decision { rowsRefresh.endWrite() } }
         guard let client = await connection() else {
             throw Unavailable(reason: "no Meetings service answers")
         }
@@ -537,6 +548,9 @@ final class MeetingsService {
         let span = HubPerf.begin("meetings.service", M.name)
         do {
             let result = try await Self.send(method, params, on: client, timeout: timeout)
+            if let decision = result as? DecisionResult, let patch = decision.rows, let entry = decision.entry {
+                rowsRefresh.apply(patch, token: entry.token)
+            }
             span.end()
             return result
         } catch {
@@ -905,10 +919,17 @@ final class MeetingsService {
             do {
                 try await start()
                 self?.failedStarts = 0
+                self?.startFailureReported = false
                 HubPerf.log("meetings.service: tools meetings serve --detach returned; the next read connects")
             } catch {
                 self?.failedStarts += 1
                 HubPerf.log("meetings.service: tools meetings serve --detach failed (\(self?.failedStarts ?? 0) in a row): \(error)")
+                if let self, !self.startFailureReported, !self.startFailureListeners.isEmpty {
+                    self.startFailureReported = true
+                    let failure = asFailure(error)
+                    let notice = MeetingsCLI.Failure(sentence: "The Meetings service could not start; this window uses its command instead. \(failure.sentence)", detail: failure.detail)
+                    for report in self.startFailureListeners.values { report(notice) }
+                }
             }
             self?.starting = nil
         }
@@ -1038,6 +1059,16 @@ struct MeetingsRead<Value: Decodable> {
         }
     }
 
+    /// All evidence readers of one answer burst share the read after its last write has settled.
+    static func service(_ method: MeetingsAPI.MeetingRows.Type, _ params: MeetingsAPI.MeetingRows.Params, orRun args: [String],
+                        timeoutSeconds: Int = 60) -> MeetingsRead where Value == ReviewRows {
+        MeetingsRead(args: args, timeoutSeconds: timeoutSeconds, method: method.name) { service in
+            try await service.rowsRefresh.read(params) {
+                try await service.call(method, params, timeout: TimeInterval(timeoutSeconds))
+            }
+        }
+    }
+
     /// Runs the read through the window's service (`MeetingsService.shared`) when it answers, else as the command.
     @MainActor
     func run() async throws -> Value {
@@ -1068,5 +1099,82 @@ struct MeetingsRead<Value: Decodable> {
     /// (`meeting-not-found`, `no-transcript-source`) is the answer, the same the command would give.
     static func runsCommand(after failure: MeetingsCLI.Failure) -> Bool {
         failure.code == "failed"
+    }
+}
+
+/// Only rows reads are shared. A cancelled pane cannot cancel another pane's evidence request; writes keep their
+/// own replies and patches. The quiet wait uses write completion, so a slow answer does not start a full rows read
+/// in the middle of the next answer. Failed reads are never cached. A read joins a pending one only while that one
+/// still waits or loads after the latest write: rows loaded before an answer would show the answered row open again.
+@MainActor
+final class MeetingsRowsRefresh {
+    typealias Key = MeetingsAPI.MeetingRows.Params
+    private final class Pending {
+        var task: Task<ReviewRows, Error>?
+        /// The write generation its load started at; nil while it waits for the writes to settle.
+        var loadedAt: Int?
+    }
+    private var pending: [Key: Pending] = [:]
+    private var writes = 0
+    private var generation = 0
+    private var lastWrite: ContinuousClock.Instant?
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+    private let quietWindow: Duration
+    private var snapshots: [Key: ReviewRows] = [:]
+    private var recent: [Key] = []
+    private(set) var completedReadCount = 0
+
+    init(quietWindow: Duration = .milliseconds(150)) { self.quietWindow = quietWindow }
+
+    func beginWrite() { writes += 1; generation += 1 }
+    func endWrite() {
+        writes -= 1
+        lastWrite = .now
+        if writes == 0 {
+            let waiters = writeWaiters; writeWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
+    func cached(_ key: Key) -> ReviewRows? { snapshots[key] }
+
+    func apply(_ patch: ReviewRowsPatch, token: String) {
+        for key in recent where key.meeting == patch.meeting {
+            guard let current = snapshots[key] else { continue }
+            let latest = Dictionary(uniqueKeysWithValues: current.rows.compactMap { row in row.decision.map { (row.id, $0.token) } })
+            snapshots[key] = patch.applying(to: current, token: token, latest: latest)
+        }
+    }
+
+    func read(_ key: Key, load: @escaping @MainActor () async throws -> ReviewRows) async throws -> ReviewRows {
+        if let joined = pending[key], let task = joined.task, joined.loadedAt.map({ $0 == generation }) ?? true {
+            return try await task.value
+        }
+        let entry = Pending()
+        let task = Task { @MainActor in
+            while true {
+                if self.writes > 0 { await withCheckedContinuation { self.writeWaiters.append($0) } }
+                let turn = self.generation
+                if let last = self.lastWrite {
+                    let remaining = self.quietWindow - last.duration(to: .now)
+                    if remaining > .zero { try await Task.sleep(for: remaining) }
+                }
+                if self.writes == 0 && turn == self.generation { break }
+            }
+            let turn = self.generation
+            entry.loadedAt = turn
+            let rows = try await load()
+            self.completedReadCount += 1
+            if turn == self.generation {
+                self.snapshots[key] = rows
+                self.recent.removeAll { $0 == key }; self.recent.append(key)
+                if self.recent.count > 8 { self.snapshots[self.recent.removeFirst()] = nil }
+            }
+            return rows
+        }
+        entry.task = task
+        pending[key] = entry
+        defer { if pending[key] === entry { pending[key] = nil } }
+        return try await task.value
     }
 }
