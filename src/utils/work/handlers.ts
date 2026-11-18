@@ -266,7 +266,10 @@ export const workHandlers: WorkHandlers = {
 
     async triage(p, session) {
         const rows = await triage(session.ctx.db, p.project, session.alive);
-        const withPairings = await pairingsForRows(session.ctx, rows.map((row) => row.ref));
+        const withPairings = await pairingsForRows(
+            session.ctx,
+            rows.map((row) => row.ref)
+        );
         return okReply("triage", rows.map(withPairings));
     },
 

@@ -5668,6 +5668,59 @@ public enum WorkTreeResultOption0ValueDataContainersItemState: String, Codable, 
     case value5 = "reopened"
 }
 
+public enum WorkTreeResultOption0ValueDataContainersItemPairingsItemState: String, Codable, Sendable {
+    case value0 = "in-sync"
+    case value1 = "pending"
+    case value2 = "held"
+    case value3 = "drift"
+    case value4 = "failed"
+}
+
+public enum WorkTreeResultOption0ValueDataContainersItemPairingsItemDriftDirection: String, Codable, Sendable {
+    case value0 = "local"
+    case value1 = "remote"
+}
+
+public struct WorkTreeResultOption0ValueDataContainersItemPairingsItem: Codable, Sendable {
+    public var `connector`: String
+    public var `displayName`: String?
+    public var `enabled`: Bool
+    public var `remoteKey`: String
+    public var `state`: WorkTreeResultOption0ValueDataContainersItemPairingsItemState
+    public var `driftDirection`: WorkTreeResultOption0ValueDataContainersItemPairingsItemDriftDirection?
+    public var `note`: String?
+    public init(`connector`: String, `displayName`: String? = nil, `enabled`: Bool, `remoteKey`: String, `state`: WorkTreeResultOption0ValueDataContainersItemPairingsItemState, `driftDirection`: WorkTreeResultOption0ValueDataContainersItemPairingsItemDriftDirection? = nil, `note`: String? = nil) {
+        self.`connector` = `connector`
+        self.`displayName` = `displayName`
+        self.`enabled` = `enabled`
+        self.`remoteKey` = `remoteKey`
+        self.`state` = `state`
+        self.`driftDirection` = `driftDirection`
+        self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `connector`; case `displayName`; case `enabled`; case `remoteKey`; case `state`; case `driftDirection`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`connector` = try box.decode(String.self, forKey: .`connector`)
+        self.`displayName` = try box.decodeIfPresent(String.self, forKey: .`displayName`)
+        self.`enabled` = try box.decode(Bool.self, forKey: .`enabled`)
+        self.`remoteKey` = try box.decode(String.self, forKey: .`remoteKey`)
+        self.`state` = try box.decode(WorkTreeResultOption0ValueDataContainersItemPairingsItemState.self, forKey: .`state`)
+        self.`driftDirection` = try box.decodeIfPresent(WorkTreeResultOption0ValueDataContainersItemPairingsItemDriftDirection.self, forKey: .`driftDirection`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`connector`, forKey: .`connector`)
+        try box.encodeIfPresent(`displayName`, forKey: .`displayName`)
+        try box.encode(`enabled`, forKey: .`enabled`)
+        try box.encode(`remoteKey`, forKey: .`remoteKey`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encodeIfPresent(`driftDirection`, forKey: .`driftDirection`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+    }
+}
+
 public enum WorkTreeResultOption0ValueDataContainersItemMembersItemState: String, Codable, Sendable {
     case value0 = "spotted"
     case value1 = "open"
@@ -5700,6 +5753,59 @@ public enum WorkTreeResultOption0ValueDataContainersItemMembersItemSeverity: Str
     case value3 = "low"
 }
 
+public enum WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemState: String, Codable, Sendable {
+    case value0 = "in-sync"
+    case value1 = "pending"
+    case value2 = "held"
+    case value3 = "drift"
+    case value4 = "failed"
+}
+
+public enum WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemDriftDirection: String, Codable, Sendable {
+    case value0 = "local"
+    case value1 = "remote"
+}
+
+public struct WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItem: Codable, Sendable {
+    public var `connector`: String
+    public var `displayName`: String?
+    public var `enabled`: Bool
+    public var `remoteKey`: String
+    public var `state`: WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemState
+    public var `driftDirection`: WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemDriftDirection?
+    public var `note`: String?
+    public init(`connector`: String, `displayName`: String? = nil, `enabled`: Bool, `remoteKey`: String, `state`: WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemState, `driftDirection`: WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemDriftDirection? = nil, `note`: String? = nil) {
+        self.`connector` = `connector`
+        self.`displayName` = `displayName`
+        self.`enabled` = `enabled`
+        self.`remoteKey` = `remoteKey`
+        self.`state` = `state`
+        self.`driftDirection` = `driftDirection`
+        self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `connector`; case `displayName`; case `enabled`; case `remoteKey`; case `state`; case `driftDirection`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`connector` = try box.decode(String.self, forKey: .`connector`)
+        self.`displayName` = try box.decodeIfPresent(String.self, forKey: .`displayName`)
+        self.`enabled` = try box.decode(Bool.self, forKey: .`enabled`)
+        self.`remoteKey` = try box.decode(String.self, forKey: .`remoteKey`)
+        self.`state` = try box.decode(WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemState.self, forKey: .`state`)
+        self.`driftDirection` = try box.decodeIfPresent(WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItemDriftDirection.self, forKey: .`driftDirection`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`connector`, forKey: .`connector`)
+        try box.encodeIfPresent(`displayName`, forKey: .`displayName`)
+        try box.encode(`enabled`, forKey: .`enabled`)
+        try box.encode(`remoteKey`, forKey: .`remoteKey`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encodeIfPresent(`driftDirection`, forKey: .`driftDirection`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+    }
+}
+
 public struct WorkTreeResultOption0ValueDataContainersItemMembersItem: Codable, Sendable {
     public var `ref`: String
     public var `state`: WorkTreeResultOption0ValueDataContainersItemMembersItemState
@@ -5709,7 +5815,8 @@ public struct WorkTreeResultOption0ValueDataContainersItemMembersItem: Codable, 
     public var `title`: String
     public var `project`: String
     public var `slot`: String?
-    public init(`ref`: String, `state`: WorkTreeResultOption0ValueDataContainersItemMembersItemState, `type`: WorkTreeResultOption0ValueDataContainersItemMembersItemType, `severity`: WorkTreeResultOption0ValueDataContainersItemMembersItemSeverity? = nil, `worker`: String? = nil, `title`: String, `project`: String, `slot`: String? = nil) {
+    public var `pairings`: [WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItem]?
+    public init(`ref`: String, `state`: WorkTreeResultOption0ValueDataContainersItemMembersItemState, `type`: WorkTreeResultOption0ValueDataContainersItemMembersItemType, `severity`: WorkTreeResultOption0ValueDataContainersItemMembersItemSeverity? = nil, `worker`: String? = nil, `title`: String, `project`: String, `slot`: String? = nil, `pairings`: [WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItem]? = nil) {
         self.`ref` = `ref`
         self.`state` = `state`
         self.`type` = `type`
@@ -5718,8 +5825,9 @@ public struct WorkTreeResultOption0ValueDataContainersItemMembersItem: Codable, 
         self.`title` = `title`
         self.`project` = `project`
         self.`slot` = `slot`
+        self.`pairings` = `pairings`
     }
-    private enum CodingKeys: String, CodingKey { case `ref`; case `state`; case `type`; case `severity`; case `worker`; case `title`; case `project`; case `slot` }
+    private enum CodingKeys: String, CodingKey { case `ref`; case `state`; case `type`; case `severity`; case `worker`; case `title`; case `project`; case `slot`; case `pairings` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`ref` = try box.decode(String.self, forKey: .`ref`)
@@ -5730,6 +5838,7 @@ public struct WorkTreeResultOption0ValueDataContainersItemMembersItem: Codable, 
         self.`title` = try box.decode(String.self, forKey: .`title`)
         self.`project` = try box.decode(String.self, forKey: .`project`)
         self.`slot` = try box.decodeIfPresent(String.self, forKey: .`slot`)
+        self.`pairings` = try box.decodeIfPresent([WorkTreeResultOption0ValueDataContainersItemMembersItemPairingsItem].self, forKey: .`pairings`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -5741,6 +5850,7 @@ public struct WorkTreeResultOption0ValueDataContainersItemMembersItem: Codable, 
         try box.encode(`title`, forKey: .`title`)
         try box.encode(`project`, forKey: .`project`)
         try box.encodeIfPresent(`slot`, forKey: .`slot`)
+        try box.encodeIfPresent(`pairings`, forKey: .`pairings`)
     }
 }
 
@@ -5751,17 +5861,19 @@ public struct WorkTreeResultOption0ValueDataContainersItem: Codable, Sendable {
     public var `title`: String
     public var `open`: Int
     public var `total`: Int
+    public var `pairings`: [WorkTreeResultOption0ValueDataContainersItemPairingsItem]?
     public var `members`: [WorkTreeResultOption0ValueDataContainersItemMembersItem]
-    public init(`ref`: String, `type`: WorkTreeResultOption0ValueDataContainersItemType, `state`: WorkTreeResultOption0ValueDataContainersItemState, `title`: String, `open`: Int, `total`: Int, `members`: [WorkTreeResultOption0ValueDataContainersItemMembersItem]) {
+    public init(`ref`: String, `type`: WorkTreeResultOption0ValueDataContainersItemType, `state`: WorkTreeResultOption0ValueDataContainersItemState, `title`: String, `open`: Int, `total`: Int, `pairings`: [WorkTreeResultOption0ValueDataContainersItemPairingsItem]? = nil, `members`: [WorkTreeResultOption0ValueDataContainersItemMembersItem]) {
         self.`ref` = `ref`
         self.`type` = `type`
         self.`state` = `state`
         self.`title` = `title`
         self.`open` = `open`
         self.`total` = `total`
+        self.`pairings` = `pairings`
         self.`members` = `members`
     }
-    private enum CodingKeys: String, CodingKey { case `ref`; case `type`; case `state`; case `title`; case `open`; case `total`; case `members` }
+    private enum CodingKeys: String, CodingKey { case `ref`; case `type`; case `state`; case `title`; case `open`; case `total`; case `pairings`; case `members` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`ref` = try box.decode(String.self, forKey: .`ref`)
@@ -5770,6 +5882,7 @@ public struct WorkTreeResultOption0ValueDataContainersItem: Codable, Sendable {
         self.`title` = try box.decode(String.self, forKey: .`title`)
         self.`open` = try box.decode(Int.self, forKey: .`open`)
         self.`total` = try box.decode(Int.self, forKey: .`total`)
+        self.`pairings` = try box.decodeIfPresent([WorkTreeResultOption0ValueDataContainersItemPairingsItem].self, forKey: .`pairings`)
         self.`members` = try box.decode([WorkTreeResultOption0ValueDataContainersItemMembersItem].self, forKey: .`members`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -5780,6 +5893,7 @@ public struct WorkTreeResultOption0ValueDataContainersItem: Codable, Sendable {
         try box.encode(`title`, forKey: .`title`)
         try box.encode(`open`, forKey: .`open`)
         try box.encode(`total`, forKey: .`total`)
+        try box.encodeIfPresent(`pairings`, forKey: .`pairings`)
         try box.encode(`members`, forKey: .`members`)
     }
 }
@@ -6186,6 +6300,59 @@ public enum WorkTriageResultOption0Status: String, Codable, Sendable {
 
 public enum WorkTriageResultOption0ValueV: Double, Codable, Sendable { case value0 = 1 }
 
+public enum WorkTriageResultOption0ValueDataItemPairingsItemState: String, Codable, Sendable {
+    case value0 = "in-sync"
+    case value1 = "pending"
+    case value2 = "held"
+    case value3 = "drift"
+    case value4 = "failed"
+}
+
+public enum WorkTriageResultOption0ValueDataItemPairingsItemDriftDirection: String, Codable, Sendable {
+    case value0 = "local"
+    case value1 = "remote"
+}
+
+public struct WorkTriageResultOption0ValueDataItemPairingsItem: Codable, Sendable {
+    public var `connector`: String
+    public var `displayName`: String?
+    public var `enabled`: Bool
+    public var `remoteKey`: String
+    public var `state`: WorkTriageResultOption0ValueDataItemPairingsItemState
+    public var `driftDirection`: WorkTriageResultOption0ValueDataItemPairingsItemDriftDirection?
+    public var `note`: String?
+    public init(`connector`: String, `displayName`: String? = nil, `enabled`: Bool, `remoteKey`: String, `state`: WorkTriageResultOption0ValueDataItemPairingsItemState, `driftDirection`: WorkTriageResultOption0ValueDataItemPairingsItemDriftDirection? = nil, `note`: String? = nil) {
+        self.`connector` = `connector`
+        self.`displayName` = `displayName`
+        self.`enabled` = `enabled`
+        self.`remoteKey` = `remoteKey`
+        self.`state` = `state`
+        self.`driftDirection` = `driftDirection`
+        self.`note` = `note`
+    }
+    private enum CodingKeys: String, CodingKey { case `connector`; case `displayName`; case `enabled`; case `remoteKey`; case `state`; case `driftDirection`; case `note` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`connector` = try box.decode(String.self, forKey: .`connector`)
+        self.`displayName` = try box.decodeIfPresent(String.self, forKey: .`displayName`)
+        self.`enabled` = try box.decode(Bool.self, forKey: .`enabled`)
+        self.`remoteKey` = try box.decode(String.self, forKey: .`remoteKey`)
+        self.`state` = try box.decode(WorkTriageResultOption0ValueDataItemPairingsItemState.self, forKey: .`state`)
+        self.`driftDirection` = try box.decodeIfPresent(WorkTriageResultOption0ValueDataItemPairingsItemDriftDirection.self, forKey: .`driftDirection`)
+        self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`connector`, forKey: .`connector`)
+        try box.encodeIfPresent(`displayName`, forKey: .`displayName`)
+        try box.encode(`enabled`, forKey: .`enabled`)
+        try box.encode(`remoteKey`, forKey: .`remoteKey`)
+        try box.encode(`state`, forKey: .`state`)
+        try box.encodeIfPresent(`driftDirection`, forKey: .`driftDirection`)
+        try box.encodeIfPresent(`note`, forKey: .`note`)
+    }
+}
+
 public enum WorkTriageResultOption0ValueDataItemGroup: String, Codable, Sendable {
     case value0 = "spotted"
     case value1 = "reopened-no-worker"
@@ -6304,6 +6471,7 @@ public struct WorkTriageResultOption0ValueDataItemNextItem: Codable, Sendable {
 
 public struct WorkTriageResultOption0ValueDataItem: Codable, Sendable {
     public var `ref`: String
+    public var `pairings`: [WorkTriageResultOption0ValueDataItemPairingsItem]?
     public var `group`: WorkTriageResultOption0ValueDataItemGroup
     public var `type`: WorkTriageResultOption0ValueDataItemType
     public var `state`: WorkTriageResultOption0ValueDataItemState
@@ -6316,8 +6484,9 @@ public struct WorkTriageResultOption0ValueDataItem: Codable, Sendable {
     public var `spottedBy`: String?
     public var `worker`: String?
     public var `next`: [WorkTriageResultOption0ValueDataItemNextItem]
-    public init(`ref`: String, `group`: WorkTriageResultOption0ValueDataItemGroup, `type`: WorkTriageResultOption0ValueDataItemType, `state`: WorkTriageResultOption0ValueDataItemState, `title`: String, `where`: String? = nil, `why`: String? = nil, `userSees`: String? = nil, `severity`: WorkTriageResultOption0ValueDataItemSeverity? = nil, `spottedIn`: WorkTriageResultOption0ValueDataItemSpottedIn? = nil, `spottedBy`: String? = nil, `worker`: String? = nil, `next`: [WorkTriageResultOption0ValueDataItemNextItem]) {
+    public init(`ref`: String, `pairings`: [WorkTriageResultOption0ValueDataItemPairingsItem]? = nil, `group`: WorkTriageResultOption0ValueDataItemGroup, `type`: WorkTriageResultOption0ValueDataItemType, `state`: WorkTriageResultOption0ValueDataItemState, `title`: String, `where`: String? = nil, `why`: String? = nil, `userSees`: String? = nil, `severity`: WorkTriageResultOption0ValueDataItemSeverity? = nil, `spottedIn`: WorkTriageResultOption0ValueDataItemSpottedIn? = nil, `spottedBy`: String? = nil, `worker`: String? = nil, `next`: [WorkTriageResultOption0ValueDataItemNextItem]) {
         self.`ref` = `ref`
+        self.`pairings` = `pairings`
         self.`group` = `group`
         self.`type` = `type`
         self.`state` = `state`
@@ -6331,10 +6500,11 @@ public struct WorkTriageResultOption0ValueDataItem: Codable, Sendable {
         self.`worker` = `worker`
         self.`next` = `next`
     }
-    private enum CodingKeys: String, CodingKey { case `ref`; case `group`; case `type`; case `state`; case `title`; case `where`; case `why`; case `userSees`; case `severity`; case `spottedIn`; case `spottedBy`; case `worker`; case `next` }
+    private enum CodingKeys: String, CodingKey { case `ref`; case `pairings`; case `group`; case `type`; case `state`; case `title`; case `where`; case `why`; case `userSees`; case `severity`; case `spottedIn`; case `spottedBy`; case `worker`; case `next` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`ref` = try box.decode(String.self, forKey: .`ref`)
+        self.`pairings` = try box.decodeIfPresent([WorkTriageResultOption0ValueDataItemPairingsItem].self, forKey: .`pairings`)
         self.`group` = try box.decode(WorkTriageResultOption0ValueDataItemGroup.self, forKey: .`group`)
         self.`type` = try box.decode(WorkTriageResultOption0ValueDataItemType.self, forKey: .`type`)
         self.`state` = try box.decode(WorkTriageResultOption0ValueDataItemState.self, forKey: .`state`)
@@ -6351,6 +6521,7 @@ public struct WorkTriageResultOption0ValueDataItem: Codable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(`ref`, forKey: .`ref`)
+        try box.encodeIfPresent(`pairings`, forKey: .`pairings`)
         try box.encode(`group`, forKey: .`group`)
         try box.encode(`type`, forKey: .`type`)
         try box.encode(`state`, forKey: .`state`)

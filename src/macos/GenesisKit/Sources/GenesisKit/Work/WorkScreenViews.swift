@@ -406,5 +406,7 @@ struct WorkNotifyCellView: View {
                         bullets: cell.layers.map { "\($0.layer): \($0.level ?? "not set")" })
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(cell.action) \(cell.level), decided by \(cell.from)")
+        // The grid holds a cell per type and action (130 today): each one rests its tooltip like a list row.
+        .liveRow(selected: false)
     }
 }
