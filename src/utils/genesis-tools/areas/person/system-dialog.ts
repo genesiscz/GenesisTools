@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { appleScriptString } from "@genesiscz/utils/macos/jxa";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 
 /**
  * The platform's own Approve or Cancel dialog (osascript, zenity or kdialog, PowerShell), started only from system
@@ -254,13 +255,18 @@ export const PERSON_DIALOGS: Partial<Record<NodeJS.Platform, PersonDialog>> = {
 export const DIALOG_SYSTEM: DialogSystem = {
     trusted: (path) => isTrustedDialogProgram(path),
     run: (argv, environment) => {
+        refuseHostEffectInTest("The system dialog", "Inject a DialogSystem in tests.");
         const proc = Bun.spawnSync(argv, {
             env: environment,
             stdout: "pipe",
             stderr: "pipe",
             timeout: (DIALOG_GIVE_UP_S + 10) * 1000,
         });
-        return { exitCode: proc.exitCode, stdout: new TextDecoder().decode(proc.stdout) };
+        return {
+            exitCode: proc.exitCode,
+            stdout: new TextDecoder().decode(proc.stdout),
+            stderr: new TextDecoder().decode(proc.stderr),
+        };
     },
     hasDisplay: () => env.device.hasGraphicalDisplay(),
 };
