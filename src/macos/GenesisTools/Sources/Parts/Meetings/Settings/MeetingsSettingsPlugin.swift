@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The meetings part in the feature settings window: Recording, Projects, Dictionary and Window. Added by the
+/// The meetings part in the feature settings window: Recording, Projects, Dictionary, Speakers and Window. Added by the
 /// executable (Sources/GenesisTools/Parts.swift); it knows no other part.
 @MainActor
 package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
@@ -19,8 +19,8 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
 
     package func settingsReady(page: String?) -> Bool {
         guard let page, page.hasPrefix("meetings.") else { return true }
-        // The Window page shows the engine's clip and tone from the config: a snapshot waits for that read only.
-        if page == MeetingsSettingsPages.windowPage {
+        // The Window and Speakers pages show the engine's values from the config: a snapshot waits for that read only.
+        if page == MeetingsSettingsPages.windowPage || page == MeetingsSettingsPages.speakersPage {
             guard let model else { return true }
             return model.settings.value != nil || model.settings.failure != nil
         }
@@ -44,6 +44,9 @@ enum MeetingsSettingsPages {
     static let recordingPage = "meetings.recording"
     static let projectsPage = "meetings.projects"
     static let dictionaryPage = "meetings.dictionary"
+    static let speakersPage = "meetings.speakers"
+    /// The card on the Speakers page that sets how the voice pass runs.
+    static let voicePassAnchor = "voicePass"
     static let windowPage = "meetings.window"
     /// The card on the Window page that picks where a transcript time plays.
     static let playbackAnchor = "playback"
@@ -72,6 +75,10 @@ enum MeetingsSettingsPages {
             NativeSettingsPage(id: dictionaryPage, title: "Dictionary", symbol: "character.book.closed", tint: .orange,
                                subtitle: "Words a transcript gets wrong, abbreviations and terms, globally and per project.") {
                 MeetingsDictionaryPage(model: model)
+            },
+            NativeSettingsPage(id: speakersPage, title: "Speakers", symbol: "person.wave.2", tint: .purple,
+                               subtitle: "How the engine names who spoke, and what the voice pass costs this Mac.") {
+                MeetingsSpeakersPage(model: model)
             },
             NativeSettingsPage(id: windowPage, title: "Window", symbol: "macwindow", tint: .gray,
                                subtitle: "How the Meetings window opens and what it shows.") {
