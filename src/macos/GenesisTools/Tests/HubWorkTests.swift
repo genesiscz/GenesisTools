@@ -9,6 +9,16 @@ import XCTest
 private final class FakeWorkSource: WorkSource {
     var performed: [WorkScreenAction] = []
     var projectNames = ["App", "Quiet"]
+    var requestedItems: [String] = []
+
+    func detail(ref: String) async throws -> WorkItemDetail {
+        requestedItems.append(ref)
+        guard ref == "h_build001:t2" else { throw WorkSourceError("No fixture item \(ref)") }
+        return try JSONDecoder().decode(WorkItemDetail.self, from: Data(#"""
+            {"item":{"id":"h_build001:t2","type":"task","title":"Verify the release","state":"active",
+                     "project":"App","body":"Inspect the release archive.","acceptance":"The archive contains the receipt."}}
+            """#.utf8))
+    }
 
     func projects() async throws -> [String] { projectNames }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
@@ -132,6 +142,40 @@ final class HubWorkTests: XCTestCase {
     func testTheWorkModeIsAModeOfTheHub() {
         XCTAssertTrue(HubMode.allCases.contains(.work))
         XCTAssertEqual(HubMode.work.title, "Work")
+    }
+
+    func testWidgetLinkSelectsTheWorkItemAndShowsItsAcceptance() async throws {
+        HubDefaults.isolate()
+        let ref = "h_build001:t2"
+        let args = try XCTUnwrap(HubRequest.arguments(fromLink: "genesis-tools://hub?work=h_build001%3At2"))
+        let request = HubRequest(args)
+        XCTAssertEqual(args, ["--work", ref])
+        XCTAssertEqual(request.launchMode, .work, "a cold launch must start in Work")
+        let source = FakeWorkSource()
+        let hub = HubModel(wantedSession: nil, tab: .transcript, workSource: source)
+        defer { hub.work.deactivate() }
+        await enter(hub.work)
+        hub.work.openProject("Quiet")
+        hub.work.screen.pane = .notify
+        XCTAssertTrue(hub.apply(request), "a widget click must navigate a running hub")
+        let loaded = expectation(description: "Work settled on the requested item")
+        hub.work.onLoaded = { loaded.fulfill() }
+        await fulfillment(of: [loaded], timeout: 3)
+        let view = HStack(spacing: 0) {
+            WorkProjectsList(screen: hub.work.screen, filter: "", openProject: hub.work.openProject).frame(width: 200)
+            WorkMain(screen: hub.work.screen)
+        }
+        .frame(width: 1000, height: 460).background(Color.black).environment(\.colorScheme, .dark)
+        let rep = try HubInboxUXTests.render(view: AnyView(view), name: "hub-work-linked", folderKey: "HUB_WORK_SHOTS")
+        let text = try HubInboxUXTests.drawnText(rep)
+        XCTAssertEqual(source.requestedItems, [ref])
+        XCTAssertEqual(hub.mode, .work)
+        XCTAssertEqual(hub.work.screen.project, "App")
+        XCTAssertEqual(hub.work.screen.pane, .items)
+        XCTAssertTrue(text.contains("The archive contains the receipt"), text)
+        XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work", ref])
+        XCTAssertTrue(hub.apply(HubRequest(["--mode", "work"])))
+        XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--mode", "work"])
     }
 
     /// A launch with `--mode work` settles on the Work screen's first load (the snapshot waits for it).

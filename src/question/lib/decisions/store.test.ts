@@ -2018,7 +2018,7 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             sessionId: "s-a",
             sessionTitle: "Release session",
             project: "App",
-            repoRoot: null,
+            repoRoot: "/fixture/App",
             branch: null,
             commitSha: null,
         };
@@ -2031,10 +2031,19 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
                     id,
                     project: "App",
                     title: "Prepare the release",
+                    description: "Follow .claude/plans/Release.md",
                     status: "claimed",
                     postedByContext: by,
                     createdTs: row.updatedTs,
-                    tasks: [{ id: "t1", text: "Write release notes", checked: true, denied: false }],
+                    tasks: [
+                        {
+                            id: "t1",
+                            text: "Write release notes",
+                            acceptanceCriteria: "Include the receipt",
+                            checked: true,
+                            denied: false,
+                        },
+                    ],
                 },
                 [{ event: { ev: "claim", id, by, ts: row.updatedTs, uid: "claim-1" }, outcome: null }]
             );
@@ -2054,7 +2063,20 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         expect(first.projects).toContain("App");
         expect(first.sessions).toContainEqual({ id: "codex:s-a", title: "Release session" });
         expect(first.claimedHandoffs).toMatchObject([
-            { id, members: [{ slot: "t1", state: "done", title: "Write release notes" }] },
+            {
+                id,
+                body: "Follow .claude/plans/Release.md",
+                repoRoot: "/fixture/App",
+                members: [
+                    {
+                        id: `${id}:t1`,
+                        slot: "t1",
+                        state: "done",
+                        title: "Write release notes",
+                        acceptance: "Include the receipt",
+                    },
+                ],
+            },
         ]);
         const noLog = await listLiveWidgetTasks({ ...options, file: join(dirname(files.file), "absent.jsonl") });
         expect(noLog.tasks).toEqual([]);
@@ -2063,6 +2085,25 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         expect(filtered.claimedHandoffs).toEqual([]);
         const exited = await listLiveWidgetTasks({ ...options, liveSessions: async () => new Set<string>() });
         expect(exited.claimedHandoffs).toEqual([]);
+    });
+
+    test("listed session tasks keep their ledger id and open the mirrored Work id", async () => {
+        const { files, row } = fixture();
+        const store = join(dirname(files.file), "work.db");
+        const db = openWorkDb(store);
+        const prompt = "Inspect the receipt. ".repeat(110);
+        try {
+            mirrorSessionTodos(db, [{ ...row, prompt }], () => "receipt1");
+        } finally {
+            db.close();
+        }
+        const snapshot = await listLiveWidgetTasks({ file: files.file, store, liveSessions: async () => new Set() });
+        expect(snapshot.tasks[0]).toMatchObject({
+            id: row.id,
+            workRef: "w_receipt1",
+            fullText: prompt,
+            truncated: true,
+        });
     });
 
     test("parity (work-items P9, list 2): every task the log shows today shows the same from the work store", () => {

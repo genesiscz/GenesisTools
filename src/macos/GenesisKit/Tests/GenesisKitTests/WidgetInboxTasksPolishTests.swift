@@ -131,6 +131,65 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertFalse(hidden.contains("Prepare the release"), hidden)
     }
 
+    /// Send a window-local click to the real member row. Vision locates its text so the same test can
+    /// press the old static row and the new button, without moving the pointer or opening the hub.
+    func testTaskRowAsksForWorkWithItsItemID() async throws {
+        let handoff = try JSONDecoder().decode(WidgetClaimedHandoff.self, from: Data(#"""
+            {"id":"h_release1","project":"App","title":"Prepare the release","claimants":[],
+             "members":[{"id":"w_build001","slot":"t2","title":"Inspect the archive","state":"active",
+                         "acceptance":"The archive contains the receipt."}]}
+            """#.utf8))
+        var snap = WidgetTaskSnapshot(tasks: [], total: 0, activeCount: 0, truncated: false,
+                                      sourcePath: "/fixture/work.db", sourceStamp: "fixture", projects: ["App"], sessions: [])
+        snap.claimedHandoffs = [handoff]
+        let data = try JSONEncoder().encode(snap)
+        let store = WidgetTasksStore(request: { _ in data })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        var urls: [URL] = []
+        let opened = expectation(description: "The task button requested a URL")
+        let card = WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
+            .frame(width: 432, height: 300, alignment: .top)
+            .environment(\.openURL, OpenURLAction { url in urls.append(url); opened.fulfill(); return .handled })
+            .background(Color.black).environment(\.colorScheme, .dark)
+        let drawn = try renderTasks(card, name: "widget-work-linked")
+        XCTAssertTrue(drawn.contains("Inspect the archive"), drawn)
+        let host = NSHostingView(rootView: card)
+        let window = NSPanel(contentRect: NSRect(x: -10000, y: -10000, width: 432, height: 300),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.order(.below, relativeTo: 0)
+        defer { window.close() }
+        window.displayIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let ocr = VNRecognizeTextRequest()
+        ocr.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains("Inspect the archive") == true })
+        let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)
+        func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        // Supply mouse-up before mouse-down enters a control's tracking loop.
+        NSApp.postEvent(try mouse(.leftMouseUp), atStart: true)
+        window.sendEvent(try mouse(.leftMouseDown))
+        if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+            window.sendEvent(up)
+        }
+        await fulfillment(of: [opened], timeout: 2)
+        let url = try XCTUnwrap(urls.first)
+        XCTAssertEqual(url.scheme, "genesis-tools")
+        XCTAssertEqual(url.host, "hub")
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                       [URLQueryItem(name: "work", value: "w_build001")])
+    }
+
     func testATickShowsAtOnceRunsBesideAnotherAndStaysVisibleWithUndo() async throws {
         let first = task()
         let second = task("t_2_fixture", title: "Feed the cat")
