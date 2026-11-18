@@ -408,7 +408,8 @@ const speakerLabelsSchema = z.object({
                     priority: z.enum(VOICE_COMPUTE_PRIORITIES).default("normal"),
                     /**
                      * Worker processes that embed lines side by side. `auto` takes what is free when the pass starts:
-                     * the performance cores minus the one-minute load average, at least one and at most four.
+                     * the idle cores of a one-second CPU sample, no more than the performance cores, at least one and
+                     * at most four (`voiceWorkerCount`).
                      */
                     workers: z
                         .union([z.literal("auto"), z.number().int().min(1).max(MAX_VOICE_WORKERS)])
@@ -419,16 +420,24 @@ const speakerLabelsSchema = z.object({
         .prefault({}),
 });
 
+/** What a voice pass finds free when it starts: the performance cores, and the cores a CPU sample found idle. */
+export interface VoiceFreeCores {
+    performanceCores: number;
+    idleCores: number;
+}
+
 /**
- * The worker count `auto` means right now: the performance cores minus the one-minute load average, at least one and at
- * most four, read once when a pass starts. A busy Mac (load 100 to 700 from agent builds, 2026-11-18) gets one worker.
+ * The worker count `auto` means right now: the idle cores, no more than the performance cores, at least one and at most
+ * four, read once when a pass starts. Idle cores, not the load average: on this Mac the one-minute load sat at 10 to 30
+ * while a CPU sample found 5 to 9 of 16 cores idle (2026-11-18), and a load rule gave one worker where four ran in 25 s
+ * instead of 88 s for the same CPU seconds. A Mac with every core busy still gets one worker.
  */
-export function voiceWorkerCount(workers: "auto" | number, free: { performanceCores: number; load1: number }): number {
+export function voiceWorkerCount(workers: "auto" | number, free: VoiceFreeCores): number {
     if (workers !== "auto") {
         return workers;
     }
 
-    return Math.max(1, Math.min(4, Math.floor(free.performanceCores - free.load1)));
+    return Math.max(1, Math.min(4, Math.floor(Math.min(free.performanceCores, free.idleCores))));
 }
 
 /** The audio a clip keeps before and after the heard stretch. */

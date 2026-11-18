@@ -671,21 +671,22 @@ describe("voice worker start", () => {
         expect(background.prefix).toEqual(existsSync("/usr/sbin/taskpolicy") ? ["/usr/sbin/taskpolicy", "-b"] : []);
     });
 
-    test("auto workers read the free cores once: a loaded Mac gets one worker, a quiet one up to four", async () => {
+    test("auto workers read the free cores once: a busy Mac gets one worker, idle cores up to four", async () => {
         const config = meetingsConfigSchema.parse({});
         let reads = 0;
-        const reading = (load1: number) => () => {
+        const reading = (idleCores: number) => async () => {
             reads++;
-            return { performanceCores: 12, load1 };
+            return { performanceCores: 12, idleCores };
         };
-        expect((await voiceWorkerSettings(config, reading(0.4))).workers).toBe(4);
-        expect((await voiceWorkerSettings(config, reading(700))).workers).toBe(1);
+        expect((await voiceWorkerSettings(config, reading(7.9))).workers).toBe(4);
+        expect((await voiceWorkerSettings(config, reading(0.3))).workers).toBe(1);
         expect(reads).toBe(2);
         const fixed = meetingsConfigSchema.parse({
             global: { speakerLabels: { voice: { compute: { priority: "background", workers: 3 } } } },
         });
-        const settings = await voiceWorkerSettings(fixed, reading(700));
+        const settings = await voiceWorkerSettings(fixed, reading(0));
         expect(settings.workers).toBe(3);
         expect(settings.clearBackground).toBe(false);
+        expect(reads).toBe(2);
     });
 });

@@ -177,6 +177,30 @@ export function cpuBusyPercent(previous: CpuTicks, current: CpuTicks): number | 
     return Math.round(((user + system + nice) / total) * 1000) / 10;
 }
 
+/**
+ * CPU busy percent over a window of its own, `windowMs` from now, sharing nothing with `sampleCpuBusyPercent`: a
+ * long-lived process (the meetings service) would otherwise get the average since its last call, minutes ago. If no
+ * tick moved in the window it waits once more. Null when the kernel read is unavailable or the counters still did not
+ * move.
+ */
+export async function measureCpuBusyPercent(windowMs = CPU_SAMPLE_MIN_MS): Promise<number | null> {
+    const first = readCpuTicks();
+
+    if (!first) {
+        return null;
+    }
+
+    await Bun.sleep(windowMs);
+    let current = readCpuTicks();
+
+    if (current && cpuBusyPercent(first, current) === null) {
+        await Bun.sleep(windowMs);
+        current = readCpuTicks();
+    }
+
+    return current ? cpuBusyPercent(first, current) : null;
+}
+
 let lastSample: { ticks: CpuTicks; at: number } | null = null;
 
 /**

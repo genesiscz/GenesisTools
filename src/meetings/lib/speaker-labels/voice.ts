@@ -1,10 +1,11 @@
 import { availableParallelism, loadavg } from "node:os";
 import { join } from "node:path";
-import { readPerformanceCores } from "@genesiscz/utils/macos/host-stats";
+import { measureCpuBusyPercent, readPerformanceCores } from "@genesiscz/utils/macos/host-stats";
 import {
     type MeetingsConfig,
     MeetingsConfigStore,
     type VoiceComputePriority,
+    type VoiceFreeCores,
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -39,16 +40,20 @@ export function voiceWorkerStart(priority: VoiceComputePriority): VoiceWorkerSta
  */
 export async function voiceWorkerSettings(
     config?: MeetingsConfig,
-    free: () => { performanceCores: number; load1: number } = freeCores
+    free: () => Promise<VoiceFreeCores> = freeCores
 ): Promise<VoiceWorkerStart & { workers: number }> {
     const compute = (config ?? (await new MeetingsConfigStore().read())).global.speakerLabels.voice.compute;
-    return { ...voiceWorkerStart(compute.priority), workers: voiceWorkerCount(compute.workers, free()) };
+    const workers = compute.workers === "auto" ? voiceWorkerCount("auto", await free()) : compute.workers;
+    return { ...voiceWorkerStart(compute.priority), workers };
 }
 
-function freeCores(): { performanceCores: number; load1: number } {
+/** A one-second CPU sample (`measureCpuBusyPercent`); without the kernel read, all cores minus the one-minute load. */
+async function freeCores(): Promise<VoiceFreeCores> {
+    const cores = availableParallelism();
+    const busy = await measureCpuBusyPercent();
     return {
-        performanceCores: readPerformanceCores() ?? Math.max(1, Math.floor(availableParallelism() / 2)),
-        load1: loadavg()[0] ?? 0,
+        performanceCores: readPerformanceCores() ?? Math.max(1, Math.floor(cores / 2)),
+        idleCores: busy === null ? Math.max(0, cores - (loadavg()[0] ?? 0)) : (cores * (100 - busy)) / 100,
     };
 }
 
