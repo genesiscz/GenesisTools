@@ -2904,9 +2904,10 @@ test("voice readiness in show JSON counts attended people and requires one sampl
         await store.update(record.id, { command: "set", change: "seats" }, (current) => {
             current.seats = { room: [p6Alice.person, "Carol Example"], remote: [{ name: p6Bob.person }] };
         });
+        // One recorded stretch belongs to one person (the voice library refuses a second owner), so each gets its own.
         addVoicePrint(project, p6Alice.person, p6Print, "fixture-model");
-        addVoicePrint(project, "Visitor Example", p6Print, "fixture-model");
-        addVoicePrint(project, p6Bob.person, p6Print, "fixture-model");
+        addVoicePrint(project, "Visitor Example", { ...p6Print, fromSec: 10, toSec: 15 }, "fixture-model");
+        addVoicePrint(project, p6Bob.person, { ...p6Print, fromSec: 20, toSec: 25 }, "fixture-model");
         expect(await show()).toMatchObject({ voice: { seats: true, samples: 2, ready: false, hints: [backfill] } });
         addVoicePrint(project, p6Bob.person, { ...p6Print, track: "source-call", seat: "call" }, "fixture-model");
         expect(await show()).toMatchObject({

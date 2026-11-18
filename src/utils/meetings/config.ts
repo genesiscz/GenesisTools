@@ -389,7 +389,7 @@ export const DEFAULT_APPLY_ABOVE = 0.7;
 
 /**
  * The speaker labelers and their keys, one block per labeler (the axis is the labeler: a new labeler is one more
- * block). `seat` names a line by the seat it was heard on, `voice` by the voice samples kept per project.
+ * block). `seat` names a line by the seat it was heard on, `voice` by compatible samples in the voice library.
  */
 const speakerLabelsSchema = z.object({
     /** Minimum difference in median left-channel share between tagged mic and call audio. */
@@ -400,6 +400,10 @@ const speakerLabelsSchema = z.object({
     voice: z
         .object({
             enabled: z.boolean().default(true),
+            /** The samples prediction may consult. Browsing and corrections carry their own scope. */
+            sampleScope: z.enum(["all", "project"]).default("all"),
+            /** Mean cosine below which a sample is offered for human review. */
+            outlierBelow: z.number().min(-1).max(1).default(0.5),
             /** When a voice match is good enough to name a line (cosine scores, 0 to 1). */
             gate: z
                 .object({
