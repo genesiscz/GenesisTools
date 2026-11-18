@@ -95,8 +95,8 @@ final class TargetPulseTests: XCTestCase {
             XCTAssertNotNil(stroke.superlayer)
             XCTAssertTrue(stroke.superlayer === panel.contentView?.layer)
         }
-        XCTAssertEqual(f.strokes[0].path?.boundingBoxOfPath, spanning.offsetBy(dx: 320, dy: 40))
-        XCTAssertEqual(f.strokes[1].path?.boundingBoxOfPath, spanning.union(target))
+        assertRect(f.strokes[0].path?.boundingBoxOfPath, spanning.offsetBy(dx: 320, dy: 40))
+        assertRect(f.strokes[1].path?.boundingBoxOfPath, spanning.union(target))
         XCTAssertEqual(f.strokes.map { $0.submissions.count }, [1, 1])
         f.pulse.hover([spanning, target])
         XCTAssertEqual(f.strokes.map { $0.submissions.count }, [1, 1], "staying over a row does not restart its pulse")
@@ -209,5 +209,13 @@ final class TargetPulseTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(80))
         XCTAssertEqual(f.panels.map(\.isVisible), [false, true])
         XCTAssertEqual(f.strokes.map { $0.submissions.count }, [1, 1])
+    }
+}
+
+/// Rounded-rect paths carry floating-point noise (80.00000000000001); compare each edge within a thousandth.
+private func assertRect(_ actual: CGRect?, _ expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
+    guard let actual else { return XCTFail("no path", file: file, line: line) }
+    for (a, e) in [(actual.minX, expected.minX), (actual.minY, expected.minY), (actual.width, expected.width), (actual.height, expected.height)] {
+        XCTAssertEqual(a, e, accuracy: 0.001, file: file, line: line)
     }
 }

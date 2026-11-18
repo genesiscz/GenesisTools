@@ -100,7 +100,8 @@ struct CaptureOptions: Equatable {
         switch tab {
         case .windows: "A window movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
         case .apps: "An app movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
-        case .displays: nil
+        case .click: "A window movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
+        case .displays, .area: nil
         }
     }
 

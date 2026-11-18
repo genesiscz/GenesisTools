@@ -59,6 +59,12 @@ public final class TargetPulse {
         choice = nil
         hovered = rects
         draw(rects, reduceMotion: reduceMotion(), animate: true)
+        // Settle on a timer, not on Core Animation's completion: an overlay that is not rendered (a test, a display
+        // that sleeps) never reports one, and the two beats must not stay attached to a steady border.
+        schedule(after: .milliseconds(Int(Self.animationDuration * 1000))) { pulse in
+            guard pulse.choice == nil, pulse.hovered == rects else { return }
+            pulse.draw(rects, reduceMotion: pulse.reduceMotion(), animate: false)
+        }
     }
 
     /// Confirms a choice after the chosen window has had time to come forward.
