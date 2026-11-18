@@ -34,6 +34,7 @@ struct DisplaySwitchStep: Equatable {
 /// One selection for the whole editor, so ⌫, Esc, the lanes and the inspector agree on what is selected.
 enum EditorSelection: Equatable {
     case none
+    case layer(String)
     case clip(String)
     case zoom(String)
     case redaction(String)
@@ -92,7 +93,29 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 @Observable
 final class EditorModel {
     /// Set only by the edit path (EditorEdits.swift): what the recorder service answered, or the CLI saved.
-    var project: EditProject
+    var project: EditProject {
+        didSet {
+            if project.layers != oldValue.layers || project.camera != oldValue.camera || project.clips != oldValue.clips {
+                updateLayerRows()
+            }
+            if project.audio != oldValue.audio || project.source.video != oldValue.source.video {
+                if project.source.video != oldValue.source.video { sourceAudioFacts = nil }
+                updateSoundRows()
+            }
+        }
+    }
+    private(set) var layerRows: [EditorLayerRow] = []
+    private(set) var layerRowIDs: [String] = []
+    private(set) var rowClips: [TimelineMap.Placed] = []
+    private(set) var layersByID: [String: EditorLayerRow] = [:]
+    private(set) var soundRows: [EditorSoundRow] = []
+    @ObservationIgnored private var overviewRows: [EditorSoundRow] = []
+    private(set) var overviewPeaks: [Float] = []
+    private(set) var overviewMuted = false
+    @ObservationIgnored var focusedEditorRow: EditorRowFocus?
+    var requestedRowFocus: EditorRowFocus?
+    @ObservationIgnored private var fileWaveforms: [URL: Waveform] = [:]
+    private var sourceAudioFacts: EditProject.AudioFacts?
     let store: ProjectStore
     /// The edit session on the recorder service (EditorSession.swift); offline, edits run in `tools`.
     @ObservationIgnored let session: EditorSession
@@ -233,7 +256,12 @@ final class EditorModel {
         }
         store.onExternalChange = { [weak self] next in self?.fileChanged(next) }
         store.watch()
-        session.onOpened = { [weak self] next in self?.sessionOpened(next) }
+        updateLayerRows()
+        updateSoundRows()
+        session.onOpened = { [weak self] next in
+            self?.sessionOpened(next)
+            self?.readSourceAudioFacts()
+        }
         session.onOutsideChange = { [weak self] changed in self?.outsideChanged(action: changed.action) }
         session.start()
         commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
@@ -245,11 +273,9 @@ final class EditorModel {
         titleWatch.start()
         let video = URL(fileURLWithPath: project.source.video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
+        waveform.onLoaded = { [weak self] in self?.updateOverview() }
         waveform.load(video: video)
-        Task { [weak self] in
-            let count = (try? await AVURLAsset(url: video).loadTracks(withMediaType: .audio).count) ?? 0
-            self?.audioTrackCount = count
-        }
+        loadAudioTrackCount(video)
         loadNominalFps(asset)
         rebuild()
     }
@@ -388,6 +414,15 @@ final class EditorModel {
     /// The arrow keys: with a shape selected they nudge it by 0.2 % of the picture (⇧: 2 %); otherwise ← and → step
     /// a frame (⇧: a second) and ↑ ↓ do nothing. Esc deselects, which gives the keys back to the frame steps.
     func arrowKey(dx: Int, dy: Int, shift: Bool) {
+        if dy != 0, let focus = focusedEditorRow {
+            let ids = focus.isLayer ? layerRows.map(\.id) : soundRows.map(\.id)
+            if let i = ids.firstIndex(of: focus.id), ids.indices.contains(i + dy) {
+                let next = focus.withID(ids[i + dy])
+                requestedRowFocus = next
+                if next.isLayer { selectLayer(next.id) }
+            }
+            return
+        }
         if let id = selectedShape {
             let amount = shift ? 0.02 : 0.002
             nudgeShape(id, dx: Double(dx) * amount, dy: Double(dy) * amount)
@@ -404,7 +439,7 @@ final class EditorModel {
         let id: String
         switch selection {
         case let .zoom(item), let .redaction(item), let .text(item), let .shape(item), let .cameraHide(item): id = item
-        case .clip, .marker, .none:
+        case .clip, .marker, .layer, .none:
             show("Select a zoom, hidden part, text or shape to move it in time.", error: false)
             return
         }
@@ -460,7 +495,7 @@ final class EditorModel {
         case .redaction: tab = .hide
         case .text, .shape: tab = .text
         case .cameraHide: tab = .style
-        case .clip, .marker, .none: break
+        case .clip, .marker, .layer, .none: break
         }
         player.pause()
         seek(item.startUs)
@@ -644,7 +679,7 @@ final class EditorModel {
         case let .text(id): return project.texts?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
         case let .shape(id): return project.shapes?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
         case let .cameraHide(id): return project.camera?.hidden.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
-        case .clip, .marker, .none: return nil
+        case .clip, .marker, .layer, .none: return nil
         }
     }
 
@@ -661,6 +696,12 @@ final class EditorModel {
         case let .redaction(id): op = .unredact(EditOp.Unredact(id: id))
         case let .text(id): op = .untext(EditOp.Untext(id: id))
         case let .shape(id): op = .unshape(EditOp.Unshape(id: id))
+        case let .layer(id):
+            guard id != EditProject.cameraLayerID else {
+                edit([.layer(.init(id: id, hidden: true))])
+                return
+            }
+            op = .layerRemove(.init(id: id))
         case let .cameraHide(id): op = .cameraShow(EditOp.CameraShow(id: id))
         case let .marker(id, _):
             guard let id else {
@@ -718,7 +759,7 @@ final class EditorModel {
         let id: String
         switch selection {
         case let .zoom(item), let .redaction(item), let .text(item), let .shape(item), let .cameraHide(item): id = item
-        case .clip, .marker, .none:
+        case .clip, .marker, .layer, .none:
             show("Select a zoom, a hidden part or a text to duplicate it.", error: false)
             return
         }
@@ -731,7 +772,7 @@ final class EditorModel {
             case .text: Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }).map { self.selection = .text($0) }
             case .shape: Self.addedID(before, after, { ($0.shapes ?? []).map(\.id) }).map { self.selection = .shape($0) }
             case .cameraHide: Self.addedID(before, after, { ($0.camera?.hidden ?? []).map(\.id) }).map { self.selection = .cameraHide($0) }
-            case .clip, .marker, .none: break
+            case .clip, .marker, .layer, .none: break
             }
         }
     }
@@ -1095,7 +1136,18 @@ final class EditorModel {
     }
 
     /// The movie's sound tracks (a recording with the system sound and the microphone has two).
-    private(set) var audioTrackCount = 0
+    private(set) var audioTrackCount = 0 {
+        didSet { updateSoundRows() }
+    }
+
+    private func loadAudioTrackCount(_ video: URL) {
+        Task { [weak self] in
+            let count = (try? await AVURLAsset(url: video).loadTracks(withMediaType: .audio).count) ?? 0
+            guard let self, self.project.source.video == video.path else { return }
+            self.audioTrackCount = count
+            if count > 0, !self.session.isOnline { self.readSourceAudioFacts() }
+        }
+    }
 
     /// The movie track's nominal frame rate, which sets the export's rate and so its H.264 size budget
     /// (`EditRenderer.plannedOutput`); nil while it loads, which guesses 60.
@@ -1271,11 +1323,12 @@ final class EditorModel {
         let asset = asset
         let zoom = zoom
         let keep = clock.outUs
+        let facts = sourceAudioFacts
         renderTask = Task { [weak self] in
             let span = HubPerf.begin("recorder.editor.render", "\(project.clips.count) clips")
             do {
                 // The preview renders at most 1440 pixels high: a 4K source costs a quarter of the work per frame.
-                let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440)
+                let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440, audioFacts: facts)
                 span.end()
                 guard !Task.isCancelled, let self else { return }
                 self.reportRenderWarnings(rendered.warnings)
@@ -1312,6 +1365,8 @@ final class EditorModel {
         asset = AVURLAsset(url: video)
         filmstrip.load(video: video, durationUs: project.source.durationUs)
         waveform.load(video: video)
+        loadAudioTrackCount(video)
+        if session.isOnline { readSourceAudioFacts() }
         loadNominalFps(asset)
         rebuild()
     }
@@ -1770,6 +1825,8 @@ final class EditorModel {
     }
 
     func close() {
+        fileWaveforms.values.forEach { $0.cancel() }
+        waveform.cancel()
         finishGesture()
         session.stop()
         store.stopWatching()
@@ -1780,6 +1837,127 @@ final class EditorModel {
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
+    }
+}
+
+// MARK: - Timeline rows
+
+extension EditorModel {
+    private func updateLayerRows() {
+        rowClips = TimelineMap.placed(project)
+        layerRows = EditorLayerRow.rows(in: project, clips: rowClips)
+        layerRowIDs = layerRows.map(\.id)
+        layersByID = Dictionary(uniqueKeysWithValues: layerRows.map { ($0.id, $0) })
+        if case let .layer(id) = selection, layersByID[id] == nil { selection = .none }
+    }
+
+    var inspectedLayer: EditorLayerRow? {
+        guard tab == .style else { return nil }
+        if case let .layer(id) = selection { return layersByID[id] }
+        return project.layers?.media.isEmpty == false ? layerRows.first : nil
+    }
+
+    func selectLayer(_ id: String) {
+        guard layersByID[id] != nil else { return }
+        selection = .layer(id)
+        tab = .style
+    }
+
+    private func readSourceAudioFacts() {
+        // An older frames edit can still have separate sound files. Ask the session that prepared them,
+        // using the existing window hold. Merely opening its inspector must never write audio.lanes.
+        let video = project.source.video
+        guard project.audio.lanes == nil, URL(fileURLWithPath: video).lastPathComponent == "proxy.mp4" else { return }
+        func adoptFacts(_ facts: EditProject.AudioFacts) {
+            guard project.source.video == video, project.audio.lanes == nil, sourceAudioFacts != facts else { return }
+            sourceAudioFacts = facts
+            updateSoundRows()
+            if !facts.mixedFrom.isEmpty { rebuild() }
+        }
+        if !session.isOnline {
+            // Standalone editors also use the recorder's source discovery (including segmented microphone files).
+            // Pass a JSON string literal as one argv argument so every filename is data in the REPL call.
+            guard let path = try? JSONEncoder().encode(video) else { return }
+            let script = "nodeRepl.write(JSON.stringify(await movies.open(\(String(decoding: path, as: UTF8.self))).audioLanes()))"
+            runToolsCommand(["node-repl", "run", "--toolset", "movies", script]) { [weak self] status, stdout, _ in
+                guard let self, !self.session.isOnline, status == 0,
+                      let json = stdout.split(separator: "\n").first(where: { $0.hasPrefix("[") }),
+                      let lanes = try? JSONDecoder().decode([EditProject.AudioLane].self, from: Data(json.utf8)) else { return }
+                let inputs: [EditProject.AudioFacts.Mixed] = lanes.compactMap { lane in
+                    guard lane.source == .mic || lane.source == .system, let file = lane.file else { return nil }
+                    return .init(source: lane.source, file: file, offsetMs: lane.offsetMs)
+                }
+                adoptFacts(.init(movieTracks: self.audioTrackCount, mixedFrom: inputs))
+            }
+            return
+        }
+        struct OpenFacts: Decodable { var audioFacts: EditProject.AudioFacts? }
+        session.call("session.open", ["path": session.path, "holder": session.holder]) { result in
+            if case let .success(value) = result,
+               let facts = try? RecorderProtocol.decode(OpenFacts.self, from: value).audioFacts { adoptFacts(facts) }
+        }
+    }
+
+    private func updateSoundRows() {
+        let video = URL(fileURLWithPath: project.source.video)
+        let folder = video.deletingLastPathComponent()
+        let facts = sourceAudioFacts ?? .init(movieTracks: audioTrackCount, mixedFrom: [])
+        let lanes = project.audioLanes(facts: facts)
+        var files: [URL: Waveform] = [:]
+        soundRows = lanes.map { lane in
+            let clip = lane.source == .voiceover ? project.audio.voiceovers?.first { $0.id == lane.id } : nil
+            let music = lane.source == .music ? project.audio.music : nil
+            let file = lane.file ?? clip?.file ?? music?.file
+            var wave = waveform
+            if let file {
+                let url = URL(fileURLWithPath: file, relativeTo: folder).standardizedFileURL
+                if let cached = files[url] ?? fileWaveforms[url] { wave = cached }
+                else {
+                    wave = Waveform()
+                    wave.onLoaded = { [weak self] in self?.updateOverview() }
+                    wave.load(video: url)
+                }
+                files[url] = wave
+            }
+            return EditorSoundRow(lane: lane, waveform: wave, voiceover: clip, music: music,
+                                  mixed: video.lastPathComponent == "proxy.mp4" && lane.track == 0 && lane.name == nil)
+        }
+        for (url, wave) in fileWaveforms where files[url] == nil { wave.cancel() }
+        fileWaveforms = files
+        let sources = soundRows.filter { $0.lane.source != .voiceover && $0.lane.source != .music }
+        let audible = sources.filter { !$0.lane.muted && $0.lane.volume > 0 }
+        overviewMuted = !project.audio.include || audible.isEmpty
+        overviewRows = overviewMuted ? sources : audible
+        updateOverview()
+    }
+
+    /// Fold the recorded inputs once per load or edit. Scrolling reads the same 1,200 buckets at any zoom.
+    private func updateOverview() {
+        let duration = project.source.durationUs
+        guard !overviewRows.isEmpty, duration > 0 else { overviewPeaks = []; return }
+        let buckets = 1200
+        overviewPeaks = (0..<buckets).map { index in
+            let lo = Int64(Double(duration) * Double(index) / Double(buckets))
+            let hi = Int64(Double(duration) * Double(index + 1) / Double(buckets))
+            return overviewRows.reduce(Float.zero) { peak, row in
+                max(peak, row.peak(source: lo..<hi, output: 0..<0) * Float(overviewMuted ? 1 : row.lane.volume))
+            }
+        }
+    }
+
+    func toggleMute(_ row: EditorSoundRow) {
+        edit([.audioLane(.init(id: row.id, muted: !row.lane.muted))])
+    }
+
+    // The editor's window-level M shortcut normally opens the comment prompt. A focused sound row owns M.
+    func commentPrompt() {
+        if let focus = focusedEditorRow, !focus.isLayer, NSApp.currentEvent?.type == .keyDown,
+           NSApp.currentEvent?.charactersIgnoringModifiers?.lowercased() == "m",
+           let row = soundRows.first(where: { $0.id == focus.id }) {
+            toggleMute(row)
+        } else {
+            commentPrompt(range: nil)
+        }
     }
 }
 

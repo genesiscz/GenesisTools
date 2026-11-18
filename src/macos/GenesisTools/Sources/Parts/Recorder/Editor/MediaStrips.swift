@@ -85,12 +85,16 @@ final class Waveform {
     /// The loudest bucket of each track.
     private var loudest: [Float] = []
     private(set) var hasAudio = false
+    private(set) var durationUs: Int64 = 0
+    @ObservationIgnored var onLoaded: (() -> Void)?
     /// The read finished; with `hasAudio` false the movie has no sound track.
     private(set) var loaded = false
     private var task: Task<Void, Never>?
 
     /// The audio tracks the last read found.
     var trackCount: Int { peaks.count }
+
+    func cancel() { task?.cancel() }
 
     func load(video: URL, buckets: Int = 1200) {
         task?.cancel()
@@ -165,6 +169,7 @@ final class Waveform {
             // A replaced read stops early with partial peaks: publish nothing, as the filmstrip does.
             await MainActor.run {
                 guard !Task.isCancelled else { return }
+                self?.durationUs = duration.convertScale(1_000_000, method: .roundHalfAwayFromZero).value
                 self?.publish(read)
             }
         }
@@ -186,6 +191,22 @@ final class Waveform {
         loudest = read.map { $0.max() ?? 0 }
         hasAudio = !read.isEmpty
         loaded = true
+        onLoaded?()
+    }
+
+    /// A row reads one track for every bar, with no temporary collection of tracks per bar.
+    func peak(fromUs: Int64, toUs: Int64, track: Int) -> Float {
+        guard peaks.indices.contains(track) else { return 0 }
+        let value = Self.peak(in: peaks[track], fromUs: fromUs, toUs: toUs, durationUs: durationUs)
+        return loudest[track] > 0.0005 ? value / loudest[track] : value
+    }
+
+    nonisolated static func peak(in samples: [Float], fromUs: Int64, toUs: Int64, durationUs: Int64) -> Float {
+        guard !samples.isEmpty, durationUs > 0 else { return 0 }
+        let scale = Double(samples.count) / Double(durationUs)
+        let first = min(samples.count - 1, max(0, Int(Double(fromUs) * scale)))
+        let last = min(samples.count - 1, max(first, Int(Double(toUs) * scale)))
+        return samples[first...last].max() ?? 0
     }
 
     /// The peak over a source range of the given tracks, 0...1: the loudest of them there, scaled to the loudest moment
