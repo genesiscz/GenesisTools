@@ -42,8 +42,8 @@ registerWidgetVoiceNotes(widget);
 widget
     .command("message-body <id>")
     .description("Read the full question and markdown body of a stored inbox entry")
-    .action((id: string) => {
-        out.result(readWidgetMessageBody(id));
+    .action(async (id: string) => {
+        out.result(await readWidgetMessageBody(id));
     });
 widget
     .command("answer-group <id>")

@@ -117,4 +117,19 @@ final class WidgetInboxAnswerTests: XCTestCase {
         XCTAssertTrue(lines.joined().contains("Use the small one"), lines.description)
         XCTAssertFalse(lines.joined().contains("unused option"), lines.description)
     }
+
+    /// `tools hub widget message-body` sends the lifted pictures with the whole text; an older CLI sends none.
+    func testTheOpenedReceiptDecodesItsPicturesAndAnOlderReplyWithout() throws {
+        let current = Data("""
+        {"body":"It looks right.","question":"How does it look?","attachments":[{"id":"img1",\
+        "path":"/tmp/after.png","name":"after.png","mimeType":"image/png","bytes":70,"width":2,"height":1,\
+        "sha256":"abc","label":"After"}]}
+        """.utf8)
+        let read = try JSONDecoder().decode(WidgetEntryBody.self, from: current)
+        XCTAssertEqual(read.attachments?.map(\.path), ["/tmp/after.png"])
+        XCTAssertEqual(read.attachments?.first?.label, "After")
+        let older = try JSONDecoder().decode(WidgetEntryBody.self, from: Data(#"{"body":"Text only."}"#.utf8))
+        XCTAssertNil(older.attachments)
+        XCTAssertNil(older.question)
+    }
 }
