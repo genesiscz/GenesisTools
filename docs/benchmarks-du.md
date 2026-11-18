@@ -1736,3 +1736,10 @@ naive_bytes are identical in both arms. System CPU old 22.42 s and 23.14 s, new 
 load. The partner change runs only for compressed files in phase 2, which this tree does not hold.
 Regression: `src/du/lib/clone-controls.test.ts` now asks the partner query for a third compressed clone and expects
 both other clones; on the old engine it returned no partner file.
+
+## 2026-11-18 — display compression savings in volume and index queries
+
+The human output derives per-file compression savings from the existing logical and allocated totals.
+The change runs after a scan or database query. It adds no filesystem calls, index columns or walker counters.
+The native benchmark was not rerun. The volume formatting fixture uses 4,000,000 logical and 1,000,000 allocated
+bytes across two files and expects 3.0 MB saved before clone deduplication.

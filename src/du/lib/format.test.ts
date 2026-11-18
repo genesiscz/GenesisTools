@@ -265,6 +265,12 @@ describe("renderVolume", () => {
         expect(text).toContain("(11.1% of used)");
     });
 
+    it("reports compression saving before clone deduplication in volume units", () => {
+        const compressed = { files: 2, logical_bytes: 4_000_000, allocated_bytes: 1_000_000 };
+        const text = renderVolume(volume(), scanned({ compressed }));
+        expect(text).toContain("2 files, 4.0 MB logical, 1.0 MB allocated, 3.0 MB saved before clone deduplication");
+    });
+
     it("prefers allocated bytes over mapped bytes as the scanned figure", () => {
         // unique_bytes understates real consumption by each file's sub-block slack,
         // so the reconcile must use unique_allocated_bytes when it is present.
