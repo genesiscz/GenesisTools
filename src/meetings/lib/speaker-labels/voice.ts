@@ -37,17 +37,34 @@ export function voiceWorkerStart(priority: VoiceComputePriority): VoiceWorkerSta
         : { prefix: [], clearBackground: true };
 }
 
-/**
- * How a voice pass runs here, from `speakerLabels.voice.compute` (the store's config when none is passed). The free
- * cores are read once, when the pass starts.
- */
+/** One pass shares the same auto count across all its file/channel groups, sampled on the first worker start. */
+export async function voicePassSettings(
+    config?: MeetingsConfig,
+    free: () => Promise<VoiceFreeCores> = freeCores
+): Promise<VoiceWorkerStart & { workers: number | (() => Promise<number>) }> {
+    const compute = (config ?? (await new MeetingsConfigStore().read())).global.speakerLabels.voice.compute;
+    const start = voiceWorkerStart(compute.priority);
+    if (compute.workers !== "auto") {
+        return { ...start, workers: compute.workers };
+    }
+
+    let sampled: Promise<number> | undefined;
+    return {
+        ...start,
+        workers: () =>
+            (sampled ??= prof.measureAsync("voices.worker-settings", async () =>
+                voiceWorkerCount("auto", await free())
+            )),
+    };
+}
+
+/** Resolve the settings immediately for a caller that needs the numeric worker count. */
 export async function voiceWorkerSettings(
     config?: MeetingsConfig,
     free: () => Promise<VoiceFreeCores> = freeCores
 ): Promise<VoiceWorkerStart & { workers: number }> {
-    const compute = (config ?? (await new MeetingsConfigStore().read())).global.speakerLabels.voice.compute;
-    const workers = compute.workers === "auto" ? voiceWorkerCount("auto", await free()) : compute.workers;
-    return { ...voiceWorkerStart(compute.priority), workers };
+    const { workers, ...start } = await voicePassSettings(config, free);
+    return { ...start, workers: typeof workers === "number" ? workers : await workers() };
 }
 
 /** A one-second CPU sample (`measureCpuBusyPercent`); without the kernel read, all cores minus the one-minute load. */
@@ -102,7 +119,7 @@ export async function embedSeatLines(
         context.onProgress?.(completed, context.lines.length);
         return result.sort((a, b) => a.index - b.index);
     }
-    const worker = await prof.measureAsync("voices.worker-settings", () => voiceWorkerSettings(context.config));
+    const worker = await voicePassSettings(context.config);
     context.onProgress?.(completed, context.lines.length);
     for (const group of groups.values()) {
         group.lines.sort((a, b) => a.slice.fileFromSec - b.slice.fileFromSec);

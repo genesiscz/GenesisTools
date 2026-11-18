@@ -1,5 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as hostStats from "@genesiscz/utils/macos/host-stats";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -272,6 +275,53 @@ afterEach(() => {
         mock.mockRestore();
     }
 });
+
+test("auto samples CPU once for seat groups with misses and never for a fully cached voice pass", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "seat-voice-cache-"));
+    const audioPath = join(folder, "source.wav");
+    writeFileSync(audioPath, "fixture audio");
+    const sound = meetingSound({
+        folder,
+        rows: [],
+        timelineZeroMs: 0,
+        tracks: "best",
+        source: { path: audioPath, source: "wisprflow", layout: "left-mic", durationSec: 60 },
+    });
+    const lines: LabelContext["lines"] = [
+        { index: 0, seat: "mic", fromSec: 0, toSec: 3 },
+        { index: 1, seat: "call", fromSec: 4, toSec: 7 },
+    ];
+    const pass = { lines, sound, config: meetingsConfigSchema.parse({}), cachePath: join(folder, "voice-lines.json") };
+    const sample = spyOn(hostStats, "measureCpuBusyPercent").mockResolvedValue(100);
+    const backend = spyOn(voice, "localVoiceBackend").mockReturnValue({
+        model: "fixture-model",
+        embed: () => ({ embedding: [1, 0] }),
+    });
+    const spawn = Bun.spawn.bind(Bun);
+    const reply = `await Bun.stdin.text(); process.stdout.write('[[{"quality":"ready","model":"fixture-model","embedding":[1,0]}]]');`;
+    const workers = spyOn(Bun, "spawn").mockImplementation(() =>
+        spawn([process.execPath, "-e", reply], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+    );
+    spies.push(sample, backend, workers);
+
+    const cold = await embedSeatLines(pass);
+    expect(cold.map((line) => line.channels[0]?.quality)).toEqual(["ready", "ready"]);
+    expect(sample).toHaveBeenCalledTimes(1);
+    expect(workers).toHaveBeenCalledTimes(2);
+
+    sample.mockClear();
+    workers.mockClear();
+    expect(await embedSeatLines(pass)).toEqual(cold);
+    expect(sample).toHaveBeenCalledTimes(0);
+    expect(workers).toHaveBeenCalledTimes(0);
+
+    const mixed = await embedSeatLines({ ...pass, lines: [lines[0]!, { ...lines[1]!, toSec: 8 }] });
+    expect(mixed[0]).toEqual(cold[0]);
+    expect(mixed[1]?.channels[0]?.quality).toBe("ready");
+    expect(sample).toHaveBeenCalledTimes(1);
+    expect(workers).toHaveBeenCalledTimes(1);
+});
+
 test("the voice labeler measures and saves recorder clocks before taking recorder samples", async () => {
     const store = new MeetingStore(new Storage("voice-clock-fixture"));
     const record = await store.create(
