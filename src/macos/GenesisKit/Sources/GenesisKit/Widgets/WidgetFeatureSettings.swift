@@ -1041,7 +1041,7 @@ private struct WidgetDictationSettings: View {
                         if let missing = prefs.voiceAccount,
                             provider?.accounts.contains(where: { $0.id == missing }) != true
                         {
-                            Text("Unavailable — select another account").tag(missing)
+                            Text("Unavailable. Select another account").tag(missing)
                         }
                     }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
