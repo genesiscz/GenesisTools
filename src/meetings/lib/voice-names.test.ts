@@ -168,6 +168,47 @@ test("sound selection uses a measured recorder clock or falls back to the seat's
         mock.mockRestore();
     }
 });
+test("seat groups share one worker setting and report one total across mic, call and missing audio", async () => {
+    const sound = meetingSound({
+        folder: "/fixture",
+        timelineZeroMs: 0,
+        tracks: "best",
+        rows: [],
+        source: { path: "/fixture/source", source: "wisprflow", layout: "right-mic", durationSec: 60 },
+    });
+    const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 3 } } } } });
+    const embedded = spyOn(voice, "embedVoiceLines").mockImplementation(async (input) => {
+        input.onProgress?.(0, input.spans.length);
+        input.onProgress?.(input.spans.length, input.spans.length);
+        return input.spans.map((span) => ({ ...line([1, 0]), index: span.index }));
+    });
+    try {
+        const updates: number[][] = [];
+        const results = await embedSeatLines({
+            config,
+            sound,
+            lines: [
+                { index: 0, seat: "mic", fromSec: 5, toSec: 8 },
+                { index: 1, seat: "call", fromSec: 10, toSec: 13 },
+                { index: 2, seat: "mic", fromSec: 90, toSec: 93 },
+            ],
+            onProgress: (done, total) => updates.push([done, total]),
+        });
+        expect(embedded.mock.calls.map(([input]) => [input.workers, input.clearBackground])).toEqual([
+            [3, true],
+            [3, true],
+        ]);
+        expect(updates).toEqual([
+            [1, 3],
+            [2, 3],
+            [3, 3],
+        ]);
+        expect(results.map(({ index }) => index)).toEqual([0, 1, 2]);
+    } finally {
+        embedded.mockRestore();
+    }
+});
+
 test("speaker rows mark model proposals with their cosine score", () => {
     expect(
         itemWhat({

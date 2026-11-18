@@ -14,6 +14,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voiceBackend from "@genesiscz/utils/meetings/voice";
 import { addVoicePrint, readVoiceStore, type VoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
+import * as p from "@genesiscz/utils/prompts/p";
 import { renderBrief } from "@genesiscz/utils/repl/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
@@ -242,6 +243,57 @@ test("sample playback feeds the Moment player the selected channel and seconds a
     } finally {
         available.mockRestore();
         player.mockRestore();
+    }
+});
+
+test("suggest updates one terminal spinner and keeps piped and JSON results quiet", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Voice progress", start: "2026-01-01T10:00:00Z", createdBy: "new", project: "fixture" },
+        { command: "test", change: "CLI voice progress fixture" }
+    );
+    const suggest = await import("./suggest-run");
+    const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ onProgress }) => {
+        for (const done of [0, 1, 2]) {
+            onProgress?.(done, 2);
+        }
+        return { fresh: [], warnings: [], retired: [] };
+    });
+    const messages: string[] = [];
+    const spinner = spyOn(p, "spinner").mockReturnValue({
+        start: (label) => messages.push(`start ${label}`),
+        message: (label) => messages.push(`update ${label}`),
+        stop: (label) => messages.push(`stop ${label}`),
+    });
+    const json = spyOn(out, "result").mockImplementation(() => {});
+    const stdoutTTY = process.stdout.isTTY;
+    const stderrTTY = process.stderr.isTTY;
+    try {
+        for (const mode of ["tty", "pipe", "json"]) {
+            Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: mode !== "pipe" });
+            Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: mode !== "pipe" });
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "suggest" });
+            const args = ["suggest", record.id, "--rules", "speakers"];
+            if (mode === "json") {
+                args.push("--json");
+            }
+            await program.parseAsync(args, { from: "user" });
+        }
+        expect(spinner).toHaveBeenCalledTimes(1);
+        expect(messages).toEqual([
+            "start Voices: 0 of 2 lines",
+            "update Voices: 1 of 2 lines",
+            "update Voices: 2 of 2 lines",
+            "stop Voices: 2 of 2 lines",
+        ]);
+        expect(json).toHaveBeenCalledWith("[]");
+    } finally {
+        Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: stdoutTTY });
+        Object.defineProperty(process.stderr, "isTTY", { configurable: true, value: stderrTTY });
+        json.mockRestore();
+        spinner.mockRestore();
+        run.mockRestore();
     }
 });
 

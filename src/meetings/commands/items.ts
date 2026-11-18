@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
+import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -16,6 +18,7 @@ import {
     QUESTION_TOPICS,
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { CorrectionOutcome } from "@genesiscz/utils/transcribe/apply";
 import {
@@ -261,6 +264,9 @@ async function suggest(
         return;
     }
 
+    const quiet = isQuietOutput(opts.json ? "json" : undefined) || !process.stderr.isTTY;
+    const spinner = quiet ? createQuietSpinner() : p.spinner();
+    let voiceLabel: string | undefined;
     try {
         const { fresh, retired, warnings } = await runSuggest({
             store,
@@ -270,6 +276,21 @@ async function suggest(
             attendanceId: opts.attendanceId,
             wordCheck: wordCheckChoice,
             actor: callerActor(),
+            onProgress: quiet
+                ? undefined
+                : (done, total) => {
+                      const label = `Voices: ${done} of ${total} lines`;
+                      if (voiceLabel === undefined) {
+                          spinner.start(label);
+                      } else {
+                          spinner.message(label);
+                      }
+                      voiceLabel = label;
+                      if (done === total) {
+                          spinner.stop(label);
+                          voiceLabel = undefined;
+                      }
+                  },
         });
 
         for (const warning of warnings) {
@@ -295,6 +316,9 @@ async function suggest(
         printItems(store.read(record.id) ?? record, fresh);
         ui.dim(`Confirm or reject: ${TOOL} confirm ${record.id} <ids> · ${TOOL} reject ${record.id} <ids>`);
     } catch (err) {
+        if (voiceLabel !== undefined) {
+            spinner.stop(voiceLabel);
+        }
         fail(err);
     }
 }

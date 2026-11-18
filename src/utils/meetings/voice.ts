@@ -8,12 +8,13 @@ import {
 } from "@genesiscz/utils/ai/local/runtimes/sherpa/speaker-embedding";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { env } from "@genesiscz/utils/env";
+import { splitLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { clearOwnBackground } from "@genesiscz/utils/process/priority";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { VoiceLineCache, voiceLineCachePath } from "./voice-line-cache";
+import { VoiceLineCache, voiceLineCachePath, voiceLineResultSchema } from "./voice-line-cache";
 
 export const voiceSampleSchema = z.object({
     person: z.string().min(1),
@@ -200,15 +201,22 @@ export interface LineEmbedding {
 
 const voiceLineRequestSchema = z.object({
     audioPath: z.string(),
-    spans: z.array(z.object({ index: z.number().int(), fromSec: z.number(), toSec: z.number() })),
-    channels: z.array(
+    clips: z.array(
         z.object({
-            channel: z.union([z.literal(0), z.literal(1)]),
-            track: z.enum(["raw-mic", "isolated-call", "clean-mic"]),
+            fromSec: z.number(),
+            toSec: z.number(),
+            windowFromSec: z.number(),
+            channels: z.array(z.union([z.literal(0), z.literal(1)])),
         })
     ),
-    cachePath: z.string().optional(),
+    progress: z.boolean(),
 });
+type VoiceChunk = z.infer<typeof voiceLineRequestSchema>;
+type VoiceClip = VoiceChunk["clips"][number];
+// A decoder or process failure can succeed on retry. Only intrinsic unknowns go in the cache.
+const workerResultSchema = z.array(z.array(z.union([voiceLineResultSchema, z.object({ error: z.string() })])));
+type ChunkResults = z.infer<typeof workerResultSchema>;
+export type VoiceProgress = (done: number, total: number) => void;
 const voiceSampleRequestSchema = z.object({
     audioPath: z.string(),
     channel: z.union([z.literal(0), z.literal(1)]),
@@ -224,35 +232,25 @@ const voiceWorkerEnvelopeSchema = z.object({
     modelFile: z.string(),
     clearBackground: z.boolean().default(false),
 });
-const workerResultSchema = z.array(
-    z.object({
-        index: z.number().int(),
-        channels: z.array(
-            z.intersection(
-                z.object({
-                    source: z.object({ audioPath: z.string(), size: z.number(), mtimeMs: z.number() }),
-                    channel: z.union([z.literal(0), z.literal(1)]),
-                    track: z.enum(["raw-mic", "isolated-call", "clean-mic"]),
-                    fromSec: z.number(),
-                    toSec: z.number(),
-                }),
-                z.discriminatedUnion("quality", [
-                    z.object({
-                        quality: z.literal("ready"),
-                        model: z.string(),
-                        embedding: z.array(z.number().finite()).min(1),
-                    }),
-                    z.object({ quality: z.literal("unknown"), reason: z.string() }),
-                ])
-            )
-        ),
-    })
-);
+
+async function workerStderr(stream: ReadableStream<Uint8Array>, onProgress?: (done: number) => void): Promise<string> {
+    let tail = "";
+    for await (const line of splitLines(stream)) {
+        const progress = /^\{"done":(\d+)\}$/.exec(line);
+        if (progress) {
+            onProgress?.(Number(progress[1]));
+        } else if (line) {
+            tail = `${tail}\n${line}`.slice(-1500);
+        }
+    }
+    return tail.trim();
+}
 
 async function runVoiceWorker(options: {
     request: z.infer<typeof voiceWorkerRequestSchema>;
     workerPrefix: readonly string[];
     clearBackground: boolean;
+    onProgress?: (done: number) => void;
 }): Promise<unknown> {
     const { workerPrefix, request, clearBackground } = options;
     const child = Bun.spawn([...workerPrefix, process.execPath, fileURLToPath(import.meta.url)], {
@@ -265,14 +263,14 @@ async function runVoiceWorker(options: {
         killSignal: "SIGKILL",
     });
     child.stdin.write(SafeJSON.stringify({ request, modelFile: selectedModelFile, clearBackground }, { strict: true }));
-    child.stdin.end();
     const [stdout, stderr, code] = await Promise.all([
         new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
+        workerStderr(child.stderr, options.onProgress),
         child.exited,
+        child.stdin.end(),
     ]);
     if (code !== 0) {
-        throw new Error(`Voice embedding worker failed (exit ${code}): ${stderr.slice(-1500)}`);
+        throw new Error(`Voice embedding worker failed (exit ${code}): ${stderr}`);
     }
     const result: unknown = SafeJSON.parse(stdout, { strict: true });
     const unavailable = z.object({ unavailable: z.string() }).safeParse(result);
@@ -281,6 +279,136 @@ async function runVoiceWorker(options: {
     }
     return result;
 }
+
+function lineBackend(): SpeakerEmbedder | Error {
+    try {
+        return localVoiceBackend();
+    } catch (error) {
+        logger.debug({ error }, "Voice backend unavailable; line identities remain unknown");
+        return error instanceof Error ? error : new Error(String(error));
+    }
+}
+
+async function embedChunk(options: {
+    input: VoiceChunk;
+    backend: SpeakerEmbedder | Error;
+    onProgress?: (done: number) => void;
+}): Promise<ChunkResults> {
+    const { input, backend, onProgress } = options;
+    const results: ChunkResults = [];
+    const windows = new Map<number, { fromSec: number; samples: Float32Array }>();
+    for (const clip of input.clips) {
+        const row: ChunkResults[number] = [];
+        for (const channel of clip.channels) {
+            try {
+                const duration = clip.toSec - clip.fromSec;
+                if (clip.fromSec < 0 || !Number.isFinite(duration)) {
+                    throw new VoiceUnavailableError("Voice line needs a finite nonnegative start and duration");
+                }
+                if (duration < 1.5 || duration > 60) {
+                    throw new VoiceUnavailableError("Voice line needs 1.5 to 60 seconds of speech");
+                }
+                if (backend instanceof Error) {
+                    throw backend;
+                }
+                let window = windows.get(channel);
+                if (!window || window.fromSec !== clip.windowFromSec) {
+                    const samples = await toFloat32AudioWindow(input.audioPath, {
+                        fromSec: clip.windowFromSec,
+                        toSec: clip.windowFromSec + 60,
+                        channel,
+                        decoderThreads: 1,
+                        timeoutMs: 120_000,
+                    });
+                    window = { fromSec: clip.windowFromSec, samples };
+                    windows.set(channel, window);
+                }
+                const samples = window.samples.slice(
+                    Math.round((clip.fromSec - window.fromSec) * 16000),
+                    Math.round((clip.toSec - window.fromSec) * 16000)
+                );
+                row.push({ ...embeddingOf(samples, backend), quality: "ready" });
+            } catch (error) {
+                row.push(
+                    error instanceof VoiceUnavailableError
+                        ? { quality: "unknown", reason: error.message }
+                        : { error: error instanceof Error ? error.message : String(error) }
+                );
+            }
+        }
+        results.push(row);
+        onProgress?.(results.length);
+    }
+    return results;
+}
+
+interface PendingLine {
+    position: number;
+    clip: VoiceClip;
+    missing: Array<{ slot: number; provenance: VoiceEmbeddingProvenance }>;
+    results: ChunkResults[number];
+}
+
+/** Prefer whole decode windows. A short meeting can still use multiple workers with the explicit window origin. */
+function splitVoiceWork(lines: PendingLine[], workers: number): PendingLine[][] {
+    const ordered = lines.toSorted((a, b) => a.clip.fromSec - b.clip.fromSec);
+    const count = Math.min(workers, ordered.length);
+    const starts = ordered.flatMap((line, i) =>
+        i === 0 || line.clip.windowFromSec !== ordered[i - 1]!.clip.windowFromSec ? [i] : []
+    );
+    const boundary = (i: number) =>
+        starts.length >= count
+            ? (starts[Math.floor((i * starts.length) / count)] ?? ordered.length)
+            : Math.floor((i * ordered.length) / count);
+    return Array.from({ length: count }, (_, i) => ordered.slice(boundary(i), boundary(i + 1)));
+}
+
+async function fillVoiceChunk(options: {
+    chunk: PendingLine[];
+    audioPath: string;
+    workerPrefix?: readonly string[];
+    clearBackground?: boolean;
+    backend: SpeakerEmbedder | Error;
+    advance?: (lines: number) => void;
+}): Promise<void> {
+    const { chunk, audioPath, workerPrefix, backend } = options;
+    let reported = 0;
+    const report = (done: number) => {
+        if (done > reported && done <= chunk.length) {
+            const delta = done - reported;
+            reported = done;
+            options.advance?.(delta);
+        }
+    };
+    const input = { audioPath, clips: chunk.map((line) => line.clip), progress: !!options.advance };
+    try {
+        const rows = workerPrefix
+            ? workerResultSchema.parse(
+                  await runVoiceWorker({
+                      request: { kind: "lines", input },
+                      workerPrefix,
+                      clearBackground: options.clearBackground === true,
+                      onProgress: report,
+                  })
+              )
+            : await embedChunk({ input, backend, onProgress: report });
+        if (rows.length !== chunk.length || rows.some((row, i) => row.length !== chunk[i]!.missing.length)) {
+            throw new Error("Voice worker returned an incomplete chunk");
+        }
+        for (const [i, line] of chunk.entries()) {
+            line.results = rows[i]!;
+        }
+    } catch (error) {
+        logger.warn({ error, lines: chunk.length }, "Voice embedding chunk failed");
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const line of chunk) {
+            line.results = line.missing.map(() => ({ error: reason }));
+        }
+    }
+    // A process that exited midway still settles every unfinished line of its chunk as unknown.
+    report(chunk.length);
+}
+
 /** Canonical per-line adapter for Listen and Room. Unknown channels never masquerade as empty embeddings. */
 export async function embedVoiceLines(options: {
     audioPath: string;
@@ -290,118 +418,108 @@ export async function embedVoiceLines(options: {
     workerPrefix?: readonly string[];
     /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
     clearBackground?: boolean;
+    workers?: number;
+    onProgress?: VoiceProgress;
 }): Promise<LineEmbedding[]> {
-    const stat = statSync(options.audioPath);
-    const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
-    const result: LineEmbedding[] = [];
-    const windows = new Map<number, { fromSec: number; toSec: number; samples?: Float32Array }>();
+    const { audioPath, spans, onProgress } = options;
+    const stat = statSync(audioPath);
+    const source = { audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
+    const result: LineEmbedding[] = spans.map(({ index }) => ({ index, channels: [] }));
+    if (!spans.length || !options.channels.length) {
+        onProgress?.(spans.length, spans.length);
+        return result;
+    }
+
+    const backend = lineBackend();
     let cache: VoiceLineCache | undefined;
-    let backend: ReturnType<typeof localVoiceBackend> | undefined;
-    let backendError: unknown;
-    if (options.spans.length && options.channels.length) {
+    if (!(backend instanceof Error)) {
         try {
-            backend = localVoiceBackend();
             cache = new VoiceLineCache({
                 source,
                 model: backend.model,
-                cachePath: options.cachePath ?? (await voiceLineCachePath(options.audioPath)),
+                cachePath: options.cachePath ?? (await voiceLineCachePath(audioPath)),
             });
         } catch (error) {
-            backendError = error;
-            logger.debug({ error }, "Voice backend unavailable; line identities remain unknown");
+            logger.debug({ error }, "Voice line cache unavailable; computing without it");
         }
     }
-    if (options.workerPrefix) {
-        const saved: LineEmbedding[] = [];
-        for (const span of options.spans) {
-            const channels: ChannelEmbedding[] = [];
-            for (const channel of options.channels) {
-                const provenance = { source, ...channel, fromSec: span.fromSec, toSec: span.toSec };
-                const hit = cache?.get(provenance);
-                if (!hit) {
-                    break;
-                }
-                channels.push({ ...provenance, ...hit });
-            }
-            if (channels.length !== options.channels.length) {
-                break;
-            }
-            saved.push({ index: span.index, channels });
+    const pending: PendingLine[] = [];
+    let origin: number | undefined;
+    for (const [position, { fromSec, toSec }] of spans.entries()) {
+        const duration = toSec - fromSec;
+        // Cache hits and failed decodes must keep the same window origin as a complete cold pass.
+        if (
+            fromSec >= 0 &&
+            duration >= 1.5 &&
+            duration <= 60 &&
+            (origin === undefined || fromSec < origin || toSec > origin + 60)
+        ) {
+            origin = fromSec;
         }
-        if (saved.length === options.spans.length) {
-            return saved;
-        }
-        return workerResultSchema.parse(
-            await runVoiceWorker({
-                request: { kind: "lines", input: voiceLineRequestSchema.parse(options) },
-                workerPrefix: options.workerPrefix,
-                clearBackground: options.clearBackground === true,
-            })
-        );
-    }
-    for (const span of options.spans) {
-        const channels: ChannelEmbedding[] = [];
-        for (const channel of options.channels) {
-            const provenance = { source, ...channel, fromSec: span.fromSec, toSec: span.toSec };
-            const duration = span.toSec - span.fromSec;
-            let window = windows.get(channel.channel);
-            // Cache hits and failed decodes must keep the same window origin as a complete cold pass.
-            if (
-                Number.isFinite(span.fromSec) &&
-                span.fromSec >= 0 &&
-                duration >= 1.5 &&
-                duration <= 60 &&
-                (!window || span.fromSec < window.fromSec || span.toSec > window.toSec)
-            ) {
-                window = { fromSec: span.fromSec, toSec: span.fromSec + 60 };
-                windows.set(channel.channel, window);
-            }
-            const cached = cache?.get(provenance);
-            if (cached) {
-                channels.push({ ...provenance, ...cached });
-                continue;
-            }
-            try {
-                if (!Number.isFinite(span.fromSec) || span.fromSec < 0 || !Number.isFinite(duration)) {
-                    throw new VoiceUnavailableError("Voice line needs a finite nonnegative start and duration");
-                }
-                if (duration < 1.5 || duration > 60) {
-                    throw new VoiceUnavailableError("Voice line needs 1.5 to 60 seconds of speech");
-                }
-                if (!backend) {
-                    throw backendError;
-                }
-                if (!window) {
-                    throw new VoiceUnavailableError("Voice line needs a finite nonnegative start");
-                }
-                if (!window.samples) {
-                    window.samples = await toFloat32AudioWindow(options.audioPath, {
-                        fromSec: window.fromSec,
-                        toSec: window.toSec,
-                        channel: channel.channel,
-                        decoderThreads: 1,
-                        timeoutMs: 120_000,
-                    });
-                }
-                const samples = window.samples.slice(
-                    Math.round((span.fromSec - window.fromSec) * 16000),
-                    Math.round((span.toSec - window.fromSec) * 16000)
-                );
-                const embedding = embeddingOf(samples, backend);
-                channels.push({ ...provenance, ...embedding, quality: "ready" });
-                cache?.set(provenance, { ...embedding, quality: "ready" });
-            } catch (error) {
+        const missing: PendingLine["missing"] = [];
+        for (const [slot, channel] of options.channels.entries()) {
+            const provenance = { source, ...channel, fromSec, toSec };
+            const hit = cache?.get(provenance);
+            if (hit) {
+                result[position]!.channels[slot] = { ...provenance, ...hit };
+            } else if (!Number.isFinite(fromSec) || !Number.isFinite(toSec)) {
                 const unknown = {
                     quality: "unknown",
-                    reason: error instanceof Error ? error.message : String(error),
+                    reason: "Voice line needs a finite nonnegative start and duration",
                 } as const;
-                channels.push({ ...provenance, ...unknown });
-                if (error instanceof VoiceUnavailableError) {
-                    cache?.set(provenance, unknown);
-                }
+                result[position]!.channels[slot] = { ...provenance, ...unknown };
+                cache?.set(provenance, unknown);
+            } else {
+                missing.push({ slot, provenance });
             }
         }
-        result.push({ index: span.index, channels });
+        if (missing.length) {
+            const channels = missing.map(({ provenance }) => provenance.channel);
+            const clip = { fromSec, toSec, windowFromSec: origin ?? 0, channels };
+            pending.push({ position, missing, clip, results: [] });
+        }
+    }
+
+    let done = spans.length - pending.length;
+    onProgress?.(done, spans.length);
+    const workerPrefix = options.workerPrefix ?? (options.workers !== undefined ? [] : undefined);
+    const workers = options.workers ?? 1;
+    if (!Number.isSafeInteger(workers) || workers < 1) {
+        throw new RangeError("Voice workers must be a positive integer");
+    }
+    const advance =
+        onProgress &&
+        ((lines: number) => {
+            done += lines;
+            onProgress(done, spans.length);
+        });
+    const chunks = splitVoiceWork(pending, workerPrefix ? workers : 1);
+    await Promise.all(
+        chunks.map((chunk) =>
+            fillVoiceChunk({
+                chunk,
+                audioPath,
+                workerPrefix,
+                clearBackground: options.clearBackground,
+                backend,
+                advance,
+            })
+        )
+    );
+
+    // Commit in input order, independent of worker completion. For repeated millisecond keys the first
+    // cacheable result wins, just as if each line had looked up the one before it in a serial pass.
+    for (const line of pending) {
+        for (const [i, { slot, provenance }] of line.missing.entries()) {
+            const computed = line.results[i]!;
+            const previous = cache?.get(provenance);
+            const value =
+                previous ?? ("error" in computed ? { quality: "unknown" as const, reason: computed.error } : computed);
+            result[line.position]!.channels[slot] = { ...provenance, ...value };
+            if (!previous && !("error" in computed)) {
+                cache?.set(provenance, computed);
+            }
+        }
     }
     cache?.save();
     return result;
@@ -417,7 +535,15 @@ async function runWorkerMain(): Promise<void> {
     const request = envelope.request;
     try {
         const result =
-            request.kind === "sample" ? await embedVoice(request.input) : await embedVoiceLines(request.input);
+            request.kind === "sample"
+                ? await embedVoice(request.input)
+                : await embedChunk({
+                      input: request.input,
+                      backend: lineBackend(),
+                      onProgress: request.input.progress
+                          ? (done) => process.stderr.write(`{"done":${done}}\n`)
+                          : undefined,
+                  });
         out.print(SafeJSON.stringify(result, { strict: true }));
     } catch (error) {
         if (!(error instanceof VoiceUnavailableError)) {

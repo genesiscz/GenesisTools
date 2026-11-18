@@ -5,6 +5,7 @@ import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings
 import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { type LineVoice, lineVoices, type VoiceFrame, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -104,6 +105,7 @@ export async function runSuggest(options: {
     attendance?: string;
     attendanceId?: string;
     wordCheck?: WordCheckChoice;
+    onProgress?: VoiceProgress;
     /** Who runs it. Without an actor nobody is asked (voice enrolment, tests). */
     actor?: DecisionActor;
     /** The person area; tests pass a fake. */
@@ -112,6 +114,11 @@ export async function runSuggest(options: {
     const { store, record, rules } = options;
     const warnings: string[] = [];
     const opened = OpenedMeeting.of(store, record);
+    if (options.onProgress) {
+        const { voiceProgressForMeeting } = await import("./speaker-labels/voice");
+        voiceProgressForMeeting.set(opened, options.onProgress);
+    }
+
     const collected = await collectForSuggest(
         opened,
         warnings,

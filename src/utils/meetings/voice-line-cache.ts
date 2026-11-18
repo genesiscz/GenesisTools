@@ -7,12 +7,12 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import type { VoiceEmbeddingProvenance } from "./voice";
 
-const resultSchema = z.discriminatedUnion("quality", [
+export const voiceLineResultSchema = z.discriminatedUnion("quality", [
     z.object({ quality: z.literal("ready"), model: z.string(), embedding: z.array(z.number().finite()).min(1) }),
     z.object({ quality: z.literal("unknown"), reason: z.string() }),
 ]);
-const cacheSchema = z.object({ version: z.literal(1), entries: z.record(z.string(), resultSchema) });
-type VoiceLineResult = z.infer<typeof resultSchema>;
+const cacheSchema = z.object({ version: z.literal(1), entries: z.record(z.string(), voiceLineResultSchema) });
+type VoiceLineResult = z.infer<typeof voiceLineResultSchema>;
 type Entries = Record<string, VoiceLineResult>;
 
 /** Retained source audio and recorder pieces both live below the canonical meeting folder. */
@@ -80,7 +80,11 @@ export class VoiceLineCache {
 
     set(span: Omit<VoiceEmbeddingProvenance, "source">, result: VoiceLineResult): void {
         const key = this.key(span);
-        this.changed[key] = this.entries[key] = result;
+        // Keep the original on-disk representation even when validation of a worker reply reordered its fields.
+        this.changed[key] = this.entries[key] =
+            result.quality === "ready"
+                ? { model: result.model, embedding: result.embedding, quality: "ready" }
+                : result;
     }
 
     save(): void {
