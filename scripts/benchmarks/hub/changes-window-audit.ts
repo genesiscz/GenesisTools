@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { auditClaudeChanges } from "@genesiscz/utils/agent-sessions/readers/claude-changes-audit";
+import { auditClaudeChanges, auditClaudeFacts } from "@genesiscz/utils/agent-sessions/readers/claude-changes-audit";
 import { out } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 
@@ -33,6 +33,11 @@ for (const root of nativeSessionRoots("claude")) {
 const totals: Record<string, number> = { sessions: 0, recentSubagents: 0, recentPhantomCapable: 0 };
 for (const [index, file] of files.sort((a, b) => b.mtime - a.mtime).entries()) {
     try {
+        if (process.argv.includes("--facts")) {
+            const checks = auditClaudeFacts(file.path);
+            totals.factsChecked = (totals.factsChecked ?? 0) + 1;
+            totals.factsMismatch = (totals.factsMismatch ?? 0) + Number(Object.values(checks).some((ok) => !ok));
+        }
         const counts = auditClaudeChanges(file.path);
         totals.sessions++;
         for (const [key, count] of Object.entries(counts)) {
@@ -48,6 +53,6 @@ for (const [index, file] of files.sort((a, b) => b.mtime - a.mtime).entries()) {
 }
 
 out.result({ ...totals, unreadable });
-if (unreadable || !totals.sessions) {
+if (unreadable || !totals.sessions || totals.factsMismatch) {
     process.exitCode = 1;
 }

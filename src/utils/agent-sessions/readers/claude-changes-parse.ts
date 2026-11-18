@@ -188,7 +188,7 @@ function backupOf(
 }
 
 /** Every backup a `file-history-delta` or `file-history-snapshot` entry names. */
-function historyBackups(entry: Json): HistoryBackup[] {
+export function historyBackups(entry: Json): HistoryBackup[] {
     if (entry.type === "file-history-delta") {
         const tracking = text(entry.trackingPath);
         const found = tracking ? backupOf("first-edit", text(entry.snapshotMessageId), tracking, entry.backup) : null;
@@ -249,6 +249,25 @@ export function applyToolResult(
     if (call.command !== null) {
         call.harnessDetected = harnessDetected(toolResult);
     }
+}
+
+/** Shared decoding of an assistant tool_use block. Facts discard the input after indexing its writers. */
+export function claudeChangeUse(block: Json, cwd: string | null, at: string | null) {
+    const id = text(block.id);
+    const name = text(block.name);
+    if (!id || !name) {
+        return null;
+    }
+    const input = record(block.input) ?? {};
+    return {
+        id,
+        name,
+        input,
+        startedAt: epoch(at),
+        cwd,
+        filePath: text(input.file_path) ?? text(input.notebook_path),
+        command: isShellTool(name) ? text(input.command) : null,
+    };
 }
 
 /**
@@ -337,32 +356,20 @@ export function parseLines(
             const block = record(raw);
 
             if (block?.type === "tool_use" && entry.type === "assistant") {
-                const id = text(block.id);
-                const name = text(block.name);
-                const input = record(block.input) ?? {};
-
-                if (!id || !name) {
-                    continue;
+                const use = claudeChangeUse(block, cwd, at);
+                if (use) {
+                    const { input, ...call } = use;
+                    if (fileToolVia(call.name)) {
+                        state.inputs.set(call.id, input);
+                    }
+                    state.calls.set(call.id, {
+                        ...call,
+                        agentId,
+                        turnId: cursor.currentTurn ?? "",
+                        finishedAt: null,
+                        isError: false,
+                    });
                 }
-
-                // Only a file tool's input is read again (its edits rebuild the after state); a resident fold keeps
-                // what is set here for as long as it keeps the session.
-                if (fileToolVia(name) !== null) {
-                    state.inputs.set(id, input);
-                }
-
-                state.calls.set(id, {
-                    id,
-                    turnId: cursor.currentTurn ?? "",
-                    name,
-                    startedAt: epoch(at),
-                    finishedAt: null,
-                    cwd,
-                    agentId,
-                    isError: false,
-                    filePath: text(input.file_path) ?? text(input.notebook_path),
-                    command: isShellTool(name) ? text(input.command) : null,
-                });
                 continue;
             }
 
