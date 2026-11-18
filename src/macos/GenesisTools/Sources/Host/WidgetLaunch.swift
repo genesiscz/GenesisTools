@@ -94,16 +94,9 @@ package enum WidgetLaunch {
         return GenesisToolsHome.path("hub/widget/state.json", environment: environment)
     }
     package static func start(_ arguments: [String] = ["--widget", "--settings"]) {
-        guard AppParts.canLaunch(face: arguments.first ?? ""), let executable = Bundle.main.executableURL else { return }
-        do {
-            let child = Process()
-            child.executableURL = executable
-            child.arguments = arguments
-            child.standardInput = FileHandle.nullDevice
-            child.standardOutput = FileHandle.nullDevice
-            child.standardError = FileHandle.nullDevice
-            try child.run()
-        } catch {
+        guard AppParts.canLaunch(face: arguments.first ?? "") else { return }
+        // A boot of the widget behind another face must not take the focus from it.
+        FaceLaunch.start(arguments, activates: arguments.contains(ensureRunningFlag) ? false : nil) { error in
             PerfLog.mark("widget.launch \(error.localizedDescription)")
             let alert = NSAlert()
             alert.messageText = "Could not open the widget"

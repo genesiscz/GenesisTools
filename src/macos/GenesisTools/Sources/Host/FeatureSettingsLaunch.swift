@@ -40,17 +40,8 @@ package enum FeatureSettingsLaunch {
     static let face = "--features"
 
     package static func open(pageID: String? = nil, context: String? = nil) {
-        guard AppParts.canLaunch(face: face), let executable = Bundle.main.executableURL else { return }
-        do {
-            let child = Process()
-            child.executableURL = executable
-            child.arguments = [face] + FeatureSettingsRequest(pageID: pageID, context: context).arguments
-            child.standardInput = FileHandle.nullDevice
-            child.standardOutput = FileHandle.nullDevice
-            child.standardError = FileHandle.nullDevice
-            try child.run()
-        } catch {
-            NSLog("Settings launch failed: %@", error.localizedDescription)
+        guard AppParts.canLaunch(face: face) else { return }
+        FaceLaunch.start([face] + FeatureSettingsRequest(pageID: pageID, context: context).arguments) { error in
             let alert = NSAlert()
             alert.messageText = "Could not open Settings"
             alert.informativeText = error.localizedDescription
