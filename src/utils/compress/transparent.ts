@@ -4,6 +4,7 @@
  */
 import {
     closeSync,
+    constants,
     existsSync,
     fstatSync,
     linkSync,
@@ -19,6 +20,7 @@ import { fileFlags } from "@genesiscz/utils/fs/cloud-placeholder";
 import { logger } from "@genesiscz/utils/logger";
 import { cloneFile, getPrivateSize } from "@genesiscz/utils/macos/apfs";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { sniffSample } from "./presets";
 import {
     encodedSampleBytes,
     restoreFileTimes,
@@ -275,6 +277,28 @@ export function drop(path: string): void {
 /** A file whose sample packs to more than this share is not worth a full pass. */
 const SAMPLE_SKIP = 0.75;
 
+/** Inspect only metadata-eligible files. A replaced pathname or an unreadable header cannot enter a plan. */
+export function hasTextHeader(candidate: Candidate): boolean {
+    let fd: number | undefined;
+    try {
+        fd = openSync(candidate.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.ino !== candidate.ino || stat.size !== candidate.size) {
+            return false;
+        }
+        const head = Buffer.alloc(Math.min(stat.size, 4096));
+        const count = readSync(fd, head, 0, head.length, 0);
+        return count === head.length && sniffSample(head).kind === "text";
+    } catch (error) {
+        logger.debug({ error, path: candidate.path }, "transparent plan skipped an unreadable header");
+        return false;
+    } finally {
+        if (fd !== undefined) {
+            closeSync(fd);
+        }
+    }
+}
+
 /**
  * Encoded/raw ratio of the first and middle 1 MiB using the selected libcompression codec.
  * A smaller file is sampled whole. Media-like JSONL can be rejected before a full temporary copy.
@@ -293,6 +317,11 @@ export function sampleRatio(path: string, size: number, algorithm: TransparentAl
     try {
         for (const position of positions) {
             const n = readSync(fd, buf, 0, chunk, position);
+            // A configured text extension can hide an archive, an image or a SQLite database.
+            if (n !== chunk || (position === 0 && sniffSample(buf.subarray(0, Math.min(n, 4096))).kind !== "text")) {
+                return Number.POSITIVE_INFINITY;
+            }
+
             raw += n;
             packed += encodedSampleBytes(buf.subarray(0, n), algorithm);
         }
@@ -343,7 +372,9 @@ export async function compressOne(c: Candidate, writer: TransparentWriter = DITT
             status: "no gain",
             before: c.alloc,
             after: c.alloc,
-            note: `a sample packs to ${Math.round(est * 100)}%; no full pass`,
+            note: Number.isFinite(est)
+                ? `a sample packs to ${Math.round(est * 100)}%; no full pass`
+                : "sample changed or is not text",
         };
     }
 

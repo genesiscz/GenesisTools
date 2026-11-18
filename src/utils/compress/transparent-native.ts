@@ -2,7 +2,8 @@ import { dlopen, FFIType } from "bun:ffi";
 import { lstatSync } from "node:fs";
 
 export type TransparentAlgorithm = "zlib" | "lzvn" | "lzfse";
-const CODES: Record<TransparentAlgorithm, number> = { zlib: 0x205, lzvn: 0x100, lzfse: 0x801 };
+// 0x900 dispatches to lzvn_encode_buffer in macOS libcompression. The public SDK's 0x100 is LZ4.
+const CODES: Record<TransparentAlgorithm, number> = { zlib: 0x205, lzvn: 0x900, lzfse: 0x801 };
 
 let compression: ReturnType<typeof loadCompression> | undefined;
 function loadCompression() {
