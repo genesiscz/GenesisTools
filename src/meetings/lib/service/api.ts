@@ -1648,6 +1648,7 @@ export const meetingsApi = defineApi({
         dictionaryAdd,
         dictionaryRemove,
         dictionaryTest,
+        ...VOICES_METHODS,
     ],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",

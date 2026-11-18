@@ -1,14 +1,11 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type Block, json2md } from "@genesiscz/utils/json2md";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { truncateDisplay } from "@genesiscz/utils/table";
 import { localTime } from "@genesiscz/utils/transcribe/render";
-import { CallTimeline } from "./call-timeline";
 import { recordingSummary } from "./screen";
 import { TOOL } from "./shared";
-import { meetingSound, readAudioRows, readSoundClock } from "./sound";
 import { preservedSourceAudio } from "./source-audio";
-import { isMeetingSourceId, sourceRefOf } from "./sources";
 import { assignmentText } from "./speaker-assign";
 
 /** A source block as a person reads it: the source meeting and its folders, not the raw JSON (MC24). */
@@ -50,29 +47,6 @@ export function showText(record: MeetingRecord): string {
     }
 
     facts.push(...recordingSummary(record));
-    const folder = new MeetingStore().folder(record.id);
-    const owned = preservedSourceAudio(record);
-    const source = sourceRefOf(record);
-    const sound = meetingSound({
-        folder,
-        timelineZeroMs: CallTimeline.stored(record).zeroMs,
-        rows: readAudioRows(folder),
-        clock: readSoundClock(folder),
-        tracks: "best",
-        ...(owned && source && isMeetingSourceId(source.sourceId)
-            ? {
-                  source: {
-                      path: owned.path,
-                      source: source.sourceId,
-                      layout: record.evidence?.channels?.layout ?? "unknown",
-                      durationSec: Number.POSITIVE_INFINITY,
-                  },
-              }
-            : {}),
-    });
-    if (sound.tracks.length) {
-        facts.push(`sound: ${sound.tracks.map((track) => `${track.kind} (${track.clock})`).join(", ")}`);
-    }
     for (const [sourceId, audio] of Object.entries(record.audio?.sources ?? {})) {
         const present = preservedSourceAudio(record, { sourceId, sourceMeetingId: audio.sourceMeetingId });
         facts.push(

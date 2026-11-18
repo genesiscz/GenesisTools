@@ -2381,6 +2381,16 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.suggest", { meeting: "nope" });
     await ask(window, "meeting.listen.prepare", { meeting: "nope", group: "spot-check" });
     await ask(window, "meeting.voice.enrol", { meeting: "nope" });
+    await ask(window, "voices.list", { project: "Atlas" }, "A project with no voice samples: an empty list.");
+    await ask(window, "voices.preview", { meeting: "nope" });
+    await ask(window, "voices.apply", { meeting: "nope" });
+    await ask(window, "voices.sample", { project: "Atlas", person: "Alice Example", sample: 0 });
+    await ask(
+        window,
+        "voices.remove",
+        { project: "Atlas", person: "Alice Example", preview: true },
+        "preview: read only."
+    );
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });

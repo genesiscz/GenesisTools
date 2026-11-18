@@ -36,7 +36,6 @@ import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
 import { meetingsToolsetApi } from "./service/toolset-api";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
-import { showText } from "./show-text";
 import * as soundModule from "./sound";
 import { appendAudioRow, meetingSound } from "./sound";
 import { preserveSourceAudio } from "./source-audio";
@@ -276,6 +275,26 @@ describe("show sound tracks", () => {
             printed.mockRestore();
         }
     }
+
+    test("show names recorder tracks and their saved clock without decoding audio", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Track inventory", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+        soundModule.appendAudioRow(store.folder(record.id), {
+            file: "audio/mic.m4a",
+            source: "mic",
+            at: record.start,
+            durationMs: 30000,
+            mutedSpans: [],
+        });
+        soundModule.saveSoundClock(store.folder(record.id), {
+            version: 1,
+            sources: { mic: { correctionSec: 0.1, pieces: 1, clear: 1 } },
+        });
+        expect(await show(record.id)).toContain("mic-raw (measured)");
+    });
 
     test("both channels held only by the linked app come from one provider read per call", async () => {
         const store = new MeetingStore();
@@ -2378,24 +2397,4 @@ test("removing one numbered sample preserves other tracks sharing its meeting an
         ["mic-raw", 5],
         ["source-mic", 6],
     ]);
-});
-
-test("show names recorder tracks and their saved clock without decoding audio", async () => {
-    const store = new MeetingStore();
-    const record = await store.create(
-        { title: "Track inventory", start: "2026-11-01T10:00:00Z", createdBy: "new" },
-        { command: "new", change: "fixture" }
-    );
-    soundModule.appendAudioRow(store.folder(record.id), {
-        file: "audio/mic.m4a",
-        source: "mic",
-        at: record.start,
-        durationMs: 30000,
-        mutedSpans: [],
-    });
-    soundModule.saveSoundClock(store.folder(record.id), {
-        version: 1,
-        sources: { mic: { correctionSec: 0.1, pieces: 1, clear: 1 } },
-    });
-    expect(showText(record)).toContain("sound: mic-raw (measured)");
 });
