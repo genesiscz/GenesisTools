@@ -2929,13 +2929,25 @@ public final class WidgetModel: ObservableObject {
         return value
     }
 
-    func messageBody(for item: WidgetInboxItem) async throws -> String {
-        struct Response: Decodable { let body: String }
-        let result = try await bridge.run(subcommand: "hub", args: widgetArgs + ["message-body", item.sourceId],
+    func messageBody(for item: WidgetInboxItem) async throws -> WidgetEntryBody {
+        try await entryBody(id: item.sourceId)
+    }
+
+    func entryBody(id: String) async throws -> WidgetEntryBody {
+        let result = try await bridge.run(subcommand: "hub", args: widgetArgs + ["message-body", id],
                                           timeoutSeconds: 8)
         try Task.checkCancellation()
         guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
-        return try JSONDecoder().decode(Response.self, from: Data(result.stdout.utf8)).body
+        return try JSONDecoder().decode(WidgetEntryBody.self, from: Data(result.stdout.utf8))
+    }
+
+    func answerGroup(for item: WidgetInboxItem, limit: Int = 5) async throws -> [WidgetGroupEntry] {
+        struct Response: Decodable { let entries: [WidgetGroupEntry] }
+        let result = try await bridge.run(subcommand: "hub",
+            args: widgetArgs + ["answer-group", item.sourceId, "--limit", String(limit)], timeoutSeconds: 8)
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
+        return try JSONDecoder().decode(Response.self, from: Data(result.stdout.utf8)).entries
     }
 
     private func transcriptQuery(_ session: WidgetSession) -> SessionTranscriptCache.Query {
