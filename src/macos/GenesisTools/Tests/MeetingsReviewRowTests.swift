@@ -80,7 +80,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertTrue(item.speakerEvidenceText?.contains("R20, energy") == true)
         XCTAssertTrue(item.speakerEvidenceText?.contains("stretch-stuck") == true)
         XCTAssertTrue(item.speakerEvidenceText?.contains("2 contradictory lines") == true)
-        XCTAssertEqual(item.departureText, "Carol Example said goodbye at 20 s")
+        XCTAssertEqual(item.departureText, "Carol Example said goodbye at 00:20")
     }
 
     private func defaults() throws -> (UserDefaults, String) {

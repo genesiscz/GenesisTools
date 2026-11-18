@@ -31,12 +31,16 @@ struct TranscriptPane: View {
 /// The transcript as Riverside blocks (R39), for the pane and the Transcript tab: the heard line follows the player
 /// (R42), a click on a line plays from it, ⇧-click and ⌘-click select lines for a comment or a clip (R43), and the staged
 /// comments sit under the blocks with one Send.
+///
+/// The header is one row and one count line (window audit M1): the title or the filter, Follows playback and a "…"
+/// menu (Word timings…, Check by ear…); under it "Names at 50 % ▾" with the line counts, where the menu shows what each
+/// value would show. "Who was there" folds above the blocks. Everything the header and the blocks draw is computed in
+/// `TranscriptPaneProjection` when an input changes, never in a body (M11).
 struct TranscriptBlocksPane: View {
     @Bindable var detail: MeetingDetailModel
     let entries: [TranscriptLine]
     var filter = ""
-    /// The pane's own header ("Transcript", Follows playback, Jump to now); the tab has its filter field instead and
-    /// shows the follow controls in a slimmer line.
+    /// The pane's own title ("Transcript"); the tab has its filter field there instead.
     var showsHeader = false
     /// The tab's filter field, which takes the header's free room.
     var headerField: AnyView?
@@ -61,7 +65,7 @@ struct TranscriptBlocksPane: View {
     @State private var popoverLine: String?
     @State private var jump = 0
     @State private var sentExpanded = false
-    @State private var timingOptionsOpen = false
+    @State private var paneSheet: PaneSheet?
     @State private var timingFrom = ""
     @State private var timingTo = ""
     @State private var timingModel = "onnx-community/whisper-large-v3-turbo_timestamped"
@@ -70,30 +74,37 @@ struct TranscriptBlocksPane: View {
     @State private var threshold = MeetingsApplyThreshold.shared
     private var applyAbove: Double { threshold.percent ?? 70 }
     @AppStorage(MeetingsPreferences.Transcript.echoAbove.key) private var echoAbove = MeetingsPreferences.Transcript.defaultEchoAbove
-    @State private var probing = false
-    @State private var spotChecking = false
-    /// The Items tab's question group: "Spot check" opens that tab on the group it prepared.
+    /// The Items tab's question group: a check prepared here opens that tab on the group it prepared.
     @AppStorage("meetings.rows.questionGroup") private var questionGroup = "all"
+    /// "Who was there" open or folded, remembered across meetings; folded at first, so the lines get the room.
+    @AppStorage("meetings.transcript.presenceOpen") private var presenceOpen = false
+    @State private var projection: TranscriptPaneProjection?
 
-    private var filteredEntries: [TranscriptLine] { Self.shownLines(entries, applyAbove: applyAbove) }
+    /// The popovers of the header's "…" menu, anchored on it.
+    enum PaneSheet: String, Identifiable {
+        case timings, check
+        var id: String { rawValue }
+    }
 
-    /// The lines as the pane shows them at the threshold (I14). A suggested name at or above it reads as the name; under
-    /// it, or while an open question asks who said the line (I9), it reads as the guess `[name: NN %]`. Everything else
-    /// the engine sent stays: the speaking indicator (I1), its own `[unclear …]` marks, the times and the words.
+    /// The lines as the pane shows them at the threshold (I14). A suggested name at or above it is the name; under it,
+    /// or while an open question asks who said the line (I9), it is a guess (`guess`, drawn by `TranscriptLine.who`).
+    /// Everything else the engine sent stays: the speaking indicator (I1), the open questions, the times and the words.
+    /// The line keeps the speaker the engine sent, which a rename or an assignment acts on.
     static func shownLines(_ entries: [TranscriptLine], applyAbove: Double) -> [TranscriptLine] {
         entries.map { entry in
             guard let confidence = entry.confidence, entry.band != "confirmed", let name = entry.suggestedSpeaker else { return entry }
             let guess = entry.questioned == true || confidence * 100 < Double(applyAbove)
-            return TranscriptLine(indicator: entry.indicator, id: entry.id, startSec: entry.startSec,
-                                  speaker: guess ? "[\(name): \(Int((confidence * 100).rounded())) %]" : name,
-                                  text: entry.text, endSec: entry.endSec, words: entry.words,
-                                  confidence: confidence, suggestedSpeaker: name, sourceIndex: entry.sourceIndex,
-                                  questioned: entry.questioned, guess: guess, band: guess ? "guess" : "applied")
+            var shown = entry
+            shown.confidence = confidence
+            shown.suggestedSpeaker = name
+            shown.guess = guess
+            shown.band = guess ? "guess" : "applied"
+            return shown
         }
     }
 
-    /// The lines with a suggestion, by how the pane shows them (I14): a name, a guess with its percent, or still open
-    /// (the engine's `[unclear …]` mark). Lines no suggestion covers are not counted.
+    /// The lines with a suggestion, by how the pane shows them (I14): named, guessed with a percent, or still open
+    /// ("Who is this?"). Lines no suggestion covers are not counted.
     struct BandCount: Equatable {
         var applied = 0, guesses = 0, open = 0
 
@@ -103,23 +114,13 @@ struct TranscriptBlocksPane: View {
 
         init(_ shown: [TranscriptLine]) {
             for line in shown where line.band != nil {
-                if line.guess == true { guesses += 1 } else if line.speaker.hasPrefix("[") { open += 1 } else { applied += 1 }
+                let who = line.who
+                if who.isGuess { guesses += 1 } else if who.isOpen { open += 1 } else { applied += 1 }
             }
         }
 
-        var words: String { "\(applied) applied · \(Plural.count(guesses, "guess", "guesses")) · \(open) open" }
-    }
-
-    /// The spot check answered so far (I11 b): the confirmed spot-check questions and how many changed the speaker the
-    /// rules had put there. Nil before the first answer.
-    static func spotCheckRate(_ items: [MeetingItem]) -> (changed: Int, checked: Int)? {
-        let checked = items.filter { $0.group == "spot-check" && $0.status == "confirmed" }
-        guard !checked.isEmpty else { return nil }
-        let changed = checked.filter { item in
-            if case .string(let original)? = item.evidence?["originalSpeaker"] { return item.answer != original }
-            return false
-        }.count
-        return (changed, checked.count)
+        /// One word per state, the same as the chips draw them, and the noun the counts share: lines.
+        var words: String { "\(applied) named · \(guesses) guessed · \(open) open lines" }
     }
 
     /// The one speaker range whose rule set this line's name (T3), picked as the engine picks it
@@ -152,23 +153,32 @@ struct TranscriptBlocksPane: View {
     }
 
     var body: some View {
-        let blocks = TranscriptBlock.filter(built, query: filter)
         VStack(spacing: 0) {
             header
-            ListenPresenceStrip(detail: detail, duration: durationSec ?? entries.last?.endSec ?? 1)
+            presence
             Divider()
-            if blocks.isEmpty {
-                EmptyState(symbol: "magnifyingglass", text: "No line holds “\(filter)”")
+            if let projection {
+                if projection.blocks.isEmpty {
+                    EmptyState(symbol: "magnifyingglass", text: "No line holds “\(filter)”")
+                } else {
+                    FollowingBlocks(blocks: projection.blocks, names: projection.names, player: detail.window?.player, meeting: detail.id,
+                                    follows: isFollowing, jump: jump, selection: selection.union(raisedLineIDs), popoverLine: popoverLine,
+                                    dimsPast: dimPast, showsAvatar: avatars,
+                                    play: { detail.play(at: $0, from: .transcript) },
+                                    select: select, selectWords: selectWords,
+                                    scrolledAway: { if isFollowing { following = false } },
+                                    popover: { popover() },
+                                    closePopover: { popoverLine = nil })
+                }
             } else {
-                FollowingBlocks(blocks: blocks, player: detail.window?.player, meeting: detail.id, follows: isFollowing,
-                                jump: jump, selection: selection.union(raisedLineIDs), popoverLine: popoverLine, dimsPast: dimPast, showsAvatar: avatars,
-                                play: { detail.play(at: $0, from: .transcript) },
-                                select: select, selectWords: selectWords,
-                                scrolledAway: { if isFollowing { following = false } },
-                                popover: { popover(blocks) },
-                                closePopover: { popoverLine = nil })
+                Spacer(minLength: 0)
             }
             staged
+        }
+        .onChange(of: projectionInput, initial: true) { _, input in
+            let span = HubPerf.begin("meetings.transcript.projection", "\(input.entries.count) lines")
+            projection = TranscriptPaneProjection.make(input)
+            span.end()
         }
         .onAppear { detail.restoreRowsForReopen(); detail.ensureComments(); if detail.rows.value == nil { detail.loadRows() } }
         .onChange(of: detail.rows.value, initial: true) { _, rows in
@@ -188,14 +198,12 @@ struct TranscriptBlocksPane: View {
 
     // MARK: Blocks
 
-    /// The blocks with their marks: built when the transcript, the hints, the items or the comments change, not per tick.
-    private var built: [TranscriptBlock] {
-        let marks = MeetingDetailModel.lineMarks(entries: entries, hints: detail.speakers.value?.hints ?? [],
-                                                 items: detail.record.value?.items ?? [],
-                                                 comments: detail.comments.value?.comments ?? [])
-        return TranscriptBlock.build(from: filteredEntries, durationSec: durationSec, marks: marks,
-                                     evidence: detail.rows.value?.lineEvidence ?? [], items: detail.record.value?.items ?? [], echoAbove: echoAbove,
-                                     breakAfterGapSec: MeetingsPreferences.Transcript.breakAfterGapSec(blockBreakSec))
+    /// What the projection is made from; a change of any part makes it again. The arrays compare by their storage first.
+    private var projectionInput: TranscriptPaneProjection.Input {
+        .init(entries: entries, applyAbove: applyAbove, hints: detail.speakers.value?.hints ?? [],
+              items: detail.record.value?.items ?? [], comments: detail.comments.value?.comments ?? [],
+              evidence: detail.rows.value?.lineEvidence ?? [], echoAbove: echoAbove, blockBreakSec: blockBreakSec,
+              durationSec: durationSec, filter: filter, people: detail.record.value?.participants?.count ?? 0)
     }
 
     private var durationSec: Double? {
@@ -207,123 +215,162 @@ struct TranscriptBlocksPane: View {
 
     // MARK: Header
 
-    @ViewBuilder
     private var header: some View {
-        WrapLayout(spacing: 8, lineSpacing: 6) {
-            if let saved = threshold.percent {
-                Picker("Apply above", selection: Binding(get: { saved }, set: { value in Task { await threshold.set(value) } })) {
-                    ForEach(Array(Set([0, 50, 60, 70, 80, 90, 100, saved])).sorted(), id: \.self) { value in Text("\(value.formatted(.number.precision(.fractionLength(0...2)))) %").tag(value) }
-                }.frame(width: 160).disabled(threshold.busy)
-                .accessibilityIdentifier("meetings.transcript.threshold")
-            } else { Text("Reading the threshold…").font(.caption) }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if showsHeader {
+                    Text("Transcript").font(.system(size: 13, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
+                }
+                if let headerField {
+                    headerField.frame(minWidth: 140, idealWidth: 220, maxWidth: 320)
+                }
+                Spacer(minLength: 4)
+                if detail.busy.contains("word-timings") {
+                    ProgressView().controlSize(.small).accessibilityLabel("Generating word timings")
+                    GhostButton("Cancel timings", symbol: "xmark", tooltip: "Stop generating the word timings",
+                                identifier: "meetings.transcript.timings.cancel", action: detail.cancelWordTimings)
+                }
+                KitToggleChip("Follows playback", isOn: Binding(get: { isFollowing }, set: { following = $0; if $0 { jump += 1 } }),
+                              hue: .play, size: .small,
+                              tooltip: "The heard line stays in view while a Moment plays; scrolling away stops it",
+                              identifier: "meetings.transcript.follows")
+                if !isFollowing, detail.window?.player.top?.meeting == detail.id {
+                    IconButton(systemName: "scope", tooltip: "Jump to now: scroll to the heard line and follow the playback again") {
+                        following = true
+                        jump += 1
+                    }
+                    .accessibilityLabel("Jump to now")
+                    .accessibilityIdentifier("meetings.transcript.jump")
+                }
+                moreMenu
+            }
+            countLine
+        }
+        .padding(.horizontal, 14).padding(.vertical, 7)
+    }
+
+    /// "Names at 50 % ▾ · 302 named · 18 guessed · 487 open lines", then the spot check's result when it has one.
+    private var countLine: some View {
+        WrapLayout(spacing: 6, lineSpacing: 2) {
+            thresholdMenu
+            if let words = projection?.bands.words {
+                Text(verbatim: words)
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                    .instantTooltip("Lines with a suggested speaker at \(Self.percentText(applyAbove)): shown as the name, as a guess with its percent, or as Who is this?")
+                    .accessibilityLabel("Lines at \(Self.percentText(applyAbove)): \(words)")
+            }
+            if let rate = projection?.spotCheck {
+                Text(verbatim: "Spot check: \(rate.sentence)")
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                    .accessibilityIdentifier("meetings.transcript.spotCheckRate")
+            }
             if let error = threshold.failure {
-                FailureInline(FailureReport.toolsCall(error, outcome: "The threshold was not saved or read.", action: "Read or save the transcript threshold"), form: .compact) {
+                FailureInline(FailureReport.toolsCall(error, outcome: "The threshold was not read or saved", action: "Read or save the transcript threshold"), form: .compact) {
                     Task { await threshold.load() }
                 }
             }
-            Button("Probe") { probing.toggle() }
-                .popover(isPresented: $probing) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach([50, 60, 70, 80, 90], id: \.self) { value in
-                            // The same count as the line beside the picker, so the two never disagree at one value.
-                            let bands = BandCount(Self.shownLines(entries, applyAbove: Double(value)))
-                            let questions = ListenTranscriptQuality.probe(entries, percent: value).questions
-                            Button("\(value) %: \(bands.words), \(Plural.count(questions, "long-stretch question"))") {
-                                Task { await threshold.set(Double(value)) }
-                                probing = false
-                            }
-                        }
-                    }.padding()
-                }
-            bandLine
-            spotCheck
-            if showsHeader {
-                Text("Transcript").font(.system(size: 12, weight: .semibold))
-            }
-            if let headerField {
-                headerField.frame(minWidth: 160, idealWidth: 220, maxWidth: 320)
-            }
-            if detail.busy.contains("word-timings") {
-                ProgressView().controlSize(.small)
-                Button("Cancel timings", action: detail.cancelWordTimings)
-                    .accessibilityIdentifier("meetings.transcript.timings.cancel")
-            } else {
-                GhostButton("Word timings", symbol: "waveform.path", tooltip: "Generate local word timings for a short range",
-                            identifier: "meetings.transcript.timings") {
-                    let position = detail.window?.player.position ?? 0
-                    let eligible = entries.filter { line in
-                        guard let start = line.startSec, let end = line.endSec else { return false }
-                        return end > start && end - start <= 20
-                    }
-                    let chosen = eligible.first { ($0.endSec ?? 0) > position } ?? eligible.first
-                    let from = chosen?.startSec ?? position
-                    timingFrom = String(format: "%.1f", from)
-                    timingTo = String(format: "%.1f", from + 20)
-                    timingOptionsOpen = true
-                }
-                .accessibilityLabel("Word timings, \(entries.reduce(0) { $0 + ($1.words?.count ?? 0) }) words with saved timing")
-                .popover(isPresented: $timingOptionsOpen, arrowEdge: .bottom) { timingOptions }
-            }
-            KitToggleChip("Follows playback", isOn: Binding(get: { isFollowing }, set: { following = $0; if $0 { jump += 1 } }),
-                          hue: .play, size: .small,
-                          tooltip: "The heard line stays in view while a Moment plays; scrolling away stops it",
-                          identifier: "meetings.transcript.follows")
-            if !isFollowing, detail.window?.player.top?.meeting == detail.id {
-                GhostButton("Jump to now", symbol: "scope", tooltip: "Scroll to the heard line and follow the playback again",
-                            identifier: "meetings.transcript.jump") {
-                    following = true
-                    jump += 1
-                }
-            }
         }
-        .padding(.horizontal, 14).padding(.vertical, showsHeader || headerField != nil ? 8 : 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The line count per band at the threshold (I14), always beside the picker.
-    private var bandLine: some View {
-        let words = BandCount(filteredEntries).words
-        return Text(verbatim: words)
-            .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-            .instantTooltip("Lines with a suggested speaker at \(applyAbove.formatted(.number.precision(.fractionLength(0...2)))) %: shown as the name, as a guess with its percent, or still unclear")
-            .accessibilityLabel("Lines at \(applyAbove.formatted(.number.precision(.fractionLength(0...2)))) %: \(words)")
+    /// The threshold as a menu: each value with what it would show, computed at the click (it merges the picker and
+    /// the Probe popover that stood beside it).
+    private var thresholdMenu: some View {
+        let saved = threshold.percent
+        return MenuButton(style: .genHoverPlain(), items: { thresholdItems(saved) }) {
+            HStack(spacing: 3) {
+                Text("Names at").foregroundStyle(.secondary)
+                Text(verbatim: saved.map(Self.percentText) ?? (threshold.failure == nil ? "…" : "not read")).fontWeight(.semibold)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11)).monospacedDigit()
+            .frame(minHeight: 22).contentShape(Rectangle())
+        }
+        .disabled(saved == nil || threshold.busy)
+        .instantTooltip("From this confidence a suggested speaker shows as the name; below it, as a guess. The menu says what each value would show")
+        .accessibilityLabel("Names at \(saved.map(Self.percentText) ?? "not read")")
+        .accessibilityIdentifier("meetings.transcript.threshold")
     }
 
-    /// "Spot check" (I11 b): asks random lines of the band again by ear in the Items tab, and the share the answers
-    /// changed so far stands beside the band count.
-    @ViewBuilder
-    private var spotCheck: some View {
-        if spotChecking {
-            ProgressView().controlSize(.small).accessibilityLabel("Preparing the spot check")
-        } else {
-            GhostButton("Spot check", symbol: "checklist", tooltip: "Ask 20 random lines again by ear, in the Items tab",
-                        identifier: "meetings.transcript.spotcheck", action: startSpotCheck)
+    private func thresholdItems(_ saved: Double?) -> [MenuButtonItem] {
+        var values: [Double] = [0, 50, 60, 70, 80, 90, 100]
+        if let saved, !values.contains(saved) { values.append(saved); values.sort() }
+        var items: [MenuButtonItem] = [.note("Show a suggested speaker as the name from")]
+        for value in values {
+            let bands = BandCount(Self.shownLines(entries, applyAbove: value))
+            let questions = ListenTranscriptQuality.probe(entries, percent: Int(value)).questions
+            items.append(.action("\(Self.percentText(value)): \(bands.words), \(Plural.count(questions, "long-stretch question"))",
+                                 checked: value == saved) {
+                Task { await threshold.set(value) }
+            })
         }
-        if let rate = Self.spotCheckRate(detail.record.value?.items ?? []) {
-            let percent = Int((100 * Double(rate.changed) / Double(rate.checked)).rounded())
-            Text(verbatim: "Spot check: \(rate.changed) of \(rate.checked) changed (\(percent) %)")
-                .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+        return items
+    }
+
+    static func percentText(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(0...2)))) %"
+    }
+
+    /// "…": Word timings… and Check by ear…, each a popover on this button.
+    private var moreMenu: some View {
+        MenuButton(style: .genHoverPlain(), items: {
+            [.action("Word timings…", enabled: !detail.busy.contains("word-timings")) { openTimings() },
+             .action("Check by ear…") { paneSheet = .check }]
+        }) {
+            Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)
+                .frame(width: 24, height: 22).contentShape(Rectangle())
+        }
+        .instantTooltip("More: word timings for a short range, or check the speakers by ear")
+        .accessibilityLabel("More transcript actions")
+        .accessibilityIdentifier("meetings.transcript.more")
+        .popover(item: $paneSheet, arrowEdge: .bottom) { sheet in
+            switch sheet {
+            case .timings: timingOptions
+            case .check:
+                ListenCheckPopover(detail: detail, rate: projection?.spotCheck) { group in
+                    paneSheet = nil
+                    questionGroup = group
+                    detail.show(.items)
+                }
+            }
         }
     }
 
-    private func startSpotCheck() {
-        spotChecking = true
-        Task {
-            defer { spotChecking = false }
-            do {
-                try await detail.prepareListenQuality("spot-check")
-                questionGroup = "spot-check"
-                detail.show(.items)
-            } catch {
-                detail.window?.notices.push(.meetingsFailure(error, retry: { startSpotCheck() }))
-            }
+    /// The timing range starts at the first short line from the heard position on (20 s at most).
+    private func openTimings() {
+        let position = detail.window?.player.position ?? 0
+        let eligible = entries.lazy.filter { line in
+            guard let start = line.startSec, let end = line.endSec else { return false }
+            return end > start && end - start <= 20
         }
+        let chosen = eligible.first { ($0.endSec ?? 0) > position } ?? eligible.first
+        let from = chosen?.startSec ?? position
+        timingFrom = String(format: "%.1f", from)
+        timingTo = String(format: "%.1f", from + 20)
+        paneSheet = .timings
     }
 
     private var timingOptions: some View {
         WordTimingOptions(from: $timingFrom, to: $timingTo, model: $timingModel, language: $timingLanguage,
-                          cancel: { timingOptionsOpen = false }) { from, to, model, language in
+                          cancel: { paneSheet = nil }) { from, to, model, language in
             detail.generateWordTimings(from: from, to: to, model: model, language: language)
-            timingOptionsOpen = false
+            paneSheet = nil
+        }
+    }
+
+    /// "Who was there (N)": the presence strip, folded until opened; the choice is remembered.
+    @ViewBuilder
+    private var presence: some View {
+        let people = projection?.people ?? 0
+        if people > 0 {
+            GenDisclosure(isExpanded: $presenceOpen, minHeight: 22, identifier: "meetings.transcript.presence") {
+                ListenPresenceStrip(detail: detail, duration: durationSec ?? entries.last?.endSec ?? 1)
+                    .padding(.bottom, 4)
+            } label: {
+                Text(verbatim: "Who was there (\(people))").font(.system(size: 12))
+            }
+            .padding(.horizontal, 14).padding(.bottom, 4)
         }
     }
 
@@ -341,7 +388,7 @@ struct TranscriptBlocksPane: View {
         case .extendSelection:
             if let anchor {
                 let range = min(anchor.index, line.index)...max(anchor.index, line.index)
-                for block in built { for other in block.lines where range.contains(other.index) { selection.insert(other.id) } }
+                for block in projection?.built ?? [] { for other in block.lines where range.contains(other.index) { selection.insert(other.id) } }
             } else {
                 selection.insert(line.id)
             }
@@ -359,12 +406,13 @@ struct TranscriptBlocksPane: View {
     }
 
     private var selectedLines: [TranscriptBlockLine] {
-        built.flatMap(\.lines).filter { selection.contains($0.id) }
+        (projection?.built ?? []).flatMap(\.lines).filter { selection.contains($0.id) }
     }
 
-    private func popover(_ blocks: [TranscriptBlock]) -> AnyView {
+    /// Built only while the selection popover is open.
+    private func popover() -> AnyView {
         guard let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
-        let shown = filteredEntries
+        let shown = projection?.shown ?? []
         return AnyView(VStack(alignment: .leading, spacing: 8) {
             ForEach(selectedLines) { line in
                 let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
@@ -423,7 +471,7 @@ struct TranscriptBlocksPane: View {
                                   unstage: { detail.unstageComment($0) })
             }
             if !sent.isEmpty {
-                DisclosureGroup("Sent comments (\(sent.count))", isExpanded: $sentExpanded) {
+                GenDisclosure(isExpanded: $sentExpanded, minHeight: 22, identifier: "meetings.transcript.sentComments") {
                     ForEach(sent.reversed()) { comment in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(StagedCommentLine(comment).rangeText).monospacedDigit()
@@ -440,6 +488,8 @@ struct TranscriptBlocksPane: View {
                         .font(.system(size: 11))
                         .padding(.vertical, 3)
                     }
+                } label: {
+                    Text(verbatim: "Sent comments (\(sent.count))").font(.system(size: 12))
                 }
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .onChange(of: detail.commentDelivery) { _, delivery in
@@ -447,6 +497,55 @@ struct TranscriptBlocksPane: View {
                 }
             }
         }
+    }
+}
+
+/// What the transcript pane draws, made when one of its inputs changes (window audit M11). Before, the pane's body ran
+/// the line marks (every line against every hint, term and comment range), built every block, counted the bands, summed
+/// the words and filtered the items for the spot check on each redraw: a keystroke in the Word timings form, a line
+/// selection, a popover toggle.
+struct TranscriptPaneProjection: Equatable {
+    struct Input: Equatable {
+        var entries: [TranscriptLine] = []
+        var applyAbove: Double = 70
+        var hints: [SpeakerHint] = []
+        var items: [MeetingItem] = []
+        var comments: [MeetingComment] = []
+        var evidence: [WindowLineEvidence] = []
+        var echoAbove = MeetingsPreferences.Transcript.defaultEchoAbove
+        var blockBreakSec = 0.0
+        var durationSec: Double?
+        var filter = ""
+        /// The meeting's participants, the rows of "Who was there".
+        var people = 0
+    }
+
+    /// The lines at the threshold (`TranscriptBlocksPane.shownLines`).
+    var shown: [TranscriptLine] = []
+    /// Every block, and the blocks the filter keeps.
+    var built: [TranscriptBlock] = []
+    var blocks: [TranscriptBlock] = []
+    /// The shown names, sorted, for the person colours.
+    var names: [String] = []
+    var bands = TranscriptBlocksPane.BandCount()
+    var spotCheck: SpotCheckRate?
+    /// The people of "Who was there".
+    var people = 0
+
+    @MainActor
+    static func make(_ input: Input) -> Self {
+        var result = Self()
+        result.shown = TranscriptBlocksPane.shownLines(input.entries, applyAbove: input.applyAbove)
+        let marks = MeetingDetailModel.lineMarks(entries: input.entries, hints: input.hints, items: input.items, comments: input.comments)
+        result.built = TranscriptBlock.build(from: result.shown, durationSec: input.durationSec, marks: marks, evidence: input.evidence,
+                                             items: input.items, echoAbove: input.echoAbove,
+                                             breakAfterGapSec: MeetingsPreferences.Transcript.breakAfterGapSec(input.blockBreakSec))
+        result.blocks = TranscriptBlock.filter(result.built, query: input.filter)
+        result.names = TranscriptBlock.names(result.built)
+        result.bands = TranscriptBlocksPane.BandCount(result.shown)
+        result.spotCheck = SpotCheckRate.of(input.items)
+        result.people = input.people
+        return result
     }
 }
 
@@ -475,6 +574,8 @@ struct RaisedLineFlash {
 private struct FollowingBlocks: View {
     @AppStorage(MeetingsPreferences.Transcript.wordHighlights.key) private var wordHighlights = MeetingsPreferences.Transcript.wordHighlights.defaultValue
     let blocks: [TranscriptBlock]
+    /// The shown names, sorted (`TranscriptPaneProjection.names`).
+    let names: [String]
     let player: MomentPlayer?
     let meeting: String
     let follows: Bool
@@ -492,7 +593,7 @@ private struct FollowingBlocks: View {
 
     var body: some View {
         let position = player?.top?.meeting == meeting ? player?.position : nil
-        FollowingList(blocks: blocks, heard: TranscriptBlock.heard(in: blocks, at: position, wordHighlights: wordHighlights),
+        FollowingList(blocks: blocks, names: names, heard: TranscriptBlock.heard(in: blocks, at: position, wordHighlights: wordHighlights),
                       passedEnd: dimsPast ? TranscriptBlock.passedEnd(in: blocks, at: position) : nil,
                       follows: follows, jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimsPast,
                       showsAvatar: showsAvatar, play: play, select: select, selectWords: selectWords, scrolledAway: scrolledAway, popover: popover,
@@ -521,6 +622,7 @@ enum TranscriptFollowTarget: Equatable {
 /// Motion. `==` compares what it shows and leaves the callbacks out.
 private struct FollowingList: View, Equatable {
     let blocks: [TranscriptBlock]
+    let names: [String]
     let heard: TranscriptHeard?
     /// `TranscriptBlock.passedEnd(in:at:)`, nil when past blocks are not dimmed.
     let passedEnd: Double?
@@ -543,7 +645,7 @@ private struct FollowingList: View, Equatable {
     static func == (lhs: FollowingList, rhs: FollowingList) -> Bool {
         lhs.heard == rhs.heard && lhs.passedEnd == rhs.passedEnd && lhs.follows == rhs.follows && lhs.jump == rhs.jump
             && lhs.selection == rhs.selection && lhs.popoverLine == rhs.popoverLine && lhs.dimsPast == rhs.dimsPast
-            && lhs.showsAvatar == rhs.showsAvatar && lhs.blocks == rhs.blocks
+            && lhs.showsAvatar == rhs.showsAvatar && lhs.names == rhs.names && lhs.blocks == rhs.blocks
     }
 
     var body: some View {
@@ -552,7 +654,7 @@ private struct FollowingList: View, Equatable {
                 TranscriptBlocksList(blocks: blocks, heard: heard, selection: selection, dimsPast: dimsPast,
                                      showsAvatar: showsAvatar, pastBefore: passedEnd,
                                      popoverLine: popoverLine, popover: popover, closePopover: closePopover,
-                                     play: play, select: select, selectWords: selectWords)
+                                     play: play, select: select, selectWords: selectWords, speakerNames: names)
                     .padding(.vertical, 4)
                     .background(UserScrollProbe(onUserScroll: scrolledAway))
             }
