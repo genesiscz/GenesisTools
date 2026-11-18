@@ -218,7 +218,11 @@ struct ItemsTab: View {
         .onChange(of: detail.record.value?.project) { _, _ in projectRefused = false }
         .onAppear { detail.restoreRowsForReopen() }
         .onChange(of: lowPriority) { _, _ in detail.readRows(quiet: true) }
-        .onChange(of: projectionInput, initial: true) { _, input in projection = ItemsProjection.make(input) }
+        .onChange(of: projectionInput, initial: true) { _, input in
+            let span = HubPerf.begin("meetings.items.projection", "\(input.rows.count) rows")
+            projection = ItemsProjection.make(input)
+            span.end()
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             ItemsBar(detail: detail, projection: projection, group: $questionGroup, applyAbove: applyAbove)
         }
