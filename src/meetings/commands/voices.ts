@@ -2,58 +2,169 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { idSchema, ownerKey, readVoiceLibrary, voicesIn } from "@genesiscz/utils/meetings/voice-library";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import { callerActor } from "../lib/decision-journal";
-import { fail } from "../lib/shared";
-import { playSoundSlice } from "../lib/sound-playback";
+import { type MeetingsParams, type MeetingsResult, voicesReject } from "../lib/service/api";
+import { withMeetingsClient } from "../lib/service/client";
+import { fail, resolveEnum } from "../lib/shared";
 import { backfillVoices } from "../lib/voice-backfill";
-import {
-    addVoiceSample,
-    applyVoices,
-    listProjectVoices,
-    planVoiceRemoval,
-    previewVoices,
-    removeVoice,
-    voiceSample,
-} from "../lib/voices";
+import { addVoiceSample, applyVoices, previewVoices } from "../lib/voices";
 import { registerLegacyVoiceCommands } from "./acoustic";
+import { playSoundSlice } from "./play";
+import { parsePerson } from "./projects";
 
 interface VoiceOptions {
     project?: string;
+    meeting?: string;
+    all?: boolean;
+    person?: string;
     json?: boolean;
     sample?: string;
     player?: string;
     start?: boolean;
+    preview?: boolean;
+    planToken?: string;
 }
 
-function sampleNumber(value?: string): number | undefined {
-    if (value === undefined) {
-        return undefined;
+function oneSelection(value: string, previous?: string): string {
+    if (previous !== undefined && previous !== value) {
+        throw new Error("Conflicting voice selectors. Choose one value for each option.");
     }
-    const sample = Number(value);
-    if (!Number.isInteger(sample) || sample < 1) {
-        throw new Error("--sample needs a positive sample number from voices --json.");
-    }
-    return sample;
+    return value;
 }
 
-async function projectFor(options: VoiceOptions, person: string): Promise<string> {
-    if (options.project) {
-        return options.project;
+function scoped(command: Command): Command {
+    return command
+        .option("--project <name>", "samples from this project", oneSelection)
+        .option("--meeting <id>", "samples from this meeting", oneSelection)
+        .option("--all", "samples from all projects");
+}
+
+function browseScope(opts: VoiceOptions): MeetingsParams<"voices.list"> {
+    const scopes = [opts.project, opts.meeting, opts.all].filter((value) => value !== undefined);
+    if (scopes.length > 1) {
+        throw new Error("Choose one voice scope: --project, --meeting or --all.");
     }
-    const projects = [
-        ...new Set(
-            (await listProjectVoices({ store: new MeetingStore() })).people
-                .filter((row) => row.person === person && row.samples.length)
-                .map((row) => row.project)
-        ),
-    ];
-    if (projects.length !== 1) {
-        throw new Error("Give --project <name> to choose this person's voice store.");
+    if (opts.project !== undefined) {
+        return { project: opts.project };
     }
-    return projects[0]!;
+    if (opts.meeting !== undefined) {
+        return { scope: { kind: "meeting", meeting: opts.meeting } };
+    }
+    return opts.all ? { scope: { kind: "all" } } : {};
+}
+
+function stableId(value: string) {
+    const parsed = idSchema.safeParse(value);
+    if (!parsed.success) {
+        throw new Error("--sample needs a vs_ sample ID from voices samples.");
+    }
+    return parsed.data;
+}
+
+function selection(person: string, opts: VoiceOptions): MeetingsParams<"voices.sample"> {
+    const scope = browseScope(opts);
+    if (opts.sample?.startsWith("vs_")) {
+        return { ...scope, person, id: stableId(opts.sample) };
+    }
+    let sample: number | undefined;
+    if (opts.sample !== undefined) {
+        sample = Number(opts.sample);
+        if (!/^\d+$/.test(opts.sample) || !Number.isSafeInteger(sample) || sample < 1) {
+            throw new Error("--sample needs a vs_ ID or a positive decimal sample number.");
+        }
+    }
+    if (scope.scope || scope.project !== undefined) {
+        return { ...scope, person, sample };
+    }
+    // An old command may omit its project only when its samples identify a single project.
+    const groups = voicesIn(readVoiceLibrary(), { kind: "all" }).filter(
+        (row) => sameName(row.owner.name, person) || row.samples.some((s) => sameName(s.owner.name, person))
+    );
+    const projects = new Set(groups.flatMap((row) => row.projects));
+    if (groups.length !== 1 || projects.size !== 1) {
+        throw new Error("Give --project <name> or a stable sample ID to choose this person's samples.");
+    }
+    return { project: [...projects][0]!, person, sample };
+}
+
+function moveDestination(text: string) {
+    const owner = parsePerson(text);
+    if (owner.email) {
+        return { name: owner.name, email: owner.email };
+    }
+    const view = readVoiceLibrary();
+    const matches = new Map(
+        [...view.knownOwners, ...view.library.samples.map((s) => s.owner)]
+            .filter((ref) => sameName(ref.name, owner.name))
+            .map((ref) => [ownerKey(ref), ref] as const)
+    );
+    if (matches.size > 1) {
+        throw new Error('Ambiguous destination. Use --to "Name <email>" to choose the person.');
+    }
+    return matches.values().next().value ?? { name: owner.name };
+}
+
+async function listPeople(opts: VoiceOptions) {
+    const result = await withMeetingsClient((client) =>
+        client.call("voices.list", { ...browseScope(opts), person: opts.person })
+    );
+    if (opts.json) {
+        out.result(SafeJSON.stringify(result));
+        return;
+    }
+    const quality = new Map(result.learnt.flatMap((group) => group.samples.map((s) => [s.id, s] as const)));
+    const table = createBoxTable(["PERSON / PROJECT", "SAMPLE / SOURCE", "RECORDING", "QUALITY"]);
+    for (const row of result.people) {
+        const owner = row.owner.email ? `${row.person} <${row.owner.email}>` : row.person;
+        if (!row.samples.length) {
+            table.push([[owner, ...row.projects].join("\n"), "No sample yet", row.meetings.join("\n"), ""]);
+        }
+        for (const sample of row.samples) {
+            const score = quality.get(sample.id);
+            table.push([
+                `${owner}\n${sample.project}`,
+                [
+                    opts.project ? `#${sample.sample}  ${sample.id}` : sample.id,
+                    `${sample.origin} / ${sample.acquiredBy}${sample.transferred ? " (moved)" : ""}`,
+                    sample.meeting,
+                    sample.title,
+                    sample.words,
+                ]
+                    .filter(Boolean)
+                    .join("\n"),
+                [
+                    `${sample.seat} / ${sample.track}`,
+                    `${formatClock(sample.fromSec)}–${formatClock(sample.toSec)}`,
+                    `Source: ${sample.source.rootMeeting}`,
+                    sample.available ? "Available" : "Unavailable",
+                ].join("\n"),
+                score?.score == null
+                    ? (score?.reason ?? "Unavailable")
+                    : `${score.score.toFixed(2)}${score.outlier ? " (outlier)" : ""}`,
+            ]);
+        }
+    }
+    out.println(table.toString());
+    for (const conflict of result.conflicts) {
+        ui.warn(`${conflict.project}: ${conflict.message}`);
+    }
+}
+
+function printCorrection(result: MeetingsResult<"voices.move">, json?: boolean) {
+    if (json) {
+        out.result(SafeJSON.stringify(result));
+    }
+    if ("reason" in result) {
+        ui.err(result.reason);
+        process.exitCode = 1;
+    } else if (!json) {
+        out.println(`${result.status}: ${result.ids.join(", ")}\nCorrection token: ${result.token}`);
+    }
 }
 
 function guarded(work: () => Promise<void>): Promise<void> {
@@ -61,51 +172,67 @@ function guarded(work: () => Promise<void>): Promise<void> {
 }
 
 export function registerVoicesCommand(program: Command): void {
-    const voices = program
-        .command("voices")
-        .alias("voice")
-        .description("Project voice samples and suggested speaker names, kept on this Mac")
-        .option("--project <name>", "project voice store; absent lists every project")
+    const voices = scoped(program.command("voices").alias("voice").enablePositionalOptions())
+        .description("Browse confirmed voice samples and correct the library kept on this Mac")
+        .option("--person <name>", "show this person's samples")
         .option("--json", "print structured people, samples and meetings")
+        .action((opts: VoiceOptions) => guarded(() => listPeople(opts)));
+
+    const flags = (opts: VoiceOptions) => ({ ...voices.opts<VoiceOptions>(), ...opts });
+    voices.hook("preAction", (_parent, action) => {
+        if (action === voices) {
+            return;
+        }
+        for (const key of ["all", "meeting", "project", "person"] as const) {
+            const value = voices.opts<VoiceOptions>()[key];
+            if (value === undefined) {
+                continue;
+            }
+            if (!action.options.some((option) => option.attributeName() === key)) {
+                throw new Error(`--${key} does not select the target of voices ${action.name()}.`);
+            }
+            if (action.opts()[key] !== undefined && action.opts()[key] !== value) {
+                throw new Error(`Conflicting --${key} values.`);
+            }
+        }
+    });
+
+    scoped(voices.command("samples <person>"))
+        .description("Show the person's confirmed samples and their stable IDs")
+        .option("--json", "print people, samples and learnt voices")
+        .action((person: string, opts: VoiceOptions) => guarded(() => listPeople({ ...flags(opts), person })));
+
+    scoped(voices.command("quality"))
+        .description("Show independent sample counts, similarity and possible outliers")
+        .option("--person <name>", "show this person's learnt voices")
+        .option("--json", "print the quality groups and individual sample scores")
         .action((opts: VoiceOptions) =>
             guarded(async () => {
-                const result = await listProjectVoices({ store: new MeetingStore(), project: opts.project });
-                if (opts.json) {
+                const options = flags(opts);
+                const result = await withMeetingsClient((c) =>
+                    c.call("voices.quality", { ...browseScope(options), person: options.person })
+                );
+                if (options.json) {
                     out.result(SafeJSON.stringify(result));
                     return;
                 }
                 const table = createBoxTable([
-                    "PROJECT",
-                    "PERSON",
-                    "SAMPLE",
-                    "MEETING",
-                    "SEAT / TRACK",
-                    "TIME",
-                    "WORDS",
+                    "PERSON / TRACK",
+                    "MODEL",
+                    "INDEPENDENT / TOTAL",
+                    "MEAN COSINE",
+                    "SAMPLE QUALITY",
                 ]);
-                for (const person of result.people) {
-                    if (!person.samples.length) {
-                        table.push([
-                            person.project,
-                            person.person,
-                            "No sample yet",
-                            person.meetings.length,
-                            "",
-                            "",
-                            "",
-                        ]);
-                    }
-                    for (const sample of person.samples) {
-                        table.push([
-                            person.project,
-                            person.person,
-                            sample.sample,
-                            sample.meeting,
-                            `${sample.seat} / ${sample.track}`,
-                            `${formatClock(sample.fromSec)}–${formatClock(sample.toSec)}`,
-                            sample.words || (sample.available ? "" : "Source unavailable"),
-                        ]);
-                    }
+                for (const group of result.learnt) {
+                    table.push([
+                        [group.owner.name, group.owner.email, group.seat, group.track].filter(Boolean).join("\n"),
+                        `${group.model} (${group.dimension})`,
+                        `${group.independent} / ${group.count}`,
+                        group.meanCosine?.toFixed(2) ?? "Insufficient evidence",
+                        group.samples
+                            .map((s) => `${s.id}: ${s.score?.toFixed(2) ?? s.reason}${s.outlier ? " (outlier)" : ""}`)
+                            .join("\n"),
+                    ]);
                 }
                 out.println(table.toString());
             })
@@ -199,49 +326,126 @@ export function registerVoicesCommand(program: Command): void {
     voices
         .command("play <person>")
         .description("Listen to a confirmed sample at its original rate; saves nothing")
-        .option("--sample <number>", "sample number from voices; default 1")
+        .option("--project <name>", "project for a numbered sample or to narrow an ID", oneSelection)
+        .option("--sample <id|number>", "stable sample ID or project sample number; default 1", oneSelection)
         .option("--player [id]", "Moment player: afplay, vlc, ffplay")
         .option("--no-start", "resolve the sample without starting a player")
         .option("--json", "print the resolved track and file seconds")
         .action((person: string, opts: VoiceOptions) =>
             guarded(async () => {
-                const project = await projectFor({ ...voices.opts(), ...opts }, person);
-                const slice = await voiceSample({
-                    store: new MeetingStore(),
-                    project,
-                    person,
-                    sample: sampleNumber(opts.sample),
-                });
+                const request = selection(person, flags(opts));
+                const slice = await withMeetingsClient((c) => c.call("voices.sample", request));
                 if (opts.start !== false) {
                     await playSoundSlice({ slice, player: opts.player });
                 }
-                opts.json || voices.opts<VoiceOptions>().json
-                    ? out.result(SafeJSON.stringify(slice))
-                    : ui.ok(
-                          `${opts.start === false ? "Would play" : "Played"} sample on ${slice.track}, ${formatClock(slice.fromSec)}–${formatClock(slice.toSec)} at source rate.`
-                      );
+                if (flags(opts).json) {
+                    out.result(SafeJSON.stringify(slice));
+                    return;
+                }
+                out.println(
+                    `${opts.start === false ? "Would play" : "Played"} ${slice.meeting} ${slice.track} ${formatClock(slice.fromSec)}–${formatClock(slice.toSec)}\n${slice.path} (${slice.fileFromSec}–${slice.fileToSec}s${slice.channel === undefined ? "" : `, channel ${slice.channel}`})`
+                );
             })
         );
 
     voices
         .command("remove <person>")
-        .description("Show which suggested lines lose this voice name, then remove samples")
-        .option("--sample <number>", "remove this sample only; absent removes all of the person's samples")
+        .description("Forget selected samples and retire the affected suggestions")
+        .option("--project <name>", "project for the removal", oneSelection)
+        .option("--all", "preview and confirm a bulk removal across projects")
+        .option("--sample <id|number>", "remove one stable ID or project sample number", oneSelection)
+        .option("--preview", "show the affected sample IDs, suggestions and plan token without saving")
+        .option("--plan-token <token>", "apply exactly the removal shown by this preview")
         .option("--json", "print the removal and affected items")
         .action((person: string, opts: VoiceOptions) =>
             guarded(async () => {
-                const project = await projectFor({ ...voices.opts(), ...opts }, person);
-                const request = { store: new MeetingStore(), project, person, sample: sampleNumber(opts.sample) };
-                const plan = planVoiceRemoval(request);
-                for (const row of plan.affected) {
-                    ui.info(
+                const options = flags(opts);
+                const request = selection(person, options);
+                if (opts.planToken !== undefined && (!opts.planToken.trim() || opts.preview)) {
+                    throw new Error("Use --preview to get a plan, then --plan-token <token> to apply it.");
+                }
+                const result = await withMeetingsClient(async (client) => {
+                    if (opts.preview || opts.planToken) {
+                        return client.call("voices.remove", {
+                            ...request,
+                            preview: opts.preview,
+                            planToken: opts.planToken,
+                        });
+                    }
+                    if (request.scope?.kind === "all" && !request.id) {
+                        throw new Error("Use --preview, then --plan-token to remove samples across all projects.");
+                    }
+                    const plan = await client.call("voices.remove", { ...request, preview: true });
+                    if (!plan.removed) {
+                        return plan;
+                    }
+                    if (!plan.planToken) {
+                        throw new Error("The removal preview did not return a plan token.");
+                    }
+                    return client.call("voices.remove", { ...request, planToken: plan.planToken });
+                });
+                if (options.json) {
+                    out.result(SafeJSON.stringify(result));
+                    return;
+                }
+                for (const row of result.affected) {
+                    out.println(
                         `${row.meeting} ${row.item} ${formatClock(row.fromSec)}–${formatClock(row.toSec)} loses its voice suggestion.`
                     );
                 }
-                const result = await removeVoice(request);
-                opts.json || voices.opts<VoiceOptions>().json
-                    ? out.result(SafeJSON.stringify(result))
-                    : ui.ok(`Removed ${result.removed} samples; retired ${result.affected.length} voice suggestions.`);
+                out.println(
+                    `${opts.preview ? "Would remove" : "Removed"} ${result.removed} samples: ${result.ids?.join(", ") ?? ""}`
+                );
+                if (opts.preview && result.planToken) {
+                    out.println(`Plan token: ${result.planToken}`);
+                } else if (result.token) {
+                    out.println(`Correction token: ${result.token}`);
+                }
+            })
+        );
+
+    voices
+        .command("move <person>")
+        .description("Move a confirmed sample to another person and refuse its old owner")
+        .requiredOption("--sample <id>", "stable ID from voices samples", oneSelection)
+        .requiredOption("--to <person>", 'new owner, optionally "Name <email>"')
+        .option("--json", "print the correction receipt or refusal")
+        .action((person: string, opts: VoiceOptions & { sample: string; to: string }) =>
+            guarded(async () => {
+                const params = { person, id: stableId(opts.sample), to: moveDestination(opts.to) };
+                printCorrection(await withMeetingsClient((c) => c.call("voices.move", params)), flags(opts).json);
+            })
+        );
+
+    voices
+        .command("reject <person>")
+        .description("Refuse this person's binding or reject the recording for every owner")
+        .requiredOption("--sample <id>", "stable ID from voices samples", oneSelection)
+        .option("--reason [reason]", "wrong-person, bad-audio or several-voices")
+        .option("--json", "print the correction receipt or refusal")
+        .action((person: string, opts: VoiceOptions & { sample: string; reason?: string | boolean }) =>
+            guarded(async () => {
+                const reason = await resolveEnum({
+                    value: opts.reason,
+                    values: voicesReject.params.shape.reason.options,
+                    flag: "--reason",
+                    subcommand: ["voices", "reject", person],
+                });
+                if (!reason) {
+                    return;
+                }
+                const params = { person, id: stableId(opts.sample), reason };
+                printCorrection(await withMeetingsClient((c) => c.call("voices.reject", params)), flags(opts).json);
+            })
+        );
+
+    voices
+        .command("undo <correction-token>")
+        .description("Undo a voice-library correction by its receipt token")
+        .option("--json", "print the correction receipt or refusal")
+        .action((token: string, opts: VoiceOptions) =>
+            guarded(async () => {
+                printCorrection(await withMeetingsClient((c) => c.call("voices.undo", { token })), flags(opts).json);
             })
         );
 
@@ -273,4 +477,8 @@ export function registerVoicesCommand(program: Command): void {
                 })
         );
     registerLegacyVoiceCommands(voices);
+    // These four commands have always returned JSON and accepted the parent's --json after their name.
+    for (const command of voices.commands.filter((c) => ["collect", "prepare", "enroll", "score"].includes(c.name()))) {
+        command.option("--json", "print the structured result");
+    }
 }

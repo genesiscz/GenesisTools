@@ -12,7 +12,9 @@ import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
-import type { MeetingsParams, MeetingsResult } from "@app/meetings/lib/service/api";
+import type { MeetingsResult } from "@app/meetings/lib/service/api";
+import { InProcessMeetingsClient } from "@app/meetings/lib/service/client";
+import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { deliverStartFailures } from "@app/meetings/lib/start-failures";
 import type { recordingAutostart } from "@app/meetings/lib/watcher";
@@ -126,6 +128,7 @@ import {
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
+import type { z } from "zod";
 
 /** The CLI's undo and collapse with no recorder service: each on a short-lived session of the edit file. */
 const undoEdit = (path: string) => withEditSession(path, (session) => session.undo({ by: "agent" }));
@@ -263,10 +266,11 @@ interface MeetingHandle {
     mark(label: string): Promise<RecordingMarker>;
 }
 
+type VoiceMethods = typeof voiceLibraryMethods;
 type VoiceDoors = {
-    [K in "list" | "move" | "quality" | "reject" | "remove" | "sample" | "undo"]: (
-        input: MeetingsParams<`voices.${K}`>
-    ) => Promise<MeetingsResult<`voices.${K}`>>;
+    [K in keyof VoiceMethods]: (
+        input: z.input<VoiceMethods[K]["params"]>
+    ) => Promise<z.output<VoiceMethods[K]["result"]>>;
 };
 
 /** The meetings toolset's global, as the meetings tests call it. */
@@ -334,6 +338,80 @@ describe("browser toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("P3 voice library REPL commands document their CLI twins and forward scoped requests", async () => {
+        const api = new MeetingsToolset().api;
+        const { voices } = await loadMeetings();
+        const id = "vs_fixture";
+        const person = "Finch Example";
+        const scope = { kind: "meeting" as const, meeting: "fixture" };
+        const inputs = {
+            list: { scope },
+            samples: { scope, person },
+            quality: { person },
+            play: { id, person },
+            move: { id, person, to: { name: "Wren Example" } },
+            reject: { id, person, reason: "wrong-person" },
+            remove: { project: "harbor", person, sample: 1, preview: true },
+            undo: { token: "correction-fixture" },
+        } as const;
+        const cases = [
+            ["list", "voices.list", () => voices.list(inputs.list)],
+            ["samples", "voices.list", () => voices.samples(inputs.samples)],
+            ["quality", "voices.quality", () => voices.quality(inputs.quality)],
+            ["play", "voices.sample", () => voices.play({ ...inputs.play, start: false })],
+            ["move", "voices.move", () => voices.move(inputs.move)],
+            ["reject", "voices.reject", () => voices.reject(inputs.reject)],
+            ["remove", "voices.remove", () => voices.remove(inputs.remove)],
+            ["undo", "voices.undo", () => voices.undo(inputs.undo)],
+        ] as const;
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockRejectedValue(new Error("service refusal"));
+        try {
+            for (const [name, rpc, invoke] of cases) {
+                const help = describeMethod([api], `meetings.voices.${name}`);
+                expect(help).toContain(name === "list" ? "meetings voices" : `meetings voices ${name}`);
+                call.mockClear();
+                await expect(invoke()).rejects.toThrow("service refusal");
+                expect(call.mock.calls).toEqual([[rpc, inputs[name]]]);
+            }
+            const samples = api.methods.find((method) => method.name === "voices.samples");
+            expect(samples?.params.safeParse({ scope }).success).toBe(false);
+        } finally {
+            call.mockRestore();
+        }
+    });
+
+    test("P3 voice library playback starts the selected player unless start is false", async () => {
+        const { voices } = await loadMeetings();
+        const id = "vs_fixture";
+        const slice: MeetingsResult<"voices.sample"> = {
+            meeting: "fixture",
+            track: "source-mic",
+            path: "fixture.wav",
+            channel: 0,
+            fromSec: 2,
+            toSec: 6,
+            fileFromSec: 12,
+            fileToSec: 16,
+            clock: "source",
+        };
+        const meetingPlayback = await import("@app/meetings/commands/play");
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockResolvedValue(slice);
+        const play = spyOn(meetingPlayback, "playSoundSlice").mockResolvedValue({ pid: 1, player: "ffplay" });
+        try {
+            expect(await voices.play({ id, start: false })).toEqual(slice);
+            expect(play).not.toHaveBeenCalled();
+            expect(await voices.play({ id, player: "ffplay" })).toEqual(slice);
+            expect(play.mock.calls).toEqual([[{ slice, player: "ffplay" }]]);
+            expect(call.mock.calls).toEqual([
+                ["voices.sample", { id }],
+                ["voices.sample", { id }],
+            ]);
+        } finally {
+            play.mockRestore();
+            call.mockRestore();
+        }
+    });
+
     test("meetings parity t1 previews, applies and protects saved seats", async () => {
         const { id: meeting } = await new MeetingStore().create(
             { title: "Rehearsal seats", start: "2026-11-01T09:00:00Z", createdBy: "new" },

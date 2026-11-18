@@ -70,6 +70,7 @@ import {
     type thresholds,
     voiceEnroll,
     voiceFeatures,
+    type voiceLibraryMethods,
     type voiceReadiness,
     voiceScore,
     type voices,
@@ -140,6 +141,8 @@ export class MeetingsToolset extends ReplToolset {
 
     async bootstrap(): Promise<Record<string, unknown>> {
         const store = new MeetingStore();
+        const listVoices = serviceCall("voices.list");
+        const resolveSample = serviceCall("voices.sample");
         return {
             meetings: {
                 applySeats: async ({ replace, ...params }: z.input<typeof applySeats.params>) =>
@@ -166,17 +169,28 @@ export class MeetingsToolset extends ReplToolset {
                                 : input.scope === "project"
                                   ? { kind: "project" as const, project: input.project }
                                   : { kind: "all" as const };
-                        return withMeetingsClient((client) =>
-                            client.call("voices.list", { scope, person: input.person })
-                        );
+                        return listVoices({ scope, person: input.person });
                     },
                     {
-                        list: serviceCall("voices.list"),
+                        list: listVoices,
+                        samples: listVoices,
+                        play: async ({
+                            start,
+                            player,
+                            ...selection
+                        }: z.input<typeof voiceLibraryMethods.play.params>) => {
+                            const slice = await resolveSample(selection);
+                            if (start !== false) {
+                                const { playSoundSlice } = await import("@app/meetings/commands/play");
+                                await playSoundSlice({ slice, player });
+                            }
+                            return slice;
+                        },
                         move: serviceCall("voices.move"),
                         quality: serviceCall("voices.quality"),
                         reject: serviceCall("voices.reject"),
                         remove: serviceCall("voices.remove"),
-                        sample: serviceCall("voices.sample"),
+                        sample: resolveSample,
                         undo: serviceCall("voices.undo"),
                     }
                 ),

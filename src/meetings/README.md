@@ -510,6 +510,41 @@ hidden people). One person is the same email, or, when either side has no email,
 - A `people.json` that is not JSON reads as empty, and the next write moves it aside to `people.json.broken-<time>`.
   A value this build cannot read (a newer build's) is kept and written back.
 
+### Voice library
+
+`tools meetings voices` lists each person once across projects. Use `--person <name>` to filter, or choose one scope with `--all`, `--project <name>` or `--meeting <id>`. A meeting view includes its attendees even when they have no confirmed sample. `voice` is an alias for `voices`.
+
+```sh
+tools meetings voices samples "Finch Example" --project harbor --json
+tools meetings voices quality --person "Finch Example" --project harbor
+tools meetings voices play "Finch Example" --sample "$sample_id" --no-start --json
+tools meetings voices move "Finch Example" --sample "$sample_id" --to "Wren Example <wren@example.com>"
+tools meetings voices undo "$correction_token"
+tools meetings voices reject "Finch Example" --sample "$sample_id" --reason bad-audio
+```
+
+Take `sample_id` from `people[].samples[].id` in the first command. Each `vs_` ID follows the clip through a move or a change in list order. Playback checks the recording hash. With `--no-start` it prints the source track, file, channel and seconds in JSON. Without that flag it plays the clip. Quality groups show the independent sample count and cosine scores for compatible recordings. An outlier is a clip to listen to. Temporary evidence from a speaker suggestion pass has no sample ID.
+
+Moving a clip blocks its former owner from learning that line again. Use `wrong-person` to reject the current owner, or `bad-audio` or `several-voices` to reject the source for everyone. Move, reject and remove return the correction token that `voices undo` accepts.
+
+`voices remove <person>` forgets samples, so a later eligible backfill can recover them. For a numbered selection, give the project and its one-based sample number. Omitting the number selects all of that person's samples in the project. When several projects or people match, use a project or a stable ID. To inspect and confirm a removal across invocations, pass the returned `planToken` with the same selector. A change to the selection or revision makes the plan stale. An all-project bulk removal requires this preview.
+
+```sh
+tools meetings voices remove "Finch Example" --project harbor --sample 1 --preview --json
+tools meetings voices remove "Finch Example" --project harbor --sample 1 --plan-token "$plan_token"
+```
+
+In the node REPL, browse with `meetings.voices({ scope: "project", project })`. Its methods also work without opening a meeting.
+
+```js
+const { people } = await meetings.voices.samples({ person: "Finch Example", project: "harbor" })
+const { id } = people[0].samples[0]
+await meetings.voices.play({ id, start: false })
+const plan = await meetings.voices.remove({ id, preview: true })
+```
+
+`list` and `quality` accept the same filters, including `scope: { kind: "meeting", meeting: meetingId }`. Use `sample({ id })` to resolve the verified slice or `play({ id })` to hear it. `move({ id, to: { name, email } })` and `reject({ id, reason })` return a receipt on success. Pass its token to `undo({ token })`. To confirm the removal above, call `remove({ id, planToken: plan.planToken })` on the same group.
+
 ## The dictionary
 
 - `fix`: a misheard spelling, replaced at every whole-word match in any letter case (`DTLčko` becomes `DTOčko`, and so
