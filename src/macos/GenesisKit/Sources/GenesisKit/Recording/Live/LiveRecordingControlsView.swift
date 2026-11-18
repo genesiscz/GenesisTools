@@ -26,11 +26,11 @@ struct LiveRecordingControlsView: View {
                     get: { UserDefaults.standard.bool(forKey: LiveRecordingBarPresentation.foreignPreference) },
                     set: { UserDefaults.standard.set($0, forKey: LiveRecordingBarPresentation.foreignPreference) }))
             }
-            if let error = recording.lastError {
+            ForEach(Self.messages(for: recording), id: \.self) { message in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
-                    Text(error).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
-                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: message).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .frame(maxWidth: 420, alignment: .leading)
                 }
@@ -93,9 +93,13 @@ struct LiveRecordingControlsView: View {
         let frames = recording.frames > 0 ? Plural.count(recording.frames, "frame") : "Recording"
         if recording.isStopping { return "Stopping" }
         if recording.isPaused { return recording.frames > 0 ? "Paused · \(frames)" : "Paused" }
-        if recording.warning != nil { return "\(frames) · warning" }
-
         return frames
+    }
+
+    static func messages(for recording: LiveRecording) -> [String] {
+        var messages = [recording.warning].compactMap { $0 }
+        if let error = recording.lastError, error != recording.warning { messages.append(error) }
+        return messages
     }
 
     private var controls: some View {

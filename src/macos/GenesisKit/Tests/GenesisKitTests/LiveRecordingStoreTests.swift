@@ -3,6 +3,20 @@ import XCTest
 @testable import GenesisKit
 
 final class LiveRecordingStoreTests: XCTestCase {
+    @MainActor
+    func testCompactControlsKeepTheirOwnFullWarningWhenPaused() throws {
+        for state in ["recording", "paused"] {
+            for id in ["first", "second"] {
+                let warning = "Display disconnected while recording \(id).\nReconnect it to resume."
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "pid": 7, "startedAt": 1762195200000, "id": id, "state": state, "warning": warning,
+                ])
+                let recording = try XCTUnwrap(LiveRecordingStore.decode(data))
+                XCTAssertEqual(LiveRecordingControlsView.messages(for: recording), [warning])
+            }
+        }
+    }
+
     private var folder: URL!
 
     override func setUpWithError() throws {
