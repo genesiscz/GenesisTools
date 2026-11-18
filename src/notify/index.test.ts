@@ -9,6 +9,31 @@ afterEach(() => {
     process.exitCode = previousExit;
 });
 
+test("notify status leaves unknown methods unprobed and preserves the JSON failure and fallback", async () => {
+    const env = { ...appNeedFixture({ methods: null }), fresh: true, write: true };
+    const fallback = { kind: "osascript-only" as const };
+    const info = spyOn(out, "info").mockImplementation(() => {});
+    const error = spyOn(out, "error").mockImplementation(() => {});
+    const json = spyOn(out, "result").mockImplementation(() => {});
+    try {
+        await printNotificationFallbackStatus(methodUnknown, false, fallback, env);
+        const lines = info.mock.calls.flat().join("\n");
+        expect(lines).toContain("not known whether the installed build answers notify.status");
+        expect(lines).not.toContain("fixture-build");
+        expect(env.state.read().areas).toEqual({});
+        info.mockClear();
+        error.mockClear();
+        await printNotificationFallbackStatus(methodUnknown, true, fallback, env);
+        expect(json).toHaveBeenCalledWith({ ...methodUnknown, fallback });
+        expect(info).not.toHaveBeenCalled();
+        expect(error).not.toHaveBeenCalled();
+    } finally {
+        json.mockRestore();
+        error.mockRestore();
+        info.mockRestore();
+    }
+});
+
 test("notify status keeps the fallback backend and prints only the failed status need's hint", async () => {
     const info = spyOn(out, "info").mockImplementation(() => {});
     const error = spyOn(out, "error").mockImplementation(() => {});

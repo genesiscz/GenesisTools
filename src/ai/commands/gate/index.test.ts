@@ -4,6 +4,31 @@ import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import { Command } from "commander";
 import { registerGateCommands } from "./index";
 
+test("gate status reads a legacy manifest's saved methods without probing or writing state", async () => {
+    const env = { ...appNeedFixture({ methods: null }), fresh: true, write: true };
+    const printed = spyOn(out, "println").mockImplementation(() => {});
+    try {
+        const status = async () => {
+            const cli = new Command();
+            registerGateCommands(cli, env);
+            printed.mockClear();
+            await cli.parseAsync(["gate", "status"], { from: "user" });
+            return printed.mock.calls.flat().join("\n");
+        };
+        const unknown = await status();
+        expect(unknown).toContain("not known whether the installed build answers gate.approve");
+        expect(unknown).not.toContain("fixture-build");
+        expect(env.state.read().areas).toEqual({});
+
+        const saved = { value: ["gate.approve"], source: "app" as const, at: env.now().toISOString(), build: "fixture" };
+        await env.state.report("app", "rpcMethods", saved);
+        expect(await status()).toContain("GenesisTools.app RPC installed");
+        expect(env.state.get("app", "rpcMethods")).toEqual(saved);
+    } finally {
+        printed.mockRestore();
+    }
+});
+
 test("gate status prints the missing approval method and its fix only when the need fails", async () => {
     const printed = spyOn(out, "println").mockImplementation(() => {});
     try {
