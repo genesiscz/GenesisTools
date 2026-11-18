@@ -69,6 +69,7 @@ export function baseResolve(): { alias: Record<string, string> } {
             diff: join(REPO_ROOT, "node_modules", "diff"),
             "highlight.js": join(REPO_ROOT, "node_modules", "highlight.js"),
             marked: join(REPO_ROOT, "node_modules", "marked"),
+            pixelmatch: join(REPO_ROOT, "node_modules", "pixelmatch"),
             recharts: join(REPO_ROOT, "node_modules", "recharts"),
         },
     };
@@ -91,6 +92,7 @@ export function baseOptimizeDeps(): { include: string[] } {
             "recharts",
             "chart.js",
             "diff",
+            "pixelmatch",
             "highlight.js/lib/core",
             ...HLJS_LANGUAGES.map((lang) => `highlight.js/lib/languages/${lang}`),
         ],
