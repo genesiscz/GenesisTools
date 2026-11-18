@@ -41,6 +41,8 @@ final class MeetingDetailModel {
     var busyItems: Set<String> = []
     var busy: Set<String> = []
     var suggestionWarnings: [String] = []
+    /// The running suggest's newest step from the service; nil when none runs or before its first step.
+    var suggestProgress: MeetingsCallProgress?
     /// The notices of this pane's actions, floating over its tabs: several at once, each with its own Undo and time.
     @ObservationIgnored let notices: NoticeStackModel
     private var recordGeneration = 0
@@ -1023,23 +1025,41 @@ extension MeetingDetailModel {
 // MARK: - Suggest
 
 extension MeetingDetailModel {
-    /// Runs the rules on the transcript (`tools meetings suggest`), from the Items tab's empty state.
-    func suggest() {
+    /// Runs the rules on the transcript (`meeting.suggest`, or `tools meetings suggest` without a service), from the
+    /// Items tab's empty state. While it runs, `suggestProgress` holds the service's newest step (nil before the first
+    /// one); `projectRequired` runs when the service refuses a meeting without a project.
+    func suggest(projectRequired: (() -> Void)? = nil) {
         guard let service else {
             change("suggest", ["suggest", id], done: "The rules ran on the transcript")
             return
         }
         guard !busy.contains("suggest") else { return }
         busy.insert("suggest")
+        suggestProgress = nil
         Task {
-            defer { busy.remove("suggest") }
+            defer {
+                busy.remove("suggest")
+                suggestProgress = nil
+            }
             do {
-                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil))
+                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil),
+                                                    timeout: Self.suggestTimeout) { [weak self] step in
+                    self?.suggestProgress = step
+                }
                 suggestionWarnings = result.warnings
                 readRecordAndRows()
-            } catch { notices.push(.meetingsFailure(error)) }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "project-required" && projectRequired != nil {
+                projectRequired?()
+                readRecordAndRows()
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.suggest(projectRequired: projectRequired) })
+            }
         }
     }
+
+    /// How long the window waits for a suggest run with no word from the service. Each `$/progress` starts the wait
+    /// again, so a long voice pass that reports its steps is never cut off.
+    static let suggestTimeout: TimeInterval = 120
 }
 
 // MARK: - Context: links and notes

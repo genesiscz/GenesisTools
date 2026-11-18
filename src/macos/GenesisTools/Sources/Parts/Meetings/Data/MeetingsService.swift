@@ -302,6 +302,13 @@ enum MeetingsEvent: Equatable {
     }
 }
 
+/// A step of a long service call, from the service's `$/progress { id, fraction?, label? }`: how far the call is (0 to 1)
+/// and what it does now ("Voices: 120 of 300 lines"). Either part may be missing.
+struct MeetingsCallProgress: Equatable, Sendable {
+    var fraction: Double?
+    var label: String?
+}
+
 /// What a listener of the service hears: an event, the kept subscription sent again on a new connection (events between
 /// the connections were not heard: read again), or the connection of a kept subscription lost (no event arrives until
 /// it resumes).
@@ -535,8 +542,10 @@ final class MeetingsService {
     /// decode (the caller runs the command), the
     /// `MeetingsCLI.Failure` the command would have thrown when the service refuses it (its `code` is the refusal's
     /// `data.code`, `no-transcript-source` and the like), and `CancellationError` when the task was cancelled (the
-    /// service hears `$/cancel`).
-    func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = 60) async throws -> M.Result {
+    /// service hears `$/cancel`). `onProgress` hears each `$/progress` the service sends for the call, on the main actor
+    /// and before the answer.
+    func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = 60,
+                                        onProgress: (@MainActor (MeetingsCallProgress) -> Void)? = nil) async throws -> M.Result {
         let decision = M.Result.self == DecisionResult.self
         if decision { rowsRefresh.beginWrite() }
         defer { if decision { rowsRefresh.endWrite() } }
@@ -550,7 +559,7 @@ final class MeetingsService {
         }
         let span = HubPerf.begin("meetings.service", M.name)
         do {
-            let result = try await Self.send(method, params, on: client, timeout: timeout)
+            let result = try await Self.send(method, params, on: client, timeout: timeout, onProgress: onProgress)
             if let decision = result as? DecisionResult, let patch = decision.rows, let entry = decision.entry {
                 rowsRefresh.apply(patch, token: entry.token)
             }
@@ -955,14 +964,23 @@ final class MeetingsService {
     // MARK: Wire
 
     /// One request on `client`: the params encoded, the answer decoded off the main thread, a cancelled task's
-    /// request cancelled on the wire. Errors come back as the transport made them (`RemoteError` with its data).
+    /// request cancelled on the wire. Errors come back as the transport made them (`RemoteError` with its data). The
+    /// transport hands each `$/progress` and the answer to one serial queue in the order they came, and both reach the
+    /// main actor through it, so no step lands after the answer.
     private static func send<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, on client: JSONRPCSocketClient,
-                                                      timeout: TimeInterval) async throws -> M.Result {
+                                                      timeout: TimeInterval,
+                                                      onProgress: (@MainActor (MeetingsCallProgress) -> Void)? = nil) async throws -> M.Result {
         let object = try paramsObject(params)
         let pending = PendingRequest()
+        let progress: ((JSONRPCSocketClient.CallProgress) -> Void)? = onProgress.map { handler in
+            { step in
+                let value = MeetingsCallProgress(fraction: step.fraction, label: step.label)
+                DispatchQueue.main.async { MainActor.assumeIsolated { handler(value) } }
+            }
+        }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let id = client.request(M.name, params: object, timeout: timeout, errorData: true) { result in
+                let id = client.request(M.name, params: object, timeout: timeout, errorData: true, onProgress: progress) { result in
                     switch result {
                     case let .success(value):
                         do {

@@ -189,9 +189,13 @@ struct ItemsTab: View {
             if rows.rows.isEmpty, rows.hidden.lowPriority == 0 {
                 if needsProject { Color.clear } else {
                 let hasTranscript = detail.window?.meeting(detail.id)?.hasTranscript ?? true
-                EmptyState(symbol: "checklist", text: "No items yet",
-                           detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
-                           actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { suggest() }
+                if detail.isBusy("suggest") {
+                    SuggestRunView(progress: detail.suggestProgress)
+                } else {
+                    EmptyState(symbol: "checklist", text: "No items yet",
+                               detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
+                               actionTitle: hasTranscript ? "Suggest items" : nil) { suggest() }
+                }
                 }
             } else if projection.ready {
                 list(rows)
@@ -225,20 +229,8 @@ struct ItemsTab: View {
     private var needsProject: Bool { projectRefused || detail.record.value.map { $0.project?.isEmpty != false } == true }
 
     private func suggest() {
-        guard !needsProject, !detail.isBusy("suggest") else { return }
-        guard let service = detail.service else { detail.suggest(); return }
-        detail.busy.insert("suggest")
-        Task {
-            defer { detail.busy.remove("suggest") }
-            do {
-                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: detail.id, attendance: nil))
-                detail.suggestionWarnings = result.warnings
-                detail.readRecordAndRows()
-            } catch let failure as MeetingsCLI.Failure where failure.code == "project-required" {
-                projectRefused = true
-                detail.readRecordAndRows()
-            } catch { detail.notices.push(.meetingsFailure(error) { suggest() }) }
-        }
+        guard !needsProject else { return }
+        detail.suggest { projectRefused = true }
     }
 
     private func list(_ rows: ReviewRows) -> some View {
@@ -550,5 +542,54 @@ final class RowLayout {
         defer { top = newTop }
         guard let top, abs(newTop - top) > 0.5 else { return false }
         return !windowScrolls
+    }
+}
+
+/// What the Items tab shows while the rules run, in the place of the empty state that started them: the service's newest
+/// step as a bar with its words ("Voices: 120 of 300 lines (40 %)"), or a spinner before the first step. The bar and the
+/// spinner hold one height, so the words do not move when the first step arrives.
+struct SuggestRunView: View {
+    let progress: MeetingsCallProgress?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "checklist")
+                .font(.system(size: 24))
+                .foregroundColor(KitPalette.faint)
+            Text("Suggesting items")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundColor(KitPalette.dim)
+            Group {
+                if let fraction = progress?.fraction {
+                    ProgressView(value: min(1, max(0, fraction)))
+                        .progressViewStyle(.linear)
+                        .frame(width: 260)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(height: 16)
+            Text(verbatim: Self.label(progress))
+                .font(.system(size: 11.5).monospacedDigit())
+                .foregroundColor(KitPalette.dim)
+                .multilineTextAlignment(.center)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Suggesting items")
+        .accessibilityValue(Self.label(progress))
+    }
+
+    /// The step in words: the service's label with the share done, either alone, or a waiting line before any step.
+    static func label(_ progress: MeetingsCallProgress?) -> String {
+        guard let progress else { return "Starting the rules…" }
+        let percent = progress.fraction.map { "\(Int((min(1, max(0, $0)) * 100).rounded())) %" }
+        switch (progress.label, percent) {
+        case let (label?, percent?): return "\(label) (\(percent))"
+        case let (label?, nil): return label
+        case let (nil, percent?): return "\(percent) done"
+        case (nil, nil): return "Running the rules…"
+        }
     }
 }
