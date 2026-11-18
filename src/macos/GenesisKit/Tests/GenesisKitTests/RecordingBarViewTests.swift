@@ -44,7 +44,7 @@ final class RecordingBarViewTests: XCTestCase {
         let name = "test.recording.bar.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         let model = RecordingBarModel(engine: engine, setup: setup, defaults: defaults,
-                                      countdownTick: { try await Task.sleep(for: .seconds(1)) })
+                                      countdownTick: { try? await Task.sleep(for: .seconds(1)) })
         model.expanded = false
         let panel = RecordingBarPanel(model: model, actions: RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in }),
                                       defaults: defaults)
