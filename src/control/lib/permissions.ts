@@ -101,6 +101,8 @@ export interface ResponsibleRoute {
 
 /** `ax-tool permissions`: the live grant state of the process `tools control` actually spawns. */
 export interface AxLivePermissions {
+    /** Absent on older native helpers. */
+    microphone?: boolean;
     accessibility: boolean;
     screenRecording: boolean;
     viaGenesisApp: boolean;

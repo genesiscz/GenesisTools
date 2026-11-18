@@ -1,11 +1,11 @@
 import { ui } from "@genesiscz/utils/cli/ui";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
+import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
+import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { fail, resolveEnum } from "../lib/shared";
 import { watchLoop, watchOnce } from "../lib/watch";
-import { ensureWatcher, watcherPidPath } from "../lib/watcher";
+import { recordingAutostart, watcherPidPath } from "../lib/watcher";
 
 /**
  * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the
@@ -54,28 +54,21 @@ async function autostart(mode: string | undefined): Promise<void> {
         flag: "<mode>",
         subcommand: ["autostart"],
     });
-    const store = new MeetingsConfigStore();
 
     if (!picked) {
         return;
     }
 
     try {
-        if (picked !== "status") {
-            await store.setAutoRecord(picked === "on");
-        }
-
-        const config = await store.read();
-        const running = inspectPidFile(watcherPidPath(new MeetingStore())).status === "live";
-        const enabled = config.sources.wisprflow.autoRecord.enabled;
-
-        if (enabled && !running && picked === "on") {
-            await ensureWatcher();
-        }
-
+        const { enabled, running, lastFailure } = await recordingAutostart(picked);
         ui.ok(
-            `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${enabled && (running || picked === "on") ? "running" : "not running"}.`
+            `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${running ? "running" : "not running"}.`
         );
+        if (lastFailure) {
+            ui.warn(
+                `Last recording failure at ${localTime(lastFailure.at)} · ${lastFailure.meeting}: ${lastFailure.problem}\nRun: ${lastFailure.fix}\nNotification delivery: ${lastFailure.confirmed ? "confirmed" : "unconfirmed"}.`
+            );
+        }
     } catch (err) {
         fail(err);
     }

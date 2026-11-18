@@ -2278,6 +2278,20 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(docs.map((method) => method.name)).toEqual(expect.arrayContaining(["settings", "setSettings", "mark"]));
     });
 
+    test("the meetings REPL exposes recording startup and reports autostart failures", async () => {
+        const { meetings } = (await new MeetingsToolset().bootstrap()) as {
+            meetings: {
+                recordStart: (input: { audio: string }) => Promise<unknown>;
+                autostart: () => Promise<{ enabled: boolean; running: boolean }>;
+            };
+        };
+        expect(typeof (await meetings.autostart()).enabled).toBe("boolean");
+        await expect(meetings.recordStart({ audio: "unknown" })).rejects.toThrow("--audio");
+        const docs = new MeetingsToolset().api.methods;
+        expect(docs.find((one) => one.name === "recordStart")?.doc).toContain("tools meetings record start");
+        expect(docs.find((one) => one.name === "autostart")?.doc).toContain("tools meetings autostart");
+    });
+
     test("meetings: labels, people pairings and unpairing by entry through the REPL, each method documented", async () => {
         const store = new MeetingStore();
         const record = await store.create(

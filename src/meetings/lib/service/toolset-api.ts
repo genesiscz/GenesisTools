@@ -485,6 +485,30 @@ export const configSet = defineMethod({
     effect: "reversible",
     doc: "Write one meetings setting; the whole config is validated first and nothing is written when it fails.",
 });
+export const recordStart = defineMethod({
+    name: "recordStart",
+    params: z
+        .object({
+            meeting: z.string().optional(),
+            source: z.string().optional(),
+            title: z.string().optional(),
+            project: z.string().optional(),
+            display: z.string().optional(),
+            audio: z.string().optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Start a recording (tools meetings record start). Returns the meeting id, capturing identity, whether frames were omitted, and any partial-start reason.",
+});
+export const autostartMethod = defineMethod({
+    name: "autostart",
+    params: z.object({ mode: z.enum(["on", "off", "status"]).optional() }).strict(),
+    positional: ["mode"],
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Read or change tools meetings autostart. Returns enabled, running and the last failed or partial start with its time and delivery receipts.",
+});
 export const captureCostMethod = defineMethod({
     name: "captureCost",
     params: z.object({}).strict(),
@@ -648,6 +672,8 @@ export const meetingsToolsetApi = defineApi({
         audioApply,
         configSet,
         captureCostMethod,
+        recordStart,
+        autostartMethod,
         assignSweepMethod,
     ],
     handles: [
