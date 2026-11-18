@@ -82,7 +82,9 @@ struct FindingComposerForm: View {
         }.formStyle(.grouped).padding().frame(width: 430)
     }
 
-    private func add() {
+    /// The Add button's action. Tests press it here: a test runner cannot drive the form's SwiftUI picker and fields
+    /// (w_6d78h8ho).
+    func add() {
         var finding = DecisionAction.Finding(kind: draft.kind)
         if draft.kind == "question" {
             finding.from = draft.from
