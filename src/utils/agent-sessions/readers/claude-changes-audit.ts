@@ -1,11 +1,19 @@
 import { statSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { analyzeCommand } from "@genesiscz/utils/session-changes/command";
 import { fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
 import { advanceClaudeFacts, sessionFacts } from "./claude-changes-facts";
-import { isParsedLine, readClaudeTranscript, subagentFiles } from "./claude-changes-parse";
+import {
+    emptyParseState,
+    isParsedLine,
+    type ParseCursor,
+    parseLines,
+    readClaudeTranscript,
+    subagentFiles,
+} from "./claude-changes-parse";
 
 /** Offline invariant checks. Stream the actual records independently of the optimized facts scan. */
 export function auditClaudeChanges(path: string) {
@@ -98,12 +106,76 @@ export function auditClaudeFacts(path: string) {
         ),
     ];
     const shellCalls = full.calls.filter((call) => isShellTool(call.name)).map((call) => call.id);
-    const ledger = [...(files.get(path)?.state.ledger.keys() ?? [])];
+    // Byte offsets are independently counted from decoded lines. The full parser supplies the first
+    // turn, the call ids and checkpoint fields. No optimized byte predicates enter this oracle.
+    let positions = true;
+    let checkpoints = true;
+    let ledger = true;
+    for (const [file, fold] of files) {
+        const state = emptyParseState();
+        const cursor: ParseCursor = { currentTurn: null };
+        const turns: Array<{ id: string; offset: number; at: number | null }> = [];
+        const offsets = new Map<string, number>();
+        const idIterator = state.calls.keys();
+        const turnIterator = state.turns.values();
+        let offset = 0;
+        for (const line of readLinesSync(file)) {
+            // Map iterators become exhausted after the last item. New ids are read by count below.
+            const beforeCalls = state.calls.size;
+            const beforeTurns = state.turns.size;
+            parseLines([line], file === path ? null : file, state, cursor);
+            for (let i = beforeCalls; i < state.calls.size; i++) {
+                const id = idIterator.next().value;
+                if (id !== undefined && fold.state.calls.has(id)) {
+                    offsets.set(id, offset);
+                }
+            }
+            if (state.turns.size > beforeTurns) {
+                const turn = turnIterator.next().value;
+                if (turn) {
+                    const ms = turn.at ? Date.parse(turn.at) : NaN;
+                    turns.push({ id: turn.turnId, offset, at: Number.isFinite(ms) ? ms : null });
+                }
+            }
+            offset += Buffer.byteLength(line) + 1;
+        }
+        positions &&= [...fold.state.calls].every(([id, call]) => offsets.get(id) === call.offset);
+        ledger &&= isDeepStrictEqual(turns, [...fold.state.ledger.values()]);
+        const newest = new Map<string, number>();
+        for (const item of state.backups) {
+            if (item.backup !== null && item.backupTime !== null) {
+                newest.set(item.backup, Math.max(newest.get(item.backup) ?? 0, item.backupTime));
+            }
+        }
+        checkpoints &&= isDeepStrictEqual(newest, fold.state.newestBackupTime);
+    }
+
+    let writers = true;
+    let writerId = "";
+    class ObservedWrites extends Map<string, string> {
+        override set(path: string, text: string): this {
+            writers &&= facts.writersOf(path).some((writer) => writer.callId === writerId);
+            return super.set(path, text);
+        }
+    }
+    const written = new ObservedWrites();
+    for (const call of [...full.calls].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
+        writerId = call.id;
+        if (fileToolVia(call.name) && call.filePath) {
+            const target = resolve(call.filePath);
+            writers &&= facts.writersOf(target).some((writer) => writer.callId === call.id);
+            if (typeof call.after === "string") {
+                written.set(target, call.after);
+            }
+        } else if (call.command !== null) {
+            analyzeCommand({ command: call.command, cwd: call.cwd ?? full.cwds[0] ?? "/", files: written });
+        }
+    }
     return {
-        ledger: isDeepStrictEqual(
-            ledger,
-            full.turns.map((turn) => turn.turnId)
-        ),
+        ledger,
+        positions,
+        checkpoints,
+        writers,
         cwds: isDeepStrictEqual(facts.cwds, full.cwds),
         editedDirs: isDeepStrictEqual(facts.editedDirs, editedDirs),
         shellCalls: isDeepStrictEqual([...facts.shellCalls], shellCalls),

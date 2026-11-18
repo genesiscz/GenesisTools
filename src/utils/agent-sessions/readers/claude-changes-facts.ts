@@ -197,6 +197,7 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                         }
                     }
                 }
+                facts.errorIds.delete(id);
                 facts.duplicateIds ||= facts.calls.has(id);
                 facts.calls.set(id, {
                     id,

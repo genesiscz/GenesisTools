@@ -12,6 +12,9 @@ for (const name of claudeFixtureNames) {
         }
         expect(auditClaudeFacts(transcript)).toEqual({
             ledger: true,
+            positions: true,
+            checkpoints: true,
+            writers: true,
             cwds: true,
             editedDirs: true,
             shellCalls: true,
@@ -39,4 +42,21 @@ it("indexes direct and indirect heredoc writers, then resumes or rebuilds on a r
     expect(grown.state.ledger.size).toBe(9);
     writeFileSync(transcript, `${jsonl([prompt("replacement", "", 100)])}\n`);
     expect([...advanceClaudeFacts(transcript, true, grown).state.ledger.keys()]).toEqual(["replacement"]);
+});
+
+it("resumes an unfinished line and defers a valid record missing only its newline", () => {
+    const { transcript } = claudeFixture("basic");
+    if (!transcript) {
+        throw new Error("missing Claude fixture");
+    }
+    const old = advanceClaudeFacts(transcript, true);
+    const record = jsonl([prompt("after", "příliš", 95)]);
+    const split = record.length - 3;
+    appendFileSync(transcript, record.slice(0, split));
+    const partial = advanceClaudeFacts(transcript, true, old);
+    expect(partial.state.ledger.has("after")).toBe(false);
+    appendFileSync(transcript, record.slice(split));
+    expect(() => advanceClaudeFacts(transcript, true, partial)).toThrow("without its newline");
+    appendFileSync(transcript, "\n");
+    expect(advanceClaudeFacts(transcript, true, partial).state.ledger.has("after")).toBe(true);
 });

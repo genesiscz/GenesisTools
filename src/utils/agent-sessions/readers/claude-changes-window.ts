@@ -66,7 +66,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
     const facts = prof.measure(
         "facts",
         () => readFacts(cache, [path, ...agents.map((agent) => agent.path)]),
-        cpuMeta()
+        prof.enabled ? cpuMeta() : undefined
     );
     const mainFacts = cache.files.get(path);
     if (!mainFacts || facts.ambiguous) {

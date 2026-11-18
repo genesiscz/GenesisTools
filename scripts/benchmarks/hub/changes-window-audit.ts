@@ -69,7 +69,11 @@ if (process.argv.includes("--equal")) {
         try {
             const log = readChangeLog(sessionId);
             const full = loadSessionChanges({ sessionId, log });
+            if (!full.transcriptPath) {
+                throw new Error("no full transcript for equality check");
+            }
             for (const count of [1, 5, 20]) {
+                let verificationMismatch = false;
                 const render = (changes: typeof full) => {
                     const selected = lastChangedTurns(changes, count);
                     const files = mergeTurnFiles(selected);
@@ -95,13 +99,15 @@ if (process.argv.includes("--equal")) {
                     log,
                     count,
                     onRound: (round) => {
+                        verificationMismatch ||= round.fallback === "verification mismatch";
                         if (round.fallback) {
                             totals.equalFallbacks = (totals.equalFallbacks ?? 0) + 1;
                         }
                     },
                 });
                 totals.equalChecked = (totals.equalChecked ?? 0) + 1;
-                totals.equalMismatch = (totals.equalMismatch ?? 0) + Number(render(full) !== render(recent));
+                totals.equalMismatch =
+                    (totals.equalMismatch ?? 0) + Number(verificationMismatch || render(full) !== render(recent));
             }
         } catch {
             unreadable++;
