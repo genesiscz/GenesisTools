@@ -9,7 +9,7 @@ export async function requestMeetingQuestionReview(options: {
     actor: DecisionActor;
     runId: string;
     record: Pick<MeetingRecord, "id" | "title" | "items">;
-    gt?: { person: Pick<AreaClients["person"], "notice"> };
+    gt?: { person: Pick<AreaClients["person"], "windowNotice"> };
 }): Promise<string | undefined> {
     const { actor, record, runId } = options;
     if (actor.kind !== "agent") {
@@ -26,14 +26,15 @@ export async function requestMeetingQuestionReview(options: {
         return;
     }
 
-    // A v1 notice carries text only. Its request window can still give the owner the exact Items command.
+    // A click opens the Items tab. The command stays in the text for the request window and for a terminal.
     const command = `${TOOL} window ${shellWord(record.id)} --tab items`;
     try {
         const gt = options.gt ?? (await import("@genesiscz/utils/genesis-tools")).gt;
-        const outcome = await gt.person.notice({
+        const outcome = await gt.person.windowNotice({
             id: `meeting-questions:${sha256Json([record.id, runId])}`,
             title: "Meeting words need your review",
             reason: `Review the word questions in the Items tab for ${record.title || record.id}.\n${command}`,
+            open: { window: "--meetings", args: ["--meeting", record.id, "--tab", "items"] },
         });
         if (outcome.status === "unreachable") {
             return outcome.manual ?? `The meeting review request could not reach you. Open Items with ${command}`;
