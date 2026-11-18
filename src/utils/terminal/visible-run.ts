@@ -42,9 +42,18 @@ export function removeStaleCommandFiles(dir: string, now: number = Date.now()): 
     return removed;
 }
 
-/** cmux gets its own workspace; otherwise Launch Services opens a .command file in the person's terminal. */
-export async function runVisibly(options: { argv: readonly string[]; timeoutMs: number }): Promise<{ opened: true }> {
+/**
+ * cmux gets its own workspace; otherwise Launch Services opens a .command file in the person's terminal. `signal` is
+ * the caller's deadline or cancel: no step starts after it aborts, and it is read again right before the command is
+ * typed or the file is opened, so a caller that already returned never has the command run late (and twice on a retry).
+ */
+export async function runVisibly(options: {
+    argv: readonly string[];
+    timeoutMs: number;
+    signal?: AbortSignal;
+}): Promise<{ opened: true }> {
     refuseHostEffectInTest("visible terminal", "Inject a terminal runner in tests.");
+    options.signal?.throwIfAborted();
     if (process.platform !== "darwin") {
         throw new Error("Visible terminal execution is currently available on macOS.");
     }
@@ -61,10 +70,12 @@ export async function runVisibly(options: { argv: readonly string[]; timeoutMs: 
                 target: { kind: "window", windowId },
                 title: "GenesisTools action",
                 workspaceName: "GenesisTools action",
+                signal: options.signal,
             });
             return { opened: true };
         }
     }
+    options.signal?.throwIfAborted();
     const dir = toolDataDir("genesis-tools", "terminal");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     removeStaleCommandFiles(dir);

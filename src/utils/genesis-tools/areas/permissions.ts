@@ -97,7 +97,10 @@ export const permissions = defineArea({
             native: {
                 needs: [Need.person.display],
                 run: async (ctx): Promise<{ opened: true } | Pass> => {
-                    const opened = await ctx.terminal.runVisibly(ctx.args, { timeoutMs: ctx.timeoutMs });
+                    const opened = await ctx.terminal.runVisibly(ctx.args, {
+                        timeoutMs: ctx.timeoutMs,
+                        signal: ctx.signal,
+                    });
                     return opened.status === "ran"
                         ? opened.value
                         : ctx.pass(opened.skipped.map((skip) => skip.reason).join("; "));
