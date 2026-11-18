@@ -197,6 +197,15 @@ struct MeetingDetailView: View {
                 if record?.project != nil || detail.tab != .items { projectPicker(record) }
                 labelsPicker(record)
                 MeetingPeopleChip(detail: detail)
+                if let record, record.seats == nil {
+                    Button { seatsOpen = true } label: {
+                        Label("Seats not set: voice naming is off", systemImage: "chair")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("Review suggested seats")
+                    .accessibilityIdentifier("meetings.seats.review")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let failure = detail.record.failure {
@@ -381,8 +390,8 @@ private struct MenuSheets: ViewModifier {
     func body(content: Content) -> some View {
         content
             .sheet(isPresented: $seatsOpen) {
-                MeetingSeatsEditor(seats: detail.record.value?.seats ?? MeetingSeats(),
-                                   save: { try await detail.saveSeats($0) }, saved: { seatsOpen = false })
+                MeetingSeatsEditor(seats: detail.record.value?.seats, load: { try await detail.suggestedSeats() },
+                                   save: { try await detail.saveSeats($0, ifAbsent: $1) }, saved: { seatsOpen = false })
             }
             .sheet(isPresented: $voiceToolsOpen) { MeetingVoiceToolsSheet(detail: detail) { voiceToolsOpen = false } }
     }

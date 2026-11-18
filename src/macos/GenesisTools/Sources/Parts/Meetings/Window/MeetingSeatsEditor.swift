@@ -230,6 +230,46 @@ struct MeetingSeatsDraft: Equatable {
     static func contains(_ names: [String], _ name: String) -> Bool { names.contains { same($0, name) } }
 }
 
+/// The review starts with the engine's choices. Only a chosen room or remote seat goes into the save.
+struct MeetingSeatChoices {
+    typealias Seat = MeetingsAPI.SeatsSuggest.Seat
+    let suggestion: MeetingsAPI.SeatsSuggest.Suggestion
+    private(set) var choices: [String: Seat]
+    private(set) var count: Int
+
+    init(_ suggestion: MeetingsAPI.SeatsSuggest.Suggestion) {
+        self.suggestion = suggestion
+        choices = Dictionary(uniqueKeysWithValues: suggestion.people.map { ($0.name, $0.seat) })
+        count = suggestion.seats.room.count + suggestion.seats.remote.count
+    }
+
+    mutating func set(_ seat: Seat, for name: String) {
+        guard let old = choices[name], old != seat else { return }
+        if old == .unsure { count += 1 }
+        if seat == .unsure { count -= 1 }
+        choices[name] = seat
+    }
+
+    /// Built only when a button takes the choices. A remote person's original fractional times survive the review.
+    func seats(record: MeetingRecordView?) -> MeetingSeats {
+        let remote = Dictionary(uniqueKeysWithValues: suggestion.seats.remote.map { ($0.name, $0) })
+        var seats = MeetingSeats()
+        for person in suggestion.people {
+            switch choices[person.name] ?? .unsure {
+            case .room: seats.room.append(person.name)
+            case .remote:
+                if let original = remote[person.name] { seats.remote.append(original) }
+                else {
+                    let stay = PersonStay.of(person.name, in: record)
+                    seats.remote.append(.init(name: person.name, fromSec: stay.fromSec, toSec: stay.toSec))
+                }
+            case .unsure: break
+            }
+        }
+        return seats
+    }
+}
+
 /// "Seats and microphones…" from the meeting header's "…" menu: who sat in the room, who joined from elsewhere and
 /// when, and which microphone carried whom. People come from the person picker the person editor uses (the meeting's
 /// people first, or a new name), microphones from this Mac and the remote people's devices.
@@ -267,7 +307,13 @@ struct MeetingSeatsEditor: View {
         }
     }
     @State private var form: FormState
-    let save: (MeetingSeats) async throws -> Void
+    @State private var reviewing: Bool
+    @State private var choices: MeetingSeatChoices?
+    @State private var readFailure: MeetingsCLI.Failure?
+    @State private var readAttempt = 0
+    @State private var initiallyUnset: Bool
+    let load: () async throws -> MeetingsAPI.SeatsSuggest.Suggestion
+    let save: (MeetingSeats, Bool) async throws -> Void
     let saved: () -> Void
     @State private var saving = false
     @State private var failure: MeetingsCLI.Failure?
@@ -283,8 +329,15 @@ struct MeetingSeatsEditor: View {
         var id: String { rawValue }
     }
 
-    init(seats: MeetingSeats, save: @escaping (MeetingSeats) async throws -> Void, saved: @escaping () -> Void) {
-        _form = State(initialValue: FormState(seats))
+    init(seats: MeetingSeats?, preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion> = .idle,
+         load: @escaping () async throws -> MeetingsAPI.SeatsSuggest.Suggestion,
+         save: @escaping (MeetingSeats, Bool) async throws -> Void, saved: @escaping () -> Void) {
+        _form = State(initialValue: FormState(seats ?? MeetingSeats()))
+        _reviewing = State(initialValue: seats == nil)
+        _choices = State(initialValue: preview.value.map(MeetingSeatChoices.init))
+        _readFailure = State(initialValue: preview.failure)
+        _initiallyUnset = State(initialValue: seats == nil)
+        self.load = load
         self.save = save
         self.saved = saved
     }
@@ -296,37 +349,12 @@ struct MeetingSeatsEditor: View {
                 Text("Who sat in the room, who joined from elsewhere, and which microphone carried whom. The voice pass narrows each line's speaker by these facts.")
                     .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Form {
-                Section {
-                    room
-                } header: {
-                    Text("In the room")
-                }
-                Section {
-                    ForEach(Array(form.draft.seats.remote.enumerated()), id: \.offset) { index, person in remote(index, person) }
-                    addButton(.remote)
-                } header: {
-                    Text("Remote")
-                } footer: {
-                    Text("Times on the transcript clock, as 12:04 or 1:05:30. Empty: from the start, or to the end.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Section {
-                    ForEach(Array(form.groups.enumerated()), id: \.offset) { index, group in
-                        microphone(index, group)
-                    }
-                    addMicrophone
-                } header: {
-                    Text("Microphones")
-                } footer: {
-                    Text("This Mac's microphone carries people in the room; a remote person's device carries remote people.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
+            if reviewing {
+                suggestionReview
+            } else {
+                manualForm
             }
-            .formStyle(.grouped)
-            // Edits made while the write is in flight would be dismissed with the sheet unsaved.
-            .disabled(saving)
-            if let problem = form.problem {
+            if !reviewing, let problem = form.problem {
                 Text(problem).font(.system(size: 11.5)).foregroundStyle(KitHue.care.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("meetings.seats.problem")
@@ -335,21 +363,123 @@ struct MeetingSeatsEditor: View {
                 NoticePill(text: "Not saved: \(failure.sentence)", more: failure.detail, tone: .error)
             }
             HStack {
+                if reviewing {
+                    Button(initiallyUnset ? "Edit seats manually…" : "Back to current seats") {
+                        if initiallyUnset, let choices { form = FormState(choices.seats(record: detail?.record.value)) }
+                        reviewing = false
+                    }
+                } else if !initiallyUnset {
+                    Button("Review suggestion…") { reviewing = true }
+                }
                 Spacer()
                 if saving { ProgressView().controlSize(.small) }
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { submit() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(saving || form.problem != nil)
-                    .accessibilityIdentifier("meetings.seats.save")
+                Button(reviewing ? "Use suggestion" : "Save") {
+                    if reviewing, let choices { submit(choices.seats(record: detail?.record.value)) }
+                    else { submit(form.draft.parsed) }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(reviewing ? (choices?.count ?? 0) == 0 : form.problem != nil || emptyFirstSave)
+                .accessibilityIdentifier(reviewing ? "meetings.seats.useSuggestion" : "meetings.seats.save")
             }
         }
+        .disabled(saving)
         .padding(20)
         .frame(width: 620, height: 500)
         .onAppear {
             if let detail, case .idle = detail.speakers { detail.loadSpeakers() }
         }
         .onDisappear { search?.cancel() }
+    }
+
+    private var emptyFirstSave: Bool {
+        initiallyUnset && form.draft.seats.room.isEmpty && form.draft.seats.remote.isEmpty
+    }
+
+    private var suggestionReview: some View {
+        VStack(alignment: .leading) {
+            if let choices {
+                if choices.suggestion.people.isEmpty {
+                    Text("No people to suggest. Add seats manually.").foregroundStyle(.secondary)
+                    Spacer()
+                } else {
+                    List(choices.suggestion.people) { person in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(verbatim: person.name)
+                                Text(verbatim: person.reason).font(.callout).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Picker("Seat for \(person.name)", selection: Binding(
+                                get: { choices.choices[person.name] ?? .unsure },
+                                set: { self.choices?.set($0, for: person.name) })) {
+                                Text("Unsure").tag(MeetingSeatChoices.Seat.unsure)
+                                Text("In the room").tag(MeetingSeatChoices.Seat.room)
+                                Text("Remote").tag(MeetingSeatChoices.Seat.remote)
+                            }
+                            .labelsHidden().frame(width: 110)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    .listStyle(.plain)
+                }
+                if !initiallyUnset {
+                    Text("Using this suggestion replaces the saved seats and microphone groups.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            } else if let readFailure {
+                NoticePill(text: readFailure.sentence, more: readFailure.detail, tone: .error, fixes: [
+                    .button("Retry", symbol: "arrow.clockwise") { self.readFailure = nil; readAttempt += 1 }
+                ])
+                Spacer()
+            } else {
+                ProgressView("Reading seat suggestions…")
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: readAttempt) {
+            guard choices == nil, readFailure == nil else { return }
+            do {
+                let fresh = try await load()
+                try Task.checkCancellation()
+                choices = MeetingSeatChoices(fresh)
+            } catch {
+                if !Task.isCancelled { readFailure = asFailure(error) }
+            }
+        }
+    }
+
+    private var manualForm: some View {
+        Form {
+            Section {
+                room
+            } header: {
+                Text("In the room")
+            }
+            Section {
+                ForEach(Array(form.draft.seats.remote.enumerated()), id: \.offset) { index, person in remote(index, person) }
+                addButton(.remote)
+            } header: {
+                Text("Remote")
+            } footer: {
+                Text("Times on the transcript clock, as 12:04 or 1:05:30. Empty: from the start, or to the end.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Section {
+                ForEach(Array(form.groups.enumerated()), id: \.offset) { index, group in
+                    microphone(index, group)
+                }
+                addMicrophone
+            } header: {
+                Text("Microphones")
+            } footer: {
+                Text("This Mac's microphone carries people in the room; a remote person's device carries remote people.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 
     /// The labels a remote person's own channel can be: the transcript's, and any the seats already name.
@@ -548,18 +678,17 @@ struct MeetingSeatsEditor: View {
     // MARK: Save
 
     /// The sheet stays open until the write lands: a refusal shows here and the draft stays to correct.
-    private func submit() {
-        guard !saving, form.problem == nil else { return }
+    private func submit(_ seats: MeetingSeats) {
+        guard !saving else { return }
+        let submittedDraft = form.draft
+        let submittedChoices = choices?.choices
         saving = true
         failure = nil
-        let submitted = form.draft
-        let seats = submitted.parsed
         Task {
             do {
-                try await save(seats)
+                try await save(seats, initiallyUnset)
                 saving = false
-                // Keep the sheet open when the draft changed after the snapshot: closing would drop those edits.
-                if form.draft == submitted { saved() }
+                if form.draft == submittedDraft && choices?.choices == submittedChoices { saved() }
             } catch {
                 saving = false
                 failure = asFailure(error)

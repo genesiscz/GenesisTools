@@ -367,8 +367,10 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         return AnyView(LinkSourceSheet(detail: detail, list: list, close: {}))
     }
     if request.sheet == "seats" {
-        // The sheet reads the meeting's people and labels from the open meeting, as the "…" menu's sheet does.
-        return AnyView(MeetingSeatsEditor(seats: detail.record.value?.seats ?? MeetingSeats(), save: { _ in }, saved: {})
+        let preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion>
+        do { preview = .loaded(try await detail.suggestedSeats()) } catch { preview = .failed(asFailure(error), previous: nil) }
+        return AnyView(MeetingSeatsEditor(seats: detail.record.value?.seats, preview: preview,
+                                          load: { try await detail.suggestedSeats() }, save: { _, _ in }, saved: {})
             .environment(\.meetingDetail, detail))
     }
     if let sheet = request.sheet, sheet.hasPrefix("selection:") {

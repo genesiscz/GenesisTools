@@ -84,6 +84,32 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(draft.seats.remote.map(\.name), ["Robin Example"])
     }
 
+    func testSeatSuggestionsPrefillDecidedPeopleAndLeaveUnsurePeopleUnseated() throws {
+        let read = MeetingDetailModel.seatsRead("practice")
+        XCTAssertEqual(read.method, "meeting.seats.suggest")
+        XCTAssertEqual(read.args, ["seats", "practice", "--json"])
+        let result = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Result.self, from: Data(#"""
+        {"meeting":"practice","current":null,"suggestion":{"seats":{"room":["Reed"],"remote":[{"name":"Fern","fromSec":4.25,"toSec":17.75}]},
+         "people":[{"name":"Reed","seat":"room","reason":"Recording participant (self).","confidence":1},
+                   {"name":"Fern","seat":"remote","reason":"5 of 5 decided lines on the call.","confidence":1},
+                   {"name":"Lake","seat":"unsure","reason":"Muted on both reads.","confidence":0}]}}
+        """#.utf8))
+        var draft = MeetingSeatChoices(result.suggestion)
+        XCTAssertEqual(draft.suggestion.people.last?.reason, "Muted on both reads.")
+        XCTAssertEqual(draft.choices["Lake"], .unsure)
+        XCTAssertEqual(draft.count, 2)
+        XCTAssertEqual(draft.seats(record: nil), result.suggestion.seats)
+        draft.set(.unsure, for: "Reed")
+        draft.set(.room, for: "Lake")
+        draft.set(.room, for: "Lake")
+        XCTAssertEqual(draft.count, 2)
+        XCTAssertEqual(draft.seats(record: nil), MeetingSeats(room: ["Lake"], remote: [.init(name: "Fern", fromSec: 4.25, toSec: 17.75)]))
+        draft.set(.unsure, for: "Lake")
+        draft.set(.unsure, for: "Fern")
+        XCTAssertEqual(draft.count, 0)
+        XCTAssertEqual(draft.seats(record: nil), MeetingSeats())
+    }
+
     /// w_sbxfmxen: the seats sheet seats picked people and picks a device; nothing is typed as an id or a comma list,
     /// and Save writes the engine's shape (`self`, `device:<owner>` with the owner, room or remote members only).
     func testTheSeatsSheetSeatsPickedPeopleOnDevicesItOffers() {

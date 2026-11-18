@@ -151,12 +151,39 @@ final class PeopleSearch {
 
 // MARK: - The meeting's speakers and people
 
+extension MeetingsAPI {
+    enum SeatsSuggest: MeetingsServiceMethod {
+        static let name = "meeting.seats.suggest"
+        struct Params: Codable, Equatable { let meeting: String }
+        enum Seat: String, Decodable, Hashable { case room, remote, unsure }
+        struct Person: Decodable, Equatable, Identifiable {
+            let name: String
+            let seat: Seat
+            let reason: String
+            let confidence: Double
+            var id: String { name }
+        }
+        struct Suggestion: Decodable, Equatable { let seats: MeetingSeats; let people: [Person] }
+        struct Result: Decodable, Equatable { let meeting: String; let current: MeetingSeats?; let suggestion: Suggestion }
+    }
+}
+
 extension MeetingDetailModel {
+    static func seatsRead(_ meeting: String) -> MeetingsRead<MeetingsAPI.SeatsSuggest.Result> {
+        .service(MeetingsAPI.SeatsSuggest.self, .init(meeting: meeting), orRun: ["seats", meeting, "--json"])
+    }
+
+    func suggestedSeats() async throws -> MeetingsAPI.SeatsSuggest.Suggestion {
+        let result = try await Self.seatsRead(id).run(service: service)
+        return result.suggestion
+    }
+
     /// The seats editor's Save: one write the sheet waits for, so a draft the engine refuses (a blank remote name, a
     /// group of room and remote people) stays open with the reason, instead of a notice whose Retry sends it again.
-    func saveSeats(_ seats: MeetingSeats) async throws {
+    func saveSeats(_ seats: MeetingSeats, ifAbsent: Bool = false) async throws {
         var action = DecisionAction(kind: "set")
         action.seats = seats
+        action.seatsIfAbsent = ifAbsent ? true : nil
         let result = try await Self.applyDecision(meeting: id, action: action, reason: nil, service: service)
         if finishDecision(result, done: "Updated seats and microphones", reloadTranscript: false) { return }
         if let skipped = result.skipped.first {
