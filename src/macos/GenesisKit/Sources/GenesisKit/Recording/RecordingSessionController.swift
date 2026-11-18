@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import Combine
 
 /// The command side of a running `tools control capture session`: one JSON line per command, EOF to stop.
 @MainActor
@@ -18,10 +19,11 @@ extension ToolsLineStream: RecordingCommandChannel {
 /// `onDiscarded`, or `onFailed`.
 @MainActor
 public final class RecordingSessionController: ObservableObject {
+    nonisolated static let maximumDurationMs: Double = 600_000
     @Published public private(set) var phase: RecordingPhase = .idle
     /// Recorded time: what is in the movie so far, without arming or paused time.
     @Published public private(set) var elapsedMs: Double = 0
-    @Published public private(set) var limitMs: Double = 600_000
+    @Published public private(set) var limitMs: Double = RecordingSessionController.maximumDurationMs
     @Published public private(set) var target: RecordingTarget?
     /// Why the session paused: `user`, `limit` (the length limit) or `recorder` (it stopped by itself).
     @Published public private(set) var pauseReason: String?
@@ -36,8 +38,11 @@ public final class RecordingSessionController: ObservableObject {
     public var onDiscarded: (() -> Void)?
     /// The message and its code (`screen-recording-denied`), when the session could not record at all.
     public var onFailed: ((String, String?) -> Void)?
+    var onEvent: ((RecordingSessionLine) -> Void)?
+    var onRates: ((Double, Double) -> Void)?
 
     private let bridge: ToolsBridge?
+    private let screenFrames: @MainActor () -> [CGRect]
     private let openChannel: (([String], @escaping @MainActor ([String]) -> Void,
                                @escaping @MainActor (Int32, String) -> Void) throws -> RecordingCommandChannel)?
     private var channel: RecordingCommandChannel?
@@ -45,19 +50,28 @@ public final class RecordingSessionController: ObservableObject {
 
     public init(bridge: ToolsBridge) {
         self.bridge = bridge
+        screenFrames = { NSScreen.screens.map(\.frame) }
         openChannel = nil
     }
 
     /// Tests: `open` gets the CLI arguments and the line and exit callbacks, and returns the command channel.
-    init(open: @escaping ([String], @escaping @MainActor ([String]) -> Void,
+    init(screenFrames: @escaping @MainActor () -> [CGRect] = { NSScreen.screens.map(\.frame) },
+         open: @escaping ([String], @escaping @MainActor ([String]) -> Void,
                           @escaping @MainActor (Int32, String) -> Void) throws -> RecordingCommandChannel) {
         bridge = nil
+        self.screenFrames = screenFrames
         openChannel = open
     }
 
     /// The arguments after `tools control`.
-    static func arguments(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int, showsBorder: Bool) -> [String] {
-        var args = ["capture", "session", "--json", "--stop-on-stdin", "--target", target.json, "--fps", String(frameRate)]
+    private func arguments(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int,
+                           stillFrameRate: Double, showsBorder: Bool) throws -> [String] {
+        let data = try JSONSerialization.data(withJSONObject: sessionTarget(target), options: [.sortedKeys])
+        let json = String(decoding: data, as: UTF8.self)
+        var args = ["capture", "session", "--json", "--stop-on-stdin", "--target", json, "--fps", String(frameRate)]
+        if stillFrameRate != 0 && stillFrameRate != Double(frameRate) {
+            args += ["--idle-fps", String(stillFrameRate)]
+        }
         if !excludeWindowIDs.isEmpty {
             args += ["--exclude-window-ids", excludeWindowIDs.map(String.init).joined(separator: ",")]
         }
@@ -66,10 +80,11 @@ public final class RecordingSessionController: ObservableObject {
     }
 
     /// Starts recording `target`. `excludeWindowIDs` are windows the movie never shows (the controls panel).
-    public func start(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int, showsBorder: Bool) throws {
+    public func start(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int, showsBorder: Bool,
+                      stillFrameRate: Double = 0) throws {
         guard channel == nil, !ended else { return }
-        let args = Self.arguments(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: frameRate,
-                                  showsBorder: showsBorder)
+        let args = try arguments(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: frameRate,
+                                 stillFrameRate: stillFrameRate, showsBorder: showsBorder)
         self.target = target
         phase = .starting
         let lines: @MainActor ([String]) -> Void = { [weak self] in self?.receive($0) }
@@ -90,15 +105,23 @@ public final class RecordingSessionController: ObservableObject {
         }
     }
 
-    public func pause() { send(["cmd": "pause"]) }
-    public func resume() { send(["cmd": "resume"]) }
-    public func restart() { send(["cmd": "restart"]) }
+    enum Command: Equatable {
+        case pause, resume, restart, stop, discard, switchTo(RecordingTarget), rates(Int, Double)
+    }
+
+    public func pause() { send(.pause) }
+    public func resume() { send(.resume) }
+    public func restart() { send(.restart) }
     /// Stops and keeps the movie: `onDone` follows once it is joined.
-    public func stop() { send(["cmd": "stop"]) }
-    public func discard() { send(["cmd": "discard"]) }
+    public func stop() { send(.stop) }
+    public func discard() { send(.discard) }
 
     public func switchTo(_ target: RecordingTarget) {
-        var wire = target.wire
+        send(.switchTo(target))
+    }
+
+    private func switchCommand(_ target: RecordingTarget) throws -> [String: Any] {
+        var wire = try sessionTarget(target)
         // The channel takes one line of at most 512 bytes. A window's title and a display's name are labels only, so
         // a long one is left out rather than the switch refused.
         let line = try? JSONSerialization.data(withJSONObject: ["cmd": "switch", "target": wire], options: [.sortedKeys])
@@ -106,7 +129,19 @@ public final class RecordingSessionController: ObservableObject {
             wire["title"] = nil
             wire["name"] = nil
         }
-        send(["cmd": "switch", "target": wire])
+        return ["cmd": "switch", "target": wire]
+    }
+
+    private func sessionTarget(_ target: RecordingTarget) throws -> [String: Any] {
+        guard case let .area(_, display) = target else { return target.wire }
+        let screens = screenFrames()
+        guard let primary = screens.first,
+              let cocoa = RecordingPickerGeometry.rects(target, windows: [], screens: screens).first,
+              !cocoa.isEmpty, screens[display].contains(cocoa) else {
+            throw RecordingEngineError.unsupported("Choose the area again on a connected display.")
+        }
+        let region = RecordingPanelLayout.cocoa(cocoa, primaryHeight: primary.maxY)
+        return ["kind": "region", "x": region.minX, "y": region.minY, "width": region.width, "height": region.height]
     }
 
     /// `ToolsLineStream.sendInput`'s limit; the newline takes one byte of it.
@@ -117,25 +152,71 @@ public final class RecordingSessionController: ObservableObject {
         channel?.stop()
     }
 
-    private func send(_ command: [String: Any]) {
-        guard let channel, !ended else { return }
-        do {
-            let data = try JSONSerialization.data(withJSONObject: command, options: [.sortedKeys])
-            try channel.send(String(decoding: data, as: UTF8.self) + "\n")
-        } catch {
+    private func send(_ command: Command) {
+        guard !ended, channel != nil else { return }
+        do { try write(command) }
+        catch {
             notice = "The recorder did not take the command: \(error.localizedDescription)"
             PerfLog.mark("recording.session send failed \(error.localizedDescription)")
         }
     }
 
+    func write(_ command: Command) throws {
+        guard let channel, !ended else { throw POSIXError(.EPIPE) }
+        let wire: [String: Any]
+        switch command {
+        case .pause: wire = ["cmd": "pause"]
+        case .resume: wire = ["cmd": "resume"]
+        case .restart: wire = ["cmd": "restart"]
+        case .stop: wire = ["cmd": "stop"]
+        case .discard: wire = ["cmd": "discard"]
+        case let .switchTo(target): wire = try switchCommand(target)
+        case let .rates(active, idle): wire = ["cmd": "rates", "activeFps": active, "idleFps": idle]
+        }
+        let data = try JSONSerialization.data(withJSONObject: wire, options: [.sortedKeys])
+        try channel.send(String(decoding: data, as: UTF8.self) + "\n")
+    }
+
     func receive(_ lines: [String]) {
         for line in lines {
-            guard let event = try? JSONDecoder().decode(RecordingSessionLine.self, from: Data(line.utf8)) else {
+            guard !ended else { return }
+            let data = Data(line.utf8)
+            guard let event = decode(data) else {
                 PerfLog.mark("recording.session unreadable line \(line.prefix(200))")
                 continue
             }
             apply(event)
+            if event.event == "rates", let rates = try? JSONDecoder().decode(Rates.self, from: data) {
+                onRates?(rates.activeFps, rates.idleFps)
+            }
+            onEvent?(event)
         }
+    }
+
+    private struct Rates: Decodable {
+        let activeFps: Double
+        let idleFps: Double
+    }
+
+    /// Only the capture session uses global, top-left "region" on the wire. Saved bar targets stay display-local.
+    private func decode(_ data: Data) -> RecordingSessionLine? {
+        let decoder = JSONDecoder()
+        if let event = try? decoder.decode(RecordingSessionLine.self, from: data) { return event }
+        guard var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let region = object["target"] as? [String: Any], region["kind"] as? String == "region",
+              let x = region["x"] as? Double, let y = region["y"] as? Double,
+              let w = region["width"] as? Double, let h = region["height"] as? Double else { return nil }
+        let screens = screenFrames()
+        object["target"] = nil
+        if let primary = screens.first {
+            let rect = RecordingPanelLayout.cocoa(CGRect(x: x, y: y, width: w, height: h), primaryHeight: primary.maxY)
+            if let index = screens.firstIndex(where: { $0.contains(rect) }) {
+                object["target"] = RecordingTarget.area(
+                    rect: rect.offsetBy(dx: -screens[index].minX, dy: -screens[index].minY), display: index).wire
+            }
+        }
+        guard let normalized = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+        return try? decoder.decode(RecordingSessionLine.self, from: normalized)
     }
 
     private func apply(_ event: RecordingSessionLine) {

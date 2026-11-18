@@ -19,7 +19,13 @@ import {
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { parseDisplayList } from "@genesiscz/utils/screen-recorder/displays";
-import type { RecordingCommand, RecordingSession, RecordingSessionEvent, RecordingState } from "./recording-session";
+import type {
+    MovieRates,
+    RecordingCommand,
+    RecordingSession,
+    RecordingSessionEvent,
+    RecordingState,
+} from "./recording-session";
 import { describeRecordingTarget, type RecordingTarget, recordingTargetSchema } from "./recording-targets";
 import { type AxResult, runAxAsync } from "./runner";
 
@@ -331,9 +337,13 @@ const commandQueues = new WeakMap<RecorderControl, Promise<void>>();
  * One stdin command of the session, as the same RecorderControl call the socket makes, queued behind the commands
  * before it: a pause and a resume sent together each check the state the one before left.
  */
-export function applyRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
+export function applyRecordingCommand(
+    control: RecorderControl,
+    command: RecordingCommand,
+    onRates?: (rates: MovieRates) => void
+): Promise<void> {
     const next = (commandQueues.get(control) ?? Promise.resolve()).then(() =>
-        dispatchRecordingCommand(control, command)
+        dispatchRecordingCommand(control, command, onRates)
     );
     commandQueues.set(
         control,
@@ -344,10 +354,24 @@ export function applyRecordingCommand(control: RecorderControl, command: Recordi
     return next;
 }
 
-async function dispatchRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
+async function dispatchRecordingCommand(
+    control: RecorderControl,
+    command: RecordingCommand,
+    onRates?: (rates: MovieRates) => void
+): Promise<void> {
     log.debug({ command: command.cmd }, "session command through its RecorderControl");
 
     switch (command.cmd) {
+        case "rates": {
+            const { settings } = await control.setSettings({
+                activeFps: command.activeFps,
+                idleFps: command.idleFps || command.activeFps,
+                threshold: command.threshold,
+            });
+            const { activeFps, idleFps, threshold } = settings;
+            onRates?.({ activeFps, idleFps, threshold });
+            return;
+        }
         case "pause":
             await control.pause();
             return;
