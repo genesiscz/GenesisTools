@@ -248,7 +248,7 @@ export function createSearchCommand(): Command {
             "--sort <field>",
             "Sort: created|updated|comments|reactions (issues/PRs); stars|forks|updated|help-wanted-issues (repos)"
         )
-        .option("-L, --limit <n>", "Max results", parseInt, 30)
+        .option("-L, --limit <n>", "Max results", (value) => Number.parseInt(value, 10), 30)
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
         .option("--advanced", "Use only the advanced keyword search backend")
         .option("--legacy", "Use only the legacy keyword search backend")
