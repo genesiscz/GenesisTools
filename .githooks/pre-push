@@ -136,6 +136,14 @@ guard_names=""
 # Every guard has a deadline: one that never returns (entrypoint-import-guard sat idle for 40 minutes
 # in a hook on 2026-10-19, and `wait` held the push with it) is killed and reported as "did not finish".
 guard_timeout="${GT_PRE_PUSH_GUARD_TIMEOUT:-180}"
+# A process and every descendant, deepest first. The watchdog signals the whole tree: with profiling on, the job is the
+# profiler wrapper, and a SIGKILL that reached only the wrapper left a guard that ignores SIGTERM running.
+tree_pids() {
+    for child in $(pgrep -P "$1" 2>/dev/null); do
+        tree_pids "$child"
+    done
+    echo "$1"
+}
 run_guard() {
     name="$1"
     shift
@@ -149,8 +157,17 @@ run_guard() {
             "$@" > "$guard_dir/$name.log" 2>&1 &
         fi
         cmd=$!
-        # A guard that ignores SIGTERM gets SIGKILL 5 s later, so `wait` below always returns.
-        (sleep "$guard_timeout"; kill "$cmd" 2>/dev/null; sleep 5; kill -9 "$cmd" 2>/dev/null) &
+        # A guard that ignores SIGTERM gets SIGKILL 5 s later, so `wait` below always returns. The tree is read once,
+        # at the deadline: a wrapper that dies on SIGTERM would otherwise orphan the guard before the SIGKILL.
+        (
+            sleep "$guard_timeout"
+            pids=$(tree_pids "$cmd")
+            # shellcheck disable=SC2086
+            kill $pids 2>/dev/null || true
+            sleep 5
+            # shellcheck disable=SC2086
+            kill -9 $pids 2>/dev/null || true
+        ) &
         watchdog=$!
         wait "$cmd" || rc=$?
         # The watchdog's `sleep` outlives a killed subshell and holds the hook's output pipe open, so git
