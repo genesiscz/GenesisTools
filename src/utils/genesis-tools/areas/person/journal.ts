@@ -344,11 +344,27 @@ export function createRequestJournal(
         return viewOf(id, eventsAt(fileOf(id)));
     }
 
+    /** A listener observes a change that is already written: its failure must not stop the others or fail the write. */
+    function notify(listener: (view: RequestView) => void, view: RequestView): void {
+        try {
+            listener(view);
+        } catch (error) {
+            logger.warn({ error, id: view.id }, "request journal: a change listener threw");
+        }
+    }
+
     function emit(id: string): void {
-        const view = read(id);
+        let view: RequestView | null;
+        try {
+            view = read(id);
+        } catch (error) {
+            logger.warn({ error, id }, "request journal: cannot read a request to report its change");
+            return;
+        }
+
         if (view) {
             for (const listener of listeners) {
-                listener(view);
+                notify(listener, view);
             }
         }
     }
@@ -430,7 +446,7 @@ export function createRequestJournal(
             const next = prefixViews(view.events, previous, alive);
             reported.set(view.id, view.events.length);
             for (const prefix of next) {
-                listener(prefix.events.length === view.events.length ? view : prefix);
+                notify(listener, prefix.events.length === view.events.length ? view : prefix);
             }
         }
 

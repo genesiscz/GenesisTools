@@ -106,6 +106,20 @@ test("postOnce, append-only recovery, and persisted answers survive a reopen", a
     await expect(reopened.settle("missing", "done")).rejects.toThrow("does not exist");
 });
 
+test("a change listener that throws fails neither a committed post nor an answer, and the others still hear it", async () => {
+    const journal = createRequestJournal({ dir: scratch(), now });
+    const heard: string[] = [];
+    journal.onChange(() => {
+        throw new Error("observer broke");
+    });
+    journal.onChange((view) => heard.push(view.state));
+
+    const post = await journal.postOnce({ input });
+    expect(post.created).toBe(true);
+    expect((await journal.settle(input.id, "done")).status).toBe("done");
+    expect(heard).toEqual(["waiting", "done"]);
+});
+
 test("stateOf defines every prefix, including a dead runner and every terminal state", () => {
     const at = now().toISOString();
     const events: RequestEvent[] = [
