@@ -116,8 +116,8 @@ struct MeetingSeatsDraft: Equatable {
         switch Device(groups[index]) {
         case .thisMac: return true
         case .owner: return false
-        case .other(_, let owner):
-            return owner == nil && !groups[index].people.isEmpty && groups[index].people.allSatisfy { Self.contains(seats.room, $0) }
+        case .other:
+            return !groups[index].people.isEmpty && groups[index].people.allSatisfy { Self.contains(seats.room, $0) }
         }
     }
 
@@ -130,24 +130,29 @@ struct MeetingSeatsDraft: Equatable {
     /// keeps a member the sheet does not show.
     func members(_ index: Int) -> [String] {
         let eligible = eligible(index)
+        let eligibleKeys = Set(eligible.map(PeopleText.personKey))
         let held = seats.microphones.flatMap { $0.indices.contains(index) ? $0[index].people : nil } ?? []
-        return eligible + held.filter { !Self.contains(eligible, $0) }
+        return eligible + held.filter { !eligibleKeys.contains(PeopleText.personKey($0)) }
     }
 
     /// The devices the group at `index` can switch to: this Mac and each remote person's device that no other group is.
-    func devices(for index: Int) -> [(device: Device, free: Bool)] {
+    func devices(for index: Int? = nil) -> [(device: Device, free: Bool)] {
         let groups = seats.microphones ?? []
-        let taken = Set(groups.indices.filter { $0 != index }.map { Device(groups[$0]) })
-        let devices: [Device] = [.thisMac] + seats.remote.map { Device.owner($0.name) }
-        return devices.map { ($0, !taken.contains($0)) }
+        let others = groups.indices.filter { $0 != index }.map { groups[$0] }
+        let takenIDs = Set(others.map(\.id))
+        let owners = Set(others.compactMap(\.deviceId).map(PeopleText.personKey))
+        var choices: [(device: Device, free: Bool)] = [(.thisMac, !takenIDs.contains("self"))]
+        for person in seats.remote {
+            let available = !owners.contains(PeopleText.personKey(person.name)) && !takenIDs.contains("device:\(person.name)")
+            choices.append((.owner(person.name), available))
+        }
+        return choices
     }
 
     /// The devices a new microphone can be: this Mac's while it has no group, and each remote person's own device
     /// that has none yet.
     var newDevices: [Device] {
-        let taken = Set((seats.microphones ?? []).map(Device.init))
-        let devices: [Device] = [.thisMac] + seats.remote.map { .owner($0.name) }
-        return devices.filter { !taken.contains($0) }
+        devices().compactMap { $0.free ? $0.device : nil }
     }
 
     /// Adds a microphone for `device`, with the people it most likely carries: the room for this Mac, the owner for
@@ -187,11 +192,18 @@ struct MeetingSeatsDraft: Equatable {
 
     // MARK: Save
 
+    /// An unchanged clock field still denotes the full stored time, even when its display rounded to a tenth.
+    private func clock(_ fields: [String], at index: Int, stored: Double?) -> PersonStay.Clock {
+        let text = fields.indices.contains(index) ? fields[index] : ""
+        if let stored, text == ListenPresenceStrip.clock(stored) { return .seconds(stored) }
+        return PersonStay.Clock(text)
+    }
+
     /// The first thing Save cannot write, in words; nil when the seats are whole.
     var problem: String? {
         for (index, person) in seats.remote.enumerated() {
-            let join = PersonStay.Clock(joins.indices.contains(index) ? joins[index] : "")
-            let leave = PersonStay.Clock(leaves.indices.contains(index) ? leaves[index] : "")
+            let join = clock(joins, at: index, stored: person.fromSec)
+            let leave = clock(leaves, at: index, stored: person.toSec)
             if let problem = PersonStay.problem(from: join, to: leave, duration: nil) { return "\(person.name): \(problem)" }
         }
         for (index, group) in (seats.microphones ?? []).enumerated() where group.people.isEmpty {
@@ -204,15 +216,16 @@ struct MeetingSeatsDraft: Equatable {
     var parsed: MeetingSeats {
         var seats = seats
         for index in seats.remote.indices {
-            seats.remote[index].fromSec = PersonStay.Clock(joins.indices.contains(index) ? joins[index] : "").value
-            seats.remote[index].toSec = PersonStay.Clock(leaves.indices.contains(index) ? leaves[index] : "").value
+            let person = seats.remote[index]
+            seats.remote[index].fromSec = clock(joins, at: index, stored: person.fromSec).value
+            seats.remote[index].toSec = clock(leaves, at: index, stored: person.toSec).value
         }
         if seats.microphones?.isEmpty == true { seats.microphones = nil }
         return seats
     }
 
     /// The engine compares names with case and accents folded (`nameKey`).
-    static func same(_ a: String, _ b: String) -> Bool { PeopleText.fold(a) == PeopleText.fold(b) }
+    static func same(_ a: String, _ b: String) -> Bool { PeopleText.personKey(a) == PeopleText.personKey(b) }
 
     static func contains(_ names: [String], _ name: String) -> Bool { names.contains { same($0, name) } }
 }
@@ -221,7 +234,39 @@ struct MeetingSeatsDraft: Equatable {
 /// when, and which microphone carried whom. People come from the person picker the person editor uses (the meeting's
 /// people first, or a new name), microphones from this Mac and the remote people's devices.
 struct MeetingSeatsEditor: View {
-    @State private var draft: MeetingSeatsDraft
+    /// Menus, membership and validation follow edits. Redrawing the sheet only reads the rows.
+    private struct FormState {
+        struct Group {
+            let microphone: MeetingSeats.Microphone
+            let inRoom: Bool
+            let members: [(name: String, checked: Bool)]
+        }
+        var draft: MeetingSeatsDraft {
+            didSet {
+                problem = draft.problem
+                if oldValue.seats != draft.seats { updateGroups() }
+            }
+        }
+        var problem: String?
+        var groups: [Group] = []
+        var newDevices: [MeetingSeatsDraft.Device] = []
+
+        init(_ seats: MeetingSeats) {
+            draft = MeetingSeatsDraft(seats)
+            problem = draft.problem
+            updateGroups()
+        }
+
+        private mutating func updateGroups() {
+            groups = (draft.seats.microphones ?? []).enumerated().map { index, group in
+                let held = Set(group.people.map(PeopleText.personKey))
+                return Group(microphone: group, inRoom: draft.carriesRoom(index),
+                             members: draft.members(index).map { ($0, held.contains(PeopleText.personKey($0))) })
+            }
+            newDevices = draft.newDevices
+        }
+    }
+    @State private var form: FormState
     let save: (MeetingSeats) async throws -> Void
     let saved: () -> Void
     @State private var saving = false
@@ -230,8 +275,6 @@ struct MeetingSeatsEditor: View {
     @State private var adding: SeatKind?
     @State private var query = ""
     @State private var search: PeopleSearch?
-    /// The transcript's labels, read once when the sheet opens and again when the speakers arrive.
-    @State private var labels: [String] = []
     @Environment(\.meetingDetail) private var detail
     @Environment(\.dismiss) private var dismiss
 
@@ -241,7 +284,7 @@ struct MeetingSeatsEditor: View {
     }
 
     init(seats: MeetingSeats, save: @escaping (MeetingSeats) async throws -> Void, saved: @escaping () -> Void) {
-        _draft = State(initialValue: MeetingSeatsDraft(seats))
+        _form = State(initialValue: FormState(seats))
         self.save = save
         self.saved = saved
     }
@@ -260,7 +303,7 @@ struct MeetingSeatsEditor: View {
                     Text("In the room")
                 }
                 Section {
-                    ForEach(Array(draft.seats.remote.enumerated()), id: \.offset) { index, person in remote(index, person) }
+                    ForEach(Array(form.draft.seats.remote.enumerated()), id: \.offset) { index, person in remote(index, person) }
                     addButton(.remote)
                 } header: {
                     Text("Remote")
@@ -269,7 +312,7 @@ struct MeetingSeatsEditor: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Section {
-                    ForEach(Array((draft.seats.microphones ?? []).enumerated()), id: \.offset) { index, group in
+                    ForEach(Array(form.groups.enumerated()), id: \.offset) { index, group in
                         microphone(index, group)
                     }
                     addMicrophone
@@ -283,7 +326,7 @@ struct MeetingSeatsEditor: View {
             .formStyle(.grouped)
             // Edits made while the write is in flight would be dismissed with the sheet unsaved.
             .disabled(saving)
-            if let problem = draft.problem {
+            if let problem = form.problem {
                 Text(problem).font(.system(size: 11.5)).foregroundStyle(KitHue.care.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("meetings.seats.problem")
@@ -297,7 +340,7 @@ struct MeetingSeatsEditor: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { submit() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(saving || draft.problem != nil)
+                    .disabled(saving || form.problem != nil)
                     .accessibilityIdentifier("meetings.seats.save")
             }
         }
@@ -306,7 +349,6 @@ struct MeetingSeatsEditor: View {
         .onAppear {
             if let detail, case .idle = detail.speakers { detail.loadSpeakers() }
         }
-        .onChange(of: detail?.speakers.value?.speakers.count, initial: true) { _, _ in labels = Self.labels(detail, draft.seats) }
         .onDisappear { search?.cancel() }
     }
 
@@ -322,11 +364,11 @@ struct MeetingSeatsEditor: View {
 
     private var room: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if draft.seats.room.isEmpty {
+            if form.draft.seats.room.isEmpty {
                 Text("Nobody yet.").font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
                 WrapLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(draft.seats.room, id: \.self) { name in personChip(name) }
+                    ForEach(form.draft.seats.room, id: \.self) { name in personChip(name) }
                 }
             }
             addButton(.room)
@@ -337,7 +379,7 @@ struct MeetingSeatsEditor: View {
         HStack(spacing: 4) {
             Text(verbatim: name).font(.system(size: 12))
             IconButton(systemName: "xmark", tooltip: "Take \(name) out of the room", size: 9) {
-                draft.unseat(name)
+                form.draft.unseat(name)
             }
             .accessibilityIdentifier("meetings.seats.room.remove.\(name)")
         }
@@ -352,7 +394,7 @@ struct MeetingSeatsEditor: View {
             Text(verbatim: person.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
                 .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
             labelMenu(person.label, tooltip: "The label of \(person.name)'s own channel in the transcript, when the source gives one") {
-                draft.seats.remote[index].label = $0
+                form.draft.seats.remote[index].label = $0
             }
             TextField("Joined", text: clock(\.joins, index)).frame(width: 72)
                 .instantTooltip("When \(person.name) joined; empty: at the start")
@@ -361,7 +403,7 @@ struct MeetingSeatsEditor: View {
                 .instantTooltip("When \(person.name) left; empty: at the end")
                 .accessibilityIdentifier("meetings.seats.remote.leave.\(index)")
             IconButton(systemName: "minus.circle", tooltip: "Take \(person.name) off the remote seats") {
-                draft.removeRemote(at: index)
+                form.draft.removeRemote(at: index)
             }
             .accessibilityIdentifier("meetings.seats.remote.remove.\(index)")
         }
@@ -372,6 +414,7 @@ struct MeetingSeatsEditor: View {
     /// "Label: Speaker 2 ▾": the transcript's labels and None, no typed label.
     private func labelMenu(_ current: String?, tooltip: String, set: @escaping (String?) -> Void) -> some View {
         MenuButton(style: .genHoverPlain(), items: {
+            let labels = Self.labels(detail, form.draft.seats)
             var items: [MenuButtonItem] = [.action("No label", checked: current == nil) { set(nil) }]
             if !labels.isEmpty { items.append(.divider) }
             items += labels.map { label in MenuButtonItem.action(label, checked: label == current) { set(label) } }
@@ -390,15 +433,15 @@ struct MeetingSeatsEditor: View {
     }
 
     private func clock(_ list: WritableKeyPath<MeetingSeatsDraft, [String]>, _ index: Int) -> Binding<String> {
-        Binding(get: { draft[keyPath: list].indices.contains(index) ? draft[keyPath: list][index] : "" },
-                set: { if draft[keyPath: list].indices.contains(index) { draft[keyPath: list][index] = $0 } })
+        Binding(get: { form.draft[keyPath: list].indices.contains(index) ? form.draft[keyPath: list][index] : "" },
+                set: { if form.draft[keyPath: list].indices.contains(index) { form.draft[keyPath: list][index] = $0 } })
     }
 
     // MARK: Microphones
 
-    private func microphone(_ index: Int, _ group: MeetingSeats.Microphone) -> some View {
-        let device = draft.device(at: index)
-        let members = draft.members(index)
+    private func microphone(_ index: Int, _ choices: FormState.Group) -> some View {
+        let group = choices.microphone
+        let device = MeetingSeatsDraft.Device(group)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 MenuButton(style: .genHoverPlain(), items: { deviceItems(index, current: device) }) {
@@ -412,21 +455,21 @@ struct MeetingSeatsEditor: View {
                 .accessibilityIdentifier("meetings.seats.mic.device.\(index)")
                 Spacer(minLength: 6)
                 labelMenu(group.label, tooltip: "The transcript label of this device's channel, when the source gives one") {
-                    draft.seats.microphones?[index].label = $0
+                    form.draft.seats.microphones?[index].label = $0
                 }
-                IconButton(systemName: "minus.circle", tooltip: "Remove \(device.title)") { draft.removeMicrophone(at: index) }
+                IconButton(systemName: "minus.circle", tooltip: "Remove \(device.title)") { form.draft.removeMicrophone(at: index) }
                     .accessibilityIdentifier("meetings.seats.mic.remove.\(index)")
             }
-            if members.isEmpty {
-                Text(draft.carriesRoom(index) ? "Seat people in the room first." : "Seat remote people first.")
+            if choices.members.isEmpty {
+                Text(choices.inRoom ? "Seat people in the room first." : "Seat remote people first.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
             } else {
                 WrapLayout(spacing: 12, lineSpacing: 4) {
-                    ForEach(members, id: \.self) { name in
-                        Toggle(name, isOn: Binding(get: { MeetingSeatsDraft.contains(group.people, name) },
-                                                   set: { _ in draft.toggle(name, inMicrophone: index) }))
+                    ForEach(choices.members, id: \.name) { member in
+                        Toggle(member.name, isOn: Binding(get: { member.checked },
+                                                          set: { _ in form.draft.toggle(member.name, inMicrophone: index) }))
                             .toggleStyle(.checkbox).font(.system(size: 12))
-                            .accessibilityIdentifier("meetings.seats.mic.\(index).member.\(name)")
+                            .accessibilityIdentifier("meetings.seats.mic.\(index).member.\(member.name)")
                     }
                 }
             }
@@ -436,9 +479,9 @@ struct MeetingSeatsEditor: View {
 
     /// Runs at the click: this Mac and each remote person's device; one another group already is stays greyed.
     private func deviceItems(_ index: Int, current: MeetingSeatsDraft.Device) -> [MenuButtonItem] {
-        var items = draft.devices(for: index).map { choice in
+        var items = form.draft.devices(for: index).map { choice in
             MenuButtonItem.action(choice.device.title, checked: choice.device == current, enabled: choice.free) {
-                draft.setDevice(choice.device, at: index)
+                form.draft.setDevice(choice.device, at: index)
             }
         }
         if case .other = current { items.insert(.action(current.title, checked: true) {}, at: 0) }
@@ -446,9 +489,9 @@ struct MeetingSeatsEditor: View {
     }
 
     private var addMicrophone: some View {
-        let devices = draft.newDevices
+        let devices = form.newDevices
         return MenuButton(style: .genHoverPlain(), items: {
-            devices.map { device in MenuButtonItem.action(device.title) { draft.addMicrophone(device) } }
+            devices.map { device in MenuButtonItem.action(device.title) { form.draft.addMicrophone(device) } }
         }) {
             Label("Add a microphone…", systemImage: "plus").font(.system(size: 12))
                 .frame(minHeight: 22).contentShape(Rectangle())
@@ -497,27 +540,26 @@ struct MeetingSeatsEditor: View {
     private func seat(_ name: String, _ kind: SeatKind) {
         adding = nil
         switch kind {
-        case .room: draft.seatInRoom(name)
-        case .remote: draft.seatRemote(name)
+        case .room: form.draft.seatInRoom(name)
+        case .remote: form.draft.seatRemote(name)
         }
-        labels = Self.labels(detail, draft.seats)
     }
 
     // MARK: Save
 
     /// The sheet stays open until the write lands: a refusal shows here and the draft stays to correct.
     private func submit() {
-        guard !saving, draft.problem == nil else { return }
+        guard !saving, form.problem == nil else { return }
         saving = true
         failure = nil
-        let submitted = draft
+        let submitted = form.draft
         let seats = submitted.parsed
         Task {
             do {
                 try await save(seats)
                 saving = false
                 // Keep the sheet open when the draft changed after the snapshot: closing would drop those edits.
-                if draft == submitted { saved() }
+                if form.draft == submitted { saved() }
             } catch {
                 saving = false
                 failure = asFailure(error)

@@ -138,6 +138,27 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertFalse(draft.carriesRoom(1))
     }
 
+    func testChangingOneSeatTimePreservesTheOtherStoredSecond() {
+        let seats = MeetingSeats(remote: [.init(name: "Dana Example", fromSec: 2.044, toSec: 9.811)])
+        var draft = MeetingSeatsDraft(seats)
+        XCTAssertEqual(draft.parsed, seats)
+        draft.leaves[0] = "2"
+        XCTAssertEqual(draft.problem, "Dana Example: The leave comes before the join.")
+        draft.leaves[0] = "6"
+        XCTAssertNil(draft.problem)
+        XCTAssertEqual(draft.parsed.remote.first?.fromSec, 2.044)
+        XCTAssertEqual(draft.parsed.remote.first?.toSec, 6)
+    }
+
+    func testAnExistingDeviceKeepsItsMembersSeatKindAndReservesItsOwner() {
+        let seats = MeetingSeats(room: ["Alex Example"], remote: [.init(name: "Dana Example")],
+                                 microphones: [.init(id: "desk", people: ["Alex Example"], deviceId: "Example, Dana")])
+        let draft = MeetingSeatsDraft(seats)
+        XCTAssertEqual(draft.eligible(0), ["Alex Example"])
+        XCTAssertEqual(draft.newDevices, [.thisMac])
+        XCTAssertEqual(draft.parsed, seats)
+    }
+
     // MARK: Undo ends its notice (w_o8fbzbq8)
 
     func testAnUndoThatWorkedEndsItsNoticeAsUndoneAndTheNoticeFades() async throws {

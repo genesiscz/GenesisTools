@@ -37,8 +37,8 @@ enum PeopleText {
     }
 
     static func personKey(_ text: String) -> String {
-        fold(text.replacingOccurrences(of: "\\([^)]*\\)", with: "", options: .regularExpression))
-            .split(whereSeparator: \.isWhitespace).sorted().joined(separator: " ")
+        fold(text.replacingOccurrences(of: "\\([^)]*\\)", with: " ", options: .regularExpression))
+            .split { $0.isWhitespace || "._,-".contains($0) }.sorted().joined(separator: " ")
     }
 
     /// True when a person's name or one of their aliases is the typed text.
