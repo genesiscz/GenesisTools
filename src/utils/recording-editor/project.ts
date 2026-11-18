@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
+import { type AudioFacts, audioLaneSchema, setAudioLane, syncExtraAudioLanes } from "./audio-lanes";
 import { bubbleRect, CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
@@ -50,6 +51,16 @@ import {
     setLanes,
     withLane,
 } from "./lanes";
+import {
+    addMediaLayer,
+    CAMERA_LAYER_ID,
+    editMediaLayer,
+    layerOrderOf,
+    layerStackSchema,
+    layersForSave,
+    mediaLayerSchema,
+    moveLayer,
+} from "./layers";
 import {
     applyCaptionsStyle,
     applyCard,
@@ -721,6 +732,8 @@ export const editProjectSchema = z.object({
             include: z.boolean().default(true),
             volume: z.number().min(0).max(2).default(1),
             mutedTracks: z.array(z.number().int().nonnegative()).default([]),
+            /** Absent until the recording has separate sources or a lane is edited. */
+            lanes: z.array(audioLaneSchema).optional(),
             /** A sound file under the movie (looped to its length); absent is none. */
             music: musicSchema.optional(),
             /** Noise reduction of the sound on export (`denoise.ts`); absent is none. */
@@ -771,6 +784,8 @@ export const editProjectSchema = z.object({
     lanes: z.array(effectLaneSchema).optional(),
     /** The camera recorded beside the screen, drawn as a bubble; absent is none (camera.ts). */
     camera: cameraBubbleSchema.optional(),
+    /** The camera keeps its settings above. An absent stack draws the camera alone. */
+    layers: layerStackSchema.optional(),
     /** Moments marked while editing, in source order; absent is none (the recording's own are in recording.json). */
     markers: z.array(editMarkerSchema).optional(),
     /** Round 4 fx-render: transitions at the joins of two clips (fx.ts); absent is a hard cut everywhere. */
@@ -914,7 +929,12 @@ export function parseProject(text: string, path: string): EditProject {
 
 /** Writes atomically with the next revision, so the open window reloads it and knows who changed it. */
 export function writeProject(path: string, project: EditProject, by = "agent"): EditProject {
-    const saved = { ...project, version: EDIT_PROJECT_VERSION, revision: project.revision + 1, updatedBy: by };
+    const saved = {
+        ...layersForSave(project),
+        version: EDIT_PROJECT_VERSION,
+        revision: project.revision + 1,
+        updatedBy: by,
+    };
     atomicWriteFileSync(path, projectFileText(saved));
     log.debug({ path, revision: saved.revision, clips: saved.clips.length, zooms: saved.zooms.length }, "edit saved");
     return saved;
@@ -2302,6 +2322,15 @@ const REDACT_STYLE_OPTIONS = [
     ["cell", "pixelate"],
 ] as const satisfies ReadonlyArray<readonly [string, EditRedaction["style"]]>;
 
+const layerFields = mediaLayerSchema.shape;
+const layerPlacement = {
+    startUs: layerFields.startUs.optional(),
+    endUs: layerFields.endUs.optional(),
+    x: layerFields.x.unwrap().optional(),
+    y: layerFields.y.unwrap().optional(),
+    width: layerFields.width.unwrap().optional(),
+};
+
 export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("split"), at: sourceTimeSchema }).strict(),
     z.object({ op: z.literal("cut"), ...rangeFields }).strict(),
@@ -3025,6 +3054,38 @@ export const editOpSchema = z.discriminatedUnion("op", [
             all: z.boolean().optional(),
         })
         .strict(),
+    z
+        .object({
+            op: z.literal("audioLane"),
+            id: audioLaneSchema.shape.id,
+            muted: z.boolean().optional(),
+            volume: audioLaneSchema.shape.volume.unwrap().optional(),
+            name: audioLaneSchema.shape.name,
+        })
+        .strict(),
+    z.object({ op: z.literal("layerAdd"), kind: layerFields.kind, file: layerFields.file, ...layerPlacement }).strict(),
+    z
+        .object({
+            op: z.literal("layer"),
+            id: layerFields.id,
+            ...layerPlacement,
+            opacity: layerFields.opacity.unwrap().optional(),
+            shape: layerFields.shape.unwrap().nullable().optional(),
+            hidden: z.boolean().optional(),
+            name: layerFields.name,
+            videoStartMs: layerFields.videoStartMs.unwrap().optional(),
+            videoSound: z.boolean().optional(),
+            loop: z.boolean().optional(),
+        })
+        .strict(),
+    z
+        .object({
+            op: z.literal("layerMove"),
+            id: layerFields.id,
+            to: z.union([z.enum(["top", "bottom", "up", "down"]), z.number().int()]),
+        })
+        .strict(),
+    z.object({ op: z.literal("layerRemove"), id: layerFields.id }).strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -3085,6 +3146,12 @@ export interface OpFacts {
     loudnessLufs?: number | null;
     /** The source movie's audio tracks (`denoise`); absent when nobody counted them. */
     audioTracks?: number;
+    /** Recording sources, needed to materialize every lane on the first audioLane edit. */
+    audioFacts?: AudioFacts;
+    /** Layer insertion uses the editor's source playhead, or the first kept frame for a headless edit. */
+    playheadUs?: number;
+    /** Length of a layerAdd video without an explicit end, measured once by the caller for replay. */
+    videoDurationUs?: number;
     // R4 voiceover clips
     /** The length of a `voiceover` op's file, measured with ffprobe. */
     voiceoverDurationUs?: number;
@@ -3178,6 +3245,10 @@ const MAX_VOLUME = 2;
 export function opTimeWarnings(op: EditOp, sourceDurationUs: number): string[] {
     const warnings: string[] = [];
     const seconds = (us: number) => Math.round(us / 1000) / 1000;
+
+    if ((op.op === "layer" || op.op === "layerAdd") && op.endUs !== undefined && op.endUs > sourceDurationUs) {
+        warnings.push(`${op.op}: endUs ${op.endUs} is past the source end (${sourceDurationUs} µs), so it was clamped`);
+    }
 
     for (const key of ["from", "to", "at"] as const) {
         const value = Object.entries(op).find(([name]) => name === key)?.[1];
@@ -3412,11 +3483,60 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
         return placed;
     }
 
-    return next;
+    return syncExtraAudioLanes(project, next);
 }
 
 function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditProject {
     switch (op.op) {
+        case "audioLane":
+            return setAudioLane(project, op, facts);
+        case "layerAdd":
+            return addMediaLayer(project, op, facts);
+        case "layerMove":
+            return moveLayer(project, op.id, op.to);
+        case "layerRemove":
+            if (op.id === CAMERA_LAYER_ID) {
+                throw new Error('the camera cannot be removed; use layer {id: "camera", hidden: true}');
+            }
+
+            return editMediaLayer(project, op);
+        case "layer": {
+            if (op.id !== CAMERA_LAYER_ID) {
+                return editMediaLayer(project, op);
+            }
+
+            const camera = project.camera;
+            if (!camera) {
+                throw new Error("no layer camera");
+            }
+
+            const { op: _op, id: _id, x, y, width, shape, hidden, ...mediaOnly } = op;
+            const unsupported = Object.keys(mediaOnly);
+            if (unsupported.length) {
+                throw new Error(
+                    `the camera layer takes x, y, width, shape and hidden; unsupported: ${unsupported.join(", ")}`
+                );
+            }
+
+            const canvas = canvasShape(project);
+            const size =
+                width === undefined
+                    ? camera.size
+                    : Math.max(0.08, Math.min(0.6, (width * canvas.width) / Math.min(canvas.width, canvas.height)));
+            const placement = x !== undefined || y !== undefined ? cameraPlacedAt(project, { x, y }, camera.file) : {};
+            return {
+                ...project,
+                camera: cameraBubbleSchema.parse({
+                    ...camera,
+                    x: x ?? camera.x,
+                    y: y ?? camera.y,
+                    ...placement,
+                    size,
+                    shape: shape === null ? undefined : (shape ?? camera.shape),
+                    show: hidden === undefined ? camera.show : !hidden,
+                }),
+            };
+        }
         case "lanes":
             return setLanes(project, op.lanes);
         case "addLane":
@@ -3776,7 +3896,10 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
 
             const others = project.audio.mutedTracks.filter((track) => track !== op.track);
             const mutedTracks = op.muted === false ? others : [...others, op.track].sort((a, b) => a - b);
-            return { ...project, audio: { ...project.audio, mutedTracks } };
+            const lanes = project.audio.lanes?.map((lane) =>
+                !lane.file && lane.track === op.track ? { ...lane, muted: op.muted !== false } : lane
+            );
+            return { ...project, audio: { ...project.audio, mutedTracks, ...(lanes ? { lanes } : {}) } };
         }
         case "audio":
             return { ...project, audio: { ...project.audio, include: op.include } };
@@ -4256,6 +4379,9 @@ export function describeProject(project: EditProject, path: string) {
         transcriptFixes: Object.keys(project.transcript?.fixes ?? {}).length,
         motion: motionSchema.parse(project.motion ?? {}),
         camera: project.camera ?? null,
+        ...(project.layers
+            ? { layers: { media: project.layers.media, order: layerOrderOf(project).map((layer) => layer.id) } }
+            : {}),
         shapes: (project.shapes ?? []).map((shape) => ({
             id: shape.id,
             kind: shape.kind,
