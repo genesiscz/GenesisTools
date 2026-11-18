@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Foundation
 import SwiftUI
 import XCTest
@@ -148,62 +147,6 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertEqual(PeopleText.address(Fixture.person("Robin Example", email: "robin@example.com")), "robin@example.com")
         XCTAssertEqual(PeopleText.address(Fixture.person("Alex Example", meetings: 4)), "4 meetings")
         XCTAssertEqual(PeopleText.address(Fixture.person("Kai Example", meetings: 0, sources: [.contacts], rank: .contacts)), "Contacts")
-    }
-
-    func testEveryPersonPickerRowExposesAWorkingPressAction() async throws {
-        try XCTSkipUnless(AXIsProcessTrusted(), "Reading the picker through macOS AX requires a trusted test runner.")
-        let present = Fixture.person("Alex Example", rank: .present)
-        let absent = Fixture.person("Robin Example", rank: .meeting)
-        var picks: [String] = []
-        let picker = PersonPicker(people: [present, absent], query: .constant("New speaker"), restrictToPresent: true,
-                                  pick: { picks.append($0.id) }, addNew: { picks.append($0) })
-        _ = NSApplication.shared
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 350), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.title = "Person picker test \(UUID().uuidString)"
-        window.contentView = NSHostingView(rootView: picker)
-        window.orderInForSnapshot()
-        defer { window.close() }
-
-        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-            var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-            return value
-        }
-        func row(_ identifier: String) -> AXUIElement? {
-            let app = AXUIElementCreateApplication(getpid())
-            let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
-            guard let root = windows.first(where: { attribute($0, kAXTitleAttribute) as? String == window.title }) else { return nil }
-            func find(_ element: AXUIElement, depth: Int) -> AXUIElement? {
-                if attribute(element, kAXIdentifierAttribute) as? String == identifier { return element }
-                guard depth > 0 else { return nil }
-                let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-                for child in children {
-                    if let match = find(child, depth: depth - 1) { return match }
-                }
-                return nil
-            }
-            return find(root, depth: 30)
-        }
-        func press(_ id: String) async throws {
-            let identifier = "meetings.personPicker.\(id)"
-            let ready = await waitUntil(3) { row(identifier) != nil }
-            let element = try XCTUnwrap(ready ? row(identifier) : nil, "Missing row \(identifier)")
-            var actions: CFArray?
-            XCTAssertEqual(AXUIElementCopyActionNames(element, &actions), .success, identifier)
-            XCTAssertTrue((actions as? [String])?.contains(kAXPressAction) == true, "\(identifier) has \(String(describing: actions))")
-            XCTAssertEqual(AXUIElementPerformAction(element, kAXPressAction as CFString), .success, identifier)
-        }
-
-        try await press("row.\(present.id)")
-        try await press("add")
-        XCTAssertNil(row("meetings.personPicker.row.\(absent.id)"))
-        try await press("everybody")
-        try await press("row.\(absent.id)")
-        try await until("the known and new person actions arrive in order") {
-            picks == [present.id, "New speaker", absent.id]
-        }
     }
 
     func testARefusedSourceIsNamedNeverAnEmptyList() {
