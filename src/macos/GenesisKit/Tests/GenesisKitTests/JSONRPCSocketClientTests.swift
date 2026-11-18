@@ -160,3 +160,13 @@ final class JSONRPCCallbackTests: XCTestCase {
         XCTAssertNil(client.onNotification)
     }
 }
+
+@MainActor
+final class GenesisToolsRPCConnectTests: XCTestCase {
+    /// The client waits past the service's bound for an action call, so the service's own expiry answer arrives first.
+    func testActionCallsWaitPastTheServicesBound() {
+        XCTAssertEqual(GenesisToolsRPC.actionClientTimeout("person.ask"), 140)
+        XCTAssertEqual(GenesisToolsRPC.actionClientTimeout("windows.open"), 620)
+        XCTAssertEqual(GenesisToolsRPC.actionClientTimeout("windows.open", override: 5_000), 25)
+    }
+}
