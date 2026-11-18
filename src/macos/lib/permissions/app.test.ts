@@ -563,6 +563,12 @@ describe("isGatedInvocation", () => {
         expect(isGatedInvocation("control", ["see", "--help"])).toBe(false);
     });
 
+    it("skips the build offer for a report through either control entry point", () => {
+        expect(isGatedInvocation("control", ["report", "shots.json"])).toBe(false);
+        expect(isGatedInvocation("macos", ["control", "report", "shots.json"])).toBe(false);
+        expect(isGatedInvocation("control", ["see", "--app", "report"])).toBe(true);
+    });
+
     // Regression test: PR #456 review round 2 — reading a README is documentation, like --help,
     // and must never prompt for a build or write the cooldown file
     it("does not gate --readme, after a subcommand or alone", () => {
