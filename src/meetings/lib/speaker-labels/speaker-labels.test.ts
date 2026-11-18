@@ -1279,7 +1279,7 @@ describe("voice support on seat lines", () => {
         const off = await proposeSpeakerLabels(opened, config.global.speakerLabels);
         expect(on.filter((label) => label.voiceSupport)).toHaveLength(2);
         expect(off.filter((label) => label.voiceSupport)).toEqual([]);
-        expect(on.map((label) => ({ ...label, voiceSupport: undefined }))).toEqual(off);
+        expect(on.map((label): LineLabel => ({ ...label, voiceSupport: undefined }))).toEqual(off);
     });
 
     test("a rerun adds the voice's support to the stored seat proposal and takes it away when the setting is off", async () => {

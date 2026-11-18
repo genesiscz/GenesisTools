@@ -32,7 +32,10 @@ export function speakerLabelRule(id: SpeakerLabelerId): MeetingRule {
     return LABELERS[id].rule;
 }
 
-/** Seat ownership wins; a stranger veto wins over ownership; otherwise a named proposal wins over a refusal. */
+/**
+ * Seat ownership wins; a stranger veto wins over ownership; otherwise a named proposal wins over a refusal. A seat
+ * label keeps the voice's support for its own person, so the voice's agreement is not dropped with the voice label.
+ */
 export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLabel[]>): LineLabel[] {
     const byLine = new Map<number, LineLabel[]>();
 
@@ -46,13 +49,25 @@ export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLab
 
     return [...byLine]
         .sort(([a], [b]) => a - b)
-        .map(
-            ([, labels]) =>
-                labels.find((label) => label.reason === "not-the-seat-person") ??
-                labels.find((label) => label.reason === "seat-of-one" && label.person) ??
-                labels.find((label) => label.person) ??
-                labels[0]!
-        );
+        .map(([, labels]) => {
+            const veto = labels.find((label) => label.reason === "not-the-seat-person");
+            if (veto) {
+                return veto;
+            }
+
+            const owned = labels.find(
+                (label): label is LineLabel & { person: string } => label.reason === "seat-of-one" && !!label.person
+            );
+            if (!owned) {
+                return labels.find((label) => label.person) ?? labels[0]!;
+            }
+
+            const support =
+                owned.voiceSupport ??
+                labels.find((label) => label.voiceSupport && sameName(label.voiceSupport.person, owned.person))
+                    ?.voiceSupport;
+            return support ? { ...owned, voiceSupport: support } : owned;
+        });
 }
 
 async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) {
@@ -144,7 +159,14 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
             seats,
             applyAbove: threshold,
         });
-        return { ...context, ...seeds, applyAbove: threshold };
+        const seatOwners = new Map<number, string>();
+        for (const label of seats) {
+            if (label.reason === "seat-of-one" && label.person) {
+                seatOwners.set(label.index, label.person);
+            }
+        }
+
+        return { ...context, ...seeds, seatOwners, applyAbove: threshold };
     }
     return { context, forVoice };
 }

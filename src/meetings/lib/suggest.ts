@@ -1564,6 +1564,7 @@ function labeledItems(options: {
                 endSec: spans.end(label.index),
                 ...(label.score === undefined ? {} : { score: label.score }),
                 ...(label.next ? { next: label.next } : {}),
+                ...(label.voiceSupport ? { voiceSupport: label.voiceSupport } : {}),
                 ...(label.reason === "exclusion"
                     ? {
                           margin: label.margin,
@@ -1574,9 +1575,24 @@ function labeledItems(options: {
                     : {}),
             },
         };
-        const older = [...options.found, ...record.items.filter((one) => one.status === "suggested")].filter((one) =>
-            covers(one, entry.speaker, at)
-        );
+        const stored = record.items.filter((one) => one.status === "suggested" && covers(one, entry.speaker, at));
+        const older = [...options.found.filter((one) => covers(one, entry.speaker, at)), ...stored];
+
+        // A rerun keeps this line's stored seat proposal instead of a new item, so its voice support follows this pass.
+        if (label.reason === "seat-of-one") {
+            for (const old of stored) {
+                if (
+                    old.kind === "speaker-range" &&
+                    old.evidence?.labeler === "seat" &&
+                    old.evidence.transcriptLine === label.index &&
+                    old.speaker &&
+                    sameName(old.speaker, label.person)
+                ) {
+                    const { voiceSupport: _previous, ...rest } = old.evidence;
+                    old.evidence = label.voiceSupport ? { ...rest, voiceSupport: label.voiceSupport } : rest;
+                }
+            }
+        }
         const rivals: string[] = [];
 
         for (const old of older) {
