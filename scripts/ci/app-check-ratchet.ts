@@ -1,6 +1,5 @@
 /** Existing app checks. Counts may only decrease as actions replace callers. */
 export const APP_CHECK_RATCHET: ReadonlyMap<string, number> = new Map<string, number>([
-    ["src/ai/commands/gate/index.ts", 2],
     ["src/control/commands/osascript.ts", 1],
     ["src/control/lib/permissions.ts", 3],
     ["src/control/lib/runner.ts", 1],
