@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
+import { recordingTargetSchema } from "@app/control/lib/recording-targets";
 import type { AppStatus } from "@app/macos/lib/permissions/app";
 import * as appModule from "@app/macos/lib/permissions/app";
 import { registerEvidenceCommand } from "@app/meetings/commands/evidence";
@@ -86,6 +87,7 @@ import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi, editSourceOf, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
 import {
+    RecorderToolset,
     RecordingHandle,
     recorderApi,
     recorderStartSchema,
@@ -98,6 +100,8 @@ import {
     type RecorderSettingsPatch,
     type RecorderStatus,
     type RecordingMarker,
+    RPC_ERRORS,
+    RpcError,
     recorderSettingsSchema,
     type SettingsAnswer,
     type StopAnswer,
@@ -732,6 +736,20 @@ describe("toolset method names", () => {
             attendance: [{ name: "Ash Example", fromSec: 4293, toSec: 5840 }],
             screen: null,
         });
+    });
+
+    test("the Recording handle lists switchTarget, restart and capabilities with their effects and CLI help", () => {
+        const methods = recorderApi.handles.find((handle) => handle.name === "Recording")?.methods;
+        for (const [name, effect] of [
+            ["switchTarget", "reversible"],
+            ["restart", "destructive"],
+            ["capabilities", "read"],
+        ]) {
+            expect(methods?.find((method) => method.name === name)).toMatchObject({
+                effect,
+                doc: expect.stringContaining("tools recorder"),
+            });
+        }
     });
 
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {
@@ -2155,7 +2173,10 @@ describe("recorder and editor toolsets", () => {
 
 /** A live recording that serves `settings.get` and `settings.set` and keeps the settings it was given. */
 class SettingsControl extends RecorderControl {
-    readonly kind = "meeting";
+    constructor(readonly kind = "meeting") {
+        super();
+    }
+
     readonly methods: readonly RecorderMethod[] = ["status", "stop", "marker.add", "settings.get", "settings.set"];
     settings: RecorderSettings = recorderSettingsSchema.parse({
         activeFps: 2,
@@ -2202,6 +2223,145 @@ class SettingsControl extends RecorderControl {
         return { atMs: 1234, label };
     }
 }
+
+describe("recording handle live controls", () => {
+    class Control extends SettingsControl {
+        override readonly methods: readonly RecorderMethod[] = [
+            "status",
+            "target.switch",
+            "restart",
+            "displays.list",
+            "settings.get",
+            "settings.set",
+            "audio.mute",
+        ];
+        override async switchTarget(target: unknown) {
+            if (this.kind === "control-session") {
+                recordingTargetSchema.parse(target);
+            }
+
+            return { state: "paused" as const };
+        }
+
+        override async restart() {
+            return { state: "recording" as const };
+        }
+
+        override async listDisplays() {
+            return (await new FakeRecorder().displays()).map((display) => ({ ...display, recorded: false }));
+        }
+    }
+
+    async function withHandle(control: Control, run: (recording: RecordingHandle) => Promise<void>) {
+        const id = `handle-${crypto.randomUUID()}`;
+        const server = new LiveRecordingServer({ id, kind: control.kind, title: "Fixture", control, service: false });
+        const toolset = new RecorderToolset(() => new FakeRecorder());
+        try {
+            const { recorder } = (await toolset.load(ctx)) as {
+                recorder: { attach(id: string): Promise<RecordingHandle> };
+            };
+            await run(await recorder.attach(id));
+        } finally {
+            await toolset.dispose();
+            server.close();
+        }
+    }
+
+    test("switchTarget sends the target exactly once and returns the engine answer", async () => {
+        const control = new Control("fixture");
+        const switched = spyOn(control, "switchTarget");
+        await withHandle(control, async (recording) => {
+            expect(await recording.switchTarget({ window: 42 })).toEqual({ state: "paused" });
+            expect(switched.mock.calls).toEqual([[{ window: 42 }]]);
+        });
+    });
+
+    test("restart sends one restart and returns the engine answer", async () => {
+        const control = new Control("fixture");
+        const restarted = spyOn(control, "restart");
+        await withHandle(control, async (recording) => {
+            expect(await recording.restart()).toEqual({ state: "recording" });
+            expect(restarted).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    test("a refused switch rejects with the engine's text without retrying", async () => {
+        const control = new Control("fixture");
+        const switched = spyOn(control, "switchTarget").mockRejectedValue(
+            new RpcError(RPC_ERRORS.invalidParams, "window 42 closed")
+        );
+        await withHandle(control, async (recording) => {
+            await expect(recording.switchTarget({ window: 42 })).rejects.toThrow("window 42 closed");
+            expect(switched).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    test("control sessions receive native targets and resolve a display id to its current screen index", async () => {
+        const control = new Control("control-session");
+        const switched = spyOn(control, "switchTarget");
+        await withHandle(control, async (recording) => {
+            await recording.switchTarget({ window: 42 });
+            await recording.switchTarget({ app: "org.example.editor" });
+            await recording.switchTarget({ app: "Example Editor" });
+            await recording.switchTarget({ display: 4 });
+            const region = { kind: "region", x: 12, y: 20, width: 300, height: 200 };
+            await recording.switchTarget(region);
+            await expect(recording.switchTarget({ display: 99 })).rejects.toThrow("display 99");
+            expect(switched.mock.calls).toEqual([
+                [{ kind: "window", windowIds: [42] }],
+                [{ kind: "app", app: "org.example.editor" }],
+                [{ kind: "app", app: "Example Editor" }],
+                [{ kind: "display", screenIndex: 1 }],
+                [region],
+            ]);
+        });
+    });
+
+    test("capabilities reads the take's limit and distinguishes recorded sound from advertised methods", async () => {
+        const control = new Control("control-session");
+        const status = await control.status();
+        const read = spyOn(control, "status").mockResolvedValue({ ...status, limitMs: 32100 });
+        await withHandle(control, async (recording) => {
+            expect(await recording.capabilities()).toMatchObject({
+                targets: ["window", "app", "display", "area"],
+                liveTargetSwitch: true,
+                liveMicrophoneMute: true,
+                liveMicrophoneDevice: false,
+                liveSystemAudioMute: false,
+                liveFrameRate: true,
+                liveCamera: false,
+                liveDisplaysAddRemove: false,
+                maxDurationMs: 32100,
+                reasonUnavailable: { liveSystemAudioMute: expect.stringContaining("system") },
+            });
+            read.mockResolvedValue({ ...status, limitMs: 12300 });
+            expect((await recording.capabilities()).maxDurationMs).toBe(12300);
+        });
+    });
+
+    test("capabilities returns the engine's own capability report when status supplies it", async () => {
+        const control = new Control("fixture");
+        const capabilities = {
+            targets: ["area"],
+            liveTargetSwitch: true,
+            liveMicrophoneMute: false,
+            liveMicrophoneDevice: false,
+            liveSystemAudioMute: true,
+            liveFrameRate: false,
+            liveCamera: false,
+            liveDisplaysAddRemove: false,
+            maxDurationMs: 12000,
+            reasonUnavailable: { liveFrameRate: "This take has a fixed frame rate." },
+        };
+        const status = { ...(await control.status()), capabilities };
+        spyOn(control, "status").mockResolvedValue(status);
+        const settings = spyOn(control, "getSettings");
+        await withHandle(control, async (recording) => {
+            expect(await recording.capabilities()).toEqual(capabilities);
+            expect(settings).not.toHaveBeenCalled();
+        });
+    });
+});
 
 describe("live recording settings from the movies and meetings toolsets", () => {
     test("movies: a movie recording changes fps, idleFps and threshold through its real control, and refuses the keys it keeps", async () => {
