@@ -7,7 +7,6 @@
  */
 import { appendFileSync, existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 
@@ -85,7 +84,7 @@ const value = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) +
 const outDir = value("--out") ?? ".";
 
 /** Decodable mono PCM under the native track name, for file-clock and recovery fixtures. */
-function fixturePcm(durationMs: number): Buffer {
+function fixturePcm(durationMs: number, marker?: { firstSecond: number; source: string }): Buffer {
     const bytes = durationMs * 16 * 2;
     const sound = Buffer.alloc(44 + bytes);
     sound.write("RIFF", 0);
@@ -100,6 +99,12 @@ function fixturePcm(durationMs: number): Buffer {
     sound.writeUInt16LE(16, 34);
     sound.write("data", 36);
     sound.writeUInt32LE(bytes, 40);
+    if (marker) {
+        for (let second = 0; second * 1000 < durationMs; second++) {
+            const value = marker.firstSecond + second + 1;
+            sound.writeInt16LE(marker.source === "mic" ? value : -value, 44 + second * 32_000);
+        }
+    }
     return sound;
 }
 
@@ -143,7 +148,10 @@ if (args[0] === "audio-record") {
         sequence += 1;
         for (const source of sources) {
             const file = `audio-${String(sequence).padStart(6, "0")}-${source}.m4a`;
-            writeFileSync(join(outDir, file), timeline ? fixturePcm(durationMs) : "invented sound");
+            writeFileSync(
+                join(outDir, file),
+                timeline ? fixturePcm(durationMs, { firstSecond: (sequence - 1) * 30, source }) : "invented sound"
+            );
             const at = new Date(start + (sequence - 1) * (timeline ? 30_000 : 60_000)).toISOString();
             openSegment(file, source, at);
             print({
@@ -199,6 +207,7 @@ if (args[0] === "audio-record") {
         };
         const gate = value("--fixture-fail-when");
         if (gate) {
+            const { waitForPath } = await import("@genesiscz/utils/fs/watcher");
             if (!(await waitForPath(gate, { timeoutMs: 10_000 }))) {
                 throw new Error(`missing fixture failure trigger: ${gate}`);
             }
@@ -217,6 +226,7 @@ if (args[0] === "audio-record") {
         }
     }
     if (timeline) {
+        const { waitForPath } = await import("@genesiscz/utils/fs/watcher");
         for (let piece = 1; piece <= 3; piece++) {
             if (!(await waitForPath(join(outDir, "..", `frame-${piece}`), { timeoutMs: 5000 }))) {
                 throw new Error(`frame piece ${piece} did not start`);

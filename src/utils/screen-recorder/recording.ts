@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { type JobInfo, JobRegistry, type JobStep } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
-import { type AudioSegment, type AudioSession, type RecorderAudioOptions, recordsAudioSession } from "./audio-session";
+import {
+    type AudioCaptureChange,
+    type AudioSegment,
+    type AudioSession,
+    type RecorderAudioOptions,
+    recordsAudioSession,
+} from "./audio-session";
 import {
     type AudioDevices,
     type AudioSource,
@@ -192,6 +198,7 @@ export interface RecorderControlsConfig {
 }
 
 export interface RecorderHooks {
+    onAudioChange?: (change: AudioCaptureChange) => void;
     onSoundPath?: (sound: RecordingSoundPath) => void;
     /** A closed continuous sound file has been kept in the recording's audio ledger. */
     onAudioSegment?: (segment: AudioSegment) => void;
@@ -354,6 +361,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private current: RecorderSettings;
     private sound: AudioState;
     private soundSession?: AudioSession;
+    private readonly closingSound = new Set<Promise<void>>();
     private startingSound?: Promise<void>;
     private lastSoundRestart = -Infinity;
     /** Whether a continuous sound session ever ran, so the fallback note says "stopped" or "did not start". */
@@ -654,6 +662,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
     /** Ends the recording (a stop call, a signal): the running captures return what they kept, and the finish follows. */
     requestStop(): void {
+        if (!this.stopRequested) {
+            this.config.hooks.onAudioChange?.({ kind: "stop", atMs: Date.now() });
+        }
         this.stopRequested = true;
         this.phase = "stopping";
         this.update({ state: "stopping" });
@@ -741,18 +752,22 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return this.audio;
         }
 
+        const applyMute = () => {
+            this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: muted } };
+            this.config.hooks.onAudioChange?.({ kind: "mute", atMs: Date.now(), source, muted });
+            return this.audio;
+        };
         if (this.soundSession) {
             await this.soundSession.mute(source, muted);
-            this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: muted } };
-            return this.audio;
+            return applyMute();
         }
 
         // The running captures were started without the muted source: only new captures can add it.
         if (!muted) {
-            this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: false } };
+            const audio = applyMute();
             log.info({ id: this.config.live.id, source }, "audio unmuted; the piece restarts");
             this.captures.abortAll();
-            return this.audio;
+            return audio;
         }
 
         const owners = [...this.captures.running.values()].filter((one) => one.audio);
@@ -775,9 +790,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             throw new RpcError(RPC_ERRORS.internal, errorText(refused.reason));
         }
 
-        this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: true } };
         log.info({ id: this.config.live.id, source }, "audio muted");
-        return this.audio;
+        return applyMute();
     }
 
     override async setAudioInput(deviceId: string): Promise<AudioState> {
@@ -794,10 +808,15 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
         }
 
+        const atMs = Date.now();
+        const applyInput = () => {
+            this.sound = { ...this.sound, micDevice: deviceId };
+            this.config.hooks.onAudioChange?.({ kind: "device", source: "mic", atMs, untilMs: Date.now() });
+            return this.audio;
+        };
         if (this.soundSession) {
             await this.soundSession.setMic(deviceId);
-            this.sound = { ...this.sound, micDevice: deviceId };
-            return this.audio;
+            return applyInput();
         }
 
         const owners = [...this.captures.running.values()].filter((one) => one.audio);
@@ -805,23 +824,22 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         // Muted before these captures started, the mic is in none of them: the unmute restarts them, and the new ones
         // open this input, so nothing is sent or restarted now. A capture muted live still has its mic and switches.
         if (this.sound.muted.mic && !owners.some((one) => one.audioSources.includes("mic"))) {
-            this.sound = { ...this.sound, micDevice: deviceId };
             log.info({ id: this.config.live.id, deviceId }, "microphone chosen while muted; used at the unmute");
-            return this.audio;
+            return applyInput();
         }
 
         if (owners.length > 0 && owners.every((one) => one.live?.setMic)) {
             await Promise.all(owners.map((one) => one.live?.setMic?.(deviceId))).catch((error: unknown) => {
                 throw new RpcError(RPC_ERRORS.internal, errorText(error));
             });
-            this.sound = { ...this.sound, micDevice: deviceId };
         } else {
-            this.sound = { ...this.sound, micDevice: deviceId };
             // The captures restart, so those that record the sound again use the new microphone.
+            const audio = applyInput();
             this.captures.abortAll();
+            return audio;
         }
 
-        return this.audio;
+        return applyInput();
     }
 
     override listDisplays(): Promise<DisplayEntry[]> {
@@ -966,9 +984,14 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
                     log.warn({ error }, "the continuous sound session stopped");
                     // Cleanup has its own deadline. A killed process must not delay opening the replacement.
-                    void session
-                        ?.stop()
-                        .catch((stopError: unknown) => log.debug({ stopError }, "failed audio session cleaned up"));
+                    if (session) {
+                        const closing = session.stop().then(
+                            () => undefined,
+                            (stopError: unknown) => log.debug({ stopError }, "failed audio session cleaned up")
+                        );
+                        this.closingSound.add(closing);
+                        void closing.finally(() => this.closingSound.delete(closing));
+                    }
                     this.startingSound = this.restartSound(error).catch((restartError: unknown) => {
                         if (!this.soundAbort.signal.aborted) {
                             this.soundSession = undefined;
@@ -996,6 +1019,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             }
 
             log.warn({ error }, "the continuous sound session did not start");
+            hooks.onAudioChange?.({ kind: "failure", atMs: Date.now(), reason: errorText(error) });
             this.soundSession = undefined;
             this.fallBackSound(errorText(error));
             return { session: undefined, refused: true };
@@ -1003,6 +1027,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     private async restartSound(error: Error): Promise<void> {
+        this.config.hooks.onAudioChange?.({ kind: "failure", atMs: Date.now(), reason: error.message });
         const now = performance.now();
         if (now - this.lastSoundRestart < 60_000) {
             this.soundSession = undefined;
@@ -1087,10 +1112,14 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 hooks.onError?.(error);
             }
         } finally {
+            if (!this.stopRequested) {
+                hooks.onAudioChange?.({ kind: "stop", atMs: Date.now() });
+            }
             this.soundAbort.abort();
             await this.startingSound?.catch((error: unknown) =>
                 log.debug({ error }, "audio startup ended with the loop")
             );
+            await Promise.all(this.closingSound);
             try {
                 await this.soundSession?.stop();
             } catch (error) {

@@ -21,6 +21,7 @@ import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manif
 import { withTimeout } from "@genesiscz/utils/async";
 import { MeetingLevels } from "@genesiscz/utils/meetings/levels";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { AudioLevelBlock } from "@genesiscz/utils/screen-recorder/audio-levels";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput } from "@genesiscz/utils/screen-recorder/frame-output";
 import {
@@ -56,6 +57,7 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
         });
         const salvages = new Set<Promise<void>>();
         const levels = run.capture.levels.enabled ? new MeetingLevels(minSeparation) : undefined;
+        let previousLevels: AudioLevelBlock | undefined;
         let stopLevels: (() => void) | undefined;
 
         return {
@@ -118,7 +120,32 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 save: (marker) => run.recordingRecord.addMarker(marker),
             },
             hooks: {
-                onAudioLevels: levels ? (block) => levels.observe(block) : undefined,
+                onAudioChange: (change) => run.noteSoundChange(change),
+                onAudioLevels: levels
+                    ? (block) => {
+                          if (previousLevels) {
+                              for (const [source, device] of [
+                                  ["mic", "input"],
+                                  ["system", "output"],
+                              ] as const) {
+                                  if (
+                                      previousLevels[device] &&
+                                      block[device] &&
+                                      previousLevels[device] !== block[device]
+                                  ) {
+                                      run.noteSoundChange({
+                                          kind: "device",
+                                          source,
+                                          atMs: previousLevels.atMs,
+                                          untilMs: block.atMs,
+                                      });
+                                  }
+                              }
+                          }
+                          previousLevels = block;
+                          levels.observe(block);
+                      }
+                    : undefined,
                 onAudioSegment: (segment) => run.keptSound(segment),
                 onAudioWarning: (warning) => {
                     run.note(warning);
@@ -150,30 +177,9 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 },
                 afterLoop: async () => {
                     stopLevels?.();
-                    const deadlineMs = deps.salvageDeadlineMs ?? SALVAGE_DEADLINE_MS;
-                    const expired = new Error(`sound recovery did not finish within ${deadlineMs / 1000}s`);
-                    try {
-                        await withTimeout(
-                            (async () => {
-                                await Promise.all(salvages);
-                                await run.salvageTracks(run.pieceDir);
-                            })(),
-                            deadlineMs,
-                            expired
-                        );
-                    } catch (err) {
-                        if (err !== expired) {
-                            throw err;
-                        }
-
-                        // The files stay in .piece/: the next start of this meeting recovers them (MeetingRun.begin).
-                        log.warn({ meetingId, dir: run.pieceDir }, "sound recovery did not finish before the stop");
-                        run.note(`${expired.message}; the unrecovered sound stays in .piece/ for the next start`);
-                        state.warning = run.notes.join("; ");
-                        run.saveState();
-                        return;
-                    }
-
+                    await Promise.all(salvages);
+                    await run.salvageTracks(run.pieceDir);
+                    run.finishSound(recording);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {

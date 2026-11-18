@@ -95,8 +95,8 @@ describe("meetings config", () => {
         ).toBe(0.7);
     });
 
-    test("native sound mode defaults to pieces, accepts session and refuses other values without changing the file", async () => {
-        expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("pieces");
+    test("native sound defaults to a session and preserves an explicitly selected mode", async () => {
+        expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("session");
         const config = store();
         const setMode = (mode: string) =>
             config.update((raw) => {
@@ -181,7 +181,7 @@ describe("meetings config", () => {
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
         expect(recorderSettings(config.global.capture)).toEqual({
-            audio: { sources: ["mic", "system"], mode: "pieces" },
+            audio: { sources: ["mic", "system"], mode: "session" },
         });
     });
 

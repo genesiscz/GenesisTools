@@ -1,5 +1,14 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    renameSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import {
     defaultOcrLanguages,
     errorText,
@@ -13,14 +22,17 @@ import {
     type RunRecorderOptions,
 } from "@app/meetings/lib/recorder-shared";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import {
+    type AudioCaptureChange,
     type AudioSegment,
-    finishAudioHandoffs,
+    audioCaptureChangeSchema,
     salvagedAudioTiming,
 } from "@genesiscz/utils/screen-recorder/audio-session";
-import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
+import { AUDIO_SOURCES, type AudioState, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
 import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording";
@@ -31,7 +43,8 @@ import { appendFrameIndex, readFrameIndex } from "./frame-index";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
-import { AUDIO_FOLDER, type AudioRow, appendAudioRow } from "./sound";
+import { AUDIO_FOLDER, appendAudioRow } from "./sound";
+import { markMeetingSoundLoss } from "./sound-loss";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
@@ -94,6 +107,10 @@ export class MeetingRun {
     private readonly ocrSettings: LiveOcrSettings;
     private runFrames = 0;
     private audioFiles = 0;
+    private readonly soundFiles = new Set<string>();
+    private readonly interruptedFrom?: number;
+    private readonly soundChanges: AudioCaptureChange[] = [];
+    private readonly soundEventsFile: string;
     private zeroMs?: number;
     private microphoneDropped = false;
 
@@ -110,10 +127,21 @@ export class MeetingRun {
         this.capture = capture;
         this.deps = deps;
         this.initial = initial;
+        const previous = initial?.recording?.spans?.at(-1);
+        if (
+            previous &&
+            (!previous.to ||
+                previous.interrupted ||
+                previous.stopReason === "error" ||
+                previous.stopReason === "failed")
+        ) {
+            this.interruptedFrom = Date.parse(previous.from);
+        }
         this.stateFile = options.stateFile;
         this.folder = store.folder(meetingId);
         this.framesDir = join(this.folder, "frames");
         this.pieceDir = join(this.folder, ".piece");
+        this.soundEventsFile = join(this.pieceDir, "sound-events.jsonl");
         this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
@@ -202,8 +230,35 @@ export class MeetingRun {
      */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
         await this.salvageTracks(this.pieceDir);
+        this.soundFiles.clear(); // Files recovered at startup belong to the earlier run.
+        if (this.interruptedFrom !== undefined) {
+            for (const raw of readJsonlRows<unknown>(this.soundEventsFile).rows) {
+                const change = audioCaptureChangeSchema.safeParse(raw);
+                if (change.success && change.data.kind !== "stop") {
+                    this.soundChanges.push(change.data);
+                }
+            }
+            // A new run opens unmuted, even when the killed recorder had no chance to close its mute.
+            for (const source of AUDIO_SOURCES) {
+                const last = this.soundChanges.findLast((change) => change.kind === "mute" && change.source === source);
+                if (last?.kind === "mute" && last.muted) {
+                    this.soundChanges.push({
+                        kind: "mute",
+                        source,
+                        muted: false,
+                        atMs: Date.parse(this.state.startedAt),
+                    });
+                }
+            }
+        }
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
+        if (this.soundChanges.length > 0) {
+            writeFileSync(
+                this.soundEventsFile,
+                this.soundChanges.map((change) => `${SafeJSON.stringify(change)}\n`).join("")
+            );
+        }
         this.saveState();
         // A span still open here is a run whose process died without a stop: it ends at its last kept frame.
         this.recordingRecord.closeSpan("interrupted", this.lastFrameAt());
@@ -316,16 +371,43 @@ export class MeetingRun {
                         : {}),
                 },
             });
-            this.audioFiles += 1;
+            this.keptSound({ file: `${AUDIO_FOLDER}/${name}` });
         }
     }
 
     /** The engine has already moved and indexed a closed continuous sound segment. */
-    keptSound(_segment: AudioSegment): void {
+    keptSound(segment: Pick<AudioSegment, "file">): void {
+        this.soundFiles.add(segment.file);
         this.audioFiles += 1;
         if (this.state.withoutScreen) {
             this.saveState();
         }
+    }
+
+    /** Keep control times for crash recovery, even when the affected file has not closed yet. */
+    noteSoundChange(change: AudioCaptureChange): void {
+        this.soundChanges.push(change);
+        if (change.kind !== "stop") {
+            try {
+                appendFileSync(this.soundEventsFile, `${SafeJSON.stringify(change)}\n`);
+            } catch (error) {
+                log.warn({ error, meeting: this.meetingId }, "could not save the sound event for crash recovery");
+                this.note("sound event times could not be saved for crash recovery");
+            }
+        }
+    }
+
+    /** Every writer has drained, including retired sessions whose last file arrived after the replacement's. */
+    finishSound(recording: FrameRecording<string[]>): void {
+        markMeetingSoundLoss({
+            folder: this.folder,
+            files: this.soundFiles,
+            interruptedFrom: this.interruptedFrom,
+            spans: this.recordingRecord.spans,
+            changes: this.soundChanges,
+            sources: recording.audio.sources,
+            stoppedMs: this.soundChanges.find((change) => change.kind === "stop")?.atMs ?? Date.now(),
+        });
     }
 
     /**
@@ -377,6 +459,17 @@ export class MeetingRun {
                     : undefined;
             moveAndIndex({ from: path, folder: this.folder, name, ...(row ? { row } : {}) });
             kept += 1;
+
+            if (source === "mic" || source === "system") {
+                this.soundFiles.add(`${AUDIO_FOLDER}/${name}`);
+                appendAudioRow(this.folder, {
+                    file: `${AUDIO_FOLDER}/${name}`,
+                    source,
+                    ...timing,
+                    mutedSpans: [],
+                    kept: "salvaged",
+                });
+            }
 
             log.warn({ meeting: this.meetingId, from: path, to: name }, "kept a sound file a capture left behind");
         }
