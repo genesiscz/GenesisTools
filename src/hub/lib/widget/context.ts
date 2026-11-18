@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions } from "@app/question/lib/decisions/store";
+import { cleanVisibleContext } from "@app/question/lib/inbox/unread";
 import { getForm } from "@app/question/lib/pending/store";
 import { getStoredEntryById } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
@@ -39,12 +40,20 @@ function readStoredReceipt<T>(read: (db: Database) => T | null): T | null {
 }
 
 /** Expanding a long overview entry reads one indexed receipt, including when its sender has no session. */
-export function readWidgetMessageBody(id: string): { body: string } {
+export function readWidgetMessageBody(id: string): { body: string; question: string } {
     const entry = readStoredReceipt((db) => getStoredEntryById(db, id));
-    if (entry?.tag !== "message") {
+
+    if (!entry) {
         throw new Error("This message is no longer in the inbox store.");
     }
-    return { body: widgetMessageBody(entry.answerMd, entry.question) };
+
+    return {
+        body:
+            entry.tag === "message"
+                ? widgetMessageBody(entry.answerMd, entry.question)
+                : cleanVisibleContext(entry.answerMd),
+        question: entry.tag === "message" ? entry.question : cleanVisibleContext(entry.question),
+    };
 }
 
 function sourceStamp(source: NonNullable<WidgetCard["sourceContext"]>): NonNullable<WidgetCard["sourceContext"]> {

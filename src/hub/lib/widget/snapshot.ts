@@ -1,5 +1,7 @@
 import { type WidgetTask, widgetTask } from "@app/question/lib/decisions/todo-view";
 import {
+    cleanVisibleContext,
+    inboxReply,
     MESSAGE_PREVIEW_CHARS,
     readInboxData,
     type WidgetInboxData,
@@ -317,6 +319,8 @@ export interface WidgetInboxItem {
     tag?: "message";
     /** The overview carries a bounded body. Expanding a longer message reads the stored receipt by sourceId. */
     message?: { text: string; more?: true; origin?: string };
+    /** The bounded question and answer. The detail reads the full receipt when either was cut. */
+    reply?: ReturnType<typeof inboxReply>;
     /** A decision: its options, so the inbox of every session can stage a pick without opening the session. */
     options?: string[];
     recommended?: string;
@@ -667,8 +671,8 @@ function targetOf(
         cwd: row.cwd ?? "",
     };
 }
-function cleanVisibleContext(text: string): string {
-    return text.replace(/<from(?:Image|Video)>[\s\S]*?<\/from(?:Image|Video)>/g, "").trim();
+export function widgetInboxWindow(clearedAt: number | undefined, now: number): WidgetInboxWindow {
+    return { clearedAt: clearedAt ?? 0, staleBefore: now - INBOX_STALE_MS };
 }
 
 /** A card title after its images were lifted out: a title that was only an image is named by that image. */
@@ -901,10 +905,7 @@ export async function widgetSnapshot({
     // Older injected sources return only rows and cannot attest to read integrity.
     const decisions = Array.isArray(decisionRead) ? decisionRead : decisionRead.rows;
     const decisionsComplete = !Array.isArray(decisionRead) && decisionRead.complete;
-    const inboxWindow: WidgetInboxWindow = {
-        clearedAt: state.inboxClearedAt ?? 0,
-        staleBefore: now - INBOX_STALE_MS,
-    };
+    const inboxWindow = widgetInboxWindow(state.inboxClearedAt, now);
     const inboxSource = sources.inboxData;
     const rosterUnread = inboxSource ? [] : answerRoster.filter((row) => row.readAt === null);
     const rosterRecent = (message: boolean) =>
@@ -930,6 +931,8 @@ export async function widgetSnapshot({
                   count: 1,
                   itemTitle: row.question,
                   itemTag: row.tag,
+                  questionText: row.question,
+                  answerText: row.answerMd,
                   messageText: row.tag === "message" ? row.answerMd : undefined,
                   sender: row.agentLabel?.trim() || row.source,
                   ...inboxWindowCounts([row.ts], inboxWindow),
@@ -1417,6 +1420,9 @@ export async function widgetSnapshot({
                 needsAnswer: false,
                 ...(title ? { title } : {}),
                 ...(message ? { tag: "message" as const, message } : {}),
+                ...(!message && row.answerText != null
+                    ? { reply: inboxReply(row.questionText ?? row.itemTitle ?? "", row.answerText) }
+                    : {}),
             },
             items
         );

@@ -7,7 +7,9 @@ import { QaDialogItem } from "@app/dev-dashboard/ui/src/components/QaDialogItem"
 import { closeQuestion, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { Command } from "commander";
 import { createElement } from "react";
@@ -29,6 +31,7 @@ import {
 } from "../decisions/store";
 import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
+import { openReadModel } from "../read-model";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, fromRecord, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
@@ -47,6 +50,7 @@ import {
     waitingBlock,
 } from "./load";
 import { cursorStillHolds, InboxTrace, recordAnswer } from "./session-cursor";
+import { readInboxData, readInboxGroupEntries } from "./unread";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
 answerGitWithoutSpawning();
@@ -2029,4 +2033,39 @@ test("task visibility and badge counts follow the recipient within its session",
     });
     expect(both.items.map((item) => item.id)).toEqual(rows.map((row) => row.id));
     expect(both.waiting).toBe(1);
+});
+
+test("the head and its earlier answers use the same unread partition and clear watermark", async () => {
+    const root = mkdtempSync(join(tmpdir(), "inbox-answers-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root, QUESTION_LOG_BASE: join(root, "log") }, () => {
+        const db = openReadModel(toolDataDir("question", "qa.db"));
+        try {
+            const insert = db.query(
+                "INSERT INTO entries (id, ts, session_id, agent, question, answer_md, tag, read_at) VALUES (?, ?, 'alpha', ?, ?, ?, ?, ?)"
+            );
+
+            for (const at of [1, 2, 3, 4]) {
+                insert.run(`a${at}`, at, "codex", `Question ${at}`, `Answer ${at}`, "question", null);
+            }
+
+            insert.run("read", 4, "codex", "Read?", "Read", "question", 5);
+            insert.run("other", 6, "grok", "Other?", "Other", "question", null);
+            insert.run("note", 7, "codex", "Note", "Message", "message", null);
+        } finally {
+            db.close();
+        }
+
+        const window = { clearedAt: 1, staleBefore: 0 };
+        const heads = readInboxData(window).answers.filter(
+            (row) => row.provider === "codex" && row.itemTag !== "message"
+        );
+        expect(heads).toHaveLength(1);
+        expect(heads[0]).toMatchObject({ id: "a4", afterClear: 3, answerText: "Answer 4", questionText: "Question 4" });
+        expect(readInboxGroupEntries({ id: "a4", limit: 5, window })).toEqual([
+            { id: "a3", at: 3, question: "Question 3", text: "Answer 3" },
+            { id: "a2", at: 2, question: "Question 2", text: "Answer 2" },
+        ]);
+        expect(readInboxGroupEntries({ id: "a3", limit: 5, window })).toEqual([]);
+        expect(readInboxGroupEntries({ id: "a4", limit: 5, window: { ...window, staleBefore: 3 } })).toHaveLength(1);
+    });
 });
