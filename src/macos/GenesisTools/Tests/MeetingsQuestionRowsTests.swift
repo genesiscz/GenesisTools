@@ -83,6 +83,19 @@ extension MeetingsQuestionRowsTests {
         XCTAssertTrue(empty.contains("Nothing decided yet"), empty)
         XCTAssertFalse(empty.contains("question withdrawn"), empty)
     }
+    func testTheContextListShowsThePinnedDocumentsRevision() throws {
+        let detail = MeetingDetailModel(id: "copy", window: nil)
+        let record = #"""
+        {"id":"copy","title":"Practice","labels":[],"start":"2026-01-01T10:00:00Z","items":[],"speakers":{"labels":{}},
+         "sources":{},"context":[{"id":"c1","kind":"file","ref":"/tmp/meeting-glossary.md","title":"Practice glossary",
+         "addedAt":"2026-01-01T10:00:00Z","file":{"revision":{"commit":"123456789012abcdefabcdefabcdefabcdefabcd","text":"Widget"}}}]}
+        """#
+        detail.settleDecisionRecord(try JSONDecoder().decode(MeetingRecordView.self, from: Data(record.utf8)))
+        let text = try rendered(ContextTab(detail: detail).frame(height: 340), name: "C20-document-revision", native: true)
+        XCTAssertTrue(text.contains("123456789012"), text)
+        XCTAssertTrue(text.contains("saved text"), text)
+    }
+
     func testL3QuestionChoicesLeadTheMeetingAndDirectoryPeople() {
         let own = KnownPerson(id: "dana", name: "Dana Example", sources: [.own], rank: .own)
         XCTAssertEqual(PeopleText.questionPeople([present, absent, own], choices: [absent.name], query: "", hideAbsent: false).map(\.id), [absent.id, present.id, own.id])

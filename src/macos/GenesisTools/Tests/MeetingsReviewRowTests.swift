@@ -336,6 +336,9 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertNil(row.answer)
         XCTAssertEqual(row.comment, "Too much noise")
         XCTAssertEqual(MeetingsWords.entryAction(entry, label: { _ in "Q1" }), "commented on Q1")
+        let card = try MeetingQuestionPicture.text(ReviewRowView(row: row, detail: detail, player: nil),
+                                                   name: "L12-comment", native: false)
+        XCTAssertTrue(card.contains("Too much noise"), card)
     }
 
     func testTheDecisionPatchUpdatesTheRecordAndAnOldReplyUsesTheReadPath() throws {
@@ -516,7 +519,10 @@ final class MeetingsReviewRowTests: XCTestCase {
         split.replaces = "previous"
         for action in [comment, split] {
             let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "copy", action: action, reason: "by ear"))
-            XCTAssertEqual(Array(args.prefix(3)), ["decide", "copy", "--action"])
+            guard Array(args.prefix(3)) == ["decide", "copy", "--action"], args.count > 3 else {
+                XCTFail("The fallback dropped the structured answer for \(action.question ?? "the question"): \(args)")
+                continue
+            }
             let payload = try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8))
             XCTAssertEqual(payload, action)
             XCTAssertEqual(Array(args.dropFirst(4)), ["--reason", "by ear", "--json"])
