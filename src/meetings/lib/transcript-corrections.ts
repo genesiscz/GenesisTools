@@ -360,7 +360,8 @@ export function correctTranscript(options: {
                 }
 
                 const speaker = `[${unclearLabel}: ${finding.voices.join(" + ")}]`;
-                return [{ ...entry, speaker, band: "open", guess: false }];
+                const { unclear: _open, ...decided } = entry;
+                return [{ ...decided, speaker, band: "open", guess: false, voices: finding.voices }];
             }
             const proposals = speakerRanges.filter(
                 (item) => item.status !== "rejected" && covers(item, { atSec, sourceIndex })

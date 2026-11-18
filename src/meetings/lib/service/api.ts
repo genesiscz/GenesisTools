@@ -144,6 +144,10 @@ export const transcriptLineSchema = z.object({
     questioned: z.boolean().optional(),
     guess: z.boolean().optional(),
     band: z.enum(["confirmed", "applied", "guess", "open"]).optional(),
+    /** An open speaker question: the label it is about and the answers on offer (the window draws "Who is this?"). */
+    unclear: z.object({ label: z.string(), readings: z.array(z.string()) }).optional(),
+    /** The voices a confirmed answer heard together on this line. */
+    voices: z.array(z.string()).optional(),
     id: z.string().optional(),
     startSec: z.number().optional(),
     endSec: z.number().optional(),
