@@ -7,9 +7,9 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 type RangeItem = Omit<Extract<MeetingItem, { kind: "speaker-range" }>, "id" | "suggestedAt">;
 
 /** A person who joins speaks first within this many seconds (rule R16). */
-const ARRIVAL_WINDOW_SEC = 60;
+export const ARRIVAL_WINDOW_SEC = 60;
 /** A stay that starts this close to second 0 was there from the start, not an arrival. */
-const FROM_START_SEC = 5;
+export const FROM_START_SEC = 5;
 const CONFIDENCE = { phrase: 0.65, firstReading: 0.55, overruled: 0.35 } as const;
 
 /**

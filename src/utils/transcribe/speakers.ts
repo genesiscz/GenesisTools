@@ -82,8 +82,20 @@ export const ARRIVAL_PHRASES: readonly RegExp[] = [
 
 const CLOSING_GREETING = wholeWords("(?:tak |zatím )?(?:čau|ahoj|čaute)");
 /** Rule R13: another label answers a departure with one of these within `FAREWELL_REPLY_WITHIN_SEC`. */
-const FAREWELL_REPLY = wholeWords("čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|see you");
-const FAREWELL_REPLY_WITHIN_SEC = 15;
+export const FAREWELL_REPLY = wholeWords(
+    "čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|goodbye|see you"
+);
+export const FAREWELL_REPLY_WITHIN_SEC = 15;
+/** A short spoken sign-off, optionally with a word of thanks. A greeting inside a longer sentence is not a sign-off. */
+export function isShortFarewell(text: string): boolean {
+    const words = text
+        .toLowerCase()
+        .match(/[\p{L}']+/gu)
+        ?.join(" ");
+    return /^(?:(?:jo|tak|dík|díky|ďakujem|thanks|thank you|ok) )*(?:čau|ahoj|čaute|měj se|mějte se|bye|goodbye|see you(?: later)?)$/.test(
+        words ?? ""
+    );
+}
 /**
  * A bare greeting is a goodbye only from a label that already talked: "Čau." from a label with fewer words before it
  * is a hello, as when everyone greets at the start ("Čau." at 00:15, answered "Čau." and "Ahoj.").

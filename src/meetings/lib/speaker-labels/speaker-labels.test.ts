@@ -13,6 +13,7 @@ import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check
 import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
 import { OpenedMeeting } from "../opened-meeting";
 import { questionView } from "../questions";
+import { rawMeeting } from "../raw";
 import { reviewRow } from "../review-rows";
 import { suggestItems } from "../suggest";
 import { runSuggest } from "../suggest-run";
@@ -652,6 +653,151 @@ describe("speaker-label integration", () => {
             { fromSec: 0, toSec: 2400, source: "platform-roster", leaveSource: "goodbye", confidence: 0.8 },
         ]);
         expect(reopened.participants[2]?.stays?.[0]?.toSec).toBeUndefined();
+    });
+
+    test("a late roster speaker's goodbye survives an unavailable attendance override", async () => {
+        const { store, record, meeting, opened } = await runnerFixture({
+            platform: "teams",
+            participants: [
+                { name: "River Example", self: true, from: ["platform-roster"], firstSeenSec: 0 },
+                { name: "Lake Example", from: ["platform-roster"], firstSeenSec: 0 },
+                { name: "Sky Example", from: ["platform-roster"], firstSeenSec: 600 },
+                { name: "Reed Example", from: ["platform-roster"], firstSeenSec: 0 },
+            ],
+        });
+        meeting.transcript = [
+            { speaker: "River Example", startSec: 0, text: "Welcome to the meeting." },
+            { speaker: "Call", startSec: 601, text: "Hello!" },
+            { speaker: "River Example", startSec: 2396, text: "I have to go now." },
+            { speaker: "Call", startSec: 2398, text: "See you later." },
+            { speaker: "River Example", startSec: 2400, text: "Thanks, bye." },
+            { speaker: "Call", startSec: 2480, text: "Which part of the proposal should we discuss next?" },
+        ];
+        const evidence = {
+            segments: [{ startSec: 0, endSec: 2500, channel: "system" as const }],
+            speaking: [
+                { tSec: 1, speaking: ["Lake Example"], muted: ["Reed Example"] },
+                { tSec: 602, speaking: ["Sky Example"] },
+                { tSec: 603, speaking: [], speakingUnknown: true },
+                { tSec: 2481, speaking: ["Lake Example"] },
+            ],
+            files: [],
+        };
+        spies.push(
+            spyOn(opened, "suggestionPresence").mockResolvedValue(undefined),
+            spyOn(opened, "evidence").mockResolvedValue(evidence)
+        );
+        const suggest = (current: MeetingRecord) =>
+            runSuggest({ store, record: current, rules: ["speakers", "evidence"], attendance: "teams" });
+        await suggest(record);
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        expect(reopened.participants[2].stays).toEqual([
+            { fromSec: 600, toSec: 2400, source: "platform-roster", leaveSource: "goodbye", confidence: 0.65 },
+        ]);
+        expect(
+            reopened.participants
+                .filter((person) => person.name !== "Sky Example")
+                .every((person) => person.stays?.[0]?.toSec === undefined)
+        ).toBe(true);
+        expect(
+            reopened.items.some(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.rules.includes(MeetingRule.LeavePhrase) &&
+                    item.label === "River Example" &&
+                    item.fromSec === 2400 &&
+                    item.speaker === "Sky Example"
+            )
+        ).toBe(true);
+
+        // Two previously heard callers could have said the unnamed farewell.
+        evidence.speaking.splice(3, 0, { tSec: 900, speaking: ["Reed Example"] });
+        await suggest(reopened);
+        expect(new MeetingStore(store.storage).read(record.id)!.participants[2].stays?.[0]?.toSec).toBeUndefined();
+    });
+
+    test("a corroborated named farewell closes raw presence and later speaker choices at the final goodbye", async () => {
+        const leaver = "Sky Example";
+        const open = OpenedMeeting.of;
+        const { store, record, meeting, opened, config } = await runnerFixture({
+            participants: [
+                { name: "River Example", self: true, from: ["platform-roster"], firstSeenSec: 0 },
+                { name: leaver, from: ["platform-roster"], firstSeenSec: 60 },
+                { name: "Lake Example", from: ["platform-roster"], firstSeenSec: 0 },
+                { name: "Reed Example", from: ["platform-roster"], firstSeenSec: 0 },
+            ],
+        });
+        meeting.transcript = [
+            { speaker: "Lake Example", startSec: 0, text: "Here are the plans." },
+            { speaker: leaver, startSec: 65, text: "Where are we in the agenda?" },
+            { speaker: leaver, startSec: 300, text: "I need to leave." },
+            { speaker: "River Example", startSec: 301, text: "Okay." },
+            { speaker: leaver, startSec: 303, text: "Díky, čau." },
+            { speaker: "River Example", startSec: 304, text: "Čau." },
+            { speaker: leaver, startSec: 320, text: "I will take the remaining questions on the proposal." },
+            { speaker: "River Example", startSec: 330, text: "Thanks." },
+        ];
+        const evidence = {
+            selfName: "River Example",
+            segments: [{ startSec: 0, endSec: 340, channel: "system" as const }],
+            speaking: [
+                { tSec: 0, speaking: ["Lake Example"] },
+                { tSec: 65, speaking: [leaver] },
+                { tSec: 320, speaking: ["Reed Example"] },
+            ],
+            files: [],
+        };
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue(evidence),
+            spyOn(opened, "suggestionPresence").mockResolvedValue(undefined)
+        );
+        const suggest = (current: MeetingRecord) =>
+            runSuggest({ store, record: current, rules: ["speakers", "evidence"] });
+        await suggest(record);
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        expect(
+            reopened.items.find(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.fromSec === 303 &&
+                    item.rules.includes(MeetingRule.LeavePhrase)
+            )
+        ).toMatchObject({ speaker: leaver, toSec: 303 });
+        const later = reopened.items.filter(
+            (item) => (item.kind === "speaker-range" || item.kind === "question") && item.toSec > 303
+        );
+        for (const item of later) {
+            if (item.kind === "speaker-range") {
+                expect(item.speaker).not.toBe(leaver);
+                expect(item.candidates ?? []).not.toContain(leaver);
+            } else if (item.kind === "question") {
+                expect(item.choices ?? []).not.toContain(leaver);
+            }
+        }
+        const reader = open(new MeetingStore(store.storage), reopened);
+        spies.push(
+            spyOn(reader, "meeting").mockResolvedValue(meeting),
+            spyOn(reader, "evidence").mockResolvedValue(evidence),
+            spyOn(reader, "energy").mockResolvedValue({}),
+            spyOn(reader, "config").mockResolvedValue(config)
+        );
+        const presence = await reader.presence();
+        expect(presence?.find((stay) => stay.name === leaver)?.toSec).toBe(303);
+        const raw = rawMeeting({ record: reopened, meeting, evidence, presence, points: [] });
+        expect(raw.people.find((person) => person.name === leaver)?.stays).toEqual([
+            { fromSec: 60, toSec: 303, source: "platform-roster", leaveSource: "goodbye", confidence: 0.65 },
+        ]);
+        expect(raw.lines.find((line) => line.fromSec === 300)?.present).toContain(leaver);
+        expect(raw.lines.filter((line) => line.fromSec > 303).map((line) => line.present.includes(leaver))).toEqual([
+            false,
+            false,
+            false,
+        ]);
+
+        // A label recycled after departure is harmless. A good later observation of the same person is a veto.
+        evidence.speaking.push({ tSec: 331, speaking: [leaver] });
+        await suggest(reopened);
+        expect(new MeetingStore(store.storage).read(record.id)!.participants[1].stays?.[0]?.toSec).toBeUndefined();
     });
 
     test("voice names carry their source and score through transcript, rows and listen; human names do not", async () => {

@@ -265,7 +265,11 @@ export async function runSuggest(options: {
         presence,
         evidence,
         energyMicShare: share,
-        ...(options.attendance ? {} : { leaveSilenceMinutes: config.global.suggest.leaveSilenceMinutes }),
+        // A successfully loaded override belongs to this run. A failed lookup supplied no foreign stays:
+        // the record's own roster and this pass's speaker evidence can still establish durable departures.
+        ...(!options.attendance || presence === undefined
+            ? { leaveSilenceMinutes: config.global.suggest.leaveSilenceMinutes }
+            : {}),
         voice,
         labels: needsSpeakerInputs
             ? await prof.measureAsync("speakers.labels", () =>

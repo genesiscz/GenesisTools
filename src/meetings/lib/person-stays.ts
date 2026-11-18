@@ -169,7 +169,7 @@ export function personStays(options: {
                 inexact.delete(stay);
                 stay.toSec = event.atSec;
                 stay.leaveSource = event.reason === "attendance" ? "attendance" : "goodbye";
-                stay.confidence = event.reason === "attendance" ? 1 : 0.8;
+                stay.confidence = event.confidence ?? (event.reason === "attendance" ? 1 : 0.8);
             }
         }
         if (

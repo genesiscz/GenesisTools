@@ -2276,6 +2276,7 @@ export function suggestItems(options: {
                   lines: departureLines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
                   selfName: selfNameForDeparture,
                   presence: roster.length ? roster : options.presence,
+                  speaking: evidence?.speaking,
                   matchedVoices,
                   roomPeople: record.seats?.room,
                   ignoredIndicator: assessIndicator({
@@ -2315,7 +2316,11 @@ export function suggestItems(options: {
     }
     if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
         for (const departure of departures) {
-            const line = departureLines.find((line) => line.startSec === departure.atSec);
+            const line = departureLines.find((line) =>
+                departure.lineIndex === undefined
+                    ? line.startSec === departure.atSec
+                    : line.index === departure.lineIndex
+            );
             if (line) {
                 found.push({
                     kind: "speaker-range",
@@ -2324,7 +2329,7 @@ export function suggestItems(options: {
                     fromSec: line.startSec,
                     toSec: line.startSec,
                     speaker: departure.name,
-                    confidence: 0.75,
+                    confidence: departure.confidence ?? 0.75,
                     rules: [MeetingRule.LeavePhrase],
                     evidence: {
                         departure,
@@ -2334,10 +2339,11 @@ export function suggestItems(options: {
             }
         }
     }
-    if (options.presence && departures.length > 0) {
+    const departurePresence = options.presence ?? roster;
+    if (departurePresence.length && departures.length > 0) {
         options = {
             ...options,
-            presence: options.presence.map((stay) => {
+            presence: departurePresence.map((stay) => {
                 const departure = departures.find(
                     (event) =>
                         sameName(event.name, stay.name) && event.atSec >= stay.fromSec && event.atSec < stay.toSec

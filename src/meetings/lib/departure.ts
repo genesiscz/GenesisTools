@@ -1,13 +1,25 @@
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
-import { isLeavePhrase, type Presence, type SpeakerHint, sameName } from "@genesiscz/utils/transcribe/speakers";
+import type { LineEvidence, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
+import {
+    ARRIVAL_PHRASES,
+    FAREWELL_REPLY,
+    FAREWELL_REPLY_WITHIN_SEC,
+    isLeavePhrase,
+    isShortFarewell,
+    type Presence,
+    type SpeakerHint,
+    sameName,
+} from "@genesiscz/utils/transcribe/speakers";
+import { ARRIVAL_WINDOW_SEC, FROM_START_SEC } from "./arrival";
 import type { LineLabel } from "./speaker-labels/types";
 
 export interface IdentifiedDeparture {
     name: string;
     atSec: number;
+    lineIndex?: number;
     label?: string;
-    reason: "indicator" | "attendance" | "sole-remote" | "voice";
+    confidence?: number;
+    reason: "indicator" | "attendance" | "sole-remote" | "voice" | "farewell-exchange";
 }
 
 /** Named call-channel matches from this pass, or saved proposals that still address the same source line. */
@@ -47,8 +59,7 @@ export function matchedCallVoices(
     return names;
 }
 
-/** Resolve a goodbye independently of the diarizer label. Ambiguous identity remains unresolved. */
-export function identifiedDepartures(options: {
+interface DepartureEvidence {
     hints: SpeakerHint[];
     lines: LineEvidence[];
     selfName: string;
@@ -57,7 +68,114 @@ export function identifiedDepartures(options: {
     labels?: readonly LineLabel[];
     matchedVoices?: ReadonlyMap<number, string>;
     roomPeople?: readonly string[];
-}): IdentifiedDeparture[] {
+    speaking?: readonly SpeakingObservation[];
+}
+
+const onCall = (line: LineEvidence) => (line.energyMic ?? line.micShare ?? 1) < 0.35;
+
+/** The first return to the caller's label must be a short sign-off; the other side must answer the exchange. */
+function closingOf({ lines, intent }: { lines: LineEvidence[]; intent: LineEvidence }): LineEvidence | undefined {
+    const exchange = lines.filter(
+        (other) =>
+            other.index > intent.index &&
+            other.startSec >= intent.startSec &&
+            other.startSec <= intent.startSec + FAREWELL_REPLY_WITHIN_SEC
+    );
+    const closing = exchange.find((other) => other.label === intent.label);
+    if (
+        closing &&
+        onCall(closing) &&
+        isShortFarewell(closing.text) &&
+        exchange.some((other) => other.label !== intent.label && FAREWELL_REPLY.test(other.text))
+    ) {
+        return closing;
+    }
+}
+
+/** In an indicator gap, use a witnessed arrival and an answered sign-off, with another remote still speaking later. */
+function exchangeDeparture({
+    options,
+    line,
+    present,
+}: {
+    options: DepartureEvidence;
+    line: LineEvidence;
+    present: Presence[];
+}): IdentifiedDeparture | undefined {
+    const closing = closingOf({ lines: options.lines, intent: line });
+    if (!closing || !options.speaking?.length) {
+        return;
+    }
+    // Part of a line may be unreadable while an individual read at the join is good. Keep that read,
+    // but never use an indicator assessed as stuck to identify either the joiner or a continuing speaker.
+    const ignored = options.lines.filter((other) => options.ignoredIndicator?.has(other.index));
+    const reads = options.speaking.filter(
+        (read) =>
+            !read.speakingUnknown && !ignored.some((other) => read.tSec >= other.startSec && read.tSec < other.endSec)
+    );
+    const history = present.map((stay) => {
+        const inStay = reads.filter((read) => read.tSec >= stay.fromSec && read.tSec < stay.toSec);
+        const heard = inStay.filter((read) => read.speaking.some((name) => sameName(name, stay.name)));
+        return {
+            stay,
+            joinedSpeaking:
+                stay.fromSec > FROM_START_SEC &&
+                heard.some((read) => read.tSec <= Math.min(stay.fromSec + ARRIVAL_WINDOW_SEC, line.startSec)),
+            continued: heard.some((read) => read.tSec > closing.startSec + 5),
+            onlyMuted: !heard.length && inStay.some((read) => read.muted?.some((name) => sameName(name, stay.name))),
+        };
+    });
+    if (!history.some((person) => person.continued)) {
+        return;
+    }
+    const possible = history.filter((person) => !person.continued && !person.onlyMuted);
+    // A matching label alone cannot name a leaver. In a multi-speaker gap require that a good earlier
+    // call-channel read independently connected that label to its named person during this stay.
+    const supported = possible.filter(({ stay, joinedSpeaking }) => {
+        if (!joinedSpeaking || stay.leftAtExact !== false || closing.startSec > stay.toSec) {
+            return false;
+        }
+        return options.lines.some((earlier) => {
+            if (earlier.startSec < stay.fromSec || earlier.startSec >= line.startSec || !onCall(earlier)) {
+                return false;
+            }
+            if (
+                possible.length === 1 &&
+                earlier.startSec <= stay.fromSec + ARRIVAL_WINDOW_SEC &&
+                ARRIVAL_PHRASES.some((phrase) => phrase.test(earlier.text))
+            ) {
+                return true;
+            }
+            const shown = Object.keys(earlier.speaking);
+            return (
+                sameName(stay.name, line.label) &&
+                earlier.label === line.label &&
+                !earlier.speakingUnknown &&
+                !options.ignoredIndicator?.has(earlier.index) &&
+                shown.length === 1 &&
+                sameName(shown[0], stay.name)
+            );
+        });
+    });
+    const name = supported.length === 1 ? supported[0].stay.name : undefined;
+    const closingVoice =
+        options.matchedVoices?.get(closing.index) ??
+        (closing.voice?.quality === "matched" ? closing.voice.person : undefined);
+    if (
+        !name ||
+        (closingVoice && !sameName(name, closingVoice)) ||
+        [...(line.muted ?? []), ...(closing.muted ?? [])].some((other) => sameName(name, other)) ||
+        (!closing.speakingUnknown &&
+            !options.ignoredIndicator?.has(closing.index) &&
+            Object.keys(closing.speaking).some((other) => !sameName(name, other)))
+    ) {
+        return;
+    }
+    return { name, atSec: closing.startSec, lineIndex: closing.index, reason: "farewell-exchange", confidence: 0.65 };
+}
+
+/** Resolve a goodbye independently of the diarizer label. Ambiguous identity remains unresolved. */
+export function identifiedDepartures(options: DepartureEvidence): IdentifiedDeparture[] {
     const departures: IdentifiedDeparture[] = [];
     const hinted = new Map(
         options.hints.flatMap((hint) =>
@@ -69,7 +187,7 @@ export function identifiedDepartures(options: {
     for (const line of options.lines) {
         const atSec = line.startSec;
         const label = hinted.get(atSec);
-        if ((!label && !isLeavePhrase(line.text)) || (line.energyMic ?? line.micShare ?? 1) >= 0.35) {
+        if ((!label && !isLeavePhrase(line.text)) || !onCall(line)) {
             continue;
         }
         const present = options.presence?.filter(
@@ -107,7 +225,20 @@ export function identifiedDepartures(options: {
                   : candidates.length === 1
                     ? candidates[0]
                     : voiceName;
-        if (!name || sameName(name, options.selfName)) {
+        if (!name) {
+            const exchange =
+                present &&
+                !shown.length &&
+                !leaving.length &&
+                !matched &&
+                isLeavePhrase(line.text) &&
+                exchangeDeparture({ options, line, present });
+            if (exchange) {
+                departures.push(exchange);
+            }
+            continue;
+        }
+        if (sameName(name, options.selfName)) {
             continue;
         }
         departures.push({
