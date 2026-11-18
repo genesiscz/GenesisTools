@@ -21,6 +21,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
 import { hasFrameIndex } from "./frame-index";
+import { decidedLines } from "./listen-answers";
 import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
 import { PAST_END_GRACE_SEC } from "./players";
@@ -95,6 +96,8 @@ export interface Moment {
     target: MomentTarget;
     /** How a person names it: `Q12`, `i42`, `1:49:48`, `1:49:48–1:50:02`, `Speaker 2 05:09–05:31`. */
     label: string;
+    /** The intervening audio included between a question's separate passages, on the meeting clock. */
+    gapNote?: string;
     /** The heard stretch on the transcript clock, before the pad. */
     fromSec: number;
     toSec: number;
@@ -224,35 +227,85 @@ interface Span {
     spotSec: number;
     pad: "voice" | "around";
     label: string;
+    gaps?: Array<{ fromSec: number; toSec: number }>;
 }
 
 const range = (fromSec: number, toSec: number): string => `${formatClock(fromSec)}–${formatClock(toSec)}`;
 
+/** A speaker question plays its own passage and the lines its card says the answer decides, on one clock. */
+function speakerQuestionBounds({
+    record,
+    question,
+    lines,
+}: {
+    record: MeetingRecord;
+    question: QuestionItem;
+    lines: TranscriptLines;
+}): Pick<Span, "fromSec" | "toSec" | "gaps"> {
+    const passages = question.decides.length
+        ? decidedLines({ record, question, transcript: lines }).flatMap(({ index }) => lines.span(index) ?? [])
+        : [];
+    passages.sort((a, b) => a.fromSec - b.fromSec);
+    const local = passages.filter(({ fromSec }) => fromSec >= question.fromSec && fromSec <= question.toSec);
+    // Generated questions can already store the end of the final decided line. A new voice starting at that
+    // instant belongs to the next passage. Older questions can instead store the start of the final line.
+    const endsAtLineEnd = record.items.some(
+        (item) =>
+            item.kind === "speaker-range" &&
+            item.toSec < question.toSec &&
+            item.evidence?.endSec === question.toSec &&
+            question.decides.includes(item.id)
+    );
+    let lastLineEnd: number | undefined;
+    lines.entries.forEach(({ startSec }, index) => {
+        if (
+            startSec !== undefined &&
+            startSec >= question.fromSec &&
+            (startSec < question.toSec || (startSec === question.toSec && !endsAtLineEnd))
+        ) {
+            const end = lines.end(index);
+            if (end !== undefined) {
+                lastLineEnd = Math.max(lastLineEnd ?? end, end);
+            }
+        }
+    });
+    const asked =
+        lastLineEnd === undefined && question.clip
+            ? question.clip
+            : { fromSec: question.fromSec, toSec: Math.max(question.toSec, lastLineEnd ?? question.toSec) };
+
+    const first = local[0];
+    const last = local.at(-1);
+    if (first && last) {
+        // Keep the primary passage's edges without swallowing gaps between decided lines inside it.
+        first.fromSec = Math.min(first.fromSec, asked.fromSec);
+        last.toSec = Math.max(last.toSec, asked.toSec);
+    } else {
+        passages.push(asked);
+        passages.sort((a, b) => a.fromSec - b.fromSec);
+    }
+
+    const fromSec = passages[0]!.fromSec;
+    let toSec = fromSec;
+    const gaps = [];
+    for (const passage of passages) {
+        if (passage.fromSec > toSec) {
+            gaps.push({ fromSec: toSec, toSec: passage.fromSec });
+        }
+        toSec = Math.max(toSec, passage.toSec);
+    }
+    return { fromSec, toSec, gaps };
+}
+
 function questionSpan(record: MeetingRecord, question: QuestionItem, lines: TranscriptLines): Span {
-    // A word question plays the spot of its own occurrence, so a word late in a long line is in the clip; a speaker
-    // question plays only the asked voice, from the tone on.
     const occurrence = questionOccurrence(record, question);
-    const asked = (question.about === "speaker" ? undefined : heardClip(question, lines, occurrence)) ??
-        question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+    const sample = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
     const heard =
-        question.about === "speaker"
-            ? {
-                  ...asked,
-                  toSec:
-                      question.clip || question.question.startsWith('Who says "')
-                          ? asked.toSec
-                          : Math.max(
-                                asked.toSec,
-                                ...lines.entries.flatMap((entry, index) =>
-                                    entry.startSec !== undefined &&
-                                    entry.startSec >= asked.fromSec &&
-                                    entry.startSec <= asked.toSec
-                                        ? [lines.end(index) ?? asked.toSec]
-                                        : []
-                                )
-                            ),
-              }
-            : asked;
+        question.about !== "speaker"
+            ? (heardClip(question, lines, occurrence) ?? sample)
+            : question.question.startsWith('Who says "')
+              ? sample
+              : speakerQuestionBounds({ record, question, lines });
     return {
         ...heard,
         spotSec: askedSpotSec(question, lines, occurrence),
@@ -519,10 +572,14 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
     // The tone marks the spot when the clip holds it, else the start of what is heard.
     const inClip = span.spotSec >= span.fromSec - pads.beforeSec && span.spotSec <= span.toSec + pads.afterSec;
     const startSec = Math.max(0, span.fromSec - pads.beforeSec);
+    const gaps = span.gaps
+        ?.filter((gap) => gap.fromSec < span.toSec)
+        .map((gap) => range(gap.fromSec, Math.min(gap.toSec, span.toSec)));
     return {
         meeting: input.record.id,
         target,
         label: span.label,
+        ...(gaps?.length ? { gapNote: `Also plays intervening audio ${gaps.join(", ")}` } : {}),
         fromSec: span.fromSec,
         toSec: span.toSec,
         padSec: pads.beforeSec,
@@ -593,6 +650,7 @@ export function clipPlan(moment: Moment): ClipPlan {
         fromSec: moment.fromSec,
         toSec: moment.toSec,
         padSec: moment.padSec,
+        ...(moment.gapNote ? { gapNote: moment.gapNote } : {}),
         ...(moment.padAfterSec === undefined ? {} : { padAfterSec: moment.padAfterSec }),
         ...(moment.tone ? { toneAtSec: moment.tone.atSec, toneSound: moment.tone.sound } : {}),
     };

@@ -706,14 +706,14 @@ describe("the screen at a Moment (R41)", () => {
 });
 
 /** A source that answers this file's transcript and keeps the recording at `audioPath`. */
-function fakeSource(audioPath: string): TranscriptSource {
+function fakeSource(audioPath: string, entries = transcript): TranscriptSource {
     const sourceMeeting: SourceMeeting = {
         sourceMeetingId: "abc",
         title: "Planning",
         start: now,
         participants: [],
         speakers: [],
-        transcript,
+        transcript: entries,
         folders: [],
     };
     const evidence: MeetingEvidence = { audioPath, segments: [], speaking: [], files: [] };
@@ -743,7 +743,7 @@ function recording(name: string): string {
     return path;
 }
 
-async function savedMeeting(storage: string, audioPath: string) {
+async function savedMeeting(storage: string, audioPath: string, fixture = { items: meeting.items, transcript }) {
     const store = new MeetingStore(new Storage(storage));
     const saved = await store.create(
         {
@@ -751,17 +751,132 @@ async function savedMeeting(storage: string, audioPath: string) {
             start: now,
             createdBy: "new",
             sources: { wisprflow: { meetingId: "abc" } },
-            items: meeting.items,
+            items: fixture.items,
         },
         { command: "new", change: "test" }
     );
-    const opened = OpenedMeeting.of(store, saved, { source: fakeSource(audioPath), sourceMeetingId: "abc" });
+    const opened = OpenedMeeting.of(store, saved, {
+        source: fakeSource(audioPath, fixture.transcript),
+        sourceMeetingId: "abc",
+    });
     return { store, saved, opened };
 }
 
 const oneTrack = async () => ({ tracks: 1 });
 
 describe("a Moment of a saved meeting", () => {
+    test("the terminal and window cut every decided speaker line and name the intervening audio", async () => {
+        const turns = [
+            { speaker: "Voice A", startSec: 10, text: "First sentence." },
+            { speaker: "Voice A", startSec: 20, text: "Second sentence." },
+            { speaker: "Voice B", startSec: 24, text: "Another discussion." },
+            { speaker: "Voice A", startSec: 60, text: "Last sentence." },
+        ];
+        const items = record([
+            { id: "i1", kind: "speaker-range", label: "Voice A", fromSec: 10, toSec: 20 },
+            { id: "i2", kind: "speaker-range", label: "Voice A", fromSec: 60, toSec: 60 },
+            {
+                id: "i3",
+                kind: "question",
+                about: "speaker",
+                question: "Who speaks?",
+                fromSec: 10,
+                toSec: 20,
+                clip: { fromSec: 10, toSec: 20 },
+                decides: ["i2", "i1"],
+            },
+        ]).items;
+        const audioPath = recording("decided-lines");
+        const { store, saved, opened } = await savedMeeting("meetings-moment-decided", audioPath, {
+            items,
+            transcript: turns,
+        });
+        const question = saved.items.find((item): item is QuestionItem => item.kind === "question")!;
+        const cuts: Array<Parameters<typeof cutClip>[0]> = [];
+        const cut: typeof cutClip = async (options) => {
+            cuts.push(options);
+            writeFileSync(options.outPath, "RIFF");
+        };
+        const expected = { fromSec: 10, toSec: 65, gapNote: "Also plays intervening audio 00:24–01:00" };
+        const terminal = await writeQuestionClips({
+            record: saved,
+            questions: [question],
+            transcript: turns,
+            listen,
+            pads: { beforeSec: 0, afterSec: 0 },
+            audioPath,
+            dir: dirname(audioPath),
+            cut,
+        });
+        const native = await clipMoment({
+            store,
+            record: saved,
+            opened,
+            target: { kind: "item", id: "Q1" },
+            cut,
+            probe: oneTrack,
+        });
+        expect(terminal[0]).toMatchObject(expected);
+        expect(native).toMatchObject(expected);
+        expect(cuts.map(({ fromSec, toSec }) => [fromSec, toSec])).toEqual([
+            [10, 65],
+            [10, 65],
+        ]);
+        expect(question.clip).toEqual({ fromSec: 10, toSec: 20 });
+
+        const adjacent = questionClip({
+            record: saved,
+            question: { ...question, decides: ["i1"] },
+            transcript: turns,
+            listen,
+            pads: { beforeSec: 0, afterSec: 0 },
+        });
+        expect(adjacent).toMatchObject({ fromSec: 10, toSec: 24 });
+        expect(adjacent).not.toHaveProperty("gapNote");
+    });
+
+    test("a speaker question keeps its own last line when its only decided target is elsewhere", () => {
+        const saved = record([
+            { id: "i1", kind: "speaker-range", label: "Speaker 1", fromSec: 60, toSec: 60 },
+            {
+                id: "i2",
+                kind: "question",
+                about: "speaker",
+                question: "Who speaks?",
+                fromSec: 10,
+                toSec: 20,
+                decides: ["i1"],
+            },
+        ]);
+        const input = { record: saved, transcript, listen, target: { kind: "item" as const, id: "i2" } };
+        expect(planMoment(input)).toMatchObject({
+            fromSec: 10,
+            toSec: 65,
+            gapNote: "Also plays intervening audio 00:30–01:00",
+        });
+        expect(planMoment({ ...input, lengthSec: 5 })).not.toHaveProperty("gapNote");
+    });
+
+    test("a question ending at its decided line's known end leaves the next voice out", () => {
+        const saved = record([
+            { id: "i1", kind: "speaker-range", label: "Speaker 1", fromSec: 10, toSec: 20, evidence: { endSec: 30 } },
+            {
+                id: "i2",
+                kind: "question",
+                about: "speaker",
+                question: "Who speaks?",
+                fromSec: 10,
+                toSec: 30,
+                clip: { fromSec: 10, toSec: 20 },
+                decides: ["i1"],
+            },
+        ]);
+        expect(planMoment({ record: saved, transcript, listen, target: { kind: "item", id: "i2" } })).toMatchObject({
+            fromSec: 10,
+            toSec: 30,
+        });
+    });
+
     test("its source transcript and the saved settings make the Moment, its clip goes to the cache once", async () => {
         const audioPath = recording("saved");
         const { store, saved, opened } = await savedMeeting("meetings-moment-saved", audioPath);
@@ -1137,6 +1252,22 @@ test("split clips keep accepted acoustic word boundaries and at least one and a 
     expect(plan).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5, wordTimed: true });
     // No audio access is needed for an accepted boundary.
     expect(await refineSplitClip({ plan, question, audioPath: "/unreadable.wav" })).toEqual(plan);
+    const audioPath = recording("word-timed-part");
+    const fixture = await savedMeeting("meetings-moment-word-part", audioPath, {
+        items: saved.items,
+        transcript: timed,
+    });
+    const native = await clipMoment({
+        store: fixture.store,
+        record: fixture.saved,
+        opened: fixture.opened,
+        target: { kind: "item", id: "Q1" },
+        probe: oneTrack,
+        cut: async ({ outPath }) => {
+            writeFileSync(outPath, "RIFF");
+        },
+    });
+    expect(native).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5, startSec: 12.3 - 1.5 });
 });
 
 test("manual clip pause holds its position and resumes the same process without replaying", () => {

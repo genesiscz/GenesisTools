@@ -113,6 +113,7 @@ struct Moment: Decodable, Equatable, Hashable {
     let meeting: String
     let target: MomentTarget
     let label: String
+    var gapNote: String? = nil
     let fromSec: Double
     let toSec: Double
     let padSec: Double

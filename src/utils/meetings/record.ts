@@ -312,7 +312,7 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         decides: z.array(itemIdSchema).default([]),
         answer: z.string().optional(),
         comment: z.string().optional(),
-        /** What `listen` plays when the range is long: the longest line in it. Absent: the whole range. */
+        /** Representative sample (the longest line for a speaker). Playback resolves the question's decided lines. */
         clip: z.object({ fromSec: z.number(), toSec: z.number() }).optional(),
         /** Value of information, (1 − confidence) × impact × reach: `listen` asks the highest first. */
         priority: z.number().optional(),

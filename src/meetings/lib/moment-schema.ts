@@ -91,6 +91,7 @@ export const momentSchema = z.object({
     meeting: z.string(),
     target: momentTargetSchema,
     label: z.string(),
+    gapNote: z.string().optional(),
     fromSec: z.number(),
     toSec: z.number(),
     padSec: z.number(),

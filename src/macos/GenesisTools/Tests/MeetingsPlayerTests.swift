@@ -46,6 +46,7 @@ private final class FakeEngine {
     var cuts: [MeetingsAPI.MomentParams] = []
     var plans: [MeetingsAPI.MomentParams] = []
     var cutFailure: Error?
+    var itemMoment: Moment?
     var planAnswer = MeetingsAPI.MomentPlan.Result(moment: nil, cannot: nil)
     var audio: MeetingsAPI.MeetingAudio.Result?
     /// A cut waits until the test lets it go.
@@ -86,6 +87,7 @@ private final class FakeEngine {
                 default: spot = params.target.startSec ?? 0
                 }
                 var moment = Self.moment(params.meeting, params.target, spot: spot, pad: params.padSec ?? 5)
+                if case .item = params.target, let itemMoment = self.itemMoment { moment = itemMoment }
                 if case .range(let from, let to) = params.target {
                     moment = Moment(meeting: params.meeting, target: params.target, label: moment.label, fromSec: from, toSec: to,
                                     padSec: params.padSec ?? 5, startSec: from - (params.padSec ?? 5), endSec: to + (params.padSec ?? 5),
@@ -128,9 +130,9 @@ final class MeetingsPlayerTests: XCTestCase {
         try? FileManager.default.removeItem(at: engine.folder)
     }
 
-    private func makePlayer() -> MomentPlayer {
+    private func makePlayer(clipDuration: TimeInterval = 20) -> MomentPlayer {
         MomentPlayer(engine: engine.engine, load: { [unowned self] url in
-            let sound = FakeSound(url: url, duration: 20, seeksExactly: self.recordingSeeks || url.pathExtension == "wav")
+            let sound = FakeSound(url: url, duration: clipDuration, seeksExactly: self.recordingSeeks || url.pathExtension == "wav")
             self.sounds.append(sound)
             return sound
         }, defaults: defaults)
@@ -201,6 +203,23 @@ final class MeetingsPlayerTests: XCTestCase {
     }
 
     // MARK: Playing a Moment
+
+    func testQuestionPlaybackShowsTheGapAndKeepsTheLastDecidedLineOnTheMeetingClock() async throws {
+        engine.itemMoment = try JSONDecoder().decode(Moment.self, from: Data("""
+        {"meeting":"m","target":{"kind":"item","id":"i3"},"label":"Q1","fromSec":10,"toSec":65,"padSec":1,
+         "startSec":9,"endSec":66,"spotSec":10,"delaySec":0,"gapNote":"Also plays intervening audio 00:24–01:00"}
+        """.utf8))
+        let player = makePlayer(clipDuration: 57)
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("the question plays") { player.phase == .playing }
+        let top = try XCTUnwrap(player.top)
+        XCTAssertEqual(top.startSec, 9)
+        XCTAssertEqual(top.endSec, 66)
+        player.seek(to: 60)
+        XCTAssertEqual(sounds.first?.currentTime, 51)
+        XCTAssertEqual(TimelineDock.crumbTitle(of: top, meeting: "m", rows: []),
+                       "Q1 · Also plays intervening audio 00:24–01:00")
+    }
 
     func testARowPlaysItsClipFromTheStartAndASecondClickPausesIt() async throws {
         let player = makePlayer()

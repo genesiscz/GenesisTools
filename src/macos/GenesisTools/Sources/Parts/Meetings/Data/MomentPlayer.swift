@@ -630,8 +630,11 @@ final class MomentPlayer {
                     $0.startSec = clip.moment.startSec
                     $0.endSec = clip.moment.endSec
                     $0.toneEndSec = clip.moment.tone.map { $0.atSec + $0.sound.sec }
-                    if $0.kind == .moment { $0.label = clip.moment.label }
-                    else { $0.label = Self.meetingLabel(clip.moment.fromSec) }
+                    if $0.kind == .moment {
+                        $0.label = [clip.moment.label, clip.moment.gapNote].compactMap { $0 }.joined(separator: " · ")
+                    } else {
+                        $0.label = Self.meetingLabel(clip.moment.fromSec)
+                    }
                 }
                 let layer = self.stack.first { $0.id == id }
                 // A stretch of the whole meeting starts after its tone: the stretches play on as one recording.

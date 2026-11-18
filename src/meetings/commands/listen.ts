@@ -268,6 +268,10 @@ async function ask(options: {
         : options.said
           ? [pc.italic(`„${options.said}“`)]
           : [];
+    if (options.plan.gapNote) {
+        shown.push(pc.dim(options.plan.gapNote));
+    }
+
     const earlierNote = earlier
         ? `${pc.dim("↺")} ${pc.dim(`you answered these words at ${formatClock(earlier.atSec)}: `)}${pc.cyan(earlier.answer)}`
         : undefined;
@@ -484,7 +488,10 @@ async function clipsOut(options: {
 
     for (const clip of written) {
         const tone = clip.toneAtSec === undefined ? "" : `, tone at ${formatClock(clip.toneAtSec)}`;
-        out.println(`${clip.question} ${clip.clip} (${formatClock(clip.fromSec)}–${formatClock(clip.toSec)}${tone})`);
+        const gap = clip.gapNote ? ` · ${clip.gapNote}` : "";
+        out.println(
+            `${clip.question} ${clip.clip} (${formatClock(clip.fromSec)}–${formatClock(clip.toSec)}${tone})${gap}`
+        );
     }
 }
 
@@ -1229,7 +1236,7 @@ export function registerListenCommand(program: Command): void {
         )
         .option(
             "--json",
-            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec }]; with --answer: print the decision journal entry"
+            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec?, gapNote? }]; with --answer: print the decision journal entry"
         )
         .action(listen);
 }
