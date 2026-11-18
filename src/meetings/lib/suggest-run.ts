@@ -69,11 +69,16 @@ async function collectForSuggest(
 ): Promise<MeetingRecord> {
     const { platform, evidence, id } = opened.record;
 
-    if (platform && opened.record.attendance && evidence?.channels) {
-        return opened.record;
-    }
-
     try {
+        if (platform && opened.record.attendance && evidence?.channels) {
+            // Older records may still say "unknown", or the owner may have changed the separation setting.
+            const layout = opened.sourceRef ? (await opened.energy()).calibration?.layout : undefined;
+            if (layout && layout !== evidence.channels.layout) {
+                await opened.calibrate();
+            }
+            return opened.record;
+        }
+
         // The run's explicit attendance choice reaches collection, so a title lookup never stores another chat.
         const outcome = await opened.collect({ attendance });
 

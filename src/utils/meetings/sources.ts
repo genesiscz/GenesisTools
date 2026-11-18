@@ -1,6 +1,7 @@
 import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { CalendarLookup } from "./calendar-entry";
+import type { ChannelLayout } from "./energy";
 import type { MeetingCalendar, MeetingParticipant } from "./record";
 
 /** The sources a meeting's transcript can come from. A new source is one entry here and one implementation. */
@@ -74,6 +75,8 @@ export interface LiveRecording {
  */
 export interface TranscriptSource {
     readonly id: MeetingSourceId;
+    /** Physical order, if the source's stereo encoder specifies one. Also applies to preserved copies of its audio. */
+    readonly sourceLayout?: Exclude<ChannelLayout, "unknown">;
     /** A short name for messages. */
     readonly label: string;
     /** The source's meeting with its transcript. Throws when it does not exist. */

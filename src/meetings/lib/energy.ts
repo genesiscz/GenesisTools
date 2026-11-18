@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type AcousticShare, echoForRange, readEchoCache } from "@genesiscz/utils/meetings/echo";
 import {
     type ChannelCalibration,
+    type ChannelCalibrationOptions,
     calibrateChannels,
     micShare,
     readCachedChannelEnergy,
@@ -31,7 +32,8 @@ export interface MicEnergy {
 export async function energyMicShareFor(
     store: MeetingStore,
     record: MeetingRecord,
-    evidence: MeetingEvidence | null
+    evidence: MeetingEvidence | null,
+    options: ChannelCalibrationOptions = {}
 ): Promise<MicEnergy> {
     if (!evidence?.audioPath) {
         return {};
@@ -43,7 +45,7 @@ export async function energyMicShareFor(
         return {};
     }
 
-    const calibration = calibrateChannels(energy, evidence.segments);
+    const calibration = calibrateChannels(energy, evidence.segments, options);
     log.debug({ meeting: record.id, ...calibration }, "channel layout calibrated");
     const { layout } = calibration;
     const echo = await readEchoCache({

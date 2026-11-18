@@ -18,6 +18,7 @@ import { DEFAULT_MUTED_CARRY_SEC } from "@genesiscz/utils/transcribe/evidence";
 import { DEFAULT_MIN_CONFIDENCE } from "@genesiscz/utils/transcribe/terms";
 import { z } from "zod";
 import { MeetingsConflictError } from "./conflict";
+import { DEFAULT_CHANNEL_MIN_SEPARATION } from "./energy";
 import {
     addPairings,
     type PairedBy,
@@ -380,6 +381,10 @@ export const DEFAULT_APPLY_ABOVE = 0.7;
  * block). `seat` names a line by the seat it was heard on, `voice` by compatible samples in the voice library.
  */
 const speakerLabelsSchema = z.object({
+    /** Minimum difference in median left-channel share between tagged mic and call audio. */
+    channels: z
+        .object({ minSeparation: z.number().min(0).max(1).default(DEFAULT_CHANNEL_MIN_SEPARATION) })
+        .prefault({}),
     seat: z.object({ enabled: z.boolean().default(true) }).prefault({}),
     voice: z
         .object({
