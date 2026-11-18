@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
+import { launcherConfigArgs, savedLauncherConfigIsStale } from "@genesiscz/utils/bun/launcher-config";
 import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import {
     installLaunchd as installAgent,
@@ -24,7 +24,7 @@ export function automateLaunchdOptions(): LaunchdInstallOptions {
 
     return {
         label: LABEL,
-        command: [bunPath, launcherConfigFlag(), "run", resolve(import.meta.dir, "daemon.ts")],
+        command: [bunPath, ...launcherConfigArgs(), "run", resolve(import.meta.dir, "daemon.ts")],
         cwd: homedir(),
         logPaths: { stdout: DAEMON_STDOUT_LOG, stderr: DAEMON_STDERR_LOG },
         processType: "Background",
@@ -55,15 +55,18 @@ export async function getDaemonStatus(): Promise<{
     pid: number | null;
     /** plist predates GenesisTools.app; `tools automate daemon install` migrates it */
     needsMigration: boolean;
+    /** the plist's bun `--config=` disagrees with the installed GenesisTools.app; `tools automate daemon install` rewrites it */
+    staleLauncherConfig: boolean;
 }> {
     const path = plistPath(LABEL);
     const installed = existsSync(path);
     const needsMigration = launchdPlistNeedsGenesisApp(path);
 
     if (!installed) {
-        return { installed: false, running: false, pid: null, needsMigration };
+        return { installed: false, running: false, pid: null, needsMigration, staleLauncherConfig: false };
     }
 
+    const staleLauncherConfig = savedLauncherConfigIsStale(readFileSync(path, "utf8"));
     const { pid } = await launchdStatus(LABEL);
-    return { installed, running: pid !== undefined, pid: pid ?? null, needsMigration };
+    return { installed, running: pid !== undefined, pid: pid ?? null, needsMigration, staleLauncherConfig };
 }
