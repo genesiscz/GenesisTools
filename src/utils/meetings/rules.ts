@@ -162,3 +162,39 @@ export enum MeetingRule {
      */
     User = "user",
 }
+
+const RULE_NAMES: Readonly<Record<MeetingRule, string>> = {
+    [MeetingRule.PlatformPrehistory]: "The name appears before the call first shows that person.",
+    [MeetingRule.LocalSpeech]: "The computer read these words aloud.",
+    [MeetingRule.Voice]: "The voice matches a confirmed voice sample.",
+    [MeetingRule.Attendance]: "The attendance record shows who was there.",
+    [MeetingRule.LeavePhrase]: "Someone says goodbye.",
+    [MeetingRule.ContinuesAfterLeave]: "More lines appear under the same name after the goodbye.",
+    [MeetingRule.FarewellAnswered]: "Another speaker answers the goodbye.",
+    [MeetingRule.EchoedFarewell]: "This speaker echoes someone else's goodbye.",
+    [MeetingRule.LabelDrift]: "A participant is present but has no lines under their name for a long stretch.",
+    [MeetingRule.Arrival]: "This line comes just after someone joins the call.",
+    [MeetingRule.OwnLabel]: "The person speaks under their own name on a nearby line.",
+    [MeetingRule.LocalVoice]: "More than one person may be using the same microphone.",
+    [MeetingRule.LabelVoice]: "This name usually appears on the microphone track.",
+    [MeetingRule.LabelSwap]: "The transcript appears to have swapped two speakers' names.",
+    [MeetingRule.Muted]: "The call shows someone was muted during this line.",
+    [MeetingRule.Channel]: "The recording separates microphone audio from call audio.",
+    [MeetingRule.SpeakingIndicator]: "The call shows who is speaking.",
+    [MeetingRule.VoiceEmbedding]: "The call audio was compared with saved voice samples.",
+    [MeetingRule.LiveName]: "The recorder attached a name to the voice during the call.",
+    [MeetingRule.Energy]: "The recording shows how loud each audio track was.",
+    [MeetingRule.PhoneticTerm]: "The word sounds like a known term.",
+    [MeetingRule.DictionaryFuzzy]: "The spelling is close to a dictionary term.",
+    [MeetingRule.SummaryName]: "The meeting summary mentions this name.",
+    [MeetingRule.UnknownWord]: "The word is missing from the known vocabulary.",
+    [MeetingRule.ReadAloud]: "These words match a passage in a document.",
+    [MeetingRule.SpokenIdentifier]: "The spoken words match a name or path in a document.",
+    [MeetingRule.Agent]: "An agent suggested this after reviewing the meeting.",
+    [MeetingRule.User]: "Someone added this by hand.",
+};
+
+/** Older records can contain IDs without a known explanation. */
+export function meetingRuleNames(ids: readonly string[]): string[] {
+    return ids.filter((id): id is MeetingRule => Object.hasOwn(RULE_NAMES, id)).map((id) => RULE_NAMES[id]);
+}
