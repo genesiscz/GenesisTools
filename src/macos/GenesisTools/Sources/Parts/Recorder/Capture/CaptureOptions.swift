@@ -20,6 +20,13 @@ enum CaptureChoice: Equatable {
             return ["--app", app] + titleArguments
         case let .target(.display(index, _)):
             return ["--display", String(index)]
+        case let .target(.area(rect, _)):
+            // The picker's area is in Cocoa points; `--region` takes points from the top-left (P6 replaces this bridge).
+            let primary = NSScreen.screens.first?.frame.height ?? rect.maxY
+            return CaptureChoice.area(Self.coreGraphicsRect(cocoa: rect, primaryHeight: primary)).arguments
+        case let .target(.displays(indices)):
+            // Several displays need the frames recorder's `--displays`; until P6 maps it, the first one records.
+            return ["--display", String(indices.first ?? 0)]
         case let .area(rect):
             let parts = [rect.minX, rect.minY, rect.width, rect.height].map { String(Int($0.rounded())) }
             return ["--region", parts.joined(separator: ",")]
@@ -43,7 +50,7 @@ enum CaptureChoice: Equatable {
             return app.flatMap { $0.isEmpty ? nil : $0 }
         case let .app(_, name):
             return name.flatMap { $0.isEmpty ? nil : $0 }
-        case .display:
+        case .display, .area, .displays:
             return nil
         }
     }
@@ -52,7 +59,7 @@ enum CaptureChoice: Equatable {
     var recordsAudio: Bool {
         switch self {
         case .target(.window), .target(.app): false
-        case .target(.display), .area, .followPointer: true
+        case .target(.display), .target(.area), .target(.displays), .area, .followPointer: true
         }
     }
 

@@ -340,7 +340,7 @@ public final class ScreenRecorder: ObservableObject {
         switch target {
         case let .window(ids, _, _, _): return targets?.windows.filter { ids.contains($0.id) } ?? []
         case let .app(app, _): return targets?.windows.filter { String($0.pid) == app } ?? []
-        case .display: return nil
+        case .display, .area, .displays: return nil
         }
     }
 
