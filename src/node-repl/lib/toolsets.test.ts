@@ -81,6 +81,7 @@ import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi, editSourceOf, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
 import {
+    libraryStartOptions,
     RecorderToolset,
     RecordingHandle,
     recorderApi,
@@ -2895,6 +2896,47 @@ describe("tools recorder start names the limits each kind of recording checks", 
 });
 
 describe("the CLI doors of a frames recording and of the live OCR settings take the REPL's values", () => {
+    test("frames window exclusions reach both display captures from the CLI and REPL start options", async () => {
+        const ids = [91, 105];
+        const cli = framesStartOf(readStartArgs(["--frames", "--displays", "1,4", "--exclude-window-ids", "91,105"]));
+        const repl = recorderStartSchema.parse({ displays: [1, 4], excludeWindowIds: ids });
+        expect(cli).toMatchObject(repl);
+        expect(recorderStartSchema.safeParse({ excludeWindowIds: [0x1_0000_0000] }).success).toBe(false);
+        expect(() => framesStartOf(readStartArgs(["--frames", "--exclude-window-ids", "0"]))).toThrow(
+            "--exclude-window-ids"
+        );
+
+        const root = mkdtempSync(join(tmpdir(), "frames-exclusions-"));
+        const recorder = new ControlledRecorder();
+        const both = Promise.withResolvers<void>();
+        recorder.announce = () => {
+            if (recorder.requests.length === 2) {
+                both.resolve();
+            }
+        };
+        const recording = await startRecording({
+            ...libraryStartOptions(cli),
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+        });
+        try {
+            await withTimeout(both.promise, 2_000);
+            expect(recorder.requests).toHaveLength(2);
+            expect(recorder.requests.map((request) => request.target)).toEqual(
+                expect.arrayContaining([
+                    { kind: "display", displayId: 1 },
+                    { kind: "display", displayId: 4 },
+                ])
+            );
+            for (const request of recorder.requests) {
+                expect(request).toMatchObject({ excludeWindowIds: ids });
+            }
+        } finally {
+            await recording.stop();
+        }
+    });
+
     test("tools recorder start --frames gives the options recorder.start() takes, checked by its schema", () => {
         const flags = readStartArgs([
             "--frames",

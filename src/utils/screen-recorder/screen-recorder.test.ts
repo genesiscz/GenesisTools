@@ -164,6 +164,23 @@ describe("displays", () => {
 describe("native capture argv", () => {
     const displays = parseDisplayList(axScreens);
 
+    test("frames window exclusions reach ax-tool and a backend without exclusion support refuses capture", async () => {
+        const excluded = { ...request(), excludeWindowIds: [91, 105] };
+        const flags = flagsInHelp("--display-id --exclude-window-ids");
+        const argv = nativeArgv({ request: excluded, flags, displays });
+        expect(argv.slice(argv.indexOf("--exclude-window-ids"), argv.indexOf("--exclude-window-ids") + 2)).toEqual([
+            "--exclude-window-ids",
+            "91,105",
+        ]);
+        expect(nativeArgv({ request: request(), flags, displays })).not.toContain("--exclude-window-ids");
+        expect(() => nativeArgv({ request: excluded, flags: new Set(), displays })).toThrow("--exclude-window-ids");
+        const { PeekabooFrameRecorder } = await import("./peekaboo");
+        const peekaboo = new PeekabooFrameRecorder();
+        const list = spyOn(peekaboo, "displays").mockResolvedValue([]);
+        await expect(peekaboo.capture(excluded)).rejects.toThrow("exclude");
+        expect(list).not.toHaveBeenCalled();
+    });
+
     test("without the new flags, a display id becomes its current index and the cap an output scale", () => {
         const argv = nativeArgv({ request: request({ maxLongSidePx: 1280 }), flags: new Set(), displays });
 
