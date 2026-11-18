@@ -322,11 +322,12 @@ final class MeetingsUXTests: XCTestCase {
                        "the meeting with questions and suggestions stands once, so no group is left for its suggestions")
         XCTAssertEqual(needs.groups.flatMap(\.rows).count, needs.total, "the list has as many rows as the sidebar counts")
         let both = try XCTUnwrap(needs.groups.last?.rows.first)
-        XCTAssertEqual(both.reason(applyAbove: 0.5), "2 questions · 3 suggestions at 50 % or more")
+        // The apply line is said once, in the "Ready to confirm" section title, not at the end of every row (L1).
+        XCTAssertEqual(both.reason(), "2 questions · 3 suggestions")
         typealias Row = MeetingsOverview.NeedsYou.Row
-        XCTAssertEqual(Row(id: "x", noProject: false, questions: 1, suggestions: 0).reason(applyAbove: 0.5), "1 question to answer by ear")
-        XCTAssertEqual(Row(id: "x", noProject: false, questions: 0, suggestions: 3).reason(applyAbove: 0.5), "3 suggestions at 50 % or more")
-        XCTAssertEqual(Row(id: "x", noProject: true, questions: 2, suggestions: 3).reason(applyAbove: 0.5),
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 1, suggestions: 0).reason(), "1 question to answer by ear")
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 0, suggestions: 3).reason(), "3 suggestions to confirm")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 2, suggestions: 3).reason(),
                        "Choose its project · 2 questions · 3 suggestions")
         XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 0).tag, "x", "a bare id opens the meeting's first tab")
         XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 3).tag, "s:x", "suggestions open Items")

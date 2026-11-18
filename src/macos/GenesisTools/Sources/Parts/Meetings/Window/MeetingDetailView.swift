@@ -17,6 +17,9 @@ struct MeetingDetailView: View {
     @State private var openItems: Int?
     /// The column's width, for the trailing pane's rule (`trailingPane`).
     @State private var width: CGFloat = 0
+    /// The sheets of the "…" menu: the seats and microphones, and the voice tools that stood under the header.
+    @State private var seatsOpen = false
+    @State private var voiceToolsOpen = false
     @Environment(\.meetingsDockInset) private var dockInset
     @AppStorage(MeetingsPreferences.Panes.transcriptPane.key) private var transcriptPaneSetting =
         MeetingsPreferences.Panes.transcriptPane.defaultValue.rawValue
@@ -47,7 +50,6 @@ struct MeetingDetailView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 header
-                MeetingRoomPeopleView(detail: detail)
                 Divider()
                 // The notices float inside the dock's inset too: put on the padded view, a bottom stack sat under the
                 // playing dock, and an answer's Undo was never seen while the next row played.
@@ -73,6 +75,7 @@ struct MeetingDetailView: View {
         // 2026-11-11, NSSheetMoveHelper).
         .overlay { ReachOverlay(detail: detail) }
         .sheet(item: $detail.history) { history in HistorySheetView(detail: detail, history: history) }
+        .modifier(MenuSheets(detail: detail, seatsOpen: $seatsOpen, voiceToolsOpen: $voiceToolsOpen))
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .onChange(of: detail.rows.value?.rows, initial: true) { _, rows in openRows = rows.map { $0.lazy.filter(\.isOpen).count } }
         .onChange(of: detail.record.value?.items, initial: true) { _, items in
@@ -113,12 +116,15 @@ struct MeetingDetailView: View {
                     [.action("Open in New Window") { MeetingsWindow.openExtra(meeting: detail.id) },
                      .action("Duplicate", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id) },
                      .action("Duplicate clean copy", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id, withoutItems: true) },
-                     .action("Rename…") { window.renamingMeetingID = detail.id }]
+                     .action("Rename…") { window.renamingMeetingID = detail.id },
+                     .divider,
+                     .action("Seats and microphones…", enabled: record != nil) { seatsOpen = true },
+                     .action("Voice tools…", enabled: record != nil) { voiceToolsOpen = true }]
                 }) {
                     Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)
                         .frame(width: 24, height: 22).contentShape(Rectangle())
                 }
-                .instantTooltip("More: open in a new window, duplicate, rename")
+                .instantTooltip("More: open in a new window, duplicate, rename, seats and microphones, voice tools")
                 .accessibilityLabel("More meeting actions")
                 .accessibilityIdentifier("meetings.detail.more")
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {
@@ -148,8 +154,9 @@ struct MeetingDetailView: View {
                         .accessibilityIdentifier("meetings.detail.reload")
                 }
             }
-            // The time, the badges, the project and the labels share one wrapping line. The project and the labels had a
-            // line of their own, so a 900 x 600 window spent about 240 of its 600 pt on the header.
+            // The time, the badges, the project, the labels and the people share one wrapping line: the header is the
+            // title line and this line (window audit, change 1). The people strip under it, a seats button and a constant
+            // "Suggested agent findings: not applied" took three more rows and were cut at the right edge.
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 if let overview { MeetingBadgesView(meeting: overview, open: { detail.show($0) }) }
@@ -157,11 +164,10 @@ struct MeetingDetailView: View {
                     Badge("Recording failed", color: KitPalette.removed, symbol: "exclamationmark.triangle")
                         .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
                 }
+                if let source = record?.copySource { copyChip(source) }
                 if record?.project != nil || detail.tab != .items { projectPicker(record) }
                 labelsPicker(record)
-                MeetingSeatsButton(detail: detail)
-                Text("Suggested agent findings: not applied").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("meetings.detail.suggestedApplication")
+                MeetingPeopleChip(detail: detail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let failure = detail.record.failure {
@@ -261,7 +267,7 @@ struct MeetingDetailView: View {
             items.append(.action("No project", checked: current == nil) { detail.setProject(nil) })
             return items
         }) {
-            pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
+            Self.pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
         }
         .disabled(record == nil || detail.isBusy("project"))
         .onHover { if $0 { detail.ensureProposals() } }
@@ -293,7 +299,21 @@ struct MeetingDetailView: View {
         }
     }
 
-    private func pickerLabel(symbol: String, text: String, warn: Bool) -> some View {
+    /// "Copy of <title>": the meeting this one was duplicated from, one click away. It stood as the source's record id
+    /// in a line of its own.
+    private func copyChip(_ source: String) -> some View {
+        let title = window.meeting(source)?.displayTitle ?? source
+        let short = title.count > 34 ? String(title.prefix(32)) + "…" : title
+        return Button { window.select(source) } label: {
+            Badge("Copy of \(short)", color: KitPalette.dim, symbol: "doc.on.doc")
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip("This meeting is a copy of \(title). Open that meeting")
+        .accessibilityLabel("Copy of \(title), open it")
+        .accessibilityIdentifier("meetings.detail.copySource")
+    }
+
+    static func pickerLabel(symbol: String, text: String, warn: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: symbol).font(.system(size: 11))
             Text(verbatim: text).font(.system(size: 12, weight: .medium))
@@ -315,6 +335,22 @@ struct MeetingDetailView: View {
         case .speakers: SpeakersTab(detail: detail)
         case .context: ContextTab(detail: detail)
         }
+    }
+}
+
+/// The sheets of the header's "…" menu: the seats and microphones, and the voice tools.
+private struct MenuSheets: ViewModifier {
+    @Bindable var detail: MeetingDetailModel
+    @Binding var seatsOpen: Bool
+    @Binding var voiceToolsOpen: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $seatsOpen) {
+                MeetingSeatsEditor(seats: detail.record.value?.seats ?? MeetingSeats(),
+                                   save: { try await detail.saveSeats($0) }, saved: { seatsOpen = false })
+            }
+            .sheet(isPresented: $voiceToolsOpen) { MeetingVoiceToolsSheet(detail: detail) { voiceToolsOpen = false } }
     }
 }
 

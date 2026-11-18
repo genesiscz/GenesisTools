@@ -1,19 +1,5 @@
 import SwiftUI
 
-struct MeetingSeatsButton: View {
-    @Bindable var detail: MeetingDetailModel
-    @State private var editing = false
-    var body: some View {
-        Button("Seats and microphones…") { editing = true }
-            .accessibilityIdentifier("meetings.detail.seats")
-            .disabled(detail.record.value == nil)
-            .sheet(isPresented: $editing) {
-                MeetingSeatsEditor(seats: detail.record.value?.seats ?? MeetingSeats(),
-                                   save: { try await detail.saveSeats($0) }, saved: { editing = false })
-            }
-    }
-}
-
 /// The comma lists of the editor as typed: a list is parsed on Save, so "Alice," keeps its comma while Bob is typed.
 struct MeetingSeatsDraft: Equatable {
     var seats: MeetingSeats
@@ -52,7 +38,7 @@ struct MeetingSeatsDraft: Equatable {
     }
 }
 
-private struct MeetingSeatsEditor: View {
+struct MeetingSeatsEditor: View {
     @State private var draft: MeetingSeatsDraft
     let save: (MeetingSeats) async throws -> Void
     let saved: () -> Void
