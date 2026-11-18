@@ -98,6 +98,9 @@ final class RecorderLayersTests: XCTestCase {
         XCTAssertEqual(reorder.count, 1)
         guard case let .layerMove(move)? = reorder.first else { return XCTFail("Expected layerMove") }
         XCTAssertEqual(try mark.movingLayer(move.id, to: move.to).layerOrder(), moved.layerOrder())
+        draft = mark
+        draft.camera?.show = false
+        XCTAssertEqual(EditorModel.changeName(from: mark, to: draft).name, "Hide Camera")
     }
 
     private func oldEdit() throws -> [String: Any] {
@@ -133,6 +136,9 @@ final class RecorderLayersTests: XCTestCase {
 
     func testUntouchedOldEditAndSavedLaneAndLayerKeysRoundTrip() throws {
         let old = try oldEdit()
+        let sorted = JSONEncoder()
+        sorted.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(try sorted.encode(project(old)), try bytes(old))
         for source in [old, try withLayers()] {
             let written = try project(source).encoded()
             XCTAssertEqual(try bytes(JSONSerialization.jsonObject(with: written)), try bytes(source))
@@ -215,9 +221,9 @@ final class RecorderLayersTests: XCTestCase {
         let steps = try XCTUnwrap(result["steps"] as? [[String: Any]])
         guard steps.count == rows.count else { return XCTFail("Expected \(rows.count) apply/undo pairs, got \(steps.count)") }
         XCTAssertTrue(try XCTUnwrap(result["refused"] as? String).contains(#"layer {id: "camera", hidden: true}"#))
-        let names = ["Mute Narration", "Change Narration Volume", "Add stamp.png", "Hide Logo", "Move Camera above Logo",
+        let names = ["Mute Narration", "Change Narration Volume", "Add stamp.png", "Hide Logo", "Reorder Camera and Logo",
                      "Remove Logo", "Camera Bubble"]
-        let feed = ["Muted Narration", "Changed Narration volume", "Added stamp.png", "Hid Logo", "Moved Camera above Logo",
+        let feed = ["Muted Narration", "Changed Narration volume", "Added stamp.png", "Hid Logo", "Camera is now above Logo",
                     "Removed Logo", "Hid the camera bubble"]
         let before = try project(initial)
         for (index, step) in steps.enumerated() {

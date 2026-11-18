@@ -38,6 +38,8 @@ struct EditProject: Codable, Equatable {
     var lanes: [EffectLane]?
     /// The camera recorded beside the screen, drawn as a bubble; nil is none (Render/CameraLayer.swift).
     var camera: Camera?
+    /// Bottom-to-top picture layers. Without a stack the recorded camera keeps its original place.
+    var layers: LayerStack?
     /// Moments marked while editing (the range popover's Add Marker), in source order; nil is none. The recording's
     /// own markers stay in recording.json. Written by the `marker` op (src/utils/recording-editor/project.ts).
     var markers: [Marker]?
@@ -209,6 +211,8 @@ struct EditProject: Codable, Equatable {
         var volume = 1.0
         /// Muted source audio tracks by index (0 is the first audio track of the movie).
         var mutedTracks: [Int] = []
+        /// Absent until a lane is saved. Old files derive their lanes from the movie and mutedTracks.
+        var lanes: [AudioLane]?
         /// A sound file under the movie; nil is none. Optional, so an older file decodes.
         var music: Music?
         /// Noise reduction on export, applied by the TypeScript export (src/utils/recording-editor/denoise.ts); kept
@@ -782,6 +786,35 @@ extension EditProject {
             case let .badValue(detail): "the edit file is not valid: \(detail)"
             }
         }
+    }
+}
+
+// The audio-lane cases use the same partial audio and music objects that the TypeScript schema accepts.
+extension EditProject.AudioSettings {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        include = try c.decodeIfPresent(Bool.self, forKey: .include) ?? include
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? volume
+        mutedTracks = try c.decodeIfPresent([Int].self, forKey: .mutedTracks) ?? mutedTracks
+        lanes = try c.decodeIfPresent([EditProject.AudioLane].self, forKey: .lanes)
+        music = try c.decodeIfPresent(EditProject.Music.self, forKey: .music)
+        denoise = try c.decodeIfPresent(EditProject.Denoise.self, forKey: .denoise)
+        voiceovers = try c.decodeIfPresent([EditProject.Voiceover].self, forKey: .voiceovers)
+        ducking = try c.decodeIfPresent(EditProject.Ducking.self, forKey: .ducking)
+    }
+}
+
+extension EditProject.Music {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(file: try c.decode(String.self, forKey: .file))
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? volume
+        duck = try c.decodeIfPresent(Double.self, forKey: .duck) ?? duck
+        fadeMs = try c.decodeIfPresent(Int.self, forKey: .fadeMs) ?? fadeMs
+        startMs = try c.decodeIfPresent(Int.self, forKey: .startMs)
+        loop = try c.decodeIfPresent(Bool.self, forKey: .loop)
+        inWhole = try c.decodeIfPresent(InWhole.self, forKey: .inWhole)
     }
 }
 
