@@ -161,15 +161,7 @@ final class AppMenuTarget: NSObject {
 
     /// The privacy grants window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
     @objc func openPermissions(_ sender: Any?) {
-        guard let executable = Bundle.main.executablePath else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["--window"]
-        do {
-            try process.run()
-        } catch {
-            HubPerf.log("menu: the permissions window did not start: \(error)")
-        }
+        FaceLaunch.start(["--window"])
     }
 }
 
