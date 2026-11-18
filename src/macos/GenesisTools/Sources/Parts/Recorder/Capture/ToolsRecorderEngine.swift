@@ -94,7 +94,12 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         var targets = Set(RecordingTargetKind.allCases)
         if frames { targets = [.display, .displays] }
         else if entry != nil { targets.remove(.displays) }
-        var reasons = ["camera": "The camera starts with the recording"]
+        // A window or app movie never carries sound in this recorder, before a take as well as during it.
+        var reasons = [
+            "camera": "The camera starts with the recording",
+            "windowAudio": "A window movie has no audio. Choose a display or an area to record sound.",
+            "appAudio": "An app movie has no audio. Choose a display or an area to record sound.",
+        ]
         if !supports("audio.mute") {
             reasons["microphone"] = "This recorder keeps the audio sources chosen at start."
             reasons["systemAudio"] = reasons["microphone"]
