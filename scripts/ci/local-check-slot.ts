@@ -14,8 +14,24 @@ export function heavyCheckLockPath(cwd?: string): string {
         throw new Error(`Cannot locate the shared Git directory: ${common.stderr.toString().trim()}`);
     }
 
-    const gitDir = realpathSync(common.stdout.toString().trim());
-    return join(sharedCloneOrigin(gitDir) ?? gitDir, "genesis-heavy-check.lock");
+    return join(sharedCloneRoot(realpathSync(common.stdout.toString().trim())), "genesis-heavy-check.lock");
+}
+
+/**
+ * The repository at the end of a chain of shared clones. `git clone --shared` records the source's own objects folder,
+ * so a clone of a clone (A, then B from A, then C from B) points C at B, while B waits in A's slot. Each hop is
+ * followed until a repository without alternates, and a loop stops at the first folder seen twice.
+ */
+function sharedCloneRoot(gitDir: string): string {
+    const seen = new Set<string>([gitDir]);
+    let current = gitDir;
+
+    for (let next = sharedCloneOrigin(current); next !== null && !seen.has(next); next = sharedCloneOrigin(current)) {
+        seen.add(next);
+        current = next;
+    }
+
+    return current;
 }
 
 /** The Git directory a `git clone --shared` copy borrows its objects from, or null for an ordinary repository. */

@@ -1729,6 +1729,15 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             expect(automatic.status, automatic.stdout).not.toBe(0);
             expect(automatic.stderr).toContain("ratchet lists may only shrink (scripts/ci/rosters/rosters.json)");
             expect(automatic.stderr).toContain("roster-a: src/one.ts 1 → 2");
+
+            // The full audit (`lint:rules --all`, or CI) refuses the same growth against its base.
+            const full = spawnSync(process.execPath, [join(import.meta.dir, "lint-rules.ts"), "--ratchet-base", base], {
+                cwd: dir,
+                env: process.env,
+                encoding: "utf8",
+            });
+            expect(full.status, full.stdout).not.toBe(0);
+            expect(full.stderr).toContain("ratchet lists may only shrink (scripts/ci/rosters/rosters.json)");
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
@@ -1736,17 +1745,20 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
 
     test("bun run lint:rules checks the changed files by default and every file with --all or under CI", () => {
         const changed = ["--no-rosters", "--changed", "origin/master", "--working-tree"];
-        expect(lintRulesPlan({ argv: [], ci: false }).args).toEqual(changed);
-        expect(lintRulesPlan({ argv: ["--base", "feat/parent"], ci: false }).args).toEqual([
+        expect(lintRulesPlan({ ci: false }).args).toEqual(changed);
+        expect(lintRulesPlan({ base: "feat/parent", ci: false }).args).toEqual([
             "--no-rosters",
             "--changed",
             "feat/parent",
             "--working-tree",
         ]);
-        expect(lintRulesPlan({ argv: ["--all"], ci: false }).args).toEqual([]);
-        expect(lintRulesPlan({ argv: [], ci: true }).args).toEqual([]);
-        expect(() => lintRulesPlan({ argv: ["--base"], ci: false })).toThrow("--base needs a ref");
-        expect(() => lintRulesPlan({ argv: ["--everything"], ci: false })).toThrow("unknown argument --everything");
+        // The full audit still checks the ratchet lists against the base.
+        expect(lintRulesPlan({ all: true, ci: false }).args).toEqual(["--ratchet-base", "origin/master"]);
+        expect(lintRulesPlan({ ci: true }).args).toEqual(["--ratchet-base", "origin/master"]);
+        expect(lintRulesPlan({ all: true, base: "feat/parent", ci: false }).args).toEqual([
+            "--ratchet-base",
+            "feat/parent",
+        ]);
     });
 
     test("a linked worktree and a shared clone of it wait in the original repository's slot", () => {
@@ -1779,11 +1791,14 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             git(join(dir, "main"), ["worktree", "add", "-q", "--detach", join(dir, "linked")]);
             // The babysit integration gates run in such a snapshot of a worker's linked worktree.
             git(dir, ["clone", "-q", "--shared", "--no-checkout", join(dir, "linked"), join(dir, "snapshot")]);
+            // A clone of that clone records the snapshot's objects, and still waits in the original's slot.
+            git(dir, ["clone", "-q", "--shared", "--no-checkout", join(dir, "snapshot"), join(dir, "chained")]);
 
             const main = heavyCheckLockPath(join(dir, "main"));
             expect(main).toBe(join(realpathSync(join(dir, "main", ".git")), "genesis-heavy-check.lock"));
             expect(heavyCheckLockPath(join(dir, "linked"))).toBe(main);
             expect(heavyCheckLockPath(join(dir, "snapshot"))).toBe(main);
+            expect(heavyCheckLockPath(join(dir, "chained"))).toBe(main);
             expect(heavyCheckLockPath(join(dir, "other"))).not.toBe(main);
         } finally {
             rmSync(dir, { recursive: true, force: true });
