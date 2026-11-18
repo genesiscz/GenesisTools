@@ -6,7 +6,8 @@ import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
-import { type LineVoice, lineVoices, type VoiceFrame, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
+import { type LineVoice, lineVoices, type VoiceFrame } from "@genesiscz/utils/meetings/voice-features";
+import { collectVoiceFrames } from "@genesiscz/utils/meetings/voice-frame-cache";
 import { profiler } from "@genesiscz/utils/profile";
 import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -198,7 +199,10 @@ export async function runSuggest(options: {
     if (rules.includes("evidence")) {
         try {
             frames = await prof.measureAsync("evidence.voice-frames", async () =>
-                voiceFrames({ audioPath: await opened.audioPath() })
+                collectVoiceFrames({
+                    audioPath: await opened.audioPath(),
+                    cachePath: join(store.folder(record.id), "evidence", "voice-frames.bin"),
+                })
             );
         } catch (error) {
             log.warn({ error, meeting: record.id }, "voice change points unavailable");
