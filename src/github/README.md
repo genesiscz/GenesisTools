@@ -302,7 +302,8 @@ tools github review comment 42 --thread PRRT_aaa --body-file reply.md --now     
 
 ```bash
 tools github search "memory leak" --repo owner/repo --state open    # issues and PRs
-tools github search "window opens empty" --repo owner/repo --search-type hybrid  # cached issues and PRs
+tools github search "window opens empty" --repo owner/repo --search-type semantic  # one hosted search
+tools github search "window opens empty" --repo owner/repo --search-type hybrid --local  # offline cache
 tools github search "dark mode" --type pr --sort reactions -L 50
 tools github search "crash" --repo owner/repo --min-comment-reactions 3   # GraphQL scan of the hits' comments
 tools github search "http client" --type repo --language typescript --min-stars 1000 --sort stars
@@ -315,15 +316,20 @@ tools github code "interface Props" --repo owner/repo --language typescript
 `--min-comment-reactions <n>`, `--language <lang>` and `--min-stars <n>` (repository search), `-f, --format
 ai|md|json` (default `ai`), `-o, --output <file>`, and `--search-type keyword|semantic|hybrid` for issues and PRs.
 
-- Semantic and hybrid search rank previously cached issues and PRs on macOS using DarwinKit. Hybrid also searches the cached title and body with FTS5. Both modes work offline and use no GitHub quota.
-- By default `search` runs two backends at once and merges the hits: GitHub's advanced issue search
+- Semantic and hybrid search use GitHub by default. Each run makes one REST request against a quota of 10 per minute.
+  GitHub ranks the page. The result's `source` is `semantic` or `hybrid`. On HTTP 403 or 429, the command reports
+  the reset time when GitHub supplies it.
+- Add `--local` to either mode to rank previously cached issues and PRs offline on macOS using DarwinKit.
+  Local hybrid search also searches the cached title and body with FTS5.
+- Keyword search runs two backends at once and merges the hits: GitHub's advanced issue search
   (`advanced_search=true`, `type:` qualifiers) and the legacy one (`is:` qualifiers). It prints how many hits each
   found and which it deduplicated. `--advanced` or `--legacy` runs one, which costs half the search quota.
-- `--sort` takes `created`, `updated`, `comments` or `reactions` for issues and PRs, and `stars`, `forks`,
+- Keyword `--sort` takes `created`, `updated`, `comments` or `reactions` for issues and PRs, and `stars`, `forks`,
   `updated` or `help-wanted-issues` for repositories.
 - `search` reads one page per backend, and `-L` is its size. GitHub caps a page at 100.
-- `--min-comment-reactions` reads the comments of every hit over GraphQL. It first prints its cost estimate in points
+- In keyword mode, `--min-comment-reactions` reads the comments of every hit over GraphQL. It first prints its cost estimate in points
   of the 5,000 per hour GraphQL budget. When no hit passes, it prints all hits instead of none.
+  Local semantic and hybrid modes filter cached comments. Hosted semantic and hybrid modes reject this flag.
 - `--type repo` searches repositories; GitHub's own qualifiers work in the query (`topic:react stars:>5000`).
 
 `code` flags: `-r, --repo <owner/repo>` (recommended), `-p, --path <glob>`, `-l, --language <lang>`,
@@ -505,14 +511,15 @@ Logs go to the GenesisTools day log,
 
 ### What it calls
 
-- GitHub's REST and GraphQL APIs, through Octokit. A rate-limited call waits and retries, up to 5 times.
+- GitHub's REST and GraphQL APIs, through Octokit. Hosted semantic and hybrid searches make one attempt.
+  Calls using the standard retry handler wait and retry up to 5 times.
 - The `gh` CLI: for its login token, and for `pr --include`.
 - `git`: for the `merge --rebase` restack, the repository of a bare number (`git remote get-url origin`), and
   `--worktree`.
 - Your default browser for `notifications --open`, and the clipboard for `-c`.
 
-Nothing costs money. The limits are GitHub's: issue search allows 30 requests per minute with a token and 10
-without, and code search 10 per minute. A default `search` makes two search requests. `status` shows the REST
+Nothing costs money. Keyword issue search allows 30 requests per minute with a token and 10 without.
+Hosted semantic, hybrid and code searches allow 10 per minute. A default keyword issue search makes two requests. `status` shows the REST
 budget.
 
 ### The cache
@@ -534,7 +541,8 @@ budget.
 - `pr` always fetches the PR, and stores its title, body and state.
 - `pr --include` is fresh unless you pass `--max-cache-age`. Its answers are shared by every caller on the Mac, and
   identical calls that miss at the same moment run `gh` once.
-- `search`, `code`, `get`, `notifications`, `activity`, `releases` and `review` always read live.
+- `search` reads live by default. With `--local` it reads the issue and PR cache.
+- `code`, `get`, `notifications`, `activity`, `releases` and `review` always read live.
 
 There is no clear command. To start the cache over, delete `cache.db` and its `cache.db-wal` and `cache.db-shm`
 files; the next run creates them again.

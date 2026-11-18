@@ -27,8 +27,9 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | Filter by positive reactions | `tools github issue <url> --min-reactions-positive 3` |
 | Exclude bots | `tools github issue <url> --no-bots` |
 | Search with min reactions | `tools github search "bug" --repo owner/repo --min-reactions 10` |
-| Search cached issues by meaning on macOS | `tools github search "window opens empty" --repo owner/repo --search-type semantic` |
-| Search cached issue text and meaning together | `tools github search "blank panel" --repo owner/repo --search-type hybrid` |
+| Search GitHub issues by meaning | `tools github search "window opens empty" --repo owner/repo --type issue --search-type semantic` |
+| Run hosted hybrid search | `tools github search "blank panel" --repo owner/repo --search-type hybrid` |
+| Search cached issue text and meaning offline on macOS | `tools github search "blank panel" --repo owner/repo --search-type hybrid --local` |
 | Search issues | `tools github search "error" --repo owner/repo --state open` |
 | Get PR with review comments | `tools github pr <url> --review-comments` |
 | Check auth status | `tools github status` |
@@ -153,6 +154,11 @@ tools github issue <url> --since 789
 ```
 
 ### Search Issues/PRs
+
+Keyword is the default mode. Semantic and hybrid search use GitHub by default and make one request per run,
+with a limit of 10 per minute. Add `--local` to either mode for offline search over previously fetched issues
+and PRs on macOS. Use keyword search for a live comment-reaction scan, or `--local` for cached comments.
+
 ```bash
 # Search open issues
 tools github search "memory leak" --repo anthropics/claude-code --state open
@@ -503,9 +509,10 @@ Options:
   --min-comment-reactions <n>  Min reactions on any comment (GraphQL, slower)
   --language <lang>            Filter repos by language
   --min-stars <n>              Minimum star count for repo search
-  --search-type <mode>         keyword searches GitHub (default); semantic and hybrid rank cached issues and PRs locally
-  --advanced                   Use only advanced search backend
-  --legacy                     Use only legacy search backend
+  --search-type [mode]         keyword (default), semantic or hybrid on GitHub
+  --local                      Run semantic or hybrid search on the offline cache
+  --advanced                   Use only the advanced keyword backend
+  --legacy                     Use only the legacy keyword backend
   -f, --format <format>        Output format
   -o, --output <file>          Output path
   -v, --verbose                Enable verbose logging

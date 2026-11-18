@@ -232,8 +232,13 @@ export interface PRCommandOptions extends IssueCommandOptions {
     worktree?: boolean | string;
 }
 
+export const ISSUE_SEARCH_TYPES = ["keyword", "semantic", "hybrid"] as const;
+export type IssueSearchType = (typeof ISSUE_SEARCH_TYPES)[number];
+export type RankedIssueSearchType = Exclude<IssueSearchType, "keyword">;
+
 export interface SearchCommandOptions {
-    searchType?: "keyword" | "semantic" | "hybrid";
+    searchType?: IssueSearchType;
+    local?: boolean;
     type?: "issue" | "pr" | "all" | "repo";
     repo?: string;
     state?: "open" | "closed" | "all";
@@ -472,7 +477,7 @@ export interface SearchResult {
     reactions: number | null;
     repo: string;
     url: string;
-    source?: "advanced" | "legacy" | "both" | "local-semantic" | "local-hybrid";
+    source?: "advanced" | "legacy" | "both" | RankedIssueSearchType | `local-${RankedIssueSearchType}`;
 }
 
 // ============================================
