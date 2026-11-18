@@ -377,6 +377,55 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[1]), ["context", "add", "a", "/tmp/spec.md", "--note", "the second part"])
     }
 
+    func testUndoRestoresPinnedContextAfterTheSourceChanges() throws {
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let tools = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../tools").standardizedFileURL
+        let git = URL(fileURLWithPath: "/usr/bin/git")
+        let page = fixture.appendingPathComponent("Practice notes.md")
+        let original = "Use the original wording.\n"
+        @discardableResult
+        func run(_ executable: URL, _ args: [String]) throws -> Data {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = args
+            process.currentDirectoryURL = fixture
+            var environment = ProcessInfo.processInfo.environment
+            environment["GENESIS_TOOLS_HOME"] = fixture.path
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            let output = try process.runCapturing()
+            return try XCTUnwrap(output.status == 0 ? output.stdout : nil, String(decoding: output.stderr, as: UTF8.self))
+        }
+        func context() throws -> [MeetingContextRef] {
+            try JSONDecoder().decode([MeetingContextRef].self, from: run(tools, ["meetings", "context", "list", "last", "--json"]))
+        }
+
+        try run(git, ["init", "-q"])
+        try original.write(to: page, atomically: true, encoding: .utf8)
+        try run(git, ["add", "--", page.lastPathComponent])
+        try run(git, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+                      "commit", "--no-gpg-sign", "-qm", "original document"])
+        let commit = String(decoding: try run(git, ["rev-parse", "HEAD"]), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        try run(tools, ["meetings", "new", "Practice", "--yes"])
+        try run(tools, ["meetings", "context", "add", "last", page.path, "--rev", commit, "--title", "Practice", "--note", "Read aloud"])
+        let saved = try XCTUnwrap(context().first)
+        XCTAssertEqual(saved.file?.revision.text, original)
+        try run(tools, ["meetings", "context", "remove", "last", saved.id])
+        XCTAssertTrue(try context().isEmpty)
+        try "Replacement wording.\n".write(to: page, atomically: true, encoding: .utf8)
+        try run(git, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+                      "commit", "--no-gpg-sign", "-qam", "changed document"])
+        try run(tools, ["meetings"] + MeetingDetailModel.readdArgs(meeting: "last", saved))
+        let restored = try XCTUnwrap(context().first)
+        XCTAssertEqual(restored.file?.revision.commit, commit)
+        XCTAssertEqual(restored.file?.revision.text, original)
+        XCTAssertEqual(restored.title, saved.title)
+        XCTAssertEqual(restored.note, saved.note)
+    }
+
     func testARecordKnowsWhyItsRecordingStopped() throws {
         let recording = try JSONDecoder().decode(MeetingRecordView.Recording.self, from: Data("""
         {"frames":120,"status":"stopped","stopReason":"failed"}

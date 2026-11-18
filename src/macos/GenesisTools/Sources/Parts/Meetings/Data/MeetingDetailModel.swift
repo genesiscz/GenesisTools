@@ -1109,6 +1109,7 @@ extension MeetingDetailModel {
             args += ["--note", ref.ref]
         } else {
             args.append(ref.ref)
+            if let revision = ref.file?.revision { args += ["--rev", revision.commit] }
             if let note = ref.note { args += ["--note", note] }
         }
         if let title = ref.title { args += ["--title", title] }
