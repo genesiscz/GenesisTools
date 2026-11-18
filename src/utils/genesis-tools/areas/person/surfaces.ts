@@ -33,8 +33,10 @@ export async function presentInSystemDialog(ctx: RequestContext): Promise<Reques
         return ctx.pass("No trusted system dialog program is installed.");
     }
     const timeout = Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000));
+    const input = dialog.input?.({ title: ctx.args.title, body: ctx.args.reason });
     const proc = Bun.spawn(argv, {
         env: dialogEnvironment(dialog.searchPath),
+        stdin: input === undefined ? "ignore" : Buffer.from(input, "utf8"),
         stdout: "pipe",
         stderr: "pipe",
         timeout,
