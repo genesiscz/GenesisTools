@@ -14,6 +14,10 @@ import SwiftUI
 //   meeting, as an answer or a Skip leaves one.
 //   `--card <row id>` draws that row's pin card alone, and `--sheet history` (or `history:<row id>`) the history
 //   sheet alone: a popover and a sheet are windows of their own, which the window's picture does not hold.
+//   `--sheet seats` draws the seats sheet, and `--sheet selection:<from>-<to>` the transcript's selection popover for
+//   those line indexes, then redraws it ten times with each redraw's main-thread time in app-perf.log.
+//   `--undo-person <name>` removes that person from the meeting, presses Undo on the notice, and pictures the notice
+//   once the undo has answered (at most 10 s): it writes to the record, so use it on a copy.
 //   `--play '{"kind":"item","id":"i2"}'` (a Moment target as the engine writes it) starts that Moment of the meeting
 //   without sound first, so the picture shows the dock, the timeline and the playing row.
 
@@ -78,6 +82,8 @@ struct MeetingsRequest {
     /// step (no run starts).
     var voices: String?
     var voicesProgress: MeetingsCallProgress?
+    /// `--undo-person <name>`: a removal of that person and its notice's Undo, before the picture.
+    var undoPerson: String?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -113,6 +119,7 @@ struct MeetingsRequest {
             case "--suggest-progress": request.suggestProgress = value().map(MeetingsRequest.progress)
             case "--voices": request.voices = value()
             case "--voices-progress": request.voicesProgress = value().map(MeetingsRequest.progress)
+            case "--undo-person": request.undoPerson = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--play-request": request.playRequest = value().flatMap { try? JSONDecoder().decode(MeetingsAPI.MomentParams.self, from: Data($0.utf8)) }
@@ -359,6 +366,28 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         do { list = .loaded(try await detail.sourceMeetingsNear()) } catch { list = .failed(asFailure(error), previous: nil) }
         return AnyView(LinkSourceSheet(detail: detail, list: list, close: {}))
     }
+    if request.sheet == "seats" {
+        // The sheet reads the meeting's people and labels from the open meeting, as the "…" menu's sheet does.
+        return AnyView(MeetingSeatsEditor(seats: detail.record.value?.seats ?? MeetingSeats(), save: { _ in }, saved: {})
+            .environment(\.meetingDetail, detail))
+    }
+    if let sheet = request.sheet, sheet.hasPrefix("selection:") {
+        let bounds = sheet.dropFirst(10).split(separator: "-").compactMap { Int($0) }
+        guard bounds.count == 2, bounds[0] <= bounds[1] else { return nil }
+        if case .idle = detail.transcript { detail.loadTranscript() }
+        _ = await waitUntil(60) { detail.transcript.value != nil || detail.transcript.failure != nil }
+        if case .idle = detail.rows { detail.loadRows() }
+        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        let entries = detail.transcript.value?.entries ?? []
+        let projection = TranscriptPaneProjection.make(.init(entries: entries, applyAbove: 70, items: detail.record.value?.items ?? [],
+                                                             evidence: detail.rows.value?.lineEvidence ?? [],
+                                                             durationSec: model.meeting(detail.id)?.durationSec))
+        let range = bounds[0]...bounds[1]
+        let selection = Set(projection.built.flatMap(\.lines).filter { range.contains($0.index) }.map(\.id))
+        FileHandle.standardError.write(Data("meetings snapshot: selection of \(selection.count) of \(entries.count) lines, \(detail.record.value?.items.count ?? 0) items\n".utf8))
+        return AnyView(TranscriptSelectionPopover(detail: detail, entries: entries, projection: projection, selection: selection,
+                                                  wordSelection: nil, clipSec: 5, clear: {}))
+    }
     if let sheet = request.sheet, sheet.hasPrefix("person:") {
         let name = String(sheet.dropFirst(7))
         return AnyView(PersonStayEditor(detail: detail, original: name.isEmpty ? nil : PersonStay.of(name, in: detail.record.value),
@@ -431,8 +460,26 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     detail.suggestProgress = step
                 }
             }
+            if let name = request.undoPerson, let detail = model.detail {
+                // What Remove and its notice's Undo leave: the person goes, Undo puts them back, and the picture shows
+                // the notice once the undo answered.
+                do {
+                    try await detail.removePersonStay(PersonStay.of(name, in: detail.record.value))
+                } catch {
+                    FileHandle.standardError.write(Data("meetings snapshot: removing \(name) failed: \(error)\n".utf8))
+                    exit(1)
+                }
+                if let notice = detail.notices.notices.last, let undo = notice.actions.first(where: { $0.label == "Undo" }) {
+                    detail.notices.press(undo, of: notice.id)
+                    let settled = await waitUntil(10) { detail.notices.waiting[notice.id] == nil }
+                    let text = detail.notices.notice(notice.id)?.text ?? "gone"
+                    FileHandle.standardError.write(Data("meetings snapshot: the undo notice reads \"\(text)\", \(settled ? "settled" : "still waiting after 10 s")\n".utf8))
+                }
+            }
             if let text = request.notice, let detail = model.detail {
-                detail.notices.push(StackedNotice(text: text, actions: [.undo { _ in }]))
+                detail.notices.push(StackedNotice(text: text, actions: [.undo { [weak notices = detail.notices] id in
+                    notices?.push(StackedNotice(text: "Undone"), replacing: id)
+                }]))
             }
             if let target = request.play {
                 guard let meeting = model.detail?.id else {
@@ -490,7 +537,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let window: NSWindow
             if request.card != nil || request.sheet != nil {
                 guard let part = await meetingsSnapshotPart(request, model: model) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source or person:<name>)\n".utf8))
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, selection:<from>-<to> or person:<name>)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)
@@ -499,6 +546,15 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             window.orderInForSnapshot()
             try? await Task.sleep(for: .milliseconds(900))
+            if let sheet = request.sheet, sheet.hasPrefix("selection:"), let detail = model.detail {
+                // A redraw while the popover is open, as a busy key or the playback makes one: the main thread's busy
+                // time of ten redraws (`meetings.transcript.selection.redraw … main busy`).
+                for round in 1...10 {
+                    HubMainBusy.measure("meetings.transcript.selection.redraw")
+                    if round % 2 == 1 { detail.busy.insert("snapshot.redraw") } else { detail.busy.remove("snapshot.redraw") }
+                    try? await Task.sleep(for: .milliseconds(700))
+                }
+            }
             if request.card == nil, request.sheet == nil, let top = model.player.top {
                 // The dock reads its waveform once it shows, after the reads the window sent before it (the service
                 // answers in order): a picture taken before they land showed a timeline without a waveform.

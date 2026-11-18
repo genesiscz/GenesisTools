@@ -428,42 +428,8 @@ struct TranscriptBlocksPane: View {
 
     /// Built only while the selection popover is open.
     private func popover() -> AnyView {
-        guard let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
-        let shown = projection?.shown ?? []
-        return AnyView(VStack(alignment: .leading, spacing: 8) {
-            ForEach(selectedLines) { line in
-                let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
-                if let match = detail.record.value?.evidence?.voice?.lines[String(sourceIndex)] {
-                    ListenVoiceScores(match: match)
-                }
-                if let acoustic = detail.rows.value?.lineEvidence?.first(where: { $0.index == sourceIndex }) {
-                    ForEach(acoustic.acousticText, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(.secondary) }
-                    if let echo = acoustic.echoText {
-                        Label(echo, systemImage: "speaker.wave.2").font(.system(size: 11)).foregroundStyle(.pink)
-                    }
-                }
-            }
-            SelectionPopover(
-            selection: chosen,
-            clipLengthSec: clipSec > 0 ? clipSec : MeetingsPreferences.Transcript.clipSec.defaultValue,
-            stage: { selection, text in
-                detail.stageComment(selection, text: text)
-                clearSelection()
-            },
-            clip: { target, length in
-                detail.window?.player.play(target, in: detail.id, from: .selection, lengthSec: length)
-            },
-            playAll: { target in
-                detail.window?.player.play(target, in: detail.id, from: .selection)
-            },
-            saveClip: { selection, length in
-                detail.saveSelectionClip(selection, length: length) { clearSelection() }
-            },
-            savingClip: detail.isBusy("clip.save"),
-            speakerEvidence: Self.lineEvidence(selectedLines.compactMap { shown.indices.contains($0.index) ? shown[$0.index] : nil },
-                                               items: detail.record.value?.items ?? [], ruleNames: detail.window?.ruleNames ?? [:]),
-            close: { clearSelection() })
-        })
+        AnyView(TranscriptSelectionPopover(detail: detail, entries: entries, projection: projection, selection: selection,
+                                           wordSelection: wordSelection, clipSec: clipSec, clear: clearSelection))
     }
 
     private func clearSelection() {
@@ -521,6 +487,71 @@ struct TranscriptBlocksPane: View {
 /// the line marks (every line against every hint, term and comment range), built every block, counted the bands, summed
 /// the words and filtered the items for the spot check on each redraw: a keystroke in the Word timings form, a line
 /// selection, a popover toggle.
+/// The selection popover's content: each selected line's voice scores and acoustic notes, then Comment and Clip with
+/// the sentences of the speaker ranges that named the lines. `--sheet selection:<from>-<to>` draws it alone, and its
+/// render runs in a span (`meetings.transcript.selection.render`).
+struct TranscriptSelectionPopover: View {
+    @Bindable var detail: MeetingDetailModel
+    let entries: [TranscriptLine]
+    let projection: TranscriptPaneProjection?
+    let selection: Set<String>
+    let wordSelection: TranscriptSelection?
+    let clipSec: Double
+    let clear: () -> Void
+
+    private var selectedLines: [TranscriptBlockLine] {
+        (projection?.built ?? []).flatMap(\.lines).filter { selection.contains($0.id) }
+    }
+
+    var body: some View {
+        let span = HubPerf.begin("meetings.transcript.selection.render", "\(selection.count) lines")
+        let content = self.content
+        span.end()
+        return content
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) {
+            let shown = projection?.shown ?? []
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(selectedLines) { line in
+                    let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
+                    if let match = detail.record.value?.evidence?.voice?.lines[String(sourceIndex)] {
+                        ListenVoiceScores(match: match)
+                    }
+                    if let acoustic = detail.rows.value?.lineEvidence?.first(where: { $0.index == sourceIndex }) {
+                        ForEach(acoustic.acousticText, id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(.secondary) }
+                        if let echo = acoustic.echoText {
+                            Label(echo, systemImage: "speaker.wave.2").font(.system(size: 11)).foregroundStyle(.pink)
+                        }
+                    }
+                }
+                SelectionPopover(
+                selection: chosen,
+                clipLengthSec: clipSec > 0 ? clipSec : MeetingsPreferences.Transcript.clipSec.defaultValue,
+                stage: { selection, text in
+                    detail.stageComment(selection, text: text)
+                    clear()
+                },
+                clip: { target, length in
+                    detail.window?.player.play(target, in: detail.id, from: .selection, lengthSec: length)
+                },
+                playAll: { target in
+                    detail.window?.player.play(target, in: detail.id, from: .selection)
+                },
+                saveClip: { selection, length in
+                    detail.saveSelectionClip(selection, length: length) { clear() }
+                },
+                savingClip: detail.isBusy("clip.save"),
+                speakerEvidence: TranscriptBlocksPane.lineEvidence(selectedLines.compactMap { shown.indices.contains($0.index) ? shown[$0.index] : nil },
+                                                                   items: detail.record.value?.items ?? [], ruleNames: detail.window?.ruleNames ?? [:]),
+                close: { clear() })
+            }
+        }
+    }
+}
+
 struct TranscriptPaneProjection: Equatable {
     struct Input: Equatable {
         var entries: [TranscriptLine] = []
