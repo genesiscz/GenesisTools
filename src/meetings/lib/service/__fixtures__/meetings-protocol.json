@@ -100,6 +100,10 @@
             "voices.remove",
             "voices.sample",
             "voices.workers",
+            "voices.move",
+            "voices.reject",
+            "voices.undo",
+            "voices.quality",
             "voice.backfill",
             "subscribe",
             "unsubscribe"
@@ -494,6 +498,12 @@
               "samples": [],
               "meetings": [
                 "2026-11-03-1000-design-review"
+              ],
+              "owner": {
+                "name": "Alex Example"
+              },
+              "projects": [
+                "Atlas"
               ]
             },
             {
@@ -502,9 +512,17 @@
               "samples": [],
               "meetings": [
                 "2026-11-03-1000-design-review"
+              ],
+              "owner": {
+                "name": "Dana Example"
+              },
+              "projects": [
+                "Atlas"
               ]
             }
-          ]
+          ],
+          "learnt": [],
+          "conflicts": []
         }
       }
     },
@@ -1469,6 +1487,10 @@
             "voices.remove",
             "voices.sample",
             "voices.workers",
+            "voices.move",
+            "voices.reject",
+            "voices.undo",
+            "voices.quality",
             "voice.backfill",
             "subscribe",
             "unsubscribe"
@@ -6142,6 +6164,10 @@
             "voices.remove",
             "voices.sample",
             "voices.workers",
+            "voices.move",
+            "voices.reject",
+            "voices.undo",
+            "voices.quality",
             "voice.backfill",
             "subscribe",
             "unsubscribe"
@@ -7097,6 +7123,89 @@
           "issue": {
             "tool": "meetings"
           }
+        }
+      }
+    },
+    {
+      "method": "voices.move",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 122,
+        "method": "voices.move",
+        "params": {
+          "id": "vs_missing",
+          "to": {
+            "name": "Reed Example"
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 122,
+        "result": {
+          "status": "stale",
+          "reason": "Stale voice sample selection."
+        }
+      }
+    },
+    {
+      "method": "voices.reject",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 123,
+        "method": "voices.reject",
+        "params": {
+          "id": "vs_missing",
+          "reason": "bad-audio"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 123,
+        "result": {
+          "status": "stale",
+          "reason": "Stale voice sample selection."
+        }
+      }
+    },
+    {
+      "method": "voices.undo",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 124,
+        "method": "voices.undo",
+        "params": {
+          "token": "missing"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 124,
+        "result": {
+          "status": "refused",
+          "reason": "Unknown voice correction token."
+        }
+      }
+    },
+    {
+      "method": "voices.quality",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 125,
+        "method": "voices.quality",
+        "params": {
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 125,
+        "result": {
+          "learnt": []
         }
       }
     }

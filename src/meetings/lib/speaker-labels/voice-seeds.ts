@@ -77,7 +77,12 @@ export function meetingVoiceSeeds(options: {
         if (entry.action.kind === "confirm") {
             return entry.action.minConfidence === undefined && entry.decided.includes(item.id);
         }
-        return entry.action.kind === "answer" && !!entry.question && targets.get(entry.question)?.has(item.id);
+        return (
+            entry.action.kind === "answer" &&
+            !entry.action.knownAnswer &&
+            !!entry.question &&
+            targets.get(entry.question)?.has(item.id)
+        );
     };
     const decidedIds = new Set(
         ranges.filter((range) => range.status === "confirmed" && direct(range)).map((range) => range.id)

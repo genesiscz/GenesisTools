@@ -2,7 +2,12 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { roomSeatNames, seatIntervalsFor } from "@genesiscz/utils/meetings/seats";
-import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import {
+    groupedOwners,
+    meetingVoiceOwner,
+    predictionPrints,
+    readVoiceLibrary,
+} from "@genesiscz/utils/meetings/voice-library";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Seat } from "./sound";
 
@@ -30,12 +35,21 @@ export function voiceReadiness(record: MeetingRecord, { seatsHint = true } = {})
             })
             .map((person) => person.name),
     ].filter((name, index, names) => names.findIndex((known) => sameName(known, name)) === index);
-    const enrolled = Object.entries(record.project ? readVoiceStore(record.project).people : {});
+    const view = readVoiceLibrary();
+    const directory = groupedOwners(view);
+    const enrolled = record.project
+        ? predictionPrints({
+              project: record.project,
+              view,
+              owners: attended.map((name) => meetingVoiceOwner(record, name)),
+          }).samples
+        : [];
     const occupied = new Set<Seat>();
     const covered = new Set<Seat>();
     const people = Object.fromEntries(
         attended.map((name) => {
-            const prints = enrolled.filter(([person]) => sameName(person, name)).flatMap(([, value]) => value.samples);
+            const binding = directory.select(meetingVoiceOwner(record, name));
+            const prints = enrolled.filter((s) => directory.binding(s.owner) === binding);
             if (seats) {
                 const ownMic = record.participants.some((person) => person.self && sameName(person.name, name));
                 const intervals = record.seats && seatIntervalsFor(record.seats, name);

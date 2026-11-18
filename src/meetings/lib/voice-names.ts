@@ -1,6 +1,7 @@
 import { DEFAULT_APPLY_ABOVE, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { ChannelEmbedding, LineEmbedding } from "@genesiscz/utils/meetings/voice";
-import type { VoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import type { SampleSource } from "@genesiscz/utils/meetings/voice-library";
+import type { VoicePrint, VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Seat, TrackKind } from "./sound";
 import type { LabelContext, LineLabel } from "./speaker-labels/types";
@@ -19,16 +20,18 @@ interface NamingInputs {
     minSeconds: number;
     exclusion?: VoiceSettings["exclusion"];
     meeting?: string;
+    lineKeys?: readonly string[];
+    sources?: ReadonlyMap<VoicePrint, SampleSource>;
     certain?: LabelContext["certain"];
     applyAbove?: number;
 }
 
-function unit(vector: number[]): number[] | undefined {
+export function unit(vector: number[]): number[] | undefined {
     const length = Math.hypot(...vector);
     return length > 0 && Number.isFinite(length) ? vector.map((v) => v / length) : undefined;
 }
 
-function addVector(sum: number[], vector: number[], sign: 1 | -1): void {
+export function addVector(sum: number[], vector: number[], sign: 1 | -1): void {
     for (let i = 0; i < sum.length; i++) {
         sum[i]! += sign * vector[i]!;
     }
@@ -47,6 +50,7 @@ export function meanVoice(embeddings: readonly number[][]): number[] | undefined
 }
 
 interface WindowPrint {
+    lineKey?: string;
     fromSec: number;
     toSec: number;
     vector: number[];
@@ -98,7 +102,13 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             external: [],
         };
         if (window) {
-            if (profile.windows.some((w) => w.fromSec === window.fromSec && w.toSec === window.toSec)) {
+            if (
+                profile.windows.some((w) =>
+                    w.lineKey && window.lineKey
+                        ? w.lineKey === window.lineKey
+                        : w.fromSec === window.fromSec && w.toSec === window.toSec
+                )
+            ) {
                 return;
             }
             profile.windows.push(window);
@@ -111,8 +121,18 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
     }
 
     for (const [name, person] of Object.entries(options.store.people)) {
+        const seen = new Set<string>();
         for (const sample of person.samples) {
             const vector = unit(sample.embedding);
+            const source = options.sources?.get(sample);
+            const identity =
+                source && [source.rootMeeting, source.lineKey, sample.track, sample.embedding.length].join("\0");
+            if (identity && seen.has(identity)) {
+                continue;
+            }
+            if (identity) {
+                seen.add(identity);
+            }
             if (vector) {
                 add(name, {
                     seat: sample.seat,
@@ -120,8 +140,8 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
                     model: options.store.model,
                     vector,
                     window:
-                        sample.meeting === options.meeting
-                            ? { fromSec: sample.fromSec, toSec: sample.toSec, vector }
+                        (source?.rootMeeting ?? sample.meeting) === options.meeting
+                            ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
                             : undefined,
                 });
             }
@@ -152,15 +172,16 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
                 track: line.track,
                 model: voice.model,
                 vector,
-                window: { fromSec, toSec, vector, voice },
+                window: { fromSec, toSec, vector, voice, lineKey: options.lineKeys?.[line.index] },
             });
         }
     }
     return { profiles, enrolled };
 }
 
-function overlapsWindow(w: WindowPrint, { fromSec, toSec, voice }: Target): boolean {
+function overlapsWindow(w: WindowPrint, { fromSec, toSec, voice, lineKey }: Target): boolean {
     return (
+        (lineKey !== undefined && w.lineKey === lineKey) ||
         (w.fromSec < toSec && w.toSec > fromSec) ||
         (w.voice?.source.audioPath === voice.source.audioPath &&
             w.voice.channel === voice.channel &&
@@ -169,7 +190,7 @@ function overlapsWindow(w: WindowPrint, { fromSec, toSec, voice }: Target): bool
     );
 }
 
-function dot(a: number[], b: number[]): number {
+export function dot(a: number[], b: number[]): number {
     let score = 0;
     for (let i = 0; i < a.length; i++) {
         score += a[i]! * b[i]!;
@@ -237,7 +258,16 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
         if (toSec - fromSec < options.minSeconds) {
             return { ...base, reason: "no-voice" };
         }
-        const target = { seat: line.seat, track: line.track, model: voice.model, vector, fromSec, toSec, voice };
+        const target = {
+            lineKey: options.lineKeys?.[line.index],
+            seat: line.seat,
+            track: line.track,
+            model: voice.model,
+            vector,
+            fromSec,
+            toSec,
+            voice,
+        };
         const touching = stays.filter(
             (stay) => stay.seat === line.seat && stay.fromSec < toSec && stay.toSec > fromSec
         );

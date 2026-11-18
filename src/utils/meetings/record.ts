@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -16,6 +16,8 @@ import { voiceEvidenceSchema } from "./voice";
 
 const { log } = logger.scoped("meetings-record");
 
+export const JOURNAL_FILE = "decisions.ndjson";
+const copyParentSchema = z.object({ meeting: z.string(), copiedFrom: z.string().optional() });
 export const MEETING_FILE = "meeting.json";
 /**
  * The folder in a meeting's folder that holds its cut Moment clips (src/meetings/lib/moment.ts): a cache of WAVs cut
@@ -446,6 +448,8 @@ export const meetingRecordSchema = z.object({
     id: z.string().min(1),
     title: z.string(),
     project: projectNameSchema.optional(),
+    /** Root record whose recording this duplicate shares, retained even when journal items are omitted. */
+    voiceRootMeeting: z.string().min(1).optional(),
     /** Labels inside the project ("Checkout 2.0"): a meeting has one project and any labels. */
     labels: z.array(z.string().trim().min(1)).default([]),
     start: isoTime,
@@ -604,6 +608,48 @@ export function parseSourceRef(ref: string): { source: string; id: string } | un
 export interface MeetingChange {
     command: string;
     change: string;
+}
+
+/** Old duplicates carry their immediate parent in the creation event or in copied journal entries. */
+export function voiceRootMeeting(store: MeetingStore, record: MeetingRecord): string {
+    let current = record;
+    const visited = new Set<string>();
+    while (!visited.has(current.id)) {
+        visited.add(current.id);
+        if (current.voiceRootMeeting) {
+            return current.voiceRootMeeting;
+        }
+        const created = current.history.find((event) => event.command === "duplicate");
+        let parent = created && /^duplicated from (.+?)(?: without items)?$/.exec(created.change)?.[1];
+        if (!parent && !current.history.some((event) => event.command === "new")) {
+            const file = join(store.folder(current.id), JOURNAL_FILE);
+            if (existsSync(file)) {
+                const parents = new Set<string>();
+                for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
+                    const entry = copyParentSchema.safeParse(parseJSON(line));
+                    if (entry.success && entry.data.meeting === current.id && entry.data.copiedFrom) {
+                        parents.add(entry.data.copiedFrom);
+                    }
+                }
+                if (parents.size > 1) {
+                    throw new Error("Ambiguous recording lineage in the copied journal.");
+                }
+                parent = [...parents][0];
+            }
+        }
+        if (!parent) {
+            return current.id;
+        }
+        if (!FOLDER_NAME.test(parent)) {
+            throw new Error("Invalid recording lineage.");
+        }
+        const previous = store.read(parent);
+        if (!previous) {
+            return parent;
+        }
+        current = previous;
+    }
+    throw new Error("Cycle in copied recording lineage.");
 }
 
 /**

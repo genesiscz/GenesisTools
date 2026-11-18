@@ -3468,6 +3468,10 @@ async function captureExamples(): Promise<Example[]> {
     });
     await ask(window, "meeting.seats.suggest", { meeting: RETRO.id });
     await ask(window, "meeting.thresholds.preview", { meeting: "nope", values: {} });
+    await ask(window, "voices.move", { id: "vs_missing", to: { name: "Reed Example" } });
+    await ask(window, "voices.reject", { id: "vs_missing", reason: "bad-audio" });
+    await ask(window, "voices.undo", { token: "missing" });
+    await ask(window, "voices.quality", { project: "Atlas" });
     return examples;
 }
 

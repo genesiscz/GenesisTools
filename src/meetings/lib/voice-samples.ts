@@ -1,13 +1,17 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
+import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
-    addVoicePrint,
-    readVoiceStore,
-    removeVoicePrint,
-    type VoicePrint,
-} from "@genesiscz/utils/meetings/voice-store";
+    type ConfirmedSampleInput,
+    changeVoiceLearning,
+    meetingVoiceOwner,
+    type SampleId,
+    type SampleSource,
+    sourceForVoicePrint,
+    type VoiceOwner,
+    voiceLineKeys,
+} from "@genesiscz/utils/meetings/voice-library";
+import type { VoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { JournalEntry } from "./decision-actions";
@@ -23,6 +27,13 @@ export interface VoicePrintChange {
     project: string;
     person: string;
     model: string;
+    source?: SampleSource;
+    owner?: VoiceOwner;
+    id?: SampleId;
+    token?: string;
+    item?: string;
+    origin?: "answer" | "confirm";
+    acquiredBy?: "live" | "backfill";
     before?: VoicePrint;
     after: VoicePrint;
 }
@@ -72,7 +83,7 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
             : [];
     }
 
-    if (action.kind !== "confirm" || action.minConfidence !== undefined) {
+    if (action.kind !== "confirm" || action.minConfidence !== undefined || !action.items.length) {
         return [];
     }
 
@@ -82,6 +93,8 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
             after?.kind !== "speaker-range" ||
             after.status !== "confirmed" ||
             change.before?.status === "confirmed" ||
+            (!entry.decided.includes(after.id) && !action.items.includes(after.id)) ||
+            after.segments?.length ||
             after.decision?.token !== entry.token ||
             !singleSpeaker(after.speaker) ||
             (after.voices?.length ?? 0) > 1 ||
@@ -148,8 +161,11 @@ export async function prepareVoicePrints<T extends VoiceTarget>(opened: OpenedMe
         return [];
     }
     const energy = await opened.energy();
+    const meeting = await opened.meeting();
+    const rootMeeting = voiceRootMeeting(opened.store, opened.record);
+    const keys = voiceLineKeys(meeting);
     const lines = lineEvidence(
-        (await opened.meeting()).transcript,
+        meeting.transcript,
         (await opened.evidence()) ?? { segments: [], speaking: [] },
         undefined,
         energy.share
@@ -184,17 +200,18 @@ export async function prepareVoicePrints<T extends VoiceTarget>(opened: OpenedMe
         : [];
     const byLine = new Map(embeddings.map((line) => [line.index, line]));
     const hashes = new Map<string, string>();
-    const people = readVoiceStore(project).people;
     const results = [];
     for (const [i, target] of targets.entries()) {
         const lines = eligible[i]!.flatMap(({ index }) => byLine.get(index) ?? []);
         const changes = await printsOf({
             ...target,
+            owner: meetingVoiceOwner(opened.record, target.voice.person),
             meeting: opened.record.id,
             project,
             lines,
             hashes,
-            samples: people[target.voice.person]?.samples ?? [],
+            keys,
+            rootMeeting,
         });
         results.push({ target, changes });
     }
@@ -206,8 +223,10 @@ async function printsOf(options: {
     project: string;
     entry: JournalEntry;
     voice: ConfirmedVoice;
+    owner: VoiceOwner;
     lines: VoiceLine[];
-    samples: VoicePrint[];
+    keys: string[];
+    rootMeeting: string;
     hashes: Map<string, string>;
 }): Promise<VoicePrintChange[]> {
     const { project, entry, voice, hashes } = options;
@@ -220,11 +239,7 @@ async function printsOf(options: {
 
         let sourceSha = hashes.get(channel.source.audioPath);
         if (!sourceSha) {
-            const hash = createHash("sha256");
-            for await (const chunk of createReadStream(channel.source.audioPath)) {
-                hash.update(chunk);
-            }
-            sourceSha = hash.digest("hex");
+            sourceSha = await sha256FileAsync(channel.source.audioPath);
             hashes.set(channel.source.audioPath, sourceSha);
         }
 
@@ -239,31 +254,55 @@ async function printsOf(options: {
             confirmedAt: entry.at,
             question: voice.item,
         };
-        const before = options.samples.find(
-            (sample) =>
-                sample.meeting === after.meeting &&
-                sample.sourceSha === after.sourceSha &&
-                sample.track === after.track &&
-                sample.fromSec === after.fromSec &&
-                sample.toSec === after.toSec
-        );
-        changes.push({ project, person: voice.person, model: channel.model, ...(before ? { before } : {}), after });
+        changes.push({
+            project,
+            owner: options.owner,
+            person: voice.person,
+            model: channel.model,
+            after,
+            token: entry.token,
+            origin: entry.action.kind === "confirm" ? "confirm" : "answer",
+            source: sourceForVoicePrint(after, options.rootMeeting, options.keys[line.index]),
+        });
     }
 
     return changes;
 }
 
-export function writeAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
-    const written: VoicePrintChange[] = [];
-    try {
-        for (const change of changes) {
-            addVoicePrint(change.project, change.person, change.after, change.model);
-            written.push(change);
-        }
-    } catch (error) {
-        undoAnsweredVoiceSamples(written);
-        throw error;
-    }
+function learningInput(change: VoicePrintChange): ConfirmedSampleInput {
+    return {
+        project: change.project,
+        owner: change.owner ?? { name: change.person },
+        model: change.model,
+        print: change.after,
+        source: change.source ?? sourceForVoicePrint(change.after),
+        origin: change.origin ?? "answer",
+        acquiredBy: change.acquiredBy ?? "live",
+        ...(change.token && (change.item || change.after.question)
+            ? { decision: { token: change.token, item: (change.item ?? change.after.question)! } }
+            : {}),
+    };
+}
+
+export function publishVoiceChanges(
+    changes: readonly VoicePrintChange[],
+    dryRun = false,
+    removed: readonly VoicePrintChange[] = []
+) {
+    return changeVoiceLearning({
+        add: changes.map(learningInput),
+        remove: removed.map((change) => ({
+            project: change.project,
+            model: change.model,
+            owner: change.owner ?? { name: change.person },
+            print: change.after,
+            before: change.before,
+            source: change.source,
+            token: change.token,
+            id: change.id,
+        })),
+        dryRun,
+    });
 }
 
 export async function saveAnsweredVoiceSamples(options: {
@@ -271,102 +310,92 @@ export async function saveAnsweredVoiceSamples(options: {
     entry: JournalEntry;
 }): Promise<VoicePrintChange[]> {
     const changes = await prepareAnsweredVoiceSamples(options);
-    writeAnsweredVoiceSamples(changes);
-    return changes;
+    const { results } = publishVoiceChanges(changes);
+    return changes.flatMap((change, i) => {
+        const result = results[i];
+        return result?.status === "added" ? [{ ...change, id: result.id }] : [];
+    });
 }
 
-const CONFIRMING_KINDS = new Set(["question", "speaker-range"]);
+/** Old journals have just the print and the deciding item. Match its v1 payload and human decision on replay. */
+export function journalVoices(entry: JournalEntry | undefined, item?: string, project?: string): VoicePrintChange[] {
+    if (!entry?.voices?.length) {
+        return [];
+    }
+    const targets = answeredVoiceTargets(
+        entry,
+        entry.voices.map((change) => change.person)
+    );
+    return entry.voices.flatMap((change) => {
+        const decidingItem = change.item ?? change.after.question;
+        const matching = targets.filter(
+            (t) =>
+                (!decidingItem || t.voice.item === decidingItem) &&
+                sameName(t.voice.person, change.person) &&
+                (!t.voice.seat || t.voice.seat === change.after.seat) &&
+                change.after.fromSec >= t.voice.fromSec &&
+                change.after.toSec <= t.voice.endSec
+        );
+        const target = matching.length === 1 ? matching[0] : undefined;
+        if (
+            !target ||
+            (item && item !== target.voice.item) ||
+            !change.project ||
+            (project !== undefined && change.project !== project) ||
+            entry.meeting !== change.after.meeting
+        ) {
+            return [];
+        }
+        return [
+            {
+                ...change,
+                item: target.voice.item,
+                token: entry.token,
+                origin: entry.action.kind === "confirm" ? "confirm" : "answer",
+            },
+        ];
+    });
+}
 
-/** Restore only samples owned by items whose confirmation changed, including Undo of an Undo. */
 export function transitionAnsweredVoiceSamples(options: {
     entry: JournalEntry;
     entryOf: (token: string) => JournalEntry | undefined;
+    project?: string;
 }): () => void {
     const removed: VoicePrintChange[] = [];
     const added: VoicePrintChange[] = [];
     for (const change of options.entry.changes) {
-        const was = change.before;
-        const next = change.after;
-        // The items whose confirmation owns prints: a speaker question's answer, a voice-named range's confirm.
-        if (!CONFIRMING_KINDS.has(was?.kind ?? "") && !CONFIRMING_KINDS.has(next?.kind ?? "")) {
+        const before = change.before?.status === "confirmed" ? change.before.decision?.token : undefined;
+        const after = change.after?.status === "confirmed" ? change.after.decision?.token : undefined;
+        if (before === after) {
             continue;
         }
-        const beforeToken = was?.status === "confirmed" ? was.decision?.token : undefined;
-        const afterToken = next?.status === "confirmed" ? next.decision?.token : undefined;
-        if (beforeToken === afterToken) {
-            continue;
+        if (before) {
+            removed.push(...journalVoices(options.entryOf(before), change.id));
         }
-        if (beforeToken) {
-            removed.push(
-                ...(options.entryOf(beforeToken)?.voices ?? []).filter((voice) => voice.after.question === change.id)
-            );
-        }
-        if (afterToken && afterToken !== options.entry.token) {
-            added.push(
-                ...(options.entryOf(afterToken)?.voices ?? []).filter((voice) => voice.after.question === change.id)
-            );
+        if (after && after !== options.entry.token) {
+            added.push(...journalVoices(options.entryOf(after), change.id, options.project));
         }
     }
-    const owned = removed.filter((change) =>
-        readVoiceStore(change.project).people[change.person]?.samples.some(
-            (sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after)
-        )
-    );
-    added.push(...(options.entry.voices ?? []));
-    // Snapshot ownership at the moment of the write, so another answer's later sample survives rollback.
-    const captured = added.map((change) => ({
-        ...change,
-        before: readVoiceStore(change.project).people[change.person]?.samples.find(
-            (sample) =>
-                sample.meeting === change.after.meeting &&
-                sample.sourceSha === change.after.sourceSha &&
-                sample.track === change.after.track &&
-                sample.fromSec === change.after.fromSec &&
-                sample.toSec === change.after.toSec
-        ),
-    }));
-    const rollback = () => {
-        undoAnsweredVoiceSamples(captured);
-        writeAnsweredVoiceSamples(owned);
-    };
-    try {
-        undoAnsweredVoiceSamples(owned);
-        writeAnsweredVoiceSamples(captured);
-    } catch (error) {
-        rollback();
-        throw error;
+    const own = journalVoices(options.entry, undefined, options.project);
+    const batch = publishVoiceChanges([...added, ...own], false, removed);
+    if (own.length && options.entry.voices) {
+        options.entry.voices = own.flatMap((change, i) => {
+            const result = batch.results[i + added.length];
+            return result?.status === "added" ? [{ ...change, id: result.id }] : [];
+        });
     }
-    return rollback;
+    return batch.rollback;
 }
 
-/** Replay persisted embeddings in journal file order (oldest first); no source sound or model is needed. */
 export function replayAnsweredVoiceSamples(entries: readonly JournalEntry[]): void {
     const known = new Map<string, JournalEntry>();
     for (const entry of entries) {
-        transitionAnsweredVoiceSamples({ entry, entryOf: (token) => known.get(token) });
+        transitionAnsweredVoiceSamples({ entry: structuredClone(entry), entryOf: (token) => known.get(token) });
         known.set(entry.token, entry);
     }
 }
 
-/** Undo removes only a print this answer still owns; a later confirmation survives. */
 export function undoAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
-    for (const change of [...changes].reverse()) {
-        const samples = readVoiceStore(change.project).people[change.person]?.samples ?? [];
-        const at = samples.filter(
-            (sample) => sample.meeting === change.after.meeting && sample.fromSec === change.after.fromSec
-        );
-        if (!at.some((sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after))) {
-            continue;
-        }
-        removeVoicePrint(change.project, change.person, {
-            meeting: change.after.meeting,
-            fromSec: change.after.fromSec,
-        });
-        for (const sample of at.filter((sample) => SafeJSON.stringify(sample) !== SafeJSON.stringify(change.after))) {
-            addVoicePrint(change.project, change.person, sample, change.model);
-        }
-        if (change.before) {
-            addVoicePrint(change.project, change.person, change.before, change.model);
-        }
-    }
+    publishVoiceChanges([], false, changes);
 }

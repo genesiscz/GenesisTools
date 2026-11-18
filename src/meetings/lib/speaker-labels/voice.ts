@@ -1,5 +1,6 @@
 import { availableParallelism, loadavg } from "node:os";
 import { join } from "node:path";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { measureCpuBusyPercent, readPerformanceCores } from "@genesiscz/utils/macos/host-stats";
 import {
     type MeetingsConfig,
@@ -8,9 +9,22 @@ import {
     type VoiceFreeCores,
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
+import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
-import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import {
+    groupedOwners,
+    meetingVoiceOwner,
+    predictionPrints,
+    readVoiceLibrary,
+    refused,
+    type SampleSource,
+    sameLine,
+    sourceForVoicePrint,
+    type VoicePrint,
+    type VoiceStore,
+    voiceLineKeys,
+} from "@genesiscz/utils/meetings/voice-library";
 import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import { profiler } from "@genesiscz/utils/profile";
 import type { OpenedMeeting } from "../opened-meeting";
@@ -214,22 +228,84 @@ export function voiceLabeler(options: {
             if (!context.project || !context.attended.some((stay) => stay.seat)) {
                 return [];
             }
-            const store = readVoiceStore(context.project);
+            const view = readVoiceLibrary();
+            const owners = context.attended.map((stay) => meetingVoiceOwner(options.opened.record, stay.person));
+            const prints = predictionPrints({
+                project: context.project,
+                scope: options.settings.sampleScope,
+                owners,
+                view,
+            });
+            const directory = groupedOwners(view);
+            const names = new Map(owners.map((owner) => [directory.select(owner), owner.name]));
+            const store: VoiceStore = { version: 1, model: prints.model, people: Object.create(null) };
+            const sources = new Map<VoicePrint, SampleSource>();
+            for (const sample of prints.samples) {
+                const name = names.get(directory.binding(sample.owner));
+                if (name) {
+                    const person: { samples: VoicePrint[] } = store.people[name] ?? { samples: [] };
+                    person.samples.push(sample);
+                    store.people[name] = person;
+                    sources.set(sample, sample.source);
+                }
+            }
             if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }
+            const root = voiceRootMeeting(options.opened.store, options.opened.record);
+            const localRefusals = view.library.rejected.filter((r) => r.source.rootMeeting === root);
+            const localSamples = view.library.samples.filter(
+                (s) => s.source.rootMeeting === root && !refused(view.library, s.source, s.owner)
+            );
+            const lineKeys =
+                localRefusals.length || localSamples.length ? voiceLineKeys(await options.opened.meeting()) : undefined;
             const lines = options.readLines
                 ? await options.readLines(context, store.model)
                 : await meetingVoiceLines(options.opened, context);
             const inputs = {
                 ...options.settings,
                 store,
-                meeting: options.opened.record.id,
+                meeting: root,
+                lineKeys,
+                sources,
                 applyAbove: context.applyAbove,
                 attended: context.attended,
                 lines,
             };
             const certain = new Map(context.certain);
+            const hashes = new Map<string, string>();
+            for (const line of lines) {
+                const name = certain.get(line.index);
+                const ready = line.channels.find((channel) => channel.quality === "ready");
+                if (!name || !ready || (!localRefusals.length && !localSamples.length)) {
+                    continue;
+                }
+                const file = ready.source.audioPath;
+                const sha = hashes.get(file) ?? (await sha256FileAsync(file));
+                hashes.set(file, sha);
+                const source = sourceForVoicePrint(
+                    {
+                        meeting: root,
+                        sourceSha: sha,
+                        seat: line.seat,
+                        track: line.track,
+                        fromSec: line.fromSec ?? ready.fromSec,
+                        toSec: line.toSec ?? ready.toSec,
+                    },
+                    root,
+                    lineKeys?.[line.index]
+                );
+                const owner = meetingVoiceOwner(options.opened.record, name);
+                const binding = directory.select(owner) ?? directory.binding(owner);
+                const blockers = localRefusals.filter((r) => !r.owner || directory.binding(r.owner) === binding);
+                if (
+                    refused(view.library, source, owner) ||
+                    blockers.some((r) => sameLine(r.source, source)) ||
+                    localSamples.some((s) => sameLine(s.source, source) && directory.binding(s.owner) !== binding)
+                ) {
+                    certain.delete(line.index);
+                }
+            }
             // Several strangers on the same single-owner seat must not train one another as its owner.
             const vetoes = new Map<number, LineLabel>();
             if (context.seatOnlySeeds?.size && Object.keys(store.people).length) {
