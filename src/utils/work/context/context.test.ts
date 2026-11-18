@@ -53,7 +53,7 @@ function ctx(over: Partial<WorkContext> = {}): WorkContext {
         actor,
         project: "Proj",
         ports: {
-            legacy: { write: async () => ({ ok: false }) },
+            legacy: { write: async () => ({ ok: false }), check: async (actions) => actions.map(() => ({ ok: true })) },
             delivery: { place: async () => null, deliver: async () => ({ outcome: "unknown", to: null, at: "" }) },
         },
         random: () => `id${String(n++).padStart(6, "0")}`,

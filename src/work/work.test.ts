@@ -194,12 +194,17 @@ describe("add-member (P5 decision 5)", () => {
         expect(parity()).toEqual([]);
     });
 
-    test("the owner adds to a handoff another session posted; that session's poster credential is not needed", async () => {
+    test("an agent's add to a handoff another session posted is refused before the store writes; the owner's add passes", async () => {
         const posted = postHandoff({ title: "theirs", tasks: [{ text: "one" }] }, env.depsFor(byFor("sess-b", "b")));
         const handoff = posted.handoff.id;
         const a = await spot("the owner moves it in");
+        const journal = (): number => (db.query("SELECT COUNT(*) AS n FROM changes").get() as { n: number }).n;
+        const before = journal();
         const agent = await write(ctx(), { verb: "add-member", refs: [a], to: handoff });
-        expect(agent.ok ? "" : agent.diagnostics.map((d) => d.code).join()).toContain("LEGACY_WRITE_FAILED");
+        expect(agent.ok ? "" : agent.diagnostics.map((d) => d.code).join()).toBe("LEGACY_REFUSED");
+        expect(showItem(db, a)?.item.state).toBe("spotted");
+        expect(journal()).toBe(before);
+        expect(getHandoff({ id: handoff }, deps).handoff.tasks.map((t) => t.text)).toEqual(["one"]);
 
         const owner = { ...ctx(), actor: ownerAtSurface("TestProj", "hub").actor };
         const b = await spot("the owner moves this one in");

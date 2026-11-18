@@ -61,6 +61,8 @@ export interface LegacyWriteResult {
 
 export interface LegacyHandoffs {
     write(action: LegacyAction): Promise<LegacyWriteResult>;
+    /** What the old store would answer to these actions, in order, without writing; one result per action. */
+    check(actions: LegacyAction[]): Promise<LegacyWriteResult[]>;
 }
 
 /** Who else belongs to the caller: the sessions whose live claims a spotted item may pair with. */
