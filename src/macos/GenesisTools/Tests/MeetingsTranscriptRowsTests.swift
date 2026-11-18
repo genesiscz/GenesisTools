@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -113,12 +115,13 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         let shown = TranscriptBlocksPane.shownLines(
             [line("Speaker 2", at: 10, confidence: 0.8, suggested: "Alice Example", band: "applied", indicator: indicator)],
             applyAbove: 70)
-        XCTAssertEqual(shown[0].speaker, "Alice Example")
+        XCTAssertEqual(shown[0].who, .name("Alice Example"))
+        XCTAssertEqual(shown[0].speaker, "Speaker 2", "the label the engine sent stays, for a rename or an assignment")
         XCTAssertEqual(shown[0].indicator, indicator)
         let below = TranscriptBlocksPane.shownLines(
             [line("Speaker 2", at: 10, confidence: 0.6, suggested: "Alice Example", band: "applied", indicator: indicator)],
             applyAbove: 70)
-        XCTAssertEqual(below[0].speaker, "[Alice Example: 60 %]")
+        XCTAssertEqual(below[0].who, .guess("Alice Example", percent: 60))
         XCTAssertEqual(below[0].indicator, indicator)
         let block = TranscriptBlock.build(from: below)[0]
         XCTAssertEqual(block.lines[0].indicator, indicator, "the block line draws the glyph from it")
@@ -129,7 +132,7 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         let shown = TranscriptBlocksPane.shownLines(
             [line("Speaker 2", at: 10, confidence: 0.9, suggested: "Alice Example", questioned: true, band: "applied")],
             applyAbove: 70)
-        XCTAssertEqual(shown[0].speaker, "[Alice Example: 90 %]")
+        XCTAssertEqual(shown[0].who, .guess("Alice Example", percent: 90))
         XCTAssertEqual(shown[0].guess, true)
     }
 
@@ -147,14 +150,14 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
             line("Speaker 2", at: 2, confidence: 0.95, suggested: "Alice Example", band: "applied"),
             line("Speaker 2", at: 3, confidence: 0.75, suggested: "Bob Example", band: "applied"),
             line("Speaker 2", at: 4, confidence: 0.55, suggested: "Bob Example", band: "guess"),
-            line("[unclear: \"Speaker 3\"]", at: 5, confidence: 0.3, band: "applied"),
+            line("[unclear: \"Speaker 3\"]", at: 5, confidence: 0.3, band: "open"),
             line("Bob Example", at: 6, confidence: 0.3, suggested: "Bob Example", band: "confirmed"),
         ]
         let at70 = TranscriptBlocksPane.BandCount(TranscriptBlocksPane.shownLines(entries, applyAbove: 70))
         XCTAssertEqual(at70, .init(applied: 3, guesses: 1, open: 1))
-        XCTAssertEqual(at70.words, "3 applied · 1 guess · 1 open")
+        XCTAssertEqual(at70.words, "3 named · 1 guessed · 1 open lines")
         let at90 = TranscriptBlocksPane.BandCount(TranscriptBlocksPane.shownLines(entries, applyAbove: 90))
-        XCTAssertEqual(at90.words, "2 applied · 2 guesses · 1 open")
+        XCTAssertEqual(at90.words, "2 named · 2 guessed · 1 open lines")
     }
 
     /// T3: the popover names the one range that set the line's name, not every range over its time.
@@ -189,24 +192,66 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertEqual(TranscriptBlocksPane.lineEvidence(lines, items: []), ["Speaking indicator: Bob Example"])
     }
 
-    /// L21: a guessed block takes the guess style; a name or an unclear mark does not.
+    /// L21: a guessed block takes the guess style; a name or an open question does not.
     func testOnlyAGuessTakesTheGuessStyle() {
-        XCTAssertTrue(TranscriptBlock(id: "b", speaker: "[Alice Example: 60 %]", lines: []).isGuess)
+        XCTAssertTrue(TranscriptBlock(id: "b", speaker: "Speaker 2", who: .guess("Alice Example", percent: 60), lines: []).isGuess)
         XCTAssertFalse(TranscriptBlock(id: "b", speaker: "Alice Example", lines: []).isGuess)
-        XCTAssertFalse(TranscriptBlock(id: "b", speaker: "[unclear: \"Speaker 2\"]", lines: []).isGuess)
+        XCTAssertFalse(TranscriptBlock(id: "b", speaker: "[unclear: \"Speaker 2\"]", who: .open(label: "Speaker 2", candidates: []), lines: []).isGuess)
+    }
+
+    /// Window audit H2a: the speaker is one of three typed states read from the engine's fields, and the export's mark
+    /// never reaches a chip, an initials badge or a person colour.
+    func testSpeakerStatesComeFromTheTypedFieldsNeverFromTheMark() throws {
+        let json = #"""
+        [{"id":"o1","startSec":1,"speaker":"[unclear: \"Speaker 2\"; 1) Alice Example 2) Bob Example]","text":"First words.","band":"open","guess":false,"unclear":{"label":"Speaker 2","readings":["Alice Example","Bob Example"]}},
+         {"id":"o2","startSec":2,"speaker":"[unclear: \"Speaker 2\"; 1) Alice Example 2) Bob Example]","text":"Second words.","band":"open","guess":false,"unclear":{"label":"Speaker 2","readings":["Alice Example","Bob Example"]}},
+         {"id":"g1","startSec":3,"speaker":"[Bob Example: 63 %]","text":"Guessed words.","band":"guess","guess":true,"confidence":0.63,"suggestedSpeaker":"Bob Example"},
+         {"id":"v1","startSec":4,"speaker":"[unclear: Alice Example + Bob Example]","text":"Both talk.","band":"open","guess":false,"voices":["Alice Example","Bob Example"]},
+         {"id":"n1","startSec":5,"speaker":"Alice Example","text":"Named words."}]
+        """#
+        let lines = try JSONDecoder().decode([TranscriptLine].self, from: Data(json.utf8))
+        XCTAssertEqual(lines.map(\.who), [.open(label: "Speaker 2", candidates: ["Alice Example", "Bob Example"]),
+                                           .open(label: "Speaker 2", candidates: ["Alice Example", "Bob Example"]),
+                                           .guess("Bob Example", percent: 63), .name("Alice Example + Bob Example"),
+                                           .name("Alice Example")])
+        let blocks = TranscriptBlock.build(from: TranscriptBlocksPane.shownLines(lines, applyAbove: 70))
+        XCTAssertEqual(blocks.map(\.who.title), ["Who is this?", "Bob Example", "Alice Example + Bob Example", "Alice Example"],
+                       "the two open lines of one question are one block")
+        XCTAssertEqual(TranscriptBlock.names(blocks), ["Alice Example", "Alice Example + Bob Example", "Bob Example"],
+                       "an open question takes no person colour")
+        XCTAssertEqual(TranscriptAvatar.initials(blocks[0].who.personName), "?")
+        XCTAssertEqual(TranscriptBlocksPane.BandCount(TranscriptBlocksPane.shownLines(lines, applyAbove: 70)).words,
+                       "1 named · 1 guessed · 2 open lines", "a line no suggestion covers is not counted")
+
+        // Drawn: the chip says "Who is this?" and the guess's percent, never the mark's words.
+        let view = VStack(alignment: .leading) {
+            ForEach(blocks) { block in TranscriptBlockView(block: block, heardLineID: nil, selected: [], past: false, play: { _ in }) }
+        }
+        .frame(width: 460).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        XCTAssertTrue(text.contains("Who is this?"), text)
+        XCTAssertTrue(text.contains("63 %"), text)
+        XCTAssertFalse(text.contains("unclear"), text)
+        XCTAssertFalse(text.contains("1)"), text)
     }
 
     /// L23: the spot check's measured share, from the answered spot-check questions.
     func testTheSpotCheckRate() throws {
-        XCTAssertNil(TranscriptBlocksPane.spotCheckRate([]))
+        XCTAssertNil(SpotCheckRate.of([]))
         let answered = try items("""
         [{"id":"q1","kind":"question","status":"confirmed","group":"spot-check","answer":"Bob Example","evidence":{"originalSpeaker":"Alice Example"}},
          {"id":"q2","kind":"question","status":"confirmed","group":"spot-check","answer":"Alice Example","evidence":{"originalSpeaker":"Alice Example"}},
          {"id":"q3","kind":"question","status":"suggested","group":"spot-check"},
          {"id":"q4","kind":"question","status":"confirmed","group":"long-stretch","answer":"Bob Example","evidence":{"originalSpeaker":"Alice Example"}}]
         """)
-        let rate = try XCTUnwrap(TranscriptBlocksPane.spotCheckRate(answered))
+        let rate = try XCTUnwrap(SpotCheckRate.of(answered))
         XCTAssertEqual(rate.changed, 1)
-        XCTAssertEqual(rate.checked, 2)
+        XCTAssertEqual(rate.answered, 2)
+        XCTAssertEqual(rate.sentence, "1 of 2 answers changed the speaker (50 %)", "the pane and the Items bar say it one way")
     }
 }

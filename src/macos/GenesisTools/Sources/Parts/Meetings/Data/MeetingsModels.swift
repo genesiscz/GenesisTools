@@ -117,7 +117,7 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     var departureText: String? {
         guard case .object(let event)? = evidence?["departure"],
               case .string(let name)? = event["name"] else { return nil }
-        return "\(name) said goodbye at \(Int(fromSec ?? 0)) s"
+        return "\(name) said goodbye at \(MeetingsFormat.clock(fromSec ?? 0))"
     }
     var speakerEvidenceText: String? {
         guard kind == "speaker-range" else { return nil }
@@ -279,7 +279,59 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     var questioned: Bool? = nil
     var guess: Bool? = nil
     var band: String? = nil
+    /// The open speaker question on the line: the source label it is about and the answers on offer. `speaker` holds
+    /// the export's mark (`[unclear: "<label>"; 1) … 2) …]`), which is never drawn as a name.
+    struct Unclear: Decodable, Equatable, Hashable {
+        let label: String
+        let readings: [String]
+    }
+    var unclear: Unclear? = nil
+    /// The voices a confirmed answer heard together on the line ("several voices").
+    var voices: [String]? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
+
+    /// Who said the line, as the window draws it (window audit H2a): a name, a guess with its percent, or an open
+    /// question with the answers on offer. Read from the typed fields, never from the marks in `speaker`.
+    var who: TranscriptSpeaker {
+        if let voices, !voices.isEmpty { return .name(voices.joined(separator: " + ")) }
+        if guess == true, let name = suggestedSpeaker {
+            return .guess(name, percent: confidence.map { Int(($0 * 100).rounded()) })
+        }
+        if band == "applied", let name = suggestedSpeaker { return .name(name) }
+        if let unclear { return .open(label: unclear.label, candidates: unclear.readings) }
+        if band == "open" { return .open(label: nil, candidates: []) }
+        return .name(speaker)
+    }
+}
+
+/// Who said a transcript line, in one of three states that look different (ux genesiscz.md 12a): a name, a guess (the
+/// name with its percent, in the tentative hue), or an open question ("Who is this?" in the ask hue, the candidates as
+/// answers).
+enum TranscriptSpeaker: Hashable {
+    case name(String)
+    case guess(String, percent: Int?)
+    /// `label`: the source label the question is about, nil when the engine did not send it.
+    case open(label: String?, candidates: [String])
+
+    /// The words a chip shows: the name, the guessed name, or "Who is this?".
+    var title: String {
+        switch self {
+        case .name(let name): return name.isEmpty ? "Unknown voice" : name
+        case .guess(let name, _): return name
+        case .open: return "Who is this?"
+        }
+    }
+
+    /// The name the person colour and the initials come from; empty for an open question, which takes the neutral "?".
+    var personName: String {
+        switch self {
+        case .name(let name), .guess(let name, _): return name
+        case .open: return ""
+        }
+    }
+
+    var isGuess: Bool { if case .guess = self { return true } else { return false } }
+    var isOpen: Bool { if case .open = self { return true } else { return false } }
 }
 
 struct MeetingTranscript: Decodable, Equatable {

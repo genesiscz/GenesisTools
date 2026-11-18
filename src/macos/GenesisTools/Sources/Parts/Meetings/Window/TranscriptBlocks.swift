@@ -45,13 +45,24 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
 /// Consecutive lines of one speaker, drawn as one Riverside block: the speaker chip, the block's time, the lines.
 struct TranscriptBlock: Equatable, Identifiable {
     let id: String
+    /// The speaker the engine sent for the block's first line: the label a rename or an assignment acts on. It may be an
+    /// export mark (`[unclear: …]`), so it is never drawn; `who` is.
     let speaker: String
+    /// Who said the block, as the chip draws it: a name, a guess or an open question (window audit H2a).
+    let who: TranscriptSpeaker
     var lines: [TranscriptBlockLine]
+
+    init(id: String, speaker: String, who: TranscriptSpeaker? = nil, lines: [TranscriptBlockLine]) {
+        self.id = id
+        self.speaker = speaker
+        self.who = who ?? .name(speaker)
+        self.lines = lines
+    }
 
     var startSec: Double? { lines.first(where: { $0.startSec != nil })?.startSec }
     var endSec: Double? { lines.last?.endSec }
-    /// The block's name is a guess with its percent (`[name: NN %]`, I11): its chip takes the guess style.
-    var isGuess: Bool { speaker.hasPrefix("[") && speaker.hasSuffix(" %]") }
+    /// The block's name is a guess with its percent (I11): its chip takes the guess style.
+    var isGuess: Bool { who.isGuess }
 
     /// Groups the transcript's lines into blocks. A new block starts when the speaker changes, and also after a
     /// silence longer than `breakAfterGapSec` (nil: never; the plan's pick, one block per turn as Riverside draws it).
@@ -74,11 +85,12 @@ struct TranscriptBlock: Equatable, Identifiable {
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
                                            text: entry.text, marks: (marks[entry.rowID] ?? []).union(cues.map(\.kind)), words: entry.words ?? [],
                                            indicator: entry.indicator, evidenceMarks: cues)
-            if var last = blocks.last, last.speaker == entry.speaker, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
+            let who = entry.who
+            if var last = blocks.last, last.who == who, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
                 blocks[blocks.count - 1] = last
             } else {
-                blocks.append(TranscriptBlock(id: "b-\(entry.rowID)", speaker: entry.speaker, lines: [line]))
+                blocks.append(TranscriptBlock(id: "b-\(entry.rowID)", speaker: entry.speaker, who: who, lines: [line]))
             }
         }
         return blocks
@@ -96,7 +108,7 @@ struct TranscriptBlock: Equatable, Identifiable {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return blocks }
         return blocks.compactMap { block in
-            let speakerHit = block.speaker.localizedStandardContains(query)
+            let speakerHit = block.who.title.localizedStandardContains(query)
             var hit = speakerHit
             var copy = block
             for index in copy.lines.indices where copy.lines[index].text.localizedStandardContains(query) {
@@ -116,6 +128,12 @@ struct TranscriptBlock: Equatable, Identifiable {
         guard let line = block.lines.last(where: { $0.isHeard(at: position) }) else { return nil }
         let wordRange = wordHighlights ? line.words.compactMap { $0.heardRange(at: position, in: line.text) }.first : nil
         return TranscriptHeard(blockID: block.id, lineID: line.id, wordRange: wordRange)
+    }
+
+    /// The shown names of the blocks, sorted: the person colours pick among them. Computed with the blocks (the pane's
+    /// projection), never in a list's body.
+    static func names(_ blocks: [TranscriptBlock]) -> [String] {
+        Set(blocks.map(\.who.personName).filter { !$0.isEmpty }).sorted()
     }
 
     /// The end of the last block the playback has passed: the latest block end at or before `position`. A block is
@@ -204,9 +222,10 @@ struct TranscriptBlocksList: View {
     /// A ⇧ or ⌘ click on a line (R43).
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
     var selectWords: (TranscriptBlockLine, NSRange) -> Void = { _, _ in }
+    /// The shown names, sorted (`TranscriptBlock.names`), for the person colours: computed with the blocks, not here.
+    var speakerNames: [String] = []
 
     var body: some View {
-        let speakerNames = Set(blocks.map(\.speaker)).sorted()
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(blocks) { block in
                 TranscriptBlockView(
@@ -267,16 +286,13 @@ struct TranscriptBlockView: View, Equatable {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             if showsAvatar {
-                TranscriptAvatar(speaker: block.speaker)
+                TranscriptAvatar(speaker: block.who.personName)
             }
             VStack(alignment: .leading, spacing: 2) {
-                SpeakerChip(speaker: block.speaker, startSec: block.startSec, play: play)
-                    // The guess style (I11): lighter, with a dotted underline, so a guess never reads as a fact.
-                    .opacity(block.isGuess ? 0.65 : 1)
-                    .underline(block.isGuess, pattern: .dot)
+                SpeakerChip(speaker: block.speaker, who: block.who, startSec: block.startSec, play: play)
                 ForEach(block.lines) { line in
                     TranscriptBlockLineView(
-                        line: line, speaker: SpeakerChip(speaker: block.speaker).name, heard: line.id == heardLineID,
+                        line: line, speaker: block.who.title, heard: line.id == heardLineID,
                         wordRange: line.id == heardLineID ? heardWordRange : nil,
                         selected: selected.contains(line.id), past: past, play: play, select: select, selectWords: selectWords
                     )
@@ -338,8 +354,7 @@ struct TranscriptAvatar: View {
             .accessibilityHidden(true)
     }
 
-    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty label is "?". Only letters and digits count, so a label that
-    /// is a note in brackets ("[unclear: …]") is "UN", not "[\"".
+    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty name (an open question) is "?". Only letters and digits count.
     static func initials(_ speaker: String) -> String {
         let words = speaker.split(whereSeparator: { $0.isWhitespace || $0 == "-" })
             .map { String($0.filter { $0.isLetter || $0.isNumber }) }
@@ -383,7 +398,9 @@ private struct TranscriptBlockLineView: View {
                     RoundedRectangle(cornerRadius: 4).fill(fill)
                         .animation(animateActivity && !reduceMotion ? .easeOut(duration: 0.16) : nil, value: heard)
                 }
-            if let indicator = line.indicator {
+            // Only an indicator that says something the block does not (window audit M12): stuck and ignored, or naming
+            // someone other than the block's speaker. Drawn on every line, it was a glyph down the whole pane.
+            if let indicator = line.indicator, indicator.ignored != nil || !indicator.names.contains(speaker) {
                 Image(systemName: indicator.ignored == nil ? "person.wave.2" : "exclamationmark.triangle")
                     .font(.system(size: 11)).foregroundStyle(indicator.ignored == nil ? Color.secondary : .orange)
                     .instantTooltip(indicator.shownText)
