@@ -25,13 +25,19 @@ struct PresenceGroup: Identifiable, Equatable {
         groups += microphones.map { Self(id: "mic." + $0.id, title: "Via " + ($0.label ?? $0.deviceId ?? $0.id), people: []) }
         let remoteIndex = groups.count
         groups.append(Self(id: "remote", title: "Remote", people: []))
+        let changingIndex = groups.count
+        groups.append(Self(id: "changing", title: "Room and remote", people: []))
         groups.append(Self(id: "unknown", title: "Unknown seat", people: []))
         var seat: [String: Int] = [:]
-        for remote in record.seats?.remote ?? [] { seat[remote.name] = remoteIndex }
-        for (index, microphone) in microphones.enumerated() { for name in microphone.people { seat[name] = index + 1 } }
-        for name in (record.seats?.room ?? []) + (record.seats?.microphones?.first { $0.id == "self" }?.people ?? []) { seat[name] = 0 }
+        let remote = Set((record.seats?.remote ?? []).filter { ($0.toSec ?? .infinity) > ($0.fromSec ?? 0) }.map { PeopleText.personKey($0.name) })
+        for key in remote { seat[key] = remoteIndex }
+        for (index, microphone) in microphones.enumerated() { for name in microphone.people { seat[PeopleText.personKey(name)] = index + 1 } }
+        for name in record.seats?.room ?? [] {
+            let key = PeopleText.personKey(name)
+            seat[key] = remote.contains(key) ? changingIndex : 0
+        }
         for person in record.participants ?? [] {
-            groups[seat[person.name] ?? (person.isSelf == true ? 0 : groups.count - 1)].people.append(Person(person: person, reads: reads[person.name] ?? []))
+            groups[seat[PeopleText.personKey(person.name)] ?? (person.isSelf == true ? 0 : groups.count - 1)].people.append(Person(person: person, reads: reads[person.name] ?? []))
         }
         return groups.filter { !$0.people.isEmpty }
     }
