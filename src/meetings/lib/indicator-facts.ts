@@ -16,12 +16,13 @@ export interface LabelPrehistory {
     lines: number;
 }
 
-/** Empty readings give no indicator evidence, including when the people panel is hidden. */
-export function indicatorFacts(options: {
+interface IndicatorInputs {
     meeting: SourceMeeting;
     evidence: MeetingEvidence | null;
     presence?: Presence[];
-}): { gaps: IndicatorGap[]; labels: LabelPrehistory[]; people: string[] } {
+}
+
+export function indicatorGaps(options: IndicatorInputs): IndicatorGap[] {
     const readings = options.evidence?.speaking ?? [];
     const addressed = new TranscriptLines(options.meeting.transcript);
     const timed = options.meeting.transcript.flatMap((entry, index) =>
@@ -46,7 +47,12 @@ export function indicatorFacts(options: {
             gaps.push({ fromSec, toSec, reason: "no speaking or muted indicator observation" });
         }
     }
-    const labels = options.meeting.speakers
+    return gaps;
+}
+
+export function indicatorLabels(options: IndicatorInputs): LabelPrehistory[] {
+    const readings = options.evidence?.speaking ?? [];
+    return options.meeting.speakers
         .filter((speaker) => speaker.origin === "platform")
         .map((speaker): LabelPrehistory => {
             const firstOwnIndicatorSec = readings
@@ -59,7 +65,12 @@ export function indicatorFacts(options: {
                 .sort((a, b) => a - b)[0];
             const boundary = Math.min(firstOwnIndicatorSec ?? Infinity, firstJoinSec ?? Infinity);
             const early = Number.isFinite(boundary)
-                ? timed.filter((line) => sameName(line.entry.speaker, speaker.name) && line.startSec < boundary)
+                ? options.meeting.transcript.filter(
+                      (line) =>
+                          line.startSec !== undefined &&
+                          line.startSec < boundary &&
+                          sameName(line.speaker, speaker.name)
+                  )
                 : [];
             return {
                 label: speaker.name,
@@ -69,9 +80,18 @@ export function indicatorFacts(options: {
                 ...(early.length >= 10 ? { fromSec: early[0]!.startSec, toSec: early.at(-1)!.startSec } : {}),
             };
         });
+}
+
+/** Empty readings give no indicator evidence, including when the people panel is hidden. */
+export function indicatorFacts(options: IndicatorInputs): {
+    gaps: IndicatorGap[];
+    labels: LabelPrehistory[];
+    people: string[];
+} {
+    const readings = options.evidence?.speaking ?? [];
     return {
-        gaps,
-        labels,
+        gaps: indicatorGaps(options),
+        labels: indicatorLabels(options),
         people: [...new Set(readings.flatMap((reading) => [...reading.speaking, ...(reading.muted ?? [])]))],
     };
 }

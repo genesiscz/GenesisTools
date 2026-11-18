@@ -5,6 +5,7 @@ import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { PROFILER_SCOPE_NAMES, profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
@@ -54,7 +55,9 @@ async function runnerFixture(fields: Partial<MeetingRecord> = {}) {
         spyOn(opened, "config").mockResolvedValue(config),
         spyOn(opened, "evidence").mockResolvedValue(null),
         spyOn(opened, "energy").mockResolvedValue({}),
-        spyOn(opened, "suggestionPresence").mockResolvedValue([]),
+        spyOn(opened, "suggestionPresence").mockImplementation((options) =>
+            opened.presence(options.attendance, options.attendanceId)
+        ),
         spyOn(opened, "presence").mockResolvedValue([]),
         spyOn(opened, "sound").mockResolvedValue({ tracks: [], slice: () => undefined }),
         spyOn(opened, "dictionary").mockResolvedValue({ abbrExpansion: "every", entries: [] }),
@@ -66,6 +69,75 @@ async function runnerFixture(fields: Partial<MeetingRecord> = {}) {
 }
 
 describe("suggest runner word settings", () => {
+    test("suggest records collection, the selected rule and the save under its registered profiler scope", async () => {
+        const { store, record } = await runnerFixture();
+        const scope = profiler.scope("meetings-suggest");
+        const measured = spyOn(scope, "measureAsync");
+        const sections = spyOn(scope, "section");
+        spies.push(measured, sections);
+        await runSuggest({ store, record, rules: ["terms"], wordCheck: "off" });
+        expect(PROFILER_SCOPE_NAMES).toContain("meetings-suggest");
+        expect(measured.mock.calls.map(([label]) => label)).toContain("collectForSuggest");
+        expect(sections.mock.calls.map(([label]) => label)).toEqual(
+            expect.arrayContaining(["rule.terms", "save", "run"])
+        );
+    });
+
+    test("seat lines use the segment share before energy and skip evidence unrelated to a seat", async () => {
+        const { opened, meeting, config } = await runnerFixture();
+        config.global.speakerLabels.seat.enabled = true;
+        config.global.speakerLabels.voice.enabled = false;
+        meeting.transcript = [0, 5, 10].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        const share = Object.assign(
+            mock(() => 0.1),
+            { acoustic: mock(() => undefined) }
+        );
+        spies.push(
+            spyOn(opened, "energy").mockResolvedValue({ share }),
+            spyOn(opened, "evidence").mockResolvedValue({
+                files: [],
+                speaking: [],
+                segments: [
+                    { startSec: 0, endSec: 10, channel: "mic" },
+                    { startSec: 5, endSec: 10, channel: "system" },
+                ],
+            })
+        );
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.map(({ index, seat }) => [index, seat])).toEqual([
+            [0, "mic"],
+            [2, "call"],
+        ]);
+        expect(share).toHaveBeenCalledTimes(1);
+        expect(share.acoustic).not.toHaveBeenCalled();
+    });
+
+    test("a speakers-only run does not read term dictionaries or open sound for the seat labeler", async () => {
+        const { opened, store, record, meeting, config } = await runnerFixture({
+            seats: { room: ["Alice Example"], remote: [] },
+        });
+        config.global.speakerLabels.voice.enabled = false;
+        meeting.transcript = [{ speaker: "Speaker 1", startSec: 0, text: "A line." }];
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                files: [],
+                segments: [{ startSec: 0, endSec: 5, channel: "mic" }],
+                speaking: [],
+            }),
+            spyOn(opened, "presence").mockResolvedValue([{ name: "Alice Example", fromSec: 0, toSec: 5 }])
+        );
+
+        const result = await runSuggest({ store, record, rules: ["speakers"] });
+        expect(result.warnings).toEqual([]);
+        expect(new MeetingStore(store.storage).read(record.id)?.items).toContainEqual(
+            expect.objectContaining({ kind: "speaker-range", speaker: "Alice Example" })
+        );
+        expect(opened.dictionary).not.toHaveBeenCalled();
+        expect(opened.sourceWords).not.toHaveBeenCalled();
+        expect(opened.sound).not.toHaveBeenCalled();
+        expect(opened.presence).toHaveBeenCalledTimes(1);
+    });
+
     test("the configured occurrence minimum reaches both word questions and retirement", async () => {
         const fixture = await runnerFixture();
         const { store, record, opened, meeting, config } = fixture;

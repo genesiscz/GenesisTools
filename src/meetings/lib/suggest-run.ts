@@ -7,10 +7,12 @@ import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { type LineVoice, lineVoices, type VoiceFrame, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
+import { profiler } from "@genesiscz/utils/profile";
+import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { contextEntryText } from "./context-file";
-import { indicatorFacts } from "./indicator-facts";
+import { indicatorGaps } from "./indicator-facts";
 import { addQualityQuestions } from "./listen-quality";
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
@@ -23,6 +25,7 @@ import { anchoredMeetingVoices } from "./voice";
 import type { WordCheckChoice } from "./word-check";
 
 const { log } = logger.scoped("meetings-suggest");
+const prof = profiler.scope("meetings-suggest");
 
 /**
  * One person under two names, as the people directory knows them for this meeting (its merges and aliases, from the
@@ -112,36 +115,44 @@ export async function runSuggest(options: {
     gt?: MeetingReviewDoor;
 }): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
     const { store, record, rules } = options;
+    using _run = prof.section("run");
+    const needsSpeakerInputs = rules.includes("speakers") || rules.includes("evidence");
+    const terms = rules.includes("terms");
     const warnings: string[] = [];
-    const opened = OpenedMeeting.of(store, record);
-    if (options.onProgress) {
+    const opened = prof.measure("open", () => OpenedMeeting.of(store, record));
+    if (options.onProgress || prof.enabled) {
+        let beforeProgress = prof.enabled ? prof.start("before-first-voice-progress") : undefined;
         const { voiceProgressForMeeting } = await import("./speaker-labels/voice");
-        voiceProgressForMeeting.set(opened, options.onProgress);
+        voiceProgressForMeeting.set(opened, (done, total) => {
+            beforeProgress?.();
+            beforeProgress = undefined;
+            options.onProgress?.(done, total);
+        });
     }
 
-    const collected = await collectForSuggest(
-        opened,
-        warnings,
-        options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
+    const collected = await prof.measureAsync("collectForSuggest", () =>
+        collectForSuggest(
+            opened,
+            warnings,
+            options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
+        )
     );
-    const meeting = await opened.meeting();
-    const config = await opened.config();
-    const evidence = rules.includes("evidence") || rules.includes("speakers") ? await opened.evidence() : null;
+    const meeting = await prof.measureAsync("source-meeting", () => opened.meeting());
+    const config = await prof.measureAsync("config", () => opened.config());
+    const evidence = needsSpeakerInputs ? await prof.measureAsync("evidence.read", () => opened.evidence()) : null;
 
     // Only indicator evidence that was read can show a gap: a terms-only run, or a source without it, has none to judge.
     if (evidence) {
-        for (const gap of indicatorFacts({ meeting, evidence }).gaps) {
+        for (const gap of prof.measure("evidence.indicator-gaps", () => indicatorGaps({ meeting, evidence }))) {
             warnings.push(`Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`);
         }
     }
 
-    if (rules.includes("terms")) {
-        warnings.push(...contextWarnings(collected));
-    }
     let wordCheck: Awaited<ReturnType<OpenedMeeting["wordCheck"]>>["check"];
 
-    if (rules.includes("terms")) {
-        const check = await opened.wordCheck(options.wordCheck);
+    if (terms) {
+        warnings.push(...prof.measure("terms.context-warnings", () => contextWarnings(collected)));
+        const check = await prof.measureAsync("terms.word-check", () => opened.wordCheck(options.wordCheck));
 
         if (!check.check && options.wordCheck !== "off") {
             warnings.push(
@@ -152,37 +163,43 @@ export async function runSuggest(options: {
         wordCheck = check.check;
     }
 
-    const presence = await opened.suggestionPresence({ ...options, warnings });
-    const energy = await opened.energy();
+    const presenceRecord = opened.record;
+    const presence = await prof.measureAsync("presence", () => opened.suggestionPresence({ ...options, warnings }));
+    // Labels use stored stays even when this run requested a different attendance source.
+    const storedPresence = !options.attendance && opened.record === presenceRecord ? presence : undefined;
+    const energy = needsSpeakerInputs ? await prof.measureAsync("energy", () => opened.energy()) : undefined;
+    const audioPath = evidence?.audioPath;
+    const layout = energy?.calibration?.layout;
     const echo =
-        rules.includes("evidence") &&
-        evidence?.audioPath &&
-        energy.calibration?.layout &&
-        energy.calibration.layout !== "unknown"
-            ? await collectEcho({
-                  audioPath: evidence.audioPath,
-                  cachePath: join(store.folder(record.id), "evidence", "echo.json"),
-                  layout: energy.calibration.layout,
-              })
+        rules.includes("evidence") && audioPath && layout && layout !== "unknown"
+            ? await prof.measureAsync("evidence.echo", () =>
+                  collectEcho({
+                      audioPath,
+                      cachePath: join(store.folder(record.id), "evidence", "echo.json"),
+                      layout,
+                  })
+              )
             : undefined;
     const share: AcousticShare | undefined = echo
         ? Object.assign(
               (fromSec: number, toSec: number) =>
-                  echoForRange(echo, fromSec, toSec)?.cleanMicShare ?? energy.share?.(fromSec, toSec),
+                  echoForRange(echo, fromSec, toSec)?.cleanMicShare ?? energy?.share?.(fromSec, toSec),
               {
                   acoustic: (fromSec: number, toSec: number) => echoForRange(echo, fromSec, toSec),
-                  raw: energy.share?.raw ?? energy.share,
+                  raw: energy?.share?.raw ?? energy?.share,
                   // The echo wrapper keeps the cached voice matches, or no line of a calibrated meeting has a voice.
-                  voice: energy.share?.voice,
+                  voice: energy?.share?.voice,
               }
           )
-        : energy.share;
+        : energy?.share;
     // One decode and one pitch pass serve both the room voice clustering and the quality questions.
     let frames: VoiceFrame[] | undefined;
 
     if (rules.includes("evidence")) {
         try {
-            frames = await voiceFrames({ audioPath: await opened.audioPath() });
+            frames = await prof.measureAsync("evidence.voice-frames", async () =>
+                voiceFrames({ audioPath: await opened.audioPath() })
+            );
         } catch (error) {
             log.warn({ error, meeting: record.id }, "voice change points unavailable");
             warnings.push("Voice change points unavailable; long stretches remain open for listening");
@@ -191,21 +208,25 @@ export async function runSuggest(options: {
 
     const roomSize = collected.seats?.room.length ?? 0;
     // One set of line voice features, on the transcript's own line spans, serves the clustering and the questions.
-    const features = frames ? lineVoices({ frames, spans: entrySpans(meeting.transcript) }) : undefined;
+    const features = prof.measure("evidence.line-voices", () =>
+        frames ? lineVoices({ frames, spans: entrySpans(meeting.transcript) }) : undefined
+    );
     let voice: LineVoice[] | undefined;
 
     if (features && roomSize > 1) {
         // Clustering is optional evidence: without it the shared-device lines keep their candidates.
         try {
-            const micChannel = energy.calibration?.layout === "right-mic" ? 1 : 0;
-            voice = anchoredMeetingVoices({
-                record: collected,
-                transcript: meeting.transcript,
-                features,
-                voices: roomSize,
-                channel: micChannel,
-                micChannel,
-            });
+            const micChannel = energy?.calibration?.layout === "right-mic" ? 1 : 0;
+            voice = prof.measure("evidence.room-voices", () =>
+                anchoredMeetingVoices({
+                    record: collected,
+                    transcript: meeting.transcript,
+                    features,
+                    voices: roomSize,
+                    channel: micChannel,
+                    micChannel,
+                })
+            );
         } catch (error) {
             log.warn({ error, meeting: record.id, roomSize }, "room voice clustering unavailable");
             warnings.push(
@@ -215,30 +236,41 @@ export async function runSuggest(options: {
     }
 
     const inputs: Parameters<typeof suggestItems>[0] = {
-        localSpeech: rules.includes("evidence") ? localSpeechDuring({ start: meeting.start, end: meeting.end }) : [],
+        localSpeech: rules.includes("evidence")
+            ? prof.measure("evidence.local-speech-history", () =>
+                  localSpeechDuring({ start: meeting.start, end: meeting.end })
+              )
+            : [],
         record: collected,
         meeting,
         rules,
-        dictionary: await opened.dictionary(),
-        sourceWords: await opened.sourceWords(),
+        dictionary: terms
+            ? await prof.measureAsync("terms.dictionary", () => opened.dictionary())
+            : mergeDictionaries([]),
+        sourceWords: terms ? await prof.measureAsync("terms.source-words", () => opened.sourceWords()) : [],
         presence,
         evidence,
         energyMicShare: share,
         voice,
-        labels:
-            rules.includes("speakers") || rules.includes("evidence")
-                ? await proposeSpeakerLabels(opened, config.global.speakerLabels)
-                : undefined,
+        labels: needsSpeakerInputs
+            ? await prof.measureAsync("speakers.labels", () =>
+                  proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence)
+              )
+            : undefined,
         listenBelow: config.global.suggest.listenBelow,
         questionBudget: config.global.suggest.questionCap,
         minPriority: config.global.playback.listen.minPriority,
-        points: await opened.summaryPoints(),
+        points: await prof.measureAsync("summary-points", () => opened.summaryPoints()),
         wordCheck,
         sourceLabels: languageSettings(config).render,
         restatedIdentifiers: config.global.suggest.restatedIdentifiers,
         wordQuestions: { minOccurrences: config.global.suggest.words.minOccurrences },
-        ...(rules.includes("speakers") || rules.includes("evidence")
-            ? { samePerson: await directorySamePerson({ store, config, meeting: record.id }) }
+        ...(needsSpeakerInputs
+            ? {
+                  samePerson: await prof.measureAsync("speakers.directory", () =>
+                      directorySamePerson({ store, config, meeting: record.id })
+                  ),
+              }
             : {}),
         now: new Date().toISOString(),
     };
@@ -247,40 +279,47 @@ export async function runSuggest(options: {
     const known = knownWord(wordCheck);
 
     try {
+        using _save = prof.section("save");
         await store.update(record.id, { command: "suggest", change: "suggest findings and questions" }, (current) => {
+            using _mutate = prof.section("save.compute");
             // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
-            const settled = rules.includes("terms")
-                ? settledTermItems({
-                      record: current,
-                      dictionary: inputs.dictionary,
-                      known,
-                      minOccurrences: config.global.suggest.words.minOccurrences,
-                  })
-                : new Map<string, string>();
+            if (terms) {
+                using _retire = prof.section("terms.retire");
+                const settled = settledTermItems({
+                    record: current,
+                    dictionary: inputs.dictionary,
+                    known,
+                    minOccurrences: config.global.suggest.words.minOccurrences,
+                });
 
-            for (const item of current.items) {
-                const reason = settled.get(item.id);
+                for (const item of current.items) {
+                    const reason = settled.get(item.id);
 
-                if (reason) {
-                    item.status = "rejected";
-                    item.decidedAt = inputs.now;
-                    item.evidence = { ...item.evidence, retired: reason };
+                    if (reason) {
+                        item.status = "rejected";
+                        item.decidedAt = inputs.now;
+                        item.evidence = { ...item.evidence, retired: reason };
+                    }
                 }
-            }
 
-            retired = [...settled.keys()];
+                retired = [...settled.keys()];
+            }
             const suggested = current.items.filter((item) => item.status === "suggested");
-            fresh = suggestItems({ ...inputs, record: current });
+            fresh = prof.measure("suggestItems", () => suggestItems({ ...inputs, record: current }));
             retired.push(...suggested.filter((item) => item.status === "rejected").map((item) => item.id));
             current.items.push(...fresh);
+            if (!rules.includes("evidence")) {
+                return;
+            }
+            using _quality = prof.section("evidence.quality");
             // The long-stretch questions are evidence questions, and they share the meeting's one question budget.
             const open = current.items.filter(
                 (item) => item.kind === "question" && item.status === "suggested" && item.group !== "words"
             );
             const room = Math.max(0, config.global.suggest.questionCap - open.length);
 
-            if (rules.includes("evidence") && room > 0) {
-                const before = new Set(current.items.map((item) => item.id));
+            if (room > 0) {
+                const before = current.items.length;
                 const quality = new Set(
                     addQualityQuestions({
                         record: current,
@@ -292,7 +331,7 @@ export async function runSuggest(options: {
                         limit: room,
                     })
                 );
-                fresh.push(...current.items.filter((item) => quality.has(item.id) && !before.has(item.id)));
+                fresh.push(...current.items.slice(before).filter((item) => quality.has(item.id)));
             }
         });
     } finally {
@@ -300,6 +339,7 @@ export async function runSuggest(options: {
     }
 
     if (options.actor) {
+        using _review = prof.section("review-request");
         const warning = await requestMeetingQuestionReview({
             actor: options.actor,
             runId: randomUUID(),

@@ -21,7 +21,7 @@ import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } 
 import { personStays, presenceOf, rosterPresence } from "./person-stays";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { missingProjectWarning } from "./project";
-import { loadMeetingSound, type MeetingSound } from "./sound";
+import { loadMeetingSound, type MeetingSound, readSoundInputs, type SoundInputs } from "./sound";
 import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { assessIndicator } from "./speaker-indicator";
@@ -61,6 +61,7 @@ export class OpenedMeeting {
     private timelineOnce?: Promise<CallTimeline>;
     private configOnce?: Promise<MeetingsConfig>;
     private soundOnce?: Promise<MeetingSound>;
+    private soundInputsOnce?: Promise<SoundInputs>;
     /** A platform's attendance per choice (spec and id): one read serves the statistics and the evidence alike. */
     private readonly attendanceOnce = new Map<string, ReturnType<typeof loadPresence>>();
 
@@ -368,6 +369,12 @@ export class OpenedMeeting {
         }
 
         return evidence.audioPath;
+    }
+
+    /** The source probe and recorder rows used to construct this meeting's sound. */
+    soundInputs(): Promise<SoundInputs> {
+        this.soundInputsOnce ??= readSoundInputs(this);
+        return this.soundInputsOnce;
     }
 
     /** The meeting's sound: the source's channels and the recorder's tracks, each on the transcript clock. */

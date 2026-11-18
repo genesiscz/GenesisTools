@@ -27,7 +27,8 @@ export interface LabelContext {
     lines: readonly { index: number; fromSec: number; toSec: number; seat: Seat }[];
     /** People who attended, with the seat each holds in this meeting and the time they were there. */
     attended: readonly { person: string; seat: Seat | undefined; fromSec: number; toSec: number }[];
-    sound: MeetingSound;
+    /** A caller-supplied track selection. The voice labeler opens the meeting's sound on demand otherwise. */
+    sound?: MeetingSound;
     project: string | undefined;
 }
 

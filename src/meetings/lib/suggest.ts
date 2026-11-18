@@ -8,6 +8,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import type { LineVoice } from "@genesiscz/utils/meetings/voice-features";
+import { profiler } from "@genesiscz/utils/profile";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import {
     docIdentifiers,
@@ -16,7 +17,7 @@ import {
     findSpokenIdentifiers,
     restatesSpokenWords,
 } from "@genesiscz/utils/transcribe/doc-match";
-import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
+import { type LineEvidence, lineEvidence, presentAt, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import {
@@ -41,7 +42,7 @@ import {
 import { arrivalItems } from "./arrival";
 import { contextEntryText } from "./context-file";
 import { identifiedDepartures } from "./departure";
-import { indicatorFacts } from "./indicator-facts";
+import { indicatorLabels } from "./indicator-facts";
 import { uncertainSharedCallRanges } from "./listen-quality";
 import { type LocalSpeech, localSpeechLines } from "./local-speech";
 import { selectQuestions } from "./question-select";
@@ -73,6 +74,7 @@ import {
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
 const { log } = logger.scoped("meetings-suggest");
+const prof = profiler.scope("meetings-suggest");
 
 export const SUGGEST_RULES = ["speakers", "evidence", "terms"] as const;
 export type SuggestRule = (typeof SUGGEST_RULES)[number];
@@ -446,9 +448,7 @@ function contextDocuments(record: MeetingRecord): { name: string; text: string }
  * The passages read aloud from a context document (a quote of its line) and the spoken paths and identifiers (a
  * meaning after the words). An identifier inside a quoted passage is left to the quote.
  */
-function documentItems(options: TermSources): NewItem[] {
-    const docs = contextDocuments(options.record);
-
+function documentItems(options: TermSources, docs: ReturnType<typeof contextDocuments>): NewItem[] {
     if (docs.length === 0) {
         return [];
     }
@@ -510,16 +510,8 @@ function documentItems(options: TermSources): NewItem[] {
 }
 
 /** The terms a meeting's transcript should contain: glossary, source dictionary, own dictionary, names, context. */
-function termVocabulary(options: TermSources): VocabTerm[] {
+function termVocabulary(options: TermSources, docs: ReturnType<typeof contextDocuments>): VocabTerm[] {
     const { record, dictionary } = options;
-    const contextTexts = record.context.map((entry) => {
-        if (entry.kind === "note") {
-            return termsFromText(entry.ref, "context");
-        }
-
-        const file = entry.kind === "file" ? contextEntryText(entry, record) : undefined;
-        return file ? termsFromText(file.text, "context") : [];
-    });
     const dictionaryTerms = dictionary.entries.flatMap((entry) => {
         if (entry.type === "term") {
             return [{ term: entry.value, source: "dictionary" }];
@@ -530,7 +522,7 @@ function termVocabulary(options: TermSources): VocabTerm[] {
 
     return scopedVocabulary({
         dictionary: dictionaryTerms,
-        context: contextTexts.flat(),
+        context: docs.flatMap((doc) => termsFromText(doc.text, "context")),
         user: options.sourceWords.map((word) => ({ term: word.replacement ?? word.value, source: "source" })),
         people: record.participants.flatMap((person) => [person.name, ...person.name.split(/\s+/)]),
     });
@@ -540,15 +532,16 @@ function termVocabulary(options: TermSources): VocabTerm[] {
 export function rawTerms(
     options: TermSources & { wordCheck?: WordCheck; unavailable?: string }
 ): RawTermEvidence & { documents: DocumentEvidence } {
+    const docs = contextDocuments(options.record);
     return {
         ...rawTermEvidence({
             entries: options.meeting.transcript,
-            vocab: termVocabulary(options),
+            vocab: termVocabulary(options, docs),
             context: termsFromText(options.meeting.title, "title"),
             wordCheck: options.wordCheck,
             unavailable: options.unavailable,
         }),
-        documents: documentEvidence(options),
+        documents: documentEvidence(options, docs),
     };
 }
 
@@ -558,8 +551,7 @@ interface DocumentEvidence {
     identifiers: Array<{ atSec?: number; heard: string; identifier: string; matched: number }>;
 }
 
-function documentEvidence(options: TermSources): DocumentEvidence {
-    const docs = contextDocuments(options.record);
+function documentEvidence(options: TermSources, docs: ReturnType<typeof contextDocuments>): DocumentEvidence {
     const entries = options.meeting.transcript;
 
     return {
@@ -641,7 +633,8 @@ function termItems(
     options: TermSources & { wordCheck?: WordCheck; wordQuestions?: { minOccurrences: number } }
 ): NewItem[] {
     const { meeting, dictionary, wordCheck } = options;
-    const vocab = termVocabulary(options);
+    const docs = contextDocuments(options.record);
+    const vocab = termVocabulary(options, docs);
     // A word the dictionary keeps, or already replaces (a fix, a term's spoken form), needs no item and no question.
     const keep = dictionaryKeeps(dictionary);
     const context = termsFromText(meeting.title, "title");
@@ -720,7 +713,7 @@ function termItems(
     }));
 
     return [
-        ...documentItems(options),
+        ...documentItems(options, docs),
         ...fuzzyItems,
         ...suspects.flatMap((suspect) => {
             // A code name or another case of the same word keeps the heard words: no replacement to suggest.
@@ -1506,6 +1499,7 @@ function inSwap(swaps: SwapStretch[], label: string, sec: number): boolean {
 function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
+    lines: LineEvidence[];
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voiceMatches?: Readonly<Record<string, VoiceMatch>>;
@@ -1522,8 +1516,14 @@ function evidenceItems(options: {
     }
 
     // Teams attendance names the user by email; here the user is always `selfName`.
-    const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
-    const measured = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
+    const renameSelf = options.presence?.some((stay) => stay.self && stay.name !== selfName);
+    const presence = renameSelf
+        ? options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay))
+        : options.presence;
+    const measured =
+        renameSelf && presence
+            ? options.lines.map((line) => ({ ...line, present: presentAt(presence, line.startSec) }))
+            : options.lines;
     const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
     const assessment = assessIndicator({ lines: measured, selfName, roomPeople: options.record.seats?.room });
     const stuck = assessment.ignored;
@@ -2169,11 +2169,11 @@ export function suggestItems(options: {
     const { record } = options;
     // A label item says the label tracks no one person in its stretch: the speaker rules see those lines unlabeled.
     const indicated: NewItem[] = options.rules.some((rule) => rule === "speakers" || rule === "evidence")
-        ? indicatorFacts({
+        ? indicatorLabels({
               meeting: options.meeting,
               evidence: options.evidence ?? null,
               presence: options.presence,
-          }).labels.flatMap((label): NewItem[] =>
+          }).flatMap((label): NewItem[] =>
               label.fromSec === undefined || label.toSec === undefined
                   ? []
                   : [
@@ -2215,6 +2215,7 @@ export function suggestItems(options: {
 
     // Speech this Mac played into the room is evidence of who did not speak: only the evidence rules remove it.
     if (options.rules.includes("evidence")) {
+        using _local = prof.section("evidence.local-speech");
         found.push(
             ...localSpeechLines({
                 transcript: meeting.transcript,
@@ -2236,27 +2237,38 @@ export function suggestItems(options: {
     }
 
     const selfNameForDeparture = record.participants.find((person) => person.self)?.name ?? options.evidence?.selfName;
-    const departureLines = options.evidence
-        ? lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare)
+    const evidence = options.evidence;
+    const departureLines = evidence
+        ? prof.measure("rules.line-evidence", () =>
+              lineEvidence(meeting.transcript, evidence, options.presence, options.energyMicShare)
+          )
         : [];
-    const departureHints = speakerStats(meeting.transcript, {
-        participants: meeting.speakers,
-        presence: options.presence,
-    }).hints;
-    const departures = selfNameForDeparture
-        ? identifiedDepartures({
-              hints: departureHints,
-              lines: departureLines,
-              selfName: selfNameForDeparture,
-              presence: options.presence,
-              labels: options.labels,
-              ignoredIndicator: assessIndicator({
+    const needsSpeakers = options.rules.includes("speakers");
+    const originalPresence = options.presence;
+    const initialStats =
+        needsSpeakers || (selfNameForDeparture && departureLines.length)
+            ? prof.measure("rules.speaker-stats", () =>
+                  speakerStats(meeting.transcript, {
+                      participants: meeting.speakers,
+                      presence: options.presence,
+                  })
+              )
+            : undefined;
+    const departures =
+        selfNameForDeparture && initialStats?.hints.some((hint) => hint.kind === "leave-then-continues")
+            ? identifiedDepartures({
+                  hints: initialStats.hints,
                   lines: departureLines,
                   selfName: selfNameForDeparture,
-                  roomPeople: record.seats?.room,
-              }).ignored,
-          })
-        : [];
+                  presence: options.presence,
+                  labels: options.labels,
+                  ignoredIndicator: assessIndicator({
+                      lines: departureLines,
+                      selfName: selfNameForDeparture,
+                      roomPeople: record.seats?.room,
+                  }).ignored,
+              })
+            : [];
     if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
         for (const departure of departures) {
             const line = departureLines.find((line) => line.startSec === departure.atSec);
@@ -2290,11 +2302,15 @@ export function suggestItems(options: {
             }),
         };
     }
-    if (options.rules.includes("speakers")) {
-        const stats = speakerStats(meeting.transcript, {
-            participants: meeting.speakers,
-            presence: options.presence,
-        });
+    if (needsSpeakers && initialStats) {
+        using _speakers = prof.section("rule.speakers");
+        const stats =
+            options.presence === originalPresence
+                ? initialStats
+                : speakerStats(meeting.transcript, {
+                      participants: meeting.speakers,
+                      presence: options.presence,
+                  });
         const lastSecOf = new Map(stats.speakers.map((stat) => [stat.label, stat.lastSec ?? 0]));
         const selfName = record.participants.find((person) => person.self)?.name;
         const safeHints = stats.hints.flatMap((hint): SpeakerHint[] => {
@@ -2321,9 +2337,17 @@ export function suggestItems(options: {
     }
 
     if (options.rules.includes("evidence") && options.evidence) {
+        using _evidence = prof.section("rule.evidence");
+        // Departures can shorten attendance. Only the present names depend on that change.
+        const presence = options.presence;
+        const lines =
+            presence && presence !== originalPresence
+                ? departureLines.map((line) => ({ ...line, present: presentAt(presence, line.startSec) }))
+                : departureLines;
         const channel = evidenceItems({
             meeting,
             evidence: options.evidence,
+            lines,
             presence: options.presence,
             energyMicShare: options.energyMicShare,
             items: record.items,
@@ -2349,12 +2373,7 @@ export function suggestItems(options: {
                 item.evidence = rest;
             }
         }
-        for (const line of lineEvidence(
-            meeting.transcript,
-            options.evidence,
-            options.presence,
-            options.energyMicShare
-        )) {
+        for (const line of lines) {
             if ((line.energyMic ?? line.micShare ?? 0) < ENERGY_MIC_SURE) {
                 continue;
             }
@@ -2443,7 +2462,7 @@ export function suggestItems(options: {
         }
         const arrivals = arrivalItems({
             entries: meeting.transcript,
-            lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
+            lines,
             presence: options.presence,
             speakingReadings: options.evidence.speaking,
         });
@@ -2453,7 +2472,7 @@ export function suggestItems(options: {
             ...arrivals.filter((item) => !inSwap(channel.swaps, item.label, item.fromSec)),
             ...uncertainSharedCallRanges({
                 record,
-                lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
+                lines,
             }),
         ];
         found.push(
@@ -2478,6 +2497,7 @@ export function suggestItems(options: {
     }
 
     if (options.rules.includes("terms")) {
+        using _terms = prof.section("rule.terms");
         found.push(...termItems(options));
     }
 
@@ -2490,7 +2510,7 @@ export function suggestItems(options: {
         merged.set(key, seen ? agreeing(seen, item) : item);
     }
 
-    const known = new Set(record.items.map(itemKey));
+    const known = decidedKeys;
     const fresh: MeetingItem[] = [];
     const taken = [...record.items];
 

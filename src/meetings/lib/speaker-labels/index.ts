@@ -1,10 +1,13 @@
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
-import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import { profiler } from "@genesiscz/utils/profile";
+import { lineChannelShares } from "@genesiscz/utils/transcribe/evidence";
+import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { OpenedMeeting } from "../opened-meeting";
 import type { LabelContext, LineLabel, SpeakerLabeler, SpeakerLabelerId } from "./types";
 import { SPEAKER_LABELER_IDS } from "./types";
+
+const prof = profiler.scope("meetings-suggest");
 
 // The synchronous rule lets the pure item writer use the same registry without loading a labeler's dependencies.
 type LabelerLoader = ((
@@ -50,7 +53,8 @@ export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLab
 
 export async function proposeSpeakerLabels(
     opened: OpenedMeeting,
-    settings: MeetingsConfig["global"]["speakerLabels"]
+    settings: MeetingsConfig["global"]["speakerLabels"],
+    storedPresence?: Presence[]
 ): Promise<LineLabel[]> {
     const enabled = SPEAKER_LABELER_IDS.filter((id) => settings[id].enabled);
 
@@ -59,33 +63,36 @@ export async function proposeSpeakerLabels(
     }
 
     const meeting = await opened.meeting();
-    const evidence = await opened.evidence();
-    const energy = await opened.energy();
+    const evidence = await prof.measureAsync("speakers.evidence", () => opened.evidence());
+    const energy = await prof.measureAsync("speakers.energy", () => opened.energy());
     const record = opened.record;
     const context: LabelContext = {
-        lines: lineEvidence(
-            meeting.transcript,
-            evidence ?? { segments: [], speaking: [] },
-            undefined,
-            energy.share
-        ).flatMap((line): LabelContext["lines"][number][] => {
-            const share = line.micShare ?? line.energyMic;
+        lines: prof.measure("speakers.line-evidence", () =>
+            lineChannelShares({
+                entries: meeting.transcript,
+                segments: evidence?.segments ?? [],
+                energy: energy.share,
+            }).flatMap(({ index, fromSec, toSec, share }): LabelContext["lines"][number][] => {
+                // A missing channel or an exact tie establishes neither seat.
+                if (share === undefined || share === 0.5) {
+                    return [];
+                }
 
-            // A missing channel or an exact tie establishes neither seat.
-            if (share === undefined || share === 0.5) {
-                return [];
-            }
-
-            return [
-                {
-                    index: line.index,
-                    fromSec: line.startSec,
-                    toSec: line.endSec,
-                    seat: share > 0.5 ? "mic" : "call",
-                },
-            ];
-        }),
-        attended: ((await opened.presence()) ?? []).flatMap((stay): LabelContext["attended"][number][] => {
+                return [
+                    {
+                        index,
+                        fromSec,
+                        toSec,
+                        seat: share > 0.5 ? "mic" : "call",
+                    },
+                ];
+            })
+        ),
+        attended: (
+            storedPresence ??
+            (await prof.measureAsync("speakers.presence", () => opened.presence())) ??
+            []
+        ).flatMap((stay): LabelContext["attended"][number][] => {
             if (record.seats?.room.some((person) => sameName(person, stay.name))) {
                 return [{ person: stay.name, seat: "mic", fromSec: stay.fromSec, toSec: stay.toSec }];
             }
@@ -103,12 +110,12 @@ export async function proposeSpeakerLabels(
                 },
             ];
         }),
-        sound: await opened.sound(),
         project: record.project,
     };
     const byLabeler = new Map<SpeakerLabelerId, LineLabel[]>();
 
     for (const id of enabled) {
+        using _labeler = prof.section(`speakers.labeler.${id}`);
         byLabeler.set(id, await (await LABELERS[id](opened, settings)).propose(context));
     }
 
