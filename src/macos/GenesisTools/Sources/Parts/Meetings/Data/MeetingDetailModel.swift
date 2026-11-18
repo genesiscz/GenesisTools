@@ -1043,8 +1043,9 @@ extension MeetingDetailModel {
                 suggestProgress = nil
             }
             do {
-                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil),
-                                                    timeout: Self.suggestTimeout) { [weak self] step in
+                // The deadline of every call (`MeetingsService.silenceLimit`): the service repeats a running call's
+                // newest step every 15 s, so it ends this call only when the service stopped answering (w_gu80y4mc).
+                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil)) { [weak self] step in
                     self?.suggestProgress = step
                 }
                 suggestionWarnings = result.warnings
@@ -1058,9 +1059,6 @@ extension MeetingDetailModel {
         }
     }
 
-    /// How long the window waits for a suggest run with no word from the service. Each `$/progress` starts the wait
-    /// again, so a long voice pass that reports its steps is never cut off.
-    static let suggestTimeout: TimeInterval = 120
 }
 
 // MARK: - Context: links and notes
