@@ -249,6 +249,30 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
         expect(existsSync(result.frames[0].path)).toBe(true);
     });
 
+    test("a deadline without a native reply recovers written frames and still rejects an empty piece", async () => {
+        const processes = await import("./process");
+        const run = spyOn(processes, "runCaptureProcess").mockResolvedValue({
+            exitCode: 137,
+            stdout: "",
+            stderr: "",
+            timedOut: true,
+            aborted: false,
+        });
+        try {
+            const outDir = mkdtempSync(join(tmpdir(), "deadline-frames-"));
+            const piece = request({ outDir, audio: { sources: ["mic"] } });
+            await expect(recorder.capture(piece)).rejects.toMatchObject({ kind: "timeout" });
+            const path = join(outDir, "keep-0001.png");
+            writeFileSync(path, "saved frame");
+            expect(await recorder.capture(piece)).toMatchObject({
+                endedEarly: "stream-error",
+                frames: [{ path, displayId: 4, reason: "salvaged" }],
+            });
+        } finally {
+            run.mockRestore();
+        }
+    });
+
     test("a sound track whose sidecar failed keeps its warnings and has no file", async () => {
         const failing = new NativeFrameRecorder({
             axTool: async () => [process.execPath, fake, "--fixture-failed-audio"],
@@ -2363,6 +2387,64 @@ describe("frame recordings with continuous sound", () => {
         }
         expect(notes ?? []).toEqual([]);
     });
+
+    test("both sound modes keep the same screen changes, including a sound piece finalized past its deadline", async () => {
+        const root = mkdtempSync(join(tmpdir(), "frames-same-screen-"));
+        const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
+        const recorder = new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake, "--fixture-screen-changes"],
+            launch: (argv) => argv,
+        });
+        const processes = await import("./process");
+        const runCapture = processes.runCaptureProcess;
+        const run = spyOn(processes, "runCaptureProcess");
+        const cases = [
+            { mode: "session", late: false },
+            { mode: "pieces", late: false },
+            { mode: "pieces", late: true },
+        ] as const;
+        try {
+            for (const { mode, late } of cases) {
+                if (late) {
+                    // The deadline sends SIGINT too. Use the real fixture reply without waiting for the 30 s grace.
+                    run.mockImplementationOnce(async (options) => ({ ...(await runCapture(options)), timedOut: true }));
+                }
+                const folder = join(root, late ? "late-piece" : mode);
+                const recording = await new ModeRecording({
+                    recorder,
+                    folder,
+                    liveDir: join(root, "live"),
+                    audioMode: mode,
+                    audio: { mic: true },
+                    pieceSec: 30,
+                    fps: 2,
+                    idleFps: 0.5,
+                    threshold: 4,
+                }).start();
+                const outDir = join(folder, ".pieces", "d1-1");
+                try {
+                    expect(await waitForPath(join(outDir, "keep-0003.png"), { timeoutMs: 3000 })).toBe(true);
+                    expect(recording.soundPath.path).toBe(mode);
+                    const argv = run.mock.calls.at(-1)![0].argv;
+                    const flags = ["--duration", "--active-fps", "--idle-fps", "--threshold"];
+                    expect(flags.map((flag) => argv[argv.indexOf(flag) + 1])).toEqual(["30", "2", "0.5", "4"]);
+                    expect(argv.includes("--audio-sidecar")).toBe(mode === "pieces");
+                } finally {
+                    await recording.stop();
+                }
+                const frames = readRecordingManifest(folder)!.frames;
+                const firstMs = frames[0]?.atMs ?? 0;
+                expect(frames.map((frame) => [frame.atMs - firstMs, frame.reason, frame.changePercent])).toEqual([
+                    [0, "first", 100],
+                    [1000, "change", 4],
+                    [2000, "change", 6],
+                ]);
+                expect(frames.every((frame) => existsSync(join(folder, frame.file)))).toBe(true);
+            }
+        } finally {
+            run.mockRestore();
+        }
+    }, 15_000);
 
     test("sound outlives frame pieces and mute, input, pause and resume do not restart them", async () => {
         const root = mkdtempSync(join(tmpdir(), "frames-continuous-"));
