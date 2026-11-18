@@ -1,5 +1,6 @@
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import { channelFor, isStrongCallForNaming } from "./speaker-eligibility";
 
 export interface IndicatorAssessment {
     ignored: Set<number>;
@@ -63,7 +64,16 @@ export function assessIndicator(options: {
         if (stretch.length < 20 || stretch.at(-1)!.endSec - stretch[0]!.startSec < 360) {
             continue;
         }
-        const call = stretch.filter((line) => (line.energyMic ?? line.micShare ?? 1) <= 0.35);
+        const call: LineEvidence[] = [];
+        let mic = 0;
+        for (const line of stretch) {
+            const channel = channelFor(line);
+            if (isStrongCallForNaming(channel)) {
+                call.push(line);
+            } else if (channel.side === "mic" && (line.energyMic ?? line.micShare ?? 0) >= 0.9) {
+                mic++;
+            }
+        }
         const counts = new Map<string, number>();
         for (const line of call) {
             for (const name of Object.keys(line.speaking)) {
@@ -76,7 +86,6 @@ export function assessIndicator(options: {
         const activeRemotes =
             stretch[0]!.present?.filter(remote) ??
             candidates.filter((person) => person.fromSec <= stretch[0]!.startSec).map((person) => person.name);
-        const mic = stretch.filter((line) => (line.energyMic ?? line.micShare ?? 0) >= 0.9).length;
         if (
             dominant &&
             call.length >= 5 &&

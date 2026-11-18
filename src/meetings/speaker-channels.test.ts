@@ -316,7 +316,7 @@ describe("seat suggestions", () => {
         });
         const meeting = meetingRecordSchema.parse({
             ...record,
-            seats,
+            seats: { ...seats, remote: [...seats.remote, { name: "Empty desk", fromSec: 10, toSec: 10 }] },
             participants: [{ name, from: ["platform-roster"] }],
         });
         const result = suggestSeats({

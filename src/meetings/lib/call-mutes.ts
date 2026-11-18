@@ -1,9 +1,10 @@
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import { channelFor, mutedAccountsFor } from "./speaker-eligibility";
 
 /** A muted participant can still be heard on a room microphone. Only a call line rules them out. */
 export function callMutes(line: LineEvidence): readonly string[] {
-    return (line.energyMic ?? line.micShare ?? 1) < 0.5 ? (line.muted ?? []) : [];
+    return line.muted?.length ? mutedAccountsFor(channelFor(line), line.muted) : [];
 }
 
 /** The same veto for a question, its proposed speaker range, and a sampled clip. */

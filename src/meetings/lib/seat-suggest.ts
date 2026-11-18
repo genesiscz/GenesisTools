@@ -1,6 +1,7 @@
 import { nameKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import type { MeetingSeats, RemoteSeat } from "@genesiscz/utils/meetings/seats";
+import { withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
+import { type MeetingSeats, microphoneSide, type RemoteSeat, seatSpan } from "@genesiscz/utils/meetings/seats";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { LINE_AT_TOLERANCE_SEC } from "@genesiscz/utils/transcribe/lines";
 import { baselineStays } from "./person-stays";
@@ -60,8 +61,13 @@ interface Facts {
     call: number;
 }
 type Stay = { fromSec: number; toSec?: number };
+interface RosterRead {
+    at: number;
+    muted?: Set<string>;
+    speaking: Set<string>;
+}
 
-function infer(facts: Facts, reads: ReadonlyArray<ReadonlySet<string>>): Omit<SeatPerson, "name"> {
+function infer(facts: Facts, reads: readonly RosterRead[]): Omit<SeatPerson, "name"> {
     if (facts.self) {
         return { seat: "room", reason: "Recording participant (self).", confidence: 1 };
     }
@@ -93,11 +99,26 @@ function infer(facts: Facts, reads: ReadonlyArray<ReadonlySet<string>>): Omit<Se
     }
     if (facts.roster) {
         const key = nameKey(facts.name);
-        if (reads.length > 0 && reads.every((muted) => muted.has(key))) {
-            const count = reads.length === 1 ? "the only roster read" : `all ${reads.length} roster reads`;
-            return { seat: "unsure", reason: `Muted on ${count} while present.`, confidence: 0 };
+        const explicit = reads.filter((read) => read.muted !== undefined);
+        const muted = explicit.filter((read) => read.muted?.has(key)).length;
+        const spoke = reads.some((read) => read.speaking.has(key) && !read.muted?.has(key));
+        let reason = "Listed on the call. No explicit mute reads while present.";
+        if (explicit.length) {
+            reason = `Physical seat unknown. ${muted} of ${explicit.length} explicit mute lists included this account.`;
+            if (!spoke && muted / explicit.length >= 0.8) {
+                const count =
+                    muted === reads.length
+                        ? reads.length === 1
+                            ? "the only roster read"
+                            : `all ${reads.length} roster reads`
+                        : `${muted} of ${explicit.length} explicit mute reads`;
+                reason = `Muted on ${count} while present.`;
+            }
         }
-        return { seat: "remote", reason: "Listed on the call roster with no decided lines.", confidence: 0.5 };
+        if (spoke) {
+            reason += " Observed speaking on the call.";
+        }
+        return { seat: "unsure", reason, confidence: 0 };
     }
     return { seat: "unsure", reason: "No call roster entry or decided lines.", confidence: 0 };
 }
@@ -195,27 +216,59 @@ export function suggestSeats(options: {
             manual.set(key, seat);
         }
     }
-    const observations = (record.evidence?.indicator ?? [])
-        .filter((read) => !read.reason && (!read.speakingUnknown || read.muted !== undefined))
+    const observations: RosterRead[] = (record.evidence?.indicator ?? [])
+        .filter(
+            (read) =>
+                !read.reason &&
+                Number.isFinite(read.tSec) &&
+                read.tSec >= 0 &&
+                (read.validUntilSec === undefined || read.validUntilSec > read.tSec)
+        )
         .map((read) => ({
             at: read.tSec,
-            muted: new Set(read.muted?.map(nameKey)),
+            muted: read.muted && new Set(read.muted.map(nameKey)),
+            speaking: new Set(read.speakingUnknown ? [] : read.speaking.map(nameKey)),
         }));
-    const seats: MeetingSeats = { room: [], remote: [] };
+    // A fresh hand choice can move one person. Keep everyone else's rows, including gaps, labels and devices.
+    const keep = (name: string, side: "room" | "remote") => {
+        person(name);
+        const override = manual.get(nameKey(name));
+        return override === undefined || override === side;
+    };
+    const saved = withoutEmptyRemoteSeats(record.seats);
+    const seats: MeetingSeats = {
+        room: (saved?.room ?? []).filter((row) => keep(seatSpan(row).name, "room")),
+        remote: (saved?.remote ?? []).filter((row) => keep(row.name, "remote")),
+    };
+    const roomNames = new Set(seats.room.map((row) => nameKey(seatSpan(row).name)));
+    const remoteNames = new Set(seats.remote.map((row) => nameKey(row.name)));
+    if (saved?.microphones) {
+        seats.microphones = saved.microphones.flatMap((group) => {
+            const names = microphoneSide(saved, group) === "room" ? roomNames : remoteNames;
+            const members = group.people.filter((name) => names.has(nameKey(name)));
+            return members.length ? [{ ...group, people: members }] : [];
+        });
+    }
     const people: SeatPerson[] = [];
     for (const [key, row] of facts) {
+        const inRoom = roomNames.has(key);
+        const onCall = remoteNames.has(key);
+        if (inRoom || onCall) {
+            people.push({
+                name: row.name,
+                seat: inRoom && onCall ? "unsure" : inRoom ? "room" : "remote",
+                reason: inRoom && onCall ? "Saved room and remote intervals." : "Saved seat.",
+                confidence: 1,
+            });
+            continue;
+        }
         const stays = baselineStays(record, row.name)?.map(({ stay }) => stay);
         const reads = observations.filter(
             ({ at }) =>
                 !stays || stays.some((stay) => at >= stay.fromSec && (stay.toSec === undefined || at < stay.toSec))
         );
         const picked = manual.get(key);
-        const decision = picked
-            ? { seat: picked, reason: "Set by hand.", confidence: 1 }
-            : infer(
-                  row,
-                  reads.map(({ muted }) => muted)
-              );
+        const decision = picked ? { seat: picked, reason: "Set by hand.", confidence: 1 } : infer(row, reads);
         people.push({ name: row.name, ...decision });
         if (decision.seat === "room") {
             seats.room.push(row.name);
