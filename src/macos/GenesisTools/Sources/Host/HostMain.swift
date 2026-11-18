@@ -147,14 +147,15 @@ package func runHost() -> Never {
         runDefaultBrowser(Array(arguments.dropFirst()))
     }
 
-    // GenesisTools --rpc '<json>' (or --rpc - to read stdin): run one request as this bundle, then
-    // exit. The reply is one JSON line on stdout. This is the door a unix socket would replace without
-    // changing the envelope, so it stays the single entry point for anything the CLI wants done under
-    // this bundle's identity (see Notify.swift).
+    // GenesisTools --requests [--socket <path>]: the resident renderer of the service's requests (RequestPresent.swift).
     if firstArgument == "--requests" {
         runRequestFace(Array(arguments.dropFirst()))
     }
 
+    // GenesisTools --rpc '<json>' (or --rpc - to read stdin): run one request as this bundle, then
+    // exit. The reply is one JSON line on stdout. This is the door a unix socket would replace without
+    // changing the envelope, so it stays the single entry point for anything the CLI wants done under
+    // this bundle's identity (see Notify.swift).
     if firstArgument == "--rpc" {
         runRpc(Array(arguments.dropFirst()))
     }
