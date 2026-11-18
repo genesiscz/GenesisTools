@@ -134,6 +134,10 @@ export function answeredVoiceTargets(entry: JournalEntry, people: readonly strin
     if (!["answer", "confirm"].includes(entry.action.kind) || !["window", "listen", "cli"].includes(entry.actor.kind)) {
         return [];
     }
+    // Listen replayed an earlier human answer: that answer already gave its samples, so it is not a second confirmation.
+    if (entry.action.kind === "answer" && entry.action.knownAnswer) {
+        return [];
+    }
     return confirmedVoices(entry, people).map((voice) => ({ entry, voice }));
 }
 

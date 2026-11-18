@@ -56,7 +56,7 @@ import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
 import { looksLikeOnePerson } from "./voice-backfill";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
-import { replayAnsweredVoiceSamples } from "./voice-samples";
+import { answeredVoiceTargets, replayAnsweredVoiceSamples } from "./voice-samples";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -230,6 +230,28 @@ async function voiceAnswerFixture(project = `journal-voice-${++stores}`, extra: 
 }
 
 describe("speaker answers and their project voice prints", () => {
+    test("a Listen replay of a known answer is not a second voice confirmation", async () => {
+        const fx = await voiceAnswerFixture();
+        try {
+            fx.embed.mockResolvedValueOnce([]);
+            const { entry } = await fx.answer();
+            const people = ["Alice Example", "Bob Example"];
+            expect(answeredVoiceTargets(entry!, people)).toHaveLength(1);
+            const action = entry!.action;
+            if (action.kind !== "answer") {
+                throw new Error("the fixture answers a question");
+            }
+            const replay = {
+                ...entry!,
+                actor: { kind: "listen" as const },
+                action: { ...action, knownAnswer: { meeting: fx.meeting.id, date: "2026-11-02", revision: 1 } },
+            };
+            expect(answeredVoiceTargets(replay, people)).toEqual([]);
+        } finally {
+            fx.restore();
+        }
+    });
+
     test("voice backfill takes a name, never a sentence that an old free-text answer stored as the speaker", () => {
         for (const name of ["Alice Example", "Example Bob (QT)", "alice.example01"]) {
             expect(looksLikeOnePerson(name)).toBe(true);
