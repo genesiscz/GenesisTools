@@ -11,6 +11,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { configValueAt, setAt } from "./config-edit";
 import { itemWhat } from "./item-text";
 import type { OpenedMeeting } from "./opened-meeting";
+import type { MeetingsClient } from "./service/client";
 import { itemKey } from "./suggest";
 import type { ThresholdChange, ThresholdResult } from "./threshold-schema";
 import { correctTranscript, lineOf } from "./transcript-corrections";
@@ -172,6 +173,30 @@ function numeric(config: MeetingsConfig, path: string): number {
         throw new Error(`Missing numeric Meetings setting ${path}`);
     }
     return value;
+}
+
+export async function readOrSetThresholds(options: {
+    client: MeetingsClient;
+    meeting?: string;
+    set?: Record<string, number>;
+    preview?: boolean;
+}) {
+    const { client, meeting, set: values = {}, preview } = options;
+    const edits = thresholdEdits(values);
+    const method = "meeting.thresholds.preview";
+    if (edits.length && !meeting) {
+        throw new Error("Choose a meeting when changing thresholds.");
+    }
+    if (edits.length && !preview) {
+        // Resolve the meeting before changing global settings. Guard all touched paths in one transaction.
+        const current = await client.call(method, { meeting, values: {} });
+        const expected = new Map(current.thresholds.map((row) => [row.path, row.globalValue]));
+        await client.call("config.edit", {
+            edits: edits.map((edit) => ({ ...edit, expect: expected.get(edit.path) })),
+        });
+        return client.call(method, { meeting, values: {} });
+    }
+    return client.call(method, { meeting, values });
 }
 
 export function thresholdEdits(values: Record<string, number>) {

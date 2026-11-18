@@ -64,17 +64,23 @@ A missing meeting names only the store that was searched. To find which store ho
 
    **Seats and voices. Strongly recommended before pass 2.**
 
-   - Run `tools meetings seats <meeting>` and read the reasons. Someone listed in the call may have sat in the room.
-     Run `tools meetings seats <meeting> --apply` to save the suggestion when seats are missing. Ask where anyone
+   For a disputed line, `tools meetings evidence <meeting> --line-eligibility <index> --json` and
+   `await meetings.lineEligibility({ meeting, line: index })` return the same choices, excluded people and reasons,
+   channel and review-only flag. The first source transcript line is 0.
+
+   - Run `tools meetings seats <meeting>` or `await meetings.seats({ meeting })` and read the reasons. Someone listed in the call may have sat in the room.
+     Run `tools meetings seats <meeting> --apply` or `await meetings.applySeats({ meeting })` to save the suggestion when seats are missing. Ask where anyone
      marked unsure sat. Use `--room` and `--remote` for corrections. Use `--replace` to change saved seats.
-   - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`.
+     Both REPL calls also accept timed entries, e.g. `room: [{ name, fromSec: 30, toSec: 90 }]`. Supply the person's
+     room and remote intervals together when they move. Omitting the end keeps the seat through the rest of the meeting.
+   - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`, or call `await meetings.voiceReadiness({ meeting })`.
      `people` counts project samples per attendee. `ready` means seats are set and each occupied side of the recording
      has samples from at least one person on that side. Without seats or usable samples, voice naming is off and
      people in the room or on the call can stay unnamed.
-   - Run `tools meetings voices backfill --project <p>` to recover samples from earlier speaker answers and names
+   - Run `tools meetings voices backfill --project <p>` or `await meetings.backfillVoices({ project })` to recover samples from earlier speaker answers and names
      proposed by voice that a person confirmed individually. To select meetings directly, pass their IDs in place of
      `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
-     to see counts per meeting and person. Repeating the command counts existing samples separately.
+     to see counts per meeting and person. The matching REPL call is `await meetings.backfillVoices({ meetings: [meeting], dryRun: true })`. Repeating the command counts existing samples separately.
    - Run `tools meetings voices preview <meeting>`. Check proposed names, times and refusals. The pass can also
      use certain lines from this meeting as temporary samples. It excludes the line it is scoring. A person without
      a sample can still be proposed if they are the only such person present on that seat, the voice clearly matches
@@ -221,7 +227,7 @@ saved dBFS, microphone share, device names, mute state and calibration are avail
 With `--with-suggested`, proposed terms apply at 70% confidence by default (`term.applyAbove`).
 Term and speaker thresholds are global settings in Settings → Meetings. Open Thresholds from a meeting to preview
 which proposals change there before saving a setting for all meetings. In the CLI, `tools meetings thresholds <meeting>`
-lists the names and current values. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` to
+lists the names and current values, as does `await meetings.thresholds({ meeting })`. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` or `await meetings.thresholds({ meeting, set: { [name]: value }, preview: true })` to
 see the changed lines, then omit `--preview` to save the value.
 
 `listen <meeting> --spot-check 20` samples the 50 to 69 percent band without replacement. Comments leave questions
@@ -248,11 +254,28 @@ Cosine and margin are evidence, not probabilities. Missing models, quiet audio, 
 scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
 estimated-clean tracks separately.
 
-`voices [--project <p>]` lists each person's samples (meeting, seat, track, time, words); `voices play <person>
+`tools meetings voices --project <p> --json` or `await meetings.voices({ scope: "project", project })` lists each person's samples.
+Use `scope: "meeting", meeting: id` for one meeting or `scope: "global"` for the library. Each row gives the meeting, seat, track, time and words. `voices play <person>
 [--sample <n>]` plays one. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
 refusal reasons. A preview can cache line embeddings. `voices apply <meeting>` saves the names as suggestions.
-`voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first. `play <meeting> --track
-<track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
+`voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first.
+
+| Voice library command (after `tools meetings`) | REPL call (await the result) |
+| --- | --- |
+| `voices --meeting <meeting> --person <person> --json` | `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` |
+| `voices play <person> --sample <id> --no-start --json` | `meetings.voices.sample({ id })` returns the verified file and slice |
+| `voices quality --project <p> --person <person>` | `meetings.voices.quality({ project, person })` |
+| `voices move <person> --sample <id> --to <name>` | `meetings.voices.move({ id, person, to: { name } })` |
+| `voices reject <person> --sample <id> --reason wrong-person` | `meetings.voices.reject({ id, person, reason: "wrong-person" })` |
+| `voices remove <person> --sample <id> --preview` | `meetings.voices.remove({ id, preview: true })` |
+| `voices undo <token>` | `meetings.voices.undo({ token })` |
+
+Copy the stable `id` from the list. In the REPL, add `preview: true` to inspect a move, rejection or removal.
+Use the preview's `planToken` on the same call without `preview` to
+apply it. A stale preview needs a fresh read. The applied receipt's `token` addresses that correction for Undo.
+Use `wrong-person` for an incorrect owner. Use `bad-audio` or `several-voices` when the clip is unsuitable for any owner.
+
+`play <meeting> --track <track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
 it (172 minutes: about 90 s at normal priority); later passes read the cache in about half a second. Its priority and
 worker count are `global.speakerLabels.voice.compute` (`priority: normal` by default, `workers: auto` takes the free
 performance cores, at most four).

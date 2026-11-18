@@ -1,10 +1,35 @@
 import { nameKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
-import { type MeetingSeats, microphoneSide, type RemoteSeat, seatSpan } from "@genesiscz/utils/meetings/seats";
+import {
+    type MeetingSeats,
+    meetingSeatsSchema,
+    microphoneSide,
+    type RemoteSeat,
+    seatSpan,
+} from "@genesiscz/utils/meetings/seats";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { LINE_AT_TOLERANCE_SEC } from "@genesiscz/utils/transcribe/lines";
 import { baselineStays } from "./person-stays";
+import type { MeetingsResult } from "./service/api";
+import type { MeetingsClient } from "./service/client";
+
+export async function applySuggestedSeats(options: {
+    client: MeetingsClient;
+    view: MeetingsResult<"meeting.seats.suggest">;
+    replace?: boolean;
+}): Promise<boolean> {
+    const { client, view, replace } = options;
+    const { seats } = view.suggestion;
+    if ((!seats.room.length && !seats.remote.length) || (view.current && !replace)) {
+        return false;
+    }
+    await client.call("decision.apply", {
+        meeting: view.meeting,
+        action: { kind: "set", seats, ...(replace ? {} : { seatsIfAbsent: true }) },
+    });
+    return true;
+}
 
 type Seat = "room" | "remote" | "unsure";
 interface SeatPerson {
@@ -148,8 +173,8 @@ export function suggestSeats(options: {
     record: MeetingRecord;
     ranges: readonly Range[];
     lines: readonly ChannelLine[];
-    room?: readonly string[];
-    remote?: readonly string[];
+    room?: Readonly<MeetingSeats["room"]>;
+    remote?: ReadonlyArray<string | RemoteSeat>;
 }): { seats: MeetingSeats; people: SeatPerson[] } {
     const { record, ranges, lines } = options;
     const facts = new Map<string, Facts>();
@@ -202,13 +227,26 @@ export function suggestSeats(options: {
         }
     }
     const manual = new Map<string, "room" | "remote">();
+    const roomStays = (options.room ?? []).filter((row) => typeof row !== "string");
+    const remoteStays = (options.remote ?? []).filter((row) => typeof row !== "string");
+    const explicitStays = new Set([...roomStays, ...remoteStays].map((row) => nameKey(row.name)));
+    if (explicitStays.size) {
+        meetingSeatsSchema.parse({ room: roomStays, remote: remoteStays });
+    }
     for (const seat of ["room", "remote"] as const) {
-        for (const name of options[seat] ?? []) {
+        for (const entry of options[seat] ?? []) {
+            const { name } = seatSpan(entry);
+            person(name);
+            if (typeof entry !== "string") {
+                continue;
+            }
             const key = nameKey(name);
+            if (explicitStays.has(key)) {
+                throw new Error("Give a person's stays as intervals or choose a seat by name.");
+            }
             if (!key || (manual.has(key) && manual.get(key) !== seat)) {
                 throw new Error("Give each person one nonempty name and one seat.");
             }
-            person(name);
             manual.set(key, seat);
         }
     }
@@ -228,13 +266,14 @@ export function suggestSeats(options: {
     // A fresh hand choice can move one person. Keep everyone else's rows, including gaps, labels and devices.
     const keep = (name: string, side: "room" | "remote") => {
         person(name);
-        const override = manual.get(nameKey(name));
-        return override === undefined || override === side;
+        const key = nameKey(name);
+        const override = manual.get(key);
+        return !explicitStays.has(key) && (override === undefined || override === side);
     };
     const saved = withoutEmptyRemoteSeats(record.seats);
     const seats: MeetingSeats = {
-        room: (saved?.room ?? []).filter((row) => keep(seatSpan(row).name, "room")),
-        remote: (saved?.remote ?? []).filter((row) => keep(row.name, "remote")),
+        room: [...(saved?.room ?? []).filter((row) => keep(seatSpan(row).name, "room")), ...roomStays],
+        remote: [...(saved?.remote ?? []).filter((row) => keep(row.name, "remote")), ...remoteStays],
     };
     const roomNames = new Set(seats.room.map((row) => nameKey(seatSpan(row).name)));
     const remoteNames = new Set(seats.remote.map((row) => nameKey(row.name)));
@@ -253,7 +292,11 @@ export function suggestSeats(options: {
             people.push({
                 name: row.name,
                 seat: inRoom && onCall ? "unsure" : inRoom ? "room" : "remote",
-                reason: inRoom && onCall ? "Saved room and remote intervals." : "Saved seat.",
+                reason: explicitStays.has(key)
+                    ? "Seat intervals set by hand."
+                    : inRoom && onCall
+                      ? "Saved room and remote intervals."
+                      : "Saved seat.",
                 confidence: 1,
             });
             continue;

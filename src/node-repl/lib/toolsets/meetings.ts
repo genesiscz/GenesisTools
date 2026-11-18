@@ -1,7 +1,7 @@
 import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { type ByChannelOptions, byChannelOptionsSchema } from "@app/meetings/lib/by-channel";
 import { captureCost } from "@app/meetings/lib/capture-cost";
-import { attributeByChannel, channelEvidence } from "@app/meetings/lib/channel-operation";
+import { attributeByChannel, channelEvidence, lineEligibilityFor } from "@app/meetings/lib/channel-operation";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
@@ -16,16 +16,20 @@ import { startMeetingRecording } from "@app/meetings/lib/record-start";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
 import { reviewRow } from "@app/meetings/lib/review-rows";
+import { applySuggestedSeats } from "@app/meetings/lib/seat-suggest";
+import type { MeetingsMethod, MeetingsParams } from "@app/meetings/lib/service/api";
 import { withMeetingsClient } from "@app/meetings/lib/service/client";
+import { recordOf } from "@app/meetings/lib/service/handlers";
 import {
     acousticClip,
     acousticInspect,
     add,
+    type applySeats,
     assignApply,
     assignAsk,
     audioApply,
     audioPlan,
-    autostartMethod,
+    type backfillVoices,
     commentRead,
     commentWithdraw,
     configGet,
@@ -38,7 +42,7 @@ import {
     exportMethod,
     itemsList,
     itemsRows,
-    levels,
+    type lineEligibility,
     lines,
     list,
     locate,
@@ -63,17 +67,20 @@ import {
     set,
     speakers,
     suggest,
+    type thresholds,
     voiceEnroll,
     voiceFeatures,
+    type voiceReadiness,
     voiceScore,
+    type voices,
 } from "@app/meetings/lib/service/toolset-api";
 import { locateMeeting } from "@app/meetings/lib/shared";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
+import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
-import { watchOnce } from "@app/meetings/lib/watch";
-import { recordingAutostart } from "@app/meetings/lib/watcher";
+import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
 import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -124,6 +131,10 @@ function itemRow(record: MeetingRecord, item: MeetingItem) {
     };
 }
 
+function serviceCall<M extends MeetingsMethod>(method: M) {
+    return async (params: MeetingsParams<M>) => withMeetingsClient((client) => client.call(method, params));
+}
+
 export class MeetingsToolset extends ReplToolset {
     readonly api = meetingsToolsetApi;
 
@@ -131,12 +142,44 @@ export class MeetingsToolset extends ReplToolset {
         const store = new MeetingStore();
         return {
             meetings: {
-                levels: async (input: z.input<typeof levels.params> = {}) => {
-                    const { meeting, seconds } = levels.params.parse(input);
-                    return meeting === undefined
-                        ? liveMeetingLevels({ seconds: seconds ?? 3 })
-                        : savedMeetingLevels(store, meeting);
-                },
+                applySeats: async ({ replace, ...params }: z.input<typeof applySeats.params>) =>
+                    withMeetingsClient(async (client) => {
+                        const view = await client.call("meeting.seats.suggest", params);
+                        return { ...view, saved: await applySuggestedSeats({ client, view, replace }) };
+                    }),
+                backfillVoices: async (params: z.input<typeof backfillVoices.params>) =>
+                    withMeetingsClient((client) => client.call("voice.backfill", params, { timeoutMs: 3_600_000 })),
+                seats: serviceCall("meeting.seats.suggest"),
+                thresholds: async (params: z.input<typeof thresholds.params> = {}) =>
+                    withMeetingsClient((client) => readOrSetThresholds({ client, ...params })),
+                voiceReadiness: async ({ meeting }: z.input<typeof voiceReadiness.params>) =>
+                    withMeetingsClient(async (client) =>
+                        readVoiceReadiness(await client.call("meeting.show", { ref: meeting }))
+                    ),
+                lineEligibility: async ({ meeting, line }: z.input<typeof lineEligibility.params>) =>
+                    lineEligibilityFor(OpenedMeeting.of(store, recordOf(store, meeting)), line),
+                voices: Object.assign(
+                    async (input: z.input<typeof voices.params>) => {
+                        const scope =
+                            input.scope === "meeting"
+                                ? { kind: "meeting" as const, meeting: input.meeting }
+                                : input.scope === "project"
+                                  ? { kind: "project" as const, project: input.project }
+                                  : { kind: "all" as const };
+                        return withMeetingsClient((client) =>
+                            client.call("voices.list", { scope, person: input.person })
+                        );
+                    },
+                    {
+                        list: serviceCall("voices.list"),
+                        move: serviceCall("voices.move"),
+                        quality: serviceCall("voices.quality"),
+                        reject: serviceCall("voices.reject"),
+                        remove: serviceCall("voices.remove"),
+                        sample: serviceCall("voices.sample"),
+                        undo: serviceCall("voices.undo"),
+                    }
+                ),
                 audio: {
                     plan: async (input: z.input<typeof audioPlan.params> = {}) => {
                         audioPlan.params.parse(input);
