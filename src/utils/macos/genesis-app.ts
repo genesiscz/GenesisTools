@@ -60,6 +60,14 @@ export function genesisAppBundlePath(): string {
 }
 
 /**
+ * Whether the GenesisTools.app bundle is on disk. It says nothing about routing (`installedGenesisAppLauncher` also
+ * honours the off switch) or about which parts the build links (the install manifest).
+ */
+export function isGenesisAppBundleInstalled(bundle: string = genesisAppBundlePath()): boolean {
+    return existsSync(bundle);
+}
+
+/**
  * The installed bundle's own state (its build manifest, the install marker), beside the bundle in the app home. Under
  * a GENESIS_TOOLS_HOME sandbox it stays the real one, so a sandbox sees the app that is installed.
  */

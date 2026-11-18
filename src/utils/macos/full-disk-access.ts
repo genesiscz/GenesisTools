@@ -7,6 +7,7 @@ import {
     describeResponsibleIdentity,
     genesisAppBundlePath,
     genesisAppDir,
+    isGenesisAppBundleInstalled,
     isRunningUnderGenesisApp,
 } from "./genesis-app";
 import { appleScriptString } from "./jxa";
@@ -168,7 +169,7 @@ export function requestFullDiskAccess(
 
     // Only the responsible identity belongs in the list; revealing the bundle under a terminal
     // would point the user at an app that is not the one being denied.
-    if (isRunningUnderGenesisApp() && existsSync(genesisAppBundlePath())) {
+    if (isRunningUnderGenesisApp() && isGenesisAppBundleInstalled()) {
         Bun.spawnSync(["open", "-R", genesisAppBundlePath()]);
     }
 

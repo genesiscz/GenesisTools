@@ -116,8 +116,8 @@ export function macosPermissionsOpenCommand(pane: string): string {
 }
 
 /** Builds and installs GenesisTools.app. */
-export function macosPermissionsBuildCommand(): string {
-    return toolCommand("macos permissions build");
+export function macosPermissionsBuildCommand(part?: string | null): string {
+    return `${toolCommand("macos permissions build")}${part ? ` --add-part ${part}` : ""}`;
 }
 
 /** Asks macOS for the notification grant of GenesisTools.app. */
@@ -183,4 +183,15 @@ export function musicSoundfontInstallCommand(): string {
 /** Explicitly installs the pinned drum sample sets: the default ones, or one set by name. */
 export function musicSamplesInstallCommand(set?: string): string {
     return toolCommand(set === undefined ? "music samples install" : `music samples install ${set}`);
+}
+
+export function macosPermissionsCommand(): string {
+    return toolCommand("macos permissions");
+}
+
+export function genesisToolsRequestOpenCommand(id: string): string {
+    if (!/^[a-zA-Z0-9:._-]{1,500}$/.test(id)) {
+        throw new Error("Invalid request id");
+    }
+    return `${toolCommand("genesis-tools request open")} ${id}`;
 }

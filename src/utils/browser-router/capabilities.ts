@@ -8,7 +8,7 @@ import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { GENESIS_APP_BUNDLE_ID, genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { GENESIS_APP_BUNDLE_ID, isGenesisAppBundleInstalled } from "@genesiscz/utils/macos/genesis-app";
 import { appPathForBundleId } from "@genesiscz/utils/macos/launch-services";
 
 /** What a preset needs on this Mac before its routes are written and its links are offered. */
@@ -63,7 +63,7 @@ function evaluate(capability: Capability): boolean {
 
     switch (capability) {
         case "browser-router:installed":
-            return existsSync(genesisAppBundlePath());
+            return isGenesisAppBundleInstalled();
         case "browser-router:default":
             return httpsHandler() === GENESIS_APP_BUNDLE_ID;
         case "browser-extension:installed":

@@ -1,31 +1,6 @@
-/**
- * The grants `GenesisTools --permission-dialog <kind>` and `--permission-status <kind>` take: the raw values of
- * GenesisKit's PermissionKind (src/macos/GenesisKit/Sources/GenesisKitBase/Permissions/PermissionKind.swift). A test keeps
- * the two lists equal.
- */
-export const PERMISSION_KINDS = [
-    "input-monitoring",
-    "accessibility",
-    "microphone",
-    "camera",
-    "speech",
-    "screen-recording",
-    "calendar",
-    "reminders",
-    "contacts",
-    "full-disk-access",
-    "automation",
-    "desktop",
-    "documents",
-    "downloads",
-    "local-network",
-] as const;
+import { isPermissionKind, type PermissionKindId } from "@genesiscz/utils/macos/permission-kinds";
 
-export type PermissionKindId = (typeof PERMISSION_KINDS)[number];
-
-export function isPermissionKind(value: string): value is PermissionKindId {
-    return (PERMISSION_KINDS as readonly string[]).includes(value);
-}
+export { isPermissionKind, PERMISSION_KINDS, type PermissionKindId } from "@genesiscz/utils/macos/permission-kinds";
 
 /** `--permission-status` prints one wire value (GenesisKit PermissionStatus.wireValue); this is its reading. */
 export function permissionStatusLabel(wire: string): string {

@@ -65,7 +65,7 @@ package func runHost() -> Never {
     // The launcher passes its caller's environment through untouched.
     if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
         let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
-        let windowFace = wantsWindow || AppParts.partOfFace[firstArgument] != nil || hubLink
+        let windowFace = wantsWindow || AppFaces.face(firstArgument: firstArgument)?.window == true || AppParts.partOfFace[firstArgument] != nil || hubLink
         ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
         // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
         // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
@@ -151,6 +151,10 @@ package func runHost() -> Never {
     // exit. The reply is one JSON line on stdout. This is the door a unix socket would replace without
     // changing the envelope, so it stays the single entry point for anything the CLI wants done under
     // this bundle's identity (see Notify.swift).
+    if firstArgument == "--requests" {
+        runRequestFace(Array(arguments.dropFirst()))
+    }
+
     if firstArgument == "--rpc" {
         runRpc(Array(arguments.dropFirst()))
     }

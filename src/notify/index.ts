@@ -5,7 +5,11 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import type { GenesisAppRpcFailure, GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
+import {
+    appCannotAnswer,
+    type GenesisAppRpcFailure,
+    type GenesisAppRpcOutcome,
+} from "@genesiscz/utils/macos/genesis-app-rpc";
 import type { NotificationAction, NotificationOptions } from "@genesiscz/utils/macos/notifications";
 import {
     launchdSession,
@@ -764,7 +768,7 @@ function printAppUnavailable(): void {
 function printRpcFailure(error: GenesisAppRpcFailure): void {
     out.error(`${error.code}: ${error.message}`);
 
-    if (error.code === "unavailable") {
+    if (appCannotAnswer(error)) {
         out.info(suggestCommand("tools macos permissions", { replaceCommand: ["build"] }));
     } else if (error.code === "not_determined" || error.code === "denied") {
         out.info(suggestCommand("tools notify", { replaceCommand: ["authorize"] }));
