@@ -50,6 +50,7 @@ interface SetFlags {
     missedRun?: string | true;
     retryAt?: string;
     description?: string;
+    command?: string;
     json?: boolean;
 }
 
@@ -123,6 +124,10 @@ function patchFromFlags(name: string, flags: SetFlags): TaskPatch | null {
         patch.description = flags.description;
     }
 
+    if (flags.command !== undefined) {
+        patch.command = flags.command;
+    }
+
     return patch;
 }
 
@@ -176,6 +181,7 @@ export function registerConfigCommand(program: Command): void {
         )
         .option("--retry-at <times>", "retry-at times, comma-separated HH:MM (implies --missed-run retry-at)")
         .option("--description <text>", "a one-line description")
+        .option("--command <cmd>", "the shell command the task runs (replaces the old one)")
         .option("--json", "print the updated task as JSON")
         .action(async (name: string, flags: SetFlags) => {
             const patch = patchFromFlags(name, flags);

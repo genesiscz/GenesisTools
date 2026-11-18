@@ -77,6 +77,7 @@ example between two launchd restarts in a crash loop), `--uninstall` does nothin
 | `--missed-run [asap\|on-wake\|retry-at\|skip]` | Daily tasks: what a run missed while the Mac slept does |
 | `--retry-at <times>` | Comma-separated `HH:MM` times; implies `--missed-run retry-at` |
 | `--description <text>` | A one-line description |
+| `--command <cmd>` | The shell command the task runs; replaces the old one whole |
 | `--json` | Print the updated task as JSON |
 
 A flag that takes a choice, given with no value, prints the possible values and exits 1. `--missed-run asap` removes
