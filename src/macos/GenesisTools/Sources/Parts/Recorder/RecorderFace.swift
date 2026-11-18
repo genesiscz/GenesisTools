@@ -31,6 +31,8 @@ struct RecorderRequest {
     var width: CGFloat = 1440
     var height: CGFloat = 920
     var atSeconds: Double?
+    var atSourceSeconds: Double?
+    var menuCommand: RecorderMenu.Command?
     var tab: InspectorTab?
     var selectZoom: Int?
     var selectClip: Int?
@@ -85,6 +87,8 @@ struct RecorderRequest {
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
             case "--at": request.atSeconds = value().flatMap(Double.init)
+            case "--at-source-seconds": request.atSourceSeconds = value().flatMap(Double.init)
+            case "--menu-command": request.menuCommand = value().flatMap(RecorderMenu.Command.init(rawValue:))
             case "--tab": request.tab = value().flatMap(InspectorTab.init(rawValue:))
             case "--select-zoom": request.selectZoom = value().flatMap(Int.init)
             case "--select-clip": request.selectClip = value().flatMap(Int.init)
@@ -150,9 +154,7 @@ package func runRecorder(_ args: [String]) -> Never {
                 // The recorder service launches the face when a camera or window call finds no host: attach at once
                 // rather than after the retry's back-off (up to a minute).
                 RecorderServiceHost.shared?.attachNow()
-                if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
-                if next.library { LibraryWindow.shared.show(focus: next.focus) }
-                if next.picker { CapturePicker.shared.show(focus: next.focus) }
+                next.openWindows()
             }
         }
         RecorderMenu.shared.install()
@@ -160,15 +162,24 @@ package func runRecorder(_ args: [String]) -> Never {
         // The live recordings' item and floating controls; the hub defers to this face while it runs.
         LiveRecordingsStatusItem.shared.start(preferred: true)
         RecorderServiceHost.startForFace()
-        if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
-        if request.library { LibraryWindow.shared.show(focus: request.focus) }
-        if request.picker { CapturePicker.shared.show(focus: request.focus) }
+        request.openWindows()
         app.run()
     }
     exit(0)
 }
 
 // MARK: - Windows
+
+extension RecorderRequest {
+    @MainActor fileprivate func openWindows() {
+        if let edit {
+            EditorWindows.shared.open(path: edit, focus: focus, atSeconds: atSeconds, atSourceSeconds: atSourceSeconds, tab: tab)
+        }
+        if library { LibraryWindow.shared.show(focus: focus) }
+        if picker { CapturePicker.shared.show(focus: focus) }
+        if let menuCommand { RecorderMenu.shared.run(menuCommand) }
+    }
+}
 
 @MainActor
 final class EditorWindows: NSObject, NSWindowDelegate {

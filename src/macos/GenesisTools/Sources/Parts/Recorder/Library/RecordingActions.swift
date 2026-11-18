@@ -154,11 +154,11 @@ enum RecordingActions {
     }
 
     /// The actions as menu entries (the menu bar's Recent rows), each reporting through `report`.
-    static func menuItems(for item: RecorderMenu.Recent, report: @escaping (Outcome) -> Void) -> [MenuButtonItem] {
+    static func menuItems(for item: RecorderMenu.Recent, perform: @escaping (RecordingAction) -> Void) -> [MenuButtonItem] {
         var items: [MenuButtonItem] = []
         for action in RecordingAction.offered(for: item) {
             if action == .trash || action == .copyMovie || action == .rename { items.append(.divider) }
-            items.append(.action(action.title, run: { run(action, item, report: report) }))
+            items.append(.action(action.title, run: { perform(action) }))
         }
         return items
     }

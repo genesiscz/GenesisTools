@@ -163,6 +163,7 @@ enum RecorderPreferencesSync {
         observers.append(center.addObserver(forName: changed, object: NativePreview.namespace, queue: .main) { _ in
             MainActor.assumeIsolated {
                 HubPerf.log("recorder: settings changed in another process; reading them again")
+                RecorderMenu.shared.applyVisibility()
                 RecorderShortcuts.shared.apply()
                 CapturePicker.shared.preferencesChanged()
                 CameraBubble.shared.appearanceChanged()
