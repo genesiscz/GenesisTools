@@ -895,12 +895,12 @@ final class HubModel {
     /// Work mode state (the `work` area of the actions service), Work/HubWork.swift.
     let work: HubWorkModel
 
-    init(wantedSession: String?, tab: HubTab) {
+    init(wantedSession: String?, tab: HubTab, workSource: WorkSource? = nil) {
         prs = MainActor.assumeIsolated { PRsModel() }
         inbox = MainActor.assumeIsolated { HubInboxModel() }
         timeline = MainActor.assumeIsolated { HubTimelineModel() }
         agents = MainActor.assumeIsolated { HubAgentsModel() }
-        work = MainActor.assumeIsolated { HubWorkModel() }
+        work = MainActor.assumeIsolated { HubWorkModel(source: workSource) }
         // A scripted run reads and writes its scratch copy of the settings, and tells no other process.
         usage = MainActor.assumeIsolated {
             HubUsageModel(preferences: HubDefaults.isolated
