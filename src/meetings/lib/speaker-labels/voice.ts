@@ -67,6 +67,18 @@ export async function voiceWorkerSettings(
     return { ...start, workers: typeof workers === "number" ? workers : await workers() };
 }
 
+/**
+ * What `auto` means on this Mac now: the worker count a pass starting now takes (`voiceWorkerCount` of `freeCores`),
+ * with the sample it came from. The Speakers settings page shows it through `voices.workers`, so no second copy of
+ * the rule lives in Swift.
+ */
+export async function autoVoiceWorkers(
+    free: () => Promise<VoiceFreeCores> = freeCores
+): Promise<VoiceFreeCores & { auto: number }> {
+    const cores = await free();
+    return { auto: voiceWorkerCount("auto", cores), ...cores };
+}
+
 /** A one-second CPU sample (`measureCpuBusyPercent`); without the kernel read, all cores minus the one-minute load. */
 async function freeCores(): Promise<VoiceFreeCores> {
     const cores = availableParallelism();

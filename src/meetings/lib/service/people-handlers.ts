@@ -4,9 +4,10 @@ import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { autoVoiceWorkers } from "../speaker-labels/voice";
 import { applyVoices, listProjectVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
 import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
-import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
+import { type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
 
 /** Five handlers ready for the service's central dispatch table; reads use the same functions as the CLI. */
 export function voicesHandlers(
@@ -16,10 +17,12 @@ export function voicesHandlers(
     const access = { store, linkedSource: deps.linkedSource, config: deps.config };
     return {
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
-        "voices.preview": (params) => previewVoices({ ...access, ...params }),
+        "voices.preview": (params, context) =>
+            previewVoices({ ...access, ...params, onProgress: voicePassProgress(context) }),
         "voices.sample": (params) => voiceSample({ ...access, ...params }),
+        "voices.workers": () => autoVoiceWorkers(deps.freeCores),
         "voices.apply": async (params, context) => {
-            const result = await applyVoices({ ...access, ...params });
+            const result = await applyVoices({ ...access, ...params, onProgress: voicePassProgress(context) });
             context.emit?.("meeting.changed", { meeting: result.meeting, parts: ["show", "speakers", "transcript"] });
             return result;
         },
