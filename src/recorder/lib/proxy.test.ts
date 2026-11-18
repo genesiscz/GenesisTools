@@ -612,7 +612,7 @@ async function withSoundRecording(
             return options.native ? "1\n2\n" : "1\n";
         }
         expect(stream).toBe("v:0");
-        const input = command.at(-1);
+        const input = command[command.length - 1];
         expect([movie, join(folder, "overlay.mp4")]).toContain(input);
         return SafeJSON.stringify({ streams: [{ width: 160, height: 90, duration: input === movie ? "20" : "2.5" }] });
     });
@@ -802,16 +802,13 @@ describe("recording sound facts", () => {
 
     test("export protects the lane and layer files in the recording folder", async () => {
         await withSoundRecording({ tracks: [micTrack, systemTrack] }, async ({ movie, folder }) => {
-            const { project } = await edits.editProject(movie, [
+            const opened = await edits.editProject(movie, [
                 { op: "layerAdd", kind: "video", file: "overlay.mp4", endUs: 2_000_000 },
             ]);
-            expect(edits.exportInputsOf(project)).toEqual(
-                expect.arrayContaining([
-                    join(folder, micTrack.path),
-                    join(folder, systemTrack.path),
-                    join(folder, "overlay.mp4"),
-                ])
-            );
+            const inputs = [join(folder, micTrack.path), join(folder, systemTrack.path), join(folder, "overlay.mp4")];
+            expect(edits.exportInputsOf(opened.project)).toEqual(expect.arrayContaining(inputs));
+            const copy = edits.denoisedRenderProject({ opened, cleanedPath: join(folder, ".denoise", "clean.mp4") });
+            expect(edits.exportInputsOf(copy)).toEqual(expect.arrayContaining(inputs));
         });
     });
 });
