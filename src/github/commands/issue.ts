@@ -387,6 +387,8 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             closed_at: issue.closed_at,
             last_fetched: new Date().toISOString(),
             last_comment_cursor: null,
+            reaction_total: issue.reactions?.total_count,
+            comment_total: issue.comments,
         });
     } else {
         // Use cached data

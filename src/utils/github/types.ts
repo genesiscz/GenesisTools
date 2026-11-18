@@ -28,6 +28,8 @@ export interface IssueRecord {
     closed_at: string | null;
     last_fetched: string;
     last_comment_cursor: string | null;
+    reaction_total?: number | null;
+    comment_total?: number | null;
 }
 
 export interface CommentRecord {
@@ -231,6 +233,7 @@ export interface PRCommandOptions extends IssueCommandOptions {
 }
 
 export interface SearchCommandOptions {
+    searchType?: "keyword" | "semantic" | "hybrid";
     type?: "issue" | "pr" | "all" | "repo";
     repo?: string;
     state?: "open" | "closed" | "all";
@@ -465,11 +468,11 @@ export interface SearchResult {
     author: string;
     createdAt: string;
     updatedAt: string;
-    comments: number;
-    reactions: number;
+    comments: number | null;
+    reactions: number | null;
     repo: string;
     url: string;
-    source?: "advanced" | "legacy" | "both";
+    source?: "advanced" | "legacy" | "both" | "local-semantic" | "local-hybrid";
 }
 
 // ============================================

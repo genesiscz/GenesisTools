@@ -24,6 +24,7 @@ import {
     upsertIssue,
     upsertTimelineEvents,
 } from "./cache";
+import { searchCachedIssues } from "./local-issue-search";
 
 describe("updateFetchMetadata concurrency safety", () => {
     test("two sequential calls for the same issueId result in exactly one row without UNIQUE constraint error", () => {
@@ -124,6 +125,70 @@ describe("github cache database", () => {
         expect(again).toEqual(first);
         expect(other.id).not.toBe(first.id);
         expect(getCacheStats().repos).toBe(2);
+    });
+
+    test("local semantic and hybrid search filter before ranking, including cached reactions", async () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        upsertIssue(issueFields(repo.id, { title: "Save failure", reaction_total: 4, comment_total: 10 }));
+        upsertIssue(issueFields(repo.id, { number: 13, state: "closed" }));
+        upsertIssue(issueFields(getOrCreateRepo("acme", "other").id));
+        const embedder = {
+            dimensions: 2,
+            isAvailable: async () => true,
+            embed: async () => ({ dimensions: 2, vector: new Float32Array([1, 0]) }),
+        };
+        const deps = { cachePath: join(dir, "cache.db"), embedder };
+        for (const mode of ["semantic", "hybrid"] as const) {
+            const hits = await searchCachedIssues(
+                "save repo:ACME/widgets is:open type:issue reactions:>=3",
+                mode,
+                {},
+                deps
+            );
+            expect(hits).toEqual([
+                expect.objectContaining({
+                    repo: "acme/widgets",
+                    number: 12,
+                    reactions: 4,
+                    comments: 10,
+                    source: `local-${mode}`,
+                    url: "https://github.com/acme/widgets/issues/12",
+                }),
+            ]);
+        }
+        const filtered = await searchCachedIssues(
+            "save",
+            "semantic",
+            { repo: "acme/widgets", state: "closed", minReactions: 1 },
+            deps
+        );
+        expect(filtered).toEqual([]);
+        await expect(searchCachedIssues("save", "hybrid", { type: "repo" }, deps)).rejects.toThrow("issues and PRs");
+        await expect(searchCachedIssues("save", "semantic", { advanced: true }, deps)).rejects.toThrow("keyword");
+    });
+
+    test("semantic synonyms and keyword matches both contribute to hybrid rank", async () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        upsertIssue(issueFields(repo.id, { number: 1, title: "Gray screen", body: "" }));
+        upsertIssue(issueFields(repo.id, { number: 2, title: "Blank window", body: "" }));
+        upsertIssue(issueFields(repo.id, { number: 3, title: "Blank window tracker", body: "" }));
+        const deps = {
+            cachePath: join(dir, "cache.db"),
+            embedder: {
+                dimensions: 2,
+                isAvailable: async () => true,
+                embed: async (text: string) => ({
+                    dimensions: 2,
+                    vector: new Float32Array(
+                        text.trim() === "Blank window" ? [0.9, 0.1] : text.includes("tracker") ? [0, 1] : [1, 0]
+                    ),
+                }),
+            },
+        };
+        const vector = await searchCachedIssues("blank window", "semantic", {}, deps);
+        expect(vector[0].number).toBe(1);
+        const hybrid = await searchCachedIssues("blank window", "hybrid", {}, deps);
+        expect(hybrid[0].number).toBe(2);
     });
 
     test("an issue is inserted with an id, then updated in place by repository and number", () => {

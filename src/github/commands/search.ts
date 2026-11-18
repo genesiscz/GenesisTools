@@ -10,7 +10,7 @@ import { parseRepo } from "@genesiscz/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@genesiscz/utils/github/utils";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 interface GitHubSearchItem {
     number: number;
@@ -255,6 +255,26 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         `Options: type=${options.type || "all"}, repo=${options.repo || "any"}, state=${options.state || "all"}`
     );
 
+    if (options.searchType && options.type === "repo") {
+        throw new Error("--search-type applies to issues and pull requests. Omit it for --type repo.");
+    }
+    if (options.searchType === "semantic" || options.searchType === "hybrid") {
+        const { searchCachedIssues } = await import("@app/github/lib/local-issue-search");
+        const results = await searchCachedIssues(query, options.searchType, options);
+        const format = options.format || "ai";
+        const output =
+            results.length || format === "json"
+                ? formatSearchResults(results, format)
+                : "No matching issues or pull requests in the local GitHub cache.";
+        if (options.output) {
+            await Bun.write(options.output, output);
+            out.println(chalk.green(`✔ Output written to ${options.output}`));
+        } else {
+            out.println(output);
+        }
+        return;
+    }
+
     // Repo search uses a completely different endpoint
     if (options.type === "repo") {
         const repos = await searchRepos(query, options);
@@ -309,7 +329,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     // Client-side safety filter for issue-level reactions
     if (options.minReactions !== undefined) {
         const min = options.minReactions;
-        results = results.filter((r) => r.reactions >= min);
+        results = results.filter((r) => r.reactions !== null && r.reactions >= min);
     }
 
     // GraphQL-based comment reaction filter
@@ -317,7 +337,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     if (options.minCommentReactions !== undefined && results.length > 0) {
         const minCommentReactions = options.minCommentReactions;
         // Estimate cost using actual comment counts from search results (capped at 100 since GraphQL fetches first:100)
-        const totalComments = results.reduce((sum, r) => sum + Math.min(r.comments, 100), 0);
+        const totalComments = results.reduce((sum, r) => sum + Math.min(r.comments ?? 0, 100), 0);
         const estimatedCost = results.length * 2 + totalComments; // 2 per issue (node + connection) + 1 per comment node
         const issueList = results.map((r) => `#${r.number} (${r.comments} comments)`).join(", ");
 
@@ -409,6 +429,12 @@ export function createSearchCommand(): Command {
     const cmd = new Command("search")
         .description("Search GitHub issues and PRs")
         .argument("<query>", "Search query")
+        .addOption(
+            new Option(
+                "--search-type <mode>",
+                "keyword (GitHub, default), semantic or hybrid (local issue cache)"
+            ).choices(["keyword", "semantic", "hybrid"])
+        )
         .option("--type <type>", "Filter: issue|pr|all|repo", "all")
         .option("-r, --repo <owner/repo>", "Limit to repository")
         .option("--state <state>", "Filter: open|closed|all", "all")

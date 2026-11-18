@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type {
     CommentRecord,
     FetchMetadataRecord,
@@ -16,6 +17,10 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const DEFAULT_CACHE_DIR = genesisToolsDir("github");
 const DB_NAME = "cache.db";
+
+export function githubCachePath(): string {
+    return join(DEFAULT_CACHE_DIR, DB_NAME);
+}
 
 let _db: Database | null = null;
 
@@ -118,6 +123,20 @@ export function initSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_comments_date ON comments(created_at);
     CREATE INDEX IF NOT EXISTS idx_events_issue ON timeline_events(issue_id);
   `);
+    runMigrations(
+        db,
+        [
+            {
+                id: "issue-search-counts",
+                description: "Keep the observed issue reaction and comment totals for offline search",
+                apply(connection) {
+                    connection.run("ALTER TABLE issues ADD COLUMN reaction_total INTEGER");
+                    connection.run("ALTER TABLE issues ADD COLUMN comment_total INTEGER");
+                },
+            },
+        ],
+        { tableName: "github" }
+    );
 }
 
 // Repository operations
@@ -157,7 +176,7 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
       UPDATE issues SET
         type = ?, title = ?, body = ?, state = ?, author = ?,
         created_at = ?, updated_at = ?, closed_at = ?,
-        last_fetched = ?, last_comment_cursor = ?
+        last_fetched = ?, last_comment_cursor = ?, reaction_total = ?, comment_total = ?
       WHERE id = ?
     `).run(
             data.type,
@@ -170,6 +189,8 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
             data.closed_at,
             data.last_fetched,
             data.last_comment_cursor,
+            data.reaction_total ?? null,
+            data.comment_total ?? null,
             existing.id
         );
         return { ...existing, ...data };
@@ -178,8 +199,8 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
     const stmt = db.query(`
     INSERT INTO issues (
       repo_id, number, type, title, body, state, author,
-      created_at, updated_at, closed_at, last_fetched, last_comment_cursor
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+      created_at, updated_at, closed_at, last_fetched, last_comment_cursor, reaction_total, comment_total
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
   `);
     const result = stmt.get(
         data.repo_id,
@@ -193,7 +214,9 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
         data.updated_at,
         data.closed_at,
         data.last_fetched,
-        data.last_comment_cursor
+        data.last_comment_cursor,
+        data.reaction_total ?? null,
+        data.comment_total ?? null
     ) as { id: number };
 
     return { id: result.id, ...data };

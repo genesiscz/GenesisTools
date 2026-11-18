@@ -302,6 +302,7 @@ tools github review comment 42 --thread PRRT_aaa --body-file reply.md --now     
 
 ```bash
 tools github search "memory leak" --repo owner/repo --state open    # issues and PRs
+tools github search "window opens empty" --repo owner/repo --search-type hybrid  # cached issues and PRs
 tools github search "dark mode" --type pr --sort reactions -L 50
 tools github search "crash" --repo owner/repo --min-comment-reactions 3   # GraphQL scan of the hits' comments
 tools github search "http client" --type repo --language typescript --min-stars 1000 --sort stars
@@ -312,8 +313,9 @@ tools github code "interface Props" --repo owner/repo --language typescript
 `search` flags: `--type issue|pr|all|repo` (default `all`), `-r, --repo <owner/repo>`, `--state open|closed|all`
 (default `all`), `--sort <field>`, `-L, --limit <n>` (default 30), `--advanced`, `--legacy`, `--min-reactions <n>`,
 `--min-comment-reactions <n>`, `--language <lang>` and `--min-stars <n>` (repository search), `-f, --format
-ai|md|json` (default `ai`), `-o, --output <file>`.
+ai|md|json` (default `ai`), `-o, --output <file>`, and `--search-type keyword|semantic|hybrid` for issues and PRs.
 
+- Semantic and hybrid search rank previously cached issues and PRs on macOS using DarwinKit. Hybrid also searches the cached title and body with FTS5. Both modes work offline and use no GitHub quota.
 - By default `search` runs two backends at once and merges the hits: GitHub's advanced issue search
   (`advanced_search=true`, `type:` qualifiers) and the legacy one (`is:` qualifiers). It prints how many hits each
   found and which it deduplicated. `--advanced` or `--legacy` runs one, which costs half the search quota.

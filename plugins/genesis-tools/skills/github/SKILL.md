@@ -27,6 +27,8 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | Filter by positive reactions | `tools github issue <url> --min-reactions-positive 3` |
 | Exclude bots | `tools github issue <url> --no-bots` |
 | Search with min reactions | `tools github search "bug" --repo owner/repo --min-reactions 10` |
+| Search cached issues by meaning on macOS | `tools github search "window opens empty" --repo owner/repo --search-type semantic` |
+| Search cached issue text and meaning together | `tools github search "blank panel" --repo owner/repo --search-type hybrid` |
 | Search issues | `tools github search "error" --repo owner/repo --state open` |
 | Get PR with review comments | `tools github pr <url> --review-comments` |
 | Check auth status | `tools github status` |
@@ -501,6 +503,7 @@ Options:
   --min-comment-reactions <n>  Min reactions on any comment (GraphQL, slower)
   --language <lang>            Filter repos by language
   --min-stars <n>              Minimum star count for repo search
+  --search-type <mode>         keyword searches GitHub (default); semantic and hybrid rank cached issues and PRs locally
   --advanced                   Use only advanced search backend
   --legacy                     Use only legacy search backend
   -f, --format <format>        Output format
