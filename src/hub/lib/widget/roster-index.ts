@@ -77,20 +77,18 @@ export function newestRosterRows<T extends Pick<AgentSessionRow, "mtime" | "file
 /** The indexed sessions and their tree, including journal and process changes with no transcript event. */
 export async function readWidgetRoster(): Promise<WidgetRoster> {
     const now = Date.now();
-    const rows = await profiler
-        .scope("widget")
-        .measureAsync(
-            "roster session rows",
-            () =>
-                listAgentSessionRows({
-                    now,
-                    hours: WIDGET_ROSTER_HOURS,
-                    withUsage: false,
-                    refresh: false,
-                    failClosed: true,
-                }),
-            cpuMeta()
-        );
+    const rows = await profiler.scope("widget").measureAsync(
+        "roster session rows",
+        () =>
+            listAgentSessionRows({
+                now,
+                hours: WIDGET_ROSTER_HOURS,
+                withUsage: false,
+                refresh: false,
+                failClosed: true,
+            }),
+        cpuMeta()
+    );
     newestRosterRows(rows);
     const agents = await readWidgetParents(rows.slice(0, WIDGET_ROSTER_LIMIT), now, false);
     return { rows, agents };
