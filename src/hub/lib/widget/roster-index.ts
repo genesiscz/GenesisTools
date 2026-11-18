@@ -7,6 +7,7 @@ import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider
 import { ACCOUNT_PROVIDER_ALIASES, byHarness, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
+import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
 import type { AgentsTree } from "../agents/types";
@@ -66,7 +67,19 @@ export class WidgetRosterReads {
 /** The roster the Widget shows: the indexed sessions and the agents tree, read from the index as it is. */
 export async function readWidgetRoster(): Promise<WidgetRoster> {
     const [rows, agents] = await Promise.all([
-        listAgentSessionRows({ hours: WIDGET_ROSTER_HOURS, withUsage: false, refresh: false, failClosed: true }),
+        profiler
+            .scope("widget")
+            .measureAsync(
+                "roster session rows",
+                () =>
+                    listAgentSessionRows({
+                        hours: WIDGET_ROSTER_HOURS,
+                        withUsage: false,
+                        refresh: false,
+                        failClosed: true,
+                    }),
+                cpuMeta()
+            ),
         hubAgents({ hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh: false }),
     ]);
     return { rows, agents };

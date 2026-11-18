@@ -12,7 +12,7 @@ import { claudeSubagentLead } from "@genesiscz/utils/agent-sessions/readers/clau
 import { resolveTranscripts } from "@genesiscz/utils/ai/transcripts/resolve";
 import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
-import { profiler } from "@genesiscz/utils/profile";
+import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import { openAgentSessionIds } from "../procs/sources";
 import { attachCodexAgents, type CodexAgentRecord, recentCodexAgentRecords } from "./codex-agents";
 import type { ParentBuilder, ParentContext } from "./parent";
@@ -407,16 +407,19 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     const openSessions = readOpenSessions(options);
 
     const [rows, workers, codexRecords] = await Promise.all([
-        prof.measureAsync("parents", () =>
-            options.session
-                ? Promise.resolve([])
-                : listAgentSessionRows({
-                      providers: AGENT_HARNESSES,
-                      refresh: options.refresh,
-                      hours,
-                      limit,
-                      maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
-                  })
+        prof.measureAsync(
+            "parents",
+            () =>
+                options.session
+                    ? Promise.resolve([])
+                    : listAgentSessionRows({
+                          providers: AGENT_HARNESSES,
+                          refresh: options.refresh,
+                          hours,
+                          limit,
+                          maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+                      }),
+            cpuMeta()
         ),
         prof.measureAsync("workers", () => listWorkers({ now, since, promptChars: options.promptChars })),
         prof.measureAsync("codex-agents", () =>
@@ -511,8 +514,10 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     };
     // A row with no provider predates the field and is a Claude session.
     const parents = sortParents(
-        prof.measure("tree", () =>
-            parentRows.map((row) => PARENT_BUILDERS.of(row.provider ?? DEFAULT_PARENT_HARNESS)(row, context))
+        prof.measure(
+            "tree",
+            () => parentRows.map((row) => PARENT_BUILDERS.of(row.provider ?? DEFAULT_PARENT_HARNESS)(row, context)),
+            cpuMeta()
         )
     )
         .map((parent) => ({ ...parent, open: open.has(parent.sessionId) }))

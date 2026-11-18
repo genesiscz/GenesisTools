@@ -1,4 +1,4 @@
-import { profiler } from "@genesiscz/utils/profile";
+import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import { readWidgetRoster, refreshWidgetIndex, WidgetRosterReads, widgetRosterPaths } from "./roster-index";
 import type { WidgetRosterReply, WidgetRosterRequest } from "./roster-reader";
 
@@ -13,12 +13,13 @@ self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
             // Resident, so the walk and transcript caches stay warm: a refresh here costs a fraction of a new
             // `hub widget discover` process, which paid every cold cache on each run.
             let changed = true;
+            const cpu = prof.enabled ? cpuMeta() : undefined;
             await prof.measureAsync(
                 "background index",
                 async () => {
                     changed = await refreshWidgetIndex(new Set(index), { paths: widgetRosterPaths(paths) });
                 },
-                () => ({ scopes: index.join(","), exact: Object.values(paths).flat().length, changed })
+                () => ({ ...cpu?.(), scopes: index.join(","), exact: Object.values(paths).flat().length, changed })
             );
             // This refresh writing nothing is not enough: another process may have written since the last read.
             if (onlyIfChanged && !reads.needed(changed)) {
