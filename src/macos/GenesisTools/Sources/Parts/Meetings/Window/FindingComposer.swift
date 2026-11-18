@@ -6,17 +6,8 @@ struct FindingComposerButton: View {
     /// The Items bar in a narrow column: the glyph alone, with its words as tooltip and label.
     var compact = false
     @State private var showing = false
-    @State private var kind = "question"
-    @State private var from = 0.0
-    @State private var to = 10.0
-    @State private var question = ""
-    @State private var choices = ""
-    @State private var heard = ""
-    @State private var proposed = ""
-    @State private var force = false
-    @State private var busy = false
-    @State private var message: String?
-    @State private var failure: MeetingsCLI.Failure?
+    // Keep the draft when the popover closes and opens again.
+    @State private var draft = FindingComposerForm.Draft()
 
     var body: some View {
         Button { showing.toggle() } label: {
@@ -27,75 +18,105 @@ struct FindingComposerButton: View {
             .accessibilityLabel("Add question or term")
             .accessibilityIdentifier("meetings.finding.add")
             .popover(isPresented: $showing) {
-                Form {
-                    Picker("Finding", selection: $kind) {
-                        Text("Question").tag("question")
-                        Text("Term").tag("term")
-                    }
-                    TextField("From, seconds", value: $from, format: .number)
-                    if kind == "question" {
-                        TextField("To, seconds", value: $to, format: .number)
-                        TextField("Question", text: $question)
-                        TextField("Choices, separated by commas", text: $choices)
-                        Text("Without decided findings, an answer is saved as a plain question.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        TextField("Heard words", text: $heard)
-                        TextField("Proposed spelling", text: $proposed)
-                        Toggle("Force an invalid anchor", isOn: $force)
-                        Text("An invalid anchor reports the nearest line containing the word. Correct the time before adding, or explicitly force it.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let message { Text(verbatim: message).font(.caption).textSelection(.enabled) }
-                    if let failure {
-                        NoticePill(text: failure.sentence, more: failure.detail, tone: .error)
-                    }
-                    HStack {
-                        Button("Cancel") { showing = false }.keyboardShortcut(.cancelAction)
-                        Spacer()
-                        Button(busy ? "Adding…" : "Add") { add() }
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(busy || from < 0 || (kind == "question" ? to < from || question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : heard.isEmpty || proposed.isEmpty))
-                    }
-                }.formStyle(.grouped).padding().frame(width: 430)
+                FindingComposerForm(detail: detail, draft: draft) { showing = false }
             }
+    }
+}
+
+struct FindingComposerForm: View {
+    @Observable final class Draft {
+        var kind = "question"
+        var from = 0.0
+        var to = 10.0
+        var question = ""
+        var choices = ""
+        var heard = ""
+        var proposed = ""
+        var force = false
+        var busy = false
+        var message: String?
+        var failure: MeetingsCLI.Failure?
+
+        var addDisabled: Bool {
+            if busy || from < 0 { return true }
+            if kind == "question" { return to < from || question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            return heard.isEmpty || proposed.isEmpty
+        }
+    }
+
+    let detail: MeetingDetailModel
+    @Bindable var draft: Draft
+    let onClose: () -> Void
+
+    var body: some View {
+        Form {
+            Picker("Finding", selection: $draft.kind) {
+                Text("Question").tag("question")
+                Text("Term").tag("term")
+            }
+            TextField("From, seconds", value: $draft.from, format: .number)
+            if draft.kind == "question" {
+                TextField("To, seconds", value: $draft.to, format: .number)
+                TextField("Question", text: $draft.question)
+                TextField("Choices, separated by commas", text: $draft.choices)
+                Text("Without decided findings, an answer is saved as a plain question.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                TextField("Heard words", text: $draft.heard)
+                TextField("Proposed spelling", text: $draft.proposed)
+                Toggle("Force an invalid anchor", isOn: $draft.force)
+                Text("An invalid anchor reports the nearest line containing the word. Correct the time before adding, or explicitly force it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let message = draft.message { Text(verbatim: message).font(.caption).textSelection(.enabled) }
+            if let failure = draft.failure {
+                NoticePill(text: failure.sentence, more: failure.detail, tone: .error)
+            }
+            HStack {
+                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(draft.busy ? "Adding…" : "Add") { add() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(draft.addDisabled)
+            }
+        }.formStyle(.grouped).padding().frame(width: 430)
     }
 
     private func add() {
-        var finding = DecisionAction.Finding(kind: kind)
-        if kind == "question" {
-            finding.from = from
-            finding.to = to
-            finding.question = question
-            finding.choices = choices.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        var finding = DecisionAction.Finding(kind: draft.kind)
+        if draft.kind == "question" {
+            finding.from = draft.from
+            finding.to = draft.to
+            finding.question = draft.question
+            finding.choices = draft.choices.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             finding.decides = []
             finding.about = "text"
         } else {
-            finding.at = from
-            finding.heard = heard
-            finding.proposed = proposed
+            finding.at = draft.from
+            finding.heard = draft.heard
+            finding.proposed = draft.proposed
             finding.scope = "line"
             finding.confidence = 1
             finding.reason = "Manual spelling correction"
         }
         var action = DecisionAction(kind: "add")
         action.findings = [finding]
-        action.force = force
-        busy = true
-        message = nil
-        failure = nil
+        action.force = draft.force
+        draft.busy = true
+        draft.message = nil
+        draft.failure = nil
         Task { @MainActor in
-            defer { busy = false }
+            defer { draft.busy = false }
             do {
                 let result = try await MeetingDetailModel.applyDecision(meeting: detail.id, action: action, reason: nil, service: detail.service)
                 detail.readRecordAndRows()
                 if let warnings = result.warnings, !warnings.isEmpty {
-                    message = warnings.joined(separator: "\n")
+                    draft.message = warnings.joined(separator: "\n")
                 } else {
-                    showing = false
+                    onClose()
                 }
             } catch {
-                failure = asFailure(error)
+                draft.failure = asFailure(error)
             }
         }
     }

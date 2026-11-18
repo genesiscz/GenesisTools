@@ -865,6 +865,92 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertTrue(notice.contains("Duplicated as"), notice)
     }
 
+    func testWindowWriteFindingTwiceShowsAlreadyOpenAndKeepsOneTerm() async throws {
+        let store = WindowWriteStore(home: folder)
+        let id = try store.seed([])
+        let model = try writeWindow(store: store)
+        model.select(id, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        defer { detail.cancelReads(); model.stopLiveUpdates() }
+
+        func hostForm(onClose: @escaping () -> Void) -> NSWindow {
+            WindowWriteControls.host(FindingComposerForm(detail: detail, draft: .init(), onClose: onClose)
+                .pickerStyle(.menu), width: 430, height: 500)
+        }
+
+        var firstCloses = 0
+        do {
+            let first = hostForm { firstCloses += 1 }
+            defer { first.close() }
+            try await enterTermAndPressAdd(in: first)
+            _ = try await WindowWriteControls.until("the first finding to close the form") { firstCloses > 0 ? true : nil }
+        }
+        XCTAssertEqual(firstCloses, 1)
+        let items = try store.record(id).items
+        let term = try XCTUnwrap(items.first)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(term.kind, "term")
+        XCTAssertEqual(term.heard, "glimmer")
+        XCTAssertEqual(term.proposed, "Glimmer")
+        XCTAssertEqual(term.atSec, 0)
+        XCTAssertEqual(term.evidence?["transcriptLine"], .number(0))
+
+        var duplicateCloses = 0
+        let second = hostForm { duplicateCloses += 1 }
+        defer { second.close() }
+        try await enterTermAndPressAdd(in: second)
+        let warning = "Already open: \(term.id)"
+        _ = try await WindowWriteControls.until(warning) {
+            guard duplicateCloses == 0 else { throw NSError(domain: "The duplicate dismissed the finding form", code: 1) }
+            return try WindowWriteControls.picture(second, containing: warning, named: "already-open-finding")
+        }
+        XCTAssertEqual(duplicateCloses, 0)
+        XCTAssertEqual(try store.record(id).items, [term])
+        XCTAssertEqual(fake.count("decision.apply"), 2)
+    }
+
+    private func enterTermAndPressAdd(in panel: NSWindow) async throws {
+        let content = try XCTUnwrap(panel.contentView)
+        let picker = try await WindowWriteControls.until("the finding picker") {
+            WindowWriteControls.controls(NSPopUpButton.self, in: content).first { $0.itemTitles.contains("Term") }
+        }
+        let menu = try XCTUnwrap(picker.menu)
+        let termIndex = try XCTUnwrap(menu.items.firstIndex { $0.title == "Term" })
+        if menu.items[termIndex].action != nil {
+            menu.performActionForItem(at: termIndex)
+        } else {
+            picker.selectItem(at: termIndex)
+            XCTAssertTrue(picker.sendAction(picker.action, to: picker.target))
+        }
+
+        let fields: [NSTextField] = try await WindowWriteControls.until("the time, heard words and proposed spelling") {
+            content.layoutSubtreeIfNeeded()
+            let inputs = WindowWriteControls.controls(NSTextField.self, in: content).filter(\.isEditable)
+            guard inputs.count == 3 else { return nil }
+            return inputs.sorted { $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY }
+        }
+        for (field, words) in zip(fields.dropFirst(), ["glimmer", "Glimmer"]) {
+            XCTAssertTrue(panel.makeFirstResponder(field))
+            let editor = try await WindowWriteControls.until("the field editor for \(words)") { field.currentEditor() as? NSTextView }
+            editor.selectAll(nil)
+            editor.insertText(words, replacementRange: editor.selectedRange())
+            XCTAssertTrue(panel.makeFirstResponder(nil))
+        }
+        let returnKey = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: panel.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+            isARepeat: false, keyCode: 36))
+        _ = try await WindowWriteControls.until("the enabled Add button") {
+            let buttons = WindowWriteControls.controls(NSButton.self, in: content)
+            if let add = buttons.first(where: { $0.title == "Add" || $0.keyEquivalent == "\r" }) {
+                guard add.isEnabled else { return nil as Bool? }
+                add.performClick(nil)
+                return true
+            }
+            // A SwiftUI-drawn Add still registers its default action on the panel.
+            return panel.performKeyEquivalent(with: returnKey) ? true : nil
+        }
+    }
+
     private func pressChoice(_ label: String, rowID: String, detail: MeetingDetailModel, picture: String) async throws {
         let rows = try await MeetingDetailModel.rowsRead(detail.id, lowPriority: .show).run(service: detail.service)
         detail.settleDecisionRecord(try await MeetingDetailModel.recordRead(detail.id).run(service: detail.service))
