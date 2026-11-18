@@ -19,6 +19,7 @@ import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
+import { MutedCallLines } from "../call-mutes";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
@@ -288,6 +289,18 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
             const { addQualityQuestions, qualityVoiceFeatures } = await import("../listen-quality");
             const entries = (await opened.meeting()).transcript;
+            const evidence = await opened.evidence().catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "roster readings unavailable for sampled questions");
+                return null;
+            });
+            let callMutes: MutedCallLines | undefined;
+            if (evidence?.speaking.some((read) => read.muted?.length)) {
+                const energy = await opened.energy().catch((error: unknown) => {
+                    log.debug({ error, meeting: record.id }, "using channel segments for sampled questions");
+                    return undefined;
+                });
+                callMutes = new MutedCallLines(lineEvidence(entries, evidence, undefined, energy?.share));
+            }
             const features = params.group === "long-stretch" ? await qualityVoiceFeatures(opened) : undefined;
             const below =
                 params.group === "long-stretch"
@@ -300,6 +313,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 questions = addQualityQuestions({
                     record: current,
                     entries,
+                    callMutes,
                     features,
                     spotCheck: params.group === "spot-check" ? (params.count ?? 20) : undefined,
                     longStretchWords: params.group === "long-stretch" ? (params.words ?? 50) : undefined,

@@ -10,8 +10,10 @@ import { type LineVoice, lineVoices, type VoiceFrame } from "@genesiscz/utils/me
 import { collectVoiceFrames } from "@genesiscz/utils/meetings/voice-frame-cache";
 import { profiler } from "@genesiscz/utils/profile";
 import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { MutedCallLines } from "./call-mutes";
 import { contextEntryText } from "./context-file";
 import { indicatorGaps } from "./indicator-facts";
 import { addQualityQuestions } from "./listen-quality";
@@ -250,6 +252,9 @@ export async function runSuggest(options: {
     }
 
     const inputs: Parameters<typeof suggestItems>[0] = {
+        measuredLines: evidence
+            ? prof.measure("rules.line-evidence", () => lineEvidence(meeting.transcript, evidence, presence, share))
+            : [],
         localSpeech: rules.includes("evidence")
             ? prof.measure("evidence.local-speech-history", () =>
                   localSpeechDuring({ start: meeting.start, end: meeting.end })
@@ -338,6 +343,7 @@ export async function runSuggest(options: {
                 addQualityQuestions({
                     record: current,
                     entries: meeting.transcript,
+                    callMutes: new MutedCallLines(inputs.measuredLines ?? []),
                     longStretchWords: config.global.suggest.longStretchWords,
                     below: Math.max(0.7, config.global.suggest.applyAbove),
                     features,

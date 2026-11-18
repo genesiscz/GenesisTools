@@ -873,7 +873,7 @@ describe("summary points and importance", () => {
 });
 
 describe("mute state", () => {
-    test("a reading that did not read the mute state does not clear it; a read one 10 s back still holds", () => {
+    test("a reading without a mute list leaves the last mute in force for up to ten minutes", () => {
         const [line] = lineEvidence([{ speaker: "Bob Example", startSec: 20, text: "Čus." }], {
             segments: [{ startSec: 20, endSec: 22, channel: "system" }],
             speaking: [
@@ -883,10 +883,38 @@ describe("mute state", () => {
         });
         expect(line?.muted).toEqual(["Alice Example"]);
 
-        const [stale] = lineEvidence([{ speaker: "Bob Example", startSec: 40, text: "Čus." }], {
-            segments: [{ startSec: 40, endSec: 42, channel: "system" }],
+        const [stale] = lineEvidence([{ speaker: "Bob Example", startSec: 620, text: "Čus." }], {
+            segments: [],
             speaking: [{ tSec: 17.8, speaking: [], muted: ["Alice Example"] }],
         });
         expect(stale?.muted).toBeUndefined();
+    });
+
+    test("a call line needs uninterrupted mute coverage from its start to its end", () => {
+        const name = "Reed Example";
+        const entries = [98, 100, 104, 108, 112, 114, 116, 120, 125].map((sec) => line("Voice", sec, "Hello."));
+        const lines = lineEvidence(entries, {
+            segments: [],
+            mutedCarrySec: 10,
+            speaking: [
+                { tSec: 100, speaking: [], muted: [name], validUntilSec: 101 },
+                { tSec: 101, speaking: [], speakingUnknown: true },
+                { tSec: 108, speaking: [], muted: [name] },
+                { tSec: 113, speaking: [name] },
+                { tSec: 115, speaking: [], muted: [name] },
+            ],
+        });
+        expect(lines.map((entry) => entry.muted ?? [])).toEqual([
+            [],
+            [name],
+            [name],
+            [name],
+            [],
+            [],
+            [name],
+            [name],
+            [],
+        ]);
+        expect(lines[2]?.speakingUnknown).toBe(true);
     });
 });

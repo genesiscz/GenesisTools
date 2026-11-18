@@ -746,6 +746,10 @@ observations produce unresolved candidate ranges, never an inferred shared voice
 `null` means no overlapping channel segment, and is distinct from a measured zero. `energyMicShare` remains the
 separate calibrated energy measurement. People found only in speaking or muted observations have `origin: "indicator"`.
 
+A roster mute holds until the next mute list omits that person, the indicator shows them speaking, or
+`global.suggest.mutedCarrySec` elapses after the last mute read (600 seconds by default). A mute must cover the
+whole transcript line to exclude a call speaker. A participant muted in the call can still speak on the room microphone.
+
 `evidence <meeting> --voice-features` (or `--voices <n>`, which clusters the lines into that many voices) measures
 each line's RMS, low-band share, tilt and pitch for both physical audio channels and puts them in a new field,
 `voiceFeatures`, on each JSON or raw line. `voice` stays the voice match. Without one of those flags nothing is
