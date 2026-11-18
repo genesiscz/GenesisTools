@@ -212,7 +212,12 @@
     "speedUpWaits",
     "autoSpeed",
     "redactionJoins",
-    "unhide"
+    "unhide",
+    "audioLane",
+    "layerAdd",
+    "layer",
+    "layerMove",
+    "layerRemove"
   ],
   "ops": [
     {
