@@ -48,7 +48,8 @@
     "params": {
       "window": "--features",
       "args": [],
-      "activate": true
+      "activate": true,
+      "wait": true
     },
     "result": {
       "status": "ran",

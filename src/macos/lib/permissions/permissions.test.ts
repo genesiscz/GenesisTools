@@ -102,12 +102,14 @@ describe("permission window commands", () => {
         const exitCode = process.exitCode;
         const open = spyOn(gt.windows, "open").mockResolvedValue({
             status: "unreachable",
-            skipped: [{
-                way: "native",
-                code: "app-missing",
-                reason: "app unavailable",
-                fix: { command: "install-ui-fixture", sentence: "Install the app." },
-            }],
+            skipped: [
+                {
+                    way: "native",
+                    code: "app-missing",
+                    reason: "app unavailable",
+                    fix: { command: "install-ui-fixture", sentence: "Install the app." },
+                },
+            ],
             manual: null,
         });
         const err = spyOn(ui, "err").mockImplementation(() => {});
@@ -142,12 +144,14 @@ describe("permission window commands", () => {
         try {
             await runPermissions(["request", "microphone", "--reason", "Record this clip"]);
             expect(open.mock.calls).toEqual([
-                [{
-                    window: "--permission-dialog",
-                    args: ["microphone", "--reason", "Record this clip"],
-                    activate: true,
-                    wait: true,
-                }],
+                [
+                    {
+                        window: "--permission-dialog",
+                        args: ["microphone", "--reason", "Record this clip"],
+                        activate: true,
+                        wait: true,
+                    },
+                ],
             ]);
             expect(calls).toEqual(["status", "dialog", "status"]);
             expect(ok).toHaveBeenCalledWith("microphone: granted");
@@ -168,12 +172,14 @@ describe("permission window commands", () => {
         });
         const open = spyOn(gt.windows, "open").mockResolvedValue({
             status: "unreachable",
-            skipped: [{
-                way: "native",
-                code: "app-missing",
-                reason: "missing app",
-                fix: { command: "repair-fixture", sentence: "Install it." },
-            }],
+            skipped: [
+                {
+                    way: "native",
+                    code: "app-missing",
+                    reason: "missing app",
+                    fix: { command: "repair-fixture", sentence: "Install it." },
+                },
+            ],
             manual: null,
         });
         const err = spyOn(ui, "err").mockImplementation(() => {});
@@ -197,13 +203,17 @@ describe("permission window commands", () => {
         const exitCode = process.exitCode;
         const isTest = spyOn(LIVE_FACTS, "isTest").mockReturnValue(false);
         const bundle = spyOn(LIVE_FACTS, "appBundle").mockReturnValue({
-            installed: false, routingOff: false, path: "/fixture/missing.app",
+            installed: false,
+            routingOff: false,
+            path: "/fixture/missing.app",
         });
         const err = spyOn(ui, "err").mockImplementation(() => {});
         try {
             await runPermissions(["open", "--pane", "accessibility"]);
             expect(err.mock.calls).toEqual([
-                ["app.installed: GenesisTools.app is not installed at /fixture/missing.app\ntools macos permissions build"],
+                [
+                    "app.installed: GenesisTools.app is not installed at /fixture/missing.app\ntools macos permissions build",
+                ],
             ]);
             expect(process.exitCode).toBe(1);
         } finally {

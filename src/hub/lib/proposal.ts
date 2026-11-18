@@ -666,10 +666,7 @@ export async function reviewWindowStatus(deps = liveEngineDeps(AREAS)): Promise<
     return hubStatus(bundlePath);
 }
 
-export async function openInApp(
-    path: string,
-    { open = gt.windows.open, warn = out.log.warn } = {}
-): Promise<void> {
+export async function openInApp(path: string, { open = gt.windows.open, warn = out.log.warn } = {}): Promise<void> {
     const outcome = await open({ window: "--review", args: ["--proposal", path], activate: true });
     if (outcome.status === "unreachable") {
         for (const skipped of outcome.skipped) {

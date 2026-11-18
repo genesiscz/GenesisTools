@@ -44,12 +44,7 @@ import {
     PARTS_FLAG_VALUES,
     parsePartsFlag,
 } from "../../lib/permissions/parts";
-import {
-    type PermissionsReport,
-    permissionsReport,
-    SETTINGS_PANES,
-    settingsUrl,
-} from "../../lib/permissions/report";
+import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
 import { createBuildProgressDisplay } from "../../lib/permissions/swift-progress";
 import { runCodesignTrust } from "./codesign-trust";
 
