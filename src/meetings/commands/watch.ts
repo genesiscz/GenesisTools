@@ -1,27 +1,12 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { fail, resolveEnum } from "../lib/shared";
-import { watchLoop, watchOnce } from "../lib/watch";
-import { recordingAutostart, watcherPidPath } from "../lib/watcher";
+import { watchOnce } from "../lib/watch";
+import { recordingAutostart, runWatcher } from "../lib/watcher";
 
-/**
- * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the
- * shared claim's one rule (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts), so one a SIGKILL left behind no longer blocks.
- */
-export async function claimWatcher(store: MeetingStore): Promise<void> {
-    const file = watcherPidPath(store);
-    const claim = await claimPidFile(file, {
-        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
-    });
-
-    if (claim.status !== "claimed") {
-        const owner = claim.status === "held" && "pid" in claim.state ? ` (pid ${claim.state.pid})` : "";
-        throw new Error(`another meetings watcher holds ${file}${owner}`);
-    }
-}
+export { claimWatcher } from "../lib/watcher";
 
 async function watch(opts: { once?: boolean }): Promise<void> {
     const store = new MeetingStore();
@@ -32,13 +17,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             return;
         }
 
-        await claimWatcher(store);
-
-        try {
-            await watchLoop(store);
-        } finally {
-            clearPidFile(watcherPidPath(store));
-        }
+        await runWatcher(store);
     } catch (err) {
         fail(err);
     }

@@ -1367,7 +1367,7 @@ test("record start chooses frames only on a positive live grant and preserves th
 });
 
 describe("watchOnce", () => {
-    const settings = { enabled: true, liveWithinSec: 30, notify: true };
+    const settings = { enabled: true, liveWithinSec: 30, notify: true, permissionCard: true };
     const now = Date.parse("2026-11-02T15:10:00.000Z");
     const live = {
         sourceMeetingId: "w1",
@@ -1385,6 +1385,7 @@ describe("watchOnce", () => {
         const refreshed: string[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
+            grantCard: async () => {},
             grants: () => ({
                 live: {
                     accessibility: true,
@@ -1422,6 +1423,7 @@ describe("watchOnce", () => {
             notify: async (note) => {
                 notes.push(note.title);
                 posted.push(note);
+                return true;
             },
             ...over,
         };
@@ -2023,6 +2025,97 @@ describe("watchOnce", () => {
         await watchOnce(h.store, { deps: h.deps, now: now + 45_000 });
         expect(h.refreshed.filter((one) => one.endsWith("wisprflow:w1"))).toHaveLength(before + 1);
         expect(readAuto(h.store)?.sourceMeetingId).toBe("w2");
+    });
+
+    test("preflight persists the grant card at startup, reads hourly and clears it after recovery or disable", async () => {
+        const home = mkdtempSync(join(tmpdir(), "recording-preflight-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { readWidgetState } = await import("@app/hub/lib/widget/storage");
+            let reads = 0;
+            let enabled = true;
+            let granted = false;
+            const h = harness({
+                settings: async () => ({ ...settings, enabled }),
+                liveRecording: async () => null,
+                grants: () => {
+                    reads++;
+                    return {
+                        live: {
+                            accessibility: true,
+                            screenRecording: granted,
+                            microphone: granted,
+                            viaGenesisApp: true,
+                            responsiblePid: 42,
+                            responsibleBundleId: "org.example.orchard",
+                            responsiblePath: "/fixture",
+                        },
+                    };
+                },
+            });
+            delete h.deps.grantCard; // Exercise the persisted widget state, including the hub's decoding schema.
+            const tick = (after: number) => watchOnce(h.store, { deps: h.deps, now: now + after });
+            await tick(0);
+            expect((await readWidgetState()).meetingRecordingWarning).toBe("Screen Recording, Microphone");
+            granted = true;
+            await tick(3_599_999);
+            expect(reads).toBe(1);
+            expect((await readWidgetState()).meetingRecordingWarning).toBe("Screen Recording, Microphone");
+            await tick(3_600_000);
+            expect(reads).toBe(2);
+            expect((await readWidgetState()).meetingRecordingWarning).toBeUndefined();
+            h.deps.grants = () => ({ live: null, error: "fixture helper timed out" });
+            await tick(7_200_000);
+            expect((await readWidgetState()).meetingRecordingWarning).toBe(
+                "could not read the grant: fixture helper timed out"
+            );
+            enabled = false;
+            await tick(7_215_000);
+            expect((await readWidgetState()).meetingRecordingWarning).toBeUndefined();
+        });
+    });
+
+    test("newer code ends the old watcher and the daemon starts a fresh owner", async () => {
+        const home = mkdtempSync(join(tmpdir(), "recording-restart-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new MeetingStore();
+            const { runWatcher } = await import("./lib/watcher");
+            const { superviseMeetingsWatcher } = await import("@app/daemon/daemon");
+            const claimed = Promise.withResolvers<void>();
+            const replacement = Promise.withResolvers<void>();
+            let stamp = 0;
+            const old = runWatcher(store, {
+                everyMs: 5,
+                newest: () => stamp,
+                loop: async (_, signal) => {
+                    claimed.resolve();
+                    await new Promise<void>((resolve) =>
+                        signal.addEventListener("abort", () => resolve(), { once: true })
+                    );
+                },
+            });
+            await claimed.promise;
+            const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockImplementation(() => {
+                writePidFile(watcherPidPath(store));
+                replacement.resolve();
+                return process.pid;
+            });
+            let stopSupervising: (() => void) | undefined;
+            try {
+                expect(await ensureWatcher()).toBe("running");
+                stamp = Date.now() + 1_000;
+                await withTimeout(old, 2_000);
+                expect(existsSync(watcherPidPath(store))).toBe(false);
+                stopSupervising = superviseMeetingsWatcher(60_000);
+                await withTimeout(replacement.promise, 2_000);
+                expect(await ensureWatcher()).toBe("running");
+                expect(spawn.mock.calls).toEqual([[["meetings", "watch"]]]);
+            } finally {
+                stamp = Date.now() + 1_000;
+                stopSupervising?.();
+                spawn.mockRestore();
+                clearPidFile(watcherPidPath(store));
+            }
+        });
     });
 
     test("failed start logs live grants, posts one inbox message and retries only the unconfirmed banner", async () => {

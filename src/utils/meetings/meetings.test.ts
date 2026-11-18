@@ -163,11 +163,17 @@ describe("meetings config", () => {
         const config = meetingsConfigSchema.parse({});
 
         expect(config.global.dictionary).toEqual({ entries: [] });
-        expect(config.global.capture).toMatchObject({ activeFps: 1, idleFps: 0.1, retentionDays: 30 });
+        expect(config.global.capture).toMatchObject({
+            activeFps: 1,
+            idleFps: 0.1,
+            retentionDays: 30,
+            soundWithoutScreen: true,
+        });
         expect(config.sources.wisprflow.autoRecord).toEqual({
             enabled: false,
             liveWithinSec: 30,
             notify: true,
+            permissionCard: true,
         });
         expect(config.projects).toEqual({});
         expect(config.global.playback.listen.roundCap).toBe(12);

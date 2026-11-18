@@ -351,5 +351,7 @@ export const widgetStateSchema = z.object({
     inboxClearedAt: z.number().finite().nonnegative().optional(),
     /** `tools hub widget show-decision`: the running widget shows this decision once per `at` (a decision link). */
     showDecision: z.object({ id: z.string().min(1), at: z.number().finite() }).optional(),
+    /** Maintained by the meetings watcher while a required recording grant is unavailable. */
+    meetingRecordingWarning: z.string().min(1).optional(),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;

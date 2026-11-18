@@ -501,6 +501,13 @@ export const recordStart = defineMethod({
     effect: "reversible",
     doc: "Start a recording (tools meetings record start). Returns the meeting id, capturing identity, whether frames were omitted, and any partial-start reason.",
 });
+export const watchOnceMethod = defineMethod({
+    name: "watchOnce",
+    params: z.object({}).strict(),
+    result: z.string(),
+    effect: "reversible",
+    doc: "Run one tools meetings watch --once tick, including recording permission preflight, and return its outcome.",
+});
 export const autostartMethod = defineMethod({
     name: "autostart",
     params: z.object({ mode: z.enum(["on", "off", "status"]).optional() }).strict(),
@@ -674,6 +681,7 @@ export const meetingsToolsetApi = defineApi({
         captureCostMethod,
         recordStart,
         autostartMethod,
+        watchOnceMethod,
         assignSweepMethod,
     ],
     handles: [

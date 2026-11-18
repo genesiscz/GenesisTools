@@ -708,13 +708,14 @@ public struct WidgetState: Codable, Equatable, Sendable {
     public var outgoing: [WidgetOutgoing]
     /// A decision link asked the running widget to show this decision (`tools hub widget show-decision`).
     public var showDecision: WidgetShowDecision?
+    public var meetingRecordingWarning: String?
     /// Set when `preferences` did not decode (a hub older or newer than this build): `preferences` then holds
     /// `WidgetPreferences.hubDefaults`, and `WidgetPreferencesStore` shows its last good value instead and reports
     /// the failure once, so a stale app beside newer hub code never blanks the widget. Never encoded.
     public var preferencesUnreadable: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case version, revision, selectedKey, preferences, assets, drafts, outgoing, showDecision
+        case version, revision, selectedKey, preferences, assets, drafts, outgoing, showDecision, meetingRecordingWarning
     }
 }
 
@@ -734,6 +735,7 @@ extension WidgetState {
         drafts = try container.decode([String: WidgetDraft].self, forKey: .drafts)
         outgoing = try container.decode([WidgetOutgoing].self, forKey: .outgoing)
         showDecision = try container.decodeIfPresent(WidgetShowDecision.self, forKey: .showDecision)
+        meetingRecordingWarning = try container.decodeIfPresent(String.self, forKey: .meetingRecordingWarning)
     }
 }
 public struct WidgetShowDecision: Codable, Equatable, Sendable {
