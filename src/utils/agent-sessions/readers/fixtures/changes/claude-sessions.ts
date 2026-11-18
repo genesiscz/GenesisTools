@@ -93,7 +93,7 @@ export function createFile(turn: string, id: string, file: string, seconds: numb
     ];
 }
 
-export const claudeFixtureNames = ["basic", "subagents", "backups", "heredoc", "rows", "roots"] as const;
+export const claudeFixtureNames = ["basic", "subagents", "backups", "heredoc", "rows", "roots", "wrap"] as const;
 export type ClaudeFixture = (typeof claudeFixtureNames)[number];
 
 export function claudeFixture(name: ClaudeFixture): Fixture {
@@ -242,6 +242,15 @@ export function claudeFixture(name: ClaudeFixture): Fixture {
             shell(7, "near", "cd /work/acme-tools && echo hi > near");
             f.rows.push(row(f, "p7", "/work/acme-tools/near", 73), row(f, "p7", "/elsewhere/no", 73));
             f.rows.push(row(f, "unmatched", `${REPO}/orphan`, 85, "unmatched"));
+            break;
+        }
+        case "wrap": {
+            shell(8, "bulk", "bun codemod.ts");
+            for (let i = 0; i < 1003; i++) {
+                capture(8, `bulk-${String(i).padStart(4, "0")}`, "bulk");
+            }
+            // The repeated path straddles the old modulo boundary.
+            f.rows.push({ ...f.rows[2], beforeOid: "b".repeat(40), afterOid: "c".repeat(40) });
             break;
         }
         case "roots": {
