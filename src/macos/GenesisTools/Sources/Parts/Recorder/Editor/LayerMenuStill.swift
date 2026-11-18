@@ -63,10 +63,10 @@ private struct NativeMenuStill: NSViewRepresentable {
     func updateNSView(_ view: MenuCells, context: Context) {}
 
     final class MenuCells: NSView {
-        let menu: NSMenu
+        private let hostingMenu: NSMenu
         let cells: [NSMenuItemCell]
         init(_ menu: NSMenu) {
-            self.menu = menu
+            hostingMenu = menu
             cells = menu.items.filter { !$0.isHidden }.map { item in
                 let cell = NSMenuItemCell(textCell: item.title)
                 cell.menuItem = item
