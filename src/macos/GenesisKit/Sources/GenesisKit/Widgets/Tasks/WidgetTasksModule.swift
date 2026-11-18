@@ -2,12 +2,13 @@ import SwiftUI
 
 public extension WidgetTasksStore {
     func taskModule(handoffs: @escaping () -> WidgetHandoffDisplay = { .folded },
+                    showTaskTooltips: @escaping () -> Bool = { true },
                     openHandoffSettings: (() -> Void)? = nil) -> WidgetModuleDescriptor {
         WidgetModuleDescriptor(
             id: "tasks", title: "Tasks", symbol: "checklist", tint: .mint,
             summary: { "\(self.activeCount) active tasks" }, visibilityChanged: { self.visibilityChanged($0) }
         ) { WidgetTasksModuleView(store: self, presentation: $0, handoffDisplay: handoffs(),
-                                  openHandoffSettings: openHandoffSettings) }
+                                  showTaskTooltips: showTaskTooltips(), openHandoffSettings: openHandoffSettings) }
     }
 }
 
@@ -16,7 +17,9 @@ struct WidgetTasksModuleView: View {
     @ObservedObject var store: WidgetTasksStore
     let presentation: WidgetModulePresentation
     var handoffDisplay: WidgetHandoffDisplay = .folded
+    var showTaskTooltips = true
     var openHandoffSettings: (() -> Void)?
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         Group {
@@ -38,6 +41,16 @@ struct WidgetTasksModuleView: View {
                         handoffSection
                         preview
                     }
+                    Button {
+                        openURL(WidgetWorkLink.destination(nil)) { opened in
+                            if !opened { CopyToast.post(title: "Could not open Work", detail: "GenesisTools hub", style: .problem) }
+                        }
+                    } label: {
+                        Label("Open Work", systemImage: "arrow.up.forward.square")
+                            .font(.caption.weight(.medium)).frame(minHeight: 26)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .accessibilityIdentifier("tasks.open-work")
                 }
                 // The host's own rows (Expand, the module switcher) sit 18 pt in; the module's edges line up with them.
                 .padding(.horizontal, 18).padding(.vertical, 16)
@@ -52,7 +65,7 @@ struct WidgetTasksModuleView: View {
         if handoffDisplay != .hidden, let handoffs = store.claimedHandoffs,
            presentation == .expanded || !handoffs.isEmpty {
             WidgetClaimedHandoffSection(handoffs: handoffs, initiallyExpanded: handoffDisplay == .expanded,
-                                        openSettings: openHandoffSettings)
+                                        showTooltip: showTaskTooltips, openSettings: openHandoffSettings)
                 .id(handoffDisplay)
         }
     }
@@ -100,9 +113,11 @@ struct WidgetTasksModuleView: View {
                 HStack(spacing: 8) {
                     WidgetTaskCheckbox(task: task, state: store.shownState(task),
                                        busy: store.mutatingIDs.contains(task.id)) { store.toggle(task) }
-                    Text(task.title).font(.system(size: 12)).lineLimit(1)
-                        .strikethrough(store.shownState(task) == "implemented")
-                        .foregroundStyle(store.shownState(task) == "implemented" ? .secondary : .primary)
+                    WidgetWorkButton(item: WidgetWorkLink(task), showTooltip: showTaskTooltips) {
+                        Text(task.title).font(.system(size: 12)).lineLimit(1)
+                            .strikethrough(store.shownState(task) == "implemented")
+                            .foregroundStyle(store.shownState(task) == "implemented" ? .secondary : .primary)
+                    }
                 }
             }
         }
@@ -224,7 +239,7 @@ struct WidgetTasksModuleView: View {
     /// or busy flag changed.
     private func row(_ task: WidgetTask) -> WidgetTaskRow {
         WidgetTaskRow(
-            task: task, state: store.shownState(task), busy: store.mutatingIDs.contains(task.id),
+            task: task, state: store.shownState(task), busy: store.mutatingIDs.contains(task.id), showTooltip: showTaskTooltips,
             toggle: { store.toggle(task) }, perform: { store.perform($0, on: task) },
             hasSource: { store.sourceSession(for: task) != nil }, openSource: { store.openSource(task) },
             save: { session in session.save(in: store) })
@@ -378,6 +393,7 @@ private struct WidgetTaskRow: View, Equatable {
     let state: String
     /// A change of this task is in flight.
     let busy: Bool
+    let showTooltip: Bool
     let toggle: () -> Void
     let perform: (WidgetTaskAction) -> Void
     /// The task's session is in the widget's list; asked when the menu or the details are built.
@@ -389,7 +405,7 @@ private struct WidgetTaskRow: View, Equatable {
     @State private var edit: WidgetTaskEditSession?
 
     static func == (a: WidgetTaskRow, b: WidgetTaskRow) -> Bool {
-        a.task == b.task && a.state == b.state && a.busy == b.busy
+        a.task == b.task && a.state == b.state && a.busy == b.busy && a.showTooltip == b.showTooltip
     }
 
     var body: some View {
@@ -400,11 +416,12 @@ private struct WidgetTaskRow: View, Equatable {
                 if let edit {
                     WidgetTaskEditor(edit: edit, busy: busy, save: { save(edit) }, close: { self.edit = nil })
                 } else {
-                    Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(3)
-                        .strikethrough(state == "implemented" || state == "dismissed")
-                        .foregroundStyle(state == "implemented" || state == "dismissed" ? .secondary : .primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 3)
+                    WidgetWorkButton(item: WidgetWorkLink(task), showTooltip: showTooltip) {
+                        Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(3)
+                            .strikethrough(state == "implemented" || state == "dismissed")
+                            .foregroundStyle(state == "implemented" || state == "dismissed" ? .secondary : .primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Text(meta(state)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 WidgetTaskDetailsDisclosure(expanded: $expanded, identifier: "tasks.details." + task.id) { details }

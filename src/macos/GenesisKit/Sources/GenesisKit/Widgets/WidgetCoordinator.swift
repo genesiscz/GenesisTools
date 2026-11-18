@@ -176,6 +176,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             try modules.register(shelf.shelfModule())
             try modules.register(tasks.taskModule(handoffs: { [weak model] in
                 model?.preferences.tasks?.handoffs ?? .folded
+            }, showTaskTooltips: { [weak model] in
+                model?.preferences.tasks?.showTooltips ?? true
             }, openHandoffSettings: { [weak model] in
                 model?.showSettingsPage?("widgets.general#tasks")
             }))

@@ -18,6 +18,10 @@ public struct WidgetTask: Codable, Identifiable, Hashable, Sendable {
     public var sourceContext: WidgetSourceContext
 
     public var sendUncertain: Bool? = nil
+    public var workRef: String?
+    public var acceptance: String?
+    public var fullTitle: String?
+    public var fullText: String?
     public var addressee: String { owner?.lowercased() == "human" ? "For you" : "For agent" }
     public var statusLabel: String { Self.label(for: state) }
     public static func label(for state: String) -> String {
@@ -151,6 +155,9 @@ struct WidgetClaimedHandoff: Codable, Equatable, Identifiable, Sendable {
         var slot: String?
         var title: String
         var state: String
+        var body: String?
+        var acceptance: String?
+        var repoRoot: String?
         var rowID: String { slot ?? id }
     }
     var id: String
@@ -158,6 +165,8 @@ struct WidgetClaimedHandoff: Codable, Equatable, Identifiable, Sendable {
     var title: String
     var claimants: [Claimant]
     var members: [Member]
+    var body: String?
+    var repoRoot: String?
 }
 
 /// One project's counts of the work store (work-items P8): what waits for a look, shown under the Tasks header.

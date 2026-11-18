@@ -16,11 +16,14 @@ import {
     TASK_TITLE_CHARS,
     taskProvider,
     type WidgetTask,
+    type WidgetTaskSource,
     widgetTask,
 } from "@app/question/lib/decisions/todo-view";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { type ClaimedHandoff, claimedHandoffTree, handoffClaimantIds } from "@genesiscz/utils/work/claimed-handoffs";
+import { SESSION_TODO_POINTER, sessionTodoKey } from "@genesiscz/utils/work/legacy/session-todos";
 import { type ProjectCounts, projectCounts } from "@genesiscz/utils/work/read";
 import { workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
@@ -83,8 +86,26 @@ export const widgetTaskEditSchema = z.object({
     ...taskTextSchema,
     expected: shownTaskSchema,
 });
+interface ListedWidgetTask extends WidgetTask {
+    workRef?: string;
+    acceptance?: string;
+    fullTitle?: string;
+    fullText?: string;
+}
+
+/** Keep the editor's bounded fields and truncation guard. Only the read-only hover uses the original text. */
+function listedTask(row: WidgetTaskSource): ListedWidgetTask {
+    const task = widgetTask(row);
+    const title = row.title || row.prompt;
+    return {
+        ...task,
+        ...(title !== task.title && { fullTitle: title }),
+        ...(row.prompt !== task.summary && { fullText: row.prompt }),
+    };
+}
+
 export interface WidgetTaskSnapshot {
-    tasks: WidgetTask[];
+    tasks: ListedWidgetTask[];
     total: number;
     activeCount: number;
     truncated: boolean;
@@ -150,7 +171,7 @@ export function listWidgetTasks({
             const tasks = prof.measure("tasks-read", () =>
                 readDecisions(file)
                     .filter((row) => kindOf(row) === "todo")
-                    .map(widgetTask)
+                    .map(listedTask)
             );
             cached = { stamp, tasks };
             if (taskCache.size >= 4) {
@@ -239,7 +260,7 @@ function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[]; wor
             const tasks = prof.measure("tasks-read-store", () =>
                 readStoredTodoRows(db)
                     .filter((row) => kindOf(row) === "todo")
-                    .map(widgetTask)
+                    .map(listedTask)
             );
             const work = projectCounts(db);
             storeCache.set(path, { stamp, tasks, work });
@@ -307,6 +328,25 @@ export async function listLiveWidgetTasks({
         const db = new Database(path, { readonly: true });
         let tree: ClaimedHandoff[] = [];
         try {
+            // A session TODO keeps its ledger id for edits. Navigation uses the work item the pointer actually names.
+            if (snapshot.tasks.length) {
+                const byTarget = new Map(snapshot.tasks.map((task) => [sessionTodoKey(task), task]));
+                const links = db
+                    .query<{ target: string; item: string; acceptance: string | null }, [string, string]>(
+                        `SELECT p.target, p.item, i.acceptance FROM pointers p JOIN items i ON i.id = p.item
+                     WHERE p.kind = ? AND p.target IN (SELECT value FROM json_each(?))`
+                    )
+                    .all(SESSION_TODO_POINTER, SafeJSON.stringify([...byTarget.keys()], { strict: true }));
+                for (const link of links) {
+                    const task = byTarget.get(link.target);
+                    if (task) {
+                        task.workRef = link.item;
+                        if (link.acceptance) {
+                            task.acceptance = link.acceptance;
+                        }
+                    }
+                }
+            }
             const claimants = handoffClaimantIds(db);
             if (claimants.length > 0) {
                 const { widgetRosterCachePath } = await import("./roster-cache");
@@ -388,7 +428,7 @@ export async function updateWidgetTask({
     taskCache.delete(files.file);
     logger.debug({ id: row.id, state: row.state, revision: row.revision ?? 1 }, "Widget task action saved");
     return {
-        task: widgetTask(row),
+        task: listedTask(row),
         receipt: {
             id: row.id,
             action: request.action,
@@ -436,7 +476,7 @@ export async function createWidgetTask({
     taskCache.delete(files.file);
     logger.debug({ id: row.id, session: row.sessionId, provider: row.provider }, "Widget task created");
     return {
-        task: widgetTask(row),
+        task: listedTask(row),
         receipt: {
             id: row.id,
             action: "create",
@@ -487,7 +527,7 @@ export async function editWidgetTask({
     taskCache.delete(files.file);
     logger.debug({ id: row.id, revision: row.revision ?? 1 }, "Widget task edited");
     return {
-        task: widgetTask(row),
+        task: listedTask(row),
         receipt: {
             id: row.id,
             action: "edit",

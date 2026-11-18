@@ -215,12 +215,21 @@ private struct WidgetGeneralSettings: View {
                 NativeSettingsRow("Claimed handoffs", detail: "Choose how handoffs claimed by sessions on this Mac appear in Tasks.") {
                     Picker("Claimed handoffs", selection: Binding(
                         get: { prefs.tasks?.handoffs ?? .folded },
-                        set: { value in write { $0.tasks = WidgetTasksPreferences(handoffs: value) } })) {
+                        set: { value in write {
+                            if $0.tasks == nil { $0.tasks = WidgetTasksPreferences() }
+                            $0.tasks?.handoffs = value
+                        } })) {
                         Text("Folded").tag(WidgetHandoffDisplay.folded)
                         Text("Expanded").tag(WidgetHandoffDisplay.expanded)
                         Text("Hidden").tag(WidgetHandoffDisplay.hidden)
                     }.labelsHidden().pickerStyle(.segmented)
                 }
+                Divider()
+                NativeSettingsToggle("Task tooltips", detail: "Show the full text and acceptance criteria when you hover over a task.",
+                                     isOn: Binding(get: { prefs.tasks?.showTooltips ?? true }, set: { value in write {
+                                         if $0.tasks == nil { $0.tasks = WidgetTasksPreferences() }
+                                         $0.tasks?.showTooltips = value
+                                     } }))
             }
             .nativeSettingsAnchor("tasks")
             NativeSettingsCard("Shape") {
