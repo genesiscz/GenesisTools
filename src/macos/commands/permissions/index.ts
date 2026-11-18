@@ -598,7 +598,8 @@ export function registerPermissionsCommand(program: Command): void {
 
             const bundle = genesisAppBundlePath();
 
-            const need = Need.app.installed;
+            // Opening System Settings and Finder never goes through the launcher, so routing switched off is no reason to stop.
+            const need = Need.app.bundle;
             const installed = await checkNeed(need, { ...liveEngineDeps(AREAS), fresh: false, write: false });
             if (!installed.ok) {
                 ui.err(`${describeNeed(need)}: ${windowFailureMessage(installed)}`);

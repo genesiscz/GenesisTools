@@ -76,7 +76,7 @@ describe("review proposal", () => {
             facts: {
                 ...LIVE_FACTS,
                 isTest: () => false,
-                appBundle: () => ({ installed: true, routingOff: false, path: "/fixture/app" }),
+                appBundle: () => ({ installed: true, launcher: true, routingOff: false, path: "/fixture/app" }),
                 appManifest: () => ({ buildId: "fixture", parts: [], rpcMethods: null }),
             },
             builder: null,

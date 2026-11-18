@@ -5,6 +5,7 @@ import { type Facts, LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capabilit
 import type { AppPartId, AppRpcMethod } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import type { ServiceDoor } from "@genesiscz/utils/genesis-tools/service/clients";
 import { macosPermissionsCommand } from "@genesiscz/utils/genesis-tools/tools/system";
+import { GENESIS_APP_NAME } from "@genesiscz/utils/macos/genesis-app";
 import type { PermissionKindId } from "@genesiscz/utils/macos/permission-kinds";
 
 /** Phase 2 fills it with the methods a connected face serves. */
@@ -13,6 +14,7 @@ export type ServiceClientMethod = "request.present";
 export type NeedSpec =
     | { kind: "platform"; platform: "darwin" | "linux" }
     | { kind: "app.installed" }
+    | { kind: "app.bundle" }
     | { kind: "app.rpc"; method: AppRpcMethod }
     | { kind: "app.part"; part: AppPartId }
     | { kind: "app.grant"; grant: PermissionKindId }
@@ -31,6 +33,8 @@ export const Need = {
     },
     app: {
         installed: { kind: "app.installed" },
+        /** The bundle and its launcher on disk, routing not asked: for effects that start the bundle themselves. */
+        bundle: { kind: "app.bundle" },
         rpc: (method: AppRpcMethod): NeedSpec => ({ kind: "app.rpc", method }),
         part: (part: AppPartId): NeedSpec => ({ kind: "app.part", part }),
         grant: (grant: PermissionKindId): NeedSpec => ({ kind: "app.grant", grant }),
@@ -85,8 +89,15 @@ function inTest(env: Pick<NeedEnv, "facts">, what: string): NeedResult | null {
     return env.facts.isTest() ? fail("in-test", `a test process never reaches ${what}`) : null;
 }
 
-/** The installed bundle and its routing, or the reason it cannot be used. */
-function appBundleUsable(env: Pick<NeedEnv, "facts" | "builder">): NeedResult {
+/**
+ * Why the installed bundle cannot be used, or null when it can. One read of the bundle per need check. `routing`
+ * also asks that `tools` may run through it: the app RPC and the launcher route do, while `open -n <bundle>` and a
+ * direct start of the launcher (the window that holds the routing switch among them) work with routing off.
+ */
+function appBundleProblem(
+    env: Pick<NeedEnv, "facts" | "builder">,
+    { routing }: { routing: boolean }
+): NeedResult | null {
     const bundle = env.facts.appBundle();
 
     if (!bundle.installed) {
@@ -97,21 +108,29 @@ function appBundleUsable(env: Pick<NeedEnv, "facts" | "builder">): NeedResult {
         );
     }
 
-    if (bundle.routingOff) {
+    if (!bundle.launcher) {
+        return fail(
+            "app-missing",
+            `GenesisTools.app at ${bundle.path} has no launcher (Contents/MacOS/${GENESIS_APP_NAME}), so its install did not finish`,
+            buildFix(env, null, "Builds and installs GenesisTools.app again.")
+        );
+    }
+
+    if (routing && bundle.routingOff) {
         return fail(
             "app-missing",
             "GenesisTools.app routing is switched off (GENESIS_TOOLS_NO_APP or the window's switch)"
         );
     }
 
-    return OK_PROBE;
+    return null;
 }
 
 /** The same app.installed need for callers that return a string or report synchronously. */
 export function checkAppInstalled(
     env: Pick<NeedEnv, "facts" | "builder"> = { facts: LIVE_FACTS, builder: appBuilder() }
 ): NeedResult {
-    return inTest(env, "GenesisTools.app") ?? appBundleUsable(env);
+    return inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: true }) ?? OK_PROBE;
 }
 
 /** Human-readable diagnostic text. A satisfied need has nothing to explain. */
@@ -157,8 +176,11 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
 
     "app.installed": async (_need, env) => checkAppInstalled(env),
 
+    "app.bundle": async (_need, env) =>
+        inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: false }) ?? OK_PROBE,
+
     "app.part": async (need, env) => {
-        const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
+        const refused = inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: false });
 
         if (refused) {
             return refused;
@@ -180,7 +202,7 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
     },
 
     "app.rpc": async (need, env) => {
-        const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
+        const refused = inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: true });
 
         if (refused) {
             return refused;
@@ -236,7 +258,7 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
     },
 
     "app.grant": async (need, env) => {
-        const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
+        const refused = inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: true });
 
         if (refused) {
             return refused;
@@ -299,6 +321,7 @@ export function describeNeed(need: NeedSpec): string {
         case "service.client":
             return `service.client(${need.method})`;
         case "app.installed":
+        case "app.bundle":
         case "person.display":
         case "person.terminal":
         case "sudo.touchId":

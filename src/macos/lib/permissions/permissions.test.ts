@@ -205,6 +205,7 @@ describe("permission window commands", () => {
         const isTest = spyOn(LIVE_FACTS, "isTest").mockReturnValue(false);
         const bundle = spyOn(LIVE_FACTS, "appBundle").mockReturnValue({
             installed: false,
+            launcher: false,
             routingOff: false,
             path: "/fixture/missing.app",
         });
@@ -213,7 +214,7 @@ describe("permission window commands", () => {
             await runPermissions(["open", "--pane", "accessibility"]);
             expect(err.mock.calls).toEqual([
                 [
-                    "app.installed: GenesisTools.app is not installed at /fixture/missing.app\ntools macos permissions build",
+                    "app.bundle: GenesisTools.app is not installed at /fixture/missing.app\ntools macos permissions build",
                 ],
             ]);
             expect(process.exitCode).toBe(1);

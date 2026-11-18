@@ -4,6 +4,8 @@ import type { NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 
 interface AppNeedFixtureOptions {
     installed?: boolean;
+    /** Whether the launcher executable is inside the bundle (default: when installed). */
+    launcher?: boolean;
     routingOff?: boolean;
     methods?: AppRpcMethod[] | null;
     isTest?: boolean;
@@ -25,6 +27,7 @@ export function appNeedFixture(options: AppNeedFixtureOptions = {}): NeedEnv {
             appBundle: () => ({
                 path: "/fixture/GenesisTools.app",
                 installed: options.installed ?? true,
+                launcher: options.launcher ?? options.installed ?? true,
                 routingOff: options.routingOff ?? false,
             }),
             appManifest: () => ({

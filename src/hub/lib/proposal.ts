@@ -656,7 +656,7 @@ export function hubStatus(bundlePath = genesisAppBundlePath()): HubStatus {
 export async function reviewWindowStatus(deps = liveEngineDeps(AREAS)): Promise<HubStatus> {
     const bundlePath = genesisAppBundlePath();
     const env = { ...deps, fresh: false, write: false };
-    for (const need of [Need.app.installed, Need.app.part("hub")]) {
+    for (const need of [Need.app.bundle, Need.app.part("hub")]) {
         const result = await checkNeed(need, env);
         if (!result.ok) {
             return { available: false, bundlePath, reason: `${describeNeed(need)}: ${windowFailureMessage(result)}` };

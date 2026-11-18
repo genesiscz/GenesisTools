@@ -98,6 +98,11 @@ export function isGenesisAppDisabledByMarker(): boolean {
     return existsSync(genesisAppDisabledMarkerPath());
 }
 
+/** Whether routing through the app is switched off, by `GENESIS_TOOLS_NO_APP=1` or the disabled marker. */
+export function isGenesisAppRoutingOff(): boolean {
+    return env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker();
+}
+
 export function isRunningUnderGenesisApp(): boolean {
     return env.tools.getAppBundleId() === GENESIS_APP_BUNDLE_ID;
 }
@@ -112,7 +117,7 @@ export function isRunningUnderGenesisApp(): boolean {
  * command happened to be launched through the app or not.
  */
 export function installedGenesisAppLauncher(): string | null {
-    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
+    if (process.platform !== "darwin" || isGenesisAppRoutingOff()) {
         return null;
     }
 
@@ -150,7 +155,7 @@ export class GenesisAppUpdatingError extends Error {
  * native command until the next build.
  */
 export function assertGenesisAppNotUpdating(): void {
-    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
+    if (process.platform !== "darwin" || isGenesisAppRoutingOff()) {
         return;
     }
 
