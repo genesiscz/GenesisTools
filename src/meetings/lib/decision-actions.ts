@@ -5,6 +5,7 @@ import {
     speakerAssignmentSchema,
     spellingReachSchema,
 } from "@genesiscz/utils/meetings/record";
+import { idSchema, ownerSchema, sourceSchema } from "@genesiscz/utils/meetings/voice-library";
 import { voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
@@ -20,7 +21,7 @@ import { rejectFilterSchema } from "./reject-filter";
  */
 
 /** The file in a meeting's folder that keeps its decision journal: one entry per line, oldest first, append-only. */
-export const JOURNAL_FILE = "decisions.ndjson";
+export { JOURNAL_FILE } from "@genesiscz/utils/meetings/record";
 
 import { meetingSeatsSchema, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 
@@ -312,6 +313,13 @@ export const journalEntrySchema = z.object({
                 project: z.string(),
                 person: z.string(),
                 model: z.string(),
+                source: sourceSchema.optional(),
+                owner: ownerSchema.optional(),
+                id: idSchema.optional(),
+                token: z.string().optional(),
+                item: z.string().optional(),
+                origin: z.enum(["answer", "confirm"]).optional(),
+                acquiredBy: z.enum(["live", "backfill"]).optional(),
                 before: voicePrintSchema.optional(),
                 after: voicePrintSchema,
             })

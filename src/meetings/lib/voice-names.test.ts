@@ -1,19 +1,22 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import * as hostStats from "@genesiscz/utils/macos/host-stats";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voice from "@genesiscz/utils/meetings/voice";
-import * as voiceStoreModule from "@genesiscz/utils/meetings/voice-store";
+import * as voiceLibraryModule from "@genesiscz/utils/meetings/voice-library";
+import { insertVoiceSample, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore, type VoicePrint, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { Storage } from "@genesiscz/utils/storage";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { journalEntrySchema } from "./decision-actions";
 import { DecisionJournal } from "./decision-journal";
 import { identifiedDepartures } from "./departure";
+import { duplicateMeeting } from "./duplicate";
 import { itemWhat } from "./item-text";
 import { OpenedMeeting } from "./opened-meeting";
 import { voicesPreview } from "./service/api";
@@ -27,6 +30,13 @@ import { correctionsOf } from "./transcript-corrections";
 import { nameByVoice, type VoiceLine } from "./voice-names";
 import { saveAnsweredVoiceSamples, undoAnsweredVoiceSamples } from "./voice-samples";
 import * as voices from "./voices";
+
+let previousHome: string;
+beforeEach(() => {
+    previousHome = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voice-names-")));
+});
+afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
 
 const settings = meetingsConfigSchema.parse({}).global.speakerLabels.voice;
 const alice = { person: "Alice Example", seat: "mic" as const, fromSec: 0, toSec: 100 };
@@ -189,6 +199,107 @@ test("meeting enrolment holds out overlapping windows from both stores and keeps
     const saved = storeOf({ [alice.person]: [[1, 0]] });
     saved.people[alice.person]!.samples[0] = { ...basePrint, meeting: "current", fromSec: 5, toSec: 8 };
     expect(nameByVoice({ ...options, store: saved }).map((row) => row.person)).toEqual(labels.map((row) => row.person));
+});
+
+test("P2 all-project prediction holds out a retimed duplicate, filters refused temporary seeds and preserves C3 compatibility", async () => {
+    const { opened, record, store } = await sampledMeeting("spring");
+    const copy = await duplicateMeeting({ store, ref: record.id, withoutItems: true });
+    const second = await duplicateMeeting({ store, ref: copy.id, withoutItems: true });
+    const duplicate = store.read(second.id)!;
+    expect(duplicate.voiceRootMeeting).toBe(record.id);
+    expect(duplicate.items).toEqual([]);
+    const source = await opened.meeting();
+    const transcript = source.transcript.map((entry, i) => ({ ...entry, id: `line-${i}` }));
+    const { voiceLineKeys, correctVoiceSample } = await import("@genesiscz/utils/meetings/voice-library");
+    const keys = voiceLineKeys({ ...source, transcript });
+    const printed = { ...basePrint, meeting: record.id };
+    const identity = sourceForVoicePrint(printed, record.id, keys[0]);
+    const learned = insertVoiceSample({
+        project: "winter",
+        owner: { name: alice.person },
+        source: identity,
+        origin: "enrol",
+        acquiredBy: "manual",
+        print: printed,
+        model: "fixture-model",
+    });
+    if (learned.status !== "added") {
+        throw new Error("The source fixture needs a persisted sample.");
+    }
+    const target = OpenedMeeting.of(store, duplicate);
+    spies.push(
+        spyOn(target, "meeting").mockResolvedValue({
+            ...source,
+            transcript: transcript.map((entry) => ({ ...entry, startSec: entry.startSec! + 20 })),
+        })
+    );
+    const lines = [20, 25, 30].map((at, i) => timedLine(i, at, [1, 0], "mic"));
+    const run = (scope: "project" | "all", certain?: Map<number, string>) =>
+        voiceLabeler({
+            opened: target,
+            settings: { ...settings, sampleScope: scope },
+            readLines: async () => lines,
+        }).propose({
+            project: record.project,
+            attended: [alice],
+            lines: lines.map((l, i) => ({ index: i, fromSec: l.fromSec!, toSec: l.toSec!, seat: l.seat })),
+            certain,
+        });
+    expect(await run("project")).toEqual([]);
+    const predicted = await run("all");
+    expect(predicted[0]?.person).toBeUndefined();
+    expect(predicted[1]?.person).toBe(alice.person);
+    correctVoiceSample({ kind: "reject", id: learned.id, reason: "wrong-person" });
+    for (const line of lines) {
+        const channel = line.channels[0]!;
+        if (channel.quality === "ready") {
+            channel.source.audioPath = join(store.folder(record.id), "fixture.wav");
+        }
+    }
+    expect((await run("all", new Map([[0, alice.person]]))).every((row) => !row.person)).toBe(true);
+    expect(readVoiceLibrary().library.samples).toEqual([]);
+
+    const saved = storeOf({ [alice.person]: [[1, 0]], [bob.person]: [[0, 1]] });
+    saved.people[bob.person]!.samples[0]!.track = "mic-raw";
+    const abstain = nameByVoice({
+        ...settings,
+        store: saved,
+        attended: [alice, bob],
+        lines: [1, 6, 12].map((at, i) => timedLine(i, at, [0, 1], "mic")),
+    });
+    expect(abstain.every((row) => row.reason !== "exclusion" && !row.person)).toBe(true);
+});
+
+test("P2 playback resolves the pinned source and channel by ID and refuses changed media or conflicting selectors", async () => {
+    const { opened, record, store } = await sampledMeeting("playback");
+    const file = join(store.folder(record.id), "fixture.wav");
+    const { sha256FileAsync } = await import("@genesiscz/utils/fs/hash");
+    const print = { ...basePrint, meeting: record.id, sourceSha: await sha256FileAsync(file) };
+    const receipt = insertVoiceSample({
+        project: "playback",
+        owner: { name: alice.person },
+        model: "fixture-model",
+        print,
+        source: sourceForVoicePrint(print),
+        origin: "enrol",
+        acquiredBy: "manual",
+    });
+    if (receipt.status !== "added") {
+        throw new Error("Fixture clip missing.");
+    }
+    spies.push(spyOn(OpenedMeeting, "of").mockReturnValue(opened));
+    const selected = { store, id: receipt.id };
+    expect(await voices.voiceSample(selected)).toMatchObject({
+        path: file,
+        meeting: record.id,
+        channel: 0,
+        fileFromSec: 0,
+        fileToSec: 5,
+    });
+    await expect(voices.voiceSample({ ...selected, project: "elsewhere" })).rejects.toThrow("Stale");
+    await expect(voices.voiceSample({ ...selected, sample: 1 })).rejects.toThrow("Choose");
+    writeFileSync(file, "replaced recording");
+    await expect(voices.voiceSample(selected)).rejects.toThrow("changed");
 });
 
 test("voice registry maps to the canonical rule", () => {
@@ -761,7 +872,7 @@ test("threshold preview rescores a shared seat from local voice evidence without
     const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 1 } } } } });
     spies.push(spyOn(opened, "config").mockResolvedValue(config));
     const { speakerLabels } = config.global;
-    const enrollment = spyOn(voiceStoreModule, "readVoiceStore");
+    const enrollment = spyOn(voiceLibraryModule, "readVoiceLibrary");
     spies.push(enrollment);
     const score = await preparePreviewLabels({ opened, settings: speakerLabels, presence: await opened.presence() });
     expect((await score(speakerLabels.voice, 0.8))[1]?.person).toBeUndefined();

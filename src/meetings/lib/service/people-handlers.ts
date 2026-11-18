@@ -6,7 +6,16 @@ import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/u
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { autoVoiceWorkers } from "../speaker-labels/voice";
 import { backfillVoices } from "../voice-backfill";
-import { applyVoices, listProjectVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
+import {
+    applyVoices,
+    editVoice,
+    listProjectVoices,
+    planVoiceRemoval,
+    previewVoices,
+    removeVoice,
+    voiceQuality,
+    voiceSample,
+} from "../voices";
 import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
 import { type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
 
@@ -23,7 +32,46 @@ export function voicesHandlers(
             recordOf(store, ref);
         }
     };
+    async function correction(
+        action: Parameters<typeof editVoice>[0]["action"],
+        params: { person?: string; preview?: boolean; planToken?: string },
+        context: import("./handlers").MeetingsCallContext
+    ) {
+        const result = await editVoice({
+            ...access,
+            action,
+            person: params.person,
+            preview: params.preview,
+            planToken: params.planToken,
+        });
+        if (result.status === "applied") {
+            context.emit?.("people.changed", {});
+            for (const meeting of new Set(result.affected.map((row) => row.meeting))) {
+                context.emit?.("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] });
+            }
+        }
+        return result;
+    }
     return {
+        "voices.move": (p, context) =>
+            correction(
+                { kind: "move", id: p.id, to: p.to, token: p.token, expectedRevision: p.expectedRevision },
+                p,
+                context
+            ),
+        "voices.reject": (p, context) =>
+            correction(
+                { kind: "reject", id: p.id, reason: p.reason, token: p.token, expectedRevision: p.expectedRevision },
+                p,
+                context
+            ),
+        "voices.undo": (p, context) =>
+            correction(
+                { kind: "revert", correction: p.token, token: p.requestToken, expectedRevision: p.expectedRevision },
+                p,
+                context
+            ),
+        "voices.quality": (p) => voiceQuality({ ...access, ...p }),
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {
             knownMeetings(params.meetings);
@@ -56,9 +104,10 @@ export function voicesHandlers(
             return result;
         },
         "voices.remove": async (params, context) => {
-            const result = params.preview
-                ? planVoiceRemoval({ ...access, ...params })
-                : await removeVoice({ ...access, ...params });
+            const predictionScope = (await (deps.config?.() ?? new MeetingsConfigStore().read())).global.speakerLabels
+                .voice.sampleScope;
+            const request = { ...access, ...params, predictionScope };
+            const result = params.preview ? planVoiceRemoval(request) : await removeVoice(request);
             if (!params.preview) {
                 context.emit?.("people.changed", {});
                 for (const meeting of new Set(result.affected.map((row) => row.meeting))) {

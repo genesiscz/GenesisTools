@@ -2,13 +2,19 @@ import { isDeepStrictEqual } from "node:util";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { readVoiceStore, voicePrintKey } from "@genesiscz/utils/meetings/voice-store";
-import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import { readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { DecisionJournal } from "./decision-journal";
 import { recordPeople } from "./listen-answers";
 import { OpenedMeeting } from "./opened-meeting";
 import { errorText } from "./shared";
-import { answeredVoiceTargets, prepareVoicePrints, type VoicePrintChange, type VoiceTarget } from "./voice-samples";
+import {
+    answeredVoiceTargets,
+    journalVoices,
+    prepareVoicePrints,
+    type VoicePrintChange,
+    type VoiceTarget,
+} from "./voice-samples";
 import type { VoicesAccess } from "./voices";
 
 interface BackfillRow {
@@ -86,12 +92,7 @@ async function prepareDecisions(
                 decisions.push({ ...target, changes: [], skipped: "confirmation undone or replaced" });
                 continue;
             }
-            const saved = entry.voices?.filter(
-                (change) =>
-                    change.after.question === target.voice.item &&
-                    change.after.meeting === record.id &&
-                    change.project === record.project
-            );
+            const saved = journalVoices(entry, target.voice.item, record.project);
             decisions.push({ ...target, saved, changes: [...(saved ?? [])] });
         }
     }
@@ -124,13 +125,9 @@ async function backfillMeeting(
     const journal = new DecisionJournal({ store: access.store });
     const decisions = await prepareDecisions(access, journal, record, dryRun);
     const finish = () => {
-        const { people, model } = readVoiceStore(project);
-        let projectModel = model;
-        const present = new Set(
-            Object.entries(people).flatMap(([name, row]) => row.samples.map((print) => voicePrintKey(name, print)))
-        );
+        const view = readVoiceLibrary();
+        const root = voiceRootMeeting(access.store, record);
         const changes: VoicePrintChange[] = [];
-        const recovered = new Map<string, VoicePrintChange[]>();
         const rows = new Map<string, BackfillRow>();
         for (const decision of decisions) {
             const { entry, voice } = decision;
@@ -147,29 +144,32 @@ async function backfillMeeting(
                 row.skipped[reason] = (row.skipped[reason] ?? 0) + 1;
             }
             for (const change of decision.changes) {
-                const key = voicePrintKey(change.person, change.after);
-                if (present.has(key)) {
-                    row.present++;
-                    continue;
-                }
-                if (projectModel && projectModel !== change.model) {
+                if (view.library.model && view.library.model !== change.model) {
                     const reason = "sample uses a different voice model from the project";
                     row.skipped[reason] = (row.skipped[reason] ?? 0) + 1;
                     continue;
                 }
-                projectModel = change.model;
-                present.add(key);
-                changes.push(change);
-                row.added++;
-                if (!decision.saved?.includes(change)) {
-                    const group = recovered.get(entry.token) ?? [];
-                    group.push(change);
-                    recovered.set(entry.token, group);
-                }
+                changes.push({
+                    ...change,
+                    project,
+                    origin: entry.action.kind === "confirm" ? "confirm" : "answer",
+                    acquiredBy: "backfill",
+                    token: entry.token,
+                    source: change.source ?? sourceForVoicePrint(change.after, root),
+                });
             }
         }
-        if (changes.length && !dryRun) {
-            journal.publishBackfilledVoices(record.id, project, changes, recovered);
+        const receipts = journal.publishBackfilledVoices(record.id, changes, dryRun);
+        for (const [index, receipt] of receipts.entries()) {
+            const row = rows.get(changes[index]!.person)!;
+            if (receipt.status === "added") {
+                row.added++;
+            } else if (receipt.status === "already-present") {
+                row.present++;
+            } else {
+                const reason = receipt.status === "refused" ? receipt.reason : "attachment conflict";
+                row.skipped[reason] = (row.skipped[reason] ?? 0) + 1;
+            }
         }
         return rows.size
             ? [...rows.values()]

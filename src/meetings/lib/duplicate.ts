@@ -7,6 +7,7 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingRecordSchema,
+    voiceRootMeeting,
 } from "@genesiscz/utils/meetings/record";
 import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { kickDrainer, loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRuntime } from "@genesiscz/utils/rm";
@@ -175,7 +176,12 @@ async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResu
     let copy: MeetingRecord;
     try {
         copy = await store.createWithFiles({
-            fields: { ...fields, title, ...(request.withoutItems ? { items: [] } : {}) },
+            fields: {
+                ...fields,
+                voiceRootMeeting: voiceRootMeeting(store, original),
+                title,
+                ...(request.withoutItems ? { items: [] } : {}),
+            },
             change: {
                 command: "duplicate",
                 change: `duplicated from ${original.id}${request.withoutItems ? " without items" : ""}`,

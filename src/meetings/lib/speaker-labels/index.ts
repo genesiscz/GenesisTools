@@ -3,7 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { seatSpan } from "@genesiscz/utils/meetings/seats";
-import { readVoiceStore, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import { readVoiceLibrary, type VoiceLibrarySnapshot } from "@genesiscz/utils/meetings/voice-library";
 import { profiler } from "@genesiscz/utils/profile";
 import { lineChannelShares } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -217,7 +217,8 @@ export async function preparePreviewLabels(options: {
     settings: MeetingsConfig["global"]["speakerLabels"];
     presence?: Presence[];
     signal?: AbortSignal;
-    voiceStoreFor?: (project: string) => VoiceStore;
+    /** Both sides of one threshold preview score against the same voice library snapshot. */
+    voiceLibrary?: () => VoiceLibrarySnapshot;
 }) {
     const { opened, settings, presence, signal } = options;
     type VoiceSettings = typeof settings.voice;
@@ -234,7 +235,7 @@ export async function preparePreviewLabels(options: {
         return (_voice: VoiceSettings, _applyAbove: number) => seats;
     }
     const { voiceLabeler } = await import("./voice");
-    const voiceStore = (options.voiceStoreFor ?? readVoiceStore)(context.project);
+    const voiceLibrary = (options.voiceLibrary ?? readVoiceLibrary)();
     let embeddings: { model: string; lines: Promise<VoiceLine[]> } | undefined;
     const previewLines = (inputs: LabelContext, model: string) => {
         if (embeddings?.model !== model) {
@@ -246,7 +247,7 @@ export async function preparePreviewLabels(options: {
         const inputs = await forVoice(labels.get("seat") ?? [], applyAbove);
         labels.set(
             "voice",
-            await voiceLabeler({ opened, settings: voice, readLines: previewLines, voiceStore }).propose(inputs)
+            await voiceLabeler({ opened, settings: voice, readLines: previewLines, voiceLibrary }).propose(inputs)
         );
         return mergeLineLabels(labels);
     };

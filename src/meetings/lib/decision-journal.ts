@@ -31,7 +31,6 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
-import { addVoicePrints } from "@genesiscz/utils/meetings/voice-store";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
 import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -88,7 +87,12 @@ import {
     revertAssignments,
 } from "./speaker-assign";
 import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
-import { prepareAnsweredVoiceSamples, transitionAnsweredVoiceSamples, type VoicePrintChange } from "./voice-samples";
+import {
+    prepareAnsweredVoiceSamples,
+    publishVoiceChanges,
+    transitionAnsweredVoiceSamples,
+    type VoicePrintChange,
+} from "./voice-samples";
 
 const { log } = logger.scoped("meetings-journal");
 const backfilledEntry = journalEntrySchema.pick({ meeting: true, token: true, voices: true });
@@ -2011,28 +2015,38 @@ export class DecisionJournal {
     }
 
     /** Called under the record lock. Keep late embeddings with their original decision for Undo and replay. */
-    publishBackfilledVoices(
-        meeting: string,
-        project: string,
-        changes: VoicePrintChange[],
-        recovered: Map<string, VoicePrintChange[]>
-    ): void {
-        const path = this.backfillPath(meeting);
-        const rollback = undoableAppend(path, () =>
-            appendLines(
-                path,
-                Array.from(recovered, ([token, voices]) =>
-                    SafeJSON.stringify({ meeting, token, voices }, { jsonl: true })
-                ),
-                { mode: 0o600 }
-            )
-        );
-        try {
-            addVoicePrints(project, changes, true);
-        } catch (error) {
-            rollback();
-            throw error;
+    publishBackfilledVoices(meeting: string, changes: VoicePrintChange[], dryRun: boolean) {
+        const batch = publishVoiceChanges(changes, dryRun);
+        if (dryRun) {
+            return batch.results;
         }
+        const recovered = new Map<string, VoicePrintChange[]>();
+        for (const [i, change] of changes.entries()) {
+            const receipt = batch.results[i];
+            if (receipt?.status === "added" && change.token) {
+                const group = recovered.get(change.token) ?? [];
+                group.push({ ...change, id: receipt.id });
+                recovered.set(change.token, group);
+            }
+        }
+        if (recovered.size) {
+            try {
+                const path = this.backfillPath(meeting);
+                undoableAppend(path, () =>
+                    appendLines(
+                        path,
+                        Array.from(recovered, ([token, voices]) =>
+                            SafeJSON.stringify({ meeting, token, voices }, { jsonl: true })
+                        ),
+                        { mode: 0o600 }
+                    )
+                );
+            } catch (error) {
+                batch.rollback();
+                throw error;
+            }
+        }
+        return batch.results;
     }
 
     private backfillPath(meeting: string): string {
@@ -2086,7 +2100,25 @@ export class DecisionJournal {
                 }
                 const extra = recovered.get(entry.token);
                 if (extra) {
-                    entry.voices = [...(entry.voices ?? []), ...extra];
+                    const changes = [...(entry.voices ?? [])];
+                    for (const change of extra) {
+                        const previous = changes.findIndex(
+                            (c) =>
+                                c.project === change.project &&
+                                c.person === change.person &&
+                                c.after.question === change.after.question &&
+                                c.after.track === change.after.track &&
+                                c.after.sourceSha === change.after.sourceSha &&
+                                c.after.fromSec === change.after.fromSec &&
+                                c.after.toSec === change.after.toSec
+                        );
+                        if (previous < 0) {
+                            changes.push(change);
+                        } else {
+                            changes[previous] = change;
+                        }
+                    }
+                    entry.voices = changes;
                 }
                 return [entry];
             });
@@ -2313,11 +2345,12 @@ export class DecisionJournal {
 
         try {
             await store.update(meeting, history, decide, {
-                write: () => {
+                write: (current) => {
                     if (result.entry) {
                         const undoVoices = transitionAnsweredVoiceSamples({
                             entry: result.entry,
                             entryOf: context.entryOf,
+                            project: current.project ?? "",
                         });
                         try {
                             const undoLines = this.writeLines(result.entry, {

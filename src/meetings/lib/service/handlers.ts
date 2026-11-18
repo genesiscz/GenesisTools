@@ -693,6 +693,14 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await people()).voicesHandlers(storeOf(), deps)["voices.apply"](params, context),
         "voices.remove": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.remove"](params, context),
+        "voices.move": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.move"](params, context),
+        "voices.reject": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.reject"](params, context),
+        "voices.undo": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.undo"](params, context),
+        "voices.quality": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.quality"](params, context),
         "voices.workers": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.workers"](params, context),
         "people.meetings": async (params) => (await people()).personMeetings(params, storeOf(), deps),

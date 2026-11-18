@@ -12,7 +12,7 @@ import { roomSeatNames } from "@genesiscz/utils/meetings/seats";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { collectVoiceFrames } from "@genesiscz/utils/meetings/voice-frame-cache";
-import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import { readVoiceLibrary, type VoiceLibrarySnapshot } from "@genesiscz/utils/meetings/voice-library";
 import { profiler } from "@genesiscz/utils/profile";
 import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -452,13 +452,13 @@ export async function previewSuggestionRuns(
         };
         signal?.throwIfAborted();
         // Both sides of one preview see the same enrollment, including a recalculated attendance pass.
-        let voiceStore: ReturnType<typeof readVoiceStore> | undefined;
-        const voiceStoreFor = (project: string) => (voiceStore ??= readVoiceStore(project));
+        let library: VoiceLibrarySnapshot | undefined;
+        const voiceLibrary = () => (library ??= readVoiceLibrary());
         const scoreLabels = await preparePreviewLabels({
             opened,
             settings: current.global.speakerLabels,
             presence: inputs.presence,
-            voiceStoreFor,
+            voiceLibrary,
             signal,
         });
         const labels = await scoreLabels(current.global.speakerLabels.voice, current.global.suggest.applyAbove);
@@ -472,7 +472,7 @@ export async function previewSuggestionRuns(
                 opened: next,
                 settings: draft.global.speakerLabels,
                 presence,
-                voiceStoreFor,
+                voiceLibrary,
                 signal,
             });
             afterLabels = await score(draft.global.speakerLabels.voice, draft.global.suggest.applyAbove);
