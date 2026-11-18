@@ -373,7 +373,7 @@ public struct RecordingBarView: View {
         case let .done(url):
             HStack {
                 word("Show in Finder", "finder", reason: url == nil ? "The recorder returned no movie." : nil) {
-                    if let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    if let url { PathOpener.reveal(url.path) }
                 }
                 newRecording
             }
