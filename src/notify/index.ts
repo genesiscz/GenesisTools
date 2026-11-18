@@ -3,14 +3,17 @@
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseDuration } from "@genesiscz/utils/format";
+import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
+import type { AppRpcMethod } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { checkNeed, describeNeedFailure, Need, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import {
-    appCannotAnswer,
-    type GenesisAppRpcFailure,
-    type GenesisAppRpcOutcome,
-} from "@genesiscz/utils/macos/genesis-app-rpc";
-import type { NotificationAction, NotificationOptions } from "@genesiscz/utils/macos/notifications";
+import { appCannotAnswer, type GenesisAppRpcFailure } from "@genesiscz/utils/macos/genesis-app-rpc";
+import type {
+    NotificationAction,
+    NotificationFallbackState,
+    NotificationOptions,
+} from "@genesiscz/utils/macos/notifications";
 import {
     launchdSession,
     parseNotificationOptions,
@@ -26,7 +29,6 @@ import {
     readNotificationReply,
     removeNotifications,
 } from "@genesiscz/utils/macos/notifications-app";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { ChannelConfigs, ChannelName } from "@genesiscz/utils/notifications";
 import { CHANNEL_NAMES, CHANNELS, dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
 import { PHONE_WHEN_DEFAULTS, validPhoneClock } from "@genesiscz/utils/notifications/channels/phone/when";
@@ -557,7 +559,8 @@ program
         const outcome = await notificationStatus();
 
         if (!outcome.ok) {
-            await printNotificationFallbackStatus(outcome, Boolean(options.json));
+            const fallback = await resolveNotificationFallbackState();
+            await printNotificationFallbackStatus(outcome, Boolean(options.json), fallback);
             return;
         }
 
@@ -598,7 +601,8 @@ program
     .action(async (options: { json?: boolean }) => {
         const outcome = await authorizeNotifications();
 
-        if (!printRpcOutcome(outcome, options.json)) {
+        if (!outcome.ok) {
+            await printNotificationRpcFailure("notify.authorize", outcome, options.json);
             return;
         }
 
@@ -622,7 +626,8 @@ program
     .action(async (options: { json?: boolean }) => {
         const outcome = await openNotificationSettings();
 
-        if (!printRpcOutcome(outcome, options.json)) {
+        if (!outcome.ok) {
+            await printNotificationRpcFailure("notify.settings", outcome, options.json);
             return;
         }
 
@@ -642,7 +647,7 @@ program
         const rows = await listNotifications();
 
         if (rows === null) {
-            printAppUnavailable();
+            await printAppUnavailable("notify.list");
             return;
         }
 
@@ -747,7 +752,7 @@ program
         });
 
         if (removed === null) {
-            printAppUnavailable();
+            await printAppUnavailable("notify.remove");
             return;
         }
 
@@ -759,22 +764,43 @@ program
         out.println(removed === "all" ? "removed all" : `removed ${removed.join(" ")}`);
     });
 
-function printAppUnavailable(): void {
-    out.error("GenesisTools.app is not installed, or routing is switched off.");
-    out.info(suggestCommand("tools macos permissions", { replaceCommand: ["build"] }));
+async function notificationNeedFailure(method: AppRpcMethod, env?: NeedEnv): Promise<string> {
+    return describeNeedFailure(
+        await checkNeed(Need.app.rpc(method), { ...(env ?? liveEngineDeps({})), fresh: false, write: false })
+    );
+}
+
+export async function printAppUnavailable(method: "notify.list" | "notify.remove", env?: NeedEnv): Promise<void> {
+    const hint = await notificationNeedFailure(method, env);
+    out.error(hint || `GenesisTools.app could not ${method === "notify.list" ? "list" : "remove"} notifications.`);
     process.exitCode = 1;
 }
 
-function printRpcFailure(error: GenesisAppRpcFailure): void {
+type NotificationRpcFailure = { ok: false; error: GenesisAppRpcFailure };
+
+export async function printNotificationRpcFailure(
+    method: AppRpcMethod,
+    outcome: NotificationRpcFailure,
+    json = false,
+    env?: NeedEnv
+): Promise<void> {
+    process.exitCode = 1;
+    if (json) {
+        out.result(outcome);
+        return;
+    }
+
+    const { error } = outcome;
     out.error(`${error.code}: ${error.message}`);
 
     if (appCannotAnswer(error)) {
-        out.info(suggestCommand("tools macos permissions", { replaceCommand: ["build"] }));
+        const hint = await notificationNeedFailure(method, env);
+        if (hint) {
+            out.info(hint);
+        }
     } else if (error.code === "not_determined" || error.code === "denied") {
         out.info(suggestCommand("tools notify", { replaceCommand: ["authorize"] }));
     }
-
-    process.exitCode = 1;
 }
 
 /**
@@ -783,12 +809,12 @@ function printRpcFailure(error: GenesisAppRpcFailure): void {
  * (#455 item 5). Reports which backend is actually in play before falling back to the
  * generic RPC failure message.
  */
-async function printNotificationFallbackStatus(
-    outcome: { ok: false; error: GenesisAppRpcFailure },
-    json: boolean
+export async function printNotificationFallbackStatus(
+    outcome: NotificationRpcFailure,
+    json: boolean,
+    fallback: NotificationFallbackState,
+    env?: NeedEnv
 ): Promise<void> {
-    const fallback = await resolveNotificationFallbackState();
-
     if (json) {
         out.result({ ...outcome, fallback });
         process.exitCode = 1;
@@ -798,37 +824,22 @@ async function printNotificationFallbackStatus(
     if (fallback.kind === "genesis-app") {
         // The launcher is installed but the RPC itself failed — that failure is more useful
         // here than a fallback state that is not actually in play.
-        printRpcFailure(outcome.error);
+        await printNotificationRpcFailure("notify.status", outcome, false, env);
         return;
     }
 
     if (fallback.kind === "terminal-notifier") {
-        out.error(`GenesisTools.app missing; using terminal-notifier at ${fallback.path} (not confirmed authorized).`);
+        out.error(`Using terminal-notifier at ${fallback.path} (not confirmed authorized).`);
     } else {
-        out.error(
-            "GenesisTools.app missing, terminal-notifier not found; osascript only, delivery cannot be confirmed."
-        );
+        out.error("terminal-notifier not found; osascript only, delivery cannot be confirmed.");
         out.info("Install terminal-notifier: brew install terminal-notifier");
     }
 
-    out.info(genesisAppBuildHint());
-    process.exitCode = 1;
-}
-
-function printRpcOutcome<T>(outcome: GenesisAppRpcOutcome<T>, json?: boolean): outcome is { ok: true; result: T } {
-    if (outcome.ok) {
-        return true;
+    const hint = await notificationNeedFailure("notify.status", env);
+    if (hint) {
+        out.info(hint);
     }
-
-    if (json) {
-        out.result(outcome);
-    } else {
-        printRpcFailure(outcome.error);
-        return false;
-    }
-
     process.exitCode = 1;
-    return false;
 }
 
 /**
