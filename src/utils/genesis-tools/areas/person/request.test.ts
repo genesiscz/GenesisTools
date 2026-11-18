@@ -481,7 +481,13 @@ test("every generated fixture parses in TypeScript and generated files are curre
         throw new Error("Wire fixtures must be an array");
     }
     const methods = [...genesisToolsApi.methods, ...requestPresentApi.methods];
-    expect(rows).toHaveLength(methods.length);
+    expect(
+        new Set(rows.map((row) => (typeof row === "object" && row !== null && "method" in row ? row.method : null)))
+    ).toEqual(new Set(methods.map((m) => m.name)));
+    // The second arm of an action reply and the null of a nullable field reach the Swift decoders too.
+    const replies = rows.map((row) => SafeJSON.stringify(typeof row === "object" && row !== null ? row : {}));
+    expect(replies.some((row) => row.includes('"status":"unreachable"') && row.includes('"manual":null'))).toBe(true);
+    expect(replies.some((row) => row.includes('"fix":null'))).toBe(true);
     for (const row of rows) {
         if (typeof row !== "object" || row === null || !("method" in row) || !("params" in row) || !("result" in row)) {
             throw new Error("Invalid fixture row");
