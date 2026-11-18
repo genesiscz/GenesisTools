@@ -195,13 +195,13 @@ struct ItemsBar: View {
 
     /// Below this width the actions show their glyphs, with their words as tooltip and label.
     static let compactWidth: CGFloat = 600
-    /// Below this width the question groups are one menu in the first row, not a row of their own: at 900 x 600 the
-    /// headers above the first question took 250 of 600 pt (w_gae6rjx9).
-    static let inlineGroupsWidth: CGFloat = 1000
 
     var body: some View {
         let compact = width.map { $0 < Self.compactWidth } ?? false
-        let inlineGroups = projection.showsGroups && (width.map { $0 < Self.inlineGroupsWidth } ?? false)
+        // In a compact bar (the actions are glyphs) the question groups are one menu in the first row, not a row of
+        // their own: at 900 x 600 the headers above the first question took 250 of 600 pt (w_gae6rjx9). A wider bar
+        // keeps the strip: its labelled actions leave the first row no room for the menu.
+        let inlineGroups = projection.showsGroups && compact
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 leading

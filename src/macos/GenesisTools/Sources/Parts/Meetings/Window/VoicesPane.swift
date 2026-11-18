@@ -345,6 +345,8 @@ struct VoicesPane: View {
     private var project: String? { detail.record.value?.project }
     /// The rows a list shows before "Show all": a person can hold 1,500 samples and a preview 2,000 lines.
     static let shownRows = 40
+    /// The preview's rows before "Show all": it sits under the buttons, above the people.
+    static let shownPreviewRows = 8
 
     var body: some View {
         VStack(spacing: 0) {
@@ -357,10 +359,11 @@ struct VoicesPane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
                         actions
+                        // The preview answers the button above it, so it shows right under it.
+                        previewSection
                         Divider().padding(.vertical, 6)
                         peopleSection
                         namedSection
-                        previewSection
                         othersSection
                     }
                     .padding(.horizontal, 14).padding(.vertical, 10)
@@ -613,8 +616,8 @@ struct VoicesPane: View {
                 Divider().padding(.vertical, 6)
                 sectionTitle("Preview")
                 Text(summary.headline).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary).padding(.bottom, 4)
-                ForEach(summary.lines.prefix(showAllPreview ? summary.lines.count : Self.shownRows)) { line in previewRow(line) }
-                if summary.lines.count > Self.shownRows, !showAllPreview {
+                ForEach(summary.lines.prefix(showAllPreview ? summary.lines.count : Self.shownPreviewRows)) { line in previewRow(line) }
+                if summary.lines.count > Self.shownPreviewRows, !showAllPreview {
                     Button("Show all \(summary.lines.count)") { showAllPreview = true }
                         .buttonStyle(.genHoverPlain()).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
                 }
