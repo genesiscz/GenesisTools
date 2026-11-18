@@ -212,7 +212,7 @@ final class RecordingPickerKeyTests: XCTestCase {
                       "with no event (a test), the US character decides")
         XCTAssertEqual(RecordingPickerTab.forKey(code: 18, character: "+"), .windows)
         XCTAssertEqual(RecordingPickerTab.forKey(code: 20, character: "š"), .displays)
-        XCTAssertNil(RecordingPickerTab.forKey(code: 21, character: "1"), "a position decides when there is one")
+        XCTAssertEqual(RecordingPickerTab.forKey(code: 21, character: "1"), .area, "a position decides when there is one")
         XCTAssertEqual(RecordingPickerTab.forKey(code: nil, character: "2"), .apps)
     }
 
@@ -220,7 +220,7 @@ final class RecordingPickerKeyTests: XCTestCase {
         let czech = TableKeyLayout([18: "+", 19: "ě", 20: "š", 21: "č"])
         XCTAssertEqual(RecordingPickerKey.label(RecordingPickerKey.area, layout: czech), "⌘Č")
         XCTAssertEqual(RecordingPickerKey.label(RecordingPickerKey.area, layout: TableKeyLayout.us), "⌘4")
-        XCTAssertEqual(RecordingPickerTab.allCases.map { RecordingPickerKey.label($0.keyCode, layout: czech) }, ["⌘+", "⌘Ě", "⌘Š"])
+        XCTAssertEqual(RecordingPickerTab.allCases.map { RecordingPickerKey.label($0.keyCode, layout: czech) }, ["⌘+", "⌘Ě", "⌘Š", "⌘Č", "⌘5"])
     }
 }
 

@@ -1918,7 +1918,7 @@ describe("recording handle live controls", () => {
     test("capabilities returns the engine's own capability report when status supplies it", async () => {
         const control = new Control("fixture");
         const capabilities = {
-            targets: ["area"],
+            targets: ["area"] satisfies "area"[],
             liveTargetSwitch: true,
             liveMicrophoneMute: false,
             liveMicrophoneDevice: false,
