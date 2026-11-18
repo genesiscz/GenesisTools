@@ -10,6 +10,7 @@ import { reopen } from "@genesiscz/utils/work/reopen";
 import { type WorkContext, write } from "@genesiscz/utils/work/service";
 import { openWorkDb } from "@genesiscz/utils/work/store/db";
 import { legacyHandoffs } from "./adapters";
+import { ownerAtSurface } from "./adapters/actor";
 import { openLegacySource } from "./adapters/legacy-source";
 
 const actor: Actor = {
@@ -191,5 +192,21 @@ describe("add-member (P5 decision 5)", () => {
         const refused = await write(ctx(), { verb: "add-member", refs: [a], to: a });
         expect(refused.ok ? "" : refused.diagnostics[0].code).toBe("NOT_A_HANDOFF");
         expect(parity()).toEqual([]);
+    });
+
+    test("the owner adds to a handoff another session posted; that session's poster credential is not needed", async () => {
+        const posted = postHandoff({ title: "theirs", tasks: [{ text: "one" }] }, env.depsFor(byFor("sess-b", "b")));
+        const handoff = posted.handoff.id;
+        const a = await spot("the owner moves it in");
+        const agent = await write(ctx(), { verb: "add-member", refs: [a], to: handoff });
+        expect(agent.ok ? "" : agent.diagnostics.map((d) => d.code).join()).toContain("LEGACY_WRITE_FAILED");
+
+        const owner = { ...ctx(), actor: ownerAtSurface("TestProj", "hub").actor };
+        const b = await spot("the owner moves this one in");
+        const reply = await write(owner, { verb: "add-member", refs: [b], to: handoff });
+        expect(reply.ok ? "ok" : reply.diagnostics.map((d) => d.message).join()).toBe("ok");
+        expect(getHandoff({ id: handoff }, deps).handoff.tasks.map((t) => t.text)).toContain(
+            "the owner moves this one in"
+        );
     });
 });

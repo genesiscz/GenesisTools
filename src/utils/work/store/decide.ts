@@ -1078,7 +1078,14 @@ function decideAddMember(cmd: Extract<WorkCommand, { verb: "add-member" }>, view
     return {
         ok: true,
         changes,
-        legacy: [{ action: "add_tasks", handoff: handoff.id, tasks }],
+        legacy: [
+            {
+                action: "add_tasks",
+                handoff: handoff.id,
+                tasks,
+                ...(env.actor.kind === "owner" || env.ownerSaid !== undefined ? { asOwner: true } : {}),
+            },
+        ],
         items: [handoff.id, ...items],
         diagnostics: [],
         next: [],
