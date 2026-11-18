@@ -14,6 +14,7 @@ import {
     PeopleError,
     type PeopleSource,
     peopleDirectory,
+    ProjectsPeopleSource,
 } from "./people-directory";
 import { MEETING_FILE, MeetingStore } from "./record";
 
@@ -86,6 +87,132 @@ function rankedStore() {
 }
 
 describe("PeopleDirectory.known", () => {
+    test("fresh picker directories share an address book lookup, rank for the current moment and see an add", async () => {
+        const { store, book } = rankedStore();
+        const reader = contacts([{ given: "Gale", family: "Example" }]);
+        const list = spyOn(reader, "list");
+        const open = () => peopleDirectory({ store, book, config, contacts: new ContactsPeopleSource(reader) });
+        const first = await open().known("", { meeting: "m1", atSec: 30 });
+        expect(first.people[0]?.name).toBe("Alex Example");
+        await open().add({ name: "Robin Example" });
+        const next = await open().known("", { meeting: "m1", atSec: 150 });
+        expect(next.people[0]?.name).toBe("Blake Example");
+        expect(next.people.map((person) => person.name)).toContain("Robin Example");
+        expect(list).toHaveBeenCalledTimes(1);
+
+        const other = contacts([{ given: "Sky", family: "Example" }]);
+        const otherDirectory = peopleDirectory({ store, book, config, contacts: new ContactsPeopleSource(other) });
+        expect((await otherDirectory.known("", { kinds: ["contacts"] })).people.map((one) => one.name)).toEqual([
+            "Sky Example",
+        ]);
+    });
+
+    test("an answer expires ten seconds after the read, even when the picker keeps using it", async () => {
+        const { book } = scratch([]);
+        let name = "Gale Example";
+        const source: PeopleSource = { kind: "contacts", people: async () => ({ state: "ok", people: [{ name }] }) };
+        const directory = new PeopleDirectory({ book, sources: [source] });
+        const clock = spyOn(Date, "now").mockReturnValue(1000);
+        try {
+            expect((await directory.known("")).people[0]?.name).toBe("Gale Example");
+            name = "Sky Example";
+            clock.mockReturnValue(10_999);
+            expect((await directory.known("")).people[0]?.name).toBe("Gale Example");
+            clock.mockReturnValue(11_000);
+            expect((await directory.known("")).people[0]?.name).toBe("Sky Example");
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    test("a complete project list answers a longer token, and Contacts can reuse an unchanged search token", async () => {
+        const { book } = scratch([]);
+        const projects = new ProjectsPeopleSource(config);
+        const readProjects = spyOn(projects, "people");
+        const source = searching([{ name: "Gale Example" }, { name: "Sky Example" }]);
+        const search = spyOn(source, "people");
+        const directory = new PeopleDirectory({ book, sources: [projects, source] });
+        expect((await directory.known("i")).people.map((one) => one.name)).toEqual(["Ivo Example"]);
+        expect((await directory.known("ivo")).people.map((one) => one.name)).toEqual(["Ivo Example"]);
+        expect((await directory.known("example")).total).toBe(3);
+        expect((await directory.known("example sk")).people.map((one) => one.name)).toEqual(["Sky Example"]);
+        expect(readProjects).toHaveBeenCalledTimes(1);
+        expect(search.mock.calls.map(([query]) => query.text)).toEqual(["i", "ivo", "example"]);
+    });
+
+    test("a limited Contacts search with discarded cards cannot cover a longer token or a different limit", async () => {
+        const { book } = scratch([]);
+        const reader = contacts([
+            ...Array.from({ length: 19 }, () => ({ given: "", family: "" })),
+            { given: "Miro", family: "Example" },
+            { given: "Mai", family: "Example" },
+        ]);
+        const cards = await reader.list(21);
+        const search = spyOn(reader, "search").mockImplementation(async (text, limit) =>
+            (text === "ma" ? cards.slice(20) : cards).slice(0, limit)
+        );
+        const directory = new PeopleDirectory({ book, sources: [new ContactsPeopleSource(reader)] });
+        expect((await directory.known("m")).people.map((one) => one.name)).toEqual(["Miro Example"]);
+        expect((await directory.known("ma")).people.map((one) => one.name)).toEqual(["Mai Example"]);
+        expect((await directory.known("m", { limit: 21 })).total).toBe(2);
+        expect((await directory.known("m")).total).toBe(1);
+        expect(search.mock.calls).toEqual([
+            ["m", 20],
+            ["ma", 20],
+            ["m", 21],
+        ]);
+    });
+
+    test("overlapping searches share a read, and observing a refusal clears earlier Contacts results", async () => {
+        const { book } = scratch([]);
+        const gate = deferred<void>();
+        const entered = deferred<void>();
+        let allowed = true;
+        const source: PeopleSource = {
+            kind: "contacts",
+            async people() {
+                entered.resolve();
+                await gate.promise;
+                return allowed
+                    ? { state: "ok", people: [{ name: "Gale Example" }] }
+                    : { state: "refused", reason: "access denied" };
+            },
+        };
+        const read = spyOn(source, "people");
+        const directory = new PeopleDirectory({ book, sources: [source] });
+        const first = directory.known("gal");
+        await entered.promise;
+        const second = directory.known("gal");
+        // Give the second caller a turn to join the first read while it is still held.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        gate.resolve();
+        expect((await first).people).toEqual((await second).people);
+        allowed = false;
+        expect((await directory.known("sky")).sources).toEqual([
+            { kind: "contacts", state: "refused", reason: "access denied" },
+        ]);
+        expect((await directory.known("gal")).people).toEqual([]);
+        expect(read.mock.calls.map(([query]) => query.text)).toEqual(["gal", "sky", "gal"]);
+    });
+
+    test("a failed lookup keeps its reason on a repeat and retries after expiry", async () => {
+        const { book } = scratch([]);
+        const source = searching([{ name: "Gale Example" }]);
+        const search = spyOn(source, "people").mockRejectedValueOnce(new Error("reader offline"));
+        const directory = new PeopleDirectory({ book, sources: [source] });
+        const clock = spyOn(Date, "now").mockReturnValue(0);
+        try {
+            const failed = [{ kind: "contacts", state: "failed", reason: "reader offline" }];
+            expect((await directory.known("gal")).sources).toEqual(failed);
+            expect((await directory.known("gal")).sources).toEqual(failed);
+            clock.mockReturnValue(10_000);
+            expect((await directory.known("gal")).people[0]?.name).toBe("Gale Example");
+            expect(search).toHaveBeenCalledTimes(2);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
     test("a person's history includes every appearance in date order", async () => {
         const { store, book } = rankedStore();
         const directory = peopleDirectory({ store, config, book });
