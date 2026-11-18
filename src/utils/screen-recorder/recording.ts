@@ -195,6 +195,7 @@ export interface RecorderHooks {
     onSoundPath?: (sound: RecordingSoundPath) => void;
     /** A closed continuous sound file has been kept in the recording's audio ledger. */
     onAudioSegment?: (segment: AudioSegment) => void;
+    onAudioLevels?: RecorderAudioOptions["onLevels"];
     onAudioWarning?: (warning: string) => void;
     /** Before the first piece, once the socket listens; a throw ends the recording (`onError`). */
     beforeLoop?: () => Promise<void> | void;
@@ -406,6 +407,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             },
             audioOwnership: config.pieces.audioOwnership,
             hooks: {
+                onLevels: config.hooks.onAudioLevels,
                 // The displays first: opening the interval saves the kind's state, which then names every display.
                 onStart: (capture) => {
                     this.syncDisplays();
@@ -951,6 +953,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 paused: this.paused,
                 signal: this.soundAbort.signal,
                 onSegment: (segment) => hooks.onAudioSegment?.(segment),
+                onLevels: hooks.onAudioLevels,
                 onWarning: (warning) => this.soundWarning(warning),
                 onFailure: (error) => {
                     // A failure before the session was ready also rejects the start: the catch below notes it.

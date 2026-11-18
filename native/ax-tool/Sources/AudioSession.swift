@@ -31,19 +31,24 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private var muted: [CaptureAudioSource: Bool] = [:]
     private var paused = false
     private var closed = false
+    private let monitorOnly: Bool
+    private(set) var levels: AudioLevelMeter?
     var failed: ((String) -> Void)?
     private let emit: ((Data) -> Void)?
     var rangeCopy: AudioRangeCopy = copyAudioRange
 
     init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil,
-         muted: [CaptureAudioSource] = [], paused: Bool = false,
+         muted: [CaptureAudioSource] = [], paused: Bool = false, monitorOnly: Bool = false, metering: Bool = false,
          clock: (() -> (host: CMTime, wall: Date))? = nil) {
         self.directory = directory
+        self.monitorOnly = monitorOnly
         self.emit = emit
         segmentSeconds = seconds
         self.muted = Dictionary(uniqueKeysWithValues: muted.map { ($0, true) })
         self.paused = paused
         self.clock = clock ?? { (CMClockGetTime(CMClockGetHostTimeClock()), Date()) }
+        super.init()
+        if metering { levels = AudioLevelMeter(queue: queue, micID: argValue("--mic-device")) }
     }
 
     private func wallTime(_ time: CMTime) -> String {
@@ -72,6 +77,8 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
               description.mSampleRate > 0 else { return }
         let rate = description.mSampleRate
+        levels?.append(buffer, source: source, muted: muted[source] ?? false)
+        if monitorOnly { return }
         let count = CMSampleBufferGetNumSamples(buffer)
         var offset = 0
         if let end = retiredEnd[source] {
@@ -294,6 +301,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
             if let independent {
                 do {
                     try independent.switchMicrophone(id)
+                    audio.queue.async { [audio] in audio.levels?.micID = id }
                     CaptureEvents.emit(["event": "settings", "micDevice": id])
                 } catch { CaptureEvents.error("failed", error.localizedDescription) }
                 return
@@ -311,6 +319,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
                 do {
                     configuration.microphoneCaptureDeviceID = id
                     try await stream.updateConfiguration(configuration)
+                    audio.queue.async { [audio] in audio.levels?.micID = id }
                     CaptureEvents.emit(["event": "settings", "micDevice": id])
                 } catch {
                     configuration.microphoneCaptureDeviceID = previous
@@ -380,7 +389,8 @@ func cmdAudioRecord() {
         for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
         requireScreenRecording()
     }
-    guard let out = argValue("--out") else { errorExit("audio-record needs --out", code: "invalid-argument") }
+    let monitorOnly = CommandLine.arguments.contains("--monitor")
+    guard monitorOnly || argValue("--out") != nil else { errorExit("audio-record needs --out", code: "invalid-argument") }
     let seconds = Double(argValue("--segment-sec") ?? "60") ?? .nan
     guard seconds.isFinite, (1...3600).contains(seconds) else {
         errorExit("--segment-sec must be between 1 and 3600", code: "invalid-argument")
@@ -411,11 +421,12 @@ func cmdAudioRecord() {
         }
     }
     guard !sources.isEmpty else { errorExit("no requested audio source is available", code: "no-permission") }
-    let directory = URL(fileURLWithPath: out)
+    let directory = argValue("--out").map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
     do {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !monitorOnly { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
         let configuration = SCStreamConfiguration()
-        let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused)
+        let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused,
+                                   monitorOnly: monitorOnly, metering: monitorOnly || CommandLine.arguments.contains("--levels"))
         if withoutScreen {
             let inputs = IndependentAudio(audio: audio)
             var started: [CaptureAudioSource] = []
