@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, linkSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as voiceFeatures from "@genesiscz/utils/meetings/voice-features";
 import { PROFILER_SCOPE_NAMES, profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
@@ -69,6 +71,54 @@ async function runnerFixture(fields: Partial<MeetingRecord> = {}) {
 }
 
 describe("suggest runner word settings", () => {
+    test("suggest reopens identical voice frames and decodes again only for stale or damaged evidence", async () => {
+        const { store, record, opened } = await runnerFixture();
+        const folder = store.folder(record.id);
+        const audioPath = join(folder, "source.wav");
+        const cachePath = join(folder, "evidence", "voice-frames.bin");
+        const stamp = new Date("2026-01-01T10:00:00Z");
+        writeFileSync(audioPath, "audio");
+        utimesSync(audioPath, stamp, stamp);
+        const left = { rms: 1 / 3, lowBandShare: 1 / 7, tilt: 1 / 9, pitchHz: 8000 / 51, voicedShare: 1 };
+        const right = { rms: 0, lowBandShare: 0, tilt: 0, pitchHz: null, voicedShare: 0 };
+        const frames = [{ channels: [left, right] }, { channels: [right, left] }];
+        const source = spyOn(opened, "audioPath").mockResolvedValue(audioPath);
+        const decode = spyOn(voiceFeatures, "voiceFrames").mockResolvedValue(frames);
+        const aggregate = spyOn(voiceFeatures, "lineVoices");
+        spies.push(source, decode, aggregate);
+        const suggest = () => runSuggest({ store, record, rules: ["evidence"] });
+
+        await suggest();
+        await suggest();
+        expect(decode).toHaveBeenCalledTimes(1);
+        expect(aggregate.mock.calls.map(([input]) => input.frames)).toEqual([frames, frames]);
+        expect(aggregate.mock.calls[1]![0].frames).not.toBe(frames);
+
+        // The new inode has the same path, size and modification time.
+        const other = join(folder, "other.wav");
+        writeFileSync(other, "other");
+        utimesSync(other, stamp, stamp);
+        renameSync(other, audioPath);
+        linkSync(audioPath, other);
+        decode.mockResolvedValue([{ channels: [right, left] }]);
+        await Promise.all([suggest(), suggest()]);
+        expect(decode).toHaveBeenCalledTimes(2);
+        expect(aggregate.mock.calls.slice(-2).map(([input]) => input.frames)).toEqual([
+            [{ channels: [right, left] }],
+            [{ channels: [right, left] }],
+        ]);
+
+        // A different path to the same bytes and corruption in an otherwise complete file are misses too.
+        source.mockResolvedValue(other);
+        await suggest();
+        expect(decode).toHaveBeenCalledTimes(3);
+        const bytes = readFileSync(cachePath);
+        bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;
+        writeFileSync(cachePath, bytes);
+        await suggest();
+        expect(decode).toHaveBeenCalledTimes(4);
+    });
+
     test("suggest records collection, the selected rule and the save under its registered profiler scope", async () => {
         const { store, record } = await runnerFixture();
         const scope = profiler.scope("meetings-suggest");

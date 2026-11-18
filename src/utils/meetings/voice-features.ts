@@ -28,7 +28,7 @@ export interface VoiceFrame {
 const RATE = 8000;
 const SAMPLES = 400;
 const FRAME_SEC = SAMPLES / RATE;
-const MAX_FRAMES = (8 * 3600) / FRAME_SEC;
+export const MAX_VOICE_FRAMES = (8 * 3600) / FRAME_SEC;
 /** The longest stretch of feature math between two turns of the event loop. */
 const VOICE_SLICE_MS = 20;
 const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
@@ -146,7 +146,7 @@ export async function voiceFrames(options: { audioPath: string; signal?: AbortSi
                 filled += take;
                 offset += take;
                 if (filled === frameBytes) {
-                    if (frames.length >= MAX_FRAMES) {
+                    if (frames.length >= MAX_VOICE_FRAMES) {
                         throw new Error("Voice feature limit is eight hours; split the recording explicitly.");
                     }
                     const pcm = new DataView(pending.buffer);
