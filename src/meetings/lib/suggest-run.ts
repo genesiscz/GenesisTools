@@ -132,7 +132,19 @@ export async function runSuggest(options: {
     const { store, record } = options;
     using _run = prof.section("run");
     const warnings: string[] = [];
-    const opened = prof.measure("open", () => OpenedMeeting.of(store, record));
+    options.signal?.throwIfAborted();
+    const source = prof.measure("open", () => OpenedMeeting.of(store, store.read(record.id) ?? record));
+    const collected = await prof.measureAsync("collectForSuggest", () =>
+        collectForSuggest(
+            source,
+            warnings,
+            options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
+        )
+    );
+    const snapshot = store.read(record.id) ?? collected;
+    // If another writer changed seats or decisions during collection, derive every input from the new snapshot.
+    const opened = Bun.deepEquals(snapshot, source.record) ? source : OpenedMeeting.of(store, snapshot);
+    const config = await prof.measureAsync("config", () => opened.config());
     let ranVoicePass = false;
     if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
         const { voiceProgressForMeeting, voiceSignalForMeeting } = await import("./speaker-labels/voice");
@@ -149,17 +161,6 @@ export async function runSuggest(options: {
         }
     }
 
-    options.signal?.throwIfAborted();
-
-    const collected = await prof.measureAsync("collectForSuggest", () =>
-        collectForSuggest(
-            opened,
-            warnings,
-            options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
-        )
-    );
-    const config = await prof.measureAsync("config", () => opened.config());
-    const snapshot = store.read(record.id) ?? collected;
     const { inputs, features } = await readSuggestInputs(opened, snapshot, config, options, warnings, false);
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];

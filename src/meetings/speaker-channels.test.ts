@@ -32,6 +32,7 @@ import { OpenedMeeting } from "./lib/opened-meeting";
 import { storedPresentAt } from "./lib/person-stays";
 import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
+import { answerQuestion } from "./lib/questions";
 import { compactEvidence, rawMeeting } from "./lib/raw";
 import { rejectFilterIds } from "./lib/reject-filter";
 import { decidedSeatRanges, suggestSeats } from "./lib/seat-suggest";
@@ -592,6 +593,13 @@ describe("sparse roster mute readings on the call", () => {
         expect(asked[0]?.choices).not.toContain(reed);
         expect(asked[1]?.choices).toContain(reed);
         expect(asked[1]?.decides).toHaveLength(1);
+        const review = meetingRecordSchema.parse({ ...seated, items: fresh });
+        answerQuestion(review, asked[1]!.id, { answer: reed, now: START });
+        expect(review.items.find((item) => item.id === asked[0]!.decides[0])?.status).toBe("suggested");
+        expect(review.items.find((item) => item.id === asked[1]!.decides[0])).toMatchObject({
+            status: "confirmed",
+            speaker: reed,
+        });
     });
 
     test("two eligible remotes stay a question and the roster cannot add the muted third choice back", () => {
