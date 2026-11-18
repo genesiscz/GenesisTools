@@ -172,7 +172,8 @@ test("lowering and raising the dictionary cutoff adds and removes the same timed
     await config.update((raw) => {
         raw.global = {
             dictionary: { entries: [{ type: "term", value: "klymport" }] },
-            suggest: { terms: { phonetic: 1 } },
+            // The 0.75 proposal stays a suggestion, so a raised apply line is what moves it into the transcript.
+            suggest: { terms: { phonetic: 1, applyAbove: 0.8 } },
         };
         raw.languages = { cs: { wordCheck: "off" }, sk: { wordCheck: "off" } };
     });
