@@ -1584,9 +1584,13 @@ export const voicesPreview = defineMethod({
                 current: z.string(),
                 person: z.string().optional(),
                 score: z.number().optional(),
+                margin: z.number().optional(),
                 next: z.object({ person: z.string(), score: z.number() }).optional(),
                 reason: z.enum([
                     "named",
+                    "exclusion",
+                    "exclusion-not-one-voice",
+                    "exclusion-too-few-lines",
                     "below-gate",
                     "no-rival-sample",
                     "unsampled-present",

@@ -22,6 +22,9 @@ export function itemWhat(item: MeetingItem, options: { width?: number } = {}): s
     if (item.kind === "speaker-range") {
         const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
         const score = item.evidence?.score;
+        if (item.evidence?.reason === "exclusion" && typeof item.evidence.margin === "number") {
+            return `${item.label} ${span(item.fromSec, item.toSec)} → ${who} by exclusion (margin ${item.evidence.margin.toFixed(2)})`;
+        }
         const voice = item.rules.includes(MeetingRule.VoiceEmbedding)
             ? ` by voice${typeof score === "number" ? ` ${score.toFixed(2)}` : ""}`
             : "";

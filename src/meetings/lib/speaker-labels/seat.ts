@@ -2,6 +2,8 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { LineLabel, SpeakerLabeler } from "./types";
 
+export const ATTENDANCE_CONFIDENCE = 0.95;
+
 export const seatLabeler: SpeakerLabeler = {
     id: "seat",
     rule: MeetingRule.Attendance,

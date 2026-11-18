@@ -62,6 +62,7 @@ import {
 } from "./questions";
 import { assessIndicator } from "./speaker-indicator";
 import { speakerLabelRule } from "./speaker-labels";
+import { ATTENDANCE_CONFIDENCE } from "./speaker-labels/seat";
 import type { LineLabel } from "./speaker-labels/types";
 import {
     addPolish,
@@ -230,7 +231,7 @@ export function dictionaryKeeps(dictionary: Pick<ResolvedDictionary, "entries">)
 
 /** Confidence per rule, 0 to 1. RA is attendance (evidence); a goodbye nobody answered is only an intention. */
 const CONFIDENCE = {
-    attendance: 0.95,
+    attendance: ATTENDANCE_CONFIDENCE,
     join: 0.9,
     answeredLeave: 0.75,
     unansweredLeave: 0.4,
@@ -1518,13 +1519,15 @@ function inSwap(swaps: SwapStretch[], label: string, sec: number): boolean {
 }
 
 /** The channel and energy items, and the swapped stretches (R20) that the arrival rule must leave alone too. */
-function evidenceItems(options: {
+export function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
     lines: LineEvidence[];
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voiceMatches?: Readonly<Record<string, VoiceMatch>>;
+    /** The current pass can enrol an independently identified line before neighbouring findings are grouped. */
+    onIndicator?: (index: number, person: string, confidence: number) => void;
     /** The record's items: an agent's speaker ranges over the same lines score their speaker (the polish). */
     items?: readonly MeetingItem[];
     samePerson?: SamePerson;
@@ -1837,6 +1840,15 @@ function evidenceItems(options: {
                 close();
                 continue;
             }
+            if (
+                finding.speaker &&
+                finding.rules.includes(MeetingRule.SpeakingIndicator) &&
+                !finding.listen &&
+                !finding.echo &&
+                !finding.conflict
+            ) {
+                options.onIndicator?.(line.index, finding.speaker, finding.confidence);
+            }
 
             // A voice finding and a channel finding stay apart, so a range's rules and voice evidence fit every line.
             const key = `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}|${finding.rules.includes(MeetingRule.Voice) ? "voice" : ""}|${finding.conflict ? "conflict" : ""}`;
@@ -2038,7 +2050,7 @@ function labeledItems(options: {
                 label: entry.speaker,
                 fromSec: at,
                 toSec: at,
-                confidence: label.score,
+                confidence: label.score === undefined ? undefined : Math.max(0, label.score),
                 rules: [MeetingRule.VoiceEmbedding],
                 evidence: {
                     reason: label.reason,
@@ -2058,6 +2070,14 @@ function labeledItems(options: {
             continue;
         }
 
+        const previous = proposed.get(label.index - 1);
+        const continuesExclusion =
+            previous?.kind === "speaker-range" &&
+            previous.label === entry.speaker &&
+            previous.evidence?.exclusionPerson === label.person &&
+            previous.evidence?.seat === label.seat &&
+            previous.evidence?.endSec === at &&
+            typeof previous.evidence?.exclusionStretch === "number";
         let item: NewItem = {
             kind: "speaker-range",
             status: "suggested",
@@ -2075,6 +2095,14 @@ function labeledItems(options: {
                 endSec: spans.end(label.index),
                 ...(label.score === undefined ? {} : { score: label.score }),
                 ...(label.next ? { next: label.next } : {}),
+                ...(label.reason === "exclusion"
+                    ? {
+                          margin: label.margin,
+                          listen: true,
+                          exclusionPerson: label.person,
+                          exclusionStretch: continuesExclusion ? previous.evidence?.exclusionStretch : label.index,
+                      }
+                    : {}),
             },
         };
         const older = [...options.found, ...record.items.filter((one) => one.status === "suggested")].filter((one) =>
@@ -2089,7 +2117,7 @@ function labeledItems(options: {
 
             if (old.speaker && !sameName(old.speaker, label.person)) {
                 rivals.push(old.speaker);
-            } else if (old.speaker) {
+            } else if (old.speaker && label.reason !== "exclusion") {
                 item = agreeing(item, old);
             }
         }
@@ -2660,9 +2688,9 @@ export function suggestItems(options: {
         points: options.points ?? [],
     };
     const askedItems = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
-    const strangerGroups = new Map<number, Extract<MeetingItem, { kind: "speaker-range" }>[]>();
+    const voiceGroups = new Map<string, Extract<MeetingItem, { kind: "speaker-range" }>[]>();
     for (const item of taken) {
-        const stretch = item.evidence?.strangerStretch;
+        const stretch = item.evidence?.strangerStretch ?? item.evidence?.exclusionStretch;
         if (
             item.kind !== "speaker-range" ||
             item.status !== "suggested" ||
@@ -2671,12 +2699,16 @@ export function suggestItems(options: {
         ) {
             continue;
         }
-        const group = strangerGroups.get(stretch) ?? [];
+        const key = [item.evidence?.reason, stretch, item.evidence?.exclusionPerson ?? item.evidence?.seatPerson].join(
+            "|"
+        );
+        const group = voiceGroups.get(key) ?? [];
         group.push(item);
-        strangerGroups.set(stretch, group);
+        voiceGroups.set(key, group);
     }
-    const strangerQuestions = [...strangerGroups.values()].map((ranges) => {
+    const voiceQuestions = [...voiceGroups.values()].map((ranges) => {
         const owner = ranges[0]!.evidence?.seatPerson;
+        const exclusionPerson = ranges[0]!.evidence?.exclusionPerson;
         const fromSec = Math.min(...ranges.map((range) => range.fromSec));
         // The same presence rule as every other speaker question: nobody outside their stay at the stretch.
         const { absent } = presenceAt(context.presence, fromSec);
@@ -2688,7 +2720,12 @@ export function suggestItems(options: {
                 )
             ),
         ];
-        const choices = [typeof owner === "string" ? owner : "", ...context.candidates].filter(
+        const choices = [
+            typeof exclusionPerson === "string" ? exclusionPerson : "",
+            typeof owner === "string" ? owner : "",
+            ...ranges.flatMap((range) => range.candidates ?? []),
+            ...context.candidates,
+        ].filter(
             (name, index, names) =>
                 name &&
                 !excluded.some((other) => sameName(name, other)) &&
@@ -2705,15 +2742,26 @@ export function suggestItems(options: {
                     typeof range.evidence?.endSec === "number" ? range.evidence.endSec : range.toSec
                 )
             ),
-            question: `This does not sound like ${owner}. Who is speaking?`,
+            question:
+                typeof exclusionPerson === "string"
+                    ? `Is ${exclusionPerson} speaking here?`
+                    : `This does not sound like ${owner}. Who is speaking?`,
             choices,
             decides: ranges.map((range) => range.id),
             rules: [MeetingRule.VoiceEmbedding],
-            evidence: { reason: "not-the-seat-person", seatPerson: owner },
+            evidence:
+                typeof exclusionPerson === "string"
+                    ? { reason: "exclusion", margin: ranges[0]!.evidence?.margin }
+                    : { reason: "not-the-seat-person", seatPerson: owner },
         };
     });
     const candidates = taken
-        .filter((item) => !askedItems.has(item.id) && item.evidence?.strangerStretch === undefined)
+        .filter(
+            (item) =>
+                !askedItems.has(item.id) &&
+                item.evidence?.strangerStretch === undefined &&
+                item.evidence?.exclusionStretch === undefined
+        )
         .flatMap((item) => {
             // A disagreement about identity needs an answer even on a short line or against the attendance list.
             const conflict = item.evidence?.labelConflict === true;
@@ -2728,7 +2776,7 @@ export function suggestItems(options: {
 
     // Keep the same evidence identity on unasked ranges, so a later answer can improve the whole compatible group.
     const signatureQuestions = taken
-        .filter((item) => item.evidence?.strangerStretch === undefined)
+        .filter((item) => item.evidence?.strangerStretch === undefined && item.evidence?.exclusionStretch === undefined)
         .flatMap((item) => questionFor(item, { ...context, listenBelow: Math.max(0.7, context.listenBelow) }) ?? []);
     for (const question of signatureQuestions) {
         if (question.about !== "speaker" || !question.signature) {
@@ -2777,7 +2825,7 @@ export function suggestItems(options: {
         })
         .slice(0, budget);
 
-    for (const question of [...strangerQuestions, ...worth]) {
+    for (const question of [...voiceQuestions, ...worth]) {
         if (known.has(questionKey(question))) {
             continue;
         }

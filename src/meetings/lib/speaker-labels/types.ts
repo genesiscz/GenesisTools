@@ -10,9 +10,14 @@ export interface LineLabel {
     seat: Seat;
     person?: string;
     score?: number;
+    /** Distance below the voice match threshold for the closest enrolled seat-mate. */
+    margin?: number;
     next?: { person: string; score: number };
     reason:
         | "named"
+        | "exclusion"
+        | "exclusion-not-one-voice"
+        | "exclusion-too-few-lines"
         | "below-gate"
         | "no-rival-sample"
         | "unsampled-present"
@@ -29,6 +34,11 @@ export interface LabelContext {
     attended: readonly { person: string; seat: Seat | undefined; fromSec: number; toSec: number }[];
     /** A caller-supplied track selection. The voice labeler opens the meeting's sound on demand otherwise. */
     sound?: MeetingSound;
+    /** Independent, single-speaker lines for this voice pass, keyed by source transcript index. */
+    certain?: ReadonlyMap<number, string>;
+    /** Sole occupancy is provisional if the project voice vetoes the seat owner. */
+    seatOnlySeeds?: ReadonlySet<number>;
+    applyAbove?: number;
     project: string | undefined;
 }
 

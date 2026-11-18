@@ -244,7 +244,7 @@ test("one prototype needs loneScore; two prototypes need score and margin", () =
     expect(name({ store: storeOf({ [alice.person]: [[1, 0]] }), attended: [alice] })[0]?.person).toBe(alice.person);
     expect(name({ lines: [line([0.72, 0.69])] })[0]?.reason).toBe("below-gate");
 });
-test("a stranger on a seat of one vetoes its owner, and never supplies a different name", () => {
+test("a stranger on a seat of one vetoes its owner, and never supplies a different name", async () => {
     const [veto] = name({ attended: [alice], lines: [line([0, 1])] });
     expect(veto?.reason).toBe("not-the-seat-person");
     const merged = mergeLineLabels(
@@ -255,6 +255,13 @@ test("a stranger on a seat of one vetoes its owner, and never supplies a differe
     );
     expect(merged[0]?.person).toBeUndefined();
     expect(merged[0]?.next?.person).toBe(alice.person);
+
+    const { opened, record } = await sampledMeeting("project-veto-fixture");
+    addVoicePrint(record.project!, alice.person, { ...basePrint, embedding: [0, 1] }, "fixture-model");
+    const config = meetingsConfigSchema.parse({});
+    const rows = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.every((row) => !row.person && row.reason === "not-the-seat-person")).toBe(true);
 });
 test("sound selection uses a measured recorder clock or falls back to the seat's source channel", async () => {
     const sound = meetingSound({
