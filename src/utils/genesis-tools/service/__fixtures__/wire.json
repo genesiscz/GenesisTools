@@ -66,7 +66,11 @@
       "kind": "notice",
       "id": "fixture",
       "title": "fixture",
-      "reason": "fixture"
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      }
     },
     "result": {
       "status": "ran",
@@ -93,7 +97,11 @@
       "kind": "notice",
       "id": "fixture",
       "title": "fixture",
-      "reason": "fixture"
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      }
     },
     "result": {
       "status": "ran",
@@ -141,12 +149,46 @@
     }
   },
   {
+    "method": "person.windowNotice",
+    "params": {
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      },
+      "skipped": []
+    }
+  },
+  {
     "method": "person.showWindow",
     "params": {
       "kind": "notice",
       "id": "fixture",
       "title": "fixture",
       "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -177,6 +219,10 @@
       "id": "fixture",
       "title": "fixture",
       "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -207,6 +253,10 @@
       "id": "fixture",
       "title": "fixture",
       "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -237,6 +287,10 @@
       "id": "fixture",
       "title": "fixture",
       "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -267,6 +321,10 @@
       "id": "fixture",
       "title": "fixture",
       "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
@@ -429,7 +487,11 @@
         "kind": "notice",
         "id": "fixture",
         "title": "fixture",
-        "reason": "fixture"
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": []
+        }
       },
       "timeoutMs": 120000
     },
@@ -440,6 +502,10 @@
         "id": "fixture",
         "title": "fixture",
         "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": []
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -473,6 +539,10 @@
         "id": "fixture",
         "title": "fixture",
         "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": []
+        },
         "createdAt": "2026-11-17T12:00:00.000Z",
         "deadlineSeconds": 1,
         "takesFocus": true
@@ -548,6 +618,10 @@
       "id": "fixture",
       "title": "fixture",
       "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
