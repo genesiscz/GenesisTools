@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { runningWidgetRoot } from "@genesiscz/utils/macos/native-inbox";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { WidgetRoster } from "./roster-index";
 import { streamWidgetRoster } from "./roster-pages";
@@ -160,9 +161,26 @@ export function readWarmStartRoster(root?: string): Promise<WidgetRoster | undef
  * The sources a one-shot snapshot reads: the running watch's roster when it has a fresh one, so the settings page
  * does not rebuild the agents tree cold (1.8 s of CPU), and the index otherwise. Everything else is read fresh.
  */
-export async function oneShotWidgetSources(root?: string): Promise<WidgetSources> {
+export async function oneShotWidgetSources(root?: string, { requireComplete = false } = {}): Promise<WidgetSources> {
     const roster = await readWidgetRosterCache({ root });
-    if (!roster) {
+    if (!roster && !requireComplete) {
+        const directory = widgetRoot(root);
+        const lock = Bun.file(join(directory, "worker.lock"));
+        if (
+            (await lock.exists()) &&
+            Date.now() - lock.lastModified < WIDGET_ROSTER_CACHE_MAX_AGE_MS &&
+            runningWidgetRoot({ root: directory })
+        ) {
+            // The watch just took the lock and is preparing its first page. Settings subscribes to the file.
+            return {
+                ...realWidgetSources,
+                sessions: async () => [],
+                agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                rosterStatus: () => ({ loading: true }),
+            };
+        }
+    }
+    if (!roster || (requireComplete && roster.backfill)) {
         let reading: Promise<WidgetRoster> | undefined;
         const read = () => (reading ??= streamWidgetRoster());
         return {

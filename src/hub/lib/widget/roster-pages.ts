@@ -5,8 +5,10 @@ import { historyPathUnderRoot } from "@genesiscz/utils/agent-sessions/project-sc
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { HistoryRepository } from "@genesiscz/utils/agent-sessions/repository";
 import { cpuMeta, profiler } from "@genesiscz/utils/profile";
-import { type AgentsTree, hubAgents, rankedParents } from "../agents";
+import { type AgentsTree, rankedParents } from "../agents";
 import {
+    newestRosterRows,
+    readWidgetParents,
     WIDGET_ROSTER_HOURS,
     WIDGET_ROSTER_LIMIT,
     WIDGET_ROSTER_PROVIDERS,
@@ -59,8 +61,7 @@ function rosterEntries(now: number): Entry[] {
 }
 
 export function newestPaths(entries: Entry[]): string[] {
-    entries.sort((a, b) => b.mtime - a.mtime || a.filePath.localeCompare(b.filePath));
-    return [...new Set(entries.map((entry) => entry.filePath))];
+    return [...new Set(newestRosterRows(entries).map((entry) => entry.filePath))];
 }
 
 export function readRosterRows(filePaths: string[], now: number): Promise<AgentSessionRow[]> {
@@ -98,32 +99,6 @@ export function coldRosterPages(now: number): AsyncGenerator<RosterPage> {
     return rosterRowPages(paths, (files) => readRosterRows(files, now));
 }
 
-export function newestRows(rows: AgentSessionRow[]): AgentSessionRow[] {
-    return rows.sort((a, b) => b.mtime - a.mtime || a.filePath.localeCompare(b.filePath));
-}
-
-function readParents(
-    rows: AgentSessionRow[],
-    now: number,
-    exact: boolean,
-    progress?: (tree: AgentsTree) => void | Promise<void>
-) {
-    return hubAgents(
-        { now, hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh: false },
-        {
-            parents: () =>
-                listAgentSessionRows({
-                    now,
-                    filePaths: rows.map((row) => row.filePath),
-                    refresh: false,
-                    failClosed: true,
-                }),
-            exact,
-            progress,
-        }
-    );
-}
-
 /** A scoped refresh of known parents. Changing membership, children without a known owner, or an external index
  * write falls back to reconciliation. A clock tick also reconciles journals and workers that have no file event. */
 export async function updateRosterPaths(
@@ -131,7 +106,7 @@ export async function updateRosterPaths(
     paths: string[],
     now: number,
     readRows = readRosterRows,
-    tree = readParents
+    tree = readWidgetParents
 ): Promise<WidgetRoster | undefined> {
     const changed = new Set(paths);
     if (!changed.size) {
@@ -143,7 +118,7 @@ export async function updateRosterPaths(
         return undefined;
     }
     const since = now - WIDGET_ROSTER_HOURS * 3_600_000;
-    const merged = newestRows([
+    const merged = newestRosterRows([
         ...roster.rows.filter((row) => !changed.has(row.filePath) && row.mtime >= since),
         ...rows,
     ]);
@@ -185,8 +160,8 @@ export async function streamWidgetRoster(publish?: (page: RosterPage) => void | 
         offset = page.next;
         await publish?.(page);
     }
-    newestRows(rows);
-    const agents = await readParents(
+    newestRosterRows(rows);
+    const agents = await readWidgetParents(
         rows.slice(0, WIDGET_ROSTER_LIMIT),
         now,
         false,

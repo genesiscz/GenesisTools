@@ -47,7 +47,10 @@ widget
     .requiredOption("--provider <provider>")
     .action(async (session: string, options, command) => {
         const root = command.optsWithGlobals().stateRoot;
-        const snapshot = await widgetSnapshot({ root, sources: await oneShotWidgetSources(root) });
+        const snapshot = await widgetSnapshot({
+            root,
+            sources: await oneShotWidgetSources(root, { requireComplete: true }),
+        });
         const candidates = snapshot.sessions.filter(
             (entry) => entry.target.sessionId === session && entry.target.provider === options.provider
         );

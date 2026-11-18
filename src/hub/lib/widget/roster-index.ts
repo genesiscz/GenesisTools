@@ -69,25 +69,54 @@ export class WidgetRosterReads {
     }
 }
 
-/** The roster the Widget shows: the indexed sessions and the agents tree, read from the index as it is. */
+/** Tie equal mtimes by path so a session keeps its place across a cold page and a warm refresh. */
+export function newestRosterRows<T extends Pick<AgentSessionRow, "mtime" | "filePath">>(rows: T[]): T[] {
+    return rows.sort((a, b) => b.mtime - a.mtime || a.filePath.localeCompare(b.filePath));
+}
+
+/** The indexed sessions and their tree, including journal and process changes with no transcript event. */
 export async function readWidgetRoster(): Promise<WidgetRoster> {
-    const [rows, agents] = await Promise.all([
-        profiler
-            .scope("widget")
-            .measureAsync(
-                "roster session rows",
-                () =>
-                    listAgentSessionRows({
-                        hours: WIDGET_ROSTER_HOURS,
-                        withUsage: false,
-                        refresh: false,
-                        failClosed: true,
-                    }),
-                cpuMeta()
-            ),
-        hubAgents({ hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh: false }),
-    ]);
+    const now = Date.now();
+    const rows = await profiler
+        .scope("widget")
+        .measureAsync(
+            "roster session rows",
+            () =>
+                listAgentSessionRows({
+                    now,
+                    hours: WIDGET_ROSTER_HOURS,
+                    withUsage: false,
+                    refresh: false,
+                    failClosed: true,
+                }),
+            cpuMeta()
+        );
+    newestRosterRows(rows);
+    const agents = await readWidgetParents(rows.slice(0, WIDGET_ROSTER_LIMIT), now, false);
     return { rows, agents };
+}
+
+/** Use the row listing's newest paths for the rich parent read, including on a safety reconciliation. */
+export function readWidgetParents(
+    rows: AgentSessionRow[],
+    now: number,
+    exact: boolean,
+    progress?: (tree: AgentsTree) => void | Promise<void>
+) {
+    return hubAgents(
+        { now, hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh: false },
+        {
+            parents: () =>
+                listAgentSessionRows({
+                    now,
+                    filePaths: rows.map((row) => row.filePath),
+                    refresh: false,
+                    failClosed: true,
+                }),
+            exact,
+            progress,
+        }
+    );
 }
 
 /** The transcripts that changed, by the scope they ask for; a scope without an entry refreshes its whole listing. */
