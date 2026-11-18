@@ -78,9 +78,64 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertNil(draft.problem)
         XCTAssertEqual(draft.parsed.remote.first?.fromSec, 65)
         XCTAssertEqual(draft.parsed.remote.first?.toSec, 3600)
-        draft.addRemote()
+        draft.seatRemote("Robin Example")
         draft.removeRemote(at: 0)
         XCTAssertEqual(draft.joins, [""])
+        XCTAssertEqual(draft.seats.remote.map(\.name), ["Robin Example"])
+    }
+
+    /// w_sbxfmxen: the seats sheet seats picked people and picks a device; nothing is typed as an id or a comma list,
+    /// and Save writes the engine's shape (`self`, `device:<owner>` with the owner, room or remote members only).
+    func testTheSeatsSheetSeatsPickedPeopleOnDevicesItOffers() {
+        var draft = MeetingSeatsDraft(MeetingSeats())
+        draft.seatInRoom("Alice Example")
+        draft.seatInRoom("Bob Example")
+        draft.seatInRoom("alice example")
+        XCTAssertEqual(draft.seats.room, ["Alice Example", "Bob Example"], "names compare as the engine folds them")
+        draft.seatRemote("Dana Example")
+        XCTAssertEqual(draft.newDevices, [.thisMac, .owner("Dana Example")])
+
+        draft.addMicrophone(.thisMac)
+        XCTAssertEqual(draft.seats.microphones?[0], .init(id: "self", label: nil, people: ["Alice Example", "Bob Example"], deviceId: nil),
+                       "this Mac's microphone starts with the room")
+        draft.addMicrophone(.owner("Dana Example"))
+        XCTAssertEqual(draft.seats.microphones?[1],
+                       .init(id: "device:Dana Example", label: nil, people: ["Dana Example"], deviceId: "Dana Example"),
+                       "a person's own device as the engine writes it")
+        XCTAssertEqual(draft.newDevices, [], "every seat has its microphone")
+        XCTAssertEqual(draft.device(at: 1).title, "Dana Example's device")
+
+        draft.seatRemote("Bob Example")
+        XCTAssertEqual(draft.seats.room, ["Alice Example"], "a person has one seat: Bob moves")
+        XCTAssertEqual(draft.seats.microphones?[0].people, ["Alice Example"], "and leaves the room's microphone")
+        XCTAssertEqual(draft.eligible(1), ["Dana Example", "Bob Example"], "a device offers the remote people")
+        draft.toggle("Bob Example", inMicrophone: 1)
+        XCTAssertEqual(draft.seats.microphones?[1].people, ["Dana Example", "Bob Example"])
+        XCTAssertEqual(draft.devices(for: 0).map(\.free), [true, false, true], "Dana's device is the other group")
+
+        draft.toggle("Alice Example", inMicrophone: 0)
+        XCTAssertEqual(draft.problem, "This Mac's microphone carries nobody. Tick a person, or remove it.")
+        draft.removeMicrophone(at: 0)
+        XCTAssertNil(draft.problem)
+        draft.unseat("Dana Example")
+        XCTAssertEqual(draft.seats.microphones?[0].people, ["Bob Example"], "an unseated person leaves every microphone")
+        let saved = draft.parsed
+        XCTAssertEqual(saved.room, ["Alice Example"])
+        XCTAssertEqual(saved.remote.map(\.name), ["Bob Example"])
+        draft.removeMicrophone(at: 0)
+        XCTAssertNil(draft.parsed.microphones, "no microphones: the key stays out, as before")
+    }
+
+    func testTheSeatsSheetKeepsARecordsSeatsAsTheyAreAndShowsAnOlderDevice() throws {
+        let seats = try XCTUnwrap(try record().seats)
+        let draft = MeetingSeatsDraft(seats)
+        XCTAssertEqual(draft.parsed, seats, "opening the sheet and saving changes nothing")
+        XCTAssertEqual(draft.device(at: 0), .thisMac)
+        XCTAssertEqual(draft.device(at: 1), .other(id: "desk", owner: "carol-laptop"), "a group made another way keeps its id")
+        XCTAssertEqual(draft.device(at: 1).title, "carol-laptop's device")
+        XCTAssertEqual(draft.members(1), ["Dana Example"])
+        XCTAssertTrue(draft.carriesRoom(0))
+        XCTAssertFalse(draft.carriesRoom(1))
     }
 
     // MARK: Undo ends its notice (w_o8fbzbq8)
