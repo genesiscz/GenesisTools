@@ -20,7 +20,7 @@ import SwiftUI
 }
 
 /// What an open speaker chip offers when no open question covers its block (U7). The 00:10 line of the owner's
-/// meeting asked "Who is this?" with nothing under it, while an open suggestion (Speaker 5 is Jan Hora, 85 %) covered
+/// meeting asked "Who is this?" with nothing under it, while an open suggestion (Speaker 5 is Alice Example, 85 %) covered
 /// the line and the seats named six people.
 enum OpenSpeakerOffer {
     /// The open speaker-range suggestion whose range holds `sec`, the most confident first.
@@ -32,7 +32,7 @@ enum OpenSpeakerOffer {
         .max { ($0.confidence ?? 0) < ($1.confidence ?? 0) }
     }
 
-    /// "Jan Hora (suggested, 85 % sure)". A voice model's suggestion reads "Jan Hora (by voice 0.61)": the cosine of two
+    /// "Alice Example (suggested, 85 % sure)". A voice model's suggestion reads "Alice Example (by voice 0.61)": the cosine of two
     /// voices from its evidence, never a percent (`VoiceScore`). Its confidence can be the rule's gate (0.8, "cosine is
     /// not probability" in suggest.ts), so the confidence is never shown as its score.
     static func title(_ item: MeetingItem) -> String? {

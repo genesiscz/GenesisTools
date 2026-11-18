@@ -598,7 +598,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
                        "one question opens its own menu at once")
     }
 
-    /// U7: an open chip that no question covers offered nothing under "Who said this?", and then "Rename Jan Hora for
+    /// U7: an open chip that no question covers offered nothing under "Who said this?", and then "Rename Alice Example for
     /// this meeting…" for a person it had just said it does not know. It now offers the covering suggestion with its
     /// score, the meeting's people from the seats, and "Somebody else…"; a name or a guess keeps its rename.
     func testAnOpenChipWithoutAQuestionOffersTheSuggestionAndThePeopleButNoRename() throws {

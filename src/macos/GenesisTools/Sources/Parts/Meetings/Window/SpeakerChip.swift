@@ -130,7 +130,7 @@ struct SpeakerChip: View {
 
     /// The chip's menu. A name or a guess offers "Rename <label> for this meeting…" and "Assign this stretch…"; an open
     /// chip asks who it is, so it offers answers and "Somebody else…" and no rename (U7: "Who is this?" listed nothing,
-    /// then "Rename Jan Hora", a person it had just said it did not know). `pick` opens the person picker.
+    /// then "Rename Alice Example", a person it had just said it did not know). `pick` opens the person picker.
     static func menuItems(_ shown: TranscriptSpeaker, speaker: String, startSec: Double?, play: ((Double) -> Void)?,
                           detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
         var items: [MenuButtonItem] = []

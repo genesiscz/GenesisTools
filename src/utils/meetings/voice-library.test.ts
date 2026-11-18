@@ -59,7 +59,7 @@ test("listing and planning preserve all source bytes; a write imports every atta
     const fixtures = [
         { project: "garden", owner: { name: first.name }, prints },
         { project: "library", owner: first, prints: [print(2)] },
-        { project: "col-fe.v1", owner: second, prints: [print(4), print(4)] },
+        { project: "demo-app.v1", owner: second, prints: [print(4), print(4)] },
     ];
     const sources = fixtures.map((f) => legacy(f.project, f.prints, f.owner));
     sources.push(legacy("aaa-empty", [], first, "unused-model"));
@@ -84,7 +84,7 @@ test("listing and planning preserve all source bytes; a write imports every atta
     expect(new Set(disk.samples.map((s) => s.id)).size).toBe(91);
     expect(disk.imports.map((m) => [m.project, m.rows.length])).toEqual([
         ["aaa-empty", 0],
-        ["col-fe.v1", 2],
+        ["demo-app.v1", 2],
         ["garden", 87],
         ["library", 1],
     ]);
