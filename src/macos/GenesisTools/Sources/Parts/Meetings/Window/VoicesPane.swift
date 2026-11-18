@@ -494,7 +494,7 @@ struct VoicesPane: View {
                         sampleRow(sample, person: person.person)
                     }
                     if person.samples.count > Self.shownRows, !expanded.contains(person.id + "#all") {
-                        Button("Show all \(person.samples.count)") { expanded.insert(person.id + "#all") }
+                        Button { expanded.insert(person.id + "#all") } label: { Text(verbatim: "Show all \(person.samples.count)") }
                             .buttonStyle(.genHoverPlain()).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
                             .padding(.vertical, 4)
                     }
@@ -561,7 +561,7 @@ struct VoicesPane: View {
             sectionTitle("Named by voice (\(namedLines.count))")
             ForEach(namedLines.prefix(showAllNamed ? namedLines.count : Self.shownRows)) { line in namedRow(line) }
             if namedLines.count > Self.shownRows, !showAllNamed {
-                Button("Show all \(namedLines.count)") { showAllNamed = true }
+                Button { showAllNamed = true } label: { Text(verbatim: "Show all \(namedLines.count)") }
                     .buttonStyle(.genHoverPlain()).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
             }
         }
@@ -618,7 +618,7 @@ struct VoicesPane: View {
                 Text(summary.headline).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary).padding(.bottom, 4)
                 ForEach(summary.lines.prefix(showAllPreview ? summary.lines.count : Self.shownPreviewRows)) { line in previewRow(line) }
                 if summary.lines.count > Self.shownPreviewRows, !showAllPreview {
-                    Button("Show all \(summary.lines.count)") { showAllPreview = true }
+                    Button { showAllPreview = true } label: { Text(verbatim: "Show all \(summary.lines.count)") }
                         .buttonStyle(.genHoverPlain()).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
                 }
             }
