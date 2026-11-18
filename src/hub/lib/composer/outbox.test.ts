@@ -6704,10 +6704,39 @@ describe("inbox card images and agent messages", () => {
                 expect(preview).toMatchObject({ origin: "Harbor · backup", more: true });
                 expect(preview?.text).toStartWith("Inspect **backups**.");
                 expect(preview?.text).not.toContain("End.");
-                expect(readWidgetMessageBody("notice-b")).toEqual({ body: markdown, question: "Backup delayed" });
+                expect(await readWidgetMessageBody("notice-b")).toEqual({
+                    body: markdown,
+                    question: "Backup delayed",
+                    attachments: [],
+                });
                 expect(snapshot.cards.find((card) => card.sourceId === "notice-a")?.messageOrigin).toBe(
                     "Orchard · cli"
                 );
+            }
+        );
+    });
+
+    test("an opened answer reads its whole text with its image lifted out as an attachment", async () => {
+        const directory = await root();
+        const shot = png(join(directory, "after.png"));
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                try {
+                    db.query(
+                        "INSERT INTO entries (id,ts,session_id,agent,project,cwd,tag,source,question,answer_md,refs_json) VALUES (?,?,'s1','claude','Orchard','/fixture',NULL,'agent',?,?,'[]')"
+                    ).run("answer-img", Date.now(), "How does the panel look?", `It looks right.\n\n![After](${shot})`);
+                } finally {
+                    db.close();
+                }
+
+                const read = await readWidgetMessageBody("answer-img");
+                expect(read.question).toBe("How does the panel look?");
+                expect(read.body).toContain("It looks right.");
+                expect(read.body).not.toContain(shot);
+                expect(read.attachments.map((image) => image.path)).toEqual([shot]);
+                expect(read.attachments[0]?.label).toBe("After");
             }
         );
     });

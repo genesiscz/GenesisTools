@@ -9,10 +9,11 @@ import { getStoredEntryById } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { type TranscriptAround, transcriptAround } from "@genesiscz/utils/ai/transcripts/around";
 import { resolveTranscript, rootsOfHome, type TranscriptRoots } from "@genesiscz/utils/ai/transcripts/resolve";
-
+import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { liftCardImages } from "./card-images";
 import { type WidgetCard, type WidgetSources, widgetMessageBody, widgetProvider } from "./snapshot";
 import { parseWidgetSessionKey } from "./types";
 
@@ -39,21 +40,26 @@ function readStoredReceipt<T>(read: (db: Database) => T | null): T | null {
     }
 }
 
-/** Expanding a long overview entry reads one indexed receipt, including when its sender has no session. */
-export function readWidgetMessageBody(id: string): { body: string; question: string } {
+/**
+ * Opening an overview entry reads one indexed receipt, including when its sender has no session: the whole question
+ * and body, and the images the receipt carries or its text names, lifted out of the text as a session card lifts them.
+ */
+export async function readWidgetMessageBody(
+    id: string
+): Promise<{ body: string; question: string; attachments: ImageAttachment[] }> {
     const entry = readStoredReceipt((db) => getStoredEntryById(db, id));
 
     if (!entry) {
         throw new Error("This message is no longer in the inbox store.");
     }
 
-    return {
-        body:
-            entry.tag === "message"
-                ? widgetMessageBody(entry.answerMd, entry.question)
-                : cleanVisibleContext(entry.answerMd),
-        question: entry.tag === "message" ? entry.question : cleanVisibleContext(entry.question),
-    };
+    const body =
+        entry.tag === "message"
+            ? widgetMessageBody(entry.answerMd, entry.question)
+            : cleanVisibleContext(entry.answerMd);
+    const question = entry.tag === "message" ? entry.question : cleanVisibleContext(entry.question);
+    const lifted = await liftCardImages([question, body], { existing: entry.attachments ?? [] });
+    return { question: lifted.texts[0], body: lifted.texts[1], attachments: lifted.attachments };
 }
 
 function sourceStamp(source: NonNullable<WidgetCard["sourceContext"]>): NonNullable<WidgetCard["sourceContext"]> {

@@ -98,10 +98,12 @@ struct WidgetInboxEntryDetail: View {
         VStack(alignment: .leading, spacing: 10) {
             summary(item)
             if let message = item.message {
-                WidgetOverviewMessage(message: message, clamp: compact ? 8 : 14, load: { try await model.messageBody(for: item) })
+                WidgetOverviewMessage(message: message, clamp: compact ? 8 : 14, imageHeight: compact ? 64 : 96,
+                                      showMedia: { model.showMedia?($0) }, load: { try await model.messageBody(for: item) })
             } else if let reply = item.reply {
                 WidgetReceiptBlock(question: reply.question, preview: reply.text, more: reply.more == true,
                                    headTitle: item.title, label: "Answer", clamp: compact ? 8 : 14,
+                                   imageHeight: compact ? 64 : 96, showMedia: { model.showMedia?($0) },
                                    load: { try await model.messageBody(for: item) })
                     .accessibilityIdentifier("widget.overview.answer." + item.id)
                 if let count = item.count, count > 1 {
@@ -156,7 +158,8 @@ struct WidgetInboxEntryDetail: View {
                             LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief)
                                 .font(.caption2).foregroundStyle(.secondary)
                             WidgetReceiptBlock(question: entry.question, preview: entry.text, more: entry.more == true,
-                                               headTitle: nil, label: "Answer", clamp: 4, earlier: true,
+                                               headTitle: nil, label: "Answer", clamp: 4, imageHeight: 56,
+                                               showMedia: { model.showMedia?($0) }, earlier: true,
                                                load: { try await model.entryBody(id: entry.id) })
                         }
                     }
@@ -187,11 +190,13 @@ struct WidgetInboxEntryDetail: View {
 private struct WidgetOverviewMessage: View {
     let message: WidgetInboxItem.Message
     let clamp: Int
+    let imageHeight: CGFloat
+    let showMedia: (WidgetMediaSelection) -> Void
     let load: () async throws -> WidgetEntryBody
 
     var body: some View {
         WidgetReceiptBlock(question: nil, preview: message.text, more: message.more == true, headTitle: nil,
-                           label: "Message", clamp: clamp, load: load)
+                           label: "Message", clamp: clamp, imageHeight: imageHeight, showMedia: showMedia, load: load)
     }
 }
 
@@ -202,6 +207,8 @@ private struct WidgetReceiptBlock: View {
     let headTitle: String?
     let label: String
     let clamp: Int
+    let imageHeight: CGFloat
+    let showMedia: (WidgetMediaSelection) -> Void
     var earlier = false
     let load: () async throws -> WidgetEntryBody
 
@@ -221,14 +228,20 @@ private struct WidgetReceiptBlock: View {
                               more: more && full == nil && failure == nil, clampLines: clamp,
                               label: label, earlier: earlier)
                 .equatable()
-            if let failure {
+            // The pictures come with the full read: the snapshot carries text only.
+            if let images = full?.attachments, !images.isEmpty {
+                WidgetCardAttachments(images: images, height: imageHeight, maxWidth: imageHeight * 2.4,
+                                      compare: !earlier, showMedia: showMedia)
+            }
+            if let failure, more {
                 Text("The full \(label.lowercased()) could not be read: \(failure)")
                     .font(.caption).foregroundStyle(.secondary)
                 // lint-rules-ignore: short list (at most five earlier answers, and only after a failed read)
                 Button("Try again") { attempt += 1 }.buttonStyle(.genHoverPlain()).font(.caption)
             }
         }.task(id: attempt) {
-            guard more, full == nil else { return }
+            // Every open reads the receipt once: a cut text gets its rest, and any text gets its pictures.
+            guard full == nil else { return }
             failure = nil
             do { full = try await load() }
             catch { if !Task.isCancelled { failure = error.localizedDescription } }

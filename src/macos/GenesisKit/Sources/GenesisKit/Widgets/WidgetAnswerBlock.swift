@@ -3,6 +3,8 @@ import SwiftUI
 struct WidgetEntryBody: Decodable, Sendable {
     let body: String
     let question: String?
+    /// The pictures the receipt carries or its text names, lifted out of the body (an older CLI sends none).
+    var attachments: [WidgetImageReference]? = nil
 }
 
 struct WidgetGroupEntry: Decodable, Identifiable, Sendable {

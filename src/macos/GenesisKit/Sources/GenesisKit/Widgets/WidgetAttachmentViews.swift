@@ -123,13 +123,28 @@ private struct WidgetAssetTile: View {
 /// The pictures an inbox item carries, for every kind (decision, todo, form, result, answer, message): thumbnails
 /// at their own aspect ratio that preview in place, all of them, and a side-by-side compare for two or more.
 struct WidgetCardAttachments: View {
-    let card: WidgetCard
+    let attachments: [WidgetImageReference]
     let height: CGFloat
     let maxWidth: CGFloat
     let compare: Bool
     let showMedia: (WidgetMediaSelection) -> Void
 
-    private var gallery: [MediaPreviewItem] { card.attachments.map(Self.item) }
+    init(card: WidgetCard, height: CGFloat, maxWidth: CGFloat, compare: Bool,
+         showMedia: @escaping (WidgetMediaSelection) -> Void) {
+        self.init(images: card.attachments, height: height, maxWidth: maxWidth, compare: compare, showMedia: showMedia)
+    }
+
+    /// The pictures of an inbox entry that is not a card: an overview answer reads them when it opens.
+    init(images: [WidgetImageReference], height: CGFloat, maxWidth: CGFloat, compare: Bool,
+         showMedia: @escaping (WidgetMediaSelection) -> Void) {
+        attachments = images
+        self.height = height
+        self.maxWidth = maxWidth
+        self.compare = compare
+        self.showMedia = showMedia
+    }
+
+    private var gallery: [MediaPreviewItem] { attachments.map(Self.item) }
 
     static func item(_ image: WidgetImageReference) -> MediaPreviewItem {
         MediaPreviewItem(id: image.id, path: image.path, name: image.label ?? image.name)
@@ -139,7 +154,7 @@ struct WidgetCardAttachments: View {
         VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 8) {
-                    ForEach(card.attachments) { image in
+                    ForEach(attachments) { image in
                         let aspect = image.height > 0 ? CGFloat(image.width) / CGFloat(image.height) : nil
                         let size = MediaThumbnailView.frame(
                             aspect: aspect, height: height, maxWidth: maxWidth, minWidth: height * 0.6)
@@ -154,12 +169,12 @@ struct WidgetCardAttachments: View {
                         .accessibilityIdentifier("widget.card.attachment." + image.id)
                     }
                 }
-                .padding(.bottom, card.attachments.count > 1 ? 4 : 0)
+                .padding(.bottom, attachments.count > 1 ? 4 : 0)
             }
             .scrollIndicators(.automatic)
-            if compare && card.attachments.count > 1 {
+            if compare && attachments.count > 1 {
                 Button {
-                    showMedia(.images(card.attachments, card.attachments[0].id))
+                    showMedia(.images(attachments, attachments[0].id))
                 } label: {
                     Label("Compare side by side…", systemImage: "rectangle.split.2x1")
                         .font(.system(size: 11))
