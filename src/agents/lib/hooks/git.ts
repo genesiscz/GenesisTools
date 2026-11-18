@@ -80,14 +80,22 @@ export function gitOut(root: string, args: string[], options: { quiet?: boolean 
  * (45 ms wall) with the threads, 49 ms (50 ms wall) without. The threads contend in the kernel:
  * a single-threaded `git ls-files --deleted` stats the same files in 19 ms.
  */
-export function statusOf(root: string): StatusSummary {
+export function statusOf(root: string, options: { trackedOnly?: boolean } = {}): StatusSummary {
     return parseStatusPorcelainV2Z(
-        gitOut(root, ["-c", "core.preloadIndex=false", ...STATUS_PORCELAIN_ARGS, "--no-renames"])
+        gitOut(root, [
+            "-c",
+            "core.preloadIndex=false",
+            ...STATUS_PORCELAIN_ARGS,
+            "--no-renames",
+            // Post needs the HEAD oid, but neither hook uses upstream commit counts.
+            "--no-ahead-behind",
+            ...(options.trackedOnly ? ["--untracked-files=no"] : []),
+        ])
     );
 }
 
-export function statusEntries(root: string): StatusEntry[] {
-    return statusOf(root).entries;
+export function statusEntries(root: string, options: { trackedOnly?: boolean } = {}): StatusEntry[] {
+    return statusOf(root, options).entries;
 }
 
 /** A 40-hex object id, or `null`. `git rev-parse` echoes the literal `HEAD` on an empty repo. */
