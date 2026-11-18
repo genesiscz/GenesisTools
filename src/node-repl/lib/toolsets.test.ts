@@ -334,6 +334,22 @@ describe("toolset method names", () => {
         });
     });
 
+    test("meetings.levels documents live and saved reads and opens a transcript-free meeting", async () => {
+        const toolset = new MeetingsToolset();
+        const doc = toolset.api.methods.find((method) => method.name === "levels")?.doc;
+        expect(doc).toContain("tools meetings evidence");
+        expect(doc).toContain("--levels");
+        expect(doc).toContain("live");
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Silent room", start: new Date().toISOString(), createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+        const { meetings } = (await toolset.bootstrap()) as {
+            meetings: { levels(input: { meeting: string }): Promise<unknown> };
+        };
+        expect(await meetings.levels({ meeting: record.id })).toEqual([]);
+    });
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {
         const ctx: ToolsetContext = { scratchDir: tmpdir(), show: async () => {}, write: () => {} };
         const { movies } = (await new MoviesToolset().load(ctx)) as {

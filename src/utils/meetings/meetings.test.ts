@@ -1243,6 +1243,31 @@ describe("meeting records", () => {
 });
 
 describe("calibrateChannels", () => {
+    test("live stereo levels use dBFS, RMS share and the last minute of source calibration", async () => {
+        const { MeetingLevels } = await import("./levels");
+        const levels = new MeetingLevels();
+        for (let i = 0; i < 600; i++) {
+            levels.observe({
+                atMs: i * 100,
+                mic: i < 300 ? 0.5 : 0.125,
+                system: i < 300 ? 0.125 : 0.5,
+                input: "Desk mic",
+                output: "Headphones",
+            });
+        }
+        const row = levels.snapshot(59_900);
+        expect(row.mic.dbfs).toBeCloseTo(-18.062, 2);
+        expect(row.system.dbfs).toBeCloseTo(-6.021, 2);
+        expect(row.micShare).toBeCloseTo(0.2);
+        expect(row.calibration.layout).toBe("left-mic");
+        expect(row.voiceMicShare).toBeCloseTo(0.8);
+        levels.observe({ atMs: 120_000, mic: 0, system: 0, input: "Desk mic", output: "Headphones" });
+        const quiet = levels.snapshot(120_000);
+        expect(quiet.mic).toMatchObject({ sampled: true, dbfs: null });
+        expect(quiet.micShare).toBeNull();
+        expect(quiet.calibration.layout).toBe("unknown");
+        expect(levels.snapshot(125_000).mic.sampled).toBe(false);
+    });
     // 30 mic segments (2 s each) then 30 call segments, 10 blocks per second.
     const segments = Array.from({ length: 60 }, (_, index) => ({
         startSec: index * 2,
