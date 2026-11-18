@@ -116,12 +116,6 @@ export type CaptureFailureNotices = (typeof CAPTURE_FAILURE_NOTICES)[number];
 
 const captureSchema = z.object({
     soundWithoutScreen: z.boolean().default(true),
-    levels: z
-        .object({
-            enabled: z.boolean().default(true),
-            intervalSec: z.number().int().min(1).max(3600).default(30),
-        })
-        .prefault({}),
     /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
     backend: z.enum(FRAME_RECORDER_IDS).default("native"),
     displays: displayPolicySchema.default("all"),

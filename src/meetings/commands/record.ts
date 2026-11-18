@@ -572,7 +572,6 @@ async function runCommand(
             withoutScreen: opts.withoutScreen,
             display,
             capture: config.global.capture,
-            minSeparation: config.global.speakerLabels.channels.minSeparation,
             ocrLanguages: languageSettings(config).ocr,
             ...(opts.audio ? { audio: parseAudioSources(opts.audio) ?? [] } : {}),
         });

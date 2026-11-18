@@ -156,8 +156,6 @@ export type ChannelLayout = (typeof CHANNEL_LAYOUTS)[number];
 
 export interface ChannelCalibration {
     layout: ChannelLayout;
-    /** Descriptive share on the declared microphone side during its loud windows. Layout carries the verdict. */
-    sourceMicShare?: number;
     /** Median left RMS share of the uncontested part of each counted tag. */
     micMedian?: number;
     systemMedian?: number;
@@ -227,7 +225,7 @@ function uncontestedShares(energy: ChannelEnergy, segments: TaggedSpan[]) {
 }
 
 /** Pick the loudest 15% independently on each channel, before observing either group's left share. */
-function loudWindowShare(channel: Float32Array, energy: ChannelEnergy) {
+function loudWindowShare(channel: Float32Array, energy: ChannelEnergy): number | undefined {
     const sorted = channel.slice().sort();
     const loud = Math.max(QUIET, sorted[Math.floor(0.85 * sorted.length)] ?? QUIET);
     const shares = [];
@@ -236,23 +234,21 @@ function loudWindowShare(channel: Float32Array, energy: ChannelEnergy) {
             shares.push(energy.left[i]! / (energy.left[i]! + energy.right[i]!));
         }
     }
-    return {
-        count: shares.length,
-        share: shares.length >= CALIBRATION_MIN_SEC * ENERGY_BLOCKS_PER_SEC ? median(shares) : undefined,
-    };
+    return shares.length >= CALIBRATION_MIN_SEC * CALIBRATION_MIN_SEGMENTS * ENERGY_BLOCKS_PER_SEC
+        ? median(shares)
+        : undefined;
 }
 
 export interface ChannelCalibrationOptions {
     minSeparation?: number;
     sourceLayout?: Exclude<ChannelLayout, "unknown">;
-    reportSourceShare?: boolean;
 }
 
 /** Tags establish the order in either direction. Without usable tags, separated audio can verify a source's order. */
 export function calibrateChannels(
     energy: ChannelEnergy,
     segments: TaggedSpan[],
-    { minSeparation = DEFAULT_CHANNEL_MIN_SEPARATION, sourceLayout, reportSourceShare }: ChannelCalibrationOptions = {}
+    { minSeparation = DEFAULT_CHANNEL_MIN_SEPARATION, sourceLayout }: ChannelCalibrationOptions = {}
 ): ChannelCalibration {
     const shares = uncontestedShares(energy, segments);
     const counted = { mic: shares.mic.length, system: shares.system.length };
@@ -264,17 +260,10 @@ export function calibrateChannels(
     };
 
     if (counted.mic < CALIBRATION_MIN_SEGMENTS || counted.system < CALIBRATION_MIN_SEGMENTS) {
-        let sourceMicShare: number | undefined;
         if (sourceLayout) {
-            const { share: left, count: leftCount } = loudWindowShare(energy.left, energy);
-            const { share: right, count: rightCount } = loudWindowShare(energy.right, energy);
-            const required = CALIBRATION_MIN_SEC * CALIBRATION_MIN_SEGMENTS * ENERGY_BLOCKS_PER_SEC;
-            if (reportSourceShare) {
-                sourceMicShare = sourceLayout === "left-mic" ? left : right === undefined ? undefined : 1 - right;
-            }
+            const left = loudWindowShare(energy.left, energy);
+            const right = loudWindowShare(energy.right, energy);
             if (
-                leftCount >= required &&
-                rightCount >= required &&
                 left !== undefined &&
                 right !== undefined &&
                 left > 0.5 &&
@@ -283,7 +272,6 @@ export function calibrateChannels(
             ) {
                 return {
                     layout: sourceLayout,
-                    ...(sourceMicShare !== undefined ? { sourceMicShare } : {}),
                     ...medians,
                     segments: counted,
                     reason: `source channel order verified by loud windows (median left shares ${left.toFixed(3)} and ${right.toFixed(3)})`,
@@ -292,7 +280,6 @@ export function calibrateChannels(
         }
         return {
             layout: "unknown",
-            ...(sourceMicShare !== undefined ? { sourceMicShare } : {}),
             ...medians,
             segments: counted,
             reason: `too few tagged segments (${counted.mic} mic, ${counted.system} call; ${CALIBRATION_MIN_SEGMENTS} of each needed)`,
