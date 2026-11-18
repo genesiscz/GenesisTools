@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import {
     addVoicePrint,
     readVoiceStore,
@@ -26,7 +27,7 @@ import {
 import type { LinkedSource } from "./sources";
 import { proposeSpeakerLabels } from "./speaker-labels";
 import type { LineLabel } from "./speaker-labels/types";
-import { embedSeatLines } from "./speaker-labels/voice";
+import { embedSeatLines, voiceProgressForMeeting } from "./speaker-labels/voice";
 import { runSuggest } from "./suggest-run";
 import { correctTranscript } from "./transcript-corrections";
 
@@ -182,13 +183,17 @@ export async function listProjectVoices(
     return { people };
 }
 
-export async function previewVoices(options: VoicesAccess & { meeting: string }): Promise<{
+export async function previewVoices(options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress }): Promise<{
     meeting: string;
     project?: string;
     lines: Array<LineLabel & { fromSec: number; toSec: number; text: string; current: string }>;
 }> {
     const record = recordOf(options, options.meeting);
     const opened = await voiceReadMeeting(openedOf(options, record));
+    if (options.onProgress) {
+        voiceProgressForMeeting.set(opened, options.onProgress);
+    }
+
     const config = await (options.config?.() ?? opened.config());
     const meeting = await opened.meeting();
     const lines = new TranscriptLines(meeting.transcript);
@@ -229,7 +234,7 @@ export async function previewVoices(options: VoicesAccess & { meeting: string })
 }
 
 export async function applyVoices(
-    options: VoicesAccess & { meeting: string }
+    options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress }
 ): Promise<{ meeting: string; added: number; warnings: string[] }> {
     const record = recordOf(options, options.meeting);
 
@@ -237,7 +242,12 @@ export async function applyVoices(
         throw new Error("Choose a project before naming voices.");
     }
 
-    const result = await runSuggest({ store: options.store, record, rules: ["speakers"] });
+    const result = await runSuggest({
+        store: options.store,
+        record,
+        rules: ["speakers"],
+        ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    });
     return { meeting: record.id, added: result.fresh.length, warnings: result.warnings };
 }
 

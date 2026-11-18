@@ -1609,8 +1609,29 @@ export const voicesSample = defineMethod({
     effect: "read",
 });
 
+export const voicesWorkers = defineMethod({
+    name: "voices.workers",
+    params: z.object({}).strict(),
+    result: z.object({
+        /** The worker count a voice pass starting now takes under `workers: "auto"` (1 to 4). */
+        auto: z.number().int().min(1),
+        performanceCores: z.number(),
+        /** The cores a one-second CPU sample found idle (a fraction: 12 cores at 78 % busy is 2.64). */
+        idleCores: z.number(),
+    }),
+    doc: "What `auto` voice workers means on this Mac now: the idle cores of a one-second CPU sample, no more than the performance cores, 1 to 4 (`voiceWorkerCount`). Takes about a second; saves nothing.",
+    effect: "read",
+});
+
 /** Pending dispatch integration: these descriptors and people-handlers share the CLI implementation. */
-export const VOICES_METHODS = [voicesList, voicesPreview, voicesApply, voicesRemove, voicesSample] as const;
+export const VOICES_METHODS = [
+    voicesList,
+    voicesPreview,
+    voicesApply,
+    voicesRemove,
+    voicesSample,
+    voicesWorkers,
+] as const;
 export type VoicesMethod = (typeof VOICES_METHODS)[number]["name"];
 type VoiceMethodNamed<M extends VoicesMethod> = Extract<(typeof VOICES_METHODS)[number], { name: M }>;
 export type VoicesParams<M extends VoicesMethod> = z.output<VoiceMethodNamed<M>["params"]>;

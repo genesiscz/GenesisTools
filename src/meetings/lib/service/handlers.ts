@@ -1,6 +1,6 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
 import { logger } from "@genesiscz/utils/logger";
-import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { type MeetingsConfig, MeetingsConfigStore, type VoiceFreeCores } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
     MEETINGS_STATE_CODES,
@@ -14,6 +14,7 @@ import { type MeetingRecord, MeetingStore, parseSourceRef } from "@genesiscz/uti
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
 import { meetingRuleSentences } from "@genesiscz/utils/meetings/rules";
 import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -66,7 +67,35 @@ export interface MeetingsCallContext {
     progress?: (update: { fraction?: number; label?: string }) => void;
 }
 
+/**
+ * The voice pass's steps as the call's `$/progress`: at most every 250 ms or 1 % of the lines, and always the last line.
+ * Every call that may run the pass uses it (`meeting.suggest`, `voices.preview`, `voices.apply`), so the window's bar
+ * reads the same words for each. None when the caller hears no progress.
+ */
+export function voicePassProgress(
+    context: Pick<MeetingsCallContext, "progress">,
+    now: () => number = () => performance.now()
+): VoiceProgress | undefined {
+    const send = context.progress;
+    if (!send) {
+        return undefined;
+    }
+
+    let lastTime = -Infinity;
+    let lastDone = -Infinity;
+    return (done, total) => {
+        const at = now();
+        if (done === total || done - lastDone >= total / 100 || at - lastTime >= 250) {
+            send({ fraction: total ? done / total : 1, label: `Voices: ${done} of ${total} lines` });
+            lastDone = done;
+            lastTime = at;
+        }
+    };
+}
+
 export interface MeetingsHandlerDeps {
+    /** The CPU sample `voices.workers` reads (`freeCores` of the voice labeler); tests pass a fixed one. */
+    freeCores?: () => Promise<VoiceFreeCores>;
     /** Local audio adapters with their live lookup; tests supply isolated ones and never read this Mac's provider. */
     localSourceAudio?: LocalSourceAudioAccess;
     /** Optional isolated cache/inference dependencies for word-timing generation tests. */
@@ -241,27 +270,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
 
             const { runSuggest } = await import("../suggest-run");
             const { actorOfCall } = await decisions();
-            let lastTime = -Infinity;
-            let lastDone = -Infinity;
             const result = await runSuggest({
                 store,
                 record,
                 rules: ["speakers", "evidence", "terms"],
                 attendance: params.attendance,
                 actor: actorOfCall(context),
-                onProgress:
-                    context.progress &&
-                    ((done, total) => {
-                        const now = performance.now();
-                        if (done === total || done - lastDone >= total / 100 || now - lastTime >= 250) {
-                            context.progress?.({
-                                fraction: total ? done / total : 1,
-                                label: `Voices: ${done} of ${total} lines`,
-                            });
-                            lastDone = done;
-                            lastTime = now;
-                        }
-                    }),
+                onProgress: voicePassProgress(context),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             return { added: result.fresh.length, warnings: result.warnings };
@@ -597,6 +612,8 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await people()).voicesHandlers(storeOf(), deps)["voices.apply"](params, context),
         "voices.remove": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.remove"](params, context),
+        "voices.workers": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.workers"](params, context),
         "people.meetings": async (params) => (await people()).personMeetings(params, storeOf(), deps),
         "people.add": async (params, context) =>
             changedPeople(await (await people()).addPerson(params, storeOf(), deps), context),

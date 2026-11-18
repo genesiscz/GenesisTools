@@ -68,7 +68,7 @@ import { testDictionaryPhrase } from "./library-handlers";
 import { previewTone } from "./moment-handlers";
 import { voicesHandlers } from "./people-handlers";
 import { readRows } from "./reads-handlers";
-import { type MeetingsServiceOptions, startMeetingsService } from "./service";
+import { MEETINGS_CALL_BEAT_MS, type MeetingsServiceOptions, progressBeat, startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
 const CODE = "0123456789ab";
@@ -319,6 +319,78 @@ test("voice descriptors validate the shared handlers: lists and removal previews
     for (const name of ["voices.list", "voices.preview", "voices.sample"]) {
         expect(VOICES_METHODS.find((method) => method.name === name)?.effect).toBe("read");
     }
+});
+
+test("voices.workers answers what auto means from the CPU sample; voices.preview and voices.apply send the voice pass's progress", async () => {
+    const { store, linkedSource } = scratchStore();
+    const table = toRpcTable(
+        { methods: VOICES_METHODS },
+        voicesHandlers(store, { linkedSource, freeCores: async () => ({ performanceCores: 12, idleCores: 2.6 }) })
+    );
+    const updates: Array<{ fraction?: number; label?: string }> = [];
+    const context = {
+        hello: () => ({ protocol: MEETINGS_PROTOCOL, code: "fixture", methods: [], events: [], version: "fixture" }),
+        progress: (update: { fraction?: number; label?: string }) => updates.push(update),
+    };
+    expect(await table.call("voices.workers", {}, context)).toEqual({ auto: 2, performanceCores: 12, idleCores: 2.6 });
+    expect(VOICES_METHODS.find((method) => method.name === "voices.workers")?.effect).toBe("read");
+
+    const labels = await import("../speaker-labels");
+    const { voiceProgressForMeeting } = await import("../speaker-labels/voice");
+    const propose = spyOn(labels, "proposeSpeakerLabels").mockImplementation(async (opened) => {
+        voiceProgressForMeeting.get(opened)?.(3, 3);
+        return [];
+    });
+    closing.push(() => propose.mockRestore());
+    const suggest = await import("../suggest-run");
+    const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ onProgress }) => {
+        onProgress?.(4, 4);
+        return { fresh: [], retired: [], warnings: [] };
+    });
+    closing.push(() => run.mockRestore());
+    await table.call("voices.preview", { meeting: REVIEW.id }, context);
+    await table.call("voices.apply", { meeting: REVIEW.id }, context);
+    expect(updates).toEqual([
+        { fraction: 1, label: "Voices: 3 of 3 lines" },
+        { fraction: 1, label: "Voices: 4 of 4 lines" },
+    ]);
+});
+
+test("a running call repeats its newest step every beat, so a client's deadline measures silence, never length", async () => {
+    const sent: Array<{ fraction?: number; label?: string }> = [];
+    const beat = progressBeat((update) => sent.push(update), 30);
+    await Bun.sleep(45);
+    beat.progress({ fraction: 0.5, label: "Voices: 1 of 2 lines" });
+    await Bun.sleep(75);
+    beat.stop();
+    const stopped = sent.length;
+    await Bun.sleep(45);
+    expect(sent[0]).toEqual({});
+    expect(sent.slice(1)).toContainEqual({ fraction: 0.5, label: "Voices: 1 of 2 lines" });
+    expect(sent.filter((update) => update.label).length).toBeGreaterThanOrEqual(2);
+    expect(sent.length).toBe(stopped);
+    expect(MEETINGS_CALL_BEAT_MS).toBeLessThan(60_000 / 2);
+
+    // Over a socket: a call that works longer than the client's deadline still answers while the beat runs.
+    const { service } = await startService({
+        beatMs: 30,
+        deps: {
+            freeCores: async () => {
+                await Bun.sleep(200);
+                return { performanceCores: 12, idleCores: 9 };
+            },
+        },
+    });
+    const client = await SocketMeetingsClient.connect(service.entry, hello);
+    closing.push(() => client.close());
+    const beats: Array<{ fraction?: number; label?: string }> = [];
+    const answer = await client.call(
+        "voices.workers",
+        {},
+        { timeoutMs: 100, onProgress: (update) => beats.push(update) }
+    );
+    expect(answer.auto).toBe(4);
+    expect(beats.length).toBeGreaterThanOrEqual(3);
 });
 
 async function questionRowsFixture() {
@@ -627,7 +699,12 @@ const quietDeps: MeetingsHandlerDeps = {
 };
 
 async function startService(
-    options: { dir?: string; watch?: MeetingsServiceOptions["watch"]; deps?: Partial<MeetingsHandlerDeps> } = {}
+    options: {
+        dir?: string;
+        watch?: MeetingsServiceOptions["watch"];
+        deps?: Partial<MeetingsHandlerDeps>;
+        beatMs?: number;
+    } = {}
 ) {
     const { store, config, linkedSource, source } = scratchStore();
     const dir = options.dir ?? serviceDir();
@@ -641,6 +718,7 @@ async function startService(
         idleMs: 0,
         code: CODE,
         watch: options.watch ?? false,
+        ...(options.beatMs === undefined ? {} : { beatMs: options.beatMs }),
         ...quietDeps,
         ...options.deps,
     });
@@ -2380,6 +2458,7 @@ async function captureExamples(): Promise<Example[]> {
     const modelFiles = [wordTimingFile(model)];
     const { service, store, config } = await startService({
         deps: {
+            freeCores: async () => ({ performanceCores: 12, idleCores: 2.6 }),
             voiceFrames: async () => FIXTURE_VOICE_FRAMES,
             wordTimings: {
                 cache: new WordTimingCache(join(timingRoot, "cache")),
@@ -2423,6 +2502,7 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "voices.preview", { meeting: "nope" });
     await ask(window, "voices.apply", { meeting: "nope" });
     await ask(window, "voices.sample", { project: "Atlas", person: "Alice Example", sample: 0 });
+    await ask(window, "voices.workers", {}, "What auto voice workers means now, from a fixed CPU sample.");
     await ask(
         window,
         "voices.remove",
