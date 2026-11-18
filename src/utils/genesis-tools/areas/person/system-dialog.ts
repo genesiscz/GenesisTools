@@ -209,8 +209,8 @@ const LINUX_DIALOG: PersonDialog = {
 };
 
 /**
- * A Windows Forms message box through PowerShell, No as the default button. The text goes in as base64, so a path
- * with quotes or `$` is never read as PowerShell.
+ * A Windows Forms message box through PowerShell, No as the default button. The text and the title go in as base64, so
+ * a path with quotes (a typographic one too) or `$` is never read as PowerShell.
  */
 const WINDOWS_DIALOG: PersonDialog = {
     command: ({ title, body }, system) => {
@@ -220,11 +220,12 @@ const WINDOWS_DIALOG: PersonDialog = {
             return null;
         }
 
-        const text = Buffer.from(`${body}\n\nYes approves.`, "utf8").toString("base64");
+        const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
         const script = [
             "Add-Type -AssemblyName System.Windows.Forms",
-            `$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${text}'))`,
-            `[System.Windows.Forms.MessageBox]::Show($text, '${title.replaceAll("'", "''")}', 'YesNo', 'Warning', 'Button2', 'DefaultDesktopOnly')`,
+            `$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(`${body}\n\nYes approves.`)}'))`,
+            `$title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(title)}'))`,
+            "[System.Windows.Forms.MessageBox]::Show($text, $title, 'YesNo', 'Warning', 'Button2', 'DefaultDesktopOnly')",
         ].join("; ");
         return [powershell, "-NoProfile", "-Command", script];
     },
