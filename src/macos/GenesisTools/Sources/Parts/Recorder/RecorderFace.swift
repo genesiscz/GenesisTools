@@ -28,8 +28,8 @@ struct RecorderRequest {
     /// library goes behind too, and the picker comes to the front without the keyboard.
     var focus = true
     var snapshot: String?
-    var width: CGFloat = 1440
-    var height: CGFloat = 920
+    var width: CGFloat = 1440 { didSet { hasSnapshotDimensions = true } }
+    var height: CGFloat = 920 { didSet { hasSnapshotDimensions = true } }
     var atSeconds: Double?
     var atSourceSeconds: Double?
     var menuCommand: RecorderMenu.Command?
@@ -62,6 +62,12 @@ struct RecorderRequest {
     var full = false
     /// `--picker`: the capture picker (with `--snapshot`, a picture of it over made-up targets).
     var picker = false
+    /// With --picker --snapshot, draw a reproducible state of either control-bar host.
+    var barState: String?
+    var barHost: String?
+    var hasSnapshotDimensions = false
+    var selectLayer: String?
+    var layerMenu: String?
     /// `--shortcuts` with `--picker --snapshot`: the Shortcuts section open.
     var shortcuts = false
     // R5 3 export size
@@ -106,6 +112,10 @@ struct RecorderRequest {
             case "--sheet": request.sheet = value().map(absolute)
             case "--full": request.full = true
             case "--picker": request.picker = true
+            case "--bar-state": request.barState = value() ?? ""
+            case "--bar-host": request.barHost = value() ?? ""
+            case "--select-layer": request.selectLayer = value() ?? ""
+            case "--layer-menu": request.layerMenu = value() ?? ""
             case "--shortcuts": request.shortcuts = true
             case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
             // R5 3 export size: "1280x720", "1280x" or "x720".

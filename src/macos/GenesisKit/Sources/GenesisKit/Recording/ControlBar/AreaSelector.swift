@@ -89,6 +89,14 @@ public final class RecordingPickerOverlays: ObservableObject {
 /// Selects one rectangle in the display's own lower-left-origin coordinate system.
 @MainActor
 public enum AreaSelector {
+    /// The real selector at a point during a drag, without any input panels or mouse events.
+    public static func still(size: CGSize, selection: CGRect) -> NSView {
+        let view = RecordingAreaSelectionView(frame: CGRect(origin: .zero, size: size))
+        view.begin(at: CGPoint(x: selection.minX, y: selection.minY))
+        view.drag(to: CGPoint(x: selection.maxX, y: selection.maxY))
+        return view
+    }
+
     public static func begin(overlays: RecordingPickerOverlays, parent: NSWindow?,
                              completion: @escaping (RecordingTarget?) -> Void) {
         overlays.present(title: "Select an area", parent: parent, makeView: { display, frame in

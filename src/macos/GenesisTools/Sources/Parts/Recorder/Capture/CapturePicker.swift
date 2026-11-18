@@ -337,31 +337,15 @@ final class CapturePicker {
         return (options.startArguments(choice, excludeWindowIds: exclude), !preview.isEmpty)
     }
 
-    static func snapshot(to path: String, shortcutsOpen: Bool) async throws {
-        let targets = RecordingTargets(
-            windows: [
-                RecordingWindow(id: 101, pid: 501, app: "Editor", title: "notes.md",
-                                bounds: .init(x: 0, y: 0, width: 1200, height: 800)),
-                RecordingWindow(id: 102, pid: 501, app: "Editor", title: "plan.md",
-                                bounds: .init(x: 40, y: 40, width: 900, height: 700)),
-                RecordingWindow(id: 201, pid: 502, app: "Browser", title: "Example page",
-                                bounds: .init(x: 0, y: 0, width: 1440, height: 900)),
-            ],
-            apps: [RecordingApp(pid: 501, name: "Editor", windowCount: 2), RecordingApp(pid: 502, name: "Browser", windowCount: 1)],
-            displays: [RecordingDisplay(index: 0, name: "Built-in Display", isPrimary: true, width: 1512, height: 982)],
-            frontmostPid: 501)
-        var setup = RecordingSetup()
-        setup.target = targets.defaultTarget(preferredPid: 501)
-        let bar = RecordingBarModel(engine: ToolsRecorderEngine(), setup: setup)
-        bar.expanded = shortcutsOpen
-        let view = VStack(spacing: 4) {
-            RecordingBarView(model: bar, actions: RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in }))
-            RecordingTargetPicker(load: .loaded(targets), bar: bar, overlays: RecordingPickerOverlays(screens: []),
-                                  onChoose: {}, onCancel: {})
-        }
-        let hosting = NSHostingView(rootView: view.fixedSize())
+    static func snapshot(to path: String, shortcutsOpen: Bool, request: RecorderRequest = RecorderRequest()) async throws {
+        let fixture = try RecorderBarSnapshot(request: request, shortcutsOpen: shortcutsOpen)
+        let view = await fixture.view()
+        let sized = request.hasSnapshotDimensions || request.barState != nil
+        let hosting = NSHostingView(rootView: view.fixedSize()
+            .frame(width: sized ? request.width : nil, height: sized ? request.height : nil)
+            .preferredColorScheme(.dark))
         hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
+        let size = sized ? CGSize(width: request.width, height: request.height) : hosting.fittingSize
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

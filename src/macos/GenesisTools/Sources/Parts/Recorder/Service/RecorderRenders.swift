@@ -71,7 +71,7 @@ enum RecorderRenders {
         }
         if request.library { return try await snapshotLibrary(request, to: path) }
         if request.picker {
-            try await CapturePicker.snapshot(to: path, shortcutsOpen: request.shortcuts)
+            try await CapturePicker.snapshot(to: path, shortcutsOpen: request.shortcuts, request: request)
             return "picker"
         }
         guard let edit = request.edit else { throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--snapshot needs --edit <path> or --library"]) }
@@ -79,6 +79,12 @@ enum RecorderRenders {
         let model = EditorModel(project: project, store: store)
         defer { model.close() }
         if let tab = request.tab { model.tab = tab }
+        if let layer = request.layerMenu ?? request.selectLayer {
+            guard model.layerRows.contains(where: { $0.id == layer }) else {
+                throw RecordingEngineError.unsupported("No layer named \(layer) in this edit.")
+            }
+            model.selectLayer(layer)
+        }
         if let n = request.selectZoom, project.zooms.indices.contains(n) { model.selection = .zoom(project.zooms[n].id); model.tab = .zoom }
         if let n = request.selectClip, project.clips.indices.contains(n) { model.selection = .clip(project.clips[n].id); model.tab = .clip }
         if let n = request.selectMarker, let markers = project.markers, markers.indices.contains(n) {
@@ -94,7 +100,7 @@ enum RecorderRenders {
         if let n = request.comment, model.reviewComments.indices.contains(n) { model.openComment = model.reviewComments[n].id }
         let at = Int64(((request.atSeconds ?? 0) * 1_000_000).rounded())
         // The filmstrip and the waveform load in the background; give them up to 8 s.
-        for _ in 0..<80 where model.filmstrip.tiles.isEmpty {
+        for _ in 0..<80 where model.filmstrip.tiles.isEmpty || model.soundRows.contains(where: { !$0.waveform.loaded }) {
             try await Task.sleep(for: .milliseconds(100))
         }
         try await Task.sleep(for: .milliseconds(300))
@@ -110,7 +116,8 @@ enum RecorderRenders {
         // A movie the preview cannot read draws the editor's own error state in the picture's place.
         let still = try? await stillFrame(project: project, atOutput: at, zoom: model.zoom)
         let window = EditorWindows.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
-        window.contentView = NSHostingView(rootView: EditorView(model: model, stillPreview: still))
+        window.contentView = NSHostingView(rootView: EditorView(model: model, stillPreview: still)
+            .snapshotLayerMenu(request.layerMenu))
         window.orderInForSnapshot()
         try await Task.sleep(for: .milliseconds(500))
         guard let capture = await WindowSnapshot.capture(window),
