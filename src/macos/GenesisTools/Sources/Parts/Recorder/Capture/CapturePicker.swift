@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// What the capture picker does when another app or window takes the keyboard. Settings → Recorder → Recording.
@@ -20,184 +21,308 @@ enum CapturePickerFocusLoss: String, CaseIterable, Identifiable {
     }
 }
 
-/// The capture picker (⌘7 by default, from any app): what to record (a window, an app, a display or an area) and the
-/// recording's options in one panel. A choice starts `tools recorder start` through `RecorderMenu.startRecording`,
-/// the one start path; with the countdown on, as its last second begins (see `CaptureCountdown`).
+/// The full recorder's host for the shared bar. The picker is a child panel that can close independently.
 @MainActor
 final class CapturePicker {
-    static let shared = CapturePicker()
-
-    /// The keys under the list, named as the user's layout prints them (⌘4 on a US keyboard, ⌘Č on a Czech one).
-    static var footerHint: String {
-        "↑ ↓ choose · Return records · \(RecordingPickerKey.label(RecordingPickerKey.area)) an area · Esc cancels · "
-            + "\(RecordingPickerKey.tabLabels) tabs"
-    }
-
-    let model = CapturePickerModel()
-    private let panel = RecordingPickerPanel()
+    static var shared = CapturePicker()
+    private let engine: ToolsRecorderEngine
+    private let defaults: UserDefaults
+    private let listTargets: () async throws -> RecordingTargets
+    private(set) var bar: RecordingBarModel?
+    private(set) var controls: RecordingBarPanel?
+    private let picker = RecordingPickerPanel()
+    private var overlays: RecordingPickerOverlays?
     private var load: RecordingTargetPicker.Load = .loading
-    private var targets: RecordingTargets?
-    private var initial: RecordingTarget?
     private var filter: (tab: RecordingPickerTab, query: String)?
-    private var anchor = CGPoint.zero
-    private var countdown: CaptureCountdown?
-    private var area: AreaSelection?
-    /// Whether the open picker took the keyboard; a redraw after the targets load keeps it.
-    private var takesFocus = true
+    private var read: Task<Void, Never>?
+    private var observers = Set<AnyCancellable>()
+    private var focus = true
+    private var onHide: (() -> Void)?
+    private let preview: (Bool) -> Void
 
-    var isVisible: Bool { panel.isVisible }
-
-    /// Opens the picker under the pointer, on the front window of the app the person was in. Without `focus`
-    /// (`--no-focus`, `window.show { focus: false }`) it comes to the front and that app keeps the keyboard.
-    func show(focus: Bool = true) {
-        panel.closesOnFocusLoss = CapturePickerFocusLoss.load().closesPicker
-        if panel.isVisible {
-            if focus {
-                panel.window.makeKeyAndOrderFront(nil)
-            } else {
-                panel.window.orderFrontRegardless()
-            }
-            return
-        }
-        takesFocus = focus
-        model.reload()
-        anchor = NSEvent.mouseLocation
-        let front = NSWorkspace.shared.frontmostApplication.flatMap { app in
-            app.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : app.processIdentifier
-        }
-        load = targets.map { .loaded($0) } ?? .loading
-        initial = targets?.defaultTarget(preferredPid: front)
-        filter = nil
-        present()
-        CameraBubble.shared.optionChanged(model.options.camera)
-        HubPerf.log("recorder: capture picker opened")
-        Task { await refresh(preferredPid: front) }
-    }
-
-    func dismiss() {
-        panel.dismiss()
-    }
-
-    /// Settings changed in the settings window: an open picker shows the stored options again.
-    func preferencesChanged() {
-        panel.closesOnFocusLoss = CapturePickerFocusLoss.load().closesPicker
-        guard panel.isVisible else { return }
-        model.reloadFromDefaults()
-        CameraBubble.shared.optionChanged(model.options.camera)
-    }
-
-    private func present() {
-        model.tab = filter?.tab ?? RecordingPickerTab.of(initial)
-        let view = RecordingTargetPicker(
-            load: load, title: "Record", initial: initial,
-            onChoose: { [weak self] target in self?.choose(.target(target)) },
-            onCancel: { [weak self] in self?.cancel() },
-            onRetry: { [weak self] in
-                guard let self else { return }
-                load = .loading
-                present()
-                Task { await self.refresh(preferredPid: nil) }
-            },
-            restoring: filter,
-            onFilterChange: { [weak self] tab, query in
-                self?.filter = (tab, query)
-                self?.model.tab = tab
-            },
-            accessory: AnyView(CaptureOptionsView(model: model, onArea: { [weak self] in self?.selectArea() })),
-            footerHint: Self.footerHint)
-            .onKeyPress(phases: .down) { [weak self] press in
-                // By the key's position: a Czech layout types č on the 4 key with ⌘ held.
-                guard RecordingPickerKey.matches(modifiers: press.modifiers, eventCode: RecordingPickerKey.eventCode(),
-                                                 character: press.characters.first, code: RecordingPickerKey.area)
-                else { return .ignored }
-                self?.selectArea()
-                return .handled
-            }
-        panel.present(view, near: anchor, focus: takesFocus) { [weak self] in self?.cancel() }
-    }
-
-    private func refresh(preferredPid: Int32?) async {
-        let previous = load
-        do {
+    init(engine: ToolsRecorderEngine? = nil, defaults: UserDefaults = .standard,
+         preview: ((Bool) -> Void)? = nil, listTargets: (() async throws -> RecordingTargets)? = nil) {
+        self.engine = engine ?? ToolsRecorderEngine()
+        self.defaults = defaults
+        self.preview = preview ?? { CameraBubble.shared.optionChanged($0) }
+        self.listTargets = listTargets ?? {
             let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
                 .run(subcommand: "control", args: ["capture", "targets", "--json"], timeoutSeconds: 120)
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(600))) }
-            let loaded = try JSONDecoder().decode(RecordingTargets.self, from: Data(result.stdout.utf8))
+            return try JSONDecoder().decode(RecordingTargets.self, from: Data(result.stdout.utf8))
                 .excluding(pids: [ProcessInfo.processInfo.processIdentifier])
-            targets = loaded
-            load = .loaded(loaded)
-            if initial == nil { initial = loaded.defaultTarget(preferredPid: preferredPid) }
-        } catch {
-            HubPerf.log("recorder: capture targets failed: \(error.localizedDescription)")
-            load = .failed("Could not list what to record: \(error.localizedDescription)")
-        }
-        guard panel.isVisible, load != previous else { return }
-        present()
-    }
-
-    private func cancel() {
-        panel.dismiss()
-        CameraBubble.shared.pickerClosed(started: false)
-    }
-
-    private func selectArea() {
-        panel.dismiss()
-        let selection = AreaSelection()
-        area = selection
-        selection.begin { [weak self] rect in
-            guard let self else { return }
-            area = nil
-            if let rect {
-                choose(.area(rect))
-            } else {
-                CameraBubble.shared.pickerClosed(started: false)
-            }
         }
     }
 
-    /// Starts a recording of `choice` with the saved options (or the menu's): the countdown first when it is on. Every
-    /// start of the app comes through here.
+    var isVisible: Bool { controls?.window.isVisible == true }
+
+    /// The menu, window.show and the picker shortcut all open setup. Record is the only start action in this flow.
+    func show(focus: Bool = true, preset: CaptureOptions? = nil) {
+        self.focus = focus
+        if let bar, bar.phase != .setup, !isFinished {
+            controls?.show(focus: focus)
+            return
+        }
+        if bar == nil || preset != nil || isFinished { configure(setup: draft(preset: preset)) }
+        controls?.show(focus: false)
+        openPicker(nil)
+    }
+
+    /// The explicit Start shortcut keeps its direct route through the very same model and adapter.
     func choose(_ choice: CaptureChoice, options: CaptureOptions = .load()) {
-        panel.dismiss()
-        let screen = Self.screen(for: choice)
-        Task {
-            let need = PermissionNeed(.screenRecording, reason: "The recorder records the screen you choose.",
-                                      grantWorksInNewProcess: true)
-            guard await PermissionCenter.shared.ensure(need) else {
-                CameraBubble.shared.pickerClosed(started: false)
-                return
-            }
-            // The Start shortcut opens no picker, so the camera preview is hidden: it comes up first, before the
-            // countdown too, so its window is on screen when the start names it for the movie to leave out.
-            if options.camera { _ = await CameraBubble.shared.previewForStart() }
-            guard options.countdown else {
-                start(choice, options: options)
-                return
-            }
-            let countdown = CaptureCountdown(seconds: options.countdownSeconds, screen: screen)
-            self.countdown = countdown
-            countdown.run(onStart: { [weak self, weak countdown] in
-                // The countdown panel stays up while the recording starts, so the movie leaves it out.
-                self?.start(choice, options: options, exclude: countdown.map { [$0.windowID] } ?? []) {
-                    countdown?.recorderFailed()
+        guard bar == nil || bar?.phase == .setup || isFinished else { controls?.show(); return }
+        var setup = draft(preset: options)
+        switch choice {
+        case let .target(target): setup.target = target
+        case .followPointer: setup.target = nil
+        case let .area(rect):
+            let screens = NSScreen.screens.map(\.frame)
+            guard let primary = screens.first else { return }
+            let cocoa = CaptureChoice.coreGraphicsRect(cocoa: rect, primaryHeight: primary.maxY)
+            guard let index = screens.firstIndex(where: { $0.contains(CGPoint(x: cocoa.midX, y: cocoa.midY)) }) else { return }
+            setup.target = .area(rect: cocoa.offsetBy(dx: -screens[index].minX, dy: -screens[index].minY), display: index)
+        }
+        configure(setup: setup)
+        controls?.show()
+        bar?.record()
+    }
+
+    private var isFinished: Bool {
+        switch bar?.phase { case .done, .failed: true; default: false }
+    }
+
+    private func draft(preset: CaptureOptions?) -> RecordingSetup {
+        var setup = RecordingSetup.load(defaults)
+        if let preset {
+            setup.microphone.enabled = preset.microphone
+            setup.systemAudio.enabled = preset.systemAudio
+        }
+        return setup
+    }
+
+    private func configure(setup: RecordingSetup) {
+        detachPicker()
+        controls?.window.orderOut(nil)
+        observers.removeAll()
+        let bar = RecordingBarModel(engine: engine, setup: setup)
+        self.bar = bar
+        let options = CaptureOptions.load(defaults)
+        engine.threshold = options.threshold
+        engine.shortcuts = options.shortcutsOverlay
+        let overlays = RecordingPickerOverlays()
+        self.overlays = overlays
+        bar.excludeWindowIDs = overlays.windowIDs + [picker.window.windowNumber]
+        var actions = RecordingBarActions(chooseTarget: { [weak self] kind in self?.openPicker(kind) },
+                                         useMovie: { folder in
+            if FileManager.default.fileExists(atPath: folder.appendingPathComponent("screen.mp4").path) {
+                EditorWindows.shared.open(path: folder.path)
+            } else {
+                try ToolsRunner.detached(["recorder", "edit", folder.path]) { status, output in
+                    RecorderNotice.failure("Could not open the recording (exit \(status)).", output: output)
                 }
-            }, done: { [weak self] finished in
-                guard let self else { return }
-                self.countdown = nil
-                if !finished {
-                    HubPerf.log("recorder: countdown cancelled")
-                    CameraBubble.shared.pickerClosed(started: false)
-                }
+            }
+        }, hide: { [weak self] in self?.didHide() })
+        actions.followsDisplayInUse = true
+        actions.followedDisplay = Binding(get: { [weak engine] in engine?.followedDisplay }, set: { _ in })
+        actions.changeThreshold = Binding(get: { [weak engine] in engine?.threshold ?? 0.5 },
+                                         set: { [weak engine] in engine?.threshold = $0 })
+        actions.addMarker = { [weak engine] in
+            guard let engine else { return }
+            try await engine.addMarker()
+        }
+        let controls = RecordingBarPanel(model: bar, actions: actions, defaults: defaults) { [weak self] target in
+            self?.bounds(of: target)
+        }
+        self.controls = controls
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem("Recorder Settings and Shortcuts…") {
+            FeatureSettingsLaunch.open(pageID: RecorderSettingsPlugin.recordingPageID)
+        })
+        if onHide != nil {
+            menu.addItem(ClosureMenuItem("Use Compact Controls for Recordings Started Elsewhere") { [weak self] in
+                self?.defaults.set(false, forKey: LiveRecordingBarPresentation.foreignPreference)
+                self?.dismiss()
             })
         }
+        controls.window.contentView?.menu = menu
+        for window in [controls.window as NSWindow, picker.window as NSWindow] {
+            NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: window)
+                .sink { [weak self] _ in self?.attachPicker() }.store(in: &observers)
+        }
+        bar.$phase.removeDuplicates().dropFirst().sink { [weak self] phase in
+            guard let self else { return }
+            switch phase {
+            case .countdown, .starting, .finishing, .failed, .done:
+                detachPicker()
+            case .setup:
+                if controls.window.isVisible {
+                    Task { @MainActor [weak self] in
+                        if self?.bar?.phase == .setup { self?.openPicker(nil) }
+                    }
+                }
+            default: break
+            }
+        }.store(in: &observers)
+        if onHide == nil {
+            bar.$setup.map(\.camera.enabled).removeDuplicates().sink { [weak bar, preview] enabled in
+                if bar?.phase == .setup { preview(enabled) }
+            }.store(in: &observers)
+        }
     }
 
-    private func start(_ choice: CaptureChoice, options: CaptureOptions, exclude panels: [Int] = [],
-                       onFailure: (() -> Void)? = nil) {
-        let plan = Self.startPlan(choice: choice, options: options, previewWindowIDs: CameraBubble.shared.windowIDs,
-                                  panels: panels)
-        CameraBubble.shared.pickerClosed(started: options.camera, previewLeftOut: plan.previewLeftOut)
-        RecorderMenu.shared.startRecording(arguments: plan.arguments, onFailure: onFailure)
+    private func bounds(of target: RecordingTarget) -> CGRect? {
+        let screens = NSScreen.screens
+        if case let .area(rect, index) = target, screens.indices.contains(index) {
+            let origin = screens[index].frame.origin
+            return rect.offsetBy(dx: origin.x, dy: origin.y)
+        }
+        guard case let .loaded(targets) = load, let primary = screens.first else { return nil }
+        let windows: [RecordingWindow]
+        switch target {
+        case let .window(ids, _, _, _): windows = targets.windows.filter { ids.contains($0.id) }
+        case let .app(app, _): windows = targets.windows.filter { String($0.pid) == app || $0.app == app }
+        default: return nil
+        }
+        return windows.reduce(nil as CGRect?) { union, window in
+            let b = window.bounds
+            let rect = CGRect(x: b.x, y: primary.frame.maxY - b.y - b.height, width: b.width, height: b.height)
+            return union?.union(rect) ?? rect
+        }
+    }
+
+    private func openPicker(_ kind: RecordingTargetKind?) {
+        guard bar != nil else { return }
+        if kind == .area { filter = (.area, filter?.query ?? "") }
+        present()
+        if kind == .area, let overlays {
+            AreaSelector.begin(overlays: overlays, parent: picker.window) { [weak self] target in
+                guard let self, let target else { return }
+                bar?.endTargetSelection(target)
+                detachPicker()
+                if defaults.bool(forKey: "recorder.picker.choiceStarts"), bar?.phase == .setup { bar?.record() }
+            }
+        }
+        if read == nil { refresh() }
+    }
+
+    private func refresh() {
+        read?.cancel()
+        read = Task { [weak self] in
+            guard let self else { return }
+            let next: RecordingTargetPicker.Load
+            do { next = .loaded(try await listTargets()) }
+            catch { next = .failed("Could not list what to record: \(error.localizedDescription)") }
+            guard !Task.isCancelled else { return }
+            let changed = next != load
+            load = next
+            read = nil
+            if changed, picker.isVisible { present() }
+        }
+    }
+
+    private func present() {
+        guard let bar, let overlays, let controls else { return }
+        picker.closesOnFocusLoss = CapturePickerFocusLoss.load(defaults).closesPicker
+        let chosen = { [weak self] in self?.detachPicker() }
+        let cancel = { [weak self] in self?.cancelPicker() }
+        let retry = { [weak self] in self?.refresh() }
+        let filtered: (RecordingPickerTab, String) -> Void = { [weak self] tab, query in self?.filter = (tab, query) }
+        let view: RecordingTargetPicker
+        if bar.phase == .setup {
+            view = RecordingTargetPicker(load: load, bar: bar, overlays: overlays,
+                                         onChoose: { chosen() }, onCancel: { cancel() }, onRetry: { retry() },
+                                         restoring: filter, onFilterChange: filtered)
+        } else {
+            // Send one switch, preserving whether the pause was made by the user or by this picker.
+            view = RecordingTargetPicker(load: load, initial: bar.setup.target, onChoose: { target in
+                bar.endTargetSelection(target)
+                chosen()
+            }, onCancel: { cancel() }, onRetry: { retry() }, restoring: filter, onFilterChange: filtered,
+            capabilities: bar.capabilities, overlays: overlays)
+        }
+        let frame = controls.window.frame
+        picker.present(view, near: CGPoint(x: frame.midX, y: frame.minY), focus: focus) { cancel() }
+        if picker.window.parent !== controls.window { controls.window.addChildWindow(picker.window, ordered: .above) }
+        attachPicker()
+    }
+
+    private func attachPicker() {
+        guard let parent = picker.window.parent, picker.isVisible, let visible = parent.screen?.visibleFrame else { return }
+        let size = picker.window.frame.size
+        let bottom = visible.minY + size.height + 4
+        if parent.frame.minY < bottom {
+            parent.setFrameOrigin(CGPoint(x: parent.frame.minX, y: min(visible.maxY - parent.frame.height, bottom)))
+        }
+        let frame = parent.frame
+        picker.window.setFrameOrigin(CGPoint(x: max(visible.minX, min(frame.midX - size.width / 2, visible.maxX - size.width)),
+                                             y: max(visible.minY, frame.minY - size.height - 4)))
+    }
+
+    private func detachPicker() {
+        picker.window.parent?.removeChildWindow(picker.window)
+        picker.dismiss()
+        overlays?.dismiss()
+        read?.cancel()
+        read = nil
+    }
+
+    private func cancelPicker() {
+        bar?.endTargetSelection(nil)
+        detachPicker()
+    }
+
+    private func didHide() {
+        cancelPicker()
+        if bar?.phase == .setup || isFinished {
+            if onHide == nil { preview(false) }
+            observers.removeAll()
+            bar = nil
+            controls = nil
+            overlays = nil
+            filter = nil
+            load = .loading
+        }
+        onHide?()
+    }
+
+    func dismiss() { controls?.hide() }
+
+    func preferencesChanged() {
+        picker.closesOnFocusLoss = CapturePickerFocusLoss.load(defaults).closesPicker
+    }
+
+    /// Resolve a request from the watcher's Show Controls action, even if the original bar was hidden.
+    static func presentation(for entry: LiveRecording, hide: @escaping () -> Void) -> LiveRecordingBarPresentation? {
+        if shared.engine.liveID == entry.id {
+            return LiveRecordingBarPresentation(show: { shared.controls?.show() }, update: { _ in }, close: {})
+        }
+        guard UserDefaults.standard.bool(forKey: LiveRecordingBarPresentation.foreignPreference),
+              entry.canControl, entry.socket != nil, entry.controls.contains("settings.get") else { return nil }
+        let engine = ToolsRecorderEngine(adopting: entry)
+        let host = CapturePicker(engine: engine)
+        host.onHide = hide
+        var opening: Task<Void, Never>?
+        return LiveRecordingBarPresentation(show: {
+            if host.bar != nil { host.controls?.show(); return }
+            guard opening == nil else { return }
+            opening = Task {
+                do {
+                    let setup = try await engine.adoptedSetup()
+                    guard !Task.isCancelled else { return }
+                    host.configure(setup: setup)
+                    host.bar?.record() // The adapter attaches to the existing ID; no process is launched.
+                    host.controls?.show()
+                } catch {
+                    if !Task.isCancelled { RecorderNotice.failure("Could not open this recording's controls.", more: error.localizedDescription) }
+                }
+                opening = nil
+            }
+        }, update: { engine.observe($0) }, close: {
+            opening?.cancel()
+            opening = nil
+            host.detachPicker()
+            host.controls?.window.orderOut(nil)
+        })
     }
 
     /// What a start runs, and whether it leaves the camera preview out of the movie: one answer for both, from the
@@ -210,8 +335,6 @@ final class CapturePicker {
         return (options.startArguments(choice, excludeWindowIds: exclude), !preview.isEmpty)
     }
 
-    /// `--picker --snapshot`: the panel over made-up targets, drawn off screen into a PNG (verification without a
-    /// screen; nothing starts and no setting changes).
     static func snapshot(to path: String, shortcutsOpen: Bool) async throws {
         let targets = RecordingTargets(
             windows: [
@@ -225,14 +348,15 @@ final class CapturePicker {
             apps: [RecordingApp(pid: 501, name: "Editor", windowCount: 2), RecordingApp(pid: 502, name: "Browser", windowCount: 1)],
             displays: [RecordingDisplay(index: 0, name: "Built-in Display", isPrimary: true, width: 1512, height: 982)],
             frontmostPid: 501)
-        let model = CapturePickerModel(persist: false)
-        model.shortcutsOpen = shortcutsOpen
-        model.tab = RecordingPickerTab.of(targets.defaultTarget(preferredPid: 501))
-        let view = RecordingTargetPicker(
-            load: .loaded(targets), title: "Record", initial: targets.defaultTarget(preferredPid: 501),
-            onChoose: { _ in }, onCancel: {},
-            accessory: AnyView(CaptureOptionsView(model: model, onArea: {})),
-            footerHint: Self.footerHint)
+        var setup = RecordingSetup()
+        setup.target = targets.defaultTarget(preferredPid: 501)
+        let bar = RecordingBarModel(engine: ToolsRecorderEngine(), setup: setup)
+        bar.expanded = shortcutsOpen
+        let view = VStack(spacing: 4) {
+            RecordingBarView(model: bar, actions: RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in }))
+            RecordingTargetPicker(load: .loaded(targets), bar: bar, overlays: RecordingPickerOverlays(screens: []),
+                                  onChoose: {}, onCancel: {})
+        }
         let hosting = NSHostingView(rootView: view.fixedSize())
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
@@ -251,535 +375,15 @@ final class CapturePicker {
         FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(capture.method) (\(Int(size.width))×\(Int(size.height)) pt)\n".utf8))
     }
 
-    /// The screen the countdown shows on: the chosen display, the area's, the window's, else the pointer's.
-    private static func screen(for choice: CaptureChoice) -> NSScreen? {
-        let screens = NSScreen.screens
-        switch choice {
-        case let .target(.display(index, _)):
-            return screens.indices.contains(index) ? screens[index] : NSScreen.main
-        case let .area(rect):
-            let primaryHeight = screens.first?.frame.height ?? 0
-            let center = CGPoint(x: rect.midX, y: primaryHeight - rect.midY)
-            return screens.first { $0.frame.contains(center) } ?? NSScreen.main
-        default:
-            return screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        }
-    }
 }
 
-/// The options the panel shows and edits, saved at each change.
-@MainActor
-final class CapturePickerModel: ObservableObject {
-    /// False for a snapshot: the panel's changes stay in memory.
-    private let persist: Bool
-
-    init(persist: Bool = true) {
-        self.persist = persist
+enum CaptureCountdown {
+    static func hasFirstFrame(_ recording: LiveRecording) -> Bool {
+        recording.frames > 0 || recording.lastFrameAt != nil
     }
 
-    @Published var options = CaptureOptions.load() {
-        didSet {
-            guard persist, options != oldValue else { return }
-            options.save()
-            if options.camera != oldValue.camera { CameraBubble.shared.optionChanged(options.camera) }
-        }
-    }
-
-    @Published var cameraSize = CameraBubble.bubbleSide {
-        didSet {
-            guard persist, cameraSize != oldValue else { return }
-            UserDefaults.standard.set(cameraSize, forKey: CameraBubble.Key.size)
-            CameraBubble.shared.appearanceChanged()
-        }
-    }
-
-    @Published var cameraShape = CameraBubble.shape {
-        didSet {
-            guard persist, cameraShape != oldValue else { return }
-            UserDefaults.standard.set(cameraShape.rawValue, forKey: CameraBubble.Key.shape)
-            CameraBubble.shared.appearanceChanged()
-        }
-    }
-
-    /// The picker's tab, so the options can say what a window or an app movie leaves out.
-    @Published var tab: RecordingPickerTab = .displays
-    @Published var bindings: [RecorderShortcutAction: RecorderShortcutBinding] = CapturePickerModel.loadBindings()
-    @Published var shortcutsOpen = false
-    @Published var alwaysHeld = RecorderShortcuts.alwaysHeld {
-        didSet {
-            UserDefaults.standard.set(alwaysHeld, forKey: RecorderShortcuts.alwaysHeldKey)
-            RecorderShortcuts.shared.apply()
-        }
-    }
-
-    func reload() {
-        options = CaptureOptions.load()
-        bindings = Self.loadBindings()
-    }
-
-    /// Everything the panel shows, read again (a change made in the settings window).
-    func reloadFromDefaults() {
-        reload()
-        if cameraSize != CameraBubble.bubbleSide { cameraSize = CameraBubble.bubbleSide }
-        if cameraShape != CameraBubble.shape { cameraShape = CameraBubble.shape }
-        if alwaysHeld != RecorderShortcuts.alwaysHeld { alwaysHeld = RecorderShortcuts.alwaysHeld }
-    }
-
-    func binding(_ action: RecorderShortcutAction) -> RecorderShortcutBinding {
-        bindings[action] ?? RecorderShortcutBinding(chord: action.defaultChord)
-    }
-
-    func set(_ action: RecorderShortcutAction, _ binding: RecorderShortcutBinding) {
-        bindings[action] = binding
-        binding.save(action)
-        RecorderShortcuts.shared.apply()
-    }
-
-    private static func loadBindings() -> [RecorderShortcutAction: RecorderShortcutBinding] {
-        Dictionary(uniqueKeysWithValues: RecorderShortcutAction.allCases.map { ($0, RecorderShortcutBinding.load($0)) })
-    }
-}
-
-/// The options under the picker's list: countdown, frame rates, change threshold, audio, cursor, the shortcuts
-/// overlay, the camera bubble, the area button, and the global shortcuts behind a disclosure.
-struct CaptureOptionsView: View {
-    @ObservedObject var model: CapturePickerModel
-    let onArea: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Button(action: onArea) {
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.dashed").frame(width: 18)
-                    Text("Select an area…").font(.system(size: 12, weight: .medium))
-                    Spacer(minLength: 0)
-                    Text(verbatim: RecordingPickerKey.label(RecordingPickerKey.area)).font(.system(size: 11))
-                        .foregroundStyle(SessionPalette.secondary)
-                }
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.genHoverRow())
-            .instantTooltip("Drag a rectangle on any display; the recording keeps only that area")
-            .accessibilityIdentifier("recorder.capture.area")
-
-            Text("Options").kicker()
-            row("Countdown", detail: "Seconds to switch to what is recorded after a choice") {
-                HStack(spacing: 6) {
-                    if model.options.countdown {
-                        Stepper(value: $model.options.countdownSeconds, in: 1...10) {
-                            Text(verbatim: "\(model.options.countdownSeconds) s").font(.system(size: 11)).monospacedDigit()
-                        }
-                        .controlSize(.mini)
-                        .accessibilityIdentifier("recorder.capture.countdownSeconds")
-                    }
-                    toggle($model.options.countdown, "recorder.capture.countdown")
-                }
-            }
-            row("Frame rate", detail: "Frames per second while something moves") {
-                menu($model.options.fps, CaptureOptions.frameRates, "recorder.capture.fps") { "\($0) fps" }
-            }
-            row("While still", detail: "Frames per second while nothing moves; Same keeps one rate") {
-                menu($model.options.idleFps, CaptureOptions.idleRates, "recorder.capture.idleFps") {
-                    $0 == 0 ? "Same" : "\($0 == $0.rounded() ? String(Int($0)) : String($0)) fps"
-                }
-            }
-            row("Change needed", detail: "How much of the picture must change to leave the still rate") {
-                menu($model.options.threshold, CaptureOptions.thresholds, "recorder.capture.threshold") {
-                    "\($0 == $0.rounded() ? String(Int($0)) : String($0)) %"
-                }
-            }
-            if let note = CaptureOptions.notRecorded(on: model.tab) {
-                InfoStrip(note)
-                    .accessibilityIdentifier("recorder.capture.windowNote")
-            }
-            row("System audio", detail: "What the Mac plays, as its own track; a display or an area only (a window movie has no audio)") {
-                toggle($model.options.systemAudio, "recorder.capture.audio.system")
-            }
-            row("Microphone", detail: "Your voice, as its own track; a display or an area only (a window movie has no audio)") {
-                toggle($model.options.microphone, "recorder.capture.audio.mic")
-            }
-            row("Draw the cursor", detail: "The editor draws it smoothed and at any size. Off hides it for window movies and keeps the system cursor for displays. Clicks are always kept") {
-                toggle($model.options.drawCursor, "recorder.capture.drawCursor")
-            }
-            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never") {
-                toggle($model.options.shortcutsOverlay, "recorder.capture.shortcuts")
-            }
-            row("Camera bubble", detail: "Records the camera beside the screen; drag the bubble to place it") {
-                toggle($model.options.camera, "recorder.capture.camera")
-            }
-            if model.options.camera {
-                row("Bubble", detail: "The preview's size and shape; the editor can change both later") {
-                    HStack(spacing: 6) {
-                        menu($model.cameraSize, CameraBubble.sizes, "recorder.capture.cameraSize") {
-                            switch $0 {
-                            case 140: return "Small"
-                            case 260: return "Large"
-                            default: return "Medium"
-                            }
-                        }
-                        menu($model.cameraShape, EditProject.CameraShape.allCases, "recorder.capture.cameraShape") {
-                            switch $0 {
-                            case .circle: return "Circle"
-                            case .rounded: return "Rounded"
-                            case .square: return "Square"
-                            }
-                        }
-                    }
-                }
-                .transition(.genReveal)
-            }
-
-            GenDisclosure(isExpanded: $model.shortcutsOpen, identifier: "recorder.capture.shortcutsDisclosure",
-                          accessibilityTitle: "Shortcuts") {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(RecorderShortcutAction.allCases) { action in
-                        shortcutRow(action)
-                    }
-                    row("Hold stop, pause and mark keys", detail: "Off: those keys reach other apps while nothing records") {
-                        toggle($model.alwaysHeld, "recorder.capture.alwaysHeld")
-                    }
-                }
-                .padding(.top, 4)
-            } label: {
-                Text("Shortcuts").font(.system(size: 12, weight: .medium))
-            }
-        }
-    }
-
-    private func row<Control: View>(_ title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 12))
-                .instantTooltip(detail)
-            Spacer(minLength: 8)
-            control()
-        }
-        .frame(minHeight: 22)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(title)
-        .accessibilityHint(detail)
-    }
-
-    private func toggle(_ value: Binding<Bool>, _ identifier: String) -> some View {
-        Toggle("", isOn: value).labelsHidden().toggleStyle(.switch).controlSize(.mini)
-            .accessibilityIdentifier(identifier)
-    }
-
-    private func menu<Value: Hashable>(_ value: Binding<Value>, _ values: [Value], _ identifier: String,
-                                       title: @escaping (Value) -> String) -> some View {
-        Picker("", selection: value) {
-            ForEach(values, id: \.self) { item in
-                Text(title(item)).tag(item)
-            }
-        }
-        .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
-        .accessibilityIdentifier(identifier)
-    }
-
-    private func shortcutRow(_ action: RecorderShortcutAction) -> some View {
-        let binding = model.binding(action)
-        return HStack(alignment: .top, spacing: 8) {
-            Toggle("", isOn: Binding(get: { binding.enabled }, set: { on in
-                model.set(action, RecorderShortcutBinding(chord: binding.chord, enabled: on))
-            }))
-            .labelsHidden().toggleStyle(.checkbox).controlSize(.small)
-            .accessibilityIdentifier("recorder.shortcut.\(action.rawValue).enabled")
-            Text(action.title).font(.system(size: 12))
-                .foregroundStyle(binding.enabled ? .primary : SessionPalette.secondary)
-                .instantTooltip(action.detail)
-            Spacer(minLength: 8)
-            HotkeyRecorder(
-                chord: Binding(get: { binding.chord }, set: { chord in
-                    model.set(action, RecorderShortcutBinding(chord: chord, enabled: true))
-                }),
-                defaultChord: action.defaultChord, identifier: "recorder.shortcut.\(action.rawValue)",
-                onListening: { listening in RecorderShortcuts.shared.setListening(listening ? action : nil) })
-                .controlSize(.small)
-        }
-    }
-}
-
-// MARK: - Area
-
-/// Drag a rectangle on any display: one clear panel per screen with a crosshair; Escape or a click without a drag
-/// cancels. The result is in CoreGraphics global points, as `--region` takes it.
-@MainActor
-final class AreaSelection {
-    private var panels: [NSPanel] = []
-    private var monitor: Any?
-    private var done: ((CGRect?) -> Void)?
-
-    func begin(_ done: @escaping (CGRect?) -> Void) {
-        self.done = done
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        panels = NSScreen.screens.map { screen in
-            let panel = AreaSelectionWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
-                                            backing: .buffered, defer: false)
-            panel.title = "Select an area"
-            panel.level = .screenSaver
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = false
-            panel.hidesOnDeactivate = false
-            panel.isReleasedWhenClosed = false
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-            panel.sharingType = .none
-            let view = AreaSelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
-            view.onFinish = { [weak self] local in
-                guard let self else { return }
-                let rect = local.map { CGRect(x: $0.minX + screen.frame.minX, y: $0.minY + screen.frame.minY,
-                                              width: $0.width, height: $0.height) }
-                finish(rect.map { CaptureChoice.coreGraphicsRect(cocoa: $0, primaryHeight: primaryHeight) })
-            }
-            panel.contentView = view
-            panel.setFrame(screen.frame, display: false)
-            panel.orderFrontRegardless()
-            return panel
-        }
-        let pointer = NSEvent.mouseLocation
-        (panels.first { $0.frame.contains(pointer) } ?? panels.first)?.makeKey()
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }
-            self?.finish(nil)
-            return nil
-        }
-        NSCursor.crosshair.push()
-    }
-
-    private func finish(_ rect: CGRect?) {
-        guard let done else { return }
-        self.done = nil
-        NSCursor.pop()
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-        panels.forEach { $0.orderOut(nil); $0.close() }
-        panels = []
-        HubPerf.log("recorder: area \(rect.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "cancelled")")
-        done(rect)
-    }
-}
-
-/// Takes the keyboard (Escape) without activating the app.
-final class AreaSelectionWindow: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
-
-/// Dims the screen a little, draws the dragged rectangle clear with its size, and reports it on mouse-up.
-final class AreaSelectionView: NSView {
-    var onFinish: ((CGRect?) -> Void)?
-    private var start: CGPoint?
-    private var current: CGPoint?
-    /// A rectangle smaller than this on either side is a click, not an area.
-    static let minimumSide: CGFloat = 16
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
-
-    private var selection: CGRect? {
-        guard let start, let current else { return nil }
-        return CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
-                      width: abs(current.x - start.x), height: abs(current.y - start.y)).integral
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        start = convert(event.locationInWindow, from: nil)
-        current = start
-        needsDisplay = true
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        current = convert(event.locationInWindow, from: nil)
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        current = convert(event.locationInWindow, from: nil)
-        let rect = selection
-        start = nil
-        current = nil
-        needsDisplay = true
-        guard let rect, rect.width >= Self.minimumSide, rect.height >= Self.minimumSide else {
-            onFinish?(nil)
-            return
-        }
-        onFinish?(rect)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.25).setFill()
-        bounds.fill()
-        guard let rect = selection else {
-            hint("Drag to choose the area to record · Esc cancels", at: CGPoint(x: bounds.midX, y: bounds.midY))
-            return
-        }
-        NSGraphicsContext.current?.compositingOperation = .clear
-        rect.fill()
-        NSGraphicsContext.current?.compositingOperation = .sourceOver
-        NSColor.systemRed.withAlphaComponent(0.9).setStroke()
-        let path = NSBezierPath(rect: rect.insetBy(dx: -1, dy: -1))
-        path.lineWidth = 2
-        path.setLineDash([8, 5], count: 2, phase: 0)
-        path.stroke()
-        hint("\(Int(rect.width)) × \(Int(rect.height))", at: CGPoint(x: rect.midX, y: max(rect.minY - 18, 14)))
-    }
-
-    private func hint(_ text: String, at center: CGPoint) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white,
-        ]
-        let size = (text as NSString).size(withAttributes: attributes)
-        let box = CGRect(x: center.x - size.width / 2 - 10, y: center.y - size.height / 2 - 5,
-                         width: size.width + 20, height: size.height + 10)
-        NSColor.black.withAlphaComponent(0.7).setFill()
-        NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
-        (text as NSString).draw(at: CGPoint(x: box.minX + 10, y: box.minY + 5), withAttributes: attributes)
-    }
-}
-
-// MARK: - Countdown
-
-/// The seconds before a recording starts, large in the middle of the recorded screen. Escape cancels until the
-/// recorder starts. The recorder starts as the last second begins, because `tools recorder start` and ax-tool's arming
-/// take about 1.5 s before the first frame (0.66 s to the CLI's start and 0.74 to 1.14 s to the frame, measured
-/// 2026-11-08), and the last number stays until the recording's live entry has its first frame (at most `holdLimit`
-/// longer). So zero never shows before the movie records, and the first thing done after it is in the movie. The panel
-/// is kept out of the movie: its sharing type, and its window id in `--exclude-window-ids`.
-@MainActor
-final class CaptureCountdown {
-    /// The longest the last number waits past its second for the recording's first frame.
-    static let holdLimit: TimeInterval = 10
-
-    private let seconds: Int
-    private let panel: AreaSelectionWindow
-    private let model = CountdownModel()
-    private var monitor: Any?
-    private var timer: Timer?
-    private var holdTimer: Timer?
-    private var done: ((Bool) -> Void)?
-    private var onStart: (() -> Void)?
-    /// When the recorder was started; nil while Escape still cancels.
-    private var startedAt: Date?
-    private var lastSecondOver = false
-    private var framed = false
-    private var watcher: LiveRecordingsWatcher?
-
-    /// The panel's CG window id, for the recorder's `--exclude-window-ids`.
-    var windowID: Int { panel.windowNumber }
-
-    /// Whether the recording started at `since` records: its live entry, written after the start, has `lastFrameAt`.
-    /// The entry says "recording" while ax-tool still arms, so its state cannot tell.
-    nonisolated static func firstFrameIn(_ recordings: [LiveRecording], since: Date) -> Bool {
-        // Up to a second earlier: a start time read back from the entry's text can be rounded down.
-        recordings.contains { $0.startedAt >= since.addingTimeInterval(-1) && $0.lastFrameAt != nil }
-    }
-
-    init(seconds: Int, screen: NSScreen?) {
-        self.seconds = max(1, seconds)
-        let frame = screen?.frame ?? NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 800, height: 600)
-        let size = CGSize(width: 220, height: 220)
-        panel = AreaSelectionWindow(contentRect: CGRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2,
-                                                        width: size.width, height: size.height),
-                                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.title = "Recording countdown"
-        panel.level = .screenSaver
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.sharingType = .none
-        panel.contentView = NSHostingView(rootView: CountdownView(model: model))
-    }
-
-    /// `onStart` runs as the last second begins (the recorder starts); `done` runs when the panel goes, false for an
-    /// Escape before the start.
-    func run(onStart: @escaping () -> Void, done: @escaping (Bool) -> Void) {
-        self.done = done
-        self.onStart = onStart
-        model.remaining = seconds
-        panel.orderFrontRegardless()
-        panel.makeKey()
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }
-            // Once the recorder runs, its controls stop or discard it; the panel only shows the last number.
-            if self?.startedAt == nil { self?.finish(false) }
-            return nil
-        }
-        if seconds == 1 { startRecorder() }
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if self.model.remaining <= 1 {
-                    self.lastSecondEnded()
-                } else {
-                    self.model.remaining -= 1
-                    if self.model.remaining == 1 { self.startRecorder() }
-                }
-            }
-        }
-    }
-
-    /// The recording did not start (the CLI failed): the panel goes now, and the failure note says why.
-    func recorderFailed() {
-        HubPerf.log("recorder: countdown ends, the recording did not start")
-        finish(true)
-    }
-
-    private func startRecorder() {
-        guard startedAt == nil, let onStart else { return }
-        self.onStart = nil
-        startedAt = Date()
-        model.starting = true
-        let watcher = LiveRecordingsWatcher()
-        watcher.onRefresh = { [weak self] recordings in self?.observe(recordings) }
-        self.watcher = watcher
-        watcher.start()
-        onStart()
-    }
-
-    private func observe(_ recordings: [LiveRecording]) {
-        guard let startedAt, !framed, Self.firstFrameIn(recordings, since: startedAt) else { return }
-        framed = true
-        HubPerf.log("recorder: first frame \(Int(Date().timeIntervalSince(startedAt) * 1000)) ms after the start")
-        if lastSecondOver { finish(true) }
-    }
-
-    private func lastSecondEnded() {
-        timer?.invalidate()
-        timer = nil
-        lastSecondOver = true
-        model.lastSecondEnded()
-        startRecorder()
-        if framed {
-            finish(true)
-            return
-        }
-        holdTimer = Timer.scheduledTimer(withTimeInterval: Self.holdLimit, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                HubPerf.log("recorder: no first frame \(Int(Self.holdLimit)) s after the countdown; it ends anyway")
-                self?.finish(true)
-            }
-        }
-    }
-
-    private func finish(_ completed: Bool) {
-        guard let done else { return }
-        self.done = nil
-        onStart = nil
-        timer?.invalidate()
-        timer = nil
-        holdTimer?.invalidate()
-        holdTimer = nil
-        watcher?.stop()
-        watcher = nil
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-        panel.orderOut(nil)
-        panel.close()
-        done(completed)
+    static func firstFrameIn(_ recordings: [LiveRecording], since: Date) -> Bool {
+        recordings.contains { $0.startedAt >= since.addingTimeInterval(-1) && hasFirstFrame($0) }
     }
 }
 
@@ -797,27 +401,5 @@ final class CountdownModel: ObservableObject {
     /// What VoiceOver reads: the seconds left, or that the recording is starting once the count reached 0.
     var spoken: String {
         remaining > 0 ? "Recording starts in \(Plural.count(remaining, "second"))" : "The recording is starting"
-    }
-}
-
-struct CountdownView: View {
-    @ObservedObject var model: CountdownModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Text(verbatim: "\(model.remaining)")
-                .font(.system(size: 84, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: model.remaining)
-            Text(model.starting ? "Starting the recording" : "Esc cancels").font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.7))
-        }
-        .foregroundStyle(.white)
-        .frame(width: 200, height: 200)
-        .background(Circle().fill(.black.opacity(0.62)))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(model.spoken)
     }
 }
