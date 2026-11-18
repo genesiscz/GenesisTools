@@ -89,7 +89,7 @@ test("R3 planning on frozen input preserves old range edits, choices and departu
                 { startSec: 0, endSec: 20, channel: "mic" },
                 { startSec: 20, endSec: 2600, channel: "system" },
             ],
-            speaking: [],
+            speaking: [{ tSec: 20, speaking: [], validUntilSec: 2400 }],
             files: [],
         },
         labels: [

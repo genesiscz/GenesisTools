@@ -1,7 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -110,6 +110,13 @@ export class LineSpeakers {
                   ...row.choices,
               ].join("|")
             : "";
+    }
+
+    unknownCall(index: number): boolean {
+        return (
+            this.eligibility.get(index)?.channel.side === "call" &&
+            (this.rows.get(index)?.speakingUnknown === true || this.assessment.ignored.has(index))
+        );
     }
 
     choices(indices: readonly number[]): string[] | undefined {
@@ -750,21 +757,20 @@ function localVoiceFinding(options: {
     platformLabel: boolean;
     indicatorIgnored: boolean;
     eligible: Eligibility;
-
-    roomPeople: string[];
+    mappedCall: boolean;
 }): EvidenceFinding | undefined {
     const { line, selfName, voices, found } = options;
 
-    const remote = options.eligible.choices;
+    const choices = options.eligible.choices;
     if (
         found?.speaker &&
         found.rules.includes(MeetingRule.SpeakingIndicator) &&
-        remote.some((person) => sameName(person, found.speaker!)) &&
+        choices.some((person) => sameName(person, found.speaker!)) &&
         options.eligible.channel.side === "call"
     ) {
         return found;
     }
-    const room = [selfName, ...options.roomPeople.filter((name) => !sameName(name, selfName))];
+
     if (
         options.eligible.channel.side === "mixed" &&
         line.micShare !== undefined &&
@@ -779,22 +785,6 @@ function localVoiceFinding(options: {
             conflict: true,
         };
     }
-    if (
-        options.platformLabel &&
-        !options.isSelfLabel &&
-        (line.micShare ?? 0) >= 0.65 &&
-        line.energyMic !== undefined &&
-        line.energyMic <= 0.35
-    ) {
-        // Opposing channel measurements do not independently confirm the platform's label.
-        return {
-            candidates: [...new Set([...room, ...remote, line.label])],
-            rules: [MeetingRule.Channel, MeetingRule.Energy, MeetingRule.LocalVoice],
-            confidence: 0.4,
-            listen: true,
-            conflict: true,
-        };
-    }
 
     if (
         options.platformLabel &&
@@ -803,28 +793,29 @@ function localVoiceFinding(options: {
         (line.acoustic?.cleanMicShare ?? 1) < 0.65
     ) {
         return {
-            candidates: [...new Set([...room, ...remote])],
+            candidates: choices,
             rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
             confidence: 0.4,
             listen: true,
             echo: true,
         };
     }
-    if (options.eligible.channel.side === "mic" && remote.length > 1 && (line.echo ?? 0) < ECHO_SIMILARITY) {
+    if ((options.eligible.channel.side === "mic" || options.mappedCall) && choices.length > 1) {
         return {
-            candidates: remote,
+            candidates: choices,
             rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
             confidence: 0.4,
             listen: true,
+            echo: (line.echo ?? 0) >= ECHO_SIMILARITY,
         };
     }
     if (
-        remote.length === 1 &&
-        options.eligible.excluded.some((row) => row.reason.includes("muted")) &&
-        isStrongCallForNaming(options.eligible.channel)
+        choices.length === 1 &&
+        callMutes(line).some((name) => !choices.some((other) => sameName(name, other))) &&
+        options.eligible.channel.side === "call"
     ) {
         return {
-            speaker: remote[0],
+            ...(isStrongCallForNaming(options.eligible.channel) ? { speaker: choices[0] } : { candidates: choices }),
             rules: [MeetingRule.Channel, MeetingRule.Attendance, MeetingRule.Muted],
             confidence: ATTENDANCE_CONFIDENCE,
             elimination: true,
@@ -833,11 +824,11 @@ function localVoiceFinding(options: {
     }
     if (
         (options.indicatorIgnored ||
-            (line.speakingUnknown && Object.keys(line.speaking).length === 0 && remote.length >= 2)) &&
-        (line.energyMic ?? line.micShare ?? 1) <= 0.35
+            (line.speakingUnknown && Object.keys(line.speaking).length === 0 && choices.length >= 2)) &&
+        isStrongCallForNaming(options.eligible.channel)
     ) {
         return {
-            candidates: remote,
+            candidates: choices,
             rules: [MeetingRule.Channel],
             confidence: 0.4,
             listen: true,
@@ -919,9 +910,14 @@ export function evidenceItems(options: {
     samePerson?: SamePerson;
     record: MeetingRecord;
 }): { items: NewItem[]; swaps: SwapStretch[] } {
-    const selfName = options.evidence.selfName;
+    const selfName = options.evidence.selfName ?? options.record.participants.find((person) => person.self)?.name;
 
-    if (!selfName || (options.evidence.segments.length === 0 && !options.voiceMatches)) {
+    if (
+        !selfName ||
+        (options.evidence.segments.length === 0 &&
+            !options.voiceMatches &&
+            !options.lines.some((line) => line.voice?.quality === "matched" || line.energyMic !== undefined))
+    ) {
         log.debug({ selfName, segments: options.evidence.segments.length }, "no channel evidence");
         return { items: [], swaps: [] };
     }
@@ -1049,10 +1045,11 @@ export function evidenceItems(options: {
             }
 
             if (item.speaker === selfName) {
-                const room = microphoneCandidates(options.record, item.fromSec);
+                const swapLine = swapLines.find((line) => line.label === item.label && line.startSec === item.fromSec);
+                const room = swapLine ? (speakers.eligibility.get(swapLine.index)?.choices ?? []) : [];
                 if (room.length > 1) {
                     delete item.speaker;
-                    item.candidates = [selfName, ...room.filter((name) => !sameName(name, selfName))];
+                    item.candidates = room;
                     item.confidence = 0.4;
                 }
             }
@@ -1203,7 +1200,12 @@ export function evidenceItems(options: {
                       voices,
                       eligible,
                       platformLabel: platformLabels.has(label),
-                      roomPeople: microphoneCandidates(options.record, line.startSec),
+                      mappedCall:
+                          eligible.channel.side === "call" &&
+                          speakingNames(line).length === 1 &&
+                          !!options.record.seats?.microphones?.some(
+                              (group) => group.deviceId && sameName(group.deviceId, speakingNames(line)[0]!)
+                          ),
                       indicatorIgnored: stuck.has(line.index),
 
                       unusable: within(unusable, line.startSec),

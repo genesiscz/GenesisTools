@@ -234,7 +234,9 @@ export function groupSpeakerQuestions(
             ),
             question: stranger
                 ? `This does not sound like ${owner}. Who is speaking?`
-                : `Is ${person} speaking here, or someone else?`,
+                : typeof person === "string"
+                  ? `Is ${person} speaking here, or someone else?`
+                  : "Who is speaking here?",
             choices,
             decides: ranges.map((r) => r.id),
             rules: first.rules,
@@ -284,6 +286,9 @@ export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionC
         const choices = speakerChoices(question.choices, allowed, []);
         if (!Bun.deepEquals(choices, question.choices)) {
             question.choices = choices;
+            delete question.signature;
+        }
+        if (indices.some((i) => speakers.unknownCall(i))) {
             delete question.signature;
         }
         if (ranges.some(needsSpeakerReview)) {
@@ -353,9 +358,10 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
             ...(longest ? { clip: { fromSec: longest.startSec, toSec: longest.endSec } } : {}),
             // Missing indicator evidence never establishes a shared voice identity for propagation.
-            signature: item.evidence?.sharedCallUnknown
-                ? undefined
-                : `${choices.slice(0, 2).sort().join("+")}|${[...new Set(present)].sort().join(",")}`,
+            signature:
+                item.evidence?.sharedCallUnknown || indices.some((i) => context.speakers?.unknownCall(i))
+                    ? undefined
+                    : `${choices.slice(0, 2).sort().join("+")}|${[...new Set(present)].sort().join(",")}`,
             evidence: { words: importance.words, impact, labels: [item.label] },
         };
     }

@@ -1,7 +1,7 @@
 import { sha256Json } from "@genesiscz/utils/hash";
 import { DEFAULT_APPLY_ABOVE } from "@genesiscz/utils/meetings/config";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
-import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople, roomSeatNames, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -39,7 +39,6 @@ import {
     wordQuestions,
 } from "./questions";
 import {
-    ENERGY_MIC_SURE,
     evidenceItems,
     inSwap,
     LineSpeakers,
@@ -1036,57 +1035,7 @@ function buildSuggestions(options: SuggestInputs): void {
             speakers,
             samePerson: options.samePerson,
         });
-        for (const item of channel.items) {
-            // A confirmed voice match already says which person at the shared device spoke.
-            if (
-                item.kind !== "speaker-range" ||
-                item.rules.includes(MeetingRule.Voice) ||
-                item.rules.includes(MeetingRule.VoiceEmbedding)
-            ) {
-                continue;
-            }
-            const at = item.fromSec;
-            const mic = options.energyMicShare?.(at, Math.max(at + 0.05, item.toSec));
-            const owner = mic !== undefined && mic >= ENERGY_MIC_SURE ? "self" : item.speaker;
-            const candidates = owner ? microphoneCandidates(record, at, owner) : [];
-            if (candidates.length > 1) {
-                item.speaker = undefined;
-                item.candidates = candidates;
-                item.confidence = Math.min(item.confidence ?? 0.4, 0.4);
-                // The scores were made for the device owner at the old confidence; nobody owns the device's lines now.
-                const { candidateScores: _ownerScores, ...rest } = item.evidence ?? {};
-                item.evidence = rest;
-            }
-        }
-        for (const line of lines) {
-            if ((line.energyMic ?? line.micShare ?? 0) < ENERGY_MIC_SURE) {
-                continue;
-            }
-            const candidates = microphoneCandidates(record, line.startSec);
-            if (
-                candidates.length < 2 ||
-                channel.items.some(
-                    (item) =>
-                        item.kind === "speaker-range" &&
-                        item.label === line.label &&
-                        line.startSec >= item.fromSec &&
-                        line.startSec <= item.toSec
-                )
-            ) {
-                continue;
-            }
-            channel.items.push({
-                kind: "speaker-range",
-                status: "suggested",
-                label: line.label,
-                fromSec: line.startSec,
-                toSec: line.startSec,
-                candidates,
-                confidence: 0.4,
-                rules: [MeetingRule.Energy],
-                evidence: { channel: "mic", listen: true, note: "shared microphone" },
-            });
-        }
+
         // A shared device's range may name the room person whose anchored voice cluster holds every line of it: the
         // one exception to candidate-only shared-device ranges. It stays a proposal at 0.7 with its candidates, to
         // listen, since a cluster's confidence measures separation, not identity. Never over conflicting channels.
@@ -1354,6 +1303,16 @@ function buildSuggestions(options: SuggestInputs): void {
         });
 
     // Keep the same evidence identity on unasked ranges, so a later answer can improve the whole compatible group.
+    for (const item of taken) {
+        if (
+            item.kind === "speaker-range" &&
+            item.status === "suggested" &&
+            item.evidence?.signature &&
+            speakers.linesFor(item).some((line) => speakers.unknownCall(line.index))
+        ) {
+            delete item.evidence.signature;
+        }
+    }
     const signatureQuestions = taken
         .filter(
             (item) =>
