@@ -261,6 +261,8 @@ describe("meetings config", () => {
                 exclusion: { enabled: true, margin: 0.15, maxConfidence: 0.69, minLines: 3, coherence: 0.82 },
                 minSeconds: 1.5,
                 compute: { priority: "normal", workers: "auto" },
+                sampleScope: "all",
+                outlierBelow: 0.5,
             },
         });
         expect(config.global.capture.audioRetentionDays).toBeUndefined();
@@ -286,6 +288,8 @@ describe("meetings config", () => {
             exclusion: { enabled: false, margin: 0.15, maxConfidence: 0.69, minLines: 5, coherence: 0.82 },
             minSeconds: 3,
             compute: { priority: "normal", workers: "auto" },
+            sampleScope: "all",
+            outlierBelow: 0.5,
         });
         expect(set.capture.audioRetentionDays).toBe(90);
         expect(set.playback.tracks).toBe("source");
