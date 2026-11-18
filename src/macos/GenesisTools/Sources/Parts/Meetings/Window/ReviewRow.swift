@@ -844,7 +844,6 @@ private struct RowEditor: View {
     @State private var picking = false
     @State private var commenting = false
     @State private var commentText = ""
-    @State private var resumesAfterTyping = false
     @AppStorage(MeetingsPreferences.Rows.openPersonPicker.key) private var opensPicker =
         MeetingsPreferences.Rows.openPersonPicker.defaultValue
 
@@ -905,18 +904,8 @@ private struct RowEditor: View {
             focused = true
             if picksPerson && opensPicker { picking = true }
         }
-        .onChange(of: focused || reasonFocused || commentFocused) { _, active in
-            if active {
-                resumesAfterTyping = detail.window?.player.phase == .playing
-                detail.window?.player.pause()
-            } else if resumesAfterTyping && !commenting && !picking {
-                detail.window?.player.resume()
-                resumesAfterTyping = false
-            }
-        }
-        .onDisappear {
-            if resumesAfterTyping { detail.window?.player.resume() }
-        }
+        .modifier(PauseQuestionPlayback(player: detail.window?.player,
+                                        editing: focused || reasonFocused || commentFocused || picking || commenting))
     }
 
     private var prompt: String {
