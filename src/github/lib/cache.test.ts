@@ -121,9 +121,11 @@ describe("GitHub issue search backends", () => {
             comments: 1,
             reactions: { total_count: 2 },
         };
-        const http = spyOn(globalThis, "fetch").mockImplementation(async () =>
-            Response.json({ total_count: 1, items: [item] })
-        );
+        // Each backend reads its own body, so every call gets a fresh Response.
+        const reply = Object.assign(async () => Response.json({ total_count: 1, items: [item] }), {
+            preconnect: globalThis.fetch.preconnect,
+        });
+        const http = spyOn(globalThis, "fetch").mockImplementation(reply);
         const stdout = spyOn(out, "println").mockImplementation(() => {});
         const stderr = spyOn(out, "printlnErr").mockImplementation(() => {});
         try {
