@@ -318,7 +318,7 @@ export const set = defineMethod({
     result: z.unknown(),
     resultName: recordDoc,
     effect: "reversible",
-    doc: "Change the meeting's title, project and labels (a new project name joins the known projects; a new label joins the project's labels). unlabel removes labels.",
+    doc: "Change the meeting's title, project, labels or seats. Room and remote seats accept names or half-open intervals {name, fromSec?, toSec?}. A new project or label joins the known ones. unlabel removes labels.",
 });
 
 export const person = z.object({ name: z.string().min(1), email: z.string().min(1).optional() });

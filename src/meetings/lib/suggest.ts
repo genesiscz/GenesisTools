@@ -5,6 +5,7 @@ import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { activeSeatPeople, roomSeatNames, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import type { LineVoice } from "@genesiscz/utils/meetings/voice-features";
@@ -1567,7 +1568,11 @@ export function evidenceItems(options: {
             ? options.lines.map((line) => ({ ...line, present: presentAt(presence, line.startSec) }))
             : options.lines;
     const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
-    const assessment = assessIndicator({ lines: measured, selfName, roomPeople: options.record.seats?.room });
+    const assessment = assessIndicator({
+        lines: measured,
+        selfName,
+        roomPeople: wholeMeetingRoomPeople(options.record.seats),
+    });
     const stuck = assessment.ignored;
     const lines = measured.map((line) => {
         const shown = stuck.has(line.index) ? { ...line, speaking: {}, liveName: undefined } : line;
@@ -1828,6 +1833,8 @@ export function evidenceItems(options: {
             });
             // A confirmed voice match (its presence and mute checks passed in findingFor) names the person outright: the
             // channel and label fallbacks of R18 and R19 never replace it.
+            const activeRoom =
+                options.record.seats && activeSeatPeople({ seats: options.record.seats, atSec: line.startSec }).room;
             const finding = found?.rules.includes(MeetingRule.Voice)
                 ? found
                 : localVoiceFinding({
@@ -1844,9 +1851,7 @@ export function evidenceItems(options: {
                               .filter((person) => person.fromSec <= line.startSec)
                               .map((person) => person.name)
                       ).filter(
-                          (name) =>
-                              !sameName(name, selfName) &&
-                              !options.record.seats?.room.some((person) => sameName(name, person))
+                          (name) => !sameName(name, selfName) && !activeRoom?.some((person) => sameName(name, person))
                       ),
                       unusable: within(unusable, line.startSec),
                       found,
@@ -2050,11 +2055,12 @@ function labeledItems(options: {
         }
 
         if (label.reason === "not-the-seat-person") {
+            const active = record.seats && activeSeatPeople({ seats: record.seats, atSec: at });
             const owner =
                 label.next?.person ??
                 (label.seat === "mic"
-                    ? (record.seats?.room[0] ?? record.participants.find((person) => person.self)?.name)
-                    : record.seats?.remote[0]?.name);
+                    ? (active?.room[0] ?? record.participants.find((person) => person.self)?.name)
+                    : active?.remote[0]?.name);
             if (!owner) {
                 continue;
             }
@@ -2350,11 +2356,11 @@ export function suggestItems(options: {
                   presence: roster.length ? roster : options.presence,
                   speaking: evidence?.speaking,
                   matchedVoices,
-                  roomPeople: record.seats?.room,
+                  roomPeople: wholeMeetingRoomPeople(record.seats),
                   ignoredIndicator: assessIndicator({
                       lines: departureLines,
                       selfName: selfNameForDeparture,
-                      roomPeople: record.seats?.room,
+                      roomPeople: wholeMeetingRoomPeople(record.seats),
                   }).ignored,
               }).filter(
                   (event) =>
@@ -2697,7 +2703,7 @@ export function suggestItems(options: {
             ...options.meeting.participants.map((person) => person.name),
             ...(options.evidence?.selfName ? [options.evidence.selfName] : []),
             ...record.participants.map((person) => person.name),
-            ...(record.seats?.room ?? []),
+            ...roomSeatNames(record.seats),
             ...(record.seats?.remote.map((seat) => seat.name) ?? []),
             ...(options.evidence?.speaking.flatMap((reading) => [...reading.speaking, ...(reading.muted ?? [])]) ?? []),
             ...(record.attendance?.people.map((person) => person.name) ?? []),

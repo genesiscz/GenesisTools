@@ -2,9 +2,11 @@ import { nameKey } from "@genesiscz/utils/meetings/people";
 import {
     activeSeatPeople,
     type MeetingSeats,
-    type MicrophoneGroup,
-    meetingSeatsSchema,
+    microphoneSide,
     remoteSeatSchema,
+    roomSeatSchema,
+    seatSpan,
+    storedMeetingSeatsSchema,
 } from "@genesiscz/utils/meetings/seats";
 import { z } from "zod";
 import type { Finding } from "./findings";
@@ -12,7 +14,7 @@ import type { Finding } from "./findings";
 export const byChannelOptionsSchema = z
     .object({
         label: z.string().trim().min(1),
-        room: z.array(z.string().trim().min(1)).optional(),
+        room: z.array(roomSeatSchema).optional(),
         remote: z.array(z.union([z.string().trim().min(1), remoteSeatSchema])).optional(),
         micMax: z.number().min(0).max(1).default(0.2),
         micMin: z.number().min(0).max(1).default(0.85),
@@ -64,23 +66,6 @@ export interface ByChannelPlan {
     targets: Extract<Finding, { kind: "speaker-range" }>[];
 }
 
-/** The people of a microphone group whose members all hold seats of one kind (`seated`), or none. */
-function groupPeople(group: MicrophoneGroup | undefined, seated: readonly string[]): string[] | undefined {
-    const keys = new Set(seated.map(nameKey));
-    return group?.people.every((person) => keys.has(nameKey(person))) ? group.people.map(nameKey) : undefined;
-}
-
-/** A remote seat starts or ends inside the line: one person is not eligible for all of it. */
-function seatChangesWithin(seats: MeetingSeats, line: ChannelLine): boolean {
-    const toSec = line.toSec;
-    return (
-        toSec !== undefined &&
-        seats.remote.some((seat) =>
-            [seat.fromSec, seat.toSec].some((at) => at !== undefined && at > line.fromSec && at < toSec)
-        )
-    );
-}
-
 /** Channel evidence settles a person only when explicit seats leave one candidate. It never judges words. */
 export function planByChannel(options: {
     lines: readonly ChannelLine[];
@@ -88,22 +73,20 @@ export function planByChannel(options: {
     seats?: MeetingSeats;
 }): ByChannelPlan {
     const input = byChannelOptionsSchema.parse(options.input);
-    const seats = meetingSeatsSchema.parse({
+    const seats = storedMeetingSeatsSchema.parse({
         room: input.room ?? options.seats?.room ?? [],
         remote: input.remote ?? options.seats?.remote ?? [],
         ...(options.seats?.microphones ? { microphones: options.seats.microphones } : {}),
     });
     const groups = seats.microphones ?? [];
-    const remoteNames = seats.remote.map((seat) => seat.name);
     // The microphone channel is the owner's microphone (group `self`), else a group under this label; the system
     // channel narrows to a remote device group under this label. Without a group every seated person stays possible.
     const labelGroup = groups.find((group) => group.label === input.label);
-    const roomGroup =
-        groupPeople(
-            groups.find((group) => group.id === "self"),
-            seats.room
-        ) ?? groupPeople(labelGroup, seats.room);
-    const remoteGroup = groupPeople(labelGroup, remoteNames);
+    const labelSide = labelGroup && microphoneSide(seats, labelGroup);
+    const roomGroup = (
+        groups.find((group) => group.id === "self") ?? (labelSide === "room" ? labelGroup : undefined)
+    )?.people.map(nameKey);
+    const remoteGroup = labelSide === "remote" ? labelGroup?.people.map(nameKey) : undefined;
     const result: ByChannelPlan = {
         ranges: [],
         roomOnly: [],
@@ -192,18 +175,33 @@ export function planByChannel(options: {
         }
 
         const active = activeSeatPeople({ seats, atSec: line.fromSec });
+        const end = line.toSec ?? line.fromSec;
+        const crosses = seats[kind].some((row) => {
+            const { fromSec = 0, toSec = Infinity } = seatSpan(row);
+            return fromSec < toSec && [fromSec, toSec].some((t) => t > line.fromSec && t < end);
+        });
+        if (crosses) {
+            flush();
+            result.unresolved.push({
+                from: line.fromSec,
+                to: line.fromSec,
+                label: input.label,
+                lines: [line.index],
+                micShares: [share],
+                candidates: [],
+            });
+            continue;
+        }
         const candidates =
             kind === "room"
                 ? active.room.filter((person) => !roomGroup || roomGroup.includes(nameKey(person)))
-                : seatChangesWithin(seats, line)
-                  ? []
-                  : active.remote
-                        .filter((person) =>
-                            remoteGroup
-                                ? remoteGroup.includes(nameKey(person.name))
-                                : !person.label || person.label === input.label
-                        )
-                        .map((person) => person.name);
+                : active.remote
+                      .filter((person) =>
+                          remoteGroup
+                              ? remoteGroup.includes(nameKey(person.name))
+                              : !person.label || person.label === input.label
+                      )
+                      .map((person) => person.name);
         const confidence = kind === "room" ? 0.85 : active.remote.length === 1 ? 0.8 : 0.7;
 
         if (

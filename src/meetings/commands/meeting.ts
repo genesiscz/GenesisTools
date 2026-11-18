@@ -517,12 +517,15 @@ export function registerMeetingCommands(program: Command): void {
     program
         .command("set")
         .argument("<meeting>", MEETING_REF)
-        .description("Change a meeting's project, title or labels")
+        .description("Change a meeting's project, title, labels or seats")
         .option("--project <name>", "its project (a new name joins the known projects)")
         .option("--title <text>", "its title")
         .option("--label <text...>", "add labels (a new one joins the project's known labels)")
         .option("--unlabel <text...>", "remove labels from the meeting")
-        .option("--seats <json>", "explicit room, remote and microphone groups")
+        .option(
+            "--seats <json>",
+            "room and remote seats as names or {name, fromSec?, toSec?}, with optional microphone groups"
+        )
         .action(set);
 
     program

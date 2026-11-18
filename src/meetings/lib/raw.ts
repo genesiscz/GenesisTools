@@ -6,7 +6,12 @@ import type { EchoMetric } from "@genesiscz/utils/meetings/echo";
  */
 import type { PairedPerson } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { type MeetingSeats, personForAlias } from "@genesiscz/utils/meetings/seats";
+import {
+    type MeetingSeats,
+    personForAlias,
+    roomSeatNames,
+    wholeMeetingRoomPeople,
+} from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { lineEvidence, presentAt } from "@genesiscz/utils/transcribe/evidence";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -120,7 +125,7 @@ export function rawMeeting(options: {
     const assessment = assessIndicator({
         lines,
         selfName: selfName ?? evidence?.selfName ?? "",
-        roomPeople: record.seats?.room,
+        roomPeople: wholeMeetingRoomPeople(record.seats),
     });
     const local = new Set(
         localSpeechLines({
@@ -133,7 +138,7 @@ export function rawMeeting(options: {
         ...new Set([
             ...(presence?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
-            ...(record.seats?.room ?? []),
+            ...roomSeatNames(record.seats),
             ...(record.seats?.remote.map((person) => person.name) ?? []),
             ...meeting.speakers.map((speaker) => speaker.name),
             ...facts.people.filter(

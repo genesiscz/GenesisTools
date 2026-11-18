@@ -8,7 +8,12 @@ import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
-import { activeSeatPeople, meetingSeatsSchema, seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import {
+    activeSeatPeople,
+    meetingSeatsSchema,
+    seatIntervalsFor,
+    seatsFingerprint,
+} from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { embedVoice, VoiceUnavailableError } from "@genesiscz/utils/meetings/voice";
 import { clusterVoices, lineVoices, measureVoice, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
@@ -22,6 +27,7 @@ import { attributeByChannel } from "./lib/channel-operation";
 import { DecisionJournal } from "./lib/decision-journal";
 import { identifiedDepartures } from "./lib/departure";
 import { OpenedMeeting } from "./lib/opened-meeting";
+import { storedPresentAt } from "./lib/person-stays";
 import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { compactEvidence, rawMeeting } from "./lib/raw";
@@ -128,6 +134,12 @@ describe("seat suggestions", () => {
         });
         const presence = [{ name, fromSec: 0, toSec: 80 }];
         const seated = meetingRecordSchema.parse({ ...record, seats, attendance: { from: "teams", people: presence } });
+        expect(seatIntervalsFor(seats, "Example, Fern")).toEqual([
+            { side: "call", fromSec: 0, toSec: 60 },
+            { side: "mic", fromSec: 60, toSec: 120 },
+        ]);
+        expect(storedPresentAt(seated, name, 60)).toBe(true);
+        expect(storedPresentAt(seated, name, 90)).toBe(false);
         expect(microphoneCandidates(seated, 59)).toEqual([]);
         expect(microphoneCandidates(seated, 59, "desk")).toEqual([name]);
         for (const atSec of [60, 90]) {

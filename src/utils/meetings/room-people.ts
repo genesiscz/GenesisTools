@@ -1,6 +1,7 @@
 import { presenceSections, sameName } from "../transcribe/speakers";
+import { nameKey } from "./people";
 import type { MeetingRecord, MeetingStore } from "./record";
-import { activeSeatPeople } from "./seats";
+import { activeSeatPeople, type MeetingSeats, microphoneSide, type RemoteSeat, seatSpan } from "./seats";
 
 export interface MeetingPersonEdit {
     name: string;
@@ -11,21 +12,27 @@ export interface MeetingPersonEdit {
     via?: string;
 }
 
-/** Half-open attendance bounds apply to both room and remote device groups. */
+/** Occupants of the mapped microphone at this instant. Room occupancy is independent of call attendance. */
 export function microphoneCandidates(record: MeetingRecord, atSec: number, owner = "self"): string[] {
     if (!record.seats) {
         return [];
     }
     const active = activeSeatPeople({ seats: record.seats, atSec });
-    const names = new Set([...active.room, ...active.remote.map((person) => person.name)]);
     const groups = record.seats.microphones ?? [];
     const group = groups.find((one) => one.id === owner || one.deviceId === owner);
-    return (group?.people ?? (owner === "self" ? active.room : []))
-        .filter((name) => names.has(name))
-        .filter((name) => {
-            const stays = record.attendance?.people.filter((stay) => sameName(stay.name, name));
-            return !stays?.length || stays.some((stay) => atSec >= stay.fromSec && atSec < stay.toSec);
-        });
+    if (!group) {
+        return owner === "self" ? active.room : [];
+    }
+    const side = microphoneSide(record.seats, group);
+    const names = new Set((side === "room" ? active.room : active.remote.map((row) => row.name)).map(nameKey));
+    return group.people.filter((name) => {
+        if (!names.has(nameKey(name))) {
+            return false;
+        }
+        const stays =
+            side === "remote" ? record.attendance?.people.filter((stay) => sameName(stay.name, name)) : undefined;
+        return !stays?.length || stays.some((stay) => atSec >= stay.fromSec && atSec < stay.toSec);
+    });
 }
 
 type AttendanceStay = NonNullable<MeetingRecord["attendance"]>["people"][number];
@@ -80,7 +87,9 @@ export async function editMeetingPerson(options: {
             const same = (value: string) => sameName(value, name);
             // An omitted placement is read from the record as it is under the lock: an edit that moved the person
             // while this one waited is kept.
-            const atMic = edit.atMic ?? (!edit.via && next.seats?.room.some((person) => same(person)));
+            const seats: MeetingSeats = next.seats ?? { room: [], remote: [] };
+            const inRoom = seats.room.some((row) => same(seatSpan(row).name));
+            const atMic = edit.atMic ?? (!edit.via && inRoom);
             const via =
                 edit.via ??
                 (edit.atMic === undefined && !atMic
@@ -88,6 +97,15 @@ export async function editMeetingPerson(options: {
                     : undefined);
             const prior = next.participants.find((person) => same(person.name));
             const priorSeat = next.seats?.remote.find((person) => same(person.name));
+            // Attendance-only edits must not move a physical seat or collapse a rejoin. The native person
+            // editor also sends the displayed placement when only its attendance clocks were edited.
+            const currentDevice = seats.microphones?.find(
+                (group) => microphoneSide(seats, group) === "remote" && group.people.some(same)
+            )?.deviceId;
+            const placementSpecified = edit.atMic !== undefined || edit.via !== undefined;
+            const samePlacement =
+                Boolean(inRoom || priorSeat) &&
+                (!placementSpecified || (atMic ? inRoom : priorSeat && via === currentDevice));
             if (options.selfName && !same(options.selfName) && !next.participants.some((person) => person.self)) {
                 next.participants.push({ name: options.selfName, self: true, from: ["source"] });
             }
@@ -97,12 +115,37 @@ export async function editMeetingPerson(options: {
             const table = next.attendance?.people ?? (endSec === undefined ? [] : rosterStays(next, endSec));
             next.participants = next.participants.filter((person) => !same(person.name));
             const stays = table.filter((person) => !same(person.name));
-            const seats = next.seats ?? { room: [], remote: [] };
-            seats.room = seats.room.filter((person) => !same(person));
-            seats.remote = seats.remote.filter((person) => !same(person.name));
-            seats.microphones = (seats.microphones ?? [])
-                .map((group) => ({ ...group, people: group.people.filter((person) => !same(person)) }))
-                .filter((group) => group.people.length);
+            if (edit.action === "remove" || !samePlacement) {
+                // An explicit move replaces only this window. Keep both pieces of a seat it cuts through.
+                const remaining = (row: RemoteSeat): RemoteSeat[] => {
+                    if (edit.action === "remove") {
+                        return [];
+                    }
+                    if ((row.toSec ?? Infinity) <= fromSec || (row.fromSec ?? 0) >= toSec!) {
+                        return [row];
+                    }
+                    return [
+                        ...((row.fromSec ?? 0) < fromSec ? [{ ...row, toSec: fromSec }] : []),
+                        ...((row.toSec ?? Infinity) > toSec! ? [{ ...row, fromSec: toSec! }] : []),
+                    ];
+                };
+                const groups = (seats.microphones ?? []).map((group) => ({
+                    group,
+                    side: microphoneSide(seats, group),
+                }));
+                seats.room = seats.room.flatMap((row): typeof seats.room =>
+                    same(seatSpan(row).name) ? remaining(seatSpan(row)) : [row]
+                );
+                seats.remote = seats.remote.flatMap((row) => (same(row.name) ? remaining(row) : [row]));
+                seats.microphones = groups
+                    .map(({ group, side }) => {
+                        const stillSeated = seats[side].some((row) => same(seatSpan(row).name));
+                        return stillSeated
+                            ? group
+                            : { ...group, people: group.people.filter((member) => !same(member)) };
+                    })
+                    .filter((group) => group.people.length);
+            }
             if (edit.action === "add") {
                 next.participants.push({
                     ...prior,
@@ -113,14 +156,29 @@ export async function editMeetingPerson(options: {
                     stays: [{ fromSec, toSec: toSec!, source: "hand", leaveSource: "hand", confidence: 1 }],
                 });
                 stays.push({ name, fromSec, toSec: toSec!, joinedAtExact: true, leftAtExact: true });
+            }
+            if (edit.action === "add" && !samePlacement) {
+                seats.microphones ??= [];
                 if (atMic) {
-                    const self = next.participants.find((person) => person.self)?.name;
-                    seats.room = [...new Set([...seats.room, ...(self ? [self] : []), name])];
                     const group = seats.microphones.find((one) => one.id === "self");
+                    const self = !group ? next.participants.find((person) => person.self)?.name : undefined;
+                    if (
+                        self &&
+                        !same(self) &&
+                        !seats.room.some((row) => sameName(seatSpan(row).name, self)) &&
+                        !seats.remote.some((row) => sameName(row.name, self))
+                    ) {
+                        seats.room.push(self);
+                    }
+                    seats.room.push({ name, fromSec, toSec: toSec! });
+                    const members = [
+                        ...(self && seats.room.some((row) => sameName(seatSpan(row).name, self)) ? [self] : []),
+                        name,
+                    ];
                     if (group) {
-                        group.people = [...new Set([...group.people, ...(self ? [self] : []), name])];
+                        group.people = [...new Set([...group.people, ...members])];
                     } else {
-                        seats.microphones.push({ id: "self", people: [...new Set([...(self ? [self] : []), name])] });
+                        seats.microphones.push({ id: "self", people: [...new Set(members)] });
                     }
                 } else {
                     seats.remote.push({ ...priorSeat, name, fromSec, toSec: toSec! });

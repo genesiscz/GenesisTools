@@ -11,7 +11,7 @@ import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
-import { meetingSeatsSchema } from "./seats";
+import { storedMeetingSeatsSchema } from "./seats";
 import { voiceEvidenceSchema } from "./voice";
 
 const { log } = logger.scoped("meetings-record");
@@ -458,7 +458,7 @@ export const meetingRecordSchema = z.object({
     audio: z.object({ sources: z.record(z.string().min(1), preservedSourceAudioSchema) }).optional(),
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
-    seats: meetingSeatsSchema.optional(),
+    seats: storedMeetingSeatsSchema.optional(),
     review: z
         .object({
             listen: z

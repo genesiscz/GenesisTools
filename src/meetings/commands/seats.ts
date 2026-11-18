@@ -1,7 +1,7 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { nameKey } from "@genesiscz/utils/meetings/people";
-import type { MeetingSeats } from "@genesiscz/utils/meetings/seats";
+import { type MeetingSeats, type RemoteSeat, roomSeatNames, seatSpan } from "@genesiscz/utils/meetings/seats";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -20,15 +20,17 @@ interface Options {
 
 function seatLabels(seats: MeetingSeats | null): Map<string, string> {
     const labels = new Map<string, string>();
-    for (const name of seats?.room ?? []) {
-        labels.set(nameKey(name), "room");
-    }
-    for (const remote of seats?.remote ?? []) {
-        const bounds =
-            remote.fromSec !== undefined || remote.toSec !== undefined
-                ? ` ${formatClock(remote.fromSec ?? 0)}–${remote.toSec === undefined ? "end" : formatClock(remote.toSec)}`
-                : "";
-        labels.set(nameKey(remote.name), `remote${bounds}${remote.label ? ` (${remote.label})` : ""}`);
+    for (const side of ["room", "remote"] as const) {
+        for (const row of seats?.[side] ?? []) {
+            const seat: RemoteSeat = seatSpan(row);
+            const bounds =
+                seat.fromSec !== undefined || seat.toSec !== undefined
+                    ? ` ${formatClock(seat.fromSec ?? 0)}–${seat.toSec === undefined ? "end" : formatClock(seat.toSec)}`
+                    : "";
+            const key = nameKey(seat.name);
+            const label = `${side}${bounds}${seat.label ? ` (${seat.label})` : ""}`;
+            labels.set(key, [labels.get(key), label].filter(Boolean).join(", "));
+        }
     }
     return labels;
 }
@@ -90,10 +92,11 @@ async function seats(ref: string, opts: Options): Promise<void> {
             table.push([person.name, current.get(key) ?? "—", suggested.get(key) ?? person.seat, person.reason]);
         }
         for (const name of [
-            ...(report.current?.room ?? []),
+            ...roomSeatNames(report.current ?? undefined),
             ...(report.current?.remote.map((seat) => seat.name) ?? []),
         ]) {
             if (!listed.has(nameKey(name))) {
+                listed.add(nameKey(name));
                 table.push([name, current.get(nameKey(name)) ?? "—", "—", "Only in the saved seats."]);
             }
         }

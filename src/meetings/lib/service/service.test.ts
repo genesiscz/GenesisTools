@@ -1114,7 +1114,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             joinedAtExact: true,
             leftAtExact: true,
         });
-        expect(reopened.seats?.room).toContain("River Example");
+        expect(reopened.seats?.room).toContainEqual({ name: "River Example", fromSec: 3, toSec: 8 });
         expect(reopened.seats?.microphones?.find((group) => group.id === "self")?.people).toContain("River Example");
         await client.call("meeting.people.edit", { meeting: REVIEW.id, action: "remove", name: "River Example" });
         expect(
@@ -1306,12 +1306,17 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         const { client, store } = await ADAPTERS[kind]();
         const name = "Fern Example";
         const group = { id: "self", people: ["Reed Example", name] };
-        const legacy = { room: ["Reed Example", name], remote: ["Ash Example"], microphones: [group] };
+        const legacy = {
+            room: ["Reed Example", name],
+            remote: ["Ash Example", { name: "Empty Example", toSec: 0 }],
+            microphones: [group],
+        };
         const file = store.path(REVIEW.id);
         writeFileSync(file, SafeJSON.stringify({ ...store.read(REVIEW.id), seats: legacy }));
         const before = readFileSync(file);
         const shown = await client.call("meeting.show", { ref: REVIEW.id });
         expect(shown.seats?.room).toEqual(legacy.room);
+        expect(shown.seats?.remote).toContainEqual({ name: "Empty Example", toSec: 0 });
         expect(readFileSync(file)).toEqual(before);
         const seats = {
             ...shown.seats!,
@@ -1323,7 +1328,16 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             meeting: REVIEW.id,
             action: { kind: "set", title: "Review with seats" },
         });
-        expect(new MeetingStore(store.storage).read(REVIEW.id)?.seats).toEqual(seats);
+        await client.call("meeting.people.edit", { meeting: REVIEW.id, action: "add", name, fromSec: 0, toSec: 80 });
+        const reopened = new MeetingStore(store.storage).read(REVIEW.id);
+        expect(reopened?.seats).toEqual(seats);
+        expect(reopened?.attendance?.people).toContainEqual({
+            name,
+            fromSec: 0,
+            toSec: 80,
+            joinedAtExact: true,
+            leftAtExact: true,
+        });
         expect(SafeJSON.parse(readFileSync(file, "utf8"))).toMatchObject({ seats });
         const saved = readFileSync(file);
         for (const invalid of [
@@ -1336,6 +1350,22 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             ).rejects.toThrow();
             expect(readFileSync(file)).toEqual(saved);
         }
+        const visitor = "Ash Example";
+        await client.call("meeting.people.edit", {
+            meeting: REVIEW.id,
+            action: "add",
+            name: visitor,
+            atMic: true,
+            fromSec: 40,
+            toSec: 50,
+        });
+        const moved = new MeetingStore(store.storage).read(REVIEW.id)?.seats;
+        expect(moved?.room).toEqual([...seats.room, { name: visitor, fromSec: 40, toSec: 50 }]);
+        expect(moved?.remote.filter((row) => row.name === visitor)).toEqual([
+            { name: visitor, toSec: 40 },
+            { name: visitor, fromSec: 50 },
+        ]);
+        expect(moved?.microphones).toEqual([{ ...group, people: [...group.people, visitor] }]);
     });
 
     test("service journal reads retain the copied meeting's provenance", async () => {
@@ -3305,6 +3335,13 @@ async function captureExamples(): Promise<Example[]> {
         "A source meeting another record holds: refused, so two records never share one source meeting."
     );
     await ask(window, "voice.backfill", { project: "Unassigned-fixture", dryRun: true });
+    await store.update(RETRO.id, { command: "fixture", change: "seat transition" }, (record) => {
+        record.seats = {
+            room: ["Reed Example", { name: "Fern Example", fromSec: 60, toSec: 120 }],
+            remote: [{ name: "Fern Example", toSec: 60, label: "Guest" }],
+            microphones: [{ id: "self", people: ["Reed Example", "Fern Example"] }],
+        };
+    });
     await ask(window, "meeting.seats.suggest", { meeting: RETRO.id });
     await ask(window, "meeting.thresholds.preview", { meeting: "nope", values: {} });
     return examples;

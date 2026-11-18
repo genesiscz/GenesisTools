@@ -14,7 +14,7 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
-import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import { meetingSeatsSchema, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 import { lineVoiceSchema } from "@genesiscz/utils/meetings/voice-features";
 import {
     alignedWordSchema,
@@ -1434,7 +1434,7 @@ const meetingSeatsSuggest = defineMethod({
     params: z.object({ meeting: meetingRef, room: seatNames, remote: seatNames }).strict(),
     result: z.object({
         meeting: z.string(),
-        current: meetingSeatsSchema.nullable(),
+        current: storedMeetingSeatsSchema.nullable(),
         suggestion: z.object({
             seats: meetingSeatsSchema,
             people: z.array(

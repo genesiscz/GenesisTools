@@ -102,13 +102,25 @@ function infer(facts: Facts, reads: ReadonlyArray<ReadonlySet<string>>): Omit<Se
     return { seat: "unsure", reason: "No call roster entry or decided lines.", confidence: 0 };
 }
 
-function remoteSeat(name: string, stays: Stay[]): RemoteSeat {
-    if (!stays.length) {
-        return { name };
+/** Roster records can overlap. Coalesce only touching/overlapping stays and keep each rejoin. */
+function remoteSeats(name: string, stays: Stay[] | undefined): RemoteSeat[] {
+    if (!stays) {
+        return [{ name }];
     }
-    const fromSec = Math.min(...stays.map((stay) => stay.fromSec));
-    const end = Math.max(...stays.map((stay) => stay.toSec ?? Infinity));
-    return { name, fromSec, ...(Number.isFinite(end) ? { toSec: end } : {}) };
+    const rows: RemoteSeat[] = [];
+    for (const stay of [...stays].sort((a, b) => a.fromSec - b.fromSec)) {
+        if (stay.toSec !== undefined && stay.toSec <= stay.fromSec) {
+            continue;
+        }
+        const last = rows.at(-1);
+        if (last && stay.fromSec <= (last.toSec ?? Infinity)) {
+            last.toSec =
+                last.toSec === undefined || stay.toSec === undefined ? undefined : Math.max(last.toSec, stay.toSec);
+        } else {
+            rows.push({ name, fromSec: stay.fromSec, ...(stay.toSec === undefined ? {} : { toSec: stay.toSec }) });
+        }
+    }
+    return rows;
 }
 
 export function suggestSeats(options: {
@@ -192,11 +204,10 @@ export function suggestSeats(options: {
     const seats: MeetingSeats = { room: [], remote: [] };
     const people: SeatPerson[] = [];
     for (const [key, row] of facts) {
-        const stays = baselineStays(record, row.name)?.map(({ stay }) => stay) ?? [];
+        const stays = baselineStays(record, row.name)?.map(({ stay }) => stay);
         const reads = observations.filter(
             ({ at }) =>
-                !stays.length ||
-                stays.some((stay) => at >= stay.fromSec && (stay.toSec === undefined || at < stay.toSec))
+                !stays || stays.some((stay) => at >= stay.fromSec && (stay.toSec === undefined || at < stay.toSec))
         );
         const picked = manual.get(key);
         const decision = picked
@@ -209,7 +220,7 @@ export function suggestSeats(options: {
         if (decision.seat === "room") {
             seats.room.push(row.name);
         } else if (decision.seat === "remote") {
-            seats.remote.push(remoteSeat(row.name, stays));
+            seats.remote.push(...remoteSeats(row.name, stays));
         }
     }
     return { seats, people };

@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { channelEnergy, ENERGY_BLOCKS_PER_SEC } from "@genesiscz/utils/meetings/energy";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { DEFAULT_SPAN_GAP_SEC, sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -155,8 +156,7 @@ export async function readRows(
         return undefined;
     });
     const [evidence, energy, presence] = facts ?? [];
-    const atMic = [
-        ...(record.seats?.room ?? []),
+    const owners = [
         ...record.participants.filter((person) => person.self).map((person) => person.name),
         ...(evidence?.selfName ? [evidence.selfName] : []),
     ];
@@ -187,13 +187,10 @@ export async function readRows(
                 );
             })
             .map((item) => item.id);
-        const remotePresent = record.seats
-            ? record.seats.remote.some(
-                  (person) =>
-                      line.startSec >= (person.fromSec ?? 0) &&
-                      (person.toSec === undefined || line.startSec < person.toSec) &&
-                      personPresent(record, person.name, line.startSec)
-              )
+        const active = record.seats && activeSeatPeople({ seats: record.seats, atSec: line.startSec });
+        const atMic = [...owners, ...(active?.room ?? [])];
+        const remotePresent = active
+            ? active.remote.some((person) => personPresent(record, person.name, line.startSec))
             : presence?.some(
                   (person) =>
                       !person.self &&

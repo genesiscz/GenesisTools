@@ -3,7 +3,8 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { parseClock } from "@genesiscz/utils/transcribe/render";
@@ -200,6 +201,12 @@ async function evidence(
                   )
                   .reduce((sum, line) => sum + line.text.split(/\s+/).filter(Boolean).length, 0)
             : undefined;
+        const sharedNames = new Set(
+            lines.flatMap((line) => {
+                const people = microphoneCandidates(record, line.startSec);
+                return people.length > 1 ? people : [];
+            })
+        );
         const volume = found.tokens
             ? {
                   micTokens: found.tokens.mic,
@@ -222,10 +229,7 @@ async function evidence(
                             knownLines: lines.filter((line) => !line.speakingUnknown).length,
                             unknownLines: lines.filter((line) => line.speakingUnknown).length,
                         },
-                        volume:
-                            record.seats && record.seats.room.length > 1
-                                ? { ...volume, spread: false, sharedMic: true }
-                                : volume,
+                        volume: sharedNames.size > 1 ? { ...volume, spread: false, sharedMic: true } : volume,
                         channels: energy.calibration ?? null,
                         files: found.files,
                         devices: found.devices,
@@ -239,7 +243,7 @@ async function evidence(
                             // A shared device names no winner: several people speak into it, whatever the share.
                             const shared =
                                 withCandidates.deviceCandidates.length > 1 ||
-                                (line.winner === SELF && sharedOwnMicrophone(record));
+                                (line.winner === SELF && microphoneCandidates(record, line.startSec).length > 1);
                             return { ...withCandidates, winner: shared ? undefined : line.winner };
                         }),
                     },
@@ -258,8 +262,8 @@ async function evidence(
             "LABEL \\ VOICE",
             ...identities.map((name) =>
                 name === SELF
-                    ? record.seats && record.seats.room.length > 1
-                        ? `microphone group (${record.seats.room.join(", ")})`
+                    ? sharedNames.size > 1
+                        ? `microphone group (${[...sharedNames].join(", ")})`
                         : `you (${found.selfName ?? "mic"})`
                     : name
             ),
@@ -286,7 +290,7 @@ async function evidence(
             );
         }
 
-        if (record.seats && record.seats.room.length > 1) {
+        if (sharedNames.size > 1) {
             ui.dim("A shared microphone identifies its active people as candidates, not its owner as speaker.");
         } else if (volume) {
             const say =
@@ -308,12 +312,6 @@ async function evidence(
     } catch (err) {
         fail(err);
     }
-}
-
-/** More than one person speaks into the owner's microphone: its microphone group, else the room seats. */
-function sharedOwnMicrophone(record: MeetingRecord): boolean {
-    const group = record.seats?.microphones?.find((one) => one.id === "self");
-    return (group?.people.length ?? record.seats?.room.length ?? 0) > 1;
 }
 
 export function registerEvidenceCommand(program: Command): void {

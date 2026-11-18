@@ -22,9 +22,19 @@ import { rejectFilterSchema } from "./reject-filter";
 /** The file in a meeting's folder that keeps its decision journal: one entry per line, oldest first, append-only. */
 export const JOURNAL_FILE = "decisions.ndjson";
 
-import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import { meetingSeatsSchema, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 
 const itemRef = z.string().min(1);
+
+const setFieldsAction = z.object({
+    kind: z.literal("set"),
+    seats: meetingSeatsSchema.optional(),
+    seatsIfAbsent: z.literal(true).optional(),
+    project: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    labels: z.array(z.string().min(1)).optional(),
+    unlabel: z.array(z.string().min(1)).optional(),
+});
 
 /** One decision a person, an agent or a rule makes on a meeting. Item references take an id (`i42`) or `Q12`. */
 export const DECISION_ACTION_OPTIONS = [
@@ -152,15 +162,7 @@ export const DECISION_ACTION_OPTIONS = [
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels
      * to add and labels to remove.
      */
-    z.object({
-        kind: z.literal("set"),
-        seats: meetingSeatsSchema.optional(),
-        seatsIfAbsent: z.literal(true).optional(),
-        project: z.string().min(1).optional(),
-        title: z.string().min(1).optional(),
-        labels: z.array(z.string().min(1)).optional(),
-        unlabel: z.array(z.string().min(1)).optional(),
-    }),
+    setFieldsAction,
 ] as const;
 
 export const decisionActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS]);
@@ -210,7 +212,11 @@ const savedJournalActionSchema = z.preprocess(
         }
         return value;
     },
-    z.union([journalActionSchema, unsupportedJournalAction])
+    z.union([
+        journalActionSchema,
+        setFieldsAction.extend({ seats: storedMeetingSeatsSchema.optional() }),
+        unsupportedJournalAction,
+    ])
 );
 
 /** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
@@ -243,8 +249,8 @@ export const MEETING_FIELDS = ["project", "title", "labels", "seats"] as const;
 /** One meeting field a decision changed, before and after (absent: no value). */
 export const fieldChangeSchema = z.object({
     field: z.enum(MEETING_FIELDS),
-    before: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
-    after: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
+    before: z.union([z.string(), z.array(z.string()), storedMeetingSeatsSchema]).optional(),
+    after: z.union([z.string(), z.array(z.string()), storedMeetingSeatsSchema]).optional(),
 });
 export type FieldChange = z.infer<typeof fieldChangeSchema>;
 
