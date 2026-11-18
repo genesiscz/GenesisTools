@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
+import type { SessionChangesWindow } from "@genesiscz/utils/agent-sessions/types";
 import { repoRootOf } from "@genesiscz/utils/git/repo-root";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { analyzeCommand, type CommandAnalysis, isLockOrManifest, namedBy } from "./command";
@@ -490,7 +491,7 @@ function feedsLaterCommands(command: string, written: WrittenFiles): boolean {
 }
 
 /** `cat > f <<EOF` is the only form `analyzeCommand` records a file text from; this test is wider. */
-function writesHeredocFile(text: string): boolean {
+export function writesHeredocFile(text: string): boolean {
     return text.includes("<<") && /\bcat\b/.test(text);
 }
 
@@ -597,6 +598,12 @@ function keptAnalyses(sessionId: string): Map<string, KeptAnalysis> {
 }
 
 export function computeSessionChanges(input: SessionChangesInput): ComputedSessionChanges {
+    return computeChanges(input, null).changes;
+}
+
+export function computeChanges(input: SessionChangesInput, window: SessionChangesWindow | null) {
+    const cover = new Set<string>();
+    const triggers = { writers: 0, rows: 0 };
     const rows = input.log ?? [];
     const calls = input.transcript?.calls ?? [];
     const findRoot = input.repoRoot ?? repoRootOf;
@@ -625,9 +632,11 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     }
 
     const home = input.home ?? homedir();
-    const edited = calls
-        .filter((call) => fileToolVia(call.name) !== null && call.filePath && !call.isError)
-        .map((call) => dirname(call.filePath ?? ""));
+    const edited =
+        window?.editedDirs ??
+        calls
+            .filter((call) => fileToolVia(call.name) !== null && call.filePath && !call.isError)
+            .map((call) => dirname(call.filePath ?? ""));
 
     // A repository a file tool edited in is one the session works in, like its cwd.
     for (const root of workRoots({ dirs: [...new Set(edited)], repoRoot, home, bareDirs: false })) {
@@ -650,12 +659,31 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     }
 
     for (const row of rows) {
-        if (!turns.has(row.turn)) {
+        if (!turns.has(row.turn) && !window?.earlierTurns.has(row.turn)) {
             turns.set(row.turn, { turnId: row.turn, index: null, at: row.ts, files: [], excluded: [] });
         }
     }
 
-    const shellRows = rows.filter((row) => row.source === "bash");
+    const held = window ? new Map(calls.map((call) => [call.id, call])) : null;
+    const shellRows = rows.filter((row) => {
+        if (row.source !== "bash" || !window || !held) {
+            return row.source === "bash";
+        }
+
+        const named = row.toolUseId ? held.get(row.toolUseId) : undefined;
+        if (named?.command != null && named.finishedAt !== null) {
+            return true;
+        }
+        if (window.earlierTurns.has(row.turn)) {
+            return false;
+        }
+        if (row.toolUseId && !named && window.shellCalls.has(row.toolUseId)) {
+            cover.add(row.toolUseId);
+            triggers.rows++;
+            return false;
+        }
+        return true;
+    });
     const matched = matchRows(shellRows, calls);
     const rowsByCall = new Map<string, LoggedChange[]>();
     const orphans: LoggedChange[] = [];
@@ -681,9 +709,22 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     const written = new WrittenFiles();
     const chronological = [...calls].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 
+    // Last known, trustworthy text before the current command, including cached writes.
+    const trustedAt = new Map<string, number>();
     for (const call of chronological) {
+        const trusted = !window?.earlierTurns.has(call.turnId);
+        const recordWriter = (path: string) => {
+            if (window) {
+                if (trusted) {
+                    trustedAt.set(path, call.startedAt ?? 0);
+                } else {
+                    trustedAt.delete(path);
+                }
+            }
+        };
         if (fileToolVia(call.name) && call.filePath && typeof call.after === "string") {
             written.set(resolve(call.filePath), call.after);
+            recordWriter(resolve(call.filePath));
             continue;
         }
 
@@ -710,6 +751,32 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
             keptByCall.set(call.id, { command, cwd, analysis, read: [...trace.read], wrote: [...trace.wrote] });
         }
 
+        if (window) {
+            const trace = keptByCall.get(call.id);
+            if (trace && trusted) {
+                for (const [path] of trace.read) {
+                    const prior = trustedAt.get(path) ?? Number.NEGATIVE_INFINITY;
+                    const writer = window.writersOf(path).findLast((candidate) => {
+                        const at = candidate.at ?? 0;
+                        const source = held?.get(candidate.callId);
+                        return (
+                            at >= prior &&
+                            at <= (call.startedAt ?? 0) &&
+                            candidate.callId !== call.id &&
+                            (!source || window.earlierTurns.has(source.turnId))
+                        );
+                    });
+                    if (writer) {
+                        cover.add(writer.callId);
+                        triggers.writers++;
+                    }
+                }
+            }
+            for (const [path] of trace?.wrote ?? []) {
+                recordWriter(path);
+            }
+        }
+
         analyses.set(call.id, analysis);
 
         if (analysis.installs && !call.isError) {
@@ -730,7 +797,7 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     };
 
     for (const call of calls) {
-        if (!inScope(call.turnId)) {
+        if (!inScope(call.turnId) || window?.earlierTurns.has(call.turnId)) {
             continue;
         }
 
@@ -767,7 +834,7 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     const fileRows = input.transcript ? [] : rows.filter((row) => row.source !== "bash");
 
     for (const row of [...orphans, ...fileRows]) {
-        if (!inScope(row.turn)) {
+        if (!inScope(row.turn) || window?.earlierTurns.has(row.turn)) {
             continue;
         }
 
@@ -807,7 +874,11 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     }
 
     const ordered = [...turns.values()];
-    return { sessionId: input.sessionId, turns: ordered, files: mergeTurnFiles(ordered), blobs };
+    return {
+        changes: { sessionId: input.sessionId, turns: ordered, files: mergeTurnFiles(ordered), blobs },
+        cover: [...cover],
+        triggers,
+    };
 }
 
 /** Persist the blobs a set of files names (for a reader that resolves ids in a store). */

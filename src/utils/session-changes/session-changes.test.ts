@@ -5,11 +5,13 @@ import { dirname, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import type { SessionChangesWindow } from "@genesiscz/utils/agent-sessions/types";
 import { changeLogPath } from "@genesiscz/utils/agents/change-log";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { computeChanges } from "./compute";
 import {
     analyzeCommand,
     computeSessionChanges,
@@ -934,5 +936,42 @@ describe("findCodexRollout (Codex 0.164 compresses old rollouts to .jsonl.zst)",
         } finally {
             debug.mockRestore();
         }
+    });
+});
+
+describe("window dependencies", () => {
+    const transcript = transcriptOf("covers", [["p2", "", 10]], [shell("run", "p2", "bash run.sh", [11, 12])]);
+    const window: SessionChangesWindow = {
+        transcript,
+        transcriptPath: "fixture",
+        earlierTurns: new Set(["p1"]),
+        shellCalls: new Set(["old-shell", "run"]),
+        editedDirs: [],
+        writersOf: (path) => (path === REPO + "/run.sh" ? [{ callId: "script", at: ms(1), wildcard: false }] : []),
+        complete: false,
+        windowTurns: 1,
+        sessionTurns: 2,
+    };
+
+    it("covers the earlier script on fresh and cached shell analyses", () => {
+        for (let i = 0; i < 2; i++) {
+            const answer = computeChanges({ sessionId: "covers", transcript, repoRoot }, window);
+            expect(answer.cover).toEqual(["script"]);
+            expect(answer.triggers.writers).toBe(1);
+        }
+    });
+
+    it("covers a missing named shell only for rows outside earlier turns", () => {
+        const log = [
+            row("p1", REPO + "/ignored", 1, { toolUseId: "old-shell" }),
+            row("orphan", REPO + "/found", 11, { toolUseId: "old-shell" }),
+        ];
+        const answer = computeChanges(
+            { sessionId: "rows", log, transcript, repoRoot },
+            { ...window, writersOf: () => [] }
+        );
+        expect(answer.cover).toEqual(["old-shell"]);
+        expect(answer.triggers.rows).toBe(1);
+        expect(answer.changes.turns.map((turn) => turn.turnId)).toEqual(["p2", "orphan"]);
     });
 });

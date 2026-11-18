@@ -12,6 +12,33 @@ export interface SessionChangesRead {
     transcript: SessionTranscript;
 }
 
+export interface ChangesWindowRequest {
+    turns: number;
+    /** Calls whose final turn must be held. */
+    cover?: readonly string[];
+}
+
+export interface WindowWriter {
+    callId: string;
+    at: number | null;
+    wildcard: boolean;
+}
+
+export interface SessionChangesWindow extends SessionChangesRead {
+    earlierTurns: ReadonlySet<string>;
+    editedDirs: readonly string[];
+    shellCalls: ReadonlySet<string>;
+    writersOf(path: string): readonly WindowWriter[];
+    complete: boolean;
+    windowTurns: number;
+    sessionTurns: number;
+    lateResultCovers?: number;
+}
+
+export type ChangesWindowRead =
+    | { supported: true; window: SessionChangesWindow }
+    | { supported: false; reason: string };
+
 export type AgentKind = AccountProviderAlias;
 
 export interface AgentSession<Kind extends string = AgentKind> {
