@@ -18,6 +18,7 @@ import {
     STOP_ANSWER_MS,
 } from "@app/meetings/lib/recorder-shared";
 import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manifest";
+import { MeetingLevels } from "@genesiscz/utils/meetings/levels";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -30,6 +31,7 @@ import {
 import { settingsChange } from "@genesiscz/utils/screen-recorder/session";
 import { CaptureError } from "@genesiscz/utils/screen-recorder/types";
 import { collectRecord } from "./collect";
+import { appendMeetingLevels } from "./levels";
 import { startOcrWorker } from "./ocr-worker";
 import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
 
@@ -38,7 +40,7 @@ import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
  * controls are refused while it stops, each capture takes a settings change on its own, and the socket stays open a
  * moment for the stop answer. The meeting's own steps are the run's.
  */
-function meetingRecorderConfig(run: MeetingRun) {
+function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
     const { store, meetingId, deps, state } = run;
     return defineRecorderConfig<string[]>((recording) => {
         // No OCR here: each kept frame goes into the frame index, and the meeting's OCR worker reads it (ocr-worker.ts).
@@ -49,6 +51,8 @@ function meetingRecorderConfig(run: MeetingRun) {
             convert: deps.toJpeg,
         });
         const salvages = new Set<Promise<void>>();
+        const levels = run.capture.levels.enabled ? new MeetingLevels(minSeparation) : undefined;
+        let stopLevels: (() => void) | undefined;
 
         return {
             kind: "meeting",
@@ -110,6 +114,7 @@ function meetingRecorderConfig(run: MeetingRun) {
                 save: (marker) => run.recordingRecord.addMarker(marker),
             },
             hooks: {
+                onAudioLevels: levels ? (block) => levels.observe(block) : undefined,
                 onAudioSegment: (segment) => run.keptSound(segment),
                 onAudioWarning: (warning) => {
                     run.note(warning);
@@ -120,8 +125,27 @@ function meetingRecorderConfig(run: MeetingRun) {
                     state.sound = sound;
                     run.saveState();
                 },
-                beforeLoop: () => run.begin(recording),
+                beforeLoop: async () => {
+                    await run.begin(recording);
+                    if (levels) {
+                        stopLevels = deps.scheduleLevels((atMs) => {
+                            try {
+                                appendMeetingLevels(
+                                    run.folder,
+                                    levels.snapshot(atMs, {
+                                        muted: recording.audio.muted,
+                                        paused: recording.paused,
+                                    })
+                                );
+                            } catch (error) {
+                                run.note(`Could not write recording levels: ${errorText(error)}`);
+                                log.warn({ meetingId, error }, "could not write recording levels");
+                            }
+                        }, run.capture.levels.intervalSec * 1000);
+                    }
+                },
                 afterLoop: async () => {
+                    stopLevels?.();
                     await Promise.all(salvages);
                     await run.salvageTracks(run.pieceDir);
                     rmSync(run.pieceDir, { recursive: true, force: true });
@@ -309,7 +333,7 @@ export async function runRecorder(options: RunRecorderOptions): Promise<Recorder
 
     try {
         const run = new MeetingRun({ ...options, deps, initial, stateFile });
-        const recording = new FrameRecording(meetingRecorderConfig(run));
+        const recording = new FrameRecording(meetingRecorderConfig(run, options.minSeparation));
         run.state.displaySpans = recording.displayBook.intervals;
         recording.open();
         await recording.finished;
