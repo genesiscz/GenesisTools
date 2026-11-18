@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { statSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { DocumentUnreadableError, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -73,6 +72,11 @@ export function parseStateText(text: string): GenesisToolsStateFile {
         return emptyState();
     }
 
+    return decodeStateFile(raw);
+}
+
+/** The state file from its parsed JSON, keeping only well-formed values; it never throws. */
+function decodeStateFile(raw: unknown): GenesisToolsStateFile {
     if (!isObject(raw) || (raw.version !== undefined && raw.version !== 1) || !isObject(raw.areas)) {
         return emptyState();
     }
@@ -120,25 +124,57 @@ export interface StateStoreOptions {
     onChange?: (change: { area: string; key: string; value: StateValue | null }) => void;
 }
 
-/** The one writer of state.json: every change is a locked read, merge and write. */
+/**
+ * The one writer of state.json: every change is a locked read, merge and atomic replace, so a reader never sees half a
+ * file. State is a cache of facts: a file that does not parse is replaced, and a missing fact is probed again.
+ */
 export function createStateStore(options: StateStoreOptions = {}): StateStore {
     const file = options.file ?? genesisToolsStatePath();
+    const document = jsonDocument<GenesisToolsStateFile>({
+        path: file,
+        empty: emptyState,
+        decode: decodeStateFile,
+        encode: prettyJson,
+        strictJson: true,
+        onUnreadable: "discard",
+    });
+    /** The last parse, keyed by the file's identity: every write renames a new file in, so another inode is a change. */
+    let cached: { key: string; state: GenesisToolsStateFile } | undefined;
 
     function read(): GenesisToolsStateFile {
-        if (!existsSync(file)) {
+        const stat = statSync(file, { throwIfNoEntry: false });
+
+        if (!stat) {
             return emptyState();
         }
 
-        return parseStateText(readFileSync(file, "utf8"));
+        const key = `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+
+        if (cached?.key === key) {
+            return cached.state;
+        }
+
+        let state: GenesisToolsStateFile;
+
+        try {
+            state = document.read();
+        } catch (error) {
+            if (!(error instanceof DocumentUnreadableError) || error.kind === "io") {
+                throw error;
+            }
+
+            logger.debug({ error }, "genesis-tools state: unreadable file, starting empty");
+            state = emptyState();
+        }
+
+        cached = { key, state };
+        return state;
     }
 
     async function change(area: string, key: string, next: (current?: StateValue) => StateValue | null): Promise<void> {
-        mkdirSync(dirname(file), { recursive: true });
-        const written = await withFileLock(`${file}.lock`, async () => {
-            const current = read();
+        const written = await document.update((current) => {
             const value = next(current.areas[area]?.[key]);
-            writeFileSync(file, `${SafeJSON.stringify(withValue(current, area, key, value), null, 2)}\n`);
-            return value;
+            return { write: withValue(current, area, key, value), result: value };
         });
         // The value is written; a listener that throws must not tell the caller the report failed.
         try {

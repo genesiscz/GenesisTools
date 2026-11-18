@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigStore, resolveConfig } from "@genesiscz/utils/genesis-tools/actions/config";
@@ -7,7 +7,7 @@ import { defineAction, defineArea, needsFor, waysOf } from "@genesiscz/utils/gen
 import { createAreaEventBus } from "@genesiscz/utils/genesis-tools/actions/events";
 import { clientsOf, type EngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
 import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
-import { memoryStateStore, parseStateText } from "@genesiscz/utils/genesis-tools/actions/state";
+import { createStateStore, memoryStateStore, parseStateText } from "@genesiscz/utils/genesis-tools/actions/state";
 import type { AppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { windowOpenArgv } from "@genesiscz/utils/genesis-tools/areas/windows";
@@ -356,6 +356,26 @@ describe("config resolution", () => {
         await expect(store.set("demo.tone", "x")).rejects.toThrow();
     });
 
+    test("a set publishes a whole new file: a reader of the old file keeps reading the old, complete text", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-actions-config-"));
+        const file = join(dir, "config.json");
+        const store = createConfigStore({ registry: REGISTRY, file });
+        await store.set("demo.tone", "first");
+        const before = readFileSync(file, "utf8");
+        const reader = openSync(file, "r");
+
+        try {
+            await store.set("demo.tone", "second");
+            const buffer = Buffer.alloc(before.length + 64);
+            const length = readSync(reader, buffer, 0, buffer.length, 0);
+            expect(buffer.subarray(0, length).toString("utf8")).toBe(before);
+        } finally {
+            closeSync(reader);
+        }
+
+        expect(store.get("demo.tone")).toBe("second");
+    });
+
     test("resolveConfig is pure over a file", () => {
         const file = { version: 1 as const, areas: { demo: { tone: "t", actions: { greet: { loud: true } } } } };
         expect(resolveConfig(file, demo, "greet")).toEqual({ tone: "t", loud: true });
@@ -393,6 +413,33 @@ describe("state file", () => {
         }
 
         expect(Object.keys(parseStateText(full).areas.app ?? {})).toEqual(["installed", "rpcMethods"]);
+    });
+});
+
+describe("state store", () => {
+    test("a get reuses the parse of an unchanged file and sees a write by another store at once", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-actions-state-")), "state.json");
+        const mine = createStateStore({ file });
+        const theirs = createStateStore({ file });
+        const value = { value: true, at: "2026-11-17T12:00:00.000Z", source: "probe" as const };
+
+        await mine.report("app", "installed", value);
+        expect(mine.read()).toBe(mine.read());
+        expect(mine.get("app", "installed")).toEqual(value);
+
+        await theirs.markStale("app", "installed");
+        expect(mine.get("app", "installed")).toEqual({ ...value, stale: true });
+    });
+
+    test("a state file that does not parse reads empty, and the next report replaces it", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-actions-state-")), "state.json");
+        writeFileSync(file, '{"version": 1, "areas": {');
+        const store = createStateStore({ file });
+        const value = { value: 1, at: "2026-11-17T12:00:00.000Z", source: "app" as const };
+
+        expect(store.read()).toEqual({ version: 1, areas: {} });
+        await store.report("app", "parts", value);
+        expect(parseStateText(readFileSync(file, "utf8")).areas.app?.parts).toEqual(value);
     });
 });
 
