@@ -27,6 +27,26 @@ The detailed rules live in area files. Claude Code loads an area file by itself 
 
 A new rule goes into the area file it belongs to, or into a new `.claude/rules/<topic>.md` with a `paths:` list of globs. Do not add a CLAUDE.md to a subfolder: one rule file can cover several folders, and one folder can have several rule files. Only the sub-apps with a root of their own keep one (`apps/eve/`, `DevDashboard/mobile/`, `src/dashboard/apps/web/.claude/`). Only a rule that every session needs, whatever it touches, goes into this file.
 
+## Shared code: look before you write, move before you copy
+
+A helper that two tools need lives once, in `src/utils/`. The package rules of that folder are in `.claude/rules/tools.md` (Utility Convention). This section is about the decision.
+
+1. **Look before you write.** Before a helper that is not about your tool's own subject (parsing, geometry, text, time, a CLI or OS wrapper), search every tool, not only `src/utils/`:
+   - `tools ts skeleton src --exported --top-level | rg -i '<noun or verb>'` lists every exported name of the repo in about 3 seconds. Search by what the code does (`cluster`, `region`, `debounce`), not by the name you would give it.
+   - `rg -l '<library, binary or file format>' src -g '*.ts'` names the tools that already use the same library, spawn the same binary or read the same file. Read their `lib/` before you write yours.
+   - After you wrote it: `tools ts refactors <your paths> src/utils --include shadowed,duplicates` reports a private copy of something that is already exported.
+2. **Found in another tool's folder: move it, never copy it.** Move the pure part to `src/utils/<area>/` with its tests, and leave a re-export in the old module so no caller changes. Then run `bun scripts/ci/check-package-boundaries.ts`. Example (PR #822): `ImageCompare` needed `clusterMask` from `src/control/lib/diff-regions.ts`, so it moved to `src/utils/image/regions.ts` and `diff-regions.ts` re-exports it.
+3. **That move is in scope without asking** when all of this holds. Otherwise stop, name what you would move and why, and ask.
+   - The code is pure, or it has tests that move with it. It moves as it is: rename only what the move forces, and no behaviour change rides along.
+   - Every caller works in the same commit, through the re-export or an updated import.
+   - It is one area and under about 300 moved lines. It does not change a public interface, a saved JSON shape or a CLI flag.
+   - The moved code obeys the `src/utils/` rules: no `@app/*` import, Windows paths, no tool name in its names.
+   - The commit title names the move. It is never the start of a cleanup of the old tool.
+4. **New tool code: split it while you write it.** A function belongs in `src/utils/` when you can say what it does without the tool's name, and it takes plain data (strings, paths, buffers, typed arrays) instead of the tool's config or state. Commander wiring, prompts, output text, the tool's own config keys and the order of its steps stay in the tool.
+   - When a tool is done, read `tools ts skeleton src/<tool>/lib --exported` and ask of each line: "would another tool call this?" A `lib/` file where most lines pass belongs in `src/utils/`.
+   - Two smells: a `lib/` that is larger than the tool's `commands/`, and a test helper that had to import from another tool's `lib/`.
+5. **Do not generalise ahead of a caller.** Move what exists and is needed twice, or what is generic by nature (a format parser, a geometry function). Do not add a parameter "for other tools" that no caller passes.
+
 ## Design skills: load them before you decide a shape
 
 - `architecture` (`.claude/skills/architecture/`): before you add a config key, a field of a saved JSON shape, a CLI flag set, a branch on a provider or harness name, or a second implementation of anything. It names the axis to nest by, the loader migration, and the interface plus exhaustive table that replaces name branches.

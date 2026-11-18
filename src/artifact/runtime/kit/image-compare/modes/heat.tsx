@@ -1,0 +1,265 @@
+import { useEffect, useRef } from "react";
+import { parseCssColor, type Rgb } from "../../color";
+import { resolveCssColor, useColorSchemeTick } from "../../theme";
+import {
+    alignedSize,
+    type CompareSize,
+    comparedAreaText,
+    coverageRects,
+    insideRect,
+    isSizeChange,
+    overlapRect,
+    placeImage,
+    type RgbaImage,
+    type Shift,
+} from "../core";
+import { createIdleCache } from "../load";
+import {
+    AlignControl,
+    appliedShift,
+    type CompareMode,
+    ComparePane,
+    type CompareStageProps,
+    type IdleResult,
+    isAligned,
+    PixelNotice,
+    StageImage,
+    StaleNote,
+    useIdleCompute,
+    ViewLayer,
+} from "../stage";
+
+/** The ramp from a small to a large colour distance, in kit tones. */
+const STOPS = ["--info", "--ok", "--warn", "--err"] as const;
+/** sRGB stand-ins for a page whose template defines no tone tokens. */
+const FALLBACK: Record<(typeof STOPS)[number], Rgb> = {
+    "--info": { r: 59, g: 130, b: 246 },
+    "--ok": { r: 34, g: 160, b: 90 },
+    "--warn": { r: 230, g: 160, b: 20 },
+    "--err": { r: 225, g: 50, b: 60 },
+};
+/** Distances under this share of the largest stay clear, so compression noise does not tint the whole page. */
+const FLOOR = 0.02;
+/** pixelmatch's largest YIQ colour distance. */
+const MAX_YIQ_DELTA = 35215;
+const heatCache = createIdleCache<HeatMap>(4);
+
+interface HeatMap {
+    size: CompareSize;
+    data: Uint8ClampedArray<ArrayBuffer>;
+    /** Pixels at or above the floor. */
+    changed: number;
+    total: number;
+    /** The shift of B the map was computed with; the map is placed for it. */
+    shift: Shift;
+    /** Pixels inside only one image because the sizes differ; each is the largest distance. */
+    sizeOnly: number;
+}
+
+function blend(value: number, alpha: number): number {
+    return 255 + ((value - 255) * alpha) / 255;
+}
+
+/** pixelmatch's YIQ colour distance of one pixel pair, both blended over white, as a share of the largest. */
+function colourDistance(p: Uint8ClampedArray, q: Uint8ClampedArray, at: number): number {
+    const r1 = blend(p[at], p[at + 3]);
+    const g1 = blend(p[at + 1], p[at + 3]);
+    const b1 = blend(p[at + 2], p[at + 3]);
+    const r2 = blend(q[at], q[at + 3]);
+    const g2 = blend(q[at + 1], q[at + 3]);
+    const b2 = blend(q[at + 2], q[at + 3]);
+    const dy = 0.29889531 * (r1 - r2) + 0.58662247 * (g1 - g2) + 0.11448223 * (b1 - b2);
+    const di = 0.59597799 * (r1 - r2) - 0.2741761 * (g1 - g2) - 0.32180189 * (b1 - b2);
+    const dq = 0.21147017 * (r1 - r2) - 0.52261711 * (g1 - g2) + 0.31114694 * (b1 - b2);
+
+    return Math.sqrt((0.5053 * dy * dy + 0.299 * di * di + 0.1957 * dq * dq) / MAX_YIQ_DELTA);
+}
+
+function rampAt(stops: Rgb[], t: number): Rgb {
+    const at = Math.min(stops.length - 1, Math.max(0, t) * (stops.length - 1));
+    const low = Math.floor(at);
+    const high = Math.min(stops.length - 1, low + 1);
+    const mix = at - low;
+
+    return {
+        r: stops[low].r + (stops[high].r - stops[low].r) * mix,
+        g: stops[low].g + (stops[high].g - stops[low].g) * mix,
+        b: stops[low].b + (stops[high].b - stops[low].b) * mix,
+    };
+}
+
+/**
+ * Every pixel's colour distance on the ramp. Which image covers a pixel comes from where each image lies on the
+ * canvas, never from its alpha: inside both, the distance blends both over white (a transparent pixel of an image is
+ * still that image). A pixel inside only one image is the largest distance when the sizes put it there, and stays
+ * clear when only the move did (`coverageRects`), as the diff counts it.
+ */
+export function heatMap({ a, b, shift, stops }: { a: RgbaImage; b: RgbaImage; shift: Shift; stops: Rgb[] }): HeatMap {
+    const size = alignedSize(a, b, shift);
+    const placedA = placeImage(a, size);
+    const placedB = placeImage(b, size, { x: -shift.dx, y: -shift.dy });
+    const rects = coverageRects(a, b, shift);
+    const aligned = shift.dx !== 0 || shift.dy !== 0;
+    const area = overlapRect(a, b, shift);
+    const pixels = size.width * size.height;
+    const data = new Uint8ClampedArray(pixels * 4);
+    let changed = 0;
+    let sizeOnly = 0;
+
+    for (let y = 0; y < size.height; y++) {
+        for (let x = 0; x < size.width; x++) {
+            const at = (y * size.width + x) * 4;
+            const inA = insideRect(rects.a, x, y);
+            const inB = insideRect(rects.b, x, y);
+
+            if (!inA && !inB) {
+                continue;
+            }
+
+            if (inA !== inB) {
+                if (!isSizeChange(rects, x, y)) {
+                    continue;
+                }
+
+                sizeOnly++;
+            }
+
+            const t = inA !== inB ? 1 : colourDistance(placedA.data, placedB.data, at);
+
+            if (t < FLOOR) {
+                continue;
+            }
+
+            changed++;
+            const colour = rampAt(stops, t);
+            data[at] = colour.r;
+            data[at + 1] = colour.g;
+            data[at + 2] = colour.b;
+            // A larger distance is also more opaque, so a faint change stays faint.
+            data[at + 3] = 110 + 145 * Math.min(1, t * 2);
+        }
+    }
+
+    // The map covers the whole canvas; on an aligned pair the share counts the overlap and the size pixels.
+    const total = aligned ? area.w * area.h + sizeOnly : pixels;
+
+    return { size, data, changed, total, shift, sizeOnly };
+}
+
+/** The ramp's colours as the page's theme resolves them now. */
+function resolvedStops(): Rgb[] {
+    return STOPS.map((name) => parseCssColor(resolveCssColor(name)) ?? FALLBACK[name]);
+}
+
+function useHeat(props: CompareStageProps): { result: IdleResult<HeatMap>; shift: Shift } {
+    const shift = appliedShift(props);
+    // A light or dark flip renders again, and the key carries the resolved ramp: the tick restarts at 0 on every
+    // mount, so a key built from it gave a later comparison a map cached under another theme.
+    useColorSchemeTick();
+    const stops = resolvedStops();
+    const ramp = stops.map(({ r, g, b }) => `${r},${g},${b}`).join(" ");
+    const group = `${props.a.src}\n${props.b.src}`;
+    const pair = props.pixels.status === "ready" ? props.pixels.pair : null;
+    const result = useIdleCompute({
+        cache: heatCache,
+        group,
+        job: pair
+            ? {
+                  key: `${group}\n${shift.dx},${shift.dy}\n${ramp}`,
+                  compute: () => heatMap({ a: pair.a, b: pair.b, shift, stops }),
+              }
+            : null,
+    });
+
+    return { result, shift };
+}
+
+function HeatCanvas({ heat }: { heat: HeatMap }) {
+    const ref = useRef<HTMLCanvasElement>(null);
+
+    useEffect(() => {
+        ref.current?.getContext("2d")?.putImageData(new ImageData(heat.data, heat.size.width, heat.size.height), 0, 0);
+    }, [heat]);
+
+    return (
+        <canvas
+            ref={ref}
+            width={heat.size.width}
+            height={heat.size.height}
+            className="absolute left-0 top-0"
+            style={{ width: heat.size.width, height: heat.size.height, imageRendering: "pixelated" }}
+        />
+    );
+}
+
+/** How far each pixel's colour moved, on a ramp from a small change to a large one, over the faded After image. */
+function HeatStage(props: CompareStageProps) {
+    const { result, shift: wanted } = useHeat(props);
+    const heat = result.status === "ready" ? result.value : null;
+    // While a new map computes, the shown one keeps the underlay where it was computed, so the two stay in register.
+    const shift = heat?.shift ?? wanted;
+
+    return (
+        <ComparePane
+            stage={props}
+            label={`Colour distance of ${props.a.label} and ${props.b.label}`}
+            canvas={heat?.size}
+            caption={`Colour distance over ${props.b.label}`}
+        >
+            <ViewLayer>
+                <StageImage image={props.b} at={{ x: -shift.dx, y: -shift.dy }} className="opacity-30 grayscale" />
+                {heat ? <HeatCanvas heat={heat} /> : null}
+            </ViewLayer>
+            <PixelNotice pixels={props.pixels} computing={result.status === "loading"} />
+        </ComparePane>
+    );
+}
+
+function HeatControls(props: CompareStageProps) {
+    const { result, shift: wanted } = useHeat(props);
+    const heat = result.status === "ready" ? result.value : null;
+    // The legend and the summary describe the map on screen, which an older setting may still have made.
+    const shift = heat?.shift ?? wanted;
+    const share = heat ? (heat.changed / Math.max(1, heat.total)) * 100 : 0;
+
+    return (
+        <>
+            <span className="flex items-center gap-2 text-xs text-dim">
+                <span>Small change</span>
+                <span
+                    aria-hidden="true"
+                    className="inline-block h-2.5 w-32 rounded-full border border-line"
+                    style={{ background: `linear-gradient(90deg, ${STOPS.map((name) => `var(${name})`).join(", ")})` }}
+                />
+                <span>Large change</span>
+                <span>
+                    {isAligned(shift) && (heat?.sizeOnly ?? 0) === 0
+                        ? "(clear: no change)"
+                        : "(clear: no change; inside only one image: largest)"}
+                </span>
+            </span>
+            <AlignControl {...props} />
+            <span aria-live="polite" className="text-xs text-dim">
+                {heat && result.status === "ready" ? (
+                    <>
+                        <span className="font-medium text-ink">
+                            {`${share >= 10 ? share.toFixed(1) : share.toFixed(2)}% of pixels changed colour`}
+                        </span>
+                        {`${comparedAreaText(heat)} in ${Math.round(result.ms)} ms`}
+                        {result.stale ? <StaleNote /> : null}
+                    </>
+                ) : props.pixels.status === "error" ? null : (
+                    "Computing the heat map..."
+                )}
+            </span>
+        </>
+    );
+}
+
+export const heatMode: CompareMode = {
+    id: "heat",
+    label: "Heat",
+    Stage: HeatStage,
+    Controls: HeatControls,
+    needsPixels: true,
+};
