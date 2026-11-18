@@ -22,6 +22,7 @@
  */
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -32,8 +33,8 @@ const BASELINE_NAME = "hub-big-session";
 const REPO = join(import.meta.dir, "..", "..", "..");
 const CHILD = join(import.meta.dir, "big-session-child.ts");
 const argv = process.argv.slice(2);
-/** Convention: N >= 5 for any timing metric, so five is both the default and the lowest `--runs`. */
-const args = parseBenchArgs(argv, { runs: { fallback: 5, minimum: 5 } });
+/** Keep the five-run default. The changes acceptance run uses three interleaved samples. */
+const args = parseBenchArgs(argv, { runs: { fallback: 5, minimum: 3 } });
 
 /** The largest main transcript under the Claude session roots: `<root>/<project>/<session id>.jsonl`. */
 function largestClaudeSession(): { id: string; bytes: number } | null {
@@ -97,10 +98,14 @@ const arms: Array<{ name: string; checkout: string }> = [
  */
 const SAMPLE_DEADLINE_MS = 15 * 60_000;
 
-async function sample(checkout: string, mode: "each" | "together"): Promise<Record<string, number>> {
+async function sample(checkout: string, mode: "each" | "together" | "changes") {
     const result = await boundedCommand({
         command: [process.execPath, "run", CHILD, checkout, session as string, mode],
         timeoutMs: SAMPLE_DEADLINE_MS,
+        environment:
+            mode === "changes"
+                ? { ...env.getProcessEnv(), PROFILE: "session-changes", PROFILE_TO_STDERR: "1" }
+                : undefined,
         cwd: REPO,
     });
 
@@ -116,10 +121,27 @@ async function sample(checkout: string, mode: "each" | "together"): Promise<Reco
         );
     }
 
-    const metrics: Record<string, number> = SafeJSON.parse(result.stdout.trim().split("\n").pop() ?? "{}", {
+    const output: Record<string, unknown> = SafeJSON.parse(result.stdout.trim().split("\n").pop() ?? "{}", {
         strict: true,
     });
-    return metrics;
+    const metrics: Record<string, number> = {};
+    for (const [key, value] of Object.entries(output)) {
+        if (typeof value === "number") {
+            metrics[key] = value;
+        }
+    }
+    const digest = output["changes.digest"];
+    if (mode === "changes" && (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest))) {
+        throw new Error(`missing Changes digest for ${checkout}`);
+    }
+    if (mode === "changes") {
+        const cold = result.stderr.split("changes-cold-finished")[0];
+        const phases = [...cold.matchAll(/\[profile:session-changes\] facts cpu=(\d+)ms/g)];
+        if (phases.length) {
+            metrics["changes.cold.factsCpuMs"] = phases.reduce((sum, match) => sum + Number(match[1]), 0);
+        }
+    }
+    return { metrics, digest: typeof digest === "string" ? digest : undefined };
 }
 
 const runs: Array<Record<string, number>> = [];
@@ -127,14 +149,26 @@ const runs: Array<Record<string, number>> = [];
 for (let run = 0; run < args.warmup + args.runs; run++) {
     const merged: Record<string, number> = {};
 
+    const digests = new Map<string, string>();
     for (const arm of run % 2 === 0 ? arms : [...arms].reverse()) {
-        for (const mode of ["each", "together"] as const) {
-            for (const [key, value] of Object.entries(await sample(arm.checkout, mode))) {
-                merged[`${arm.name}.${key}`] = value;
+        for (const mode of ["each", "together", "changes"] as const) {
+            const result = await sample(arm.checkout, mode);
+            if (result.digest) {
+                digests.set(arm.name, result.digest);
+                out.log.info(`run ${run + 1} ${arm.name} changes.digest ${result.digest}`);
+            }
+            for (const [key, value] of Object.entries(result.metrics)) {
+                const name = mode === "each" && key.startsWith("changes.") ? `each.${key}` : key;
+                merged[`${arm.name}.${name}`] = value;
             }
         }
     }
 
+    if (before && digests.get("current") !== digests.get("before")) {
+        throw new Error(
+            `Changes stdout differs in run ${run + 1}: current ${digests.get("current")}, before ${digests.get("before")}`
+        );
+    }
     if (run >= args.warmup) {
         runs.push(merged);
     }
