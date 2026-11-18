@@ -267,8 +267,13 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
         const saved = env.state.get(APP_AREA, `grant.${need.grant}`);
 
         // A grant belongs to the bundle's signature, not to one build, so a report with no build may answer for an hour.
+        // No probe reads a grant here, so `fresh` cannot measure it again: the saved report answers as in a plain call.
         if (
-            usable(saved, env, { buildId: env.facts.appManifest()?.buildId ?? null, bound: false, ttlMs: GRANT_TTL_MS })
+            usable(
+                saved,
+                { ...env, fresh: false },
+                { buildId: env.facts.appManifest()?.buildId ?? null, bound: false, ttlMs: GRANT_TTL_MS }
+            )
         ) {
             return saved?.value === "granted"
                 ? { ok: true, from: "state" }
