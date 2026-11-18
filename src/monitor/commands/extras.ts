@@ -24,7 +24,7 @@ import {
 } from "@app/monitor/lib/validate";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { formatDuration, formatRelativeTime, parseDuration } from "@genesiscz/utils/format";
+import { formatDuration, formatRelativeTime, requireDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { parseSqliteOrIsoDate } from "@genesiscz/utils/sql-time";
@@ -87,15 +87,15 @@ async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
 
 /** `2h`, `45m`, `1d`, or bare minutes, as an ISO time from now. */
 export function muteUntilFrom(duration: string): string {
-    return new Date(Date.now() + requireDuration(duration)).toISOString();
+    return new Date(Date.now() + positiveDuration(duration)).toISOString();
 }
 
-/** `parseDuration` answers 0 for anything it cannot read, which would silently mean "since now". */
-function requireDuration(duration: string): number {
+/** A watcher duration must be readable and above zero; the shared reader allows zero. */
+function positiveDuration(duration: string): number {
     let ms: number;
 
     try {
-        ms = parseDuration(duration);
+        ms = requireDuration(duration);
     } catch (error) {
         logger.debug({ error, duration }, "monitor: bad duration");
         throw new WatcherValidationError(`"${duration}" is not a duration (try 30m, 2h, 1d)`);
@@ -637,7 +637,7 @@ export function registerExtraCommands(program: Command): void {
         .action(async (id: string, opts: { limit: string; since?: string; json?: boolean }) => {
             const limitValue = Number.parseInt(opts.limit, 10);
             const limit = Number.isInteger(limitValue) && limitValue > 0 ? Math.min(limitValue, 500) : 30;
-            const since = opts.since ? new Date(Date.now() - requireDuration(opts.since)).toISOString() : undefined;
+            const since = opts.since ? new Date(Date.now() - positiveDuration(opts.since)).toISOString() : undefined;
             const { watcher, checks } = await withMonitor(async (monitor) => {
                 const current = await requireWatcher(monitor, id);
 
