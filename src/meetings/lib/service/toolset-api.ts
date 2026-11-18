@@ -51,6 +51,19 @@ export const byChannel = defineMethod({
 });
 
 export const ref = z.object({ ref: z.string().min(1) });
+export const levels = defineMethod({
+    name: "levels",
+    params: z
+        .object({ meeting: z.string().min(1).optional(), seconds: z.number().int().min(1).max(60).optional() })
+        .strict()
+        .refine(
+            (input) => input.meeting === undefined || input.seconds === undefined,
+            "seconds applies only to the live microphone test"
+        ),
+    result: z.unknown(),
+    effect: "read",
+    doc: `Read saved dBFS, share, calibration, devices and mute rows with {meeting} (${toolCommand("meetings evidence")} <meeting> --levels). Without a meeting, sample live inputs for 1–60 seconds (default 3) and return the final reading and warnings (${toolCommand("meetings levels")} --seconds <n>). No test audio is saved.`,
+});
 export const ids = z.array(z.string().min(1));
 export const recordDoc =
     "{ id, title, start, project, labels, sources, speakers, items: { suggested, confirmed, rejected }, summary }";
@@ -794,6 +807,7 @@ export const meetingsToolsetApi = defineApi({
         lineEligibility,
         ...Object.values(voiceLibraryMethods),
         list,
+        levels,
         open,
         look,
         overview,

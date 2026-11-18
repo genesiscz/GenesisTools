@@ -556,6 +556,11 @@ struct MeetingsSettings: Decodable, Equatable {
             /// `failing-and-recovered`, `failing` or `off`; absent in a config written before the key.
             let failureNotices: String?
             var soundWithoutScreen: Bool?
+            struct Levels: Decodable, Equatable {
+                let enabled: Bool
+                let intervalSec: Int
+            }
+            var levels: Levels?
         }
         struct Assign: Decodable, Equatable {
             let ask: Bool

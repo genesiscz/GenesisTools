@@ -6,6 +6,7 @@ import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/li
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
+import { liveMeetingLevels, savedMeetingLevels } from "@app/meetings/lib/levels";
 import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
@@ -42,6 +43,7 @@ import {
     exportMethod,
     itemsList,
     itemsRows,
+    levels,
     type lineEligibility,
     lines,
     list,
@@ -194,6 +196,12 @@ export class MeetingsToolset extends ReplToolset {
                         undo: serviceCall("voices.undo"),
                     }
                 ),
+                levels: async (input: z.input<typeof levels.params> = {}) => {
+                    const { meeting, seconds } = levels.params.parse(input);
+                    return meeting === undefined
+                        ? liveMeetingLevels({ seconds: seconds ?? 3 })
+                        : savedMeetingLevels(store, meeting);
+                },
                 audio: {
                     plan: async (input: z.input<typeof audioPlan.params> = {}) => {
                         audioPlan.params.parse(input);
