@@ -728,7 +728,7 @@ test("a client cannot hand in a person's answer; the service records what its ow
     const dir = scratch();
     const start = await startGenesisToolsService({
         dir,
-        deps: { facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true } },
+        deps: { facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: async () => true } },
     });
     if (start.status !== "started") {
         throw new Error("fixture service did not start");
@@ -846,7 +846,7 @@ test("a request no surface took is delivered again on a retry, and its delivery 
     const wait = mock(async (id: string) => ({ id, status: "pending" as const, reason: "waited" }));
     const deps = liveEngineDeps(registry, {
         config,
-        facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true },
+        facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: async () => true },
         service: {
             journal: { ...journal, wait },
             hasClient: () => false,
