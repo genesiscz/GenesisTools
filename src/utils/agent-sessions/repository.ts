@@ -57,6 +57,7 @@ export type HistoryScopeFacts = Pick<
 /** The catalog scope terms SQL applies exactly, each as the catalog's scope test applies it to a row. */
 export interface HistoryScopeQuery {
     providerId: string;
+    excludeAgents?: boolean;
     /** Rows whose file mtime is at or after this epoch ms. */
     mtimeFrom?: number;
     filePaths?: string[];
@@ -391,6 +392,9 @@ export class HistoryRepository {
         // The unary `+` for one path: see `listMetadata`.
         const clauses = [query.filePaths?.length === 1 ? "+m.provider = ?" : "m.provider = ?"];
         const params: Array<string | number> = [query.providerId];
+        if (query.excludeAgents) {
+            clauses.push("m.is_subagent IS NOT 1");
+        }
 
         if (query.filePaths?.length === 1) {
             clauses.push("m.file_path = ?");

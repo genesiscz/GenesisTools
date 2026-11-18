@@ -398,7 +398,14 @@ async function codexAgentRecords({
 }
 
 /** The full tree: every node carries its whole spawn prompt (the list strips it, `hubAgent` keeps it). */
-async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
+interface TreeListing {
+    parents: () => Promise<AgentSessionRow[]>;
+    /** Rebuild just these already-listed parents, with their current children and workers. */
+    exact?: boolean;
+    progress?: (tree: AgentsTree) => void | Promise<void>;
+}
+
+async function buildTree(options: HubAgentsOptions, listing?: TreeListing): Promise<AgentsTree> {
     const now = options.now ?? Date.now();
     const hours = options.hours ?? DEFAULT_AGENTS_SINCE_HOURS;
     const limit = options.limit ?? DEFAULT_AGENTS_LIMIT;
@@ -410,15 +417,17 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         prof.measureAsync(
             "parents",
             () =>
-                options.session
-                    ? Promise.resolve([])
-                    : listAgentSessionRows({
-                          providers: AGENT_HARNESSES,
-                          refresh: options.refresh,
-                          hours,
-                          limit,
-                          maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
-                      }),
+                listing
+                    ? listing.parents()
+                    : options.session
+                      ? Promise.resolve([])
+                      : listAgentSessionRows({
+                            providers: AGENT_HARNESSES,
+                            refresh: options.refresh,
+                            hours,
+                            limit,
+                            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+                        }),
             cpuMeta()
         ),
         prof.measureAsync("workers", () => listWorkers({ now, since, promptChars: options.promptChars })),
@@ -430,7 +439,12 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         ),
     ]);
     const codexTops = await prof.measureAsync("codex-tree", () =>
-        attachCodexAgents(codexRecords, { now, model: null, readOnly: options.refresh === false })
+        attachCodexAgents(
+            listing?.exact
+                ? codexRecords.filter((record) => rows.some((row) => row.sessionId === record.rootId))
+                : codexRecords,
+            { now, model: null, readOnly: options.refresh === false }
+        )
     );
     const open = await openSessions;
 
@@ -438,6 +452,8 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     if (options.session) {
         const one = await parentById({ id: options.session, rows, now, refresh: options.refresh });
         parentRows = one ? [one] : [];
+    } else if (listing?.exact) {
+        parentRows = rows.map(parentRow);
     } else {
         parentRows = rows.map(parentRow);
         const listed = new Set(parentRows.map((row) => row.sessionId));
@@ -513,16 +529,26 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         codexAgentsOf: (sessionId) => codexTops.get(sessionId) ?? [],
     };
     // A row with no provider predates the field and is a Claude session.
-    const parents = sortParents(
-        prof.measure(
-            "tree",
-            () => parentRows.map((row) => PARENT_BUILDERS.of(row.provider ?? DEFAULT_PARENT_HARNESS)(row, context)),
-            cpuMeta()
-        )
-    )
-        .map((parent) => ({ ...parent, open: open.has(parent.sessionId) }))
-        .sort((left, right) => Number(right.open) - Number(left.open))
-        .slice(0, limit);
+    const generatedAt = new Date(now).toISOString();
+    const parents = await prof.measureAsync(
+        "tree",
+        async () => {
+            const built: AgentParent[] = [];
+            let nextPage = 32;
+            for (const row of parentRows) {
+                const parent = PARENT_BUILDERS.of(row.provider ?? DEFAULT_PARENT_HARNESS)(row, context);
+                built.push({ ...parent, open: open.has(parent.sessionId) });
+                if (listing?.progress && built.length === nextPage && built.length < parentRows.length) {
+                    await listing.progress(
+                        listTree({ generatedAt, parents: rankedParents([...built], limit), orphans: [] })
+                    );
+                    nextPage *= 2;
+                }
+            }
+            return rankedParents(built, limit);
+        },
+        cpuMeta()
+    );
     // From the parents returned, after the limit: a worker whose parent was cut is an orphan, never dropped.
     const attached = new Set(parents.map((parent) => parent.sessionId));
     const orphans = options.session
@@ -536,10 +562,16 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         "[hub agents] tree built"
     );
     return {
-        generatedAt: new Date(now).toISOString(),
+        generatedAt,
         parents,
         orphans: sortNodes(orphans),
     };
+}
+
+export function rankedParents(parents: AgentParent[], limit: number): AgentParent[] {
+    return sortParents(parents)
+        .sort((left, right) => Number(right.open) - Number(left.open))
+        .slice(0, limit);
 }
 
 /**
@@ -552,8 +584,11 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
  * The list carries `spawnPromptPreview` only (`spawnPrompt` is null); `hubAgent` returns one
  * agent with its whole prompt.
  */
-export async function hubAgents(options: HubAgentsOptions = {}): Promise<AgentsTree> {
-    const tree = await buildTree(options);
+export async function hubAgents(options: HubAgentsOptions = {}, listing?: TreeListing): Promise<AgentsTree> {
+    return listTree(await buildTree(options, listing));
+}
+
+function listTree(tree: AgentsTree): AgentsTree {
     return {
         ...tree,
         parents: tree.parents.map((parent) => ({ ...parent, children: withoutFullPrompts(parent.children) })),

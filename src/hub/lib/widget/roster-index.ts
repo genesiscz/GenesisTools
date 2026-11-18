@@ -34,6 +34,8 @@ export type WidgetRosterProvider = (typeof WIDGET_ROSTER_PROVIDERS)[number];
 export interface WidgetRoster {
     rows: AgentSessionRow[];
     agents: AgentsTree;
+    /** Present while this publication is a contiguous prefix of a worker revision. */
+    backfill?: { revision: string; cursor: number };
 }
 
 /**
@@ -59,8 +61,11 @@ export class WidgetRosterReads {
     }
 
     /** Before every roster read: a commit that lands during the read moves the version, so the next request reads. */
-    reading(): void {
-        this.lastRead = this.version();
+    reading(): boolean {
+        const version = this.version();
+        const same = version !== null && version === this.lastRead;
+        this.lastRead = version;
+        return same;
     }
 }
 
@@ -180,23 +185,19 @@ async function refreshExact(
  */
 export async function refreshWidgetIndex(
     scopes: ReadonlySet<WidgetRosterScope>,
-    { now = Date.now(), paths = new Map() }: { now?: number; paths?: WidgetRosterPaths } = {}
+    {
+        now = Date.now(),
+        paths = new Map(),
+        onWholeListing,
+    }: { now?: number; paths?: WidgetRosterPaths; onWholeListing?: () => void } = {}
 ): Promise<boolean> {
-    if (scopes.has("all")) {
-        await Promise.all([
-            listAgentSessionRows({
-                hours: WIDGET_ROSTER_HOURS,
-                withUsage: false,
-                refresh: true,
-                maxDiscoveryAgeMs: WIDGET_DISCOVERY_REUSE_MS,
-                failClosed: true,
-            }),
-            hubAgents({ hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh: true }),
-        ]);
-        return true;
-    }
-
     const whole = new Set<Exclude<WidgetRosterScope, "all">>();
+    if (scopes.has("all")) {
+        // Discovery updates the index. The caller will hydrate rows and build the tree once, after it.
+        for (const scope of [...WIDGET_ROSTER_PROVIDERS, "claude-agents"] as const) {
+            whole.add(scope);
+        }
+    }
     const exact = new Map<HarnessId, Array<{ scope: WidgetRosterScope; paths: readonly string[] }>>();
     for (const scope of scopes) {
         if (scope === "all") {
@@ -224,11 +225,17 @@ export async function refreshWidgetIndex(
     }
 
     const since = now - WIDGET_ROSTER_HOURS * 3_600_000;
+    if (whole.size) {
+        onWholeListing?.();
+    }
     const tasks: Promise<number>[] = [];
     const listing = (provider: HarnessId, filters: { excludeAgents?: boolean; agentsOnly?: boolean }) =>
-        catalogHistory({ provider, refresh: true, filters: { ...filters, mtimeFrom: since } }).then(
-            ({ report }) => report.parsed + report.removed
-        );
+        catalogHistory({
+            provider,
+            refresh: true,
+            maxDiscoveryAgeMs: scopes.has("all") ? WIDGET_DISCOVERY_REUSE_MS : undefined,
+            filters: { ...filters, mtimeFrom: since },
+        }).then(({ report }) => report.parsed + report.removed);
     if (whole.has("claude")) {
         tasks.push(listing("claude", { excludeAgents: true }));
     }
@@ -246,7 +253,7 @@ export async function refreshWidgetIndex(
     }
 
     const counts = await Promise.all(tasks);
-    return written > 0 || counts.some((count) => count > 0);
+    return scopes.has("all") || written > 0 || counts.some((count) => count > 0);
 }
 
 /** One provider's native session roots, as its history reader walks them; canonical, as file events name them. */

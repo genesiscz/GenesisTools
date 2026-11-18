@@ -55,8 +55,9 @@ import {
 } from "../widget/card-images";
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
-import { readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
+import { oneShotWidgetSources, readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
 import { unplacedScopes, WidgetRosterReads, widgetRosterChange } from "../widget/roster-index";
+import { newestPaths, rosterRowPages, updateRosterPaths } from "../widget/roster-pages";
 import { WidgetRosterReader, type WidgetRosterReply, type WidgetRosterRequest } from "../widget/roster-reader";
 import {
     classifyScreenshot,
@@ -5421,6 +5422,92 @@ describe("background Widget roster", () => {
         }
     });
 
+    function rosterRow(filePath: string, mtime: number) {
+        return {
+            provider: "claude" as const,
+            sessionId: filePath,
+            filePath,
+            mtime,
+            title: filePath,
+            cwd: "/fixture",
+            cwdShort: "/fixture",
+            project: "fixture",
+            model: null,
+            account: null,
+        };
+    }
+
+    test("newest paths page in stable order and resume past a missing row", async () => {
+        const entries = Array.from({ length: 40 }, (_, n) => rosterRow(String(n).padStart(2, "0"), Math.floor(n / 2)));
+        const paths = newestPaths([...entries, entries[39]]);
+        expect(paths.slice(0, 4)).toEqual(["38", "39", "36", "37"]);
+        const read = async (files: string[]) =>
+            files.filter((file) => file !== "38").map((file) => entries[Number(file)]);
+        const pages = rosterRowPages(paths, read);
+        const first = (await pages.next()).value;
+        if (!first) {
+            throw new Error("Expected the first roster page");
+        }
+        expect(first.rows).toHaveLength(31);
+        expect(first.next).toBe(32);
+        const resumed = [];
+        for await (const page of rosterRowPages(paths, read, first.next)) {
+            resumed.push(...page.rows.map((row) => row.filePath));
+        }
+        expect(resumed).toEqual(paths.slice(32));
+    });
+
+    test("a one-shot reader joining between pages sees one contiguous revision", async () => {
+        const directory = await root();
+        const f = fixture();
+        const first = rosterRow("new", 20);
+        const next = rosterRow("old", 10);
+        try {
+            f.reader.refresh();
+            f.reply({ id: 1, ok: true, revision: "r", page: { offset: 0, next: 1, rows: [first] } });
+            expect(f.reader.rows).toEqual([first]);
+            const { rows, agents, backfill } = f.reader;
+            await writeWidgetRosterCache({ root: directory, roster: { rows, agents, backfill } });
+            const joined = await oneShotWidgetSources(directory);
+            f.reply({ id: 1, ok: true, revision: "r", page: { offset: 1, next: 2, rows: [next] } });
+            expect(await joined.sessions(false)).toEqual([first]);
+            expect(joined.rosterStatus?.().loading).toBe(true);
+            expect(f.reader.rows).toEqual([first, next]);
+            expect(f.reader.backfill).toEqual({ revision: "r", cursor: 2 });
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("one changed listed session hydrates only that row and parent", async () => {
+        const rows = [rosterRow("first", 20), rosterRow("second", 10)];
+        const parents = rows.map((row) => ({
+            ...row,
+            children: [],
+            startedAt: null,
+            lastAt: new Date(row.mtime).toISOString(),
+            live: false,
+        }));
+        const agents = { generatedAt: "before", parents, orphans: [] };
+        const changed = { ...rows[1], title: "changed", mtime: 30 };
+        const update = await updateRosterPaths(
+            { rows, agents },
+            ["second"],
+            30,
+            async (paths) => {
+                expect(paths).toEqual(["second"]);
+                return [changed];
+            },
+            async (input, _now, exact) => {
+                expect(input).toEqual([changed]);
+                expect(exact).toBe(true);
+                return { ...agents, parents: [{ ...parents[1], title: "changed" }] };
+            }
+        );
+        expect(update?.rows).toEqual([changed, rows[0]]);
+        expect(update?.agents.parents.map((parent) => parent.title)).toEqual(["first", "changed"]);
+    });
+
     test("a failed refresh retains the last tree and restarts only after the refresh interval", () => {
         const f = fixture();
         try {
@@ -6059,11 +6146,13 @@ describe("background Widget roster", () => {
                 filePath: "/fixture/project/fixture-session.jsonl",
             };
             const agents = { generatedAt: "previous watch", parents: [], orphans: [] };
-            // Written by a watch that has exited: its pid is dead, which a one-shot reader refuses and a new watch accepts.
+            // Both readers can use the publication after the writer exits.
             await writeWidgetRosterCache({ root: directory, roster: { rows: [row], agents } });
             const cache = join(directory, "roster-cache.json");
             const file = SafeJSON.parse(await readFile(cache, "utf8"), { strict: true });
             await writeFile(cache, SafeJSON.stringify({ ...file, pid: 2_147_483_646 }, { strict: true }));
+            expect((await oneShotWidgetSources(directory)).rosterStatus?.().loading).toBe(false);
+            expect(await readWidgetRosterCache({ root: directory })).toEqual({ rows: [row], agents });
             const warm = await firstWatchSnapshot(directory);
             expect(warm.rosterLoading).toBe(false);
             expect(warm.sessions.map((session) => session.target.sessionId)).toContain("fixture-session");
@@ -6088,7 +6177,7 @@ describe("background Widget roster", () => {
             writeWidgetRosterCache({ root: directory, roster: { rows: [], agents: agents(name) }, now: 1000 + index })
         );
         await Promise.all(writes);
-        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => true })).toEqual({
+        expect(await readWidgetRosterCache({ root: directory, now: 2000 })).toEqual({
             rows: [],
             agents: agents("third"),
         });
@@ -6120,14 +6209,13 @@ describe("background Widget roster", () => {
             },
         ];
         await writeWidgetRosterCache({ root: directory, roster: { rows, agents }, now: 1000 });
-        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_000, alive: () => true })).toEqual({
+        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_000 })).toEqual({
             rows,
             agents,
         });
-        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_001, alive: () => true })).toBeUndefined();
-        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => false })).toBeUndefined();
+        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_001 })).toBeUndefined();
         await writeFile(join(directory, "roster-cache.json"), '{"version":2}');
-        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => true })).toBeUndefined();
+        expect(await readWidgetRosterCache({ root: directory, now: 2000 })).toBeUndefined();
 
         // Parity: the cached roster renders exactly what the same roster read from its source renders.
         const base = {

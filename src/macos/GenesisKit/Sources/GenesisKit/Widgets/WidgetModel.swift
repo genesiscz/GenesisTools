@@ -755,8 +755,10 @@ public final class WidgetModel: ObservableObject {
     private func watchSettingsState() {
         guard settingsWatcher == nil else { return }
         let file = URL(fileURLWithPath: Self.widgetStateFile(stateRoot: stateRoot)).resolvingSymlinksInPath().path
+        let folder = (file as NSString).deletingLastPathComponent
+        let roster = folder + "/roster-cache.json"
         settingsWatcher = DirectoryWatcher(
-            paths: [(file as NSString).deletingLastPathComponent], latency: 0.2, accepts: { $0 == file }
+            paths: [folder], latency: 0.2, accepts: { $0 == file || $0 == roster }
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshSettings() }
         }
@@ -934,9 +936,12 @@ public final class WidgetModel: ObservableObject {
             }
             // A cold roster holds only the sessions synthesized from Decisions and forms; choosing
             // and persisting one of those would orphan the selection once the roster arrives.
-            if selectedKey.isEmpty && next.rosterLoading != true {
-                selectedKey = WidgetSelection.initial(
-                    persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
+            if selectedKey.isEmpty {
+                let visible = next.sessions.filter(\.visible)
+                let keys = next.rosterLoading == true ? visible.filter { $0.transcriptPath != nil }.map(\.key) : visible.map(\.key)
+                // A saved selection may still be in an older page. Wait for it before persisting a replacement.
+                let waiting = next.rosterLoading == true && next.state.selectedKey.map { !$0.isEmpty && !keys.contains($0) } == true
+                selectedKey = waiting ? "" : WidgetSelection.initial(persisted: next.state.selectedKey, visibleKeys: keys)
                 selectedCardID = nil
                 if !selectedKey.isEmpty && !settingsOnly {
                     pickOnWatch(selectedKey)

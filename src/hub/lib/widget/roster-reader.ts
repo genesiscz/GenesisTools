@@ -1,7 +1,8 @@
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import { logger } from "@genesiscz/utils/logger";
 import type { AgentsTree } from "../agents/types";
-import type { WidgetRosterScope } from "./roster-index";
+import { WIDGET_EXACT_PATHS_LIMIT, type WidgetRoster, type WidgetRosterScope } from "./roster-index";
+import { newestRows, type RosterPage } from "./roster-pages";
 
 /**
  * A roster read, after refreshing the named parts of the shared index when `index` is not empty. With
@@ -13,10 +14,13 @@ export interface WidgetRosterRequest {
     index?: WidgetRosterScope[];
     /** The changed transcripts of a scope in `index`; a scope without an entry refreshes its whole listing. */
     paths?: Partial<Record<WidgetRosterScope, string[]>>;
+    /** A listed parent whose sub-agent changed without changing the parent's own index row. */
+    parentPaths?: string[];
     onlyIfChanged?: boolean;
 }
 
 export type WidgetRosterReply =
+    | { id: number; ok: true; revision: string; page: RosterPage }
     | { id: number; ok: true; rows: AgentSessionRow[]; agents: AgentsTree }
     | { id: number; ok: true; unchanged: true }
     | { id: number; ok: false; error: string };
@@ -54,6 +58,7 @@ export class WidgetRosterReader {
     agents: AgentsTree = { generatedAt: "", parents: [], orphans: [] };
     loading = true;
     error: string | undefined;
+    backfill?: WidgetRoster["backfill"];
     private worker?: RosterWorker;
     private timer?: ReturnType<typeof setTimeout>;
     private pending?: number;
@@ -68,6 +73,8 @@ export class WidgetRosterReader {
     private wanted = false;
     /** A requested run must read the roster even when its index refresh changes nothing. */
     private readWanted = false;
+    private readonly parents = new Set<string>();
+    private fullRead = false;
     private immediate = false;
     private scheduled: (() => void) | undefined;
     private startedAt = 0;
@@ -78,7 +85,7 @@ export class WidgetRosterReader {
 
     constructor(
         private readonly options: {
-            changed: () => void;
+            changed: () => void | Promise<void>;
             createWorker?: () => RosterWorker;
             now?: () => number;
             /** CPU milliseconds this process has used; the whole process, since the worker thread does the work. */
@@ -96,12 +103,13 @@ export class WidgetRosterReader {
      * Shows a roster read earlier (the previous watch's cache) until the first run of this one completes. It does
      * not count as a run: the first read still starts, and its result replaces this one.
      */
-    seed(roster: { rows: AgentSessionRow[]; agents: AgentsTree }): void {
+    seed(roster: WidgetRoster): void {
         if (this.stopped || this.agents.generatedAt) {
             return;
         }
         this.rows = roster.rows;
         this.agents = roster.agents;
+        this.backfill = roster.backfill;
     }
 
     /** A plain roster read, at most once per 15 s unless forced; a requested run that is already scheduled covers it. */
@@ -133,7 +141,13 @@ export class WidgetRosterReader {
             immediate = false,
             read = false,
             paths,
-        }: { immediate?: boolean; read?: boolean; paths?: ReadonlyMap<WidgetRosterScope, Iterable<string>> } = {}
+            parentPaths,
+        }: {
+            immediate?: boolean;
+            read?: boolean;
+            paths?: ReadonlyMap<WidgetRosterScope, Iterable<string>>;
+            parentPaths?: Iterable<string>;
+        } = {}
     ): void {
         if (this.stopped) {
             return;
@@ -147,14 +161,29 @@ export class WidgetRosterReader {
             } else {
                 for (const path of changed) {
                     known.add(path);
+                    if (known.size > WIDGET_EXACT_PATHS_LIMIT) {
+                        break;
+                    }
                 }
-                this.waitingPaths.set(scope, known);
+                this.waitingPaths.set(scope, known.size > WIDGET_EXACT_PATHS_LIMIT ? null : known);
             }
             this.waiting.add(scope);
             any = true;
         }
         this.wanted = true;
         this.readWanted ||= read || !any;
+        if (read || !any) {
+            this.fullRead ||= !parentPaths;
+            if (parentPaths && !this.fullRead) {
+                for (const file of parentPaths) {
+                    this.parents.add(file);
+                    if (this.parents.size > WIDGET_EXACT_PATHS_LIMIT) {
+                        this.fullRead = true;
+                        break;
+                    }
+                }
+            }
+        }
         this.immediate ||= immediate;
         this.schedule();
     }
@@ -188,6 +217,9 @@ export class WidgetRosterReader {
             }
         }
         const withPaths = Object.keys(paths).length > 0 ? { paths } : {};
+        const withParents = !this.fullRead && this.parents.size ? { parentPaths: [...this.parents] } : {};
+        this.parents.clear();
+        this.fullRead = false;
         this.waiting.clear();
         this.waitingPaths.clear();
         this.wanted = false;
@@ -209,10 +241,47 @@ export class WidgetRosterReader {
                     if (this.stopped || this.worker !== worker || event.data.id !== this.pending) {
                         return;
                     }
-                    if (event.data.ok && "unchanged" in event.data) {
+                    if (event.data.ok && "page" in event.data) {
+                        this.armTimeout();
+                        // A complete warm seed stays visible until a complete replacement lands.
+                        if (
+                            !this.backfill &&
+                            (this.rows.length || this.agents.parents.length || this.agents.orphans.length)
+                        ) {
+                            worker.postMessage({ id: event.data.id, received: true });
+                            return;
+                        }
+                        const { page, revision } = event.data;
+                        const resume = this.backfill?.revision === revision;
+                        if (page.offset !== (resume ? this.backfill?.cursor : 0)) {
+                            this.fail("Missing widget roster page");
+                            return;
+                        }
+                        this.rows = newestRows([...(resume ? this.rows : []), ...page.rows]);
+                        this.agents =
+                            page.agents ??
+                            (resume
+                                ? this.agents
+                                : { generatedAt: new Date().toISOString(), parents: [], orphans: [] });
+                        this.backfill = { revision, cursor: page.next };
+                        this.error = undefined;
+                        const id = event.data.id;
+                        void Promise.resolve(this.options.changed())
+                            .then(() => {
+                                if (!this.stopped && this.worker === worker && id === this.pending) {
+                                    worker.postMessage({ id, received: true });
+                                }
+                            })
+                            .catch((error) => {
+                                if (!this.stopped && this.worker === worker && id === this.pending) {
+                                    this.fail(error instanceof Error ? error.message : String(error));
+                                }
+                            });
+                    } else if (event.data.ok && "unchanged" in event.data) {
                         this.error = undefined;
                         this.finish(false);
                     } else if (event.data.ok) {
+                        this.backfill = undefined;
                         this.rows = event.data.rows;
                         this.agents = event.data.agents;
                         this.error = undefined;
@@ -227,20 +296,22 @@ export class WidgetRosterReader {
                     }
                 };
             }
-            this.timer = setTimeout(
-                () => this.fail("Agent roster refresh timed out"),
-                this.options.timeoutMs ?? 120_000
-            );
+            this.armTimeout();
             const request: WidgetRosterRequest =
                 index.length === 0
                     ? { id }
                     : onlyIfChanged
                       ? { id, index, ...withPaths, onlyIfChanged }
                       : { id, index, ...withPaths };
-            this.worker.postMessage(request);
+            this.worker.postMessage({ ...request, ...withParents });
         } catch (error) {
             this.fail(error instanceof Error ? error.message : String(error));
         }
+    }
+
+    private armTimeout(): void {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => this.fail("Agent roster refresh timed out"), this.options.timeoutMs ?? 120_000);
     }
 
     stop(): void {
