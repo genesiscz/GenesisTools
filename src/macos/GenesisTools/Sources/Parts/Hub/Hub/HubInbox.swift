@@ -1643,6 +1643,8 @@ struct InboxMain: View {
             // Coming back to the window is when new questions matter; no timer runs meanwhile.
             inbox.loadIfStale(maxAge: 30)
         }
+        .onReceive(NotificationCenter.default.publisher(for: HubSettingsPages.inboxKindsChanged)) { _ in inbox.load() }
+        .taskResumePrompt(tasks)
         .sheet(item: $inbox.resumeFor) { session in
             InboxResumeSheet(model: model, inbox: inbox, session: session)
         }
@@ -1748,7 +1750,7 @@ struct InboxMain: View {
                         if task.sendUncertain == true { Text("Check the session before sending this task again.") }
                         HStack {
                             ForEach(task.actions, id: \.self) { action in
-                                Button(action.title) { tasks.perform(action, on: task) }
+                                Button(action.title) { tasks.perform(action, on: task, sourceHome: session.sourceHome) }
                             }
                         }.disabled(tasks.mutatingIDs.contains(task.id))
                     }

@@ -2,9 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
-    changeTodoAssignment,
     createTodo,
-    type DecisionRecord,
     kindOf,
     readDecisions,
     readStoredTodoRows,
@@ -12,6 +10,7 @@ import {
     type TodoUpdateSnapshot,
     updateTodo,
 } from "@app/question/lib/decisions/store";
+import { assignSessionTodo } from "@app/question/lib/decisions/todo-assignment";
 import {
     TASK_DETAILS_CHARS,
     TASK_TITLE_CHARS,
@@ -56,6 +55,8 @@ export const widgetTaskActionSchema = z.object({
     id: z.string().min(1),
     action: z.enum(WIDGET_TASK_ACTIONS),
     expected: shownTaskSchema,
+    afterResume: z.boolean().optional(),
+    sourceHome: z.string().min(1).optional(),
 });
 export type WidgetTaskAction = z.infer<typeof widgetTaskActionSchema>;
 /** The session a task the user writes without choosing one belongs to. */
@@ -351,7 +352,7 @@ export async function updateWidgetTask({
     input,
     files = decisionFiles(),
     signal,
-    deliver = async (options) => (await import("@app/question/lib/decisions/deliver")).deliverToSession(options),
+    deliver,
 }: {
     deliver?: typeof import("@app/question/lib/decisions/deliver").deliverToSession;
     input: unknown;
@@ -367,61 +368,23 @@ export async function updateWidgetTask({
         dismiss: "dismissed",
     } as const;
     const expected: TodoUpdateSnapshot = request.expected;
-    const assignment = { ...files, id: request.id, expected };
-    let row: DecisionRecord;
-    if (request.action === "take") {
-        row = await changeTodoAssignment({
-            ...assignment,
-            change: (current) => ({ for: "human", state: current.state, delivery: undefined }),
-        });
-    } else if (request.action === "send") {
-        const reserved = await changeTodoAssignment({
-            ...assignment,
-            change: (current) => {
-                if (
-                    current.sessionId === LOCAL_TASK_SESSION ||
-                    !current.provider ||
-                    current.delivery?.uncertain ||
-                    (current.for !== "human" && current.state === "acknowledged")
-                ) {
-                    throw new Error(
-                        "This task has no receiving session or has already been sent. Check the session before taking it back."
-                    );
-                }
-                return {
-                    state: current.state,
-                    for: current.for,
-                    delivery: { route: "queued", at: expected.updatedTs, uncertain: true },
-                };
-            },
-        });
-        const reservation = { ...assignment, expected: { ...expected, updatedTs: reserved.updatedTs } };
-        // A missing receipt can mean the agent received the text. Leave the reservation intact in that case.
-        const result = await deliver({
-            session: reserved.sessionId,
-            provider: reserved.provider,
-            text: [`TODO ${reserved.number} (${reserved.id})`, reserved.title, reserved.prompt]
-                .filter(Boolean)
-                .join("\n"),
-        });
-        if (!result.delivered) {
-            await changeTodoAssignment({
-                ...reservation,
-                change: (current) => ({ state: current.state, for: current.for, delivery: undefined }),
-            });
-            throw new Error(result.error || "The session did not take the task. Resume it and send again.");
-        }
-        row = await changeTodoAssignment({
-            ...reservation,
-            change: () => ({
-                for: "agent",
-                state: "acknowledged",
-                delivery: { route: result.channel, target: result.target, at: new Date().toISOString() },
-            }),
-        });
-    } else {
-        row = await updateTodo({ ...files, id: request.id, state: states[request.action], expected, signal });
-    }
+    const result =
+        request.action === "take" || request.action === "send"
+            ? await assignSessionTodo({
+                  ...files,
+                  id: request.id,
+                  expected,
+                  action: request.action,
+                  sourceHome: request.sourceHome,
+                  afterResume: request.afterResume,
+                  signal,
+                  deliver,
+              })
+            : {
+                  row: await updateTodo({ ...files, id: request.id, state: states[request.action], expected, signal }),
+                  needsResume: false,
+              };
+    const { row, needsResume } = result;
     taskCache.delete(files.file);
     logger.debug({ id: row.id, state: row.state, revision: row.revision ?? 1 }, "Widget task action saved");
     return {
@@ -433,7 +396,8 @@ export async function updateWidgetTask({
             state: row.state,
             revision: row.revision ?? 1,
             at: row.updatedTs,
-            saved: true,
+            saved: !needsResume,
+            ...(needsResume ? { needsResume: true } : {}),
         },
     };
 }

@@ -4,6 +4,7 @@ import SwiftUI
 /// values and follows a change at once, and a change made in the hub (⌘⇧G) shows here.
 @MainActor
 public enum HubSettingsPages {
+    public static let inboxKindsChanged = Notification.Name("hub.inbox.kindsChanged")
     public static let appearancePageID = "hub.appearance"
     public static let panesPageID = "hub.panes"
     public static let historyPageID = "hub.history"
@@ -405,6 +406,7 @@ private struct HubInboxKindSettings: View {
                 subcommand: "hub", args: ["config", "inbox"] + args + ["--json"], timeoutSeconds: 15)
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
             kinds = try JSONDecoder().decode(Kinds.self, from: Data(result.stdout.utf8))
+            if !args.isEmpty { NotificationCenter.default.post(name: HubSettingsPages.inboxKindsChanged, object: nil) }
             error = nil
         } catch {
             self.error = error.localizedDescription

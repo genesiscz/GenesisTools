@@ -16,6 +16,7 @@ public final class WidgetTasksStore: ObservableObject {
     @Published public private(set) var error: String?
     @Published public private(set) var receipt: String?
     @Published public private(set) var undo: WidgetTaskUndo?
+    @Published public var resumeRequest: WidgetTask?
     @Published public var draft = WidgetTaskDraft()
     @Published public var scope = "active" { didSet { if scope != oldValue { filtersChanged() } } }
     @Published public var project = "" { didSet { if project != oldValue { filtersChanged() } } }
@@ -259,21 +260,38 @@ public final class WidgetTasksStore: ObservableObject {
     /// Ticks, unticks, acknowledges or dismisses one task. The row shows the new state at once; the ledger's
     /// answer confirms it, or the row returns to the saved state with the reason. `next` is a second step (an undo
     /// back to in progress), run against the version this one returned.
-    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil) {
+    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil, afterResume: Bool = false, sourceHome: String? = nil) {
         guard !stopped, mutations[task.id] == nil, task.actions.contains(action) else { return }
-        let args = ["update", task.id, "--action", action.rawValue,
+        var args = ["update", task.id, "--action", action.rawValue,
                     "--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                     "--session", task.sessionId, "--provider", task.provider]
         let view = viewGeneration
+        if action == .send {
+            if afterResume { args.append("--after-resume") }
+            let homes = Set(sessionsSource().filter { $0.target.sessionId == task.sessionId && $0.target.provider == task.provider }
+                .map(\.target.sourceHome).filter { !$0.isEmpty })
+            if let home = sourceHome ?? (homes.count == 1 ? homes.first : nil), !home.isEmpty {
+                args += ["--source-home", home]
+            }
+        }
         pendingStates[task.id] = action.targetState(from: task.state)
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
             let response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
-            guard response.receipt.saved, response.receipt.id == task.id,
-                  response.receipt.action == action.rawValue, response.receipt.state == action.targetState(from: task.state),
+            if action == .send, response.receipt.needsResume == true, !response.receipt.saved,
+               response.task.id == task.id, response.task.sessionId == task.sessionId, response.task.provider == task.provider {
+                self.resumeRequest = response.task
+                return
+            }
+            let finalState = response.task.state
+            let completedDuringSend = action == .send && response.task.owner == "agent" &&
+                ["implemented", "dismissed", "superseded"].contains(finalState)
+            guard finalState == action.targetState(from: task.state) || completedDuringSend,
+                  response.receipt.saved, response.receipt.id == task.id,
+                  response.receipt.action == action.rawValue, response.receipt.state == finalState,
                   response.receipt.from == task.state, response.receipt.revision == task.revision,
                   response.task.revision == task.revision, response.task.updatedTs == response.receipt.at,
-                  response.task.id == task.id, response.task.state == action.targetState(from: task.state),
+                  response.task.id == task.id,
                   response.task.sessionId == task.sessionId, response.task.provider == task.provider else {
                 throw ToolsBridgeError.refused("The task update returned an inconsistent receipt. Refresh to confirm its state.")
             }

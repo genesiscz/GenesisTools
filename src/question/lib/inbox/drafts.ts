@@ -210,6 +210,26 @@ function refuseStaleShown(rows: readonly DecisionRecord[], shown: readonly Shown
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
 const WAIT_STEP_MS = 1_000;
 
+/** Find the same receiver used by inbox answers, allowing a just-resumed session time to start. */
+export async function waitForSessionReceiver(
+    target: { session: string; provider?: string; sourceHome?: string },
+    waitMs: number,
+    deps: { deliver?: DeliverDeps; sleep?: (ms: number) => Promise<void> } = {}
+): Promise<LocatedDelivery | undefined> {
+    const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
+    const attempts = Math.max(1, Math.ceil(waitMs / WAIT_STEP_MS));
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        const located = await locateDelivery(target, deps.deliver ?? {});
+        if (isLiveDelivery(located)) {
+            return located;
+        }
+        if (attempt + 1 < attempts) {
+            await sleep(WAIT_STEP_MS);
+        }
+    }
+    return undefined;
+}
+
 /**
  * Sends every drafted answer of one session as ONE message. The drafts are promoted to `answered`
  * (the pick becomes the option, the note the answer) in one transition, then delivered through
@@ -287,28 +307,10 @@ export async function sendDrafts(
 
     // A just-resumed session boots for a few seconds: wait, bounded, for its pane to be live. The place found is
     // handed to the send, which then types there without looking the session up again.
-    let live: LocatedDelivery | undefined;
-
-    if (input.waitLiveMs && input.waitLiveMs > 0) {
-        const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
-        const attempts = Math.max(1, Math.ceil(input.waitLiveMs / WAIT_STEP_MS));
-
-        for (let attempt = 0; attempt < attempts; attempt++) {
-            const located = await locateDelivery(
-                { session: input.session, ...(provider ? { provider } : {}) },
-                deps.deliver ?? {}
-            );
-
-            if (isLiveDelivery(located)) {
-                live = located;
-                break;
-            }
-
-            if (attempt + 1 < attempts) {
-                await sleep(WAIT_STEP_MS);
-            }
-        }
-    }
+    const live =
+        input.waitLiveMs && input.waitLiveMs > 0
+            ? await waitForSessionReceiver({ session: input.session, provider }, input.waitLiveMs, deps)
+            : undefined;
 
     // The resume dialog reopened the session, and its pane never came up in time: the answers stay
     // `answered`, and the delivery names where it resumed, not a queue error. With a live pane the

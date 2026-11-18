@@ -1937,6 +1937,6 @@ private struct WidgetInboxTaskButtons: View {
             if let undo = store.undo, undo.task.id == task.id {
                 Button("Undo") { store.perform(undo.action, on: undo.task, then: undo.then) }
             }
-        }
+        }.taskResumePrompt(store, taskID: task.id)
     }
 }

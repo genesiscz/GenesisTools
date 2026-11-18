@@ -45,6 +45,7 @@ struct WidgetTasksModuleView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tasks-widget")
+        .taskResumePrompt(store, active: presentation == .expanded)
     }
 
     @ViewBuilder private var handoffSection: some View {
@@ -559,5 +560,45 @@ private struct WidgetTaskEditor: View {
         .onChange(of: edit.isOpen) { _, open in
             if !open { close() }
         }
+    }
+}
+
+public extension View {
+    /// A user chooses whether to reopen the session before the task goes to its receiver.
+    func taskResumePrompt(_ store: WidgetTasksStore, active: Bool = true, taskID: String? = nil) -> some View {
+        modifier(WidgetTaskResumePrompt(store: store, active: active, taskID: taskID))
+    }
+}
+
+private struct WidgetTaskResumePrompt: ViewModifier {
+    @ObservedObject var store: WidgetTasksStore
+    let active: Bool
+    let taskID: String?
+    @State private var failure: String?
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Resume the session to send this task?", isPresented: Binding(
+            get: { active && store.resumeRequest != nil && (taskID == nil || store.resumeRequest?.id == taskID) },
+            set: { if !$0 { store.resumeRequest = nil } }
+        ), presenting: store.resumeRequest) { task in
+            Button("Resume in a new cmux workspace and send") {
+                guard let command = CmuxCommandRunner.resumeCommand(provider: task.provider, sessionId: task.sessionId) else {
+                    failure = "Cannot resume this session's provider."
+                    return
+                }
+                Task {
+                    let reason = await Task.detached(priority: .userInitiated) {
+                        CmuxCommandRunner.run(command, cwd: task.sourceContext.cwd ?? "",
+                                              name: task.sessionTitle ?? task.sessionId, at: .newWorkspace(window: nil))
+                    }.value
+                    if let reason { failure = reason }
+                    else { store.perform(.send, on: task, afterResume: true) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { task in Text(task.title) }
+        .alert("Could not resume the session", isPresented: Binding(
+            get: { failure != nil }, set: { if !$0 { failure = nil } }
+        )) { Button("OK") { failure = nil } } message: { Text(failure ?? "") }
     }
 }

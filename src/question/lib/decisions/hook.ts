@@ -14,7 +14,7 @@ import {
     type ReadSession,
     recordFoundAnswers,
 } from "./chat-reading";
-import type { DecisionsHookConfig } from "./hook-config";
+import { type DecisionsHookConfig, decisionStopWanted } from "./hook-config";
 import {
     decisionQuestion,
     decisionQuestionRefs,
@@ -504,7 +504,7 @@ export async function runDecisionStop(
     }
 
     let reminder: StopHookOutput | null = null;
-    if (deps.todoReminder && config.stopHook !== "off") {
+    if (deps.todoReminder && decisionStopWanted({ decisions: config })) {
         const tasks = readDecisions(deps.log.file)
             .filter(
                 (row) =>

@@ -1225,11 +1225,14 @@ export function changeTodoAssignment({
     id,
     expected,
     change,
+    reservedAt,
 }: {
     file: string;
     events: string;
     id: string;
     expected: TodoUpdateSnapshot;
+    /** Finish this send even if the receiving agent closed the task before its transport returned. */
+    reservedAt?: string;
     change: (current: DecisionRecord) => Pick<DecisionRecord, "for" | "state" | "delivery">;
 }): Promise<DecisionRecord> {
     return withDecisionsLock(file, () => {
@@ -1238,11 +1241,21 @@ export function changeTodoAssignment({
         if (!row) {
             throw new Error(`No todo ${id}`);
         }
-        checkShownTodo(row, expected);
-        if ((row.revision ?? 1) !== expected.revision || (row.state !== "open" && row.state !== "acknowledged")) {
-            throw new Error("This task changed or is already closed.");
+        if (reservedAt !== undefined) {
+            if (
+                row.delivery?.at !== reservedAt ||
+                !row.delivery.uncertain ||
+                (row.revision ?? 1) !== expected.revision
+            ) {
+                throw new Error("Task delivery changed while sending. Check the receiving session.");
+            }
+        } else {
+            checkShownTodo(row, expected);
+            if ((row.revision ?? 1) !== expected.revision || (row.state !== "open" && row.state !== "acknowledged")) {
+                throw new Error("This task changed or is already closed.");
+            }
         }
-        const updatedTs = laterThan(expected.updatedTs, () => new Date().toISOString());
+        const updatedTs = laterThan(row.updatedTs, () => new Date().toISOString());
         const next = { ...row, ...change(row), updatedTs };
         rewrite(
             file,

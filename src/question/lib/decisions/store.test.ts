@@ -1780,7 +1780,7 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             deliver: async ({ session, text }) => {
                 expect(session).toBe(row.sessionId);
                 expect(text).toContain(row.prompt);
-                await expect(updateWidgetTask({ files, input })).rejects.toThrow("changed");
+                await expect(updateWidgetTask({ files, input })).rejects.toThrow();
                 return { channel: "cmux", delivered: true };
             },
         });
@@ -1794,6 +1794,28 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             },
         });
         expect(readDecisions(files.file)[0]).toMatchObject({ for: "human", state: "acknowledged" });
+    });
+
+    test("a task finished by the receiving agent stays finished when its delivery receipt arrives", async () => {
+        const { row, files } = fixture();
+        const result = await updateWidgetTask({
+            files,
+            input: { id: row.id, action: "send", expected: expected(row) },
+            deliver: async () => {
+                await updateDecision(files.file, files.events, row.id, {
+                    state: "implemented",
+                    commitRefs: ["abc1234"],
+                });
+                return { delivered: true, channel: "t3" };
+            },
+        });
+        expect(result.task.state).toBe("implemented");
+        expect(readDecisions(files.file)[0]).toMatchObject({
+            for: "agent",
+            state: "implemented",
+            commitRefs: ["abc1234"],
+            delivery: { route: "t3" },
+        });
     });
 
     test("a refused send keeps the task available and an unknown receipt blocks resending", async () => {
@@ -1818,7 +1840,7 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             send(async () => {
                 throw new Error("duplicate");
             })
-        ).rejects.toThrow("already been sent");
+        ).rejects.toThrow("already have been sent");
     });
 
     test("acknowledge, complete, reopen and dismiss append ordinary audit receipts", async () => {
