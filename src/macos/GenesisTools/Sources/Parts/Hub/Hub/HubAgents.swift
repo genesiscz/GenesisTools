@@ -202,7 +202,7 @@ enum AgentTree {
 enum AgentsSource {
     static let publicationURL: URL = {
         let root = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
-            ?? SettingsModel.toolsHome + "/.genesis-tools/hub/widget"
+            ?? GenesisToolsHome.path("hub/widget")
         return URL(fileURLWithPath: root).resolvingSymlinksInPath().appendingPathComponent("roster-cache.json")
     }()
 
