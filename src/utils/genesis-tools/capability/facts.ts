@@ -47,9 +47,16 @@ function stringList(value: unknown): string[] | null {
     return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : null;
 }
 
-/** Reads a manifest's text; null when it is not a manifest. */
+/** Reads a manifest's text; null when it is not a manifest, malformed JSON included. */
 export function parseAppManifest(text: string): AppManifestFacts | null {
-    const raw: unknown = SafeJSON.parse(text, { strict: true });
+    let raw: unknown;
+
+    try {
+        raw = SafeJSON.parse(text, { strict: true });
+    } catch (error) {
+        logger.debug({ error }, "genesis-tools facts: the app manifest is not JSON");
+        return null;
+    }
 
     if (typeof raw !== "object" || raw === null || !("sourceHash" in raw) || !("builtAt" in raw)) {
         return null;
