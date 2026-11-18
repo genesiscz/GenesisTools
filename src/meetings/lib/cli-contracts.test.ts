@@ -106,6 +106,150 @@ test("brief meeting help exposes the screen attribution instruction", () => {
     }
 });
 
+test("look returns only the requested moments, clipped stays and OCR changes on the transcript clock", async () => {
+    const store = new MeetingStore();
+    const start = "2026-10-01T09:00:00.000Z";
+    const base = { suggestedAt: start, rules: [], status: "suggested" as const };
+    const range = { ...base, kind: "speaker-range" as const, label: "Speaker 2", fromSec: 3610, toSec: 3610 };
+    const question = { ...base, kind: "question" as const, about: "speaker" as const, choices: [], decides: [] };
+    const record = await store.create(
+        {
+            title: "Map room rehearsal",
+            start,
+            createdBy: "new",
+            sources: { wisprflow: { meetingId: "map-room" } },
+            attendance: {
+                from: "fixture",
+                people: [
+                    { name: "Rowan Example", fromSec: 3600, toSec: 3610 },
+                    { name: "Fern Example", fromSec: 3601, toSec: 3614 },
+                    { name: "Ash Example", fromSec: 3618, toSec: 3630 },
+                    { name: "Wren Example", fromSec: 3621, toSec: 3630 },
+                ],
+            },
+            items: [
+                { ...range, id: "i1", speaker: "Fern Example", status: "confirmed" },
+                {
+                    ...range,
+                    id: "i2",
+                    speaker: "Ash Example",
+                    rules: [MeetingRule.VoiceEmbedding],
+                    evidence: { score: 0.81, transcriptLine: 1, reason: "named" },
+                },
+                { ...question, id: "i3", question: "Who read the map?", fromSec: 3620, toSec: 3625 },
+                { ...question, id: "i4", question: "Who closed the door?", fromSec: 3621, toSec: 3621 },
+                { ...question, id: "i5", question: "Who started?", fromSec: 3609, toSec: 3614 },
+                { ...base, id: "i6", kind: "term", heard: "map" },
+                { ...base, id: "i7", kind: "term", heard: "road", atSec: 3609 },
+                { ...question, id: "i8", question: "Who sat down?", status: "rejected", fromSec: 3610, toSec: 3610 },
+                { ...base, id: "i9", kind: "term", heard: "page", atSec: 3620 },
+                {
+                    ...base,
+                    id: "i10",
+                    kind: "removal",
+                    fromSec: 3610,
+                    toSec: 3610,
+                    heard: "Read the map.",
+                    evidence: { transcriptLine: 1, echoPair: { micLineIndex: 0, lagMs: 120 } },
+                },
+            ],
+        },
+        { command: "test", change: "fixture" }
+    );
+    const before = readFileSync(store.path(record.id));
+    const clock = Date.parse(start) + 5000;
+    const ocr = [
+        [3609, 1, "Agenda"],
+        [3609, 2, "Map"],
+        [3610, 1, "Agenda\nRoute"],
+        [3612, 2, "Map"],
+        [3620, 2, "Board"],
+        [3620.01, 1, "Outside"],
+    ] as const;
+    writeFileSync(
+        join(store.folder(record.id), "ocr.jsonl"),
+        ocr
+            .map(([sec, displayId, text]) =>
+                SafeJSON.stringify({
+                    file: `frame-${sec}-${displayId}.jpg`,
+                    displayId,
+                    at: new Date(clock + sec * 1000).toISOString(),
+                    text,
+                })
+            )
+            .join("\n")
+    );
+    const mocks = [
+        spyOn(wisprflowSource, "load").mockResolvedValue({
+            sourceMeetingId: "map-room",
+            title: record.title,
+            start,
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript: [
+                { startSec: 3609.88, speaker: "Speaker 1", text: "Read the map." },
+                { startSec: 3610, speaker: "Speaker 2", text: "Read the map." },
+                { startSec: 3620, speaker: "Speaker 2", text: "Turn the page." },
+                { startSec: 3620.01, speaker: "Speaker 3", text: "Outside." },
+            ],
+        }),
+        spyOn(wisprflowSource, "evidence").mockResolvedValue({
+            segments: [{ startSec: 3610, endSec: 3613, channel: "mic" }],
+            speaking: [],
+            files: [],
+        }),
+        spyOn(wisprflowSource, "recordingClock").mockResolvedValue({ startedAt: new Date(clock).toISOString() }),
+    ];
+    const output = spyOn(out, "result").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "look" });
+        await program.parseAsync(["look", record.id, "--from", "1:00:10", "--to", "60:20", "--json"], { from: "user" });
+        expect(output).toHaveBeenCalledTimes(1);
+        expect(SafeJSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+            fromSec: 3610,
+            toSec: 3620,
+            lines: [
+                {
+                    index: 1,
+                    fromSec: 3610,
+                    label: "Speaker 2",
+                    suggestedName: "Ash Example",
+                    confirmedName: "Fern Example",
+                    voice: { person: "Ash Example", score: 0.81 },
+                    micShare: "layout unknown",
+                    echoPair: { micLineIndex: 0, lagMs: 120 },
+                },
+                {
+                    index: 2,
+                    fromSec: 3620,
+                    confirmedName: null,
+                    voice: null,
+                    micShare: "layout unknown",
+                    echoPair: null,
+                },
+            ],
+            attendance: [
+                { name: "Fern Example", fromSec: 3610, toSec: 3614 },
+                { name: "Ash Example", fromSec: 3618, toSec: 3620 },
+            ],
+            questions: [{ id: "i3", atSec: 3620 }],
+            items: [{ id: "i1" }, { id: "i2" }, { id: "i3" }, { id: "i8" }, { id: "i10" }],
+            screen: [
+                { atSec: 3610, displayId: 1, added: ["Route"], removed: [] },
+                { atSec: 3620, displayId: 2, added: ["Board"], removed: ["Map"] },
+            ],
+        });
+        expect(readFileSync(store.path(record.id))).toEqual(before);
+    } finally {
+        output.mockRestore();
+        for (const mock of mocks) {
+            mock.mockRestore();
+        }
+    }
+});
+
 test("meeting help lists each handle method once", () => {
     const handles = meetingsToolsetApi.handles ?? [];
     expect(handles.length).toBeGreaterThan(0);
