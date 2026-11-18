@@ -196,6 +196,13 @@ export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
 
 /** Which recorded track a clip plays (`global.playback.tracks`). */
 export const PLAYBACK_TRACKS = ["best", "source"] as const;
+
+/** How the voice pass is scheduled (`speakerLabels.voice.compute.priority`). */
+export const VOICE_COMPUTE_PRIORITIES = ["normal", "background"] as const;
+export type VoiceComputePriority = (typeof VOICE_COMPUTE_PRIORITIES)[number];
+
+/** The most voice worker processes one pass may start. */
+export const MAX_VOICE_WORKERS = 16;
 export type PlaybackTracks = (typeof PLAYBACK_TRACKS)[number];
 
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
@@ -389,9 +396,34 @@ const speakerLabelsSchema = z.object({
                 .prefault({}),
             /** A line shorter than this many seconds is not named by voice: too little sound to compare. */
             minSeconds: z.number().min(0).max(60).default(1.5),
+            /** How the voice pass (decoding the sound and embedding each line) runs on this Mac. */
+            compute: z
+                .object({
+                    /**
+                     * `normal`: the pass runs at normal priority on the fast cores, done soonest (about 90 CPU s for
+                     * a one-hour meeting, measured 2026-11-18). `background`: it yields to everything else and runs on
+                     * the efficiency cores, so the Mac stays quiet, but it takes many times longer and more CPU
+                     * seconds (251 CPU s and 32 minutes for the same meeting under load).
+                     */
+                    priority: z.enum(VOICE_COMPUTE_PRIORITIES).default("normal"),
+                    /** Worker processes that embed lines side by side; `auto` is half the cores, at most four. */
+                    workers: z
+                        .union([z.literal("auto"), z.number().int().min(1).max(MAX_VOICE_WORKERS)])
+                        .default("auto"),
+                })
+                .prefault({}),
         })
         .prefault({}),
 });
+
+/** The worker count `auto` means on this Mac: half the cores, at least one, at most four. */
+export function voiceWorkerCount(workers: "auto" | number, cores: number): number {
+    if (workers !== "auto") {
+        return workers;
+    }
+
+    return Math.max(1, Math.min(4, Math.floor(cores / 2)));
+}
 
 /** The audio a clip keeps before and after the heard stretch. */
 export interface ListenPads {

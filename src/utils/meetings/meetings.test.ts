@@ -23,6 +23,7 @@ import {
     resolveDictionary,
     sourceFolders,
     TONE_PRESETS,
+    voiceWorkerCount,
 } from "./config";
 import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
@@ -232,6 +233,7 @@ describe("meetings config", () => {
                 enabled: true,
                 gate: { score: 0.45, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
                 minSeconds: 1.5,
+                compute: { priority: "normal", workers: "auto" },
             },
         });
         expect(config.global.capture.audioRetentionDays).toBeUndefined();
@@ -252,6 +254,7 @@ describe("meetings config", () => {
             enabled: true,
             gate: { score: 0.55, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
             minSeconds: 3,
+            compute: { priority: "normal", workers: "auto" },
         });
         expect(set.capture.audioRetentionDays).toBe(90);
         expect(set.playback.tracks).toBe("source");
@@ -273,6 +276,10 @@ describe("meetings config", () => {
             { speakerLabels: { voice: { gate: { strangerScore: 1.01 } } } },
             { speakerLabels: { voice: { minSeconds: -1 } } },
             { speakerLabels: { voice: { minSeconds: 61 } } },
+            { speakerLabels: { voice: { compute: { priority: "low" } } } },
+            { speakerLabels: { voice: { compute: { workers: 0 } } } },
+            { speakerLabels: { voice: { compute: { workers: 17 } } } },
+            { speakerLabels: { voice: { compute: { workers: 2.5 } } } },
             { capture: { audioRetentionDays: 0 } },
             { capture: { audioRetentionDays: 1.5 } },
             { playback: { tracks: "mic" } },
@@ -292,6 +299,11 @@ describe("meetings config", () => {
         expect(edges.speakerLabels.voice.gate).toMatchObject({ score: 0, margin: 1, strangerScore: 1 });
         expect(edges.speakerLabels.voice.minSeconds).toBe(0);
         expect(edges.capture.audioRetentionDays).toBe(1);
+    });
+
+    test("auto voice workers are half the cores, at least one and at most four; a number is kept", () => {
+        expect([1, 2, 6, 8, 10, 24].map((cores) => voiceWorkerCount("auto", cores))).toEqual([1, 1, 3, 4, 4, 4]);
+        expect(voiceWorkerCount(6, 2)).toBe(6);
     });
 
     test("a version 1 file moves each key to its axis, and the old places still read", () => {
