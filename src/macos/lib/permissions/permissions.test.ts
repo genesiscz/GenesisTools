@@ -882,9 +882,9 @@ describe("collectProblems", () => {
         expect(missing).toEqual([
             "Permissions follow the terminal. GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`.",
         ]);
-        expect(collectProblems({ ...base, app: { ...builtApp, identityStable: false } }, appNeedFixture())[0]).toContain(
-            "ad-hoc"
-        );
+        expect(
+            collectProblems({ ...base, app: { ...builtApp, identityStable: false } }, appNeedFixture())[0]
+        ).toContain("ad-hoc");
         expect(collectProblems({ ...base, app: { ...builtApp, stale: true } }, appNeedFixture())).toEqual([
             "GenesisTools.app sources changed since the last build. Run `fixture-build`.",
         ]);

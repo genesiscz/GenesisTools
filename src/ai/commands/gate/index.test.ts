@@ -20,7 +20,12 @@ test("gate status reads a legacy manifest's saved methods without probing or wri
         expect(unknown).not.toContain("fixture-build");
         expect(env.state.read().areas).toEqual({});
 
-        const saved = { value: ["gate.approve"], source: "app" as const, at: env.now().toISOString(), build: "fixture" };
+        const saved = {
+            value: ["gate.approve"],
+            source: "app" as const,
+            at: env.now().toISOString(),
+            build: "fixture",
+        };
         await env.state.report("app", "rpcMethods", saved);
         expect(await status()).toContain("GenesisTools.app RPC installed");
         expect(env.state.get("app", "rpcMethods")).toEqual(saved);
