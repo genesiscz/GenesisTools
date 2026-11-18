@@ -24,6 +24,32 @@ extension StackedNotice {
     }
 }
 
+extension NoticeStackModel {
+    /// Runs an Undo while its notice says "Undoing…", then puts the answer in that notice's place: `done` when the work
+    /// went through (a plain notice, which fades), "Not undone: …" with Retry when it failed. The kit's `.undo` leaves a
+    /// notice waiting until something replaces it, so an Undo that only runs its work kept "Undoing…" on screen after
+    /// the undo had finished (w_o8fbzbq8). The returned task is for tests.
+    @discardableResult
+    func settleUndo(_ notice: StackedNotice.ID, done: String,
+                    _ work: @escaping @MainActor () async throws -> Void) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            do {
+                try await work()
+                self?.push(StackedNotice(text: done), replacing: notice)
+            } catch {
+                guard let self else { return }
+                var failed = StackedNotice.meetingsFailure(error) { [weak self] in self?.settleUndo(notice, done: done, work) }
+                failed.text = "Not undone: \(failed.text)"
+                // Retry waits in this notice's place, as the Undo did, and its answer replaces it again.
+                failed.actions[0] = .init("Retry", symbol: "arrow.clockwise", afterPress: .wait("Undoing…")) { [weak self] id in
+                    self?.settleUndo(id, done: done, work)
+                }
+                push(failed, replacing: notice)
+            }
+        }
+    }
+}
+
 extension MeetingsCLI.Failure {
     /// The report retains the failure's event time. Cached app facts avoid disk reads in a view body.
     @MainActor

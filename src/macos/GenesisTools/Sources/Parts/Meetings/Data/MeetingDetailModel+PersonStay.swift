@@ -79,6 +79,22 @@ struct PersonStay: Equatable {
         }
         return nil
     }
+
+    /// What Undo writes after a save or a removal, and the words its notice ends with. `after` nil undoes a removal,
+    /// `before` nil undoes an addition; both set undo an edit.
+    static func undo(after: PersonStay?, before: PersonStay?,
+                     meeting: String) -> (params: MeetingsAPI.MeetingPeopleEdit.Params, done: String)? {
+        switch (after, before) {
+        case (nil, let before?):
+            return (before.params(meeting: meeting), "Undone: \(before.name) is back in the meeting, \(before.windowWords)")
+        case (let after?, nil):
+            return (after.params(meeting: meeting, remove: true), "Undone: \(after.name) is out of the meeting again")
+        case (_?, let before?):
+            return (before.params(meeting: meeting), "Undone: \(before.name) stays \(before.windowWords) again")
+        case (nil, nil):
+            return nil
+        }
+    }
 }
 
 extension MeetingDetailModel {
@@ -87,8 +103,8 @@ extension MeetingDetailModel {
     func savePersonStay(_ stay: PersonStay, before: PersonStay?) async throws {
         try await editMeetingPerson(stay.params(meeting: id))
         let undoable = (before?.stays ?? 0) <= 1
-        notices.push(StackedNotice(text: "\(stay.name): \(stay.windowWords)", actions: undoable ? [.undo { [weak self] _ in
-            self?.undoPersonStay(stay, before: before)
+        notices.push(StackedNotice(text: "\(stay.name): \(stay.windowWords)", actions: undoable ? [.undo { [weak self] notice in
+            self?.undoPersonStay(stay, before: before, notice: notice)
         }] : []))
     }
 
@@ -98,21 +114,14 @@ extension MeetingDetailModel {
         try await editMeetingPerson(stay.params(meeting: id, remove: true))
         let text = stay.stays > 1 ? "Removed \(stay.name); Undo brings them back with one stay, \(stay.windowWords)"
                                   : "Removed \(stay.name) from the meeting"
-        notices.push(StackedNotice(text: text, actions: [.undo { [weak self] _ in self?.undoPersonStay(nil, before: stay) }]))
+        notices.push(StackedNotice(text: text, actions: [.undo { [weak self] notice in
+            self?.undoPersonStay(nil, before: stay, notice: notice)
+        }]))
     }
 
-    /// `after` nil undoes a removal; `before` nil undoes an addition.
-    private func undoPersonStay(_ after: PersonStay?, before: PersonStay?) {
-        Task {
-            do {
-                if let before {
-                    try await editMeetingPerson(before.params(meeting: id))
-                } else if let after {
-                    try await editMeetingPerson(after.params(meeting: id, remove: true))
-                }
-            } catch {
-                notices.push(.meetingsFailure(error))
-            }
-        }
+    /// Puts back what the notice reports, and ends the notice with "Undone: …" or why it was not undone.
+    private func undoPersonStay(_ after: PersonStay?, before: PersonStay?, notice: StackedNotice.ID) {
+        guard let undo = PersonStay.undo(after: after, before: before, meeting: id) else { return notices.dismiss(notice) }
+        notices.settleUndo(notice, done: undo.done) { [weak self] in _ = try await self?.editMeetingPerson(undo.params) }
     }
 }

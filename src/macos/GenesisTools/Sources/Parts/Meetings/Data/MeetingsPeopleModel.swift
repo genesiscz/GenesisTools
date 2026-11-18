@@ -127,12 +127,22 @@ final class MeetingsPeopleModel {
     }
 
     func setHidden(_ person: KnownPerson, hidden: Bool) {
-        let params = MeetingsAPI.PeopleHide.Params(person: person.id, hidden: hidden)
-        perform({ [service] in
-            _ = try await PeopleCalls.write(MeetingsAPI.PeopleHide.self, params, orRun: PeopleCalls.hideArgs(params), service: service)
+        perform({ [weak self] in
+            try await self?.writeHidden(person, hidden: hidden)
             return hidden ? "\(person.name) is hidden" : "\(person.name) shows again"
-        }, undo: { [weak self] in self?.setHidden(person, hidden: !hidden) },
-           retry: { [weak self] in self?.setHidden(person, hidden: hidden) })
+        }, undo: { [weak self] notice in
+            // The Undo ends its own notice: "Undone: …", or why not.
+            self?.window?.notices.settleUndo(notice, done: hidden ? "Undone: \(person.name) shows again"
+                                                                  : "Undone: \(person.name) is hidden again") { [weak self] in
+                try await self?.writeHidden(person, hidden: !hidden)
+                self?.load()
+            }
+        }, retry: { [weak self] in self?.setHidden(person, hidden: hidden) })
+    }
+
+    private func writeHidden(_ person: KnownPerson, hidden: Bool) async throws {
+        let params = MeetingsAPI.PeopleHide.Params(person: person.id, hidden: hidden)
+        _ = try await PeopleCalls.write(MeetingsAPI.PeopleHide.self, params, orRun: PeopleCalls.hideArgs(params), service: service)
     }
 
     /// "Merge with…" picked a second person: the plan names the meetings it changes before anything is written.
@@ -201,13 +211,13 @@ final class MeetingsPeopleModel {
     }
 
     /// Runs one write, says what it did in the window's notices (with an Undo when given), and reads the list again.
-    private func perform(_ write: @escaping @MainActor () async throws -> String, undo: (@MainActor () -> Void)? = nil,
-                         retry: @escaping @MainActor () -> Void) {
+    private func perform(_ write: @escaping @MainActor () async throws -> String,
+                         undo: (@MainActor (StackedNotice.ID) -> Void)? = nil, retry: @escaping @MainActor () -> Void) {
         lastMerge = nil
         Task {
             do {
                 let done = try await write()
-                let actions = undo.map { undo in [StackedNotice.Action.undo { _ in undo() }] } ?? []
+                let actions = undo.map { undo in [StackedNotice.Action.undo { notice in undo(notice) }] } ?? []
                 window?.notices.push(StackedNotice(text: done, actions: actions))
             } catch {
                 window?.notices.push(.meetingsFailure(error, retry: retry))
