@@ -9,6 +9,7 @@ import { type TmuxCmuxLocation, tmuxCmuxLocations } from "@genesiscz/utils/cmux/
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { POLLED_LISTING_REUSE_MS } from "./listing-reuse";
 
 /**
  * A resident answer for `tools ai usage sessions --json`.
@@ -314,7 +315,9 @@ export async function sessionRowsJson(
         }
     }
 
-    const rows = await listRows(listing);
+    // A miss in the one-query answer cache may still have a current catalog for this exact scope.
+    // Fresh requests (including the daemon refresh) must still go to the source.
+    const rows = await listRows(fresh ? listing : { maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS, ...listing });
     const now = Date.now();
     if (cacheWrite) {
         await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows }, path);
