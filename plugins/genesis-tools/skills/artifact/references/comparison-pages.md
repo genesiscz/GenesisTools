@@ -28,6 +28,14 @@ Method, history and raw records come last, folded.
   it is a tooltip with that option's summary.
 - **Test:** a reader who lands in the middle of the page can read any sentence without scrolling to a key.
 
+## Cards
+
+- **Three cards per row at most:** `CardGrid min={340}` or wider. At five per row (`min={220}`) each value wraps one
+  word per line.
+- **A card is a summary, not the table.** Give it its own short texts (a `card` block in the content JSON): a
+  one-line idea as `subtitle`, and `fields` of three or four words each. The long property texts stay in the table.
+- **The card body holds what a reader compares:** one strength and one weakness, each a sentence.
+
 ## Layout
 
 | Section | Components | What it holds |
