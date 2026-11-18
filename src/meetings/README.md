@@ -286,9 +286,9 @@ findings using the meeting's available evidence and preserves decisions and manu
 to compare draft values on that meeting. **Save globally** stores only the changed settings.
 
 Suggest uses the linked source's title and transcript clock when it looks up attendance, including for a renamed
-copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. A missing or
-ambiguous Teams chat lists cached candidate titles and IDs, ordered by last-message proximity rather than call
-start. These candidates do not prove which chat belongs to the call. Select a known chat with
+copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. If several
+Teams chats match, the warning shows the first three by last cached call, with the full ID, chat participant
+count and attendance command for each. Select a known chat with
 `tools meetings suggest <meeting> --attendance teams --attendance-id <threadId>` or the REPL's
 `meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })`. Invalid input and unreadable or
 malformed attendance files still fail.

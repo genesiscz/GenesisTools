@@ -61,10 +61,16 @@ describe("attendance candidate output", () => {
         );
         const open = spyOn(cacheModule, "openCache").mockReturnValue(cache);
         const chunks: string[] = [];
-        const stdout = spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-            chunks.push(String(chunk));
-            return true;
-        });
+        const stdout = spyOn(process.stdout, "write").mockImplementation(
+            (chunk: string | Uint8Array, ...args: unknown[]) => {
+                chunks.push(String(chunk));
+                const done = args.at(-1);
+                if (typeof done === "function") {
+                    done();
+                }
+                return true;
+            }
+        );
         const saved = process.exitCode;
         try {
             process.exitCode = undefined;
