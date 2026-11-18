@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { meetingRuleNames } from "@genesiscz/utils/meetings/rules";
+import { MeetingRule, meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -342,7 +342,15 @@ function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): Ro
                 ...confidenceOf(scoreOf(scores, name)),
             }))
         ),
-        { value: NONE_OF_THESE, label: "None of these", role: "none" as const, action: { kind: "reject" as const } },
+        {
+            value: NONE_OF_THESE,
+            // A name the voice model gave is refused as such, and the refusal stays: the next pass does not give the
+            // line that name again (the record keeps the rejected range, P7 decision 2).
+            label:
+                item.speaker && item.rules.includes(MeetingRule.VoiceEmbedding) ? "Not this person" : "None of these",
+            role: "none" as const,
+            action: { kind: "reject" as const },
+        },
     ]);
 }
 
