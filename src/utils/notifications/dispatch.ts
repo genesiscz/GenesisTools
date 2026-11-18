@@ -25,6 +25,14 @@ function postTo<K extends ChannelName>(
     return CHANNELS[name].post(event, channels[name]);
 }
 
+/** What one dispatch did with an event. */
+export interface DispatchReport {
+    /** Every channel that was asked to send accepted the event (the answer of {@link dispatchNotification}). */
+    delivered: boolean;
+    /** The switched-on, usable channels that accepted the event; empty when it reached nobody. */
+    sent: ChannelName[];
+}
+
 /**
  * True when every channel that was asked to send accepted the event. A channel
  * that is switched off, or excluded by `event.only`, counts as accepted: there
@@ -32,6 +40,16 @@ function postTo<K extends ChannelName>(
  * distinction, so this never throws and never reports a silent drop as a send.
  */
 export async function dispatchNotification(event: NotificationEvent): Promise<boolean> {
+    return (await dispatchNotificationReport(event)).delivered;
+}
+
+/**
+ * {@link dispatchNotification} with the channels that really sent the event, for a caller that must tell "nothing
+ * reached the person" from "one channel of several failed". Never throws.
+ */
+export async function dispatchNotificationReport(event: NotificationEvent): Promise<DispatchReport> {
+    const sent: ChannelName[] = [];
+
     try {
         const channels = await notificationsConfig.getChannels(event.app);
         const only = event.only;
@@ -57,10 +75,15 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
 
         for (const [i, r] of results.entries()) {
             const name = CHANNEL_NAMES[i];
+            const unusable =
+                unusableReason(name, channels) ?? (r.status === "fulfilled" ? r.value.suppressed : undefined);
+
+            if (allows(name) && channels[name].enabled && !unusable && r.status === "fulfilled" && r.value.ok) {
+                sent.push(name);
+            }
+
             // The system channel records itself in postNotification, with the backend it used.
             if (name !== "system" && allows(name) && channels[name].enabled) {
-                const unusable =
-                    unusableReason(name, channels) ?? (r.status === "fulfilled" ? r.value.suppressed : undefined);
                 await recordNotification({
                     source: event.app,
                     channel: name,
@@ -81,10 +104,10 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
             delivered = delivered && r.value.ok;
         }
 
-        return delivered;
+        return { delivered, sent };
     } catch (err) {
         logger.warn({ err, app: event.app }, "Notification dispatch failed");
 
-        return false;
+        return { delivered: false, sent };
     }
 }
