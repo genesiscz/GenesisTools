@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from _run import APPEND, KINDS, append_trial, digest, require_corpus, search_trials
+from transparent_open_files import activity, collect, observation, open_under_root
 from transparent_summary import distribution, report
 
 
@@ -75,3 +76,34 @@ class BenchmarkTest(unittest.TestCase):
             self.assertIn('all\t700\t560\t140\t35: 25.00 / 25.00 / 25.00', result.getvalue())
             self.assertIn('Verified append bytes: 35', result.getvalue())
             self.assertIn('No supplementary writer results.', result.getvalue())
+
+
+class OpenFileTest(unittest.TestCase):
+    def test_scopes_nul_delimited_names_to_the_root_and_pid(self):
+        listing = b'p17\0\nn/a/root/session\npart.jsonl\0\np18\0\nn/a/root-backup/other.jsonl\0\n'
+        self.assertEqual(open_under_root(Path('/a/root'), listing), [
+            {'pid': 17, 'path': 'session\npart.jsonl'}])
+        with self.assertRaisesRegex(ValueError, 'no absolute path'):
+            open_under_root(Path('/a/root'), b'p17\0\n')
+
+    def test_five_clear_samples_do_not_establish_append_by_path(self):
+        before = {'session': (1, 10, 15), 'rotated': (1, 11, 10)}
+        changes = activity(before, {'session': (1, 10, 20), 'rotated': (1, 12, 5)})
+        self.assertEqual(changes, {'grew': ['session'], 'new_or_replaced': ['rotated']})
+        clear = [{'held_text_paths': []}] * 5
+        self.assertEqual(observation(clear, changes), 'file activity observed: append-by-path still requires writer evidence')
+        self.assertIn('no file activity', observation(clear, activity(before, before)))
+        self.assertEqual(observation(clear[:4], changes), 'incomplete')
+        self.assertEqual(observation([*clear[:4], {'held_text_paths': ['s.log']}], changes), 'open text file observed')
+
+    def test_lsof_warning_keeps_the_partial_evidence_incomplete(self):
+        from subprocess import CompletedProcess
+        with tempfile.TemporaryDirectory() as scratch:
+            ok = CompletedProcess([], 0, b'p1\0\nn/tmp/fixture\0\n', b'')
+            warning = CompletedProcess([], 0, b'p1\0\nn/tmp/fixture\0\n', b'listing incomplete')
+            with patch('transparent_open_files.subprocess.run', side_effect=[ok, warning]), \
+                 patch('transparent_open_files.time.sleep'):
+                result = collect('logs', Path(scratch), 1)
+            self.assertEqual(result['status'], 'incomplete')
+            self.assertEqual(len(result['samples']), 1)
+            self.assertIn('listing incomplete', result['error'])
