@@ -42,7 +42,7 @@ Method, history and raw records come last, folded.
 |---|---|---|
 | Hero | `Hero` + `Legend` | The verdict in the title, one sentence of method, the option tags |
 | Answer | `StatGrid`, `Claim` (confidence and proof), one `Callout` | The winner, the reader's own option, the condition that changes the result, how well the scorers agree |
-| Options at a glance | `CardGrid` of `Card`, then `Tabs` of `Mermaid` | Per card: `kicker` (owner and code), `title` (the name), the body (a one-sentence idea), `fields` (the 3 or 4 properties that differ), `note` (the score), `footer` (the ranks as `Badge pill`), `highlight` on the winner. One diagram per option, the tab labelled by the name. |
+| Options at a glance | `CardGrid` of `Card`, then `Tabs` of `Mermaid` | Per card: `kicker` (owner and code), `title` (the name), `subtitle` (a one-line idea), `fields` (the 3 or 4 properties that differ, a few words each), the body (one strength and one weakness), `note` (the score), `footer` (the ranks as `Badge pill`), `highlight` on the winner. One diagram per option, the tab labelled by the name. |
 | One table | `DataTable` | Options as columns. Upper rows: what each option is. Lower rows: the score per criterion, then sums and ranks. Never split "what it is" and "how it scored" into two sections. |
 | Why | `Compare` | The winner against the runner-up, and against the reader's own option, titled by names |
 | Cost, decide | `Callout`, `Bullets ordered` | What the winner costs, the fix, the decisions in order |
