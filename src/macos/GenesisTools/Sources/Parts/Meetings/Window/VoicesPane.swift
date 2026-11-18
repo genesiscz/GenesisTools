@@ -34,6 +34,8 @@ final class VoicesModel {
     var busy: Set<String> = []
     /// The project the people were read for; a changed project reads them again.
     @ObservationIgnored private var listedProject: String?
+    /// The running Preview or Apply, so Cancel can stop it.
+    @ObservationIgnored private var runTask: Task<Void, Never>?
 
     init(meeting: String, detail: MeetingDetailModel?) {
         self.meeting = meeting
@@ -76,14 +78,17 @@ final class VoicesModel {
             return
         }
         start(.preview)
-        preview = .loading(previous: preview.value)
-        Task {
+        let previous = preview.value
+        preview = .loading(previous: previous)
+        runTask = Task {
             defer { finish() }
             do {
                 let result = try await service.call(MeetingsAPI.VoicesPreview.self, .init(meeting: meeting)) { [weak self] step in
                     self?.progress = step
                 }
                 preview = .loaded(VoicesPreviewSummary(result.lines))
+            } catch where Task.isCancelled || error is CancellationError {
+                preview = previous.map { .loaded($0) } ?? .idle
             } catch {
                 preview = .failed(asFailure(error), previous: preview.value)
             }
@@ -94,7 +99,7 @@ final class VoicesModel {
     func apply() {
         guard running == nil, let service else { return }
         start(.apply)
-        Task {
+        runTask = Task {
             defer { finish() }
             do {
                 let result = try await service.call(MeetingsAPI.VoicesApply.self, .init(meeting: meeting)) { [weak self] step in
@@ -103,10 +108,17 @@ final class VoicesModel {
                 detail?.refreshAfterDecision()
                 detail?.notices.push(StackedNotice(text: Self.appliedText(result.added),
                                                    detail: result.warnings.isEmpty ? nil : result.warnings.joined(separator: "\n")))
+            } catch where Task.isCancelled || error is CancellationError {
+                detail?.notices.push(StackedNotice(text: "Stopped naming by voice; nothing was saved"))
             } catch {
                 detail?.notices.push(.meetingsFailure(error) { [weak self] in self?.apply() })
             }
         }
+    }
+
+    /// Stops the running Preview or Apply: the service hears `$/cancel`, kills its voice workers and saves nothing.
+    func cancelRun() {
+        runTask?.cancel()
     }
 
     static func appliedText(_ added: Int) -> String {
@@ -122,6 +134,7 @@ final class VoicesModel {
     private func finish() {
         running = nil
         progress = nil
+        runTask = nil
     }
 
     /// First the plan: which samples go and which suggested lines lose the name. The removal runs from the question.
@@ -409,7 +422,7 @@ struct VoicesPane: View {
                 Spacer(minLength: 0)
             }
             if let run = model.running {
-                VoicesRunView(run: run, progress: model.progress)
+                VoicesRunView(run: run, progress: model.progress) { model.cancelRun() }
             } else {
                 Text("Preview reads the voices and lists what Apply would name. Nothing changes until Apply.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -639,6 +652,7 @@ struct VoicesPane: View {
 struct VoicesRunView: View {
     let run: VoicesModel.Run
     let progress: MeetingsCallProgress?
+    var cancel: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -650,12 +664,18 @@ struct VoicesRunView: View {
                 }
             }
             .frame(height: 14)
-            Text(verbatim: Self.label(run, progress)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text(verbatim: Self.label(run, progress)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(run == .preview ? "Previewing the voice names" : "Naming lines by voice")
+                    .accessibilityValue(Self.label(run, progress))
+                Spacer(minLength: 4)
+                if let cancel {
+                    GhostButton("Cancel", symbol: "xmark", tooltip: "Stop the voice pass; nothing is saved", height: 22,
+                                identifier: "meetings.voices.cancel", action: cancel)
+                }
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(run == .preview ? "Previewing the voice names" : "Naming lines by voice")
-        .accessibilityValue(Self.label(run, progress))
     }
 
     static func label(_ run: VoicesModel.Run, _ progress: MeetingsCallProgress?) -> String {
