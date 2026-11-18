@@ -144,6 +144,41 @@ function decodeConfigFile(raw: unknown): GenesisToolsConfigFile {
     return { version: 1, areas };
 }
 
+/**
+ * The stored values their schema accepts, as the schema parses them. The file can be edited by hand or written under an
+ * older schema, so a value the schema refuses keeps its default (with a warning) and an unknown key is left out.
+ */
+function checkedValues(
+    values: Record<string, unknown>,
+    schemaOf: (key: string) => z.ZodType | undefined,
+    owner: string
+): Record<string, unknown> {
+    const checked: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(values)) {
+        const schema = schemaOf(key);
+
+        if (!schema) {
+            logger.debug({ owner, key }, "genesis-tools config: a stored key no schema names, ignored");
+            continue;
+        }
+
+        const parsed = schema.safeParse(value);
+
+        if (!parsed.success) {
+            logger.warn(
+                { owner, key, issues: parsed.error.issues.map((issue) => issue.message) },
+                "genesis-tools config: a stored value does not match its schema, the default applies"
+            );
+            continue;
+        }
+
+        checked[key] = parsed.data;
+    }
+
+    return checked;
+}
+
 /** The pure resolution: defaults (area, then action), then stored area values, then stored action values. */
 export function resolveConfig(
     file: GenesisToolsConfigFile,
@@ -152,12 +187,20 @@ export function resolveConfig(
 ): Record<string, unknown> {
     const { actions: storedActions, ...storedArea } = file.areas[areaDef.area] ?? {};
     const actionDef = action ? areaDef.actions[action] : undefined;
+    const storedAction = action && isObject(storedActions) ? storedActions[action] : undefined;
+    const areaSchema = (key: string): z.ZodType | undefined => areaDef.config?.shape[key];
 
     return {
         ...schemaDefaults(areaDef.config),
         ...schemaDefaults(actionDef?.config),
-        ...storedArea,
-        ...(action && isObject(storedActions) ? (storedActions[action] ?? {}) : {}),
+        ...checkedValues(storedArea, areaSchema, areaDef.area),
+        ...(isObject(storedAction)
+            ? checkedValues(
+                  storedAction,
+                  (key) => actionDef?.config?.shape[key] ?? areaSchema(key),
+                  `${areaDef.area}.${action}`
+              )
+            : {}),
     };
 }
 
