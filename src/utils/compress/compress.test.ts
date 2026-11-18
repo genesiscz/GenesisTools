@@ -2960,13 +2960,13 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         const input = {
             du: {
                 compress: {
-                    defaults: { olderThan: "7d", minKb: 128, exts: ["txt"] },
+                    defaults: { olderThan: "7d", minKb: 128, exts: [" TXT "] },
                     harnesses: { grok: { roots: ["/fixture/grok"] } },
                 },
             },
         };
         const config = migrateTransparentConfig(input, "/fixture");
-        expect(config.defaults).toEqual(input.du.compress.defaults);
+        expect(config.defaults).toEqual({ olderThan: "7d", minKb: 128, exts: ["txt"] });
         expect(config.harnesses.grok.roots).toEqual(["/fixture/grok"]);
         expect(migrateTransparentConfig({ du: { compress: config } }, "/fixture")).toEqual(config);
     });

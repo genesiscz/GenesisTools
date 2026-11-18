@@ -125,6 +125,19 @@ const COMPOUND_DURATION_PATTERN =
  * Returns 0 if the input cannot be parsed.
  */
 export function parseDuration(input: string): number {
+    return durationMilliseconds(input) ?? 0;
+}
+
+/** Use when zero is valid and invalid input must stop the caller. */
+export function requireDuration(input: string): number {
+    const duration = durationMilliseconds(input);
+    if (duration === undefined || !Number.isFinite(duration)) {
+        throw new Error(`Invalid duration "${input}". Use a duration such as 3d or 2h30m.`);
+    }
+    return duration;
+}
+
+function durationMilliseconds(input: string): number | undefined {
     const trimmed = input.trim();
 
     if (/^\d+$/.test(trimmed)) {
@@ -164,7 +177,7 @@ export function parseDuration(input: string): number {
         return (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1000;
     }
 
-    return 0;
+    return undefined;
 }
 
 // ============= Relative Time =============

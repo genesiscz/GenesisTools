@@ -4,7 +4,7 @@ import { ensureColdCompressTask } from "@app/macos/lib/clones/daemon-tasks";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { availableTransparentWriter, openPaths, plan, sampleRatio } from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
-import { parseDuration } from "@genesiscz/utils/format";
+import { requireDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { getPrivateSize } from "@genesiscz/utils/macos/apfs";
 import { escapeShellArg } from "@genesiscz/utils/string";
@@ -83,11 +83,7 @@ export function rankCompressible(options: {
 
 export async function compressionSuggestions(root: string) {
     const config = await loadTransparentConfig();
-    const age = parseDuration(config.defaults.olderThan);
-
-    if (!Number.isFinite(age) || age <= 0) {
-        throw new Error(`Invalid compression olderThan: ${config.defaults.olderThan}`);
-    }
+    const age = requireDuration(config.defaults.olderThan);
 
     const writer = availableTransparentWriter();
     const algorithm = writer.algorithm;

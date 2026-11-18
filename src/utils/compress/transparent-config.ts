@@ -74,7 +74,9 @@ export function migrateTransparentConfig(raw: unknown, userHome = homedir()): Tr
         defaults: {
             olderThan: typeof defaults.olderThan === "string" ? defaults.olderThan : "3d",
             minKb: typeof defaults.minKb === "number" ? defaults.minKb : 64,
-            exts: Array.isArray(defaults.exts) ? defaults.exts : ["jsonl", "json", "txt", "log", "md"],
+            exts: Array.isArray(defaults.exts)
+                ? defaults.exts.map((extension: string) => extension.trim().toLowerCase())
+                : ["jsonl", "json", "txt", "log", "md"],
         },
         harnesses,
     };
