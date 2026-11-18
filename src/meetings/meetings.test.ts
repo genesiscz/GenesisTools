@@ -1626,6 +1626,58 @@ test.each([
     }
 );
 
+test("record start chooses frames only on a positive live grant and preserves the read error", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "meeting-grant-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        const store = new MeetingStore();
+        const meeting = await store.create(
+            { title: "Orchard planning", start: "2026-11-02T15:00:00Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const live = {
+            accessibility: true,
+            viaGenesisApp: true,
+            responsiblePid: 42,
+            responsibleBundleId: "org.example.fixture",
+            responsiblePath: "/fixture",
+            screenRecording: true,
+        };
+        const grant = spyOn(await import("@app/control/lib/permissions"), "readLivePermissions");
+        const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockReturnValue(42);
+        const ack = spyOn(await import("./lib/recorder-shared"), "recorderAcknowledged").mockReturnValue(true);
+        const oldExit = process.exitCode;
+        try {
+            for (const [read, reason] of [
+                [{ live }, undefined],
+                [{ live: { ...live, screenRecording: false } }, "not granted"],
+                [{ live: null, error: "fixture probe timed out" }, "could not read the grant"],
+            ] as const) {
+                grant.mockReturnValue(read);
+                spawn.mockClear();
+                const program = new Command();
+                registerRecordCommands(program);
+                await program.parseAsync(["record", "start", "--meeting", meeting.id, "--yes"], { from: "user" });
+                const args = spawn.mock.calls[0]?.[0];
+                expect(args?.slice(0, 4)).toEqual(["meetings", "record", "run", meeting.id]);
+                if (reason) {
+                    expect(args?.[4]).toBe("--without-screen");
+                    expect(args?.[5]).toContain(reason);
+                    if (!read.live) {
+                        expect(args?.[5]).toContain("fixture probe timed out");
+                    }
+                } else {
+                    expect(args).toHaveLength(4);
+                }
+            }
+        } finally {
+            process.exitCode = oldExit;
+            ack.mockRestore();
+            spawn.mockRestore();
+            grant.mockRestore();
+        }
+    });
+});
+
 describe("watchOnce", () => {
     const settings = { enabled: true, liveWithinSec: 30, notify: true };
     const now = Date.parse("2026-11-02T15:10:00.000Z");

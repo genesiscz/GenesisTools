@@ -87,7 +87,7 @@ export class MeetingRun {
         this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
-        this.audioMode = audioConfig?.mode ?? "pieces";
+        this.audioMode = options.withoutScreen ? "session" : (audioConfig?.mode ?? "pieces");
         this.settings = {
             activeFps: capture.activeFps,
             idleFps: capture.idleFps,
@@ -102,13 +102,16 @@ export class MeetingRun {
             ...(audioConfig?.micDevice ? { micDevice: audioConfig.micDevice } : {}),
         };
         const policy = options.display ?? capture.displays;
-        mkdirSync(this.framesDir, { recursive: true });
+        if (!options.withoutScreen) {
+            mkdirSync(this.framesDir, { recursive: true });
+        }
         this.state = {
             meetingId,
             pid: process.pid,
             startedAt: new Date().toISOString(),
             display: policy,
             backend: deps.recorder.id,
+            ...(options.withoutScreen ? { withoutScreen: options.withoutScreen } : {}),
             frames: 0,
             bytes: 0,
         };
@@ -178,7 +181,12 @@ export class MeetingRun {
             backend: this.deps.recorder.id,
             displayPolicy: this.displays.policy,
             displaySpans: recording.displayBook.intervals,
+            withoutScreen: this.state.withoutScreen,
         });
+        if (this.state.withoutScreen) {
+            this.note(`Screen frames omitted: ${this.state.withoutScreen}`);
+            return;
+        }
 
         // The second phase: the meeting's OCR worker follows the frame index until this recording stops.
         this.writeOcrSettings(recording);
@@ -282,6 +290,9 @@ export class MeetingRun {
     /** The engine has already moved and indexed a closed continuous sound segment. */
     keptSound(_segment: AudioSegment): void {
         this.audioFiles += 1;
+        if (this.state.withoutScreen) {
+            this.saveState();
+        }
     }
 
     /**
@@ -446,7 +457,7 @@ export class MeetingRun {
         const { store, meetingId, state } = this;
         state.stopReason ??= "requested";
 
-        if (this.runFrames === 0) {
+        if (this.runFrames === 0 && !state.withoutScreen) {
             this.note(
                 `No frame was recorded${state.stopReason === "requested" ? " before the stop" : ""}. Check the recorder: ${toolCommand("control", "doctor")}`
             );

@@ -101,7 +101,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
       ax-tool audio-devices                                   Audio inputs and outputs: id (UID), name, channels, default
-      ax-tool audio-record --sources mic,system [--mic-device UID] [--muted mic,system] [--paused] --out DIR [--segment-sec 60]
+      ax-tool audio-record --sources mic,system [--without-screen] [--mic-device UID] [--muted mic,system] [--paused] --out DIR [--segment-sec 60]
                       One continuous audio stream; closed segments as JSON lines on stdout.
                       JSON-line controls on stdin: mute/unmute {"source":"mic"|"system"}, set-mic {"deviceId"},
                       pause, resume, status, stop; state/settings/error events on stderr; stdin EOF stops.

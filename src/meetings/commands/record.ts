@@ -174,9 +174,14 @@ async function start(opts: {
     }
 
     try {
-        const grant = await ensureScreenRecording({ quiet: opts.yes });
+        const {
+            global: { capture },
+        } = await new MeetingsConfigStore().read();
+        const sources = opts.audio === undefined ? capture.recorders.native.audio.sources : audio;
+        const canKeepSound = capture.soundWithoutScreen && sources.length > 0;
+        const grant = await ensureScreenRecording({ quiet: opts.yes, allowSoundOnly: canKeepSound });
 
-        if (!grant.granted) {
+        if (!grant.granted && !canKeepSound) {
             fail(grant.message ?? `Screen Recording is not granted to ${grant.identity}.`);
             return;
         }
@@ -188,6 +193,7 @@ async function start(opts: {
             "record",
             "run",
             record.id,
+            ...(!grant.granted ? ["--without-screen", grant.message ?? "Screen Recording is unavailable"] : []),
             ...(display !== undefined ? ["--display", String(display)] : []),
             ...(audio.length > 0 ? ["--audio", audio.join(",")] : []),
         ]);
@@ -216,7 +222,7 @@ async function start(opts: {
         }
 
         ui.ok(
-            `Recording the screen for ${record.id}${record.project ? ` (project ${record.project})` : ""}, as ${grant.identity}.`
+            `Recording ${grant.granted ? "the screen" : `sound only (${grant.message})`} for ${record.id}${record.project ? ` (project ${record.project})` : ""}, as ${grant.identity}.`
         );
         ui.dim(`Pause: ${TOOL} record pause · stop: ${TOOL} record stop · status: ${TOOL} record status`);
     } catch (err) {
@@ -551,7 +557,10 @@ async function status(opts: { json?: boolean }): Promise<void> {
     }
 }
 
-async function runCommand(id: string, opts: { display?: string; audio?: string }): Promise<void> {
+async function runCommand(
+    id: string,
+    opts: { display?: string; audio?: string; withoutScreen?: string }
+): Promise<void> {
     const store = new MeetingStore();
 
     try {
@@ -560,6 +569,7 @@ async function runCommand(id: string, opts: { display?: string; audio?: string }
         await runRecorder({
             store,
             meetingId: id,
+            withoutScreen: opts.withoutScreen,
             display,
             capture: config.global.capture,
             ocrLanguages: languageSettings(config).ocr,
@@ -891,6 +901,7 @@ export function registerRecordCommands(program: Command): void {
         .argument("<meeting>", "the meeting id")
         .option("--display <which>", "all, follow-focus, main or a screen index")
         .option("--audio <sources>", "mic, system or mic,system")
+        .option("--without-screen <reason>", "capture audio only and save why frames were omitted")
         .description("The recorder process itself; record start runs it")
         .action(runCommand);
 

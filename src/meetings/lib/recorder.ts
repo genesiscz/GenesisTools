@@ -52,7 +52,9 @@ function meetingRecorderConfig(run: MeetingRun) {
 
         return {
             kind: "meeting",
-            methods: FRAME_RECORDING_METHODS,
+            methods: state.withoutScreen
+                ? FRAME_RECORDING_METHODS.filter((method) => !method.startsWith("displays."))
+                : FRAME_RECORDING_METHODS,
             recorder: deps.recorder,
             live: {
                 id: meetingLiveId(meetingId),
@@ -67,6 +69,7 @@ function meetingRecorderConfig(run: MeetingRun) {
             settings: run.settings,
             audio: run.audio,
             audioMode: run.audioMode,
+            soundOnly: Boolean(state.withoutScreen),
             stopOnSignals: true,
             displays: run.displays,
             keptFrames: () => state.frames,
@@ -293,7 +296,8 @@ async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknow
  */
 export async function runRecorder(options: RunRecorderOptions): Promise<RecorderState> {
     const { store, meetingId } = options;
-    const deps: RecorderDeps = { ...defaultDeps(options.capture), startOcr: startOcrWorker, ...options.deps };
+    const capture = options.withoutScreen ? { ...options.capture, backend: "native" as const } : options.capture;
+    const deps: RecorderDeps = { ...defaultDeps(capture), startOcr: startOcrWorker, ...options.deps };
     const files = recorderFiles(store);
     const initial = store.read(meetingId);
     const claim = await claimRecorderPid(files.pid);

@@ -285,6 +285,8 @@ export interface RecorderConfig<S> {
     audio: AudioState;
     /** Unset preserves the shared core's continuous session behavior; Meetings passes its own setting. */
     audioMode?: "pieces" | "session";
+    /** Capture only an independent audio session. Never open a display or fall back to frame pieces. */
+    soundOnly?: boolean;
     /** SIGTERM and SIGINT stop the recording while its captures run (a recorder process of its own). */
     stopOnSignals?: boolean;
     /** Which displays it records, and what the display calls do. */
@@ -944,6 +946,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 folder: this.config.live.folder,
                 outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
                 request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
+                withoutScreen: this.config.soundOnly,
                 muted: this.sound.sources.filter((source) => this.sound.muted[source]),
                 paused: this.paused,
                 signal: this.soundAbort.signal,
@@ -1010,6 +1013,12 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     private fallBackSound(reason: string): void {
+        if (this.config.soundOnly) {
+            this.config.hooks.onError?.(new Error(`Sound recording failed: ${reason}`));
+            this.requestStop();
+            return;
+        }
+
         if (this.currentSoundPath.path === "pieces" && this.currentSoundPath.reason) {
             return;
         }
@@ -1051,7 +1060,18 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             await this.managed().ready();
             this.startingSound = this.startSound();
             await this.startingSound;
-            await this.capturePieces();
+            if (this.config.soundOnly) {
+                if (!this.soundSession && !this.stopRequested) {
+                    throw new Error("The sound recorder did not start.");
+                }
+                if (!this.stopRequested) {
+                    await new Promise<void>((resolve) =>
+                        this.soundAbort.signal.addEventListener("abort", () => resolve(), { once: true })
+                    );
+                }
+            } else {
+                await this.capturePieces();
+            }
         } catch (error) {
             log.debug({ error, id: this.config.live.id }, "the recording's capture loop ended on an error");
             if (!(this.stopRequested && error instanceof Error && error.name === "AbortError")) {
