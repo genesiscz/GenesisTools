@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toRpcTable } from "@genesiscz/utils/api-descriptor";
+import { env } from "@genesiscz/utils/env";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -21,11 +22,14 @@ import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts"
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { readVoiceLibrary, type VoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import * as serviceHost from "@genesiscz/utils/rpc/service-host";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
+import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 import { z } from "zod";
@@ -370,6 +374,126 @@ function scratchStore(): {
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
+
+test("P2 scoped voice selection pins legacy numbers, rolls back failed corrections and refuses an occupied destination", async () => {
+    const home = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voices-service-")));
+    const { store } = scratchStore();
+    const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(store.storage) } });
+    const name = "Lark Example";
+    const other = "Wren Example";
+    const person = { name };
+    const seed: VoicePrint = {
+        meeting: "elsewhere",
+        fromSec: 0,
+        toSec: 4,
+        seat: "mic",
+        track: "source-mic",
+        sourceSha: "clip",
+        embedding: [1, 0],
+        confirmedAt: "2026-11-01T12:00:00Z",
+    };
+    const get = (project: string) => readVoiceLibrary().library.samples.filter((s) => s.project === project);
+    try {
+        const x = await store.create(
+            { createdBy: "new", title: "Review", start: seed.confirmedAt, project: "spring" },
+            { command: "new", change: "fixture" }
+        );
+        const y = await store.create(
+            { createdBy: "new", title: "Workshop", start: seed.confirmedAt, project: "winter" },
+            { command: "new", change: "fixture" }
+        );
+        for (const { id } of [x, y]) {
+            await store.update(id, { command: "test", change: "seed proposals" }, (record) => {
+                const proposed = {
+                    id: "i1",
+                    kind: "speaker-range" as const,
+                    speaker: name,
+                    label: "S1",
+                    fromSec: 0,
+                    toSec: 4,
+                    status: "suggested" as const,
+                    rules: [MeetingRule.VoiceEmbedding],
+                    suggestedAt: seed.confirmedAt,
+                };
+                record.items = [
+                    proposed,
+                    { ...proposed, id: "i2", status: "confirmed" },
+                    { ...proposed, id: "i3", speaker: other },
+                ];
+            });
+        }
+        addVoicePrint("spring", name, { ...seed, meeting: x.id }, "fixture-model");
+        addVoicePrint("winter", name, { ...seed, meeting: y.id }, "fixture-model");
+        addVoicePrint("winter", name, { ...seed, meeting: y.id, fromSec: 10, toSec: 14 }, "fixture-model");
+        const global = await client.call("voices.list", { scope: { kind: "all" }, person: name });
+        expect(global.people).toHaveLength(1);
+        expect(global.people[0]!.samples).toHaveLength(3);
+        expect(global.people[0]!.samples.every((s) => !("embedding" in s))).toBe(true);
+        expect(
+            (await client.call("voices.list", { scope: { kind: "meeting", meeting: x.id }, person: name })).people[0]
+                ?.samples
+        ).toHaveLength(1);
+        const selection = { project: "spring", person: name, sample: 1 };
+        const first = await client.call("voices.remove", { ...selection, preview: true });
+        const xId = get("spring")[0]!.id;
+        const yIds = get("winter").map((s) => s.id);
+        expect(first.ids).toEqual([xId]);
+        expect(first.affected.map((row) => row.meeting).sort()).toEqual([x.id, y.id].sort());
+        addVoicePrint("spring", other, { ...seed, meeting: x.id, fromSec: 20, toSec: 25 }, "fixture-model");
+        await expect(client.call("voices.remove", { ...selection, planToken: first.planToken })).rejects.toThrow(
+            "Stale"
+        );
+        const plan = await client.call("voices.remove", { ...selection, preview: true });
+        const file = toolDataDir("meetings", "voice-library", "library.json");
+        const before = readFileSync(file);
+        const saved = [x, y].map((r) => readFileSync(store.path(r.id)));
+        const write = atomicFile.atomicWriteFileSync;
+        const fail = spyOn(atomicFile, "atomicWriteFileSync").mockImplementation((path, bytes, opt) => {
+            if (path === file) {
+                throw new Error("fixture publication failure");
+            }
+            return write(path, bytes, opt);
+        });
+        try {
+            await expect(client.call("voices.remove", { ...selection, planToken: plan.planToken })).rejects.toThrow(
+                "fixture publication failure"
+            );
+        } finally {
+            fail.mockRestore();
+        }
+        expect(readFileSync(file)).toEqual(before);
+        expect([x, y].map((r) => readFileSync(store.path(r.id)))).toEqual(saved);
+        const removed = await client.call("voices.remove", { ...selection, planToken: plan.planToken });
+        expect(removed.ids).toEqual([xId]);
+        expect(get("winter").map((s) => s.id)).toEqual(yIds);
+        expect(get("spring").some((s) => s.id === xId)).toBe(false);
+        for (const r of [x, y]) {
+            expect(store.read(r.id)!.items.map((i) => i.id)).toEqual(["i2", "i3"]);
+        }
+        expect(await client.call("voices.undo", { token: removed.token! })).toMatchObject({
+            status: "applied",
+            ids: [xId],
+        });
+        expect(get("spring")[0]).toMatchObject({ id: xId, owner: person });
+        const dir = toolDataDir("meetings", "voices");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, "occupied.json"),
+            SafeJSON.stringify({
+                version: 1,
+                model: "fixture-model",
+                people: { [other]: { samples: [{ ...seed, meeting: x.id }] } },
+            })
+        );
+        const occupied = readVoiceLibrary().library.samples;
+        expect(await client.call("voices.move", { id: xId, to: { name: other } })).toMatchObject({ status: "refused" });
+        expect(readVoiceLibrary().library.samples).toEqual(occupied);
+    } finally {
+        client.close();
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+    }
+});
 
 test("voice descriptors validate the shared handlers: lists and removal previews write nothing; removal retires suggested names", async () => {
     const { store, linkedSource } = scratchStore();

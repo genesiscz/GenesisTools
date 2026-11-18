@@ -1,6 +1,17 @@
-import { describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmdirSync,
+    writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
@@ -12,6 +23,7 @@ import {
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { readVoiceLibrary } from "@genesiscz/utils/meetings/voice-library";
 import {
     addVoicePrint,
     readVoiceStore,
@@ -230,6 +242,158 @@ async function voiceAnswerFixture(project = `journal-voice-${++stores}`, extra: 
 }
 
 describe("speaker answers and their project voice prints", () => {
+    let previousHome: string;
+    beforeEach(() => {
+        previousHome = env.tools.getHome();
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "journal-voice-")));
+    });
+    afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
+
+    test("P2 rejection survives live human answers, explicit confirms, saved and freshly embedded backfill and journal replay", async () => {
+        const fx = await voiceAnswerFixture(undefined, [
+            speakerRange("i4", 0, {
+                speaker: "Alice Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 5 },
+            }),
+        ]);
+        const meeting = fx.meeting.id;
+        const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(fx.store.storage) } });
+        const rows = () => readVoiceLibrary().library.samples;
+        const recover = () => client.call("voice.backfill", { meetings: [meeting] });
+        try {
+            const confirmation = { kind: "confirm" as const, items: ["i4"] };
+            const yes = await fx.journal.apply({ meeting, actor: person, action: confirmation });
+            expect(rows()).toMatchObject([{ origin: "confirm", acquiredBy: "live" }]);
+            await fx.journal.revert({ meeting, token: yes.entry!.token, actor: person });
+            const answer = await fx.answer();
+            expect(rows().map((row) => row.origin)).toEqual(["answer", "answer"]);
+            const [bad, other] = rows();
+            const rejection = await client.call("voices.reject", { id: bad!.id, reason: "bad-audio" });
+            if (rejection.status !== "applied") {
+                throw new Error("The fixture needs a committed rejection.");
+            }
+            expect(await recover()).toMatchObject({
+                added: 0,
+                present: 1,
+                rows: [expect.objectContaining({ skipped: expect.objectContaining({ "bad-audio": 1 }) })],
+            });
+            replayAnsweredVoiceSamples(fx.journal.read(meeting).reverse());
+            expect(rows().map((row) => row.id)).toEqual([other!.id]);
+            expect(fx.item("i2")?.status).toBe("confirmed");
+            await fx.journal.revert({ meeting, token: answer.entry!.token, actor: person });
+            const second = await fx.answer();
+            expect(rows().map((row) => row.fromSec)).toEqual([5]);
+            expect(second.entry?.voices).toHaveLength(1);
+            await fx.store.update(
+                meeting,
+                { command: "fixture", change: "a new proposal on the rejected line" },
+                (record) => {
+                    record.items.push(
+                        ...meetingRecord("fixture", {
+                            items: [
+                                speakerRange("i7", 0, {
+                                    speaker: "Alice Example",
+                                    rules: [MeetingRule.VoiceEmbedding],
+                                    evidence: { endSec: 5 },
+                                }),
+                            ],
+                        }).items
+                    );
+                }
+            );
+            const later = await fx.journal.apply({
+                meeting,
+                actor: person,
+                action: { kind: "confirm", items: ["i7"] },
+            });
+            expect(later.entry?.decided).toContain("i7");
+            expect(rows().map((row) => row.fromSec)).toEqual([5]);
+            // Neither later decision journaled the rejected clip. Backfill has to embed its line again.
+            fx.embed.mockClear();
+            const recomputed = await recover();
+            expect(fx.embed).toHaveBeenCalled();
+            expect(recomputed.added).toBe(0);
+            expect(recomputed.rows.some((r) => (r.skipped["bad-audio"] ?? 0) > 0)).toBe(true);
+            const remaining = rows()[0]!;
+            await client.call("voices.remove", { id: remaining.id, person: remaining.owner.name });
+            expect((await recover()).added).toBe(1);
+            expect((await recover()).added).toBe(0);
+            expect(rows().map((row) => [row.fromSec, row.acquiredBy])).toEqual([[5, "backfill"]]);
+            expect(await client.call("voices.undo", { token: rejection.token })).toMatchObject({
+                status: "applied",
+                ids: [],
+            });
+            expect(readVoiceLibrary().library.rejected).toEqual([]);
+            expect(rows().map((row) => row.fromSec)).toEqual([5]);
+        } finally {
+            client.close();
+            fx.restore();
+        }
+    });
+
+    test("P2 confirmed manual add obeys a wrong-person or mixed-audio refusal after reopening", async () => {
+        const fx = await voiceAnswerFixture();
+        const client = new InProcessMeetingsClient({ deps: { store: () => fx.store } });
+        const sound = await import("./sound");
+        const inputs = spyOn(sound, "readSoundInputs").mockResolvedValue({
+            folder: fx.store.folder(fx.meeting.id),
+            timelineZeroMs: 0,
+            tracks: "best",
+            rows: [],
+        });
+        const { addVoiceSample } = await import("./voices");
+        const manual = (name: string) =>
+            addVoiceSample({
+                store: fx.store,
+                meeting: fx.meeting.id,
+                person: name,
+                fromSec: 0,
+                toSec: 5,
+                confirmed: true,
+            });
+        try {
+            expect(await manual("Alice Example")).toMatchObject({ samples: 1 });
+            const first = readVoiceLibrary().library.samples[0]!;
+            expect(first).toMatchObject({ origin: "enrol", acquiredBy: "manual" });
+            await client.call("voices.reject", { id: first.id, reason: "wrong-person" });
+            expect(await manual("Alice Example")).toEqual({ samples: 0, skipped: ["wrong-person"] });
+            expect(await manual("Bob Example")).toMatchObject({ samples: 1 });
+            const bob = readVoiceLibrary().library.samples[0]!;
+            const moved = await client.call("voices.move", { id: bob.id, to: { name: "Alice Example" } });
+            expect(moved).toMatchObject({ status: "refused" });
+            expect(readVoiceLibrary().library.samples).toEqual([bob]);
+            await client.call("voices.reject", { id: bob.id, reason: "several-voices" });
+            expect(await manual("Bob Example")).toEqual({ samples: 0, skipped: ["several-voices"] });
+            expect((await manual("Alice Example")).samples).toBe(0);
+            expect(readVoiceLibrary().library.samples).toEqual([]);
+            const { duplicateMeeting } = await import("./duplicate");
+            const copy = await duplicateMeeting({ store: fx.store, ref: fx.meeting.id, withoutItems: true });
+            const originalSource = await fx.opened.meeting();
+            const retimed = spyOn(fx.opened, "meeting").mockResolvedValue({
+                ...originalSource,
+                transcript: originalSource.transcript.map((l) => ({ ...l, startSec: l.startSec! + 10 })),
+            });
+            try {
+                const retry = await addVoiceSample({
+                    store: fx.store,
+                    meeting: copy.id,
+                    fromSec: 10,
+                    toSec: 15,
+                    person: "Bob Example",
+                    confirmed: true,
+                });
+                expect(retry).toEqual({ samples: 0, skipped: ["several-voices"] });
+                expect(readVoiceLibrary().library.samples).toEqual([]);
+            } finally {
+                retimed.mockRestore();
+            }
+        } finally {
+            inputs.mockRestore();
+            client.close();
+            fx.restore();
+        }
+    });
     test("a Listen replay of a known answer is not a second voice confirmation", async () => {
         const fx = await voiceAnswerFixture();
         try {
