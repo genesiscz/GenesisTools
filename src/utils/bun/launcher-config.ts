@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { moduleDir } from "../fs/module-dir";
 import { installedAppAccepts } from "../macos/genesis-app";
+import { shellWordSpans } from "../shell/words";
 
 /** The empty bunfig every GenesisTools bun process starts with (launcher.bunfig.toml says why it is empty). */
 export const LAUNCHER_BUNFIG = resolve(moduleDir(import.meta), "launcher.bunfig.toml");
@@ -25,16 +26,44 @@ export function launcherConfigArgs(bunfig = LAUNCHER_BUNFIG): string[] {
     return installedAppAccepts("launcher-config") === false ? [] : [launcherConfigFlag(bunfig)];
 }
 
-/** `--config=` naming any checkout's launcher.bunfig.toml, bare or single-quoted as `shellQuote` writes it. */
-const SAVED_LAUNCHER_CONFIG =
-    /\s(?:--config=\S*\/launcher\.bunfig\.toml|'--config=[^']*\/launcher\.bunfig\.toml')(?=\s|$)/g;
+/** A word whose value is `--config=` naming any checkout's launcher.bunfig.toml, with either path separator. */
+function isLauncherConfigWord(value: string): boolean {
+    return /^--config=.*[\\/]launcher\.bunfig\.toml$/.test(value);
+}
 
 /**
  * A saved command line (a daemon task registered with `launcherConfigFlag()`) as it should run now: without the flag
- * when the installed app predates it, as `launcherConfigArgs()` decides for a process started directly.
+ * when the installed app predates it, as `launcherConfigArgs()` decides for a process started directly. Only a whole
+ * word that is the flag goes; the same text inside another argument (`printf '%s' '--config=…'`) stays.
  */
 export function launcherConfigForSavedCommand(commandLine: string): string {
-    return installedAppAccepts("launcher-config") === false
-        ? commandLine.replace(SAVED_LAUNCHER_CONFIG, "")
-        : commandLine;
+    if (installedAppAccepts("launcher-config") !== false) {
+        return commandLine;
+    }
+
+    let kept = commandLine;
+
+    for (const word of shellWordSpans(commandLine).reverse()) {
+        if (isLauncherConfigWord(word.value)) {
+            const from = commandLine.slice(0, word.start).search(/\s*$/);
+            kept = kept.slice(0, from) + kept.slice(word.end);
+        }
+    }
+
+    return kept;
+}
+
+/**
+ * Whether a bun command written into a file at install time (a launchd plist's text) disagrees with what the installed
+ * app takes now: it carries `--config=` that the installed build refuses, or lacks it while the build accepts it. Such
+ * a file was written for another build, so its service is installed again on its next user-triggered start.
+ */
+export function savedLauncherConfigIsStale(savedText: string): boolean {
+    const accepts = installedAppAccepts("launcher-config");
+
+    if (accepts === undefined) {
+        return false;
+    }
+
+    return /--config=[^\s<>'"]*[\\/]launcher\.bunfig\.toml/.test(savedText) !== accepts;
 }

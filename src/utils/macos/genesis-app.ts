@@ -31,26 +31,29 @@ export function genesisAppDir(): string {
 export type AppCapability = "launcher-config";
 
 /**
- * Whether the installed GenesisTools.app accepts `capability`, from the manifest its build wrote: `undefined` when no
- * build is installed (or the manifest is unreadable), `false` when the build predates the capability. Any worktree
- * can replace the install with its own build, while `tools` runs the main checkout, so a caller asks before it sends
- * something an older build refuses (2026-11-18 00:24: a worktree build without the `--config=` rule replaced the
- * install, and every `tools` start could only be allowed once).
+ * Whether the installed GenesisTools.app accepts `capability`, from the manifest its build wrote beside the bundle
+ * (`genesisAppInstallDir()`, which a GENESIS_TOOLS_HOME sandbox does not move, as `appStatus` reads it): `undefined`
+ * when no manifest exists (no build is installed), `false` when the build predates the capability or its manifest
+ * cannot be read. Any worktree can replace the install with its own build, while `tools` runs the main checkout, so a
+ * caller asks before it sends something an older build refuses (2026-11-18 00:24: a worktree build without the
+ * `--config=` rule replaced the install, and every `tools` start could only be allowed once).
  */
 export function installedAppAccepts(capability: AppCapability): boolean | undefined {
-    const path = join(genesisAppDir(), "manifest.json");
+    const path = join(genesisAppInstallDir(), "manifest.json");
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
 
     try {
         const manifest: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
-
-        if (typeof manifest !== "object" || manifest === null) {
-            return undefined;
-        }
-
-        const accepts = "accepts" in manifest ? manifest.accepts : undefined;
+        const accepts =
+            typeof manifest === "object" && manifest !== null && "accepts" in manifest ? manifest.accepts : undefined;
         return Array.isArray(accepts) && accepts.includes(capability);
-    } catch {
-        return undefined;
+    } catch (error) {
+        // An installed build whose manifest cannot be read is treated as one that predates the capability.
+        logger.warn({ error, path, capability }, "genesis-app: the installed app's manifest could not be read");
+        return false;
     }
 }
 

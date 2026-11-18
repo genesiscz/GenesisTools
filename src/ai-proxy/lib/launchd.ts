@@ -13,9 +13,11 @@
  * OAuth from `~/.grok/auth.json` (hence HOME) and every other credential from
  * `~/.genesis-tools/ai-proxy/config.json` and the encrypted vault.
  */
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
-import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
+import { launcherConfigArgs, savedLauncherConfigIsStale } from "@genesiscz/utils/bun/launcher-config";
+import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import {
     bootoutLaunchd,
     defaultPlistLabel,
@@ -45,10 +47,25 @@ export function isAiProxyLaunchdInstalled(): boolean {
     return isLaunchdInstalled(AI_PROXY_LAUNCHD_LABEL);
 }
 
+/**
+ * The installed plist was written for another GenesisTools.app: it predates the app, or its bun `--config=` disagrees
+ * with what the installed build takes (`savedLauncherConfigIsStale`). `up` installs it again before it starts it, as
+ * the dashboards' start does; launchd runs the definition it loaded, never the file.
+ */
+export function aiProxyLaunchdIsStale(): boolean {
+    const path = aiProxyPlistPath();
+
+    if (!isAiProxyLaunchdInstalled()) {
+        return false;
+    }
+
+    return launchdPlistNeedsGenesisApp(path) || savedLauncherConfigIsStale(readFileSync(path, "utf8"));
+}
+
 export function buildAiProxyLaunchdOptions(port: number): LaunchdInstallOptions {
     return {
         label: AI_PROXY_LAUNCHD_LABEL,
-        command: ["bun", launcherConfigFlag(), "run", proxyEntryPath(), "serve", "--port", String(port)],
+        command: ["bun", ...launcherConfigArgs(), "run", proxyEntryPath(), "serve", "--port", String(port)],
         cwd: toolsRoot(),
         // HOME and a launchd-safe PATH come from resolveCommandForLaunchd. These
         // three only fix the encoding: a launchd agent inherits no shell profile,
