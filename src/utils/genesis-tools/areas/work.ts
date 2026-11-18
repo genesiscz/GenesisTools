@@ -15,6 +15,7 @@ const callSchema = z
         request: z.string().optional().describe("a request id; a repeat with the same id returns the first reply"),
         dryRun: z.boolean().optional(),
         ownerSaid: z.string().optional().describe("the owner's words, when the owner asked for this write"),
+        project: z.string().optional().describe("the project the calling surface shows; its rules apply"),
     })
     .optional();
 
@@ -47,9 +48,25 @@ function actionOf(name: WorkMethodName) {
             }
 
             const { call, ...params } = ctx.args;
-            const reply = await door.call(name, params, call ?? {});
+            const write = method.effect !== "read";
 
-            if (reply.ok && method.effect !== "read" && call?.dryRun !== true) {
+            // Inside the service the process is not the caller. A person at a surface writes as the owner; an agent
+            // has no session the service could record, so its writes go through `tools work` or the MCP tools.
+            if (ctx.service !== null && write && ctx.facts.isAgent()) {
+                return ctx.pass(
+                    "an agent writes through the work CLI or the work_* MCP tools, which record its session"
+                );
+            }
+
+            const { project: surfaceProject, ...options } = call ?? {};
+            const own = (params as { project?: unknown }).project;
+            const project = surfaceProject ?? (typeof own === "string" ? own : "unknown");
+            const reply = await door.call(name, params, {
+                ...options,
+                ...(ctx.service !== null && !ctx.facts.isAgent() ? { atSurface: { project } } : {}),
+            });
+
+            if (reply.ok && write && call?.dryRun !== true) {
                 ctx.emit("changed", { method: name, items: reply.ok ? itemsOf(reply.data) : [] });
             }
 

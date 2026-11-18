@@ -8,7 +8,7 @@ import type { Reply } from "@genesiscz/utils/output/reply";
 import { type WorkMethodName, workMethods } from "@genesiscz/utils/work/api";
 import { registerWorkDoor, type WorkDoor, type WorkDoorCall } from "@genesiscz/utils/work/door";
 import { callWork } from "@genesiscz/utils/work/handlers";
-import { actorHere } from "../adapters/actor";
+import { actorHere, ownerAtSurface } from "../adapters/actor";
 import { connectorsEnabled } from "../connectors";
 import { openSession } from "../session";
 
@@ -28,7 +28,13 @@ export async function callWorkHere(
             ...(options.ownerSaid !== undefined ? { ownerSaid: options.ownerSaid } : {}),
         },
         // A read records no actor, so it skips the transcript read of the model facet (about 400 ms).
-        { actor: actorHere({ model: !read }), quiet: options.quiet ?? true }
+        {
+            actor:
+                options.atSurface !== undefined
+                    ? ownerAtSurface(options.atSurface.project, "hub")
+                    : actorHere({ model: !read }),
+            quiet: options.quiet ?? true,
+        }
     );
 
     try {
