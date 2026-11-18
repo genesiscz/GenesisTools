@@ -20,6 +20,7 @@ import {
     type Connector,
     type ConnectorContext,
     DEFAULT_LABEL_TEMPLATE,
+    DRIFT_NOTE_PREFIX,
     originFor,
     type Pairing,
     type PushIntent,
@@ -257,7 +258,7 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
                     writePairing(deps.db, deps, {
                         ...pairing,
                         state: "drift",
-                        note: `changed here, owned outside: ${owned.join(", ")}`,
+                        note: `${DRIFT_NOTE_PREFIX.local} ${owned.join(", ")}`,
                     })
                 );
                 report.drift++;
@@ -454,7 +455,7 @@ export async function pullRemote(
                 writePairing(db, deps, {
                     ...pairing,
                     state: "drift",
-                    note: `changed outside, owned here: ${drifted.join(", ")}`,
+                    note: `${DRIFT_NOTE_PREFIX.remote} ${drifted.join(", ")}`,
                 });
                 report.drift.push(item.id);
             }

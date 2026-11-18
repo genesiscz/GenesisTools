@@ -19,6 +19,7 @@ import { type ContextReport, stampOf } from "./context";
 import type { Item } from "./model/item";
 import { ITEM_TYPES, type ItemType, isOpenState } from "./model/vocab";
 import { type ResolvedNotify, resolveNotify } from "./notify";
+import { pairingsForRows, type RowPairings } from "./pairing-rows";
 import { type ItemRow, type Liveness, listItems, type ShowResult, showItem, type TriageRow, triage } from "./read";
 import { type ReopenData, reopen } from "./reopen";
 import type { FieldRule, RoleRule } from "./rules/config";
@@ -52,14 +53,14 @@ export interface WorkSession {
     context(network: boolean): Promise<ContextReport>;
 }
 
-export interface TreeContainer {
+export interface TreeContainer extends RowPairings {
     ref: string;
     type: ItemType;
     state: Item["state"];
     title: string;
     open: number;
     total: number;
-    members: ItemRow[];
+    members: (ItemRow & RowPairings)[];
 }
 
 export interface TreeResult {
@@ -93,7 +94,7 @@ export interface WorkResults {
     list: ListResult;
     show: ShowResult;
     tree: TreeResult;
-    triage: TriageRow[];
+    triage: (TriageRow & RowPairings)[];
     context: ContextResult;
     config: ConfigResult;
     spot: WriteData;
@@ -252,11 +253,21 @@ export const workHandlers: WorkHandlers = {
             };
         });
         const spotted = selectItems(session.ctx.db, { project, states: ["spotted"], limit: 5000 }).length;
-        return okReply("tree", { project, containers: out, spotted });
+        const withPairings = await pairingsForRows(
+            session.ctx,
+            out.flatMap((row) => [row.ref, ...row.members.map((member) => member.ref)])
+        );
+        return okReply("tree", {
+            project,
+            containers: out.map((row) => withPairings({ ...row, members: row.members.map(withPairings) })),
+            spotted,
+        });
     },
 
     async triage(p, session) {
-        return okReply("triage", await triage(session.ctx.db, p.project, session.alive));
+        const rows = await triage(session.ctx.db, p.project, session.alive);
+        const withPairings = await pairingsForRows(session.ctx, rows.map((row) => row.ref));
+        return okReply("triage", rows.map(withPairings));
     },
 
     async context(p, session) {

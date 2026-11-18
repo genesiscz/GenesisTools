@@ -12,6 +12,12 @@ export type SyncedFact = (typeof SYNCED_FACTS)[number];
 export const PAIRING_STATES = ["in-sync", "pending", "held", "drift", "failed"] as const;
 export type PairingState = (typeof PAIRING_STATES)[number];
 
+/** The first words of a stored drift note identify the side that changed. */
+export const DRIFT_NOTE_PREFIX = {
+    local: "changed here, owned outside:",
+    remote: "changed outside, owned here:",
+} as const;
+
 export interface Pairing {
     item: ItemId;
     connector: string;

@@ -4,6 +4,7 @@
  * source of the code; `wire.test.ts` parses real results with these schemas, so the two cannot drift apart unseen.
  */
 import { z } from "zod";
+import { PAIRING_STATES } from "./connectors/types";
 import { ITEM_STATES, ITEM_TYPES, SEVERITIES } from "./model/vocab";
 import { NOTIFY_ACTIONS, NOTIFY_LEVELS } from "./rules/config";
 
@@ -24,6 +25,19 @@ export const itemRowSchema = z.object({
 /** A list row; with `fields` the caller picks columns, so each one is optional on the wire. */
 export const listRowSchema = itemRowSchema.partial();
 
+const pairingRowSchema = z.object({
+    connector: z.string(),
+    displayName: z.string().optional(),
+    enabled: z.boolean(),
+    remoteKey: z.string(),
+    state: z.enum(PAIRING_STATES),
+    driftDirection: z.enum(["local", "remote"]).optional(),
+    note: z.string().optional(),
+});
+
+export type PairingRow = z.infer<typeof pairingRowSchema>;
+const pairings = z.array(pairingRowSchema).optional();
+
 export const treeResultSchema = z.object({
     project: z.string(),
     containers: z.array(
@@ -34,7 +48,8 @@ export const treeResultSchema = z.object({
             title: z.string(),
             open: z.number().int(),
             total: z.number().int(),
-            members: z.array(itemRowSchema),
+            pairings,
+            members: z.array(itemRowSchema.extend({ pairings })),
         })
     ),
     spotted: z.number().int(),
@@ -48,6 +63,7 @@ export const nextActionSchema = z.object({
 
 export const triageRowSchema = z.object({
     ref: z.string(),
+    pairings,
     group: z.enum(["spotted", "reopened-no-worker", "active-worker-gone", "spotted-in-finished"]),
     type,
     state,

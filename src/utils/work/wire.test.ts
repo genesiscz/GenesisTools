@@ -1,11 +1,24 @@
 import { describe, expect, test } from "bun:test";
+import type { Reply } from "@genesiscz/utils/output/reply";
 import { workMethods } from "./api";
+import { originFor, type Pairing } from "./connectors/types";
 import { callWork, type WorkSession } from "./handlers";
 import type { Actor } from "./model/item";
+import { resolveWorkRules } from "./rules/resolve";
 import { type WorkContext, write } from "./service";
+import { applyChange } from "./store/apply";
 import { openWorkDb } from "./store/db";
+import type { WorkCommand } from "./store/decide";
 
 let n = 0;
+
+function data<T>(reply: Reply<T>): T {
+    if (!reply.ok) {
+        throw new Error(reply.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
+    }
+
+    return reply.data;
+}
 
 function ctx(db: ReturnType<typeof openWorkDb>): WorkContext {
     const actor: Actor = {
@@ -33,33 +46,113 @@ function ctx(db: ReturnType<typeof openWorkDb>): WorkContext {
     };
 }
 
+function recordPairing(
+    ctx: WorkContext,
+    row: Pick<Pairing, "item" | "connector" | "remoteKey" | "state" | "note"> & { born?: Pairing["born"] }
+) {
+    const born = row.born ?? "local";
+    const ts = "2026-01-01T00:00:00.000Z";
+    const pairing: Pairing = { ...row, born, origin: originFor(born), updatedTs: ts };
+    applyChange(ctx.db, {
+        v: 1,
+        ts,
+        item: row.item,
+        kind: "paired",
+        actor: ctx.actor,
+        origin: { via: "connector", id: row.connector },
+        payload: { pairing },
+    });
+}
+
 describe("the wire schemas of the read methods match what the handlers return", () => {
     test("list, tree and triage parse with the result schema of the method table", async () => {
         const db = openWorkDb(":memory:");
 
         try {
             const c = ctx(db);
-            await write(c, {
+            c.rules = resolveWorkRules([
+                {
+                    layer: "config.project",
+                    rules: { connectors: { tracker: { enabled: true, settings: { server: "Issue desk" } } } },
+                },
+            ]);
+            const create = async (command: WorkCommand) => data(await write(c, command)).items[0].id;
+            const bug = await create({
                 verb: "spot",
                 title: "a bug",
                 type: "bug",
                 severity: "high",
                 fields: { where: "a.ts:1" },
             });
-            await write(c, { verb: "add", title: "an epic", type: "epic" });
+            const epic = await create({ verb: "add", title: "an epic", type: "epic" });
+            const task = await create({ verb: "add", title: "a member", type: "task", parent: epic });
+            const unpaired = await create({ verb: "spot", title: "unpaired", type: "bug", fields: {} });
+            recordPairing(c, { item: epic, connector: "tracker", remoteKey: "EP-1", state: "in-sync" });
+            recordPairing(c, {
+                item: task,
+                connector: "tracker",
+                remoteKey: "TK-2",
+                born: "remote",
+                state: "drift",
+                note: "changed here, owned outside: title",
+            });
+            recordPairing(c, {
+                item: bug,
+                connector: "tracker",
+                remoteKey: "BG-3",
+                state: "drift",
+                note: "changed outside, owned here: state",
+            });
+            recordPairing(c, { item: bug, connector: "mirror", remoteKey: "M-4", state: "held" });
             const session: WorkSession = {
                 ctx: c,
                 call: {},
                 alive: async () => null,
-                context: async () => ({}) as never,
+                context: async () => {
+                    throw new Error("A read of the store should not need session context");
+                },
             };
 
-            for (const method of ["list", "tree", "triage", "config"] as const) {
+            for (const method of ["list", "config"] as const) {
                 const reply = await callWork(method, {}, session);
                 expect(reply.ok).toBe(true);
                 const parsed = workMethods[method].result.safeParse(reply.ok ? reply.data : null);
                 expect(parsed.success ? "ok" : `${method}: ${parsed.error.message}`).toBe("ok");
             }
+
+            // A property missing from the schema gets stripped on the way to Swift.
+            const tree = workMethods.tree.result.parse(data(await callWork("tree", {}, session)));
+            expect(tree.containers).toHaveLength(1);
+            expect(tree.containers[0].pairings).toEqual([
+                { connector: "tracker", displayName: "Issue desk", enabled: true, remoteKey: "EP-1", state: "in-sync" },
+            ]);
+            expect(tree.containers[0].members[0].pairings).toEqual([
+                {
+                    connector: "tracker",
+                    displayName: "Issue desk",
+                    enabled: true,
+                    remoteKey: "TK-2",
+                    state: "drift",
+                    driftDirection: "local",
+                    note: "changed here, owned outside: title",
+                },
+            ]);
+            const rows = workMethods.triage.result.parse(data(await callWork("triage", {}, session)));
+            expect(rows.find((row) => row.ref === bug)?.pairings).toEqual([
+                { connector: "mirror", enabled: false, remoteKey: "M-4", state: "held" },
+                {
+                    connector: "tracker",
+                    displayName: "Issue desk",
+                    enabled: true,
+                    remoteKey: "BG-3",
+                    state: "drift",
+                    driftDirection: "remote",
+                    note: "changed outside, owned here: state",
+                },
+            ]);
+            const plainRow = rows.find((row) => row.ref === unpaired);
+            expect(plainRow).toBeDefined();
+            expect(plainRow).not.toHaveProperty("pairings");
         } finally {
             db.close();
         }

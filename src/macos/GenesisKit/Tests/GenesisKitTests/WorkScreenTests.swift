@@ -36,13 +36,18 @@ final class WorkScreenTests: XCTestCase {
                                                     title: "The store and the journal", slot: "t1"),
                                        WorkRowValue(ref: "h_build001:t2", state: "active", type: "task", worker: "claude ae3ac312",
                                                     title: "The hub's Work screen", slot: "t2"),
-                                       WorkRowValue(ref: "w_tracker01", state: "open", type: "task", title: "Pull from the tracker", slot: "t3"),
-                                   ]),
+                                       WorkRowValue(ref: "w_tracker01", state: "open", type: "task", title: "Pull from the tracker", slot: "t3",
+                                                    pairings: [.init(connector: "tracker", displayName: "Issue desk", remoteKey: "TASK-42",
+                                                                     state: .drift, driftDirection: .remote)]),
+                                   ], pairings: [.init(connector: "tracker", displayName: "Issue desk", remoteKey: "PLAN-12", state: .synced)]),
             ],
             triage: [
                 WorkTriageValue(ref: "w_spot0001", group: "spotted", type: "bug", state: "spotted",
                                 title: "The widget counts lag a write", where: "src/hub/lib/widget/tasks.ts:120",
-                                why: "the cache key misses a pairing change", severity: "high"),
+                                why: "the cache key misses a pairing change", severity: "high",
+                                pairings: [.init(connector: "tracker", displayName: "Issue desk", remoteKey: "BUG-17",
+                                                 state: .drift, driftDirection: .local),
+                                           .init(connector: "mirror", remoteKey: "COPY-18", state: .held)]),
                 WorkTriageValue(ref: "w_spot0002", group: "spotted", type: "idea", state: "spotted",
                                 title: "Group spotted items by file"),
                 WorkTriageValue(ref: "w_reop0001", group: "reopened-no-worker", type: "task", state: "reopened",
@@ -119,9 +124,29 @@ final class WorkScreenTests: XCTestCase {
         let text = try render(view, name: "work-items")
         for expected in ["Handoffs and epics", "Build the work items", "2 of 3 open", "The hub's Work screen",
                          "Spotted", "1 bug", "The widget counts lag a write", "1 idea",
-                         "Reopened, nobody working", "Parity test misses"] {
+                         "Reopened, nobody working", "Parity test misses", "Issue desk", "TASK-42", "Remote drift",
+                         "BUG-17", "Local drift", "mirror", "COPY-18", "Held", "PLAN-12", "Synced"] {
             XCTAssertTrue(text.contains(expected), "missing \(expected) in:\n\(text)")
         }
+    }
+
+    func testFoldingAHandoffKeepsItsOwnPairingVisible() throws {
+        let text = try render(WorkItemsView(snapshot: fixture(), pending: []) { _ in }.frame(width: 600),
+                              name: "work-items-folded")
+        XCTAssertTrue(text.contains("PLAN-12"), text)
+        XCTAssertFalse(text.contains("TASK-42"), text)
+    }
+
+    func testTheGeneratedMemberKeepsItsPairingWhenReencodedForTheScreen() throws {
+        let bytes = Data("""
+        {"ref":"w_member01","title":"Fix the counter","state":"open","type":"task","project":"App",
+         "pairings":[{"connector":"tracker","displayName":"Issue desk","enabled":true,"remoteKey":"TASK-42",
+                      "state":"drift","driftDirection":"remote","note":"changed outside, owned here: state"}]}
+        """.utf8)
+        let generated = try JSONDecoder().decode(WorkTreeResultOption0ValueDataContainersItemMembersItem.self, from: bytes)
+        let member = try JSONDecoder().decode(WorkRowValue.self, from: JSONEncoder().encode(generated))
+        XCTAssertEqual(member.pairings, [.init(connector: "tracker", displayName: "Issue desk", remoteKey: "TASK-42",
+                                              state: .drift, driftDirection: .remote, note: "changed outside, owned here: state")])
     }
 
     func testAnEmptyProjectSaysSoInEachSection() throws {
