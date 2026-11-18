@@ -22,14 +22,16 @@ const word: Extract<MeetingItem, { kind: "question" }> = {
 const dictionary = { ...word, id: "i2", about: "dictionary" as const };
 
 function fakeGt() {
-    type Notice = AreaClients["person"]["notice"];
-    const notice = mock(async (args: Parameters<Notice>[0]): ReturnType<Notice> => ({
-        status: "ran",
-        via: "native",
-        skipped: [],
-        value: { id: args.id, status: "pending", reason: null },
-    }));
-    return { person: { notice } };
+    type Notice = AreaClients["person"]["windowNotice"];
+    const windowNotice = mock(
+        async (args: Parameters<Notice>[0]): ReturnType<Notice> => ({
+            status: "ran",
+            via: "native",
+            skipped: [],
+            value: { id: args.id, status: "pending", reason: null },
+        })
+    );
+    return { person: { windowNotice } };
 }
 
 test("one request names the Items tab of the meeting with pending word and dictionary questions", async () => {
@@ -42,10 +44,14 @@ test("one request names the Items tab of the meeting with pending word and dicti
     });
 
     expect(warning).toBeUndefined();
-    expect(gt.person.notice).toHaveBeenCalledTimes(1);
-    expect(gt.person.notice.mock.calls[0]?.[0].reason).toContain(
+    expect(gt.person.windowNotice).toHaveBeenCalledTimes(1);
+    expect(gt.person.windowNotice.mock.calls[0]?.[0].reason).toContain(
         "tools meetings window 2026-01-12_10-00-planning --tab items"
     );
+    expect(gt.person.windowNotice.mock.calls[0]?.[0].open).toEqual({
+        window: "--meetings",
+        args: ["--meeting", "2026-01-12_10-00-planning", "--tab", "items"],
+    });
 });
 
 test("a dictionary question alone reaches the owner; settled and unrelated items do not", async () => {
@@ -65,10 +71,10 @@ test("a dictionary question alone reaches the owner; settled and unrelated items
         },
     });
     await requestMeetingQuestionReview({ ...run, actor: { kind: "window" }, record: { ...record, items: [word] } });
-    expect(gt.person.notice).not.toHaveBeenCalled();
+    expect(gt.person.windowNotice).not.toHaveBeenCalled();
 
     await requestMeetingQuestionReview({ ...run, record: { ...record, items: [dictionary] } });
-    expect(gt.person.notice).toHaveBeenCalledTimes(1);
+    expect(gt.person.windowNotice).toHaveBeenCalledTimes(1);
 });
 
 test("retries keep the journal key even when questions change; another run or meeting gets its own key", async () => {
@@ -79,7 +85,7 @@ test("retries keep the journal key even when questions change; another run or me
     await requestMeetingQuestionReview({ ...first, runId: "run:2" });
     await requestMeetingQuestionReview({ ...first, record: { ...first.record, id: "2026-01-13_10-00-planning" } });
 
-    const ids = gt.person.notice.mock.calls.map(([request]) => request.id);
+    const ids = gt.person.windowNotice.mock.calls.map(([request]) => request.id);
     expect(ids).toHaveLength(4);
     expect(ids[1]).toBe(ids[0]);
     expect(new Set(ids).size).toBe(3);
@@ -88,7 +94,7 @@ test("retries keep the journal key even when questions change; another run or me
 test("delivery failures become warnings after the meeting has been saved", async () => {
     const gt = fakeGt();
     const run = { actor: agent, runId: "run-1", record: { ...record, items: [word] }, gt };
-    gt.person.notice.mockResolvedValueOnce({
+    gt.person.windowNotice.mockResolvedValueOnce({
         status: "ran",
         via: "native",
         skipped: [],
@@ -96,6 +102,6 @@ test("delivery failures become warnings after the meeting has been saved", async
     });
     expect(await requestMeetingQuestionReview(run)).toBe("Open the request manually.");
 
-    gt.person.notice.mockRejectedValueOnce(new Error("journal unavailable"));
+    gt.person.windowNotice.mockRejectedValueOnce(new Error("journal unavailable"));
     expect(await requestMeetingQuestionReview(run)).toContain("journal unavailable");
 });
