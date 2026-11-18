@@ -111,17 +111,49 @@ describe("runTask", () => {
 
         const result = await runTask(task, 1, logsDir);
 
-        const stdout = readFileSync(result.logFile, "utf-8")
-            .trim()
-            .split("\n")
-            .map((line) => SafeJSON.parse(line, { strict: true }) as { type: string; data?: string })
-            .filter((record) => record.type === "stdout")
-            .map((record) => record.data);
+        const stdout = stdoutOf(result.logFile);
         expect(result.exitCode).toBe(0);
-        expect(stdout).toEqual([realpathSync(taskWorkingDir())]);
+        expect(stdout).toHaveLength(1);
+        expect(stdout[0]?.startsWith(`${realpathSync(taskWorkingDir())}/cwd-task-`)).toBe(true);
+        // An empty run folder is removed after the run.
         expect(readdirSync(taskWorkingDir())).toEqual([]);
     });
+
+    it.skipIf(skip.onWindows)("a file one run writes never reaches the next run's working folder", async () => {
+        const logsDir = makeTempDir();
+        const writer: DaemonTask = {
+            name: "writer-task",
+            command: "touch marker && pwd -P",
+            every: "every 1 minute",
+            retries: 0,
+            enabled: true,
+        };
+        const reader: DaemonTask = { ...writer, command: "ls -A && pwd -P" };
+
+        const first = await runTask(writer, 1, logsDir);
+        const second = await runTask(reader, 1, logsDir);
+        const [firstDir] = stdoutOf(first.logFile);
+        const secondOut = stdoutOf(second.logFile);
+
+        expect(second.exitCode).toBe(0);
+        // `ls -A` printed nothing, so the only line is the folder, and it is not the first run's.
+        expect(secondOut).toHaveLength(1);
+        expect(secondOut[0]).not.toBe(firstDir);
+        // The writer's file stays where it wrote it; the reader's empty folder is gone.
+        expect(readdirSync(firstDir ?? "")).toEqual(["marker"]);
+        expect(existsSync(secondOut[0] ?? "")).toBe(false);
+        rmSync(firstDir ?? "", { recursive: true, force: true });
+    });
 });
+
+function stdoutOf(logFile: string): (string | undefined)[] {
+    return readFileSync(logFile, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => SafeJSON.parse(line, { strict: true }) as { type: string; data?: string })
+        .filter((record) => record.type === "stdout")
+        .map((record) => record.data);
+}
 
 describe("taskArgv", () => {
     it("runs low under background QoS, normal as the daemon runs, and high out of background", () => {

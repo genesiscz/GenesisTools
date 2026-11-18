@@ -179,7 +179,7 @@ changes took 1669 ms.
 | `~/.genesis-tools/daemon/config.json` | The tasks |
 | `~/.genesis-tools/daemon/daemon.pid` | The running daemon's PID and command line |
 | `~/.genesis-tools/daemon/logs/<task>/` | One JSONL run log per run |
-| `~/.genesis-tools/daemon/task-cwd/` | The working folder of every task; it stays empty |
+| `~/.genesis-tools/daemon/task-cwd/` | One empty working folder per run, removed after it; a folder a task wrote into stays |
 | `~/.genesis-tools/daemon/logs/daemon-stderr.log` | The launchd job's stdout and stderr (launchd writes both here) |
 | `~/.genesis-tools/daemon/logs/daemon-stdout.log` | Only from an older plist; `logs --tail` follows it too |
 | `~/.genesis-tools/logs/<date>.log` | The day log: the daemon's structured log lines, among every tool's |
@@ -240,10 +240,11 @@ run, without a restart.
 
 Each run is `sh -c "<command>"` with stdin closed, in its own process group. The PATH starts with the checkout's root,
 so `tools <name>` in a command is that checkout's `tools`, then the daemon's PATH, then `/usr/sbin` and `/sbin`.
-The working folder is `~/.genesis-tools/daemon/task-cwd/`, an empty folder that nothing writes into. GenesisTools.app
-will not remember or auto-allow a vault-key request from a bun process whose working folder changed after it started,
-and the home folder changes every few seconds: from `$HOME`, 24 of 1771 usage polls put up a Touch ID window
-(2026-11-16 to 11-17).
+Each run starts in a new empty folder of its own, `~/.genesis-tools/daemon/task-cwd/<task>-<run id>/`, so nothing
+another run writes changes it. The daemon removes it after the run; a folder the task wrote files into stays, with a
+warning in the day log. GenesisTools.app will not remember or auto-allow a vault-key request from a bun process whose
+working folder changed after it started, and the home folder changes every few seconds: from `$HOME`, 24 of 1771
+usage polls put up a Touch ID window (2026-11-16 to 11-17).
 
 - **Timeout**: 10 minutes unless `timeoutMs` says otherwise. At the timeout the daemon sends SIGTERM to the whole
   process group, and SIGKILL 3 s later. A task that cleans up on SIGTERM has 2 s for it. The grace was 500 ms, and 123
