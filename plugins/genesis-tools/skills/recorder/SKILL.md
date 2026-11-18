@@ -53,6 +53,11 @@ table of the calls that exist today, one example each; section 3 is the recipe f
 The waiting that is cut: still, silent stretches while a step's code runs (idle.ts), the time before the first step
 and after the last. A step's first moments and its hold are never cut.
 
+## Exclude windows from frames
+
+For frames, `await recorder.start({ excludeWindowIds: [91, 105] })` returns the recording handle and excludes those
+CG windows from each display. The CLI equivalent is `tools recorder start --frames --exclude-window-ids 91,105`.
+
 ## Camera bubble
 
 The picker's "Camera bubble" option records the camera beside the screen (`camera.mov`); the preview can be dragged

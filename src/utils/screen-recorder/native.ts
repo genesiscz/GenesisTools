@@ -32,6 +32,7 @@ const { log } = logger.scoped("screen-recorder-native");
 /** The `ax-tool capture` options that came after the first release; each is used only when `--help` names it. */
 export const NATIVE_OPTIONAL_FLAGS = [
     "--display-id",
+    "--exclude-window-ids",
     "--follow-focus",
     "--max-long-side",
     "--quiet-ms",
@@ -214,6 +215,13 @@ export function nativeArgv(options: {
         } else {
             throw new CaptureError("display-missing", `display ${displayId} is not connected`);
         }
+    }
+
+    if (request.excludeWindowIds?.length) {
+        if (!flags.has("--exclude-window-ids")) {
+            throw new CaptureError("unavailable", "this ax-tool has no --exclude-window-ids; rebuild it");
+        }
+        argv.push("--exclude-window-ids", request.excludeWindowIds.join(","));
     }
 
     if (request.maxLongSidePx !== undefined) {

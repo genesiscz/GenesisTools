@@ -35,6 +35,7 @@ export const recorderStartSchema = z
     .object({
         title: z.string().optional(),
         displays: z.union([z.enum(["all", "main"]), z.array(z.number().int())]).default("main"),
+        excludeWindowIds: z.array(z.number().int().positive().max(0xffffffff)).optional(),
         audio: z
             .object({ mic: z.boolean().optional(), system: z.boolean().optional(), micDeviceId: z.string().optional() })
             .optional(),
@@ -328,7 +329,7 @@ export const recorderApi = defineApi({
             params: recorderStartSchema,
             result: z.unknown(),
             resultName: "Recording",
-            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records). It records what the user\'s screen shows, and a first microphone use can raise the system\'s permission prompt.',
+            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. excludeWindowIds leaves those CG windows out of every display, as tools recorder start --frames --exclude-window-ids does. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records). It records what the user\'s screen shows, and a first microphone use can raise the system\'s permission prompt.',
             effect: "reversible",
             reaches: ["user"],
         }),

@@ -19,6 +19,8 @@ export type CaptureTarget = { kind: "display"; displayId: number } | { kind: "fo
 
 export interface CaptureRequest {
     target: CaptureTarget;
+    /** CG window IDs the display filter must exclude. */
+    excludeWindowIds?: number[];
     /** At most 180. */
     durationSec: number;
     activeFps: number;
