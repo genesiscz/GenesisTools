@@ -424,6 +424,20 @@
     }
   },
   {
+    "method": "actions.run",
+    "params": {
+      "id": "fixture",
+      "args": null,
+      "timeoutMs": 1
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": null,
+      "skipped": []
+    }
+  },
+  {
     "method": "actions.explain",
     "params": {
       "id": "fixture",

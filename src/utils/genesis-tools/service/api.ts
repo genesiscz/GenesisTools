@@ -76,6 +76,18 @@ export const serviceMethods = [
         effect: "read",
     },
     {
+        name: "actions.run",
+        params: z.object({
+            id: z.string(),
+            args: z.unknown().optional(),
+            timeoutMs: z.number().int().min(1).optional(),
+        }),
+        result: actionOutcomeSchema(z.unknown()),
+        doc: "Run an action with the caller's deadline, which travels apart from the action's args",
+        effect: "reversible",
+        reaches: ["user"],
+    },
+    {
         name: "actions.explain",
         params: z.object({ id: z.string(), fresh: z.boolean().default(false), args: z.unknown().optional() }),
         result: explainSchema,

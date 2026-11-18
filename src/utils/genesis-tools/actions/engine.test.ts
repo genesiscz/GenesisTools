@@ -21,6 +21,7 @@ import {
     type NeedSpec,
 } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { connectGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/clients";
+import { startGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/host";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
@@ -643,6 +644,54 @@ test("app.hello reports methods to the injected state, and app.rpc returns the r
 });
 
 describe("the service client", () => {
+    test("actions.run carries the caller's deadline to the service engine, apart from the args", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-service-run-"));
+        const value = { protocol: 1, bundleId: "example.fixture", version: "1", build: "fixture", methods: [] };
+        const start = await startGenesisToolsService({
+            dir,
+            deps: {
+                facts: fakeFacts(),
+                app: {
+                    rpc: async <T>() => {
+                        await Bun.sleep(300);
+                        return { ok: true as const, result: value as T };
+                    },
+                },
+            },
+        });
+
+        if (start.status !== "started") {
+            throw new Error("fixture service did not start");
+        }
+
+        const client = await connectGenesisToolsService({ dir });
+
+        try {
+            if (!client) {
+                throw new Error("fixture client did not connect");
+            }
+
+            const started = Date.now();
+            const short = await client.call<{ status: string; skipped: Array<{ code: string }> }>("actions.run", {
+                id: "app.hello",
+                args: {},
+                timeoutMs: 50,
+            });
+            expect(Date.now() - started).toBeLessThan(250);
+            expect(short.status).toBe("unreachable");
+            expect(short.skipped.map((skip) => skip.code)).toEqual(["timed-out"]);
+
+            const full = await client.call<{ status: string }>("actions.run", { id: "app.hello", args: {} });
+            expect(full.status).toBe("ran");
+            await expect(client.call("actions.run", { id: "config.set", args: {} })).rejects.toThrow(
+                'no action "config.set"'
+            );
+        } finally {
+            client?.close();
+            start.host.stop("test");
+        }
+    });
+
     test("a refused hello closes the socket it opened", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-service-hello-"));
         const started = await startServiceHost({

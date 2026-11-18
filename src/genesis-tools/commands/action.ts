@@ -1,8 +1,8 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { explainAction, findAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { actionBudgetMs, explainAction, findAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
-import { callRunningService } from "@genesiscz/utils/genesis-tools/service/clients";
+import { callRunningService, serviceActionClientTimeoutMs } from "@genesiscz/utils/genesis-tools/service/clients";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -93,20 +93,29 @@ export function registerActionCommand(program: Command): void {
                     return;
                 }
 
-                const timeoutMs =
-                    options.timeoutMs === undefined
-                        ? (findAction(AREAS, id).action.timeoutMs ?? 120_000)
-                        : Number(options.timeoutMs);
-                if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-                    throw new Error("--timeout-ms must be positive");
+                // The id is checked before the service is reached, so only an action name is ever sent.
+                const { action } = findAction(AREAS, id);
+                const override = options.timeoutMs === undefined ? undefined : Number(options.timeoutMs);
+
+                if (override !== undefined && (!Number.isInteger(override) || override <= 0)) {
+                    throw new Error("--timeout-ms must be a positive whole number");
                 }
-                const remote = await callRunningService(id, parseArgs(options.json), timeoutMs + 10_000);
+
+                const args = parseArgs(options.json);
+                // The deadline travels beside the args, so the service's engine runs under the same budget as a local run.
+                const remote = await callRunningService(
+                    "actions.run",
+                    { id, args, ...(override === undefined ? {} : { timeoutMs: override }) },
+                    serviceActionClientTimeoutMs(actionBudgetMs(action, override))
+                );
+
                 if (!remote.called) {
                     registerCliAppBuilder();
                 }
+
                 const outcome = remote.called
                     ? remote.value
-                    : await runAreaAction(AREAS, id, parseArgs(options.json), liveEngineDeps(AREAS), { timeoutMs });
+                    : await runAreaAction(AREAS, id, args, liveEngineDeps(AREAS), { timeoutMs: override });
                 out.result(outcome);
 
                 if (

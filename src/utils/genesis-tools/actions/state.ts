@@ -32,7 +32,8 @@ export interface GenesisToolsStateFile {
 export interface StateStore {
     read(): GenesisToolsStateFile;
     get<T = unknown>(area: string, key: string): StateValue<T> | undefined;
-    report(area: string, key: string, value: StateValue): Promise<void>;
+    /** `signal`: a cancel seen before the file is replaced stops the write. */
+    report(area: string, key: string, value: StateValue, options?: { signal?: AbortSignal }): Promise<void>;
     markStale(area: string, key: string): Promise<void>;
 }
 
@@ -171,11 +172,19 @@ export function createStateStore(options: StateStoreOptions = {}): StateStore {
         return state;
     }
 
-    async function change(area: string, key: string, next: (current?: StateValue) => StateValue | null): Promise<void> {
-        const written = await document.update((current) => {
-            const value = next(current.areas[area]?.[key]);
-            return { write: withValue(current, area, key, value), result: value };
-        });
+    async function change(
+        area: string,
+        key: string,
+        next: (current?: StateValue) => StateValue | null,
+        signal?: AbortSignal
+    ): Promise<void> {
+        const written = await document.update(
+            (current) => {
+                const value = next(current.areas[area]?.[key]);
+                return { write: withValue(current, area, key, value), result: value };
+            },
+            { signal }
+        );
         // The value is written; a listener that throws must not tell the caller the report failed.
         try {
             options.onChange?.({ area, key, value: written });
@@ -187,7 +196,7 @@ export function createStateStore(options: StateStoreOptions = {}): StateStore {
     return {
         read,
         get: <T>(area: string, key: string) => read().areas[area]?.[key] as StateValue<T> | undefined,
-        report: (area, key, value) => change(area, key, () => value),
+        report: (area, key, value, reportOptions) => change(area, key, () => value, reportOptions?.signal),
         markStale: (area, key) => change(area, key, (current) => (current ? { ...current, stale: true } : null)),
     };
 }
