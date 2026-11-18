@@ -82,6 +82,7 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
         expect(tree.commands.map((command) => command.name()).sort()).toEqual([
             "add",
             "apply",
+            "backfill",
             "collect",
             "enroll",
             "play",
@@ -90,6 +91,25 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
             "remove",
             "score",
         ]);
+    }
+});
+
+test("voice backfill CLI accepts project, dry-run and JSON after the subcommand", async () => {
+    const program = new Command().exitOverride();
+    await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "voices" });
+    const result = spyOn(out, "result").mockImplementation(() => undefined);
+    try {
+        await program.parseAsync(["voices", "backfill", "--project", "empty-backfill-fixture", "--dry-run", "--json"], {
+            from: "user",
+        });
+        expect(SafeJSON.parse(String(result.mock.calls[0]?.[0]))).toEqual({
+            added: 0,
+            present: 0,
+            rows: [],
+            dryRun: true,
+        });
+    } finally {
+        result.mockRestore();
     }
 });
 
@@ -2336,6 +2356,63 @@ const p6Print: VoicePrint = {
     embedding: [1, 0],
     confirmedAt: "2026-11-01T10:00:00Z",
 };
+test("voice readiness in show JSON counts attended people and requires one sampled person on each occupied seat", async () => {
+    const store = new MeetingStore();
+    const project = "readiness-fixture";
+    const record = await store.create(
+        {
+            title: "Voice readiness",
+            start: "2026-11-01T10:00:00Z",
+            createdBy: "new",
+            project,
+            participants: [p6Alice.person, p6Bob.person].map((name) => ({ name, from: ["fixture"], firstSeenSec: 0 })),
+        },
+        { command: "new", change: "fixture" }
+    );
+    const output = spyOn(out, "result").mockImplementation(() => {});
+    const show = async () => {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "show" });
+        await program.parseAsync(["show", record.id, "--json"], { from: "user" });
+        return SafeJSON.parse(String(output.mock.calls.at(-1)?.[0]));
+    };
+    const backfill = `tools meetings voices backfill --project ${project}`;
+    try {
+        expect(await show()).toMatchObject({
+            voice: {
+                seats: false,
+                samples: 0,
+                ready: false,
+                hints: [`tools meetings seats ${record.id} --apply`, backfill],
+            },
+        });
+        await store.update(record.id, { command: "set", change: "seats" }, (current) => {
+            current.seats = { room: [p6Alice.person, "Carol Example"], remote: [{ name: p6Bob.person }] };
+        });
+        addVoicePrint(project, p6Alice.person, p6Print, "fixture-model");
+        addVoicePrint(project, "Visitor Example", p6Print, "fixture-model");
+        addVoicePrint(project, p6Bob.person, p6Print, "fixture-model");
+        expect(await show()).toMatchObject({ voice: { seats: true, samples: 2, ready: false, hints: [backfill] } });
+        addVoicePrint(project, p6Bob.person, { ...p6Print, track: "source-call", seat: "call" }, "fixture-model");
+        expect(await show()).toMatchObject({
+            voice: {
+                samples: 3,
+                people: { "Alice Example": 1, "Bob Example": 2, "Carol Example": 0 },
+                ready: true,
+                hints: [`tools meetings voices preview ${record.id}`],
+            },
+        });
+        await store.update(
+            record.id,
+            { command: "suggest", change: "suggest findings and questions with voice naming" },
+            () => {}
+        );
+        expect(await show()).toMatchObject({ voice: { ready: true, hints: [] } });
+    } finally {
+        output.mockRestore();
+    }
+});
+
 test("listen slices reject any muted overlap, fall back to source, and keep half-open boundaries", () => {
     const sound = meetingSound({
         folder: "/fixture",
