@@ -13,9 +13,15 @@ import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { windowOpenArgv } from "@genesiscz/utils/genesis-tools/areas/windows";
 import { parseSwiftRpcMethods } from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
 import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
-import { Need } from "@genesiscz/utils/genesis-tools/capability/needs";
+import {
+    checkAppInstalled,
+    checkNeed,
+    describeNeedFailure,
+    Need,
+} from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import { z } from "zod";
 import { APP_SURFACE_PATH, readAppSurfaceInput, renderAppSurface } from "../../../../scripts/gen-genesis-app-surface";
 
@@ -87,6 +93,33 @@ function deps(overrides: Partial<EngineDeps> = {}): EngineDeps {
         ...overrides,
     };
 }
+
+describe("the synchronous app.installed need", () => {
+    test("matches checkNeed and explains only a failure, using the registered build command", async () => {
+        for (const [installed, routingOff, text] of [
+            [true, false, ""],
+            [true, true, "GenesisTools.app routing is switched off (GENESIS_TOOLS_NO_APP or the window's switch)"],
+            [false, false, "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."],
+        ] as const) {
+            const env = appNeedFixture({ installed, routingOff });
+            const result = checkAppInstalled(env);
+            expect(await checkNeed(Need.app.installed, env)).toEqual(result);
+            expect(describeNeedFailure(result)).toBe(text);
+        }
+    });
+
+    test("refuses a test process before reading the bundle", () => {
+        const facts = fakeFacts({
+            isTest: () => true,
+            appBundle: () => {
+                throw new Error("the test guard must run first");
+            },
+        });
+        const result = checkAppInstalled({ facts, builder: null });
+        expect(result).toMatchObject({ ok: false, code: "in-test", fix: null });
+        expect(describeNeedFailure(result)).toBe("a test process never reaches GenesisTools.app");
+    });
+});
 
 describe("runAreaAction", () => {
     test("tries the ways in order and names why each one was skipped", async () => {
