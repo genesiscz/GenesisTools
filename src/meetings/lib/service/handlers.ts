@@ -236,11 +236,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             }
 
             const { runSuggest } = await import("../suggest-run");
+            const { actorOfCall } = await decisions();
             const result = await runSuggest({
                 store,
                 record,
                 rules: ["speakers", "evidence", "terms"],
                 attendance: params.attendance,
+                actor: actorOfCall(context),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             return { added: result.fresh.length, warnings: result.warnings };
