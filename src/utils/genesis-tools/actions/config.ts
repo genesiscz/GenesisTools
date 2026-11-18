@@ -1,9 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { z } from "zod";
 import type { AnyActionDef, AreaDef } from "./define";
@@ -123,8 +121,11 @@ function keysOf(schema: z.ZodObject | undefined): string {
 
 /** Reads a config file's text; a value that is not an object of objects is dropped and logged. */
 export function parseConfigText(text: string): GenesisToolsConfigFile {
-    const raw: unknown = SafeJSON.parse(text);
+    return decodeConfigFile(SafeJSON.parse(text));
+}
 
+/** The config file from its parsed JSON; another version throws, an area that is not an object is dropped. */
+function decodeConfigFile(raw: unknown): GenesisToolsConfigFile {
     if (!isObject(raw) || (raw.version !== undefined && raw.version !== 1)) {
         throw new ConfigError("config.json is not a version 1 GenesisTools config");
     }
@@ -195,13 +196,22 @@ export interface ConfigStoreOptions {
 export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
     const file = options.file ?? genesisToolsConfigPath();
     const listeners = new Set<(change: ConfigChange) => void>();
+    // A set writes a whole new file beside the old one and renames it over, so a reader never sees half a file and a
+    // failed write keeps the old choices. A file that does not parse is the person's data: a set refuses it.
+    const document = jsonDocument<GenesisToolsConfigFile>({
+        path: file,
+        empty: emptyConfigFile,
+        decode: decodeConfigFile,
+        encode: (doc) => `${SafeJSON.stringify(doc, null, 4)}\n`,
+        onUnreadable: "refuse",
+        unreadableError: (problem) =>
+            new ConfigError(
+                problem.cause instanceof Error ? `${problem.message}: ${problem.cause.message}` : problem.message
+            ),
+    });
 
     function read(): GenesisToolsConfigFile {
-        if (!existsSync(file)) {
-            return emptyConfigFile();
-        }
-
-        return parseConfigText(readFileSync(file, "utf8"));
+        return document.read();
     }
 
     /** A run reads through this: a broken file gives the defaults and a warning, while a set refuses to overwrite it. */
@@ -228,10 +238,7 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
             stored = parsed.data;
         }
 
-        mkdirSync(dirname(file), { recursive: true });
-        await withFileLock(`${file}.lock`, async () => {
-            writeFileSync(file, `${SafeJSON.stringify(withKey(read(), target, stored), null, 4)}\n`);
-        });
+        await document.update((current) => ({ write: withKey(current, target, stored), result: undefined }));
 
         // The value is written; a listener that throws must not tell the caller the set failed.
         for (const listener of listeners) {
