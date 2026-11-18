@@ -32,6 +32,9 @@ const LIFTABLE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 /** The image metadata of each file, by path, size and mtime: a refresh every few seconds must not re-hash it. */
 const imageCache = new Map<string, Omit<ImageAttachment, "label"> | null>();
 const IMAGE_CACHE_LIMIT = 512;
+// Recheck on a later refresh: a card can arrive seconds before its screenshot is written.
+const missingUntil = new Map<string, number>();
+const MISSING_RETRY_MS = 5_000;
 
 /**
  * How long one image may hold a snapshot. Card text can name any absolute path, and a file on a network or removable
@@ -190,6 +193,9 @@ function remember(key: string, described: Omit<ImageAttachment, "label"> | null)
  * produces reaches a snapshot or the cache.
  */
 async function describeImage(path: string, budget: ImageLiftBudget, files: ImageFiles): Promise<DescribedImage | null> {
+    if ((missingUntil.get(path) ?? 0) > Date.now()) {
+        return null;
+    }
     const running = reads.get(path);
 
     if (running?.abandoned.signal.aborted) {
@@ -258,6 +264,13 @@ async function readImage(
         size = info.size;
         mtime = info.mtimeMs;
     } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            missingUntil.delete(path);
+            if (missingUntil.size >= IMAGE_CACHE_LIMIT) {
+                missingUntil.delete(missingUntil.keys().next().value as string);
+            }
+            missingUntil.set(path, Date.now() + MISSING_RETRY_MS);
+        }
         logger.debug({ error, path }, "widget card image: path does not exist");
         return null;
     }

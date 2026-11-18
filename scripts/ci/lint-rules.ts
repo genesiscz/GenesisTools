@@ -46,6 +46,7 @@ import {
 import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
+import { withLocalCheckSlot } from "./local-check-slot";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
@@ -1366,9 +1367,11 @@ const RULES: Rule[] = [
  * The rosters (scripts/ci/rosters/*.definition.ts): one rule each, whose per-file counts come from rosters.json, so a
  * file outside its roster fails at its first match and a listed file fails when its count grows.
  */
-const ROSTERS = readRosters();
+const includeRosters = !import.meta.main || !process.argv.includes("--no-rosters");
+const ROSTERS = includeRosters ? readRosters() : {};
+const activeSwiftRosters = includeRosters ? SWIFT_ROSTERS : [];
 
-for (const roster of ROSTER_DEFINITIONS) {
+for (const roster of includeRosters ? ROSTER_DEFINITIONS : []) {
     RULES.push({
         name: roster.name,
         severity: "error",
@@ -2044,7 +2047,7 @@ export function checkSwiftSource(
         }
     }
 
-    const rosters = SWIFT_ROSTERS.filter((roster) => swiftRosterApplies(roster, file));
+    const rosters = activeSwiftRosters.filter((roster) => swiftRosterApplies(roster, file));
 
     if (rosters.length > 0) {
         const withStrings = maskSwiftNonCode(source, { keepStrings: true }).split("\n");
@@ -2389,7 +2392,7 @@ export function countRatchetShortfalls(
 const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map([
     ...RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : [])),
     // The Swift rosters are line rules of `checkSwiftSource`, not `RULES`; their counts come from the same manifest.
-    ...SWIFT_ROSTERS.map((roster) => [roster.name, rosterCounts(ROSTERS, roster.name)] as const),
+    ...activeSwiftRosters.map((roster) => [roster.name, rosterCounts(ROSTERS, roster.name)] as const),
 ]);
 
 /**
@@ -2443,7 +2446,7 @@ const RATCHET_INPUTS = [
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
     "scripts/ci/proxy-provider-ratchet.ts",
-    "scripts/ci/rosters/rosters.json",
+    ...(includeRosters ? ["scripts/ci/rosters/rosters.json"] : []),
     "scripts/ci/tool-command-ratchet.ts",
     "scripts/ci/transcript-format-ratchet.ts",
 ];
@@ -2638,7 +2641,7 @@ const ROSTER_RULE_INPUT = /^scripts\/ci\/rosters\/(?:index\.ts|define\.ts|swift\
 
 /** Whether a change to `file` must rescan the whole tree. */
 export function isRuleInput(file: string): boolean {
-    return RULE_INPUTS.has(file) || ROSTER_RULE_INPUT.test(file);
+    return RULE_INPUTS.has(file) || (includeRosters && ROSTER_RULE_INPUT.test(file));
 }
 
 export async function targetFiles(): Promise<string[]> {
@@ -2938,7 +2941,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
     return [...withinCountRatchets(kept), ...countRatchetShortfalls(kept, new Set(files))];
 }
 
-if (import.meta.main) {
+async function main(): Promise<number> {
     // Phase timings are printed because the only way this stayed fast was
     // measuring it. Local numbers do not predict the CI runner: the first
     // serial version was 3.1s here and about 26s there.
@@ -2974,5 +2977,9 @@ if (import.meta.main) {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }
 
-    process.exit(errors > 0 ? 1 : 0);
+    return errors > 0 ? 1 : 0;
+}
+
+if (import.meta.main) {
+    process.exitCode = await withLocalCheckSlot(main);
 }

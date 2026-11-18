@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Pre-commit hook — mirrors CI checks (biome + tsc typecheck, TypeScript 7).
+# Pre-commit checks staged content. Project typechecks run before push.
 # Activate: git config core.hooksPath .githooks
 
 set -e
@@ -85,46 +85,5 @@ bun scripts/ci/check-json.ts --staged
 # `biome --unsafe`; this catches the same loss from any other tool. GT_ALLOW_LOST_COMMENTS=1 lets a deliberate one pass.
 echo "▶ no comment deleted with an import..."
 bun scripts/ci/check-lost-comments.ts --staged
-
-echo "▶ tsc --noEmit (failing on staged files only)..."
-# tsc has no per-file mode (types cross files), so the whole project is checked
-# but only errors in STAGED files block the commit. Unstaged breakage — e.g. a
-# parallel agent mid-rewire in the same worktree — must not wedge an unrelated
-# commit; CI still gates the full tree.
-# Incremental, sharing the root project's build info with scripts/ci/typecheck.ts: about 1.5 s instead of 6 to 13.
-tsc_cache=$(git rev-parse --path-format=absolute --git-path genesis-typecheck)
-mkdir -p "$tsc_cache"
-# The local binary, never `bunx`: a bunx call in a worktree can write a partial node_modules (README, tests.md).
-tsc_output=$(./node_modules/.bin/tsc --noEmit --incremental --tsBuildInfoFile "$tsc_cache/root.tsbuildinfo" 2>&1) && tsc_status=0 || tsc_status=$?
-staged_files=$(git diff --cached --name-only --diff-filter=d | grep -E '\.(ts|tsx)$' || true)
-
-# Only per-file diagnostics are skippable. A non-zero exit with NO diagnostic
-# lines is a compiler crash, a bad tsconfig or a global error, and none of those
-# are "someone else's unstaged file" — swallowing them printed "pre-commit
-# passed" while the project did not build at all.
-diagnostics=$(printf '%s\n' "$tsc_output" | grep -E '\([0-9]+,[0-9]+\): (error|warning) TS[0-9]+' || true)
-
-if [ "$tsc_status" -ne 0 ] && [ -z "$diagnostics" ]; then
-    printf '%s\n' "$tsc_output"
-    echo "✖ tsc exited $tsc_status with no file diagnostics (crash, config or global error)"
-    exit 1
-fi
-
-if [ -n "$staged_files" ] && [ -n "$tsc_output" ]; then
-    patterns=$(mktemp)
-    printf '%s\n' "$staged_files" | sed 's/$/(/' > "$patterns"
-    staged_errors=$(printf '%s\n' "$tsc_output" | grep -F -f "$patterns" || true)
-    rm -f "$patterns"
-
-    if [ -n "$staged_errors" ]; then
-        printf '%s\n' "$staged_errors"
-        echo "✖ tsc errors in staged files"
-        exit 1
-    fi
-fi
-
-if [ "$tsc_status" -ne 0 ]; then
-    echo "ℹ tsc reported errors, none attributable to staged files — CI still gates the full tree"
-fi
 
 echo "✔ pre-commit passed"

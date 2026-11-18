@@ -79,7 +79,7 @@ export async function watchWidget({
     root?: string;
     selectedKey?: string;
     signal: AbortSignal;
-    emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>) => void;
+    emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>, serialized: string) => void;
     /**
      * The widget's picks as they happen (`{"select": key}` lines on stdin): the next snapshot names that session at
      * once, without waiting for the `selection` action to reach `state.json` (a process and a debounce, about 0.5 s).
@@ -164,7 +164,8 @@ export async function watchWidget({
                 }
                 lastSnapshot = { ...lastSnapshot, state };
                 prof.record("show-decision fast path", Date.now() - request.at, `id=${request.id}`);
-                emit(lastSnapshot);
+                last = SafeJSON.stringify(lastSnapshot, { strict: true });
+                emit(lastSnapshot, last);
             };
             const refresh = async () => {
                 const state = await readWidgetState(directory);
@@ -282,7 +283,7 @@ export async function watchWidget({
                         );
                     }
                     lastSnapshot = snapshot;
-                    emit(snapshot);
+                    emit(snapshot, fingerprint);
                 }
             };
             // The running refresh loop. Shutdown awaits it, so a refresh that was mid-flight at abort cannot

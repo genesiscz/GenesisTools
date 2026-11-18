@@ -705,6 +705,22 @@ final class ReviewModel: ObservableObject {
     /// 23:00). The first event after a quiet spell reloads at once; later ones wait for `watchGap` and go together,
     /// or for `refreshGap` when every root reads only its changed paths.
     private var watchBatches: [String: ReviewWatchBatch] = [:]
+    private weak var watchWindow: NSWindow?
+    private var deferredWatchFolders: Set<String> = []
+    private var watchVisible: Bool { watchWindow?.occlusionState.contains(.visible) ?? true }
+
+    func windowVisibilityChanged(_ window: NSWindow) {
+        if window === watchWindow { observeWindow(window) }
+    }
+
+    func observeWindow(_ window: NSWindow) {
+        watchWindow = window
+        guard started, watchVisible, !deferredWatchFolders.isEmpty else { return }
+        let folders = deferredWatchFolders
+        deferredWatchFolders.removeAll()
+        reload(folders: folders)
+        if refsStale { scheduleRefsRead() }
+    }
     private var watchReloadAt = Date.distantPast
     private var watchReloadQueued = false
     static let watchGap: TimeInterval = 1.5
@@ -901,6 +917,7 @@ final class ReviewModel: ObservableObject {
 
     func stop() {
         started = false
+        deferredWatchFolders.removeAll()
         watchers = []
         watchedLayouts = [:]
     }
@@ -917,6 +934,11 @@ final class ReviewModel: ObservableObject {
         watchers = wanted.map { folder, layout in
             RepoWatcher(layout: layout) { [weak self] batch in
                 guard let self, self.scope.followsWorkingTree else { return }
+                guard self.watchVisible else {
+                    self.deferredWatchFolders.insert(folder)
+                    if batch.refs { self.refsStale = true }
+                    return
+                }
                 if batch.refs {
                     self.refsStale = true
                     self.scheduleRefsRead()
@@ -952,6 +974,10 @@ final class ReviewModel: ObservableObject {
             let batches = watchBatches
             watchBatches = [:]
             guard started, scope.followsWorkingTree else { return }
+            guard watchVisible else {
+                deferredWatchFolders.formUnion(batches.keys)
+                return
+            }
             refresh(batches)
         }
     }
@@ -965,6 +991,10 @@ final class ReviewModel: ObservableObject {
             guard let self else { return }
             refsReadQueued = false
             guard started, refsStale else { return }
+            guard watchVisible else {
+                deferredWatchFolders.insert(repo.path)
+                return
+            }
             refsStale = false
             refsReadAt = Date()
             let primary = repo
@@ -3013,6 +3043,10 @@ struct ReviewRootView: View {
         .preferredColorScheme(.dark)
         .measuredWidth("review.root", $width)
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
+        .background(HubWindowReader { window in model.observeWindow(window) })
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { note in
+            if let window = note.object as? NSWindow { model.windowVisibilityChanged(window) }
+        }
         .onAppear { model.start() }
         .onDisappear { model.stop() }
         // Once, when the first files arrive: a refresh that adds a longer name never moves the diff.

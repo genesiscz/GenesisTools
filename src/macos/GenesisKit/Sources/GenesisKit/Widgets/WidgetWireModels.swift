@@ -804,6 +804,8 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
 }
 
 public struct WidgetSnapshot: Codable, Equatable, Sendable {
+    /// An opted-in watch stream may reuse the full session list from its preceding frame.
+    public var reuseSessions: Bool? = nil
     public var notifications: WidgetInboxSummary? = nil
     public var rosterLoading: Bool? = nil
     public struct Changes: Codable, Equatable, Sendable {

@@ -1080,7 +1080,7 @@ describe("lint-changed wrapper dispatch", () => {
             writeFileSync(join(dir, "Native.swift"), "let ready = sem.wait()\n");
             const swiftOnly = run(["bash", "scripts/ci/lint-changed.sh", base]);
             expect(swiftOnly.status).toBe(0);
-            expect(readFileSync(trace, "utf8")).toBe(`bun scripts/ci/lint-rules.ts --changed ${base}\n`);
+            expect(readFileSync(trace, "utf8")).toBe(`bun scripts/ci/lint-rules.ts --no-rosters --changed ${base}\n`);
 
             writeFileSync(trace, "");
             expect(run(["git", "add", "Native.swift"]).status).toBe(0);
@@ -1088,7 +1088,9 @@ describe("lint-changed wrapper dispatch", () => {
             const current = run(["git", "rev-parse", "HEAD"]).stdout.trim();
             const empty = run(["bash", "scripts/ci/lint-changed.sh", current]);
             expect(empty.status).toBe(0);
-            expect(readFileSync(trace, "utf8")).toBe(`bun scripts/ci/lint-rules.ts --changed ${current}\n`);
+            expect(readFileSync(trace, "utf8")).toBe(
+                `bun scripts/ci/lint-rules.ts --no-rosters --changed ${current}\n`
+            );
 
             writeFileSync(trace, "");
             const crashed = run(["bash", "scripts/ci/lint-changed.sh", current], { FAKE_BUN_EXIT: "7" });
@@ -1102,7 +1104,7 @@ describe("lint-changed wrapper dispatch", () => {
             const configOnly = run(["bash", "scripts/ci/lint-changed.sh", current]);
             expect(configOnly.status).toBe(0);
             expect(readFileSync(trace, "utf8")).toBe(
-                `bun run lint:biome\nbun scripts/ci/lint-rules.ts --changed ${current}\n`
+                `bun run lint:biome\nbun scripts/ci/lint-rules.ts --no-rosters --changed ${current}\n`
             );
         } finally {
             rmSync(dir, { recursive: true, force: true });

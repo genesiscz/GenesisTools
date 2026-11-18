@@ -807,6 +807,9 @@ public final class WidgetModel: ObservableObject {
                     self.fail(Self.connectionLostMessage, detail: String(exit.stderr.suffix(4000)))
                     PerfLog.mark("widget.connection lost status=\(exit.status) \(exit.stderr.suffix(600))")
                 })
+            // Older CLI watches ignore this input and continue sending full snapshots.
+            do { try watcher?.sendInput("{\"reuseSessions\":true}\n") }
+            catch { PerfLog.mark("widget.watch full snapshots: \(error.localizedDescription)") }
             // Cleared only once a watcher runs: a reconnect that cannot launch keeps Reconnect on screen.
             connectionLost = false
             if let pending = pendingDecision {
@@ -3097,13 +3100,17 @@ final class WidgetSnapshotDecoder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "genesis.widget.snapshot-decode", qos: .userInitiated)
     /// Confined to `queue`.
     private var last: String?
+    private var sessions: [WidgetSession]?
     /// The watch stream the lines belong to; main actor only. `reset()` starts a new one, and results an older stream
     /// queued before it are dropped, so a restarted watch never applies a snapshot of the stopped one.
     @MainActor private var generation = 0
 
     @MainActor func reset() {
         generation &+= 1
-        queue.async { self.last = nil }
+        queue.async {
+            self.last = nil
+            self.sessions = nil
+        }
     }
 
     @MainActor func decode(_ lines: [String], deliver: @escaping @MainActor ([Result<WidgetSnapshot, Error>]) -> Void) {
@@ -3113,7 +3120,19 @@ final class WidgetSnapshotDecoder: @unchecked Sendable {
             for line in lines where line != self.last {
                 self.last = line
                 let started = CACurrentMediaTime()
-                results.append(Result { try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8)) })
+                results.append(Result {
+                    var snapshot = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
+                    if snapshot.reuseSessions == true {
+                        guard let sessions = self.sessions else {
+                            throw CocoaError(.coderValueNotFound)
+                        }
+                        snapshot.sessions = sessions
+                        snapshot.reuseSessions = nil
+                    } else {
+                        self.sessions = snapshot.sessions
+                    }
+                    return snapshot
+                })
                 let elapsed = (CACurrentMediaTime() - started) * 1000
                 if elapsed >= 16 {
                     PerfLog.mark(String(format: "widget.snapshot decode off-main bytes=%d ms=%.1f", line.utf8.count, elapsed))
