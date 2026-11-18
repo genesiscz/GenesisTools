@@ -13,11 +13,15 @@ struct MeetingSeatsDraft: Equatable {
 
     init(_ seats: MeetingSeats) {
         self.seats = seats
-        roomJoins = seats.roomRows.map { $0.fromSec.map(Self.displayClock) ?? "" }
+        roomJoins = seats.roomRows.map { Self.displayJoin($0.fromSec) }
         roomLeaves = seats.roomRows.map { $0.toSec.map(Self.displayClock) ?? "" }
-        joins = seats.remote.map { $0.fromSec.map(Self.displayClock) ?? "" }
+        joins = seats.remote.map { Self.displayJoin($0.fromSec) }
         leaves = seats.remote.map { $0.toSec.map(Self.displayClock) ?? "" }
     }
+
+    /// A join this close to the start is the start. The call roster's first read lands a second or so after the
+    /// recording starts (1.4 s on a real call), and "00:01.4" in the field read as a join time nobody could know.
+    static let startSlack: Double = 2
 
     /// The device a microphone group stands for: the engine writes `self` for this Mac's microphone and
     /// `device:<owner>` with the owner's name for a remote person's own device (room-people.ts). A group made another
@@ -209,11 +213,78 @@ struct MeetingSeatsDraft: Equatable {
         sec < Double(Int.max) / 10 ? ListenPresenceStrip.clock(sec) : String(sec)
     }
 
-    /// An unchanged clock field still denotes the full stored time, even when its display rounded to a tenth.
-    private func clock(_ fields: [String], at index: Int, stored: Double?) -> PersonStay.Clock {
+    /// An empty join field shows "At the start", so a join within `startSlack` stays empty.
+    private static func displayJoin(_ sec: Double?) -> String {
+        guard let sec else { return "" }
+        return sec <= startSlack ? "" : displayClock(sec)
+    }
+
+    /// An unchanged clock field still denotes the full stored time, even when its display rounded to a tenth or showed
+    /// an early join as empty.
+    private func clock(_ fields: [String], at index: Int, stored: Double?, join: Bool) -> PersonStay.Clock {
         let text = fields.indices.contains(index) ? fields[index] : ""
-        if let stored, text == Self.displayClock(stored) { return .seconds(stored) }
+        if let stored, text == (join ? Self.displayJoin(stored) : Self.displayClock(stored)) { return .seconds(stored) }
         return PersonStay.Clock(text)
+    }
+
+    /// A seat row's join and leave as Save would write them; nil for an empty or unreadable field.
+    func times(_ kind: MeetingSeatsEditor.SeatKind, at index: Int) -> (from: Double?, to: Double?) {
+        switch kind {
+        case .room:
+            guard seats.roomRows.indices.contains(index) else { return (nil, nil) }
+            let row = seats.roomRows[index]
+            return (clock(roomJoins, at: index, stored: row.fromSec, join: true).value,
+                    clock(roomLeaves, at: index, stored: row.toSec, join: false).value)
+        case .remote:
+            guard seats.remote.indices.contains(index) else { return (nil, nil) }
+            let row = seats.remote[index]
+            return (clock(joins, at: index, stored: row.fromSec, join: true).value,
+                    clock(leaves, at: index, stored: row.toSec, join: false).value)
+        }
+    }
+
+    /// Where a seat's times come from, in the words of the "Who was there" strip (`ListenPresenceStrip.sourceWords`):
+    /// the record's stay or attendance row at the same second, else the time was set by hand. A read of the call
+    /// roster says that the exact time is not known; a join within `startSlack` is the start.
+    @MainActor
+    static func timeWords(name: String, from: Double?, to: Double?, record: MeetingRecordView?) -> String {
+        let key = PeopleText.personKey(name)
+        let person = record?.participants?.first { PeopleText.personKey($0.name) == key }
+        let attended = record?.attendance?.people.filter { PeopleText.personKey($0.name) == key } ?? []
+        func same(_ a: Double?, _ b: Double) -> Bool { a.map { abs($0 - b) < 0.05 } ?? false }
+        let roster = "platform-roster"
+        var clauses: [(source: String, text: String)] = []
+        if let from {
+            let source: String?
+            if let stay = person?.stays?.first(where: { same($0.fromSec, from) }) { source = stay.source }
+            else if same(person?.firstSeenSec, from) { source = person?.from?.contains(roster) == true ? roster : nil }
+            else if attended.contains(where: { same($0.fromSec, from) }) { source = "attendance" }
+            else { source = "hand" }
+            var text: String
+            if from <= startSlack { text = "there when the recording started" }
+            else if source == roster { text = "first seen \(ListenPresenceStrip.clock(from))" }
+            else { text = "joined at \(ListenPresenceStrip.clock(from))" }
+            if source == roster { text += ", the exact join time is unknown" }
+            clauses.append((ListenPresenceStrip.sourceWords(source), text))
+        }
+        if let to {
+            let source: String?
+            if let stay = person?.stays?.first(where: { same($0.toSec, to) }) { source = stay.leaveSource ?? stay.source }
+            else if attended.contains(where: { same($0.toSec, to) }) { source = "attendance" }
+            else { source = "hand" }
+            let text = source == roster ? "last seen \(ListenPresenceStrip.clock(to)), the exact leave time is unknown"
+                : "left at \(ListenPresenceStrip.clock(to))"
+            clauses.append((ListenPresenceStrip.sourceWords(source), text))
+        }
+        guard let first = clauses.first else { return "Whole meeting." }
+        func sentence(_ source: String, _ text: String) -> String {
+            let head = source.prefix(1).uppercased() + String(source.dropFirst())
+            return "\(head): \(text)."
+        }
+        if clauses.count == 2, clauses[1].source == first.source {
+            return sentence(first.source, "\(first.text), \(clauses[1].text)")
+        }
+        return clauses.map { sentence($0.source, $0.text) }.joined(separator: " ")
     }
 
     /// The first thing Save cannot write, in words; nil when the seats are whole.
@@ -222,12 +293,12 @@ struct MeetingSeatsDraft: Equatable {
             PersonStay.problem(from: join, to: leave, duration: nil).map { "\(name): \($0)" }
         }
         for (index, row) in seats.roomRows.enumerated() {
-            if let problem = check(row.name, clock(roomJoins, at: index, stored: row.fromSec),
-                                   clock(roomLeaves, at: index, stored: row.toSec)) { return problem }
+            if let problem = check(row.name, clock(roomJoins, at: index, stored: row.fromSec, join: true),
+                                   clock(roomLeaves, at: index, stored: row.toSec, join: false)) { return problem }
         }
         for (index, row) in seats.remote.enumerated() {
-            if let problem = check(row.name, clock(joins, at: index, stored: row.fromSec),
-                                   clock(leaves, at: index, stored: row.toSec)) { return problem }
+            if let problem = check(row.name, clock(joins, at: index, stored: row.fromSec, join: true),
+                                   clock(leaves, at: index, stored: row.toSec, join: false)) { return problem }
         }
         if let issue = parsed.intervalProblem() { return issue }
         for (index, group) in (seats.microphones ?? []).enumerated() {
@@ -244,14 +315,14 @@ struct MeetingSeatsDraft: Equatable {
     var parsed: MeetingSeats {
         var seats = seats
         for index in seats.roomRows.indices {
-            let row = seats.roomRows[index]
-            seats.roomRows[index].fromSec = clock(roomJoins, at: index, stored: row.fromSec).value
-            seats.roomRows[index].toSec = clock(roomLeaves, at: index, stored: row.toSec).value
+            let read = times(.room, at: index)
+            seats.roomRows[index].fromSec = read.from
+            seats.roomRows[index].toSec = read.to
         }
         for index in seats.remote.indices {
-            let person = seats.remote[index]
-            seats.remote[index].fromSec = clock(joins, at: index, stored: person.fromSec).value
-            seats.remote[index].toSec = clock(leaves, at: index, stored: person.toSec).value
+            let read = times(.remote, at: index)
+            seats.remote[index].fromSec = read.from
+            seats.remote[index].toSec = read.to
         }
         if seats.microphones?.isEmpty == true { seats.microphones = nil }
         return seats
@@ -386,6 +457,19 @@ struct MeetingSeatsEditor: View {
         var id: String { rawValue }
     }
 
+    /// What an empty time field means, shown in the field itself (U5: empty boxes read as a missing answer).
+    static let startPrompt = "At the start"
+    static let endPrompt = "At the end"
+
+    /// A label names a person's own audio channel in the transcript, so it means something only when the recording
+    /// keeps the voices apart (`evidence.channels.layout` "left-mic" or "right-mic"). A label already set stays
+    /// visible, so it can be cleared. An unmeasured meeting (no layout) shows none.
+    static func showsLabel(layout: String?, current: String?) -> Bool {
+        if current != nil { return true }
+        guard let layout else { return false }
+        return layout != "unknown"
+    }
+
     init(seats: MeetingSeats?, preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion> = .idle,
          load: @escaping () async throws -> MeetingsAPI.SeatsSuggest.Suggestion,
          save: @escaping (MeetingSeats, Bool) async throws -> Void, saved: @escaping () -> Void) {
@@ -442,7 +526,7 @@ struct MeetingSeatsEditor: View {
         }
         .disabled(saving)
         .padding(20)
-        .frame(width: 620, height: 500)
+        .frame(width: 620, height: 560)
         .onAppear {
             if let detail, case .idle = detail.speakers { detail.loadSpeakers() }
         }
@@ -508,38 +592,62 @@ struct MeetingSeatsEditor: View {
         }
     }
 
+    /// The help of each section stands in its header, above the rows it explains: as footers, the 500 pt sheet pushed
+    /// them below the fold, and the empty time boxes said nothing (U5).
     private var manualForm: some View {
-        Form {
+        let record = detail?.record.value
+        let layout = record?.evidence?.channels?.layout
+        return Form {
             Section {
-                room
+                room(record)
             } header: {
-                Text("In the room")
-            } footer: {
-                Text("Use transcript times, such as 12:04. Leave a bound empty for the start or end of the meeting. Add the same person again for another interval.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                sectionHeader("In the room", "Times on the transcript clock, as 12:04 or 1:05:30. Add a person again for another stretch in the room.")
             }
             Section {
-                ForEach(Array(form.draft.seats.remote.enumerated()), id: \.offset) { index, person in remote(index, person) }
+                ForEach(Array(form.draft.seats.remote.enumerated()), id: \.offset) { index, person in
+                    remote(index, person, layout: layout, record: record)
+                }
                 addButton(.remote)
             } header: {
-                Text("Remote")
-            } footer: {
-                Text("Times on the transcript clock, as 12:04 or 1:05:30. Empty: from the start, or to the end.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                sectionHeader("Remote", "People who joined from another place, on their own device. The line under a name says where its times come from.")
             }
             Section {
                 ForEach(Array(form.groups.enumerated()), id: \.offset) { index, group in
-                    microphone(index, group)
+                    microphone(index, group, layout: layout)
                 }
                 addMicrophone
             } header: {
-                Text("Microphones")
-            } footer: {
-                Text("This Mac's microphone carries people in the room; a remote person's device carries remote people.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                sectionHeader("Microphones", "This Mac's microphone carries the people in the room; a remote person's device carries remote people.")
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func sectionHeader(_ title: String, _ help: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(help).font(.system(size: 11, weight: .regular)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A time field after its word ("Joined"); empty, it shows what empty means ("At the start").
+    private func clockField(_ title: String, prompt: String, text: Binding<String>, label: String, identifier: String) -> some View {
+        HStack(spacing: 4) {
+            Text(title).foregroundStyle(.secondary)
+            TextField(title, text: text, prompt: Text(prompt))
+                .labelsHidden()
+                .frame(width: 84)
+                .accessibilityLabel(label)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    /// The line under a seat: where its times come from ("From the call's attendee list: first seen 00:20.4, …").
+    private func sourceLine(_ text: String, identifier: String) -> some View {
+        Text(verbatim: text).font(.system(size: 11)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier(identifier)
     }
 
     /// The labels a remote person's own channel can be: the transcript's, and any the seats already name.
@@ -552,23 +660,26 @@ struct MeetingSeatsEditor: View {
 
     // MARK: Room
 
-    @ViewBuilder private var room: some View {
+    @ViewBuilder private func room(_ record: MeetingRecordView?) -> some View {
         let rows = form.draft.seats.roomRows
         ForEach(rows.indices, id: \.self) { index in
             let person = rows[index]
-            HStack(spacing: 8) {
-                Text(verbatim: person.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                    .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
-                TextField("From", text: clock(\.roomJoins, index)).frame(width: 72)
-                    .accessibilityLabel("When \(person.name) entered the room")
-                    .accessibilityIdentifier("meetings.seats.room.join.\(index)")
-                TextField("Until", text: clock(\.roomLeaves, index)).frame(width: 72)
-                    .accessibilityLabel("When \(person.name) left the room")
-                    .accessibilityIdentifier("meetings.seats.room.leave.\(index)")
-                IconButton(systemName: "minus.circle", tooltip: "Remove this room interval for \(person.name)") {
-                    form.draft.removeRoom(at: index)
+            let times = form.draft.times(.room, at: index)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(verbatim: person.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                        .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+                    clockField("From", prompt: Self.startPrompt, text: clock(\.roomJoins, index),
+                               label: "When \(person.name) entered the room", identifier: "meetings.seats.room.join.\(index)")
+                    clockField("Until", prompt: Self.endPrompt, text: clock(\.roomLeaves, index),
+                               label: "When \(person.name) left the room", identifier: "meetings.seats.room.leave.\(index)")
+                    IconButton(systemName: "minus.circle", tooltip: "Remove this room interval for \(person.name)") {
+                        form.draft.removeRoom(at: index)
+                    }
+                    .accessibilityIdentifier("meetings.seats.room.remove.\(index)")
                 }
-                .accessibilityIdentifier("meetings.seats.room.remove.\(index)")
+                sourceLine(MeetingSeatsDraft.timeWords(name: person.name, from: times.from, to: times.to, record: record),
+                           identifier: "meetings.seats.room.source.\(index)")
             }
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 12))
@@ -578,23 +689,28 @@ struct MeetingSeatsEditor: View {
 
     // MARK: Remote
 
-    private func remote(_ index: Int, _ person: MeetingSeats.Remote) -> some View {
-        HStack(spacing: 8) {
-            Text(verbatim: person.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
-            labelMenu(person.label, tooltip: "The label of \(person.name)'s own channel in the transcript, when the source gives one") {
-                form.draft.seats.remote[index].label = $0
+    private func remote(_ index: Int, _ person: MeetingSeats.Remote, layout: String?, record: MeetingRecordView?) -> some View {
+        let times = form.draft.times(.remote, at: index)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(verbatim: person.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                    .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+                if Self.showsLabel(layout: layout, current: person.label) {
+                    labelMenu(person.label, tooltip: "The transcript label of \(person.name)'s own audio channel") {
+                        form.draft.seats.remote[index].label = $0
+                    }
+                }
+                clockField("Joined", prompt: Self.startPrompt, text: clock(\.joins, index),
+                           label: "When \(person.name) joined", identifier: "meetings.seats.remote.join.\(index)")
+                clockField("Left", prompt: Self.endPrompt, text: clock(\.leaves, index),
+                           label: "When \(person.name) left", identifier: "meetings.seats.remote.leave.\(index)")
+                IconButton(systemName: "minus.circle", tooltip: "Take \(person.name) off the remote seats") {
+                    form.draft.removeRemote(at: index)
+                }
+                .accessibilityIdentifier("meetings.seats.remote.remove.\(index)")
             }
-            TextField("Joined", text: clock(\.joins, index)).frame(width: 72)
-                .instantTooltip("When \(person.name) joined; empty: at the start")
-                .accessibilityIdentifier("meetings.seats.remote.join.\(index)")
-            TextField("Left", text: clock(\.leaves, index)).frame(width: 72)
-                .instantTooltip("When \(person.name) left; empty: at the end")
-                .accessibilityIdentifier("meetings.seats.remote.leave.\(index)")
-            IconButton(systemName: "minus.circle", tooltip: "Take \(person.name) off the remote seats") {
-                form.draft.removeRemote(at: index)
-            }
-            .accessibilityIdentifier("meetings.seats.remote.remove.\(index)")
+            sourceLine(MeetingSeatsDraft.timeWords(name: person.name, from: times.from, to: times.to, record: record),
+                       identifier: "meetings.seats.remote.source.\(index)")
         }
         .textFieldStyle(.roundedBorder)
         .font(.system(size: 12))
@@ -628,7 +744,7 @@ struct MeetingSeatsEditor: View {
 
     // MARK: Microphones
 
-    private func microphone(_ index: Int, _ choices: FormState.Group) -> some View {
+    private func microphone(_ index: Int, _ choices: FormState.Group, layout: String?) -> some View {
         let group = choices.microphone
         let device = MeetingSeatsDraft.Device(group)
         return VStack(alignment: .leading, spacing: 6) {
@@ -643,8 +759,10 @@ struct MeetingSeatsEditor: View {
                 .instantTooltip("Which device this is: this Mac's microphone, or a remote person's own device")
                 .accessibilityIdentifier("meetings.seats.mic.device.\(index)")
                 Spacer(minLength: 6)
-                labelMenu(group.label, tooltip: "The transcript label of this device's channel, when the source gives one") {
-                    form.draft.seats.microphones?[index].label = $0
+                if Self.showsLabel(layout: layout, current: group.label) {
+                    labelMenu(group.label, tooltip: "The transcript label of this device's own audio channel") {
+                        form.draft.seats.microphones?[index].label = $0
+                    }
                 }
                 IconButton(systemName: "minus.circle", tooltip: "Remove \(device.title)") { form.draft.removeMicrophone(at: index) }
                     .accessibilityIdentifier("meetings.seats.mic.remove.\(index)")

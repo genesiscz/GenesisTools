@@ -220,6 +220,10 @@ struct MeetingRecordView: Decodable, Equatable {
             let lines: [String: Match]
         }
         var voice: Voice?
+        /// How the sound's two channels hold the voices (`calibrateChannels`, src/utils/meetings/energy.ts):
+        /// "left-mic" or "right-mic", or "unknown" when the channels do not separate them.
+        struct Channels: Decodable, Equatable { var layout: String? }
+        var channels: Channels?
     }
     var evidence: Evidence? = nil
     struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
