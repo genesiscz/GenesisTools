@@ -1197,6 +1197,40 @@
     }
   },
   {
+    "method": "work.addMember",
+    "params": {
+      "refs": [
+        "fixture"
+      ],
+      "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
     "method": "work.handoff",
     "params": {
       "title": "fixture",
