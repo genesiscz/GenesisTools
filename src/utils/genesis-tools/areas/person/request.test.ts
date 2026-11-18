@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -11,7 +11,12 @@ import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { genesisToolsRequestOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
-import { runVisibly } from "@genesiscz/utils/terminal/visible-run";
+import {
+    removeStaleCommandFiles,
+    runVisibly,
+    STALE_COMMAND_FILE_MS,
+    visibleCommandScript,
+} from "@genesiscz/utils/terminal/visible-run";
 import {
     renderGenesisToolsRPC,
     renderSwiftSchema,
@@ -189,6 +194,25 @@ test("windowNotice posts once per caller id and returns after the configured del
     expect(ask).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledTimes(1);
     expect(wait).not.toHaveBeenCalled();
+});
+
+test("a visible-run script deletes itself first, and a .command file no terminal started goes after an hour", () => {
+    const lines = visibleCommandScript(["/bin/echo", "token=x"]).split("\n");
+    expect(lines.slice(0, 2)).toEqual(["#!/bin/sh", 'rm -f -- "$0"']);
+
+    const dir = mkdtempSync(join(tmpdir(), "gt-visible-run-"));
+    const now = Date.now();
+    const old = join(dir, "old.command");
+    const fresh = join(dir, "fresh.command");
+    const other = join(dir, "old.txt");
+    for (const file of [old, fresh, other]) {
+        writeFileSync(file, "#!/bin/sh\n");
+    }
+    const past = (now - STALE_COMMAND_FILE_MS - 60_000) / 1000;
+    utimesSync(old, past, past);
+    utimesSync(other, past, past);
+    expect(removeStaleCommandFiles(dir, now)).toEqual([old]);
+    expect([existsSync(old), existsSync(fresh), existsSync(other)]).toEqual([false, true, true]);
 });
 
 test("all live effects refuse the test process before a host call", async () => {
