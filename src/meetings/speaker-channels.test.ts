@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { AcousticShare } from "@genesiscz/utils/meetings/echo";
 import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
@@ -27,6 +28,7 @@ import { compactEvidence, rawMeeting } from "./lib/raw";
 import { rejectFilterIds } from "./lib/reject-filter";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
+import { correctTranscript } from "./lib/transcript-corrections";
 import { anchoredMeetingVoices, lineDeviceCandidates } from "./lib/voice";
 import { clearLanguage, lineLanguages } from "./lib/word-languages";
 
@@ -93,6 +95,100 @@ function scene(slots: Slot[]): {
 }
 
 const ranges = (items: ReturnType<typeof suggestItems>) => items.filter((item) => item.kind === "speaker-range");
+
+describe("sparse roster mute readings on the call", () => {
+    const reed = "Reed Example";
+    const lake = "Lake Example";
+    const dale = "Dale Example";
+    const transcriptAt = (startSec: number) => [
+        {
+            speaker: lake,
+            startSec,
+            text: "We agreed to send the full list of changes before the team meets again on Friday morning.",
+        },
+    ];
+
+    function at(options: { sec: number; unmute?: boolean; third?: boolean; mutedCarrySec?: number }) {
+        const { meeting, evidence } = scene([{ label: lake, mic: 0 }]);
+        meeting.transcript = transcriptAt(options.sec);
+        meeting.speakers = [{ speakerId: 1, name: lake, origin: "platform" }];
+        evidence.segments = [{ startSec: 0, endSec: 1000, channel: "system" }];
+        evidence.speaking = [
+            { tSec: 0, speaking: [], muted: [reed], validUntilSec: 5 },
+            { tSec: 5, speaking: [], speakingUnknown: true },
+            ...(options.unmute ? [{ tSec: 150, speaking: [], muted: [] }] : []),
+            { tSec: 200, speaking: [], muted: [reed] },
+        ];
+        const people = options.third ? [lake, reed, dale] : [lake, reed];
+        const presence = people.map((name) => ({ name, fromSec: 0, toSec: 1000 }));
+        return suggestItems({
+            ...base,
+            meeting,
+            evidence: { ...evidence, mutedCarrySec: options.mutedCarrySec },
+            presence,
+        });
+    }
+
+    test("a mute on either side of an unread call line leaves one eligible remote and no question", () => {
+        const items = at({ sec: 100 });
+        expect(ranges(items)).toMatchObject([{ speaker: lake, rules: expect.arrayContaining(["RM"]) }]);
+        expect(items.filter((item) => item.kind === "question")).toHaveLength(0);
+        const transcript = correctTranscript({
+            record: { ...record, items },
+            transcript: transcriptAt(100),
+            config: meetingsConfigSchema.parse({}),
+            format: "json",
+            withSuggested: true,
+            dictionary: false,
+        });
+        expect(transcript.entries[0]?.speaker).toBe(lake);
+    });
+
+    test("two eligible remotes stay a question and the roster cannot add the muted third choice back", () => {
+        const items = at({ sec: 100, third: true });
+        expect(ranges(items)).toMatchObject([{ candidates: [lake, dale], confidence: 0.4 }]);
+        const question = items.find((item) => item.kind === "question");
+        expect(question?.choices).toContain(lake);
+        expect(question?.choices).toContain(dale);
+        expect(question?.choices).not.toContain(reed);
+    });
+
+    test("an explicit unmute at 150 restores the choice until the next mute at 200", () => {
+        expect(ranges(at({ sec: 130, unmute: true }))).toMatchObject([{ speaker: lake }]);
+        expect(ranges(at({ sec: 170, unmute: true }))).toMatchObject([{ candidates: [lake, reed] }]);
+        expect(ranges(at({ sec: 240, unmute: true }))).toMatchObject([{ speaker: lake }]);
+    });
+
+    test("a configurable cap expires even when the next roster read agrees", () => {
+        expect(ranges(at({ sec: 100, mutedCarrySec: 110 }))).toMatchObject([{ speaker: lake }]);
+        expect(ranges(at({ sec: 100, mutedCarrySec: 103 }))).toMatchObject([{ candidates: [lake, reed] }]);
+        expect(ranges(at({ sec: 100, mutedCarrySec: 90 }))).toMatchObject([{ candidates: [lake, reed] }]);
+        expect(ranges(at({ sec: 801 }))).toMatchObject([{ candidates: [lake, reed] }]);
+    });
+
+    test("opened meetings apply the saved carry limit to the same readings used by suggestions and raw evidence", async () => {
+        const opened = OpenedMeeting.of(new MeetingStore(), record);
+        const fixture = scene([{ label: lake, mic: 0 }]);
+        fixture.evidence.speaking = [{ tSec: 0, speaking: [], muted: [reed] }];
+        const source = spyOn(opened, "sourceEvidence").mockResolvedValue(fixture.evidence);
+        const config = spyOn(opened, "config");
+        const entries = [{ speaker: lake, startSec: 100, text: "Hello." }];
+        try {
+            for (const [cap, expected] of [
+                [110, [reed]],
+                [90, []],
+            ] as const) {
+                config.mockResolvedValue(meetingsConfigSchema.parse({ global: { suggest: { mutedCarrySec: cap } } }));
+                const evidence = await opened.evidence();
+                expect(evidence).not.toBeNull();
+                expect(lineEvidence(entries, evidence!)[0]?.muted ?? []).toEqual([...expected]);
+            }
+        } finally {
+            config.mockRestore();
+            source.mockRestore();
+        }
+    });
+});
 
 test("one acoustic observation per line serves the evidence rules", () => {
     const fixture = scene([

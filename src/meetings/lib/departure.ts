@@ -238,7 +238,7 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
             }
             continue;
         }
-        if (sameName(name, options.selfName)) {
+        if (sameName(name, options.selfName) || line.muted?.some((person) => sameName(person, name))) {
             continue;
         }
         departures.push({

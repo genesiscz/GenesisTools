@@ -6,6 +6,7 @@ import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { callMutes, type MutedCallLines } from "./call-mutes";
 import { personKey, personPresent } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
 import { questionOwnedItems } from "./transcript-corrections";
@@ -29,6 +30,7 @@ export function addQualityQuestions(options: {
     longStretchWords?: number;
     below?: number;
     features?: readonly LineVoice[];
+    callMutes?: MutedCallLines;
     channel?: number;
 }): string[] {
     const lines = qualityLines(options.record, options.entries);
@@ -61,6 +63,8 @@ export function addQualityQuestions(options: {
             const fromSec = part[0]!.fromSec,
                 toSec = part.at(-1)!.fromSec;
             const first = part[0]!;
+            const excluded = options.callMutes?.forIndices(part.map((line) => line.index)) ?? [];
+            const eligible = (name: string) => !excluded.some((other) => sameName(other, name));
             const sharedStart =
                 options.entries[first.index - 1]?.startSec === fromSec ||
                 options.entries[first.index + 1]?.startSec === fromSec;
@@ -77,6 +81,7 @@ export function addQualityQuestions(options: {
                         item.decides.some((id) => itemsById.get(id)?.evidence?.transcriptLine === first.index))
             );
             if (known?.kind === "question") {
+                known.choices = known.choices.filter(eligible);
                 known.priority ??= 1;
                 known.confidence ??= confidence;
                 ids.push(known.id);
@@ -118,7 +123,7 @@ export function addQualityQuestions(options: {
                         ...part.flatMap((line) => line.speaker ?? []),
                         ...options.record.participants.map((person) => person.name),
                     ]),
-                ],
+                ].filter(eligible),
                 decides,
                 rules: [],
                 suggestedAt: new Date().toISOString(),
@@ -328,7 +333,9 @@ export function uncertainSharedCallRanges(options: {
                 : []),
         ];
         const candidates = names.filter(
-            (name, index) => names.findIndex((other) => personKey(other) === personKey(name)) === index
+            (name, index) =>
+                !callMutes(line).some((other) => sameName(other, name)) &&
+                names.findIndex((other) => personKey(other) === personKey(name)) === index
         );
         const confirmed = options.record.items.some(
             (item) =>

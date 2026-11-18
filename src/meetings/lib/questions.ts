@@ -16,6 +16,7 @@ import { formatClock, voiceNameText } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import type { MutedCallLines } from "./call-mutes";
 import { parsePersonAnswer, personPresent, recordPeople, sentenceSegments } from "./listen-answers";
 import { anchorScores, speakerScoresOf } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
@@ -54,6 +55,7 @@ const IMPACT = { decision: 3, cited: 3, owner: 2 } as const;
 /** What a question needs to know about the meeting besides the item. */
 export interface QuestionContext {
     listenBelow: number;
+    callMutes?: MutedCallLines;
     /** Canonical candidate names from the meeting roster and people added to this meeting. */
     candidates?: readonly string[];
     /** Who was in the call, the user under their own name (`CallTimeline.named`, as `OpenedMeeting.presence` gives it). */
@@ -184,6 +186,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         }
 
         const { present, absent } = presenceAt(context.presence, item.fromSec);
+        const excluded = [...absent, ...(context.callMutes?.forRange(item) ?? [])];
         // The people the range's typed scores weigh come last, so the first two choices (the signature) stay as before.
         const choices = [
             ...(item.speaker ? [item.speaker] : []),
@@ -193,7 +196,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             ...speakerScoresOf(item).map((score) => score.speaker),
         ].filter(
             (name, index, names) =>
-                !absent.some((other) => sameName(name, other)) &&
+                !excluded.some((other) => sameName(name, other)) &&
                 names.findIndex((other) => sameName(name, other)) === index
         );
 

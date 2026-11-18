@@ -13,6 +13,7 @@ import {
     mergeDictionaries,
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
+import { DEFAULT_MUTED_CARRY_SEC } from "@genesiscz/utils/transcribe/evidence";
 import { z } from "zod";
 import { MeetingsConflictError } from "./conflict";
 import {
@@ -600,6 +601,8 @@ const storedConfigSchema = z
                         longStretchWords: z.number().int().min(1).default(50),
                         /** Derive a low-confidence leave only after this many observed silent call minutes. */
                         leaveSilenceMinutes: z.number().min(1).max(120).default(10),
+                        /** Seconds a roster mute read remains evidence without another mute read or observed speech. */
+                        mutedCarrySec: z.number().nonnegative().default(DEFAULT_MUTED_CARRY_SEC),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
                         applyAbove: z.number().min(0).max(1).default(0.7),
                         /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */

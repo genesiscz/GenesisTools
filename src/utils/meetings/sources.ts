@@ -46,6 +46,8 @@ export interface MeetingEvidence {
     platform?: string;
     segments: EvidenceSegment[];
     speaking: SpeakingObservation[];
+    /** Applied by the opened meeting when its rules read the source observations. */
+    mutedCarrySec?: number;
     participants?: MeetingParticipant[];
     /** Words recognized per channel: the user's share of the speech. */
     tokens?: { mic: number; system: number };

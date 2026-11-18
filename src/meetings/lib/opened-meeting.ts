@@ -126,7 +126,10 @@ export class OpenedMeeting {
 
     /** The evidence the rules may read: no speaking readings when the record's platform has no speaking indicator. */
     async evidence(): Promise<MeetingEvidence | null> {
-        return speakingEvidence(this.current, await this.sourceEvidence());
+        const evidence = speakingEvidence(this.current, await this.sourceEvidence());
+        return evidence?.speaking.length
+            ? { ...evidence, mutedCarrySec: (await this.config()).global.suggest.mutedCarrySec }
+            : evidence;
     }
 
     /** The call on the transcript clock, with the source's second 0. */
