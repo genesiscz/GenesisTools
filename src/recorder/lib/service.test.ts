@@ -17,6 +17,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
+import * as denoise from "@genesiscz/utils/recording-editor/denoise";
 import {
     applyOp,
     type EditOp,
@@ -2123,7 +2124,7 @@ describe("the Movie handle's sound lanes and layer stack", () => {
                 source,
                 path: file,
                 startOffsetMs: index * 100,
-                startedAtMs: Date.parse(startedAt) + index * 100,
+                startedAtMs: Date.parse(startedAt),
                 durationMs: 1_000,
                 displayId: 1,
                 mutedSpans: [],
@@ -2142,16 +2143,7 @@ describe("the Movie handle's sound lanes and layer stack", () => {
                 frames: [{ file: "frame.png", atMs: 0, displayId: 1 }],
             })
         );
-        const probe = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) =>
-            command.includes("json")
-                ? SafeJSON.stringify({
-                      streams: [
-                          { codec_type: "video", index: 0 },
-                          { codec_type: "audio", index: 1 },
-                      ],
-                  })
-                : "1\n"
-        );
+        const probe = spyOn(denoise, "audioTrackCount").mockResolvedValue(1);
         closing.push(() => probe.mockRestore());
         writeProject(path, wholeProject({ video, durationUs: 1_000_000, width: 100, height: 100 }));
         const before = readFileSync(path, "utf8");
@@ -2161,9 +2153,9 @@ describe("the Movie handle's sound lanes and layer stack", () => {
 
         await movie.audioLane("mic", { muted: true });
 
-        expect(readProject(path).audio.lanes?.map(({ id, muted }) => [id, muted])).toEqual([
-            ["mic", true],
-            ["system", false],
+        expect(readProject(path).audio.lanes?.map(({ id, muted, offsetMs }) => [id, muted, offsetMs])).toEqual([
+            ["mic", true, 0],
+            ["system", false, 100],
         ]);
     });
 
@@ -2187,8 +2179,16 @@ describe("the Movie handle's sound lanes and layer stack", () => {
         const stack = readProject(path).layers;
         expect(stack?.order).toEqual([id, "camera"]);
         expect(stack?.media).toMatchObject([{ id, file: "logo.png", opacity: 0.5 }]);
+        const clip = await movie.addLayer("clip", { kind: "video", startUs: 500_000, endUs: 2_000_000 });
+        expect(await movie.layers()).toEqual([
+            { id, kind: "image" },
+            { id: "camera", kind: "camera" },
+            { id: clip, kind: "video" },
+        ]);
         await movie.removeLayer(id);
-        expect(await movie.layers()).toEqual([{ id: "camera", kind: "camera" }]);
+        expect(readProject(path).layers?.media).toMatchObject([
+            { id: clip, kind: "video", startUs: 500_000, endUs: 2_000_000 },
+        ]);
     });
 
     test("removeLayer refuses the camera with the layerRemove op's text and leaves the edit intact", async () => {
