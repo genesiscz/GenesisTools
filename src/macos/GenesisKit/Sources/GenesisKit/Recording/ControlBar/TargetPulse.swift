@@ -96,6 +96,12 @@ public final class TargetPulse {
         draw([], reduceMotion: false, animate: false)
     }
 
+    /// The picker has gone away. Let an already committed choice finish, with no hover to restore.
+    func pickerClosed() {
+        hovered = []
+        if choice == nil { clear() }
+    }
+
     private func schedule(after delay: Duration, _ action: @escaping @MainActor (TargetPulse) -> Void) {
         pending?.cancel()
         if delay <= .zero {

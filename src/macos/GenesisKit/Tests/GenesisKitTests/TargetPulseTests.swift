@@ -190,6 +190,18 @@ final class TargetPulseTests: XCTestCase {
         XCTAssertFalse(f.panels[0].isVisible)
     }
 
+    func testClosingPickerPreservesDelayedChoiceUntilItsHoldEnds() async throws {
+        let f = try fixture([right], reduced: true)
+        defer { f.pulse.clear() }
+        let ended = expectation(description: "choice appeared and cleared after the picker closed")
+        f.strokes[0].onClear = { ended.fulfill() }
+        f.pulse.pulse([target], after: .milliseconds(30))
+        f.pulse.pickerClosed()
+        f.pulse.pickerClosed() // choiceStarts can also dismiss the picker at countdown.
+        await fulfillment(of: [ended], timeout: 4)
+        XCTAssertFalse(f.panels[0].isVisible)
+    }
+
     func testClearAndNewHoverSupersedeDelayedChoices() async throws {
         let f = try fixture([left, right])
         defer { f.pulse.clear() }
