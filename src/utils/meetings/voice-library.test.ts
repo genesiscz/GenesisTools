@@ -278,6 +278,9 @@ test("checked insertion reuses its persisted receipt and prediction holds out on
     };
     const inserted = insertVoiceSample(input);
     expect(inserted.status).toBe("added");
+    if (!("id" in inserted)) {
+        throw new Error("the first insert must answer an added receipt with its id");
+    }
     const saved = readFileSync(libraryPath());
     expect(insertVoiceSample(input)).toEqual({ ...inserted, status: "already-present" });
     expect(insertVoiceSample({ ...input, owner: second, decision: undefined }).status).toBe("conflict");

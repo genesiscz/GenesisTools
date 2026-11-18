@@ -252,7 +252,8 @@ describe("seat suggestions", () => {
             reason: "Muted on all 2 roster reads while present.",
         });
         expect(suggestSeats({ ...input, remote: ["wren"] }).seats.remote).toEqual([
-            { name: "Wren", fromSec: 10, toSec: 40 },
+            { name: "Wren", fromSec: 10, toSec: 20 },
+            { name: "Wren", fromSec: 30, toSec: 40 },
         ]);
     });
 
