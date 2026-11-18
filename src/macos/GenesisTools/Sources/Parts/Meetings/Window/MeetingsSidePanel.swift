@@ -25,7 +25,7 @@ struct MeetingsSidePanel: View {
             }
             SidePanelSections(sections: sections, change: change, reset: reset,
                               playTone: { window.previewTone($0) },
-                              openSettings: { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage + "#" + $0) },
+                              openSettings: { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage + "#" + $0, context: detail.id) },
                               folded: window.sidePanelFolded,
                               setFolded: { id, folded in
                                   if folded { window.sidePanelFolded.insert(id) } else { window.sidePanelFolded.remove(id) }
@@ -45,7 +45,7 @@ struct MeetingsSidePanel: View {
         HStack(spacing: 8) {
             Text("Settings").font(.system(size: 13, weight: .semibold))
             Spacer(minLength: 6)
-            Button("All settings…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage) }
+            Button("All settings…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage, context: detail.id) }
                 .buttonStyle(.genHoverPlain()).font(.system(size: 11.5))
                 .instantTooltip("Open Settings → Meetings → Window")
                 .accessibilityIdentifier("meetings.sidePanel.allSettings")

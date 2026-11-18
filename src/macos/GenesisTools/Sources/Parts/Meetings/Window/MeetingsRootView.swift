@@ -359,7 +359,8 @@ private struct MeetingsListPane: View {
                         .padding(10)
                 }
                 if let settings = model.settings.value {
-                    ProjectSummary(name: name, settings: settings.projects[name], wispr: settings.wispr)
+                    ProjectSummary(name: name, settings: settings.projects[name], wispr: settings.wispr,
+                                   meetingID: model.selectedMeetingID)
                 }
                 Divider()
             }
@@ -774,6 +775,7 @@ struct ProjectSummary: View {
     let name: String
     let settings: ProjectSettings?
     let wispr: MeetingsSettings.Source?
+    let meetingID: String?
 
     var body: some View {
         let rules = Self.rules(folders: wispr?.match[name]?.folders ?? [], calendars: settings?.match?.calendar?.calendars ?? [],
@@ -792,11 +794,11 @@ struct ProjectSummary: View {
             HStack(spacing: 8) {
                 GhostButton("Edit rules…", symbol: "slider.horizontal.3", tooltip: "Open Settings → Meetings → Projects at this project",
                             identifier: "meetings.project.rules") {
-                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)")
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)", context: meetingID)
                 }
                 GhostButton("Dictionary…", symbol: "character.book.closed", tooltip: "Open Settings → Meetings → Dictionary",
                             identifier: "meetings.project.dictionary") {
-                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage)
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage, context: meetingID)
                 }
             }
         }

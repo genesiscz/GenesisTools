@@ -27,6 +27,10 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
         return model?.settled ?? true
     }
 
+    package func settingsRequested(pageID: String?, context: String?) {
+        model?.dictionaryPreviewMeetings.open(from: pageID?.hasPrefix("meetings.") == true ? context : nil)
+    }
+
     package func settingsReopened() {
         model?.reloadRead()
     }
