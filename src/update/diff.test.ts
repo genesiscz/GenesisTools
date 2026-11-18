@@ -1,8 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpRegistration } from "@app/genesis-tools-mcp/lib/mcp-install";
+import { out } from "@genesiscz/utils/logger";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import {
     diffUpdateSnapshots,
     formatUpdateDiff,
@@ -11,6 +13,7 @@ import {
     writeUpdateSnapshot,
 } from "./diff";
 import { genesisAppRefreshAction } from "./genesis-app-refresh";
+import { refreshGenesisApp } from "./index";
 import { offerMcpRegistration } from "./mcp-registration-offer";
 
 function tempSnapshotPath(): string {
@@ -176,6 +179,62 @@ describe("printUpdateCatalogue", () => {
 });
 
 describe("genesisAppRefreshAction", () => {
+    it("prints the failed install need after a rebuild failure and keeps the previous-bundle advice when usable", async () => {
+        const deps = {
+            readStatus: () => ({ built: true, stale: true }),
+            resolveSdk: () => ({ kind: "xcode" as const }),
+            build: async () => {
+                throw new Error("fixture rebuild failure");
+            },
+        };
+        const printed = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            await refreshGenesisApp({ ...deps, needEnv: appNeedFixture({ installed: false }) });
+            const missing = printed.mock.calls.flat().join("\n");
+            expect(missing).toContain("Could not rebuild GenesisTools.app: fixture rebuild failure");
+            expect(missing).toContain(
+                "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."
+            );
+            expect(missing).not.toContain("previous bundle");
+            printed.mockClear();
+            await refreshGenesisApp({ ...deps, needEnv: appNeedFixture() });
+            const ready = printed.mock.calls.flat().join("\n");
+            expect(ready).toContain("Tools keep running under the previous bundle. Run `fixture-build`.");
+            expect(ready).not.toContain("not installed");
+            printed.mockClear();
+            await refreshGenesisApp({
+                ...deps,
+                readStatus: () => ({ built: true, stale: false }),
+                needEnv: appNeedFixture(),
+            });
+            expect(printed).not.toHaveBeenCalled();
+        } finally {
+            printed.mockRestore();
+        }
+    });
+
+    it("shows the builder's Xcode instructions without attempting an unsupported rebuild", async () => {
+        const printed = spyOn(out, "println").mockImplementation(() => {});
+        const build = mock(async () => {
+            throw new Error("unexpected build");
+        });
+        try {
+            await refreshGenesisApp({
+                needEnv: appNeedFixture(),
+                readStatus: () => ({ built: true, stale: true }),
+                resolveSdk: () => ({ kind: "unsupported", toolchain: { kind: "none" } }),
+                build,
+            });
+            const text = printed.mock.calls.flat().join("\n");
+            expect(text).toContain("Skipped rebuilding GenesisTools.app");
+            expect(text).toContain("install Xcode, select it with `sudo xcode-select");
+            expect(text).toContain("tools macos permissions build");
+            expect(build).not.toHaveBeenCalled();
+        } finally {
+            printed.mockRestore();
+        }
+    });
+
     it("skips a user who never installed GenesisTools.app", () => {
         expect(genesisAppRefreshAction({ built: false, stale: false })).toBe("skip");
     });

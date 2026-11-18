@@ -8,7 +8,6 @@ export const APP_CHECK_RATCHET: ReadonlyMap<string, number> = new Map<string, nu
     ["src/meetings/lib/grants.ts", 2],
     ["src/notify/index.ts", 1],
     ["src/question/lib/hub-link.ts", 1],
-    ["src/update/index.ts", 2],
     ["src/utils/ai/stt/capture/pcm-source.ts", 1],
     ["src/utils/browser-router/capabilities.ts", 1],
     ["src/utils/macos/full-disk-access.ts", 1],
