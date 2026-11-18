@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import Darwin
-import UserNotifications
 
 @MainActor
 enum RequestWindowContent {
@@ -162,7 +161,8 @@ private var residentRequests: GenesisToolsRPC?
 /// A resident renderer only. Request state and decisions stay in the TypeScript service.
 @MainActor
 func runRequestFace(_ arguments: [String]) -> Never {
-    UNUserNotificationCenter.current().delegate = sharedNotificationDelegate
+    // A resident face: a banner click must not quit it (the default) and drop its open and queued requests.
+    installNotificationClicksForWindowFace()
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     let socket = arguments.firstIndex(of: "--socket").flatMap { index in arguments.indices.contains(index + 1) ? arguments[index + 1] : nil }
