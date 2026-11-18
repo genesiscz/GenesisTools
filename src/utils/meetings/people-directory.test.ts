@@ -13,8 +13,9 @@ import {
     PeopleDirectory,
     PeopleError,
     type PeopleSource,
-    peopleDirectory,
     ProjectsPeopleSource,
+    peopleDirectory,
+    type SourceStatus,
 } from "./people-directory";
 import { MEETING_FILE, MeetingStore } from "./record";
 
@@ -202,7 +203,7 @@ describe("PeopleDirectory.known", () => {
         const directory = new PeopleDirectory({ book, sources: [source] });
         const clock = spyOn(Date, "now").mockReturnValue(0);
         try {
-            const failed = [{ kind: "contacts", state: "failed", reason: "reader offline" }];
+            const failed: SourceStatus[] = [{ kind: "contacts", state: "failed", reason: "reader offline" }];
             expect((await directory.known("gal")).sources).toEqual(failed);
             expect((await directory.known("gal")).sources).toEqual(failed);
             clock.mockReturnValue(10_000);
