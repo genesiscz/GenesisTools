@@ -33,7 +33,13 @@ export function registerServeCommand(program: Command): void {
                             out.printlnErr("A GenesisTools service is already running.");
                             return;
                         }
-                        signal.addEventListener("abort", () => start.host.stop("signal"), { once: true });
+                        const stop = (): void => start.host.stop("signal");
+                        signal.addEventListener("abort", stop, { once: true });
+
+                        // A signal that came while the service started fired no event; it still stops the service.
+                        if (signal.aborted) {
+                            stop();
+                        }
 
                         process.once("exit", () => start.host.stop("exit"));
                         out.printlnErr(
