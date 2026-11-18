@@ -69,6 +69,9 @@ struct MeetingsRequest {
     /// `--card <row id>` and `--sheet history[:<row id>]`: a snapshot of that part alone.
     var card: String?
     var sheet: String?
+    /// `--suggest-progress <fraction>,<label>`: a snapshot of the Items tab while a suggest run reports that step (the
+    /// fraction `-` for none). No run starts; the picture shows the state the service's `$/progress` makes.
+    var suggestProgress: MeetingsCallProgress?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -101,6 +104,7 @@ struct MeetingsRequest {
             case "--notice": request.notice = value()
             case "--card": request.card = value()
             case "--sheet": request.sheet = value()
+            case "--suggest-progress": request.suggestProgress = value().map(MeetingsRequest.progress)
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--play-request": request.playRequest = value().flatMap { try? JSONDecoder().decode(MeetingsAPI.MomentParams.self, from: Data($0.utf8)) }
@@ -113,6 +117,13 @@ struct MeetingsRequest {
             index += 1
         }
         return request
+    }
+
+    /// "0.4,Voices: 120 of 300 lines" as a step; "-" or no number is no fraction, nothing after the comma no label.
+    static func progress(_ text: String) -> MeetingsCallProgress {
+        let parts = text.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+        let label = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+        return MeetingsCallProgress(fraction: parts.first.flatMap { Double($0) }, label: label.isEmpty ? nil : label)
     }
 
     /// "2926,5220" as seconds; nil for anything else.
@@ -375,6 +386,10 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     detail.edit(row)
                 } else if let id = request.select {
                     detail.selectedRow = id
+                }
+                if let step = request.suggestProgress {
+                    detail.busy.insert("suggest")
+                    detail.suggestProgress = step
                 }
             }
             if let text = request.notice, let detail = model.detail {

@@ -48,6 +48,8 @@ private final class FakeMeetingsService: @unchecked Sendable {
     var silent: Set<String> = []
     /// A method's reply (without its id) in place of the fixture's.
     var answers: [String: [String: Any]] = [:]
+    /// The `$/progress` params (without the id) a method sends for each call before its reply, also when it is silent.
+    var progress: [String: [[String: Any]]] = [:]
     private var listener: Int32 = -1
     private var connection: Int32 = -1
     private let condition = NSCondition()
@@ -169,7 +171,11 @@ private final class FakeMeetingsService: @unchecked Sendable {
             send(["jsonrpc": "2.0", "id": id, "error": ["code": 1013, "message": "cancelled"]])
             return
         }
-        guard let id = request["id"], !silent.contains(method) else { return }
+        guard let id = request["id"] else { return }
+        for step in progress[method] ?? [] {
+            send(["jsonrpc": "2.0", "method": "$/progress", "params": step.merging(["id": id]) { $1 }])
+        }
+        guard !silent.contains(method) else { return }
         if method == "hello" {
             send(["jsonrpc": "2.0", "id": id].merging(helloAnswer) { $1 })
         } else if let reply = answers[method] {
@@ -982,6 +988,63 @@ final class MeetingsServiceTests: XCTestCase {
             XCTAssertTrue(error is CancellationError, "\(error)")
         }
         XCTAssertEqual(commands.runs, [], "a cancelled read does not fall back to the command")
+    }
+
+    // MARK: Progress of a long call (`$/progress`)
+
+    private static let suggestSteps: [[String: Any]] = [
+        ["fraction": 0.25, "label": "Voices: 30 of 120 lines"],
+        ["fraction": 0.75, "label": "Voices: 90 of 120 lines"],
+        ["label": "Terms"],
+    ]
+
+    func testACallHearsEachProgressStepOfTheServiceBeforeItsAnswer() async throws {
+        try writeServiceEntry()
+        fake.answers["meeting.suggest"] = ["result": ["added": 3, "warnings": [String]()]]
+        fake.progress["meeting.suggest"] = Self.suggestSteps
+        let service = makeService()
+        final class Steps { var seen: [MeetingsCallProgress] = [] }
+        let steps = Steps()
+        let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil)) {
+            steps.seen.append($0)
+        }
+        XCTAssertEqual(result, .init(added: 3, warnings: []))
+        XCTAssertEqual(steps.seen, [MeetingsCallProgress(fraction: 0.25, label: "Voices: 30 of 120 lines"),
+                                    MeetingsCallProgress(fraction: 0.75, label: "Voices: 90 of 120 lines"),
+                                    MeetingsCallProgress(fraction: nil, label: "Terms")],
+                       "every step arrives, in order, before the answer")
+    }
+
+    func testTheItemsTabShowsTheRunningSuggestsNewestStepAndClearsItAtTheEnd() async throws {
+        try writeServiceEntry()
+        fake.silent = ["meeting.suggest"]
+        fake.progress["meeting.suggest"] = Array(Self.suggestSteps.prefix(2))
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        detail.suggest()
+        XCTAssertTrue(detail.isBusy("suggest"))
+        XCTAssertEqual(SuggestRunView.label(detail.suggestProgress), "Starting the rules…", "before the first step")
+        let reached = await waitUntil(3) { detail.suggestProgress?.fraction == 0.75 }
+        XCTAssertTrue(reached, "the newest step reaches the model: \(String(describing: detail.suggestProgress))")
+        XCTAssertEqual(SuggestRunView.label(detail.suggestProgress), "Voices: 90 of 120 lines (75 %)")
+        // The service answers: the run ends and its bar goes.
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "meeting.suggest" } }.value
+        fake.send(["jsonrpc": "2.0", "id": sent["id"] ?? NSNull(), "result": ["added": 2, "warnings": ["One warning"]]])
+        let ended = await waitUntil(3) { !detail.isBusy("suggest") }
+        XCTAssertTrue(ended, "the run ends with the answer")
+        XCTAssertNil(detail.suggestProgress, "no step stays after the answer")
+        XCTAssertEqual(detail.suggestionWarnings, ["One warning"])
+    }
+
+    func testTheSuggestStepReadsAsWords() {
+        XCTAssertEqual(SuggestRunView.label(nil), "Starting the rules…")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: 0.404, label: "Voices: 121 of 300 lines")), "Voices: 121 of 300 lines (40 %)")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: nil, label: "Terms")), "Terms")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: 1.2, label: nil)), "100 % done", "a fraction past the end reads as done")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: nil, label: nil)), "Running the rules…")
+        XCTAssertEqual(MeetingsRequest.progress("0.4,Voices: 120 of 300 lines"), .init(fraction: 0.4, label: "Voices: 120 of 300 lines"))
+        XCTAssertEqual(MeetingsRequest.progress("-,Terms"), .init(fraction: nil, label: "Terms"))
     }
 
     // MARK: Which service (finding 5 of the Wave A review)
