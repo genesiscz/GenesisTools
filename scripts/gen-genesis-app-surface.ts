@@ -44,9 +44,12 @@ function constList(name: string, values: readonly string[]): string {
 }
 
 export function renderAppSurface(input: AppSurfaceInput): string {
+    // An alias answers as its face (AppFace.aliases), so it gets a row with the face's part and window.
     const faces = [
         ...input.parts.flatMap((part) =>
-            part.faces.map((face) => ({ flag: face.flag, part: part.id, window: face.window }))
+            part.faces.flatMap((face) =>
+                [face.flag, ...(face.aliases ?? [])].map((flag) => ({ flag, part: part.id, window: face.window }))
+            )
         ),
         ...(input.hostFaces ?? [input.hostFace]).map((face) => ({ flag: face.flag, part: null, window: face.window })),
     ];
@@ -69,7 +72,7 @@ export function renderAppSurface(input: AppSurfaceInput): string {
         ),
         "export type AppPartId = (typeof APP_PART_IDS)[number];",
         "",
-        "/** Every face flag `open -n GenesisTools.app --args <flag>` takes, with the part that ships it (null: the host). */",
+        "/** Each face flag or alias `open -n GenesisTools.app --args <flag>` takes, with the part that ships it (null: host). */",
         "export const APP_FACES = {",
         ...faceRows,
         "} as const satisfies Record<string, { part: AppPartId | null; window: boolean }>;",

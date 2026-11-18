@@ -21,9 +21,10 @@ export type AppRpcMethod = (typeof APP_RPC_METHODS)[number];
 export const APP_PART_IDS = ["features", "hub", "widget", "clicky", "markdown", "recorder", "meetings"] as const;
 export type AppPartId = (typeof APP_PART_IDS)[number];
 
-/** Every face flag `open -n GenesisTools.app --args <flag>` takes, with the part that ships it (null: the host). */
+/** Each face flag or alias `open -n GenesisTools.app --args <flag>` takes, with the part that ships it (null: host). */
 export const APP_FACES = {
     "--features": { part: "features", window: true },
+    "--clicky": { part: "features", window: true },
     "--hub": { part: "hub", window: true },
     "--review": { part: "hub", window: true },
     "--widget": { part: "widget", window: true },
