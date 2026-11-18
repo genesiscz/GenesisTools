@@ -368,6 +368,25 @@ describe("speaker answers and their project voice prints", () => {
         );
     });
 
+    test("voice backfill and live sampling leave a confirmed two-speaker answer out of the project store", async () => {
+        const fx = await voiceAnswerFixture();
+        try {
+            const meeting = fx.meeting.id;
+            const answer = await fx.journal.apply({
+                meeting,
+                actor: person,
+                action: { kind: "answer", question: "i2", answer: "Alice Example + Bob Example" },
+            });
+            expect(answer.entry?.voices).toBeUndefined();
+            const client = new InProcessMeetingsClient({ deps: { store: () => fx.store } });
+            expect((await client.call("voice.backfill", { meetings: [meeting] })).added).toBe(0);
+            expect(fx.embed).not.toHaveBeenCalled();
+            expect(readVoiceStore(fx.project).people).toEqual({});
+        } finally {
+            fx.restore();
+        }
+    });
+
     test("voice backfill honors a partial Undo of a human confirm and ignores an agent answer", async () => {
         const fx = await voiceAnswerFixture(undefined, [
             speakerRange("i4", 0, {
