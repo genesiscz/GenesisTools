@@ -6,7 +6,7 @@ import { type AnswerEvent, appendAnswerEvent, type RoundEndReason, roundRunning 
 import type { Decided, DecisionAction, DecisionSkip } from "./decision-actions";
 import { DecisionJournal, type JournalEntry, type MicShare, type SplitInputs } from "./decision-journal";
 import { personKey } from "./listen-answers";
-import { openQuestions, type QuestionItem, questionLabel } from "./questions";
+import { openQuestions, type QuestionItem, questionLabel, withinListenThreshold } from "./questions";
 
 export type { MicShare, SplitInputs } from "./decision-journal";
 
@@ -77,6 +77,7 @@ export interface ListenSessionOptions {
     budget: number;
     minPriority: number;
     listenBelow: number;
+    applyAbove?: number;
     split: SplitInputs;
     /** A round already running in the log is joined, not opened again: an answer given while a person listens. */
     joinRunningRound?: boolean;
@@ -303,7 +304,10 @@ export class ListenSession {
             return selected.includes(question.id);
         }
 
-        return (question.priority ?? minPriority) >= minPriority;
+        return (
+            withinListenThreshold(question, this.options.applyAbove) &&
+            (question.priority ?? minPriority) >= minPriority
+        );
     }
 
     /**

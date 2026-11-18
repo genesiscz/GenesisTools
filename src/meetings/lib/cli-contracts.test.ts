@@ -518,6 +518,76 @@ test("a fresh spot check selects only its sampled lines even with an older round
     }
 });
 
+test("rows prints the threshold mark on a human-readable speaker row", async () => {
+    const store = new MeetingStore();
+    const start = "2026-11-09T10:00:00Z";
+    const items = [0.69, 0.7].map((confidence, index) => ({
+        kind: "speaker-range" as const,
+        id: `i${index + 1}`,
+        status: "suggested" as const,
+        label: "Voice",
+        speaker: "River Example",
+        fromSec: index,
+        toSec: index,
+        confidence,
+        rules: [],
+        suggestedAt: start,
+    }));
+    const record = await store.create(
+        { title: "Threshold rows", start, createdBy: "new", items },
+        { command: "test", change: "fixture" }
+    );
+    const output = spyOn(out, "println").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "rows" });
+        await program.parseAsync(["rows", record.id, "--apply-above", "70"], { from: "user" });
+        const lines = output.mock.calls.map(([text]) => String(text));
+        expect(lines.find((text) => text.includes("i1"))).toContain("guess 69 %");
+        expect(lines.find((text) => text.includes("i2"))).toContain("suggested");
+    } finally {
+        output.mockRestore();
+    }
+});
+
+test("listen filters previously prepared stretches against the requested apply threshold", async () => {
+    const store = new MeetingStore();
+    const items = [0.5, 0.7, 0.9].map((confidence, index) => ({
+        kind: "question" as const,
+        id: `i${index + 1}`,
+        status: "suggested" as const,
+        group: "long-stretch" as const,
+        about: "speaker" as const,
+        fromSec: index,
+        toSec: index,
+        confidence,
+        question: "Who speaks?",
+        choices: ["River Example"],
+        decides: [],
+        rules: [],
+        suggestedAt: "2026-11-09T10:00:00Z",
+    }));
+    const record = await store.create(
+        { title: "Prepared stretches", start: items[0]!.suggestedAt, createdBy: "new", items },
+        { command: "test", change: "fixture" }
+    );
+    const output = spyOn(out, "result").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(
+            ["listen", record.id, "--group", "long-stretch", "--apply-above", "70", "--prepare-only"],
+            { from: "user" }
+        );
+        expect(SafeJSON.parse(String(output.mock.calls.at(-1)?.[0]))).toEqual({
+            meeting: record.id,
+            questions: ["i1"],
+        });
+    } finally {
+        output.mockRestore();
+    }
+});
+
 test("standalone subscription flags fail before resolving or reading a meeting", async () => {
     const raw = spyOn(ui, "raw").mockImplementation(() => {});
     const human = spyOn(ui, "err").mockImplementation(() => {});

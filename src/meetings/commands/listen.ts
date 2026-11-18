@@ -64,6 +64,7 @@ import {
     questionIdOf,
     questionLabel,
     questionView,
+    withinListenThreshold,
 } from "../lib/questions";
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
@@ -868,25 +869,26 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         meeting = store.read(meeting.id) ?? meeting;
     }
+    const settings = await new MeetingsConfigStore().read();
+    const threshold = applyAbove ?? settings.global.suggest.applyAbove;
+    const eligible = openQuestions(meeting).filter((question) => withinListenThreshold(question, threshold));
     let selected: string[] | undefined =
         group === "spot-check" && sampled !== undefined
             ? sampled
             : group === "all"
               ? undefined
-              : openQuestions(meeting)
-                    .filter((question) => (question.group ?? "rules") === group)
-                    .map((question) => question.id);
+              : eligible.filter((question) => (question.group ?? "rules") === group).map((question) => question.id);
     if (opts.prepareOnly) {
         out.result(
             SafeJSON.stringify({
                 meeting: meeting.id,
-                questions: selected ?? openQuestions(meeting).map((question) => question.id),
+                questions: selected ?? eligible.map((question) => question.id),
             })
         );
         return;
     }
     for (const name of QUESTION_GROUPS) {
-        ui.dim(name + ": " + openQuestions(meeting).filter((question) => (question.group ?? "rules") === name).length);
+        ui.dim(`${name}: ${eligible.filter((question) => (question.group ?? "rules") === name).length}`);
     }
     if (opts.subscribeAnswers) {
         await subscribe(meeting, store, opts);
@@ -997,9 +999,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
-    const first = openQuestions(meeting).find(
-        (item) => (!itemId || item.id === itemId) && (!selected || selected.includes(item.id))
+    const inRound = openQuestions(meeting).filter(
+        (item) =>
+            (!itemId || item.id === itemId) &&
+            (selected ? selected.includes(item.id) : itemId !== undefined || withinListenThreshold(item, threshold))
     );
+    const first = inRound[0];
 
     if (!first) {
         // A named question that is not open was not answered, so that exits 1; an empty round is no failure.
@@ -1018,10 +1023,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         }
 
         try {
-            const questions = openQuestions(meeting).filter(
-                (item) => (!itemId || item.id === itemId) && (!selected || selected.includes(item.id))
-            );
-            await clipsOut({ store, meeting, questions, dir: opts.clipOut, json: opts.json });
+            await clipsOut({ store, meeting, questions: inRound, dir: opts.clipOut, json: opts.json });
         } catch (err) {
             fail(err);
         }
@@ -1030,7 +1032,6 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     try {
-        const settings = await new MeetingsConfigStore().read();
         const opened = OpenedMeeting.of(store, meeting);
         const chosen = await ADAPTERS[opts.answer === undefined ? "terminal" : "answer"]({
             store,
@@ -1072,6 +1073,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             ...(selected ? { selected } : {}),
             minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
+            applyAbove: threshold,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
             actor: chosen.actor,
             ...(opts.reason ? { reason: opts.reason } : {}),

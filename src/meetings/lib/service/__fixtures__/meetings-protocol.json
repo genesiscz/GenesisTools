@@ -3544,7 +3544,7 @@
         "result": {
           "generatedAt": "2026-11-18T03:46:35.732Z",
           "days": 3650,
-          "applyAbove": 0.5,
+          "applyAbove": 0.7,
           "meetings": [
             {
               "id": "2026-11-03-1400-retro",
