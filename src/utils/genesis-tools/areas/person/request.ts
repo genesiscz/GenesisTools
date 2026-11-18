@@ -1,5 +1,10 @@
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
-import { type ActionDef, type ActionOutcome, defineAction } from "@genesiscz/utils/genesis-tools/actions/define";
+import {
+    type ActionDef,
+    type ActionOutcome,
+    defineAction,
+    type WayName,
+} from "@genesiscz/utils/genesis-tools/actions/define";
 import { APP_FACES, type AppFaceFlag } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { z } from "zod";
@@ -48,7 +53,10 @@ export const requestOutcomeSchema = z.object({
 export type RequestOutcome = z.infer<typeof requestOutcomeSchema>;
 export const requestConfigSchema = z.object({ delivery: deliverySchema.default(Delivery.askNow) });
 
-/** A click consumes a pending request only after its target opens or the person answers the request window. */
+/**
+ * A click consumes a pending request only after its target opens or the person answers the request window. One worker
+ * at a time presents a request, and it reads the request's state again under that claim before any effect.
+ */
 export async function presentPostedRequest(options: {
     view: RequestView;
     journal: RequestJournal;
@@ -60,19 +68,50 @@ export async function presentPostedRequest(options: {
         return view.outcome;
     }
 
-    if (openWindow && view.request.open) {
-        const opened = await openWindow(view.request.open);
-        if (opened.status === "ran") {
-            return journal.settle(view.id, "done", null, { via: "notification", method: "click" });
+    const claim = await journal.claim(view.id, async (current) => {
+        if (openWindow && current.request.open) {
+            const opened = await openWindow(current.request.open);
+            if (opened.status === "ran") {
+                return journal.settle(current.id, "done", null, { via: "notification", method: "click" });
+            }
+
+            const after = journal.get(current.id);
+            if (after && after.outcome.status !== "pending") {
+                return after.outcome;
+            }
         }
 
-        const current = journal.get(view.id);
-        if (current && current.outcome.status !== "pending") {
-            return current.outcome;
-        }
+        return showRequest(current.request);
+    });
+    if (claim.claimed) {
+        return claim.value;
     }
 
-    return showRequest(view.request);
+    return claim.view.outcome.status === "pending"
+        ? { ...claim.view.outcome, reason: "Another worker is presenting this request." }
+        : claim.view.outcome;
+}
+
+/** Whether a surface took the request: a retry of the same id then waits instead of delivering it again. */
+function wasDelivered(view: RequestView): boolean {
+    return view.events.some((event) => event.type === "delivered");
+}
+
+/** The surface that took the request, from the way that ran and what it answered. */
+function deliveredChannel(
+    delivery: DeliveryName,
+    ran: { via: WayName },
+    value: RequestOutcome
+): "dialog" | "notification" | "terminal" {
+    if (value.via === "terminal") {
+        return "terminal";
+    }
+
+    if (delivery === Delivery.notifyThenAsk || (delivery === Delivery.askElseNotify && ran.via !== "native")) {
+        return "notification";
+    }
+
+    return "dialog";
 }
 
 /** A preset owns the request text and default delivery; callers only supply the preset's typed args. */
@@ -101,64 +140,78 @@ export function defineRequest<TArgs extends z.ZodType>(spec: {
             const journal = ctx.service?.journal ?? createRequestJournal();
             const post = await journal.postOnce({ input: spec.build(ctx.args), timeoutMs: ctx.timeoutMs });
             const posted = post.view;
-            if (!post.created) {
-                return posted.outcome.status !== "pending" ||
-                    spec.wait === "posted" ||
-                    ctx.config.delivery === Delivery.notifyThenAsk ||
-                    ctx.facts.isAgent()
-                    ? posted.outcome
+            const answerOf = (outcome: RequestOutcome): RequestOutcome | Promise<RequestOutcome> =>
+                outcome.status !== "pending" ||
+                spec.wait === "posted" ||
+                ctx.config.delivery === Delivery.notifyThenAsk ||
+                ctx.facts.isAgent()
+                    ? outcome
                     : journal.wait(posted.id, ctx.timeoutMs);
+            if (posted.outcome.status !== "pending" || (!post.created && wasDelivered(posted))) {
+                return answerOf(posted.outcome);
             }
-            if (posted.outcome.status !== "pending") {
-                return posted.outcome;
-            }
+
+            // A first post, or a retry of a post that no surface took yet.
             if (ctx.facts.isAgent() && ctx.config.delivery === Delivery.askNow) {
                 refuseHostEffectInTest("request worker", "Inject a worker launcher in tests.");
-                spawnToolDetached(["genesis-tools", "request", "run", posted.id], { reparent: true });
+                spawnToolDetached(["genesis-tools", "request", "run", "--", posted.id], { reparent: true });
                 return {
                     id: posted.id,
                     status: "pending",
                     reason: "A detached worker is showing the request; the agent does not wait for a person.",
                 };
             }
-            journal.append(posted.id, {
-                type: "delivered",
-                at: new Date().toISOString(),
-                channel:
-                    ctx.config.delivery === Delivery.notifyThenAsk ||
-                    (ctx.config.delivery === Delivery.askElseNotify && (ctx.facts.isAgent() || !ctx.facts.hasDisplay()))
-                        ? "notification"
-                        : "dialog",
-                noticeId: posted.id,
-            });
-            const outcome = await ctx.person[ctx.config.delivery](
-                {
-                    ...posted.request,
-                    deadlineSeconds: ctx.timeoutMs / 1000,
-                    takesFocus: personConfigSchema.parse(ctx.areaConfig).dialog.takesFocus,
-                },
-                { timeoutMs: ctx.timeoutMs }
-            );
-            const value: RequestOutcome =
-                outcome.status === "ran"
-                    ? outcome.value
-                    : {
-                          id: posted.request.id,
-                          status: "unreachable",
-                          reason: outcome.skipped.map((s) => s.reason).join("; "),
-                      };
-            if (value.status === "unreachable") {
-                return value;
-            }
-            if (value.status !== "pending") {
-                return journal.settle(posted.request.id, value.status, value.reason, {
-                    via: value.via,
-                    method: value.method,
+
+            const claim = await journal.claim(posted.id, async (current): Promise<RequestOutcome | null> => {
+                if (wasDelivered(current)) {
+                    return null;
+                }
+
+                const ran = await ctx.person[ctx.config.delivery](
+                    {
+                        ...current.request,
+                        deadlineSeconds: ctx.timeoutMs / 1000,
+                        takesFocus: personConfigSchema.parse(ctx.areaConfig).dialog.takesFocus,
+                    },
+                    { timeoutMs: ctx.timeoutMs }
+                );
+                if (ran.status !== "ran") {
+                    return {
+                        id: current.id,
+                        status: "unreachable",
+                        reason: ran.skipped.map((s) => s.reason).join("; "),
+                    };
+                }
+
+                const value = ran.value;
+                if (value.status === "unreachable") {
+                    return value;
+                }
+
+                journal.append(current.id, {
+                    type: "delivered",
+                    at: new Date().toISOString(),
+                    channel: deliveredChannel(ctx.config.delivery, ran, value),
+                    noticeId: current.id,
                 });
+                if (value.status !== "pending") {
+                    return journal.settle(current.id, value.status, value.reason, {
+                        via: value.via,
+                        method: value.method,
+                    });
+                }
+
+                return value;
+            });
+            if (!claim.claimed) {
+                return answerOf(claim.view.outcome);
             }
-            return spec.wait === "posted" || ctx.config.delivery === Delivery.notifyThenAsk || ctx.facts.isAgent()
-                ? value
-                : journal.wait(posted.request.id, ctx.timeoutMs);
+
+            if (claim.value === null) {
+                return answerOf(journal.get(posted.id)?.outcome ?? posted.outcome);
+            }
+
+            return claim.value.status === "unreachable" ? claim.value : answerOf(claim.value);
         },
     });
 }
