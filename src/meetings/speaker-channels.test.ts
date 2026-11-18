@@ -8,7 +8,7 @@ import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
-import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import { activeSeatPeople, meetingSeatsSchema, seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { embedVoice, VoiceUnavailableError } from "@genesiscz/utils/meetings/voice";
 import { clusterVoices, lineVoices, measureVoice, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
@@ -28,6 +28,7 @@ import { compactEvidence, rawMeeting } from "./lib/raw";
 import { rejectFilterIds } from "./lib/reject-filter";
 import { decidedSeatRanges, suggestSeats } from "./lib/seat-suggest";
 import { assessIndicator } from "./lib/speaker-indicator";
+import { proposeSpeakerLabels } from "./lib/speaker-labels";
 import { suggestItems } from "./lib/suggest";
 import { correctTranscript } from "./lib/transcript-corrections";
 import { anchoredMeetingVoices, lineDeviceCandidates } from "./lib/voice";
@@ -98,6 +99,71 @@ function scene(slots: Slot[]): {
 const ranges = (items: ReturnType<typeof suggestItems>) => items.filter((item) => item.kind === "speaker-range");
 
 describe("seat suggestions", () => {
+    test("timed seats keep the gap between two remote stays in a suggestion", () => {
+        const name = "Fern Example";
+        const stays = [
+            { fromSec: 0, toSec: 5 },
+            { fromSec: 10, toSec: 15 },
+        ];
+        const seated = meetingRecordSchema.parse({
+            ...record,
+            participants: [
+                { name, from: ["platform-roster"], stays: stays.map((s) => ({ ...s, source: "platform-roster" })) },
+            ],
+        });
+        const { seats } = suggestSeats({ record: seated, ranges: [], lines: [], remote: [name] });
+        expect(seats.remote).toEqual(stays.map((s) => ({ name, ...s })));
+        expect(activeSeatPeople({ seats, atSec: 5 }).remote).toEqual([]);
+    });
+
+    test("timed seats follow the person across devices independently of their Teams leave", async () => {
+        const name = "Fern Example";
+        const seats = meetingSeatsSchema.parse({
+            room: [{ name, fromSec: 60, toSec: 120 }],
+            remote: [{ name, toSec: 60 }],
+            microphones: [
+                { id: "self", people: [name] },
+                { id: "guest-desk", deviceId: "desk", people: [name] },
+            ],
+        });
+        const presence = [{ name, fromSec: 0, toSec: 80 }];
+        const seated = meetingRecordSchema.parse({ ...record, seats, attendance: { from: "teams", people: presence } });
+        expect(microphoneCandidates(seated, 59)).toEqual([]);
+        expect(microphoneCandidates(seated, 59, "desk")).toEqual([name]);
+        for (const atSec of [60, 90]) {
+            expect(activeSeatPeople({ seats, atSec })).toEqual({ room: [name], remote: [] });
+            expect(microphoneCandidates(seated, atSec)).toEqual([name]);
+            expect(microphoneCandidates(seated, atSec, "desk")).toEqual([]);
+        }
+        expect(microphoneCandidates(seated, 120)).toEqual([]);
+        expect(microphoneCandidates(seated, 30, name)).toEqual([]);
+        const lines = [{ index: 0, label: "Guest", text: "A line across seats.", fromSec: 59, toSec: 61 }];
+        for (const micShare of [0, 1]) {
+            expect(
+                planByChannel({
+                    seats,
+                    lines: lines.map((l) => ({ ...l, channel: { micShare } })),
+                    input: { label: "Guest", minChars: 0 },
+                }).ranges
+            ).toEqual([]);
+        }
+        const opened = OpenedMeeting.of(new MeetingStore(), seated);
+        const meeting = scene([]).meeting;
+        meeting.transcript = [59, 61, 90, 100].map((startSec) => ({ startSec, speaker: "Guest", text: "A line." }));
+        spyOn(opened, "meeting").mockResolvedValue(meeting);
+        spyOn(opened, "energy").mockResolvedValue({});
+        spyOn(opened, "evidence").mockResolvedValue({
+            speaking: [],
+            files: [],
+            segments: [{ startSec: 59, endSec: 100, channel: "mic" }],
+        });
+        const settings = meetingsConfigSchema.parse({}).global.speakerLabels;
+        settings.seat.enabled = true;
+        settings.voice.enabled = false;
+        const labels = await proposeSpeakerLabels(opened, settings, presence);
+        expect(labels.slice(0, 3).map((label) => label.person)).toEqual([undefined, name, name]);
+    });
+
     test("self wins, decided microphone lines override a muted roster, and a range alone can seat a person", () => {
         const row = (name: string) => ({ name, from: ["platform-roster"] });
         const meeting = meetingRecordSchema.parse({

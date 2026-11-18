@@ -1302,6 +1302,42 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(rows.entries).toHaveLength(2);
     });
 
+    test("timed seats survive RPC and reopen without changing a legacy room row or its group", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const name = "Fern Example";
+        const group = { id: "self", people: ["Reed Example", name] };
+        const legacy = { room: ["Reed Example", name], remote: ["Ash Example"], microphones: [group] };
+        const file = store.path(REVIEW.id);
+        writeFileSync(file, SafeJSON.stringify({ ...store.read(REVIEW.id), seats: legacy }));
+        const before = readFileSync(file);
+        const shown = await client.call("meeting.show", { ref: REVIEW.id });
+        expect(shown.seats?.room).toEqual(legacy.room);
+        expect(readFileSync(file)).toEqual(before);
+        const seats = {
+            ...shown.seats!,
+            room: ["Reed Example", { name, fromSec: 60, toSec: 120 }],
+            remote: [{ name: "Ash Example" }, { name, toSec: 60 }, { name, fromSec: 150, label: "Guest" }],
+        };
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats } });
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "set", title: "Review with seats" },
+        });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)?.seats).toEqual(seats);
+        expect(SafeJSON.parse(readFileSync(file, "utf8"))).toMatchObject({ seats });
+        const saved = readFileSync(file);
+        for (const invalid of [
+            { ...seats, remote: [{ name, toSec: 61 }] },
+            { ...seats, remote: [{ name, fromSec: 5, toSec: 5 }] },
+            { ...seats, remote: [{ name, fromSec: -1 }] },
+        ]) {
+            await expect(
+                client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats: invalid } })
+            ).rejects.toThrow();
+            expect(readFileSync(file)).toEqual(saved);
+        }
+    });
+
     test("service journal reads retain the copied meeting's provenance", async () => {
         const { client, store } = await ADAPTERS[kind]();
         const { duplicateMeeting } = await import("../duplicate");
