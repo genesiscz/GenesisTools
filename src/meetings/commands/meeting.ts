@@ -23,6 +23,7 @@ import { fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
 import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
+import { voiceReadiness } from "../lib/voice-readiness";
 import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
@@ -78,6 +79,7 @@ async function create(
                 await askProjectAtEnd(store, record.id);
             }
 
+            voiceReadiness(store.read(record.id) ?? record, { seatsHint: false }).hints.forEach(ui.info);
             return;
         }
 
@@ -207,7 +209,7 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     try {
         const record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
         if (opts.json) {
-            out.result(windowJson(record));
+            out.result(windowJson({ ...record, voice: voiceReadiness(record) }));
             return;
         }
 
@@ -260,6 +262,9 @@ async function set(
         ui.ok(
             `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
         );
+        if (opts.project) {
+            voiceReadiness(updated).hints.forEach(ui.info);
+        }
     } catch (err) {
         fail(err);
     }
@@ -492,14 +497,14 @@ export function registerMeetingCommands(program: Command): void {
             "--json",
             "print one row per meeting: id, title, start, end, project, labels, sources, context, items, recording"
         )
-        .option("--full", "with --json: the whole records, as show --json prints each")
+        .option("--full", "with --json: the whole stored records")
         .action(list);
 
     program
         .command("show")
         .argument("<meeting>", MEETING_REF)
         .description("One meeting record")
-        .option("--json", "print the record")
+        .option("--json", "print the record and its project voice readiness")
         .action(show);
 
     program

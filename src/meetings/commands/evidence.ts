@@ -17,6 +17,7 @@ import { compactEvidence, rawMeeting } from "../lib/raw";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { rawTerms } from "../lib/suggest";
 import { lineDeviceCandidates, meetingVoices } from "../lib/voice";
+import { voiceReadiness } from "../lib/voice-readiness";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const FORMATS = ["table", "json", "lines"] as const;
@@ -73,6 +74,8 @@ async function evidence(
         }
 
         // A meeting without a transcript source fails in linked() with [no-transcript-source], as every command does.
+        const readiness = voiceReadiness(record);
+        readiness.hints.forEach(ui.info);
         const opened = OpenedMeeting.of(store, record);
         // The voice measurement decodes the whole recording: only when asked for, and only into an output that shows it.
         const wantsVoice = opts.voiceFeatures === true || opts.voices !== undefined;
@@ -159,6 +162,7 @@ async function evidence(
                 });
                 const enriched = {
                     ...raw,
+                    voice: readiness,
                     lines: raw.lines.map((line) =>
                         withDevice(line, {
                             record: current,

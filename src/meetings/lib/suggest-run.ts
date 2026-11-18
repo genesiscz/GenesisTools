@@ -25,6 +25,7 @@ import { proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import { anchoredMeetingVoices } from "./voice";
+import { VOICE_PASS_HISTORY } from "./voice-readiness";
 import type { WordCheckChoice } from "./word-check";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -125,16 +126,16 @@ export async function runSuggest(options: {
     const terms = rules.includes("terms");
     const warnings: string[] = [];
     const opened = prof.measure("open", () => OpenedMeeting.of(store, record));
-    if (options.onProgress || options.signal || prof.enabled) {
+    let ranVoicePass = false;
+    if (needsSpeakerInputs) {
         const { voiceProgressForMeeting, voiceSignalForMeeting } = await import("./speaker-labels/voice");
-        if (options.onProgress || prof.enabled) {
-            let beforeProgress = prof.enabled ? prof.start("before-first-voice-progress") : undefined;
-            voiceProgressForMeeting.set(opened, (done, total) => {
-                beforeProgress?.();
-                beforeProgress = undefined;
-                options.onProgress?.(done, total);
-            });
-        }
+        let beforeProgress = prof.enabled ? prof.start("before-first-voice-progress") : undefined;
+        voiceProgressForMeeting.set(opened, (done, total) => {
+            ranVoicePass = true;
+            beforeProgress?.();
+            beforeProgress = undefined;
+            options.onProgress?.(done, total);
+        });
 
         if (options.signal) {
             voiceSignalForMeeting.set(opened, options.signal);
@@ -306,7 +307,11 @@ export async function runSuggest(options: {
 
     try {
         using _save = prof.section("save");
-        await store.update(record.id, { command: "suggest", change: "suggest findings and questions" }, (current) => {
+        const history = {
+            command: "suggest",
+            change: ranVoicePass ? VOICE_PASS_HISTORY : "suggest findings and questions",
+        };
+        await store.update(record.id, history, (current) => {
             using _mutate = prof.section("save.compute");
             // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
             if (terms) {

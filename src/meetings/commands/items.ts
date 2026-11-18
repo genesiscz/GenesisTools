@@ -51,6 +51,7 @@ import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
+import { voiceReadiness } from "../lib/voice-readiness";
 import { correctedTranscriptRead, speakerStatsRead, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
@@ -300,6 +301,7 @@ async function suggest(
         for (const warning of warnings) {
             ui.warn(warning);
         }
+        voiceReadiness(store.read(record.id) ?? record, { seatsHint: false }).hints.forEach(ui.info);
 
         if (opts.json) {
             out.result(SafeJSON.stringify(fresh, null, 2));

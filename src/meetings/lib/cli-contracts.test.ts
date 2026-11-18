@@ -113,6 +113,56 @@ test("voice backfill CLI accepts project, dry-run and JSON after the subcommand"
     }
 });
 
+test("voice readiness hints from set and raw evidence leave stdout as a single JSON result", async () => {
+    const store = new MeetingStore();
+    const project = "evidence-readiness-fixture";
+    const record = await store.create(
+        {
+            title: "Readiness evidence",
+            start: "2026-11-01T10:00:00Z",
+            createdBy: "new",
+            sources: { wisprflow: { meetingId: "readiness-source" } },
+        },
+        { command: "new", change: "fixture" }
+    );
+    const mocks = [
+        spyOn(wisprflowSource, "load").mockResolvedValue({
+            sourceMeetingId: "readiness-source",
+            title: record.title,
+            start: record.start,
+            participants: [],
+            speakers: [],
+            folders: [],
+            transcript: [],
+        }),
+        spyOn(wisprflowSource, "evidence").mockResolvedValue(null),
+        spyOn(wisprflowSource, "dictionary").mockResolvedValue([]),
+    ];
+    const info = spyOn(ui, "info").mockImplementation(() => {});
+    const output = spyOn(out, "result").mockImplementation(() => {});
+    const hints = [`tools meetings seats ${record.id} --apply`, `tools meetings voices backfill --project ${project}`];
+    try {
+        for (const [command, ...args] of [
+            ["set", record.id, "--project", project],
+            ["evidence", record.id, "--raw", "--word-check", "off"],
+        ] as const) {
+            info.mockClear();
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: command });
+            await program.parseAsync([command, ...args], { from: "user" });
+            expect(info.mock.calls.map(([text]) => text)).toEqual(expect.arrayContaining(hints));
+        }
+        expect(output).toHaveBeenCalledTimes(1);
+        expect(SafeJSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+            voice: { seats: false, samples: 0, people: {}, ready: false, hints },
+        });
+    } finally {
+        for (const mock of [...mocks, info, output]) {
+            mock.mockRestore();
+        }
+    }
+});
+
 test("play's positional time and track reach the original track's file seconds without starting sound", async () => {
     const store = new MeetingStore();
     const record = await store.create(
