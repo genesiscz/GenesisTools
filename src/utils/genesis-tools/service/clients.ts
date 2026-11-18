@@ -15,6 +15,9 @@ export interface ServiceDoor {
     present(request: PersonRequest, timeoutMs: number): Promise<RequestOutcome>;
 }
 
+/** The time beyond an action's own budget that a service call gets, so the action's expiry outcome comes back. */
+export const SERVICE_CALL_GRACE_MS = 10_000;
+
 /** The service answers `hello` at once; a longer wait means it is wedged. */
 const HELLO_TIMEOUT_MS = 5_000;
 
@@ -54,14 +57,14 @@ export async function connectGenesisToolsService(
     }
 }
 
-/** The service's deadline for one action call: the action's budget plus 10 s, never under 130 s. */
-export function serviceActionDeadlineMs(actionTimeoutMs: number | undefined): number {
-    return Math.max(130_000, (actionTimeoutMs ?? 120_000) + 10_000);
+/** The service's deadline for one action call: the action's budget, plus the time to send its expiry outcome back. */
+export function serviceActionDeadlineMs(actionBudgetMs: number | undefined): number {
+    return (actionBudgetMs ?? 120_000) + SERVICE_CALL_GRACE_MS;
 }
 
-/** How long a client waits for one action call: 10 s past the service's deadline, so the service always answers first. */
-export function serviceActionClientTimeoutMs(actionTimeoutMs: number | undefined): number {
-    return serviceActionDeadlineMs(actionTimeoutMs) + 10_000;
+/** How long a client waits for one action call: past the service's deadline, so the service always answers first. */
+export function serviceActionClientTimeoutMs(actionBudgetMs: number | undefined): number {
+    return serviceActionDeadlineMs(actionBudgetMs) + SERVICE_CALL_GRACE_MS;
 }
 
 export async function callRunningService(

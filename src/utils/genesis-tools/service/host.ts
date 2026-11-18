@@ -2,18 +2,20 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type MethodDescriptor, type RpcHandler, type RpcHandlers, toRpcTable } from "@genesiscz/utils/api-descriptor";
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
-import { type EngineDeps, liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import type { AnyActionDef } from "@genesiscz/utils/genesis-tools/actions/define";
+import { type Area, type EngineDeps, liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
+import { actionBudgetMs, explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { createStateStore } from "@genesiscz/utils/genesis-tools/actions/state";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { createRequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { type RequestOutcome, requestOutcomeSchema } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { logger } from "@genesiscz/utils/logger";
-import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import type { RpcCall, RpcConnection } from "@genesiscz/utils/rpc/socket-server";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { z } from "zod";
 import { personConfigSchema } from "../areas/person/deliveries";
 import { genesisToolsApi, type serviceMethods } from "./api";
 import { genesisToolsServiceDir, type ServiceDoor, serviceActionDeadlineMs } from "./clients";
@@ -23,11 +25,30 @@ interface FaceState {
     caller: "person" | "agent" | "face";
 }
 
-async function boundedCall(work: Promise<unknown>, method: string, timeoutMs: number): Promise<unknown> {
+/** What a handler gets: the connection it answers, and a signal that aborts at its deadline or the caller's cancel. */
+interface ServiceCall {
+    connection: RpcConnection<FaceState>;
+    signal: AbortSignal;
+}
+
+/**
+ * Runs a handler under its deadline. At the deadline the handler's signal aborts (a write checks it right before the
+ * file is replaced, an action starts no further step), and the caller is told that the outcome is unknown: a step
+ * already under way can still finish.
+ */
+async function boundedCall(
+    call: RpcCall<FaceState>,
+    timeoutMs: number,
+    handle: (signal: AbortSignal) => Promise<unknown>
+): Promise<unknown> {
+    const { method } = call;
+    const controller = new AbortController();
+    const onCallerAbort = (): void => controller.abort(call.context.signal.reason);
+    call.context.signal.addEventListener("abort", onCallerAbort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-            const message = `GenesisTools service request failed: ${method} exceeded its ${timeoutMs} ms deadline`;
+            const message = `GenesisTools service request failed: ${method} exceeded its ${timeoutMs} ms deadline; it was told to stop, and whether it changed anything is unknown`;
             logger.error({ method }, message);
             try {
                 const dir = genesisToolsDir("logs");
@@ -37,15 +58,33 @@ async function boundedCall(work: Promise<unknown>, method: string, timeoutMs: nu
             } catch (error) {
                 logger.warn({ error, method }, "Service deadline could not be written to the app monitor");
             }
-            reject(new RpcError(1001, message));
+            const error = new RpcError(1001, message);
+            controller.abort(error);
+            reject(error);
         }, timeoutMs);
     });
     try {
-        return await Promise.race([work, expired]);
+        return await Promise.race([handle(controller.signal), expired]);
     } finally {
         clearTimeout(timer);
+        call.context.signal.removeEventListener("abort", onCallerAbort);
     }
 }
+
+/** A call that is not an action (config, state, requests) finishes in seconds; this bounds a wedged one. */
+const DEFAULT_CALL_DEADLINE_MS = 130_000;
+
+const actionRunParams = z.object({ id: z.string(), timeoutMs: z.number().optional() });
+
+/** The action `<area>.<action>` names, or null for every other method. */
+function actionOf(id: string): AnyActionDef | null {
+    const registry: Record<string, Area> = AREAS;
+    const dot = id.indexOf(".");
+    const area = dot > 0 && Object.hasOwn(registry, id.slice(0, dot)) ? registry[id.slice(0, dot)] : undefined;
+    const name = id.slice(dot + 1);
+    return area && Object.hasOwn(area.actions, name) ? (area.actions[name] ?? null) : null;
+}
+
 export async function startGenesisToolsService(
     options: { dir?: string; deps?: Partial<EngineDeps>; idleMs?: number; checkEveryMs?: number } = {}
 ): Promise<{ status: "running" } | { status: "started"; host: ServiceHost<FaceState>; deps: EngineDeps }> {
@@ -85,47 +124,66 @@ export async function startGenesisToolsService(
         },
     };
     const deps = liveEngineDeps(AREAS, { ...options.deps, config, state, service: door });
-    const handlers: Record<string, RpcHandler<MethodDescriptor, RpcConnection<FaceState>>> = {};
-    const deadlines = new Map<string, number>();
-    const depsFor = (connection: RpcConnection<FaceState>): EngineDeps => ({
+    const callerDeps = (connection: RpcConnection<FaceState>): EngineDeps => ({
         ...deps,
         facts: { ...deps.facts, isAgent: () => connection.state.caller === "agent" },
     });
+    const handlers: Record<string, RpcHandler<MethodDescriptor, ServiceCall>> = {};
     for (const [area, definition] of Object.entries(AREAS)) {
-        for (const [name, action] of Object.entries(definition.actions)) {
+        for (const name of Object.keys(definition.actions)) {
             const id = `${area}.${name}`;
-            deadlines.set(id, serviceActionDeadlineMs(action.timeoutMs));
-            handlers[id] = (params, connection) =>
-                runAreaAction(AREAS, id, params, depsFor(connection), {
-                    timeoutMs: (deadlines.get(id) ?? 130_000) - 10_000,
-                });
+            handlers[id] = (params, call) =>
+                runAreaAction(AREAS, id, params, callerDeps(call.connection), { signal: call.signal });
         }
     }
-    deadlines.set("requests.present", deadlines.get("person.showWindow") ?? 130_000);
-    const extra: RpcHandlers<{ methods: typeof serviceMethods }, RpcConnection<FaceState>> = {
-        hello: (params, connection) => {
+    /** An action call's host deadline: the engine's own budget, plus the time to send its expiry outcome back. */
+    const callDeadlineMs = (method: string, params: unknown): number => {
+        const run = method === "actions.run" ? actionRunParams.safeParse(params) : null;
+        // requests.present runs person.showWindow inside the call, so it gets that action's deadline.
+        const action = actionOf(
+            run?.success ? run.data.id : method === "requests.present" ? "person.showWindow" : method
+        );
+
+        if (!action) {
+            return DEFAULT_CALL_DEADLINE_MS;
+        }
+
+        return serviceActionDeadlineMs(actionBudgetMs(action, run?.success ? run.data.timeoutMs : undefined));
+    };
+    const extra: RpcHandlers<{ methods: typeof serviceMethods }, ServiceCall> = {
+        hello: (params, { connection }) => {
             connection.state.methods = params.methods;
             connection.state.caller = params.caller;
             return { protocol: 1, methods: genesisToolsApi.methods.map((m) => m.name) };
         },
+        "actions.run": (params, call) => {
+            if (!actionOf(params.id)) {
+                throw new RpcError(JSON_RPC_ERRORS.invalidParams, `actions.run: no action "${params.id}"`);
+            }
+
+            return runAreaAction(AREAS, params.id, params.args ?? {}, callerDeps(call.connection), {
+                timeoutMs: params.timeoutMs,
+                signal: call.signal,
+            });
+        },
         "actions.explain": (params) => explainAction(AREAS, params.id, deps, params),
         "config.get": (params) => (params.path.includes(".") ? config.get(params.path) : config.resolve(params.path)),
-        "config.set": async (params) => {
-            await config.set(params.path, params.value);
+        "config.set": async (params, { signal }) => {
+            await config.set(params.path, params.value, { signal });
             return { changed: true };
         },
-        "config.unset": async (params) => {
-            await config.unset(params.path);
+        "config.unset": async (params, { signal }) => {
+            await config.unset(params.path, { signal });
             return { changed: true };
         },
-        "state.report": async (params) => {
-            await state.report(params.area, params.key, params.value);
+        "state.report": async (params, { signal }) => {
+            await state.report(params.area, params.key, params.value, { signal });
             return { reported: true };
         },
         "requests.post": (params) => journal.post(params),
         "requests.get": (params) => journal.get(params.id),
         "requests.list": (params) => journal.list({ limit: params.limit }),
-        "requests.present": async (params, connection) => {
+        "requests.present": async (params, call) => {
             const view = journal.get(params.id);
             if (!view) {
                 throw new Error(`request ${params.id} does not exist`);
@@ -143,8 +201,8 @@ export async function startGenesisToolsService(
                 AREAS,
                 "person.showWindow",
                 { ...view.request, takesFocus },
-                depsFor(connection),
-                { timeoutMs: (deadlines.get("requests.present") ?? 130_000) - 10_000 }
+                callerDeps(call.connection),
+                { signal: call.signal }
             );
             const outcome: RequestOutcome =
                 shown.status === "ran"
@@ -167,7 +225,7 @@ export async function startGenesisToolsService(
         "requests.withdraw": (params) => journal.withdraw(params.id),
     };
     Object.assign(handlers, extra);
-    const table = toRpcTable<typeof genesisToolsApi, RpcConnection<FaceState>>(genesisToolsApi, handlers);
+    const table = toRpcTable<typeof genesisToolsApi, ServiceCall>(genesisToolsApi, handlers);
     let repeating = false;
     async function repeatNotices(): Promise<void> {
         if (repeating) {
@@ -231,10 +289,8 @@ export async function startGenesisToolsService(
         protocol: 1,
         state: (): FaceState => ({ methods: [], caller: "person" }),
         call: async (call: RpcCall<FaceState>) =>
-            boundedCall(
-                table.call(call.method, call.params, call.connection),
-                call.method,
-                deadlines.get(call.method) ?? 130_000
+            boundedCall(call, callDeadlineMs(call.method, call.params), (signal) =>
+                table.call(call.method, call.params, { connection: call.connection, signal })
             ),
         idleMs: options.idleMs ?? 600_000,
         checkEveryMs,

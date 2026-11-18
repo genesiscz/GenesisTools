@@ -15895,6 +15895,202 @@ public struct HelloResult: Codable, Sendable {
     }
 }
 
+public struct ActionsRunParams: Codable, Sendable {
+    public var `id`: String
+    public var `args`: GenesisToolsJSON?
+    public var `timeoutMs`: Int?
+    public init(`id`: String, `args`: GenesisToolsJSON? = nil, `timeoutMs`: Int? = nil) {
+        self.`id` = `id`
+        self.`args` = `args`
+        self.`timeoutMs` = `timeoutMs`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `args`; case `timeoutMs` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`args` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`args`)
+        self.`timeoutMs` = try box.decodeIfPresent(Int.self, forKey: .`timeoutMs`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encodeIfPresent(`args`, forKey: .`args`)
+        try box.encodeIfPresent(`timeoutMs`, forKey: .`timeoutMs`)
+    }
+}
+
+public enum ActionsRunResultOption0Status: String, Codable, Sendable {
+    case value0 = "ran"
+}
+
+public struct ActionsRunResultOption0SkippedItemFix: Codable, Sendable {
+    public var `command`: String
+    public var `sentence`: String
+    public init(`command`: String, `sentence`: String) {
+        self.`command` = `command`
+        self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
+}
+
+public struct ActionsRunResultOption0SkippedItem: Codable, Sendable {
+    public var `way`: String
+    public var `code`: String
+    public var `reason`: String
+    public var `fix`: ActionsRunResultOption0SkippedItemFix?
+    public init(`way`: String, `code`: String, `reason`: String, `fix`: ActionsRunResultOption0SkippedItemFix? = nil) {
+        self.`way` = `way`
+        self.`code` = `code`
+        self.`reason` = `reason`
+        self.`fix` = `fix`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(ActionsRunResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
+}
+
+public struct ActionsRunResultOption0: Codable, Sendable {
+    public var `status`: ActionsRunResultOption0Status
+    public var `via`: String
+    public var `value`: GenesisToolsJSON
+    public var `skipped`: [ActionsRunResultOption0SkippedItem]
+    public init(`status`: ActionsRunResultOption0Status, `via`: String, `value`: GenesisToolsJSON, `skipped`: [ActionsRunResultOption0SkippedItem]) {
+        self.`status` = `status`
+        self.`via` = `via`
+        self.`value` = `value`
+        self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(ActionsRunResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`skipped` = try box.decode([ActionsRunResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+    }
+}
+
+public enum ActionsRunResultOption1Status: String, Codable, Sendable {
+    case value0 = "unreachable"
+}
+
+public struct ActionsRunResultOption1SkippedItemFix: Codable, Sendable {
+    public var `command`: String
+    public var `sentence`: String
+    public init(`command`: String, `sentence`: String) {
+        self.`command` = `command`
+        self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
+}
+
+public struct ActionsRunResultOption1SkippedItem: Codable, Sendable {
+    public var `way`: String
+    public var `code`: String
+    public var `reason`: String
+    public var `fix`: ActionsRunResultOption1SkippedItemFix?
+    public init(`way`: String, `code`: String, `reason`: String, `fix`: ActionsRunResultOption1SkippedItemFix? = nil) {
+        self.`way` = `way`
+        self.`code` = `code`
+        self.`reason` = `reason`
+        self.`fix` = `fix`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(ActionsRunResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
+}
+
+public struct ActionsRunResultOption1: Codable, Sendable {
+    public var `status`: ActionsRunResultOption1Status
+    public var `skipped`: [ActionsRunResultOption1SkippedItem]
+    public var `manual`: String?
+    public init(`status`: ActionsRunResultOption1Status, `skipped`: [ActionsRunResultOption1SkippedItem], `manual`: String? = nil) {
+        self.`status` = `status`
+        self.`skipped` = `skipped`
+        self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(ActionsRunResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([ActionsRunResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
+    }
+}
+
+public enum ActionsRunResult: Codable, Sendable {
+    case option0(ActionsRunResultOption0)
+    case option1(ActionsRunResultOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? ActionsRunResultOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? ActionsRunResultOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No ActionsRunResult variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
 public struct ActionsExplainParams: Codable, Sendable {
     public var `id`: String
     public var `fresh`: Bool?
@@ -19567,6 +19763,7 @@ public final class GenesisToolsRPC {
         public func batch(_ params: WorkBatchParams) async throws -> WorkBatchResult { try await owner.call("work.batch", params, timeout: 130) }
     }
     public func hello(_ params: HelloParams) async throws -> HelloResult { try await call("hello", params) }
+    public func actionsRun(_ params: ActionsRunParams) async throws -> ActionsRunResult { try await call("actions.run", params) }
     public func actionsExplain(_ params: ActionsExplainParams) async throws -> ActionsExplainResult { try await call("actions.explain", params) }
     public func configGet(_ params: ConfigGetParams) async throws -> GenesisToolsJSON { try await call("config.get", params) }
     public func configSet(_ params: ConfigSetParams) async throws -> ConfigSetResult { try await call("config.set", params) }
@@ -19702,6 +19899,7 @@ public final class GenesisToolsRPC {
         case "work.handoff": _ = try decoder.decode(WorkHandoffParams.self, from: params); _ = try decoder.decode(WorkHandoffResult.self, from: result)
         case "work.batch": _ = try decoder.decode(WorkBatchParams.self, from: params); _ = try decoder.decode(WorkBatchResult.self, from: result)
         case "hello": _ = try decoder.decode(HelloParams.self, from: params); _ = try decoder.decode(HelloResult.self, from: result)
+        case "actions.run": _ = try decoder.decode(ActionsRunParams.self, from: params); _ = try decoder.decode(ActionsRunResult.self, from: result)
         case "actions.explain": _ = try decoder.decode(ActionsExplainParams.self, from: params); _ = try decoder.decode(ActionsExplainResult.self, from: result)
         case "config.get": _ = try decoder.decode(ConfigGetParams.self, from: params); _ = try decoder.decode(GenesisToolsJSON.self, from: result)
         case "config.set": _ = try decoder.decode(ConfigSetParams.self, from: params); _ = try decoder.decode(ConfigSetResult.self, from: result)

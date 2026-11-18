@@ -241,7 +241,7 @@ function contextFor(params: {
         areaConfig: deps.config.resolve(areaName),
         state: {
             get: (key) => deps.state.get(areaName, key),
-            report: (key, value) => deps.state.report(areaName, key, value),
+            report: (key, value) => deps.state.report(areaName, key, value, { signal: params.signal }),
         },
         facts: deps.facts,
         service: deps.service ?? null,

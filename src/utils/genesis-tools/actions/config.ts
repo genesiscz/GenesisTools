@@ -32,8 +32,9 @@ export interface ConfigStore {
     resolve(area: string, action?: string): Record<string, unknown>;
     /** `<area>.<key>` or `<area>.<action>.<key>`; the resolved value. */
     get(path: string): unknown;
-    set(path: string, value: unknown): Promise<void>;
-    unset(path: string): Promise<void>;
+    /** `signal`: a cancel seen before the file is replaced stops the write. */
+    set(path: string, value: unknown, options?: { signal?: AbortSignal }): Promise<void>;
+    unset(path: string, options?: { signal?: AbortSignal }): Promise<void>;
     onChange(listener: (change: ConfigChange) => void): () => void;
 }
 
@@ -267,7 +268,7 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
         }
     }
 
-    async function write(path: string, value: unknown): Promise<void> {
+    async function write(path: string, value: unknown, signal: AbortSignal | undefined): Promise<void> {
         const target = configTarget(options.registry, path);
         let stored = value;
 
@@ -281,7 +282,9 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
             stored = parsed.data;
         }
 
-        await document.update((current) => ({ write: withKey(current, target, stored), result: undefined }));
+        await document.update((current) => ({ write: withKey(current, target, stored), result: undefined }), {
+            signal,
+        });
 
         // The value is written; a listener that throws must not tell the caller the set failed.
         for (const listener of listeners) {
@@ -310,8 +313,8 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
             const target = configTarget(options.registry, path);
             return resolve(target.area, target.action ?? undefined)[target.key];
         },
-        set: (path, value) => write(path, value),
-        unset: (path) => write(path, undefined),
+        set: (path, value, writeOptions) => write(path, value, writeOptions?.signal),
+        unset: (path, writeOptions) => write(path, undefined, writeOptions?.signal),
         onChange(listener) {
             listeners.add(listener);
             return () => {
