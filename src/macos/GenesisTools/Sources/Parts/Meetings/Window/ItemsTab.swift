@@ -54,6 +54,8 @@ enum ItemsFilter: String, CaseIterable {
 struct RepeatedWordRow: View {
     let row: ReviewRow
     let item: MeetingItem
+    /// The dictionary question attached to this word (`ItemsProjection.dictionaries`), found once per rows change.
+    var dictionary: ReviewRow? = nil
     let detail: MeetingDetailModel
     @State private var places: DecisionReach.Spelling?
     @State private var readingPlaces = false
@@ -61,12 +63,6 @@ struct RepeatedWordRow: View {
     @State private var earlierText = ""
     @State private var advanceAfterSave = false
     private var answer: String { detail.drafts[row.id] ?? item.wordSuggestion ?? "" }
-    private var dictionary: ReviewRow? {
-        let items = detail.record.value?.items ?? []
-        let id = item.about == "dictionary" ? item.id : item.dictionaryQuestion(in: items)?.id
-        return detail.rows.value?.rows.first { $0.id == id }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -173,9 +169,8 @@ struct ItemsTab: View {
     /// first layout.
     @State private var listWidth: CGFloat?
     @AppStorage("meetings.rows.questionGroup") private var questionGroup = "all"
-    @State private var qualityFailure: String?
-    @AppStorage("meetings.listen.spotCheckCount") private var qualityCount = 20
-    @AppStorage("meetings.listen.longStretchWords") private var qualityWords = 50
+    /// What the list and its bar show, computed once per change of its inputs (`ItemsProjection.make`).
+    @State private var projection = ItemsProjection()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -198,20 +193,33 @@ struct ItemsTab: View {
                            detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
                            actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { suggest() }
                 }
-            } else {
+            } else if projection.ready {
                 list(rows)
+            } else {
+                // The first frame, before the projection: nothing, not an empty list that says nothing waits.
+                Color.clear
             }
         }
         }
         .onChange(of: detail.record.value?.project) { _, _ in projectRefused = false }
         .onAppear { detail.restoreRowsForReopen() }
         .onChange(of: lowPriority) { _, _ in detail.readRows(quiet: true) }
+        .onChange(of: projectionInput, initial: true) { _, input in projection = ItemsProjection.make(input) }
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack {
-                FindingComposerButton(detail: detail)
-                Spacer()
-            }.padding(.horizontal, 16).padding(.vertical, 6)
+            ItemsBar(detail: detail, projection: projection, group: $questionGroup, applyAbove: applyAbove)
         }
+    }
+
+    /// The config's apply line (`assign.applyAbove`).
+    private var applyAbove: Double { detail.window?.overview.value?.applyAbove ?? 0.5 }
+
+    /// The projection's inputs. Building it is cheap: the arrays are shared, and an unchanged array compares equal by
+    /// its storage before any element is read.
+    private var projectionInput: ItemsProjection.Input {
+        .init(rows: detail.rowsForReopen.value?.rows ?? [], items: detail.record.value?.items,
+              order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
+              decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
+              held: detail.heldFolds, filter: detail.itemsFilter, group: questionGroup, applyAbove: applyAbove)
     }
 
     private var needsProject: Bool { projectRefused || detail.record.value.map { $0.project?.isEmpty != false } == true }
@@ -234,68 +242,18 @@ struct ItemsTab: View {
     }
 
     private func list(_ rows: ReviewRows) -> some View {
-        let open = rows.rows.filter(\.isOpen).count
-        let questions = rows.rows.filter { $0.isOpen && $0.isQuestion }.count
-        let kind = ItemsFilter.effective(detail.itemsFilter, open: open, questions: questions)
+        let open = projection.open
         // The row whose Moment is on top of the player: it carries the play hue on its leading edge.
         let player = detail.window?.player
         let top = player?.top
         let playing = top?.meeting == detail.id ? top?.target : nil
-        let visible = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
-                                                   decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
-                                                   keeping: detail.heldFolds)
-        let items = detail.record.value?.items ?? []
-        let grouped = Self.wordRows(visible.filter { $0.group != "words" } + rows.rows.filter { $0.group == "words" }, items: items)
-        let shown = kind.rows(grouped).filter { questionGroup == "all" || ($0.group ?? "rules") == questionGroup }
-        let ids = shown.map(\.id)
-        // The bar above the list says how many rows wait when it shows; the list's own title says it when it does not.
-        let barShows = BulkConfirmBar.shows(items)
+        let shown = projection.shown
+        let ids = projection.ids
         return ScrollViewReader { proxy in
             ScrollView {
                 // A lazy stack, not a List: for an accessibility client a List built, measured and recycled every row
                 // it held (2026-11-06/07). The stack holds only the rows near the viewport.
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Stepper("\(qualityCount) samples", value: $qualityCount, in: 1...100).fixedSize()
-                        Stepper("\(qualityWords)+ words", value: $qualityWords, in: 10...500, step: 10).fixedSize()
-                    }.font(.caption)
-                    HStack {
-                        Button("Prepare spot check") {
-                            Task { do { try await detail.prepareListenQuality("spot-check", count: qualityCount); questionGroup = "spot-check" } catch { qualityFailure = error.localizedDescription } }
-                        }
-                        Button("Prepare long stretches") {
-                            Task { do { try await detail.prepareListenQuality("long-stretch", words: qualityWords); questionGroup = "long-stretch" } catch { qualityFailure = error.localizedDescription } }
-                        }
-                    }
-                    if let qualityFailure { Text(qualityFailure).foregroundStyle(.red) }
-                    let checked = items.filter { $0.group == "spot-check" && $0.status == "confirmed" }
-                    if !checked.isEmpty {
-                        let changed = checked.filter { item in
-                            if case .string(let original)? = item.evidence?["originalSpeaker"] { return item.answer != original }
-                            return false
-                        }.count
-                        Text("Spot check: \(changed)/\(checked.count) changed (\(Int(100 * Double(changed) / Double(checked.count))) %)").font(.caption)
-                    }
-                    if let checks = detail.record.value?.review?.listen?.spotChecks, !checks.isEmpty {
-                        DisclosureGroup("Spot-check history") {
-                            ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
-                                Text("\(check.at): \(check.changed)/\(check.answered) changed").font(.caption)
-                            }
-                        }
-                    }
-                    WrapLayout(spacing: 6, lineSpacing: 4) {
-                        Button("All") { questionGroup = "all" }.buttonStyle(.genHoverPlain())
-                        ForEach(Self.questionGroups, id: \.id) { group in
-                            let count = grouped.filter { ($0.group ?? "rules") == group.id && $0.isQuestion }.count
-                            Button { questionGroup = group.id; detail.itemsFilter = .all } label: {
-                                Badge("\(group.title) (\(count))", color: KitHue.ask.ink,
-                                      look: questionGroup == group.id ? .filled : .tag)
-                            }.buttonStyle(.genHoverPlain()).accessibilityAddTraits(questionGroup == group.id ? .isSelected : [])
-                        }
-                    }.padding(.horizontal, 16)
-                    if !barShows {
-                        ItemsHeader(text: Self.waitingWords(open: open))
-                    }
                     if rows.hidden.lowPriority > 0 {
                         HStack(spacing: 8) {
                             Text(verbatim: "\(Plural.count(rows.hidden.lowPriority, "low-priority question")) hidden, as the terminal hides them")
@@ -313,8 +271,8 @@ struct ItemsTab: View {
                         let busy = detail.busyItems.contains(row.id)
                         let meanwhile = detail.decidedMeanwhile[row.id]
                         Group {
-                        if row.group == "words", let item = items.first(where: { $0.id == row.id }) {
-                            RepeatedWordRow(row: row, item: item, detail: detail)
+                        if row.group == "words", let item = projection.wordItems[row.id] {
+                            RepeatedWordRow(row: row, item: item, dictionary: projection.dictionaries[row.id], detail: detail)
                         } else {
                         ReviewRowView(row: row, detail: detail, player: player,
                                       play: player.map { MomentPlay.of($0, meeting: detail.id, targets: ReviewRowView.targets(row)) } ?? .none,
@@ -324,6 +282,8 @@ struct ItemsTab: View {
                                       changingAnswer: detail.changingRows.contains(row.id),
                                       foldedFit: ReviewRowView.foldedFit(row, busy: busy, room: listWidth.map { $0 - Self.rowInset }),
                                       held: detail.heldFolds.contains(row.id),
+                                      asksSpeaker: projection.speakerQuestions.contains(row.id),
+                                      references: projection.references[row.id] ?? [],
                                       selectRow: {
                                           detail.selectedRow = row.id
                                           focused = true
@@ -426,10 +386,6 @@ struct ItemsTab: View {
         // Keep room below the list for bottom notices. Top notices overlay it: changing a top safe-area inset would
         // shift every row when a notice appears, expires or is dismissed.
         .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: noticeEdge == .bottom ? noticeRoom : 0) }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            BulkConfirmBar(detail: detail, items: items, open: open, questions: questions, filter: $detail.itemsFilter,
-                           applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
-        }
     }
 
     /// A row's horizontal padding inside the list (10 pt in its background, 6 pt outside it, on both sides).
@@ -566,128 +522,6 @@ struct ItemsTab: View {
     /// term with no spelling or a range with no speaker. Kept for the item-level keys of the bulk bar's items.
     static func keyActs(on item: MeetingItem, confirm: Bool) -> Bool {
         confirm ? item.canConfirm : item.isDecidable
-    }
-}
-
-/// A section title of the Items list.
-private struct ItemsHeader: View {
-    let text: String
-
-    var body: some View {
-        Text(verbatim: text)
-            .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
-            .accessibilityAddTraits(.isHeader)
-    }
-}
-
-/// Above the rows: how many suggestions are at the apply line, and one menu that confirms all of them at or above a
-/// line, with one Undo. Before it every suggestion took its own click, 40 of them in a long meeting.
-private struct BulkConfirmBar: View {
-    let detail: MeetingDetailModel
-    let items: [MeetingItem]
-    /// The review rows that wait (questions and suggestions).
-    let open: Int
-    /// The questions among them.
-    let questions: Int
-    /// The kind of rows the list shows.
-    @Binding var filter: ItemsFilter
-    /// The config's apply line (`assign.applyAbove`), the default threshold.
-    let applyAbove: Double
-    @Environment(\.kitLook) private var look
-    /// The width the filter's slot is offered, in whole points; nil until its first layout.
-    @State private var room: CGFloat?
-
-    /// The bar shows while a suggestion waits (a question is answered by ear, not confirmed in bulk).
-    static func shows(_ items: [MeetingItem]) -> Bool {
-        items.contains { $0.status == "suggested" && $0.kind != "question" }
-    }
-
-    var body: some View {
-        if Self.shows(items) {
-            let atLine = MeetingDetailModel.confirmable(items, atOrAbove: applyAbove).count
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    if ItemsFilter.offered(open: open, questions: questions) {
-                        // Both kinds wait: the counts are the filter. Without room for the counts the titles stay;
-                        // in the narrowest column the three titles share what the menu leaves. One strip, picked
-                        // from the room this slot is given (whole points): a `ViewThatFits` of the three built every
-                        // candidate on each measurement, and the list's insets measure the bar many times per pass,
-                        // which was most of the main thread while a Moment played (2026-11-11).
-                        let shape = ItemsFilter.Bar.pick(room: room, counts: kindsWidth(counts: true), titles: kindsWidth(counts: false))
-                        kinds(counts: shape == .counts, fills: shape == .shared)
-                            .instantTooltip(ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: false))
-                            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { room = $0 }
-                            // First in line for the row's width: as one of three equal shares it was offered a third
-                            // of the row and gave up its counts in a wide column.
-                            .layoutPriority(1)
-                    } else {
-                        ViewThatFits(in: .horizontal) {
-                            words(compact: false, atLine: atLine)
-                            words(compact: true, atLine: atLine)
-                        }
-                        .accessibilityAddTraits(.isHeader)
-                    }
-                    Spacer(minLength: 8)
-                    MenuButton(items: { menu() }) {
-                        // Its own width always: beside the filter it was squeezed to one letter per line.
-                        Label("Confirm all…", systemImage: "checkmark.circle").font(.system(size: 12)).fixedSize()
-                    }
-                    .disabled(detail.isBusy("confirm.all"))
-                    .instantTooltip("Confirm every suggestion at or above a confidence, with one Undo")
-                    .accessibilityIdentifier("meetings.items.confirmAll")
-                }
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                Divider()
-            }
-            .background(.background)
-        }
-    }
-
-    private func pct(_ value: Double) -> String { MeetingsWords.confidence(value) ?? "" }
-
-    /// All, Questions, Suggestions: each with the rows that wait, a question in the ask hue.
-    private func kinds(counts: Bool, fills: Bool = false) -> some View {
-        GenSegmentedTabs("Rows shown", items: kindItems(counts: counts), selection: $filter, minSegmentWidth: 0,
-                         identifier: "meetings.items.filter", fillsWidth: fills, size: .small)
-    }
-
-    private func kindItems(counts: Bool) -> [GenSegmentedTabs<ItemsFilter>.Item] {
-        [
-            .init(.all, "All", count: counts ? open : nil),
-            .init(.questions, "Questions", count: counts ? questions : nil, hue: .ask),
-            .init(.suggestions, "Suggestions", count: counts ? open - questions : nil, hue: .care),
-        ]
-    }
-
-    /// The width the strip of `kinds(counts:)` takes at its own size, computed from its titles, not built.
-    private func kindsWidth(counts: Bool) -> CGFloat {
-        GenSegmentedTabs.naturalWidth(items: kindItems(counts: counts), selection: filter, minSegmentWidth: 0,
-                                      size: .small, look: look)
-    }
-
-    private func words(compact: Bool, atLine: Int) -> some View {
-        Text(verbatim: ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: compact))
-            .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-    }
-
-    private func menu() -> [MenuButtonItem] {
-        var lines = [0.9, 0.8]
-        if !lines.contains(applyAbove), applyAbove > 0 { lines.append(applyAbove) }
-        var menu: [MenuButtonItem] = [.note("Confirm every suggestion at or above")]
-        for line in lines.sorted(by: >) {
-            let count = MeetingDetailModel.confirmable(items, atOrAbove: line).count
-            let mark = line == applyAbove ? " (the apply line)" : ""
-            menu.append(.action("\(pct(line))\(mark): \(Plural.count(count, "item"))", enabled: count > 0) {
-                detail.confirmAll(atOrAbove: line)
-            })
-        }
-        let every = MeetingDetailModel.confirmable(items, atOrAbove: 0).count
-        menu.append(.action("Any confidence: \(Plural.count(every, "item"))", enabled: every > 0) { detail.confirmAll(atOrAbove: 0) })
-        menu.append(.divider)
-        menu.append(.note("Questions, ranges with no speaker and terms with no spelling stay for you."))
-        return menu
     }
 }
 

@@ -36,6 +36,11 @@ struct ReviewRowView: View, Equatable {
     /// This window just decided the row and it still keeps its place (G33): its choices stay in the same slot until
     /// the reader scrolls, so another choice can change the answer without opening a separate editor.
     var held = false
+    /// A question that asks who speaks (`ItemsProjection.speakerQuestions`): it offers "Somebody else…", "Something
+    /// else…" and "Two voices…". Passed in, so no row searches the record's items in its body.
+    var asksSpeaker = false
+    /// The rows its "It settles" line names, in words (`ItemsProjection.references`).
+    var references: [ItemsProjection.Reference] = []
     /// The list selects and focuses itself immediately, while the title still listens for a second click.
     var selectRow: (() -> Void)? = nil
     @Environment(\.kitLook) private var look
@@ -53,7 +58,8 @@ struct ReviewRowView: View, Equatable {
         lhs.row == rhs.row && lhs.selected == rhs.selected && lhs.editing == rhs.editing && lhs.busy == rhs.busy
             && lhs.meanwhile == rhs.meanwhile && lhs.choiceKeys == rhs.choiceKeys && lhs.held == rhs.held
             && lhs.play == rhs.play && lhs.draft == rhs.draft && lhs.changingAnswer == rhs.changingAnswer
-            && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player
+            && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player && lhs.asksSpeaker == rhs.asksSpeaker
+            && lhs.references == rhs.references
     }
 
     /// Every Moment the row offers to play: its own, the times in its text, and the transcript lines it comes from.
@@ -127,7 +133,7 @@ struct ReviewRowView: View, Equatable {
                 if detail.editingQuestion == row.id {
                     QuestionWordingEditor(row: row, detail: detail)
                 } else {
-                    RowEditor(row: row, detail: detail)
+                    RowEditor(row: row, detail: detail, asksSpeaker: asksSpeaker)
                 }
             } else if row.isOpen || held {
                 choices
@@ -348,7 +354,7 @@ struct ReviewRowView: View, Equatable {
                     detail.choose(choice, on: row)
                 }
             }
-            if row.isQuestion && detail.record.value?.items.first(where: { $0.id == row.id })?.about == "speaker" {
+            if row.isQuestion && asksSpeaker {
                 GhostButton("Somebody else…", symbol: "person.crop.circle.badge.questionmark", tooltip: "Search for the person") { detail.edit(row) }
                 GhostButton("Something else…", symbol: "text.bubble", tooltip: "Comment and keep the question open") { writingListenComment = true }
                     .popover(isPresented: $writingListenComment) {
@@ -603,7 +609,7 @@ struct ReviewRowView: View, Equatable {
     private func settlesLine(_ text: String, items: [String]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "checkmark.seal").font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
-            SettlesReferences(text: text, items: items, detail: detail)
+            SettlesReferences(text: text, items: items, references: references, detail: detail)
         }
     }
 
@@ -768,6 +774,8 @@ private struct ChoiceButton: View {
 private struct RowEditor: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
+    /// The question asks who speaks (`ReviewRowView.asksSpeaker`).
+    var asksSpeaker = false
     @FocusState private var focused: Bool
     @FocusState private var reasonFocused: Bool
     @FocusState private var commentFocused: Bool
@@ -782,8 +790,7 @@ private struct RowEditor: View {
 
     /// A speaker range is confirmed as a person: the picker ranks the people in the call at its start first.
     private var picksPerson: Bool {
-        (row.kind == "speaker-range" && row.edit == "person") ||
-        (row.isQuestion && detail.record.value?.items.first(where: { $0.id == row.id })?.about == "speaker")
+        (row.kind == "speaker-range" && row.edit == "person") || (row.isQuestion && asksSpeaker)
     }
 
     private var draft: Binding<String> {
@@ -918,19 +925,22 @@ struct QuestionLines: View {
 private struct SettlesReferences: View {
     let text: String
     let items: [String]
+    /// The settled rows in words, found once per rows change (`ItemsProjection.references`). A row the list did not
+    /// project (an empty list in a test) names its items by number.
+    let references: [ItemsProjection.Reference]
     let detail: MeetingDetailModel
 
     var body: some View {
         WrapLayout(spacing: 6, lineSpacing: 2) {
             Text(verbatim: items.isEmpty ? text : "\(text):").font(.system(size: 12.5)).foregroundStyle(.secondary)
             ForEach(items, id: \.self) { id in
-                let settled = detail.rows.value?.rows.first { $0.id == id }
+                let settled = references.first { $0.id == id }
                 // lint-rules-ignore: short list (the one to three items a question settles; LiveButton reads the review row's liveness)
                 LiveButton(tooltip: settled.map { "\($0.what). Click to select it in the list." } ?? "Item \(id)", pressable: true,
                            action: { detail.reveal(row: id) }) {
-                    Text(verbatim: settled.map(ReviewRowView.reference) ?? id).font(.system(size: 12)).foregroundStyle(Color.accentColor)
+                    Text(verbatim: settled?.words ?? "Item \(id)").font(.system(size: 12)).foregroundStyle(Color.accentColor)
                 }
-                .accessibilityLabel("Select \(settled.map(ReviewRowView.reference) ?? id)")
+                .accessibilityLabel("Select \(settled?.words ?? "item \(id)")")
             }
         }
     }

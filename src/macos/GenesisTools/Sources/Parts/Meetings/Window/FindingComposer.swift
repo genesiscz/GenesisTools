@@ -3,6 +3,8 @@ import SwiftUI
 /// Adds to the same decision journal as the CLI. The service supplies anchor errors and duplicate IDs.
 struct FindingComposerButton: View {
     @Bindable var detail: MeetingDetailModel
+    /// The Items bar in a narrow column: the glyph alone, with its words as tooltip and label.
+    var compact = false
     @State private var showing = false
     @State private var kind = "question"
     @State private var from = 0.0
@@ -17,7 +19,12 @@ struct FindingComposerButton: View {
     @State private var failure: MeetingsCLI.Failure?
 
     var body: some View {
-        Button("Add question or term…", systemImage: "plus") { showing = true }
+        Button { showing.toggle() } label: {
+            ItemsBarLabel(title: "Add question or term…", symbol: "plus", compact: compact)
+        }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("Add a question to ask by ear, or a term to correct, at a time of this meeting")
+            .accessibilityLabel("Add question or term")
             .accessibilityIdentifier("meetings.finding.add")
             .popover(isPresented: $showing) {
                 Form {
