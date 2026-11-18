@@ -1,0 +1,167 @@
+import GenesisKit
+import SwiftUI
+
+/// The Work mode (work-items P8 decision 1): one screen per project with its handoffs and their tasks, the spotted
+/// items, the reopened items nobody works on, and who hears about each change. The data and the writes go through the
+/// `work` area of the actions service (GenesisKit Work/); the hub only places the screen.
+@MainActor
+final class HubWorkModel: ObservableObject {
+    let screen: WorkScreenModel
+
+    init(source: WorkSource? = nil) {
+        screen = WorkScreenModel(source: source ?? LiveWorkSource())
+    }
+
+    func activate() { screen.activate() }
+    func deactivate() { screen.deactivate() }
+}
+
+/// The Work mode's answers to the hub (Hub/HubModeModel.swift).
+extension HubWorkModel: HubModeModel {
+    var navSelection: String? { screen.project }
+    func navTitle(selection: String) -> String { "Work: \(selection)" }
+    var showsTitlebarHeader: Bool { true }
+    func reload() { screen.reload() }
+}
+
+/// The sidebar: the projects that have items in the work store.
+struct WorkProjectsList: View {
+    @ObservedObject var screen: WorkScreenModel
+    let filter: String
+
+    var body: some View {
+        let words = filter.lowercased().split(whereSeparator: \.isWhitespace)
+        let shown = screen.projects.filter { name in words.allSatisfy { name.lowercased().contains($0) } }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                if screen.projects.isEmpty {
+                    Text(screen.failure == nil ? "Reading the projects…" : "No projects")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
+                } else if shown.isEmpty {
+                    Text("No project matches “\(filter.trimmingCharacters(in: .whitespaces))”")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
+                }
+                ForEach(shown, id: \.self) { name in
+                    WorkProjectRow(name: name, selected: screen.project == name) { screen.project = name }
+                        .equatable()
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .genScrollBars()
+        }
+    }
+}
+
+struct WorkProjectRow: View, Equatable {
+    let name: String
+    let selected: Bool
+    let action: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.name == rhs.name && lhs.selected == rhs.selected }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 11.5))
+                .foregroundColor(selected ? .white : ReviewPalette.dim)
+                .frame(width: 18)
+            Text(name)
+                .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
+                .foregroundColor(Color.white.opacity(selected ? 0.95 : 0.78))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .contentShape(Rectangle())
+        .rowButton(cornerRadius: 6, action)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.white.opacity(0.1) : .clear))
+        .instantTooltip("The work items of \(name)")
+        .liveRow(selected: selected)
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+/// The main view: the header in the title bar, then the Items or the Notifications pane.
+struct WorkMain: View {
+    @ObservedObject var screen: WorkScreenModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            if let notice = screen.notice {
+                NoticePill(text: notice.message, isError: !notice.ok, dismiss: { screen.clearNotice() })
+                    .padding(.horizontal, 18)
+                    .padding(.top, 8)
+            }
+            content
+        }
+        .hubSurface(.content)
+    }
+
+    private var header: some View {
+        TitlebarHeader {
+            HStack(spacing: 10) {
+                Group {
+                    Image(systemName: "checklist").foregroundColor(ReviewPalette.renamed)
+                    Text("Work").font(.system(size: 14, weight: .semibold))
+                    Text(verbatim: screen.project ?? "")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                    if let summary {
+                        Text(verbatim: summary).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
+                    }
+                }
+                .titlebarLabel()
+                Spacer()
+                GenSegmentedTabs("Work pane", items: WorkScreenModel.Pane.allCases.map { .init($0, $0.title) },
+                                 selection: $screen.pane, minSegmentWidth: 96)
+                    .frame(width: 220)
+                if screen.isLoading {
+                    ProgressView().controlSize(.small).accessibilityLabel("Loading")
+                }
+                IconButton(systemName: "arrow.clockwise", tooltip: "Read this project's work again") { screen.reload() }
+            }
+        }
+    }
+
+    private var summary: String? {
+        guard let snapshot = screen.snapshot else { return nil }
+        return [Plural.count(snapshot.containers.count, "container"),
+                Plural.count(snapshot.spotted.count, "spotted item"),
+                Plural.count(snapshot.reopened.count, "reopened item")].joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let failure = screen.failure, screen.snapshot == nil {
+            FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
+                          form: .pane) { screen.reload() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if screen.project == nil {
+            EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                Group {
+                    switch screen.pane {
+                    case .items:
+                        if let snapshot = screen.snapshot {
+                            WorkItemsView(snapshot: snapshot, pending: screen.pending) { action in
+                                Task { await screen.perform(action) }
+                            }
+                        }
+                    case .notify:
+                        WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .genScrollBars()
+            }
+        }
+    }
+}

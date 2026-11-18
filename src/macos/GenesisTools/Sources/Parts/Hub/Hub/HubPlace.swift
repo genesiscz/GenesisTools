@@ -50,6 +50,8 @@ struct HubPlace: Codable, Equatable {
             return ["--mode", mode.rawValue]
         case .usage:
             return ["--mode", "usage"] + (picked.flatMap(HubUsagePlace.init(selection:))?.arguments ?? [])
+        case .work:
+            return ["--mode", "work"]
         case .agents:
             guard let picked, let key = AgentTree.split(picked) else { return ["--mode", "agents"] }
             if key.child == AgentTree.mainChild, let parent = key.parent {
