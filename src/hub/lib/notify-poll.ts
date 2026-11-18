@@ -122,7 +122,7 @@ export function hubPrRef(item: Pick<NotifyItem, "project" | "number" | "provider
  * The shell line a banner click runs: the hub's PRs, at `ref` when given (`open -n` hands the flags to a
  * running hub).
  */
-export function openHubCommand(ref: string | null, _bundle?: string): string {
+export function openHubCommand(ref: string | null): string {
     return windowsOpenCommand({ window: "--hub", args: ["--mode", "prs", ...(ref ? ["--pr", ref.trim()] : [])] });
 }
 
@@ -162,14 +162,14 @@ export const postToNotificationCenter: NotifyPoster = async (item, summary) => {
 };
 
 /** `tools hub notify test`: marked as a test, and its click opens the hub's PRs, at `pr` when given. */
-export function testNotification(pr: string | null, bundle?: string): NotificationEvent {
+export function testNotification(pr: string | null): NotificationEvent {
     return {
         app: "hub",
         title: "TEST · hub PR notification",
         subtitle: `This is a test from ${toolCommand("hub notify test")}`,
         message: pr ? `A click opens the hub at ${pr}` : "A click opens the hub's PRs",
         group: "hub-pr-test",
-        execute: openHubCommand(pr, bundle),
+        execute: openHubCommand(pr),
     };
 }
 

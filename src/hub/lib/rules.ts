@@ -720,7 +720,7 @@ export async function readRuleInputs(
 }
 
 /** The shell line a banner click runs: the hub at the session (its Decisions pane) or the PR. */
-export function ruleClickCommand(target: RuleTarget, _bundle?: string): string {
+export function ruleClickCommand(target: RuleTarget): string {
     const args: string[] = [];
 
     if (target.pr) {
@@ -736,14 +736,14 @@ export function ruleClickCommand(target: RuleTarget, _bundle?: string): string {
     return windowsOpenCommand({ window: "--hub", args });
 }
 
-export function ruleNotification(firing: RuleFiring, bundle?: string): NotificationEvent {
+export function ruleNotification(firing: RuleFiring): NotificationEvent {
     return {
         app: "hub",
         title: firing.title,
         subtitle: firing.subtitle,
         message: firing.message,
         group: `hub-rule-${firing.ruleId}-${firing.key}`.slice(0, 120),
-        execute: ruleClickCommand(firing.target, bundle),
+        execute: ruleClickCommand(firing.target),
     };
 }
 
