@@ -54,6 +54,7 @@ import { InProcessMeetingsClient } from "./service/client";
 import { assignmentReach } from "./speaker-assign";
 import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
+import { looksLikeOnePerson } from "./voice-backfill";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
 import { replayAnsweredVoiceSamples } from "./voice-samples";
 
@@ -229,6 +230,13 @@ async function voiceAnswerFixture(project = `journal-voice-${++stores}`, extra: 
 }
 
 describe("speaker answers and their project voice prints", () => {
+    test("voice backfill takes a name, never a sentence that an old free-text answer stored as the speaker", () => {
+        for (const name of ["Alice Example", "Example Bob (QT)", "alice.example01"]) {
+            expect(looksLikeOnePerson(name)).toBe(true);
+        }
+        expect(looksLikeOnePerson("That one was me. No, the merge part was Bob Example")).toBe(false);
+    });
+
     test("voice backfill recovers two historical answers without seats and Undo retains the other person's sample", async () => {
         const fx = await voiceAnswerFixture(undefined, [
             question("i4", {
