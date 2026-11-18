@@ -21,7 +21,12 @@ import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } fro
 import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
-import { type T3SessionThread, type T3ThreadParent, t3SessionThreads } from "@genesiscz/utils/t3code/session-threads";
+import {
+    type T3SessionThread,
+    type T3ThreadParent,
+    t3SessionThreads,
+    t3ThreadHolding,
+} from "@genesiscz/utils/t3code/session-threads";
 
 /**
  * One session row for ANY coding agent, so a reader does not need a client per provider.
@@ -106,14 +111,9 @@ export function withT3Hosts(
     }
 
     return rows.map((row) => {
-        const thread = threads.get(row.sessionId);
-        const pin = pins.get(row.sessionId);
+        const thread = t3ThreadHolding({ thread: threads.get(row.sessionId), pin: pins.get(row.sessionId) });
 
-        if (!thread || (pin && !pin.host)) {
-            return row;
-        }
-
-        if (pin?.host && (pin.host.kind !== "t3" || (pin.host.id !== undefined && pin.host.id !== thread.threadId))) {
+        if (!thread) {
             return row;
         }
 

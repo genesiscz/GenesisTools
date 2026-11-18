@@ -24,6 +24,7 @@ import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent"
 import { HUB_SERVER_DOORS } from "./doors/index";
 import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
 import { prShowDoor } from "./doors/prs";
+import { sessionHostDescribeDoor, sessionHostFocusDoor } from "./doors/session-host";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
 import { type CallDoor, DoorUnsupported, doorlessPrefix, type StreamDoor } from "./doors/types";
 import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./doors/widget";
@@ -437,6 +438,23 @@ describe("hub server argv", () => {
         expect(prShowDoor.match(["hub", "pr", "show", "/w/a#12", "--max-cache-age", "1.5"])).toBeNull();
         expect(prShowDoor.match(["hub", "pr", "show", "/w/a#12", "--json"])).toBeNull();
         expect(prShowDoor.match(["hub", "pr", "list", "/w/a"])).toBeNull();
+    });
+
+    it("ai session-host: describe takes ids with --json; only focus has a door, wake and keepalive stay processes", () => {
+        expect(sessionHostDescribeDoor.match(["ai", "session-host", "describe", "s1", "s2", "--json"])).toEqual([
+            "s1",
+            "s2",
+        ]);
+        expect(sessionHostDescribeDoor.match(["ai", "session-host", "describe", "--json"])).toBeNull();
+        expect(sessionHostDescribeDoor.match(["ai", "session-host", "describe", "s1"])).toBeNull();
+        expect(sessionHostDescribeDoor.match(["ai", "session-host", "describe", "s1", "--json", "--fresh"])).toBeNull();
+        expect(sessionHostFocusDoor.match(["ai", "session-host", "focus", "s1", "--json"])).toBe("s1");
+        expect(sessionHostFocusDoor.match(["ai", "session-host", "focus", "s1", "s2", "--json"])).toBeNull();
+        expect(sessionHostFocusDoor.match(["ai", "session-host", "focus", "s1"])).toBeNull();
+        for (const action of ["wake", "keepalive"]) {
+            const argv = ["ai", "session-host", action, "s1", "--json"];
+            expect(HUB_SERVER_DOORS.some((door) => door.match(argv) !== null)).toBe(false);
+        }
     });
 
     it("ai usage sessions --json: whole positive numbers only; --provider stays a process", () => {

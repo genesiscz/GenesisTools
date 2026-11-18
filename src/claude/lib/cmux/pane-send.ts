@@ -447,12 +447,16 @@ function inputRefusal(
 
 const LOCATOR_SOURCE = "locator";
 
+/** The guarded input looked at the live surfaces and found none that runs the session. */
+const LOCATOR_MISSED = Symbol("locator-missed");
+
 /**
  * A full session id types through the one guarded session input (`sendToSession` in
  * `@genesiscz/utils/ai/live-sessions/input`): the locator finds its surface, and the tty, tmux, dialog and draft guards
  * run before any key. Undefined hands the send to the text matcher: a dry run, `--include-self`, a query that is not a
- * full id, no session input (a test that injects none), or a session the locator does not find (a session from before
- * the hooks, found only by its screen or tmux client).
+ * full id, or no session input (a test that injects none). `LOCATOR_MISSED` hands it over too, for a session the
+ * locator does not find (a session from before the hooks, found only by its screen or tmux client); the caller then
+ * knows that no live surface was proven to run the session.
  */
 async function sendByIdThroughInput({
     query,
@@ -470,7 +474,7 @@ async function sendByIdThroughInput({
     deps: SendCommandDeps;
     enter: boolean;
     enterDelayMs: number;
-}): Promise<PaneSendOutcome | undefined> {
+}): Promise<PaneSendOutcome | typeof LOCATOR_MISSED | undefined> {
     if (opts.dryRun || opts.includeSelf || !isFullSessionId(query)) {
         return undefined;
     }
@@ -505,7 +509,7 @@ async function sendByIdThroughInput({
         );
 
         if (!pressed.delivered) {
-            return pressed.reason === "not-found" ? undefined : inputRefusal(query, plan.sessionId, pressed);
+            return pressed.reason === "not-found" ? LOCATOR_MISSED : inputRefusal(query, plan.sessionId, pressed);
         }
 
         log.info(
@@ -532,7 +536,7 @@ async function sendByIdThroughInput({
         : await input({ sessionId, text, submit: enter, force, provider, recordedOnly }, inputDeps);
 
     if (!first.delivered) {
-        return first.reason === "not-found" ? undefined : inputRefusal(query, sessionId, first);
+        return first.reason === "not-found" ? LOCATOR_MISSED : inputRefusal(query, sessionId, first);
     }
 
     let last = first;
@@ -608,16 +612,20 @@ export async function sendToSessionPane(
 
     const viaInput = await sendByIdThroughInput({ query: queryTrim, text, option, opts, deps, enter, enterDelayMs });
 
-    if (viaInput) {
+    if (viaInput && viaInput !== LOCATOR_MISSED) {
         return viaInput;
     }
 
     // An option press never takes the recorded pane: it names where the queried id ran, and after a continuation that
     // pane runs the successor, whose dialog the old id's options would answer. The matcher follows the continuation
     // (and refuses below) or finds the pane by the id it runs now.
+    // An `--exact-session` send skips it too once the guarded input found no live surface for the session: the
+    // recorded pane is the hook journal's word with no look at what runs there now, so it can name a tab where another
+    // session runs. The live matcher still finds a pane that shows the session's own id or resume command.
+    const unprovenRecord = viaInput === LOCATOR_MISSED && opts.exactSession === true;
     let result = await findSessionTargets(queryTrim, {
         includeSelf: opts.includeSelf,
-        skipRecorded: option !== undefined,
+        skipRecorded: option !== undefined || unprovenRecord,
         deps,
     });
 
