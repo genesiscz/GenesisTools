@@ -173,6 +173,10 @@ if (args[0] === "audio-record") {
     ) {
         // As the real tool did on 2026-11-17: an error on the first captured buffer, before it was ready.
         print({ event: "error", message: "could not split system audio at the segment boundary" }, "stderr");
+        await new Promise<void>((resolve) => {
+            process.stdin.once("data", () => resolve());
+            process.stdin.once("end", () => resolve());
+        });
         process.exit(1);
     }
 
@@ -187,10 +191,21 @@ if (args[0] === "audio-record") {
         setTimeout(() => process.exit(1), 150);
     }
     if (fixtureMode === "--fixture-audio-session-dies-later" || (restartCase && !restarted)) {
-        setTimeout(() => {
+        const failWriter = () => {
             print({ event: "error", message: "the system writer stopped accepting samples" }, "stderr");
-            process.exit(1);
-        }, 150);
+            // Let the supervisor read the error and close this session before exiting.
+            process.stdin.prependOnceListener("data", () => process.exit(1));
+            process.stdin.once("end", () => process.exit(1));
+        };
+        const gate = value("--fixture-fail-when");
+        if (gate) {
+            if (!(await waitForPath(gate, { timeoutMs: 10_000 }))) {
+                throw new Error(`missing fixture failure trigger: ${gate}`);
+            }
+            failWriter();
+        } else {
+            setTimeout(failWriter, 150);
+        }
     }
 
     if (fixtureMode === "--fixture-audio-loss") {
