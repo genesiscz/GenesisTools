@@ -91,6 +91,87 @@ final class WidgetInboxFeedTests: XCTestCase {
         }
     }
 
+    func testHoverSegmentsKeepTheSessionFilterWhenItemsIsSelected() throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        XCTAssertEqual(model.previewSegment, "active")
+        model.choosePreviewSegment("items")
+        XCTAssertEqual(model.previewView, "items")
+        XCTAssertEqual(model.previewFilter, "active")
+        XCTAssertEqual(model.previewSegment, "items")
+        model.togglePreviewEntry(items[1])
+        XCTAssertTrue(model.previewEntryOpen)
+        XCTAssertTrue(model.dialogOpen)
+        model.choosePreviewSegment("needs-you")
+        XCTAssertFalse(model.previewEntryOpen)
+        XCTAssertEqual(model.previewView, "sessions")
+        XCTAssertEqual(model.previewFilter, "needs-you")
+        model.choosePreviewSegment("items")
+        XCTAssertEqual(model.previewFilter, "needs-you")
+        model.choosePreviewSegment("active")
+        XCTAssertEqual(model.previewView, "sessions")
+        XCTAssertEqual(model.previewFilter, "active")
+    }
+
+    func testTheHoverListDrawsSessionRowsOrFourFeedHeadersAndKeepsItsFooter() throws {
+        let size = CGSize(width: 480, height: 480)
+        let surface = WidgetSurfaceID(edge: .right)
+        let roster = try makeModel()
+        defer { roster.stop() }
+        let before = try WidgetInboxRender.draw(AgentWidgetPreview(model: roster, surface: surface), size: size)
+            .joined(separator: " ")
+        for word in ["Active too", "Alpha", "Beta", "Gamma", "3 sessions"] {
+            XCTAssertTrue(before.localizedCaseInsensitiveContains(word), before)
+        }
+        XCTAssertFalse(before.contains("Whole inbox"), before)
+
+        let model = try makeModel(view: "items")
+        defer { model.stop() }
+        var top: [String] = []
+        let bottom = try WidgetInboxRender.draw(AgentWidgetPreview(model: model, surface: surface), size: size) { _, host in
+            top = TreeDrawnText.placed(in: host).sorted { $0.middle < $1.middle }.map(\.text)
+            let scroll = try XCTUnwrap(Self.itemScroll(in: host))
+            // The hosting document is flipped. Move its clip to the last row even if there is no first responder.
+            if let document = scroll.documentView {
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+        }
+        XCTAssertTrue(top.joined(separator: " ").contains("Items"), top.description)
+        assertOrder(["Orchard", "Pick a basket", "Meadow", "Delivery note", "Meadow", "Sort the crates",
+                     "Orchard", "Choose a shelf", "Choose a label"], in: top + bottom)
+        let text = (top + bottom).joined(separator: " ")
+        XCTAssertFalse(text.localizedCaseInsensitiveContains("Working"), text)
+        XCTAssertTrue(text.contains("3 sessions"), text)
+    }
+
+    private static func itemScroll(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView { return scroll }
+        return view.subviews.lazy.compactMap { itemScroll(in: $0) }.first
+    }
+
+    func testTheHoverListOpensAnAnswerInPlace() throws {
+        let answer = WidgetInboxItem(reply: .init(question: "When do we pick?", text: "Pick the pears today."),
+                                    id: "answer:a", sourceId: "a", kind: "answer", key: alpha.key,
+                                    at: 6000, needsAnswer: false, title: "When do we pick?")
+        var prefs = WidgetPreferences.hubDefaults
+        prefs.previewFilter = "active"
+        let model = try WidgetInboxRender.model(sessions: [alpha, beta, gamma], items: [answer] + items, preferences: prefs)
+        defer { model.stop() }
+        let view = AgentWidgetPreview(model: model, surface: .init(edge: .right))
+        let size = CGSize(width: 480, height: 480)
+        _ = try WidgetInboxRender.draw(view, size: size, name: "hover-before")
+        model.actionRunner = { _ in ["ok": true] }
+        model.choosePreviewSegment("items")
+        let lines = try WidgetInboxRender.draw(view, size: size, name: "hover-after") { _, _ in
+            model.togglePreviewEntry(answer)
+        }
+        XCTAssertTrue(lines.contains("Answer"), lines.description)
+        XCTAssertTrue(lines.joined(separator: " ").contains("Pick the pears today"), lines.description)
+        XCTAssertTrue(lines.joined(separator: " ").contains("Open in its session"), lines.description)
+    }
+
     private func assertOrder(_ labels: [String], in lines: [String], file: StaticString = #filePath, line: UInt = #line) {
         let text = lines.joined(separator: " ")
         var rest = text[...]

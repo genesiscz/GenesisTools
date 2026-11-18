@@ -232,6 +232,26 @@ public final class WidgetModel: ObservableObject {
     @Published public var sessionChooserOpen = false
     /// Set by a session's cmux popover alone, for the same reason.
     @Published public var cmuxPopoverOpen = false
+    @Published private(set) var previewOpenItemID: String?
+    public var previewEntryOpen: Bool { previewOpenItemID != nil }
+
+    func togglePreviewEntry(_ item: WidgetInboxItem) {
+        if previewOpenItemID == item.id {
+            closePreviewEntry()
+        } else {
+            hoverTask?.cancel()
+            previewOpenItemID = item.id
+        }
+    }
+
+    func closePreviewEntry() {
+        guard previewEntryOpen else { return }
+        previewOpenItemID = nil
+        if let surface = hoveredSurface, !pointerInside.contains(surface.key), !dialogOpen {
+            hover(surface, inside: false)
+        }
+    }
+
     /// A list row's "Open cmux" accessibility action, for that row's `WidgetCmuxButton` (which exists only under the
     /// pointer) to open its popover. The button clears it.
     @Published public var cmuxRequest: WidgetCmuxRequest?
@@ -242,7 +262,7 @@ public final class WidgetModel: ObservableObject {
     }
     /// Hover previews and the outside-click collapse stay off while a window, picker or the chooser is open.
     public var dialogOpen: Bool {
-        get { hostDialogOpen || sessionChooserOpen || cmuxPopoverOpen }
+        get { hostDialogOpen || sessionChooserOpen || cmuxPopoverOpen || previewEntryOpen }
         set { hostDialogOpen = newValue }
     }
     private var mediaPicker: NSOpenPanel?
@@ -1242,6 +1262,8 @@ public final class WidgetModel: ObservableObject {
         refreshOpeningFilterAndPreview()
     }
 
+    public var previewView: String { preferences.previewView }
+    var previewSegment: String { previewView == "items" ? "items" : previewFilter }
     public var previewFilter: String { preferences.previewFilter }
     public var previewSort: String { preferences.previewSort }
 
@@ -1288,10 +1310,20 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// Stores the hover list's filter or order.
-    public func setPreview(filter: String? = nil, sort: String? = nil) {
-        guard filter != nil || sort != nil else { return }
+    func choosePreviewSegment(_ segment: String) {
+        switch segment {
+        case "items": setPreview(view: "items")
+        case "needs-you", "active": setPreview(view: "sessions", filter: segment)
+        default: break
+        }
+    }
+
+    /// A session segment writes its view and filter together. Items keeps the saved session filter.
+    public func setPreview(view: String? = nil, filter: String? = nil, sort: String? = nil) {
+        guard view != nil || filter != nil || sort != nil else { return }
+        if view == "sessions" { closePreviewEntry() }
         writePreferences { preferences in
+            if let view { preferences.previewView = view }
             if let filter { preferences.previewFilter = filter }
             if let sort { preferences.previewSort = sort }
         }
