@@ -72,12 +72,23 @@ export interface LogLine {
     data: string;
 }
 
+/** What a run cost: the task process plus every child it waited for (rusage of the reaped process). */
+export interface RunUsage {
+    userMs: number;
+    systemMs: number;
+    /** userMs + systemMs; cpuMs / duration_ms is the average number of cores the run kept busy. */
+    cpuMs: number;
+    maxRssMb: number;
+}
+
 export interface LogExit {
     type: "exit";
     ts: string;
     code: number | null;
     duration_ms: number;
     timedOut?: boolean;
+    /** Absent in logs written before 2026-11-18, and when the runtime reported no usage. */
+    usage?: RunUsage;
 }
 
 export type LogEntry = LogMeta | LogLine | LogExit;
@@ -114,6 +125,7 @@ export interface RunResult {
     logFile: string;
     /** The run's id, the last part of its log file name (`tools daemon stats --view run --run <id>`). */
     runId: string;
+    usage?: RunUsage;
 }
 
 export interface RunSummary {

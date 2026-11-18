@@ -184,4 +184,26 @@ describe("run log meta", () => {
         });
         expect(result.exitCode).toBe(0);
     });
+
+    // D28 (2026-11-18): the build purge is tuned by what each run costs, so the exit record carries it.
+    it.skipIf(skip.onWindows)("records the CPU of the run, the children it waited for included", async () => {
+        const logsBaseDir = makeTempDir();
+        const burn = `${process.execPath} -e "const end = Date.now() + 300; while (Date.now() < end) {}"`;
+        const task: DaemonTask = {
+            name: "cost-task",
+            command: `${burn}; true`,
+            every: "every 1 hour",
+            retries: 0,
+            enabled: true,
+        };
+        const result = await runTask(task, 1, logsBaseDir);
+        const lines = readFileSync(result.logFile, "utf8").trim().split("\n");
+        const exit = SafeJSON.parse(lines.at(-1) ?? "{}", { strict: true });
+
+        expect(exit.type).toBe("exit");
+        expect(exit.usage.cpuMs).toBeGreaterThanOrEqual(250);
+        expect(exit.usage.cpuMs).toBe(exit.usage.userMs + exit.usage.systemMs);
+        expect(exit.usage.maxRssMb).toBeGreaterThan(0);
+        expect(result.usage).toEqual(exit.usage);
+    });
 });

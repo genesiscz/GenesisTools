@@ -488,7 +488,7 @@ function renderOverview(stats: DaemonStats): void {
     const { totals } = stats;
     renderCliHeader("Daemon stats", windowRange(stats));
 
-    const table = createBoxTable(["TASK", ...COUNT_HEADERS, "P50", "P90", "MAX", "LAST RUN"]);
+    const table = createBoxTable(["TASK", ...COUNT_HEADERS, "P50", "P90", "MAX", "CPU P50", "CPU MAX", "LAST RUN"]);
 
     for (const task of stats.tasks) {
         const name = task.configured && task.enabled !== false ? pc.white(task.task) : pc.dim(task.task);
@@ -498,6 +498,8 @@ function renderOverview(stats: DaemonStats): void {
             formatMs(task.p50Ms),
             formatMs(task.p90Ms),
             formatMs(task.maxMs),
+            formatMs(task.cpuP50Ms),
+            formatMs(task.cpuMaxMs),
             task.lastRun
                 ? formatDotStatus(STATUS_KIND[task.lastRun.status], shortTime(task.lastRun.startedAt))
                 : pc.dim("—"),
@@ -528,9 +530,21 @@ function renderOverview(stats: DaemonStats): void {
     );
 }
 
+/** "12.3 s CPU, 0.4 cores, 210 MB" for a run that logged its usage, empty for an older one. */
+function runCost(run: StatsRun): string {
+    if (run.cpuMs === null) {
+        return "";
+    }
+
+    const cores = run.durationMs ? ` (${(run.cpuMs / run.durationMs).toFixed(1)} cores)` : "";
+    const memory = run.maxRssMb === null ? "" : `, ${run.maxRssMb} MB`;
+    return `${formatMs(run.cpuMs)} CPU${cores}${memory}`;
+}
+
 function renderRunLine(run: StatsRun): void {
+    const cost = runCost(run);
     out.println(
-        `  ${pc.bold(run.task)}  ${shortTime(run.startedAt)}  ${statusDot(run)}  ${pc.dim(`${formatMs(run.durationMs)} · run ${run.runId}`)}`
+        `  ${pc.bold(run.task)}  ${shortTime(run.startedAt)}  ${statusDot(run)}  ${pc.dim(`${formatMs(run.durationMs)}${cost ? ` · ${cost}` : ""} · run ${run.runId}`)}`
     );
 }
 
@@ -697,6 +711,7 @@ function renderRun(output: RunOutput): void {
     renderCliKeyRow("started", run.startedAt ? formatLocalDateTimeStamp(run.startedAt) : "—");
     renderCliKeyRow("try", String(run.attempt));
     renderCliKeyRow("outcome", `${statusDot(run)} ${pc.dim(formatMs(run.durationMs))}`);
+    renderCliKeyRow("cost", runCost(run) || pc.dim("not logged (a run from before 2026-11-18)"));
     out.println("");
 
     if (lines.length === 0) {

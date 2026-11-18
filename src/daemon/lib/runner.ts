@@ -8,7 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type PriorityTools, priorityShellArgv } from "@genesiscz/utils/process/priority";
 import { taskWorkingDir } from "./config";
 import { taskLogDirName } from "./run-log-name";
-import type { DaemonTask, RunContext, RunResult, TaskPriority } from "./types";
+import type { DaemonTask, RunContext, RunResult, RunUsage, TaskPriority } from "./types";
 
 /** This checkout's root, where the `tools` entry lives. */
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
@@ -95,6 +95,17 @@ async function streamLines(
  */
 export function taskArgv(command: string, priority: TaskPriority, onDisk?: PriorityTools): string[] {
     return priorityShellArgv(command, priority, onDisk);
+}
+
+/** Bun's rusage of a reaped child (microseconds, bytes) as the run log's usage record. */
+export function runUsage(raw: ReturnType<Bun.Subprocess["resourceUsage"]>): RunUsage | undefined {
+    if (!raw) {
+        return undefined;
+    }
+
+    const userMs = Math.round(Number(raw.cpuTime.user) / 1000);
+    const systemMs = Math.round(Number(raw.cpuTime.system) / 1000);
+    return { userMs, systemMs, cpuMs: userMs + systemMs, maxRssMb: Math.round(Number(raw.maxRSS) / 1_048_576) };
 }
 
 export async function runTask(
@@ -208,6 +219,7 @@ export async function runTask(
 
     const duration_ms = Date.now() - startMs;
     const exitCode = timedOut ? null : rawExitCode;
+    const usage = runUsage(proc.resourceUsage());
 
     appendJsonl(logFile, {
         type: "exit",
@@ -215,13 +227,17 @@ export async function runTask(
         code: exitCode,
         duration_ms,
         ...(timedOut ? { timedOut: true } : {}),
+        ...(usage ? { usage } : {}),
     });
 
     if (timedOut) {
-        logger.warn({ task: task.name, attempt, duration_ms, logFile }, "[daemon] task process timed out");
+        logger.warn({ task: task.name, attempt, duration_ms, usage, logFile }, "[daemon] task process timed out");
     } else {
-        logger.info({ task: task.name, attempt, exitCode, duration_ms, logFile }, "[daemon] task process exited");
+        logger.info(
+            { task: task.name, attempt, exitCode, duration_ms, usage, logFile },
+            "[daemon] task process exited"
+        );
     }
 
-    return { exitCode, duration_ms, logFile, runId };
+    return { exitCode, duration_ms, logFile, runId, ...(usage ? { usage } : {}) };
 }
