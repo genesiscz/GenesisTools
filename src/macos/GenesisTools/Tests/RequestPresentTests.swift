@@ -11,22 +11,23 @@ final class RequestPresentTests: XCTestCase {
     static func request() throws -> RequestPresentParams {
         let rows = try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [[String: Any]] ?? []
         let row = try XCTUnwrap(rows.first { $0["method"] as? String == "request.present" })
-        return try JSONDecoder().decode(RequestPresentParams.self, from: JSONSerialization.data(withJSONObject: row["params"]!))
+        let params = try XCTUnwrap(row["params"], "request.present: the fixture has no params")
+        return try JSONDecoder().decode(RequestPresentParams.self, from: JSONSerialization.data(withJSONObject: params))
     }
     func testAllGeneratedWireFixturesDecode() throws {
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: Self.fixtureURL)) as? [[String: Any]])
         XCTAssertGreaterThan(rows.count, 20)
         for row in rows {
             let method = try XCTUnwrap(row["method"] as? String)
-            let params = try JSONSerialization.data(withJSONObject: row["params"]!, options: [.fragmentsAllowed])
-            let result = try JSONSerialization.data(withJSONObject: row["result"]!, options: [.fragmentsAllowed])
+            let params = try JSONSerialization.data(withJSONObject: XCTUnwrap(row["params"], "\(method): the fixture has no params"), options: [.fragmentsAllowed])
+            let result = try JSONSerialization.data(withJSONObject: XCTUnwrap(row["result"], "\(method): the fixture has no result"), options: [.fragmentsAllowed])
             XCTAssertNoThrow(try GenesisToolsRPC.validateFixture(method: method, params: params, result: result), method)
         }
     }
     func testGeneratedLiteralRejectsTheOppositeBoolean() throws {
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: Self.fixtureURL)) as? [[String: Any]])
         let row = try XCTUnwrap(rows.first { $0["method"] as? String == "config.set" })
-        let params = try JSONSerialization.data(withJSONObject: row["params"]!)
+        let params = try JSONSerialization.data(withJSONObject: XCTUnwrap(row["params"], "config.set: the fixture has no params"))
         XCTAssertThrowsError(try GenesisToolsRPC.validateFixture(method: "config.set", params: params, result: Data("{\"changed\":false}".utf8)))
     }
 
