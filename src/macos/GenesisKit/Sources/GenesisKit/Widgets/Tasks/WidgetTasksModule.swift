@@ -433,7 +433,7 @@ private struct WidgetTaskRow: View, Equatable {
     private func meta(_ state: String) -> String {
         var parts = [WidgetTask.label(for: state)]
         if task.blocking { parts.append("Blocking") }
-        if let owner = task.owner, !owner.isEmpty { parts.append("For \(owner)") }
+        parts.append(task.addressee)
         if let project = task.sourceContext.project ?? task.sourceContext.cwd.map({ ($0 as NSString).lastPathComponent }) {
             parts.append(project)
         } else if task.isLocal {

@@ -584,10 +584,12 @@ public final class WidgetModel: ObservableObject {
         presentationChanged?()
     }
     /// The selected session's cards: from the snapshot that names it, else as last seen (`sessionCache`).
+    weak var taskActions: WidgetTasksStore?
+
     public var cards: [WidgetCard] {
         guard let snapshot else { return [] }
-        if snapshot.selectedKey != selectedKey, let cached = sessionCache[selectedKey] { return cached.cards }
-        return snapshot.cards.filter { $0.sessionKey == selectedKey }
+        if snapshot.selectedKey != selectedKey, let cached = sessionCache[selectedKey] { return cached.cards.filter { $0.hiddenFromInbox != true } }
+        return snapshot.cards.filter { $0.sessionKey == selectedKey && $0.hiddenFromInbox != true }
     }
     /// Nothing is known about the selected session yet: no snapshot named it, and none carried its cards.
     public var inboxLoading: Bool {
@@ -1333,7 +1335,7 @@ public final class WidgetModel: ObservableObject {
     /// The rail badge: only the items that wait for the user's answer (open or drafted decisions and pending
     /// questions), the kind of item the hub's Inbox counts. Unread answers and results do not count: a badge of weeks
     /// of read-later items read as 99+ while the hub said 26 (ux catalogue R1).
-    public var waitingCount: Int { max(0, inbox.needsAnswer) }
+    public var waitingCount: Int { max(0, inbox.badgeCount ?? inbox.needsAnswer) }
 
     /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
     /// way opening it from a notification does.

@@ -97,6 +97,10 @@ export interface DecisionHookPayload {
 
 /** What the decision hooks need from the hook process; the agents hook entry wires the file-backed stores. */
 export interface DecisionHookDeps {
+    todoReminder?: {
+        read(session: string): string | undefined;
+        save(session: string, value: string): Promise<void> | void;
+    };
     log: DecisionLogPaths;
     /**
      * Reads the session for the chat-answer step. Passed by the Stop entry only while `decisions.chatAnswers` is on,
@@ -499,7 +503,28 @@ export async function runDecisionStop(
         deps.diag("Chat answers failed; the reply checks still run", { err, session });
     }
 
-    return mergedStop([chat, await runReplyChecks(payload, session, config, deps)]);
+    let reminder: StopHookOutput | null = null;
+    if (deps.todoReminder && config.stopHook !== "off") {
+        const tasks = readDecisions(deps.log.file)
+            .filter(
+                (row) =>
+                    kindOf(row) === "todo" &&
+                    row.sessionId === session &&
+                    row.for?.toLowerCase() !== "human" &&
+                    (row.state === "open" || row.state === "acknowledged")
+            )
+            .sort((a, b) => a.number - b.number);
+        const list = tasks
+            .map((row) => `TODO ${row.number}: ${(row.title || row.prompt).split("\n")[0].slice(0, 80)}`)
+            .join(", ");
+        if ((deps.todoReminder.read(session) ?? "") !== list) {
+            await deps.todoReminder.save(session, list);
+            if (list) {
+                reminder = { systemMessage: `Your open tasks: ${list}` };
+            }
+        }
+    }
+    return mergedStop([chat, reminder, await runReplyChecks(payload, session, config, deps)]);
 }
 
 /** The checks on the reply itself: unposted `❓ DECISION N` blocks (harvest, warn, block) and the question nudge. */

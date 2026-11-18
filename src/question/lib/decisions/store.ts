@@ -258,11 +258,11 @@ const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
     },
     // A todo is done, not answered: whoever it is for takes it and finishes it.
     todo: {
-        open: ["acknowledged", "implemented", "dismissed"],
+        open: ["acknowledged", "implemented", "dismissed", "superseded"],
         drafted: [],
         answered: [],
         sent: [],
-        acknowledged: ["implemented", "dismissed"],
+        acknowledged: ["implemented", "dismissed", "superseded"],
         implemented: ["open"],
         dismissed: ["open"],
         superseded: [],
@@ -789,7 +789,11 @@ function contentOf(decision: PostedDecision, excerpt: string | undefined): Conte
         ...(decision.title ? { title: decision.title } : {}),
         ...(decision.proposal ? { proposal: decision.proposal } : {}),
         ...(decision.recommended ? { recommended: decision.recommended } : {}),
-        ...(decision.for ? { for: decision.for } : {}),
+        ...(kindOf(decision) === "todo"
+            ? { for: decision.for?.trim() || "agent" }
+            : decision.for
+              ? { for: decision.for }
+              : {}),
         ...(decision.reevaluateWhen ? { reevaluateWhen: decision.reevaluateWhen } : {}),
         ...(decision.reasoning ? { reasoning: decision.reasoning } : {}),
         ...(decision.confidence ? { confidence: decision.confidence } : {}),
@@ -937,6 +941,10 @@ function patched(
         );
     }
 
+    if (kindOf(row) === "todo" && patch.state === "dismissed" && !comment?.trim()) {
+        throw new Error("Dismissing a todo requires a comment saying why");
+    }
+
     if (patch.state === "superseded" && !patch.supersededBy && !comment?.trim()) {
         throw new Error(`cannot move ${row.id} to superseded without supersededBy or a comment saying why`);
     }
@@ -1081,8 +1089,10 @@ function checkSupersededBy(
     }
 
     const replacement = stored.get(target);
-    if (!replacement || kindOf(replacement) !== "decision") {
-        throw new Error(`${row.id}: supersededBy names no stored decision (${target}); post the new decision first`);
+    if (!replacement || kindOf(replacement) !== kindOf(row)) {
+        throw new Error(
+            `${row.id}: supersededBy names no stored ${kindOf(row)} (${target}); post the new ${kindOf(row)} first`
+        );
     }
 }
 
@@ -1148,7 +1158,11 @@ export async function updateTodo({
 }): Promise<DecisionRecord> {
     const patch = parseDecisionInput(
         decisionPatchSchema,
-        { state, expectedRevision: expected.revision },
+        {
+            state,
+            expectedRevision: expected.revision,
+            ...(state === "dismissed" ? { comment: "Dismissed by the user." } : {}),
+        },
         "todo update"
     );
     const [row] = await applyUpdates({
@@ -1187,7 +1201,43 @@ function checkShownTodo(current: DecisionRecord, expected: TodoUpdateSnapshot): 
     }
 }
 
+/** Compare and save a single task assignment. A send reserves its displayed version before any external delivery. */
+export function changeTodoAssignment({
+    file,
+    events,
+    id,
+    expected,
+    change,
+}: {
+    file: string;
+    events: string;
+    id: string;
+    expected: TodoUpdateSnapshot;
+    change: (current: DecisionRecord) => Pick<DecisionRecord, "for" | "state" | "delivery">;
+}): Promise<DecisionRecord> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const row = rows.find((entry) => entry.id === id);
+        if (!row) {
+            throw new Error(`No todo ${id}`);
+        }
+        checkShownTodo(row, expected);
+        if ((row.revision ?? 1) !== expected.revision || (row.state !== "open" && row.state !== "acknowledged")) {
+            throw new Error("This task changed or is already closed.");
+        }
+        const updatedTs = laterThan(expected.updatedTs, () => new Date().toISOString());
+        const next = { ...row, ...change(row), updatedTs };
+        rewrite(
+            file,
+            rows.map((entry) => (entry.id === id ? next : entry))
+        );
+        appendEvent(events, { ev: "updated", id, ts: updatedTs, state: next.state });
+        return next;
+    });
+}
+
 export interface NewTodo {
+    for?: "human" | "agent";
     title: string;
     /** The longer text; the title alone when absent. */
     details?: string;
@@ -1239,6 +1289,7 @@ export async function createTodo({
             options: [],
             ...(details ? { title } : {}),
             ...(provider ? { provider } : {}),
+            for: todo.for ?? "human",
             ...(todo.sessionTitle ? { sessionTitle: todo.sessionTitle } : {}),
             ...(todo.project ? { project: todo.project } : {}),
             ...(todo.cwd ? { cwd: todo.cwd } : {}),
@@ -1841,7 +1892,7 @@ export function readDecisionsWithIntegrity(
     const rows = stored.length === 0 ? logged : [...logged.filter((row) => !byId.has(row.id)), ...byId.values()];
 
     return {
-        rows,
+        rows: rows.map((row) => (kindOf(row) === "todo" && !row.for?.trim() ? { ...row, for: "agent" } : row)),
         complete: !missing && torn === 0 && malformed === 0,
         ...(missing && stored.length === 0 ? { missing: true } : {}),
     };

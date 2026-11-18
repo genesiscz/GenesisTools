@@ -1,3 +1,13 @@
+import { type WidgetTask, widgetTask } from "@app/question/lib/decisions/todo-view";
+import {
+    MESSAGE_PREVIEW_CHARS,
+    readInboxData,
+    type WidgetInboxData,
+    type WidgetInboxWindow,
+} from "@app/question/lib/inbox/unread";
+
+export type { WidgetInboxData, WidgetInboxGroup, WidgetInboxWindow } from "@app/question/lib/inbox/unread";
+
 import { existsSync, statSync } from "node:fs";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionOptionLabels, shownDecisionText, takesSeveral } from "@app/question/lib/decisions/option-labels";
@@ -12,20 +22,12 @@ import {
 } from "@app/question/lib/decisions/store";
 import { type InboxDeliveryView, type InboxRef, fromRecord as inboxDecisionOf } from "@app/question/lib/inbox/build";
 import { cachingReadDeps, shownExcerpts } from "@app/question/lib/inbox/excerpts";
+import { DEFAULT_INBOX_KINDS, type InboxKinds, inboxKind, readInboxKinds } from "@app/question/lib/inbox/kinds";
+import type { WidgetInboxGroup } from "@app/question/lib/inbox/unread";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
-import {
-    listFormsSnapshot,
-    listPendingFormHeadsSnapshot,
-    PENDING_MIGRATIONS,
-    type PendingFormHead,
-} from "@app/question/lib/pending/store";
+import { listFormsSnapshot, listPendingFormHeadsSnapshot, type PendingFormHead } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
-import {
-    type QaRow,
-    queryEntriesOfSessionsSnapshot,
-    queryEntriesSnapshot,
-    readQuestionSnapshot,
-} from "@app/question/lib/read-model";
+import { type QaRow, queryEntriesOfSessionsSnapshot, queryEntriesSnapshot } from "@app/question/lib/read-model";
 import { askedAtOf, INBOX_STALE_MS, waitingSet, waitsOnHuman } from "@app/question/lib/waiting/set";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { changeLogPath, readChangeLogFile } from "@genesiscz/utils/agents/change-log";
@@ -41,7 +43,6 @@ import {
 } from "@genesiscz/utils/ai/transcripts";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { isZstdPath, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
-import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -109,6 +110,8 @@ export interface WidgetSession {
 }
 export interface WidgetCard {
     messageOrigin?: string;
+    hiddenFromInbox?: true;
+    task?: WidgetTask;
     transcriptAnchor?: TranscriptAnchor;
     sourceContext?: {
         project?: string;
@@ -262,6 +265,7 @@ export interface WidgetSources {
     answersOf?(sessions: string[], limit: number): QaRow[];
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
+    inboxKinds?(): Promise<InboxKinds>;
     inboxData?(window: WidgetInboxWindow): WidgetInboxData;
     rosterStatus?(): { loading: boolean; error?: string };
     /** The lines a decision card's refs cite, for a card the snapshot publishes; else `widgetExcerpts` reads them. */
@@ -272,40 +276,6 @@ export interface WidgetSources {
      */
     excerptRound?(): void;
 }
-/** The cut-offs the badges count against, applied to every item before it is grouped. */
-export interface WidgetInboxWindow {
-    /** The last "Mark all read": only items after it count. */
-    clearedAt: number;
-    /** A quiet session's items count only from here on (`INBOX_STALE_MS` before now). */
-    staleBefore: number;
-}
-export interface WidgetInboxGroup {
-    id: string;
-    sessionId: string;
-    provider: string;
-    title: string;
-    project: string;
-    cwd: string;
-    /** The group's newest item. */
-    at: number;
-    count: number;
-    /** The newest item's own title: an answer's question. */
-    itemTitle?: string | null;
-    /** The newest answer's Q→A tag: `message` for an agent message (inbox_send, a tools rm request notice). */
-    itemTag?: string | null;
-    messageText?: string | null;
-    sender?: string | null;
-    /** Items after the window's `clearedAt`. */
-    afterClear: number;
-    /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
-    recentAfterClear: number;
-    /**
-     * `recentAfterClear` summed over EVERY group, the ones past the row limit too, on every row. The groups the
-     * snapshot never sees are counted by this session-blind rule; the listed ones by their session's freshness.
-     */
-    recentAfterClearTotal: number;
-}
-
 /** How many of a group's item times fall in the window: the per-item counts a source without SQL reports. */
 export function inboxWindowCounts(
     times: number[],
@@ -317,19 +287,10 @@ export function inboxWindowCounts(
         recentAfterClear: afterClear.filter((at) => at >= window.staleBefore).length,
     };
 }
-/**
- * The unread answers the badges count. The waiting items (decisions, forms, dialogs) are not here: the waiting set
- * (`waitingSet`) counts them from the rows the snapshot already read.
- */
-export interface WidgetInboxData {
-    answers: WidgetInboxGroup[];
-    complete: boolean;
-    truncated: boolean;
-}
 export interface WidgetInboxItem {
     id: string;
     sourceId: string;
-    kind: "answer" | "result" | "decision" | "dialog" | "form";
+    kind: "answer" | "result" | "decision" | "dialog" | "form" | "todo";
     key: string;
     at: number;
     needsAnswer: boolean;
@@ -391,6 +352,7 @@ export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
         .slice(0, INBOX_ITEMS_PER_SESSION);
 }
 export interface WidgetInboxSummary {
+    badgeCount?: number;
     unread: number;
     needsAnswer: number;
     complete: boolean;
@@ -407,58 +369,6 @@ export interface WidgetInboxSummary {
     /** Uncapped open or drafted decision IDs; optional for older producers. Authoritative only when complete. */
     pendingDecisionIDs?: string[];
     profile?: { hostId: "local" };
-}
-
-/**
- * Per session and provider, each group's newest item and its counts. `afterClear` and `recentAfterClear` count the
- * group's ITEMS against the window (?1 = clearedAt, ?2 = staleBefore), so a new item in a session never brings back
- * the older items "Mark all read" cleared or the stale ones beside it.
- */
-const INBOX_GROUP = "PARTITION BY sessionId,provider,externalProject,externalSender";
-const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (${INBOX_GROUP}) AS afterClear,
-                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (${INBOX_GROUP}) AS recentAfterClear,
-                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER () AS recentAfterClearTotal`;
-
-const MESSAGE_PREVIEW_CHARS = 800;
-
-function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
-    const bounds: [number, number] = [window.clearedAt, window.staleBefore];
-    return readQuestionSnapshot({
-        dbPath: toolDataDir("question", "qa.db"),
-        read: (db) => {
-            runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
-            const answers = db
-                .query<WidgetInboxGroup, [number, number]>(`
-                WITH unseen AS (
-                    SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
-                        CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
-                             WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
-                        COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
-                        COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle, tag AS itemTag,
-                        CASE WHEN session_id='unknown' AND tag='message' THEN project END AS externalProject,
-                        CASE WHEN session_id='unknown' AND tag='message' THEN COALESCE(NULLIF(trim(agent_label),''),source) END AS externalSender
-                    FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
-                        AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
-                ), ranked AS (
-                    SELECT *, COUNT(*) OVER (${INBOX_GROUP}) AS count,
-                        ${INBOX_WINDOW_COUNTS},
-                        ROW_NUMBER() OVER (${INBOX_GROUP} ORDER BY at DESC,id DESC) AS position
-                    FROM unseen
-                ), newest AS (
-                    SELECT * FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
-                ) SELECT newest.id,sessionId,provider,title,newest.project,newest.cwd,at,count,itemTitle,itemTag,afterClear,recentAfterClear,
-                    recentAfterClearTotal, substr(msg.answer_md,1,${MESSAGE_PREVIEW_CHARS + 1}) AS messageText,
-                    COALESCE(NULLIF(trim(msg.agent_label),''),msg.source) AS sender
-                  FROM newest LEFT JOIN entries msg ON itemTag='message' AND msg.id=newest.id ORDER BY at DESC,newest.id DESC
-            `)
-                .all(...bounds);
-            return {
-                answers: answers.slice(0, 256),
-                complete: true,
-                truncated: answers.length > 256,
-            };
-        },
-    });
 }
 
 export interface WidgetActivityEvent {
@@ -699,6 +609,7 @@ export const realWidgetSources: WidgetSources = {
     answersOf: (sessionIds, limit) =>
         queryEntriesOfSessionsSnapshot({ dbPath: toolDataDir("question", "qa.db"), sessionIds, limit }),
     agents: (refresh) => widgetAgents({ refresh }),
+    inboxKinds: readInboxKinds,
     inboxData: readInboxData,
     events: (ids) => readWidgetDecisionEvents({ ids }),
     excerpts: widgetExcerpts,
@@ -930,7 +841,7 @@ export async function widgetSnapshot({
     /** This snapshot left card images unread (its read budget was spent); the watch loop takes another one. */
     onImagesDeferred?: () => void;
 }) {
-    const state = await readWidgetState(root);
+    const [state, kinds] = await Promise.all([readWidgetState(root), sources.inboxKinds?.() ?? DEFAULT_INBOX_KINDS]);
     const imageBudget = new ImageLiftBudget();
     selectedKey ??= state.selectedKey ?? undefined;
     /**
@@ -983,10 +894,11 @@ export async function widgetSnapshot({
     };
     const inboxSource = sources.inboxData;
     const rosterUnread = inboxSource ? [] : answerRoster.filter((row) => row.readAt === null);
-    const rosterRecentAnswers = inboxWindowCounts(
-        rosterUnread.map((row) => row.ts),
-        inboxWindow
-    ).recentAfterClear;
+    const rosterRecent = (message: boolean) =>
+        inboxWindowCounts(
+            rosterUnread.filter((row) => (row.tag === "message") === message).map((row) => row.ts),
+            inboxWindow
+        ).recentAfterClear;
     const inboxData: WidgetInboxData = inboxSource
         ? await read("inbox metadata", () => inboxSource(inboxWindow), {
               answers: [],
@@ -1008,7 +920,7 @@ export async function widgetSnapshot({
                   messageText: row.tag === "message" ? row.answerMd : undefined,
                   sender: row.agentLabel?.trim() || row.source,
                   ...inboxWindowCounts([row.ts], inboxWindow),
-                  recentAfterClearTotal: rosterRecentAnswers,
+                  recentAfterClearTotal: rosterRecent(row.tag === "message"),
               })),
               complete: false,
               truncated: true,
@@ -1279,6 +1191,10 @@ export async function widgetSnapshot({
     }
     const inboxSessions = new Map<string, WidgetInboxSession>();
     const putInbox = (session: WidgetSession, item: WidgetInboxItem, count: number) => {
+        const kind = item.kind === "answer" && item.tag === "message" ? "message" : item.kind;
+        if (kind !== "result" && kind !== "todo" && !inboxKind(kinds, kind).show) {
+            return;
+        }
         const entry = inboxSessions.get(session.key) ?? { key: session.key, unread: 0, needsAnswer: 0 };
         if (item.needsAnswer) {
             entry.needsAnswer += count;
@@ -1430,7 +1346,8 @@ export async function widgetSnapshot({
     // freshness; the groups past the row limit count by the session-blind rule (`recentAfterClearTotal` minus what
     // the listed groups hold).
     let countedAnswers = 0;
-    let listedRecentAnswers = 0;
+    let badgeAnswers = 0;
+    const answerTails = new Map<string, { total: number; listed: number }>();
     for (const row of inboxData.answers) {
         // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
         const session =
@@ -1444,8 +1361,18 @@ export async function widgetSnapshot({
         // A working or lately active session counts every answer after the watermark, a quiet one only its recent ones.
         const sessionFresh = live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
         const items = sessionFresh ? row.afterClear : row.recentAfterClear;
+        const key = row.itemTag === "message" ? "message" : "answer";
+        const policy = kinds[key];
+        if (!policy.show) {
+            continue;
+        }
         countedAnswers += items;
-        listedRecentAnswers += row.recentAfterClear;
+        if (policy.countInBadge) {
+            badgeAnswers += items;
+        }
+        const tail = answerTails.get(key) ?? { total: row.recentAfterClearTotal, listed: 0 };
+        tail.listed += row.recentAfterClear;
+        answerTails.set(key, tail);
         if (items === 0) {
             continue;
         }
@@ -1477,8 +1404,41 @@ export async function widgetSnapshot({
         );
     }
     /** What the listed answer groups counted, plus the recent answers of the groups past the row limit. */
-    const unreadAnswers =
-        countedAnswers + Math.max(0, (inboxData.answers[0]?.recentAfterClearTotal ?? 0) - listedRecentAnswers);
+    let unreadAnswers = countedAnswers;
+    for (const [key, tail] of answerTails) {
+        const missing = Math.max(0, tail.total - tail.listed);
+        unreadAnswers += missing;
+        if ((key === "message" ? kinds.message : kinds.answer).countInBadge) {
+            badgeAnswers += missing;
+        }
+    }
+    let badgeTodos = 0;
+    for (const row of decisions) {
+        if (kindOf(row) !== "todo" || (row.state !== "open" && row.state !== "acknowledged")) {
+            continue;
+        }
+        const session = decisionSessions.get(row.id);
+        const policy = inboxKind(kinds, "todo", row.for);
+        if (session && policy.show) {
+            const at = askedAtOf(row);
+            putInbox(
+                session,
+                {
+                    id: `decision:${row.id}`,
+                    sourceId: row.id,
+                    kind: "todo",
+                    key: session.key,
+                    at,
+                    needsAnswer: false,
+                    title: widgetTitle(row.title || row.prompt),
+                },
+                0
+            );
+            if (policy.countInBadge && inboxCounted(session, at)) {
+                badgeTodos++;
+            }
+        }
+    }
     const staged: WidgetInboxItem[] = [];
     for (const row of decisions) {
         if (kindOf(row) !== "decision" || !waitsOnHuman(row)) {
@@ -1510,7 +1470,7 @@ export async function widgetSnapshot({
             ...stagedOf(row),
         };
         // A staged pick is unsent input: it stays in `staged` after "Mark all read" and in a quiet session.
-        if (item.draftOption || item.draft) {
+        if (kinds.decision.show && (item.draftOption || item.draft)) {
             staged.push(item);
         }
         // The waiting set decides: its session is fresh or live, and it was asked after "Mark all read" (the ask, so
@@ -1524,6 +1484,7 @@ export async function widgetSnapshot({
     for (const row of decisions) {
         const via = row.answeredVia;
         if (
+            !kinds.decision.show ||
             kindOf(row) !== "decision" ||
             (via !== "agent" && via !== "automatic_heuristic") ||
             !["acknowledged", "implemented"].includes(row.state)
@@ -1602,7 +1563,14 @@ export async function widgetSnapshot({
         waitingForms.length >= WIDGET_FORMS_LIMIT && (formHeads === null || formHeads.length > waitingForms.length);
     const notifications: WidgetInboxSummary = {
         unread: unreadAnswers + unreadResults,
-        needsAnswer: waiting.total,
+        needsAnswer: waiting.items.filter((item) => item.counted && inboxKind(kinds, item.kind).show).length,
+        badgeCount:
+            badgeAnswers +
+            badgeTodos +
+            waiting.items.filter((item) => {
+                const policy = inboxKind(kinds, item.kind);
+                return item.counted && policy.show && policy.countInBadge;
+            }).length,
         complete: inboxData.complete && errors.length === 0,
         truncated: inboxData.truncated || inboxSessions.size > 512 || formsCut,
         sessions: [...inboxSessions.values()]
@@ -1674,6 +1642,7 @@ export async function widgetSnapshot({
             cards.push({
                 id: `dialog:${id}`,
                 kind: "dialog",
+                ...(!kinds.form.show ? { hiddenFromInbox: true as const } : {}),
                 sessionKey: key,
                 sourceId: id,
                 at: timeOf(dialog.askedAt),
@@ -1723,6 +1692,9 @@ export async function widgetSnapshot({
             kind: "answer",
             ...(row.tag === "message" && row.sessionId === "unknown"
                 ? { messageOrigin: messageOrigin(row.project, row.agentLabel?.trim() || row.source) }
+                : {}),
+            ...(!inboxKind(kinds, row.tag === "message" ? "message" : "answer").show
+                ? { hiddenFromInbox: true as const }
                 : {}),
             transcriptAnchor: row.transcriptAnchor,
             sourceContext: {
@@ -1817,6 +1789,8 @@ export async function widgetSnapshot({
         cards.push({
             id: `decision:${row.id}`,
             kind: kindOf(row),
+            ...(kindOf(row) === "todo" ? { task: widgetTask(row) } : {}),
+            ...(!inboxKind(kinds, kindOf(row), row.for).show ? { hiddenFromInbox: true as const } : {}),
             transcriptAnchor: row.transcriptAnchor,
             sourceContext: {
                 sessionId: row.sessionId,
@@ -1877,6 +1851,7 @@ export async function widgetSnapshot({
         cards.push({
             id: `form:${form.id}`,
             kind: "form",
+            ...(!kinds.form.show ? { hiddenFromInbox: true as const } : {}),
             transcriptAnchor: form.transcriptAnchor,
             sourceContext: form.poster
                 ? {

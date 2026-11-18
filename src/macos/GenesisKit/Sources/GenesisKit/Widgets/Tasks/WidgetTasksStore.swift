@@ -46,7 +46,7 @@ public final class WidgetTasksStore: ObservableObject {
         let bridge = ToolsBridge(binaryPath: binaryPath)
         let prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["tasks"]
         request = { args in
-            let result = try await bridge.run(subcommand: "hub", args: prefix + args, timeoutSeconds: 15)
+            let result = try await bridge.run(subcommand: "hub", args: prefix + args, timeoutSeconds: args.contains("--action") && args.contains("send") ? 930 : 15)
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1200))) }
             return Data(result.stdout.utf8)
         }
@@ -265,15 +265,15 @@ public final class WidgetTasksStore: ObservableObject {
                     "--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                     "--session", task.sessionId, "--provider", task.provider]
         let view = viewGeneration
-        pendingStates[task.id] = action.targetState
+        pendingStates[task.id] = action.targetState(from: task.state)
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
             let response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
             guard response.receipt.saved, response.receipt.id == task.id,
-                  response.receipt.action == action.rawValue, response.receipt.state == action.targetState,
+                  response.receipt.action == action.rawValue, response.receipt.state == action.targetState(from: task.state),
                   response.receipt.from == task.state, response.receipt.revision == task.revision,
                   response.task.revision == task.revision, response.task.updatedTs == response.receipt.at,
-                  response.task.id == task.id, response.task.state == action.targetState,
+                  response.task.id == task.id, response.task.state == action.targetState(from: task.state),
                   response.task.sessionId == task.sessionId, response.task.provider == task.provider else {
                 throw ToolsBridgeError.refused("The task update returned an inconsistent receipt. Refresh to confirm its state.")
             }
@@ -286,7 +286,7 @@ public final class WidgetTasksStore: ObservableObject {
                 Task { @MainActor [weak self] in self?.perform(next, on: response.task) }
                 return
             }
-            let back = WidgetTaskAction.returning(to: task.state)
+            let back = action == .send || action == .take ? [] : WidgetTaskAction.returning(to: task.state)
             self.undo = back.first.flatMap { first in
                 response.task.actions.contains(first)
                     ? WidgetTaskUndo(task: response.task, action: first, then: back.dropFirst().first) : nil
@@ -307,6 +307,7 @@ public final class WidgetTasksStore: ObservableObject {
         let details = details.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stopped, mutations[task.id] == nil, task.editable, !title.isEmpty else { return }
         var args = ["edit", task.id, "--json", "--title", title]
+        if draft.owner == "agent" { args += ["--for", "agent"] }
         if !details.isEmpty { args += ["--details", details] }
         args += ["--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                  "--session", task.sessionId, "--provider", task.provider]
@@ -426,11 +427,14 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     /// Adds the drafted task. On success the title and details clear, the session and project stay for the next.
-    public func create() {
+    public func create() { create(sendImmediately: false) }
+
+    public func create(sendImmediately: Bool) {
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let details = draft.details.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stopped, !isCreating, !title.isEmpty else { return }
         var args = ["create", "--json", "--title", title]
+        if draft.owner == "agent" { args += ["--for", "agent"] }
         if !details.isEmpty { args += ["--details", details] }
         if !draft.session.isEmpty {
             args += ["--session", draft.session]
@@ -461,6 +465,9 @@ public final class WidgetTasksStore: ObservableObject {
                     self.draft.details = ""
                 }
                 self.receipt = "Added: \(response.task.title)"
+                if sendImmediately && submitted.owner == "agent", response.task.actions.contains(.send) {
+                    self.perform(.send, on: response.task)
+                }
                 self.reveal(response.task)
                 self.cache.removeAll(keepingCapacity: true)
                 self.refresh(force: true)

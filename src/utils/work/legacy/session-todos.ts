@@ -95,10 +95,17 @@ export function readSessionTodos(db: Database, sessionId?: string): { rows: Stor
     const stamp = String((db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0);
     const rows = db
         .query<
-            { meta: string | null; title: string; body: string | null; state: ItemState; updatedTs: string },
+            {
+                meta: string | null;
+                title: string;
+                body: string | null;
+                state: ItemState;
+                updatedTs: string;
+                owner: string | null;
+            },
             [string, ...string[]]
         >(
-            `SELECT p.meta, i.title, i.body, i.state, i.updated_ts AS updatedTs
+            `SELECT p.meta, i.title, i.body, i.state, i.updated_ts AS updatedTs, i.for_who AS owner
              FROM pointers p JOIN items i ON i.id = p.item
              WHERE p.kind = ?${sessionId === undefined ? "" : " AND json_extract(p.meta, '$.sessionId') = ?"}
              ORDER BY i.updated_ts DESC, i.id`
@@ -118,6 +125,7 @@ export function readSessionTodos(db: Database, sessionId?: string): { rows: Stor
             return [
                 {
                     ...rest,
+                    for: r.owner ?? rest.for ?? "agent",
                     ...(rest.title !== undefined ||
                     r.title !== mirrorTitle({ prompt: r.body ?? "", number: rest.number })
                         ? { title: r.title }
@@ -223,6 +231,10 @@ export function mirrorSessionTodos(
                     wrote = true;
                 } else {
                     const set: ItemPatch = {};
+
+                    if (row.for !== undefined && item.for !== row.for) {
+                        set.for = row.for;
+                    }
 
                     if (item.title !== title) {
                         set.title = title;

@@ -73,6 +73,13 @@ function wired(deps: AgentDecisionHookDeps): DecisionHookDeps {
         ...deps,
         diag: deps.diag ?? hookDiag,
         chat: deps.chat ?? fileChatState,
+        todoReminder: deps.todoReminder ?? {
+            read: (session) => readHookState(session).decisions.todoReminder,
+            save: (session, value) =>
+                updateHookState(session, (state) => {
+                    state.decisions.todoReminder = value;
+                }),
+        },
         counts: deps.counts ?? fileCounts,
         nudge: deps.nudge ?? fileNudgeState,
         appendRun: deps.appendRun ?? ((run) => appendChatAnswerRun(run)),
