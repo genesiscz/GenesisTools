@@ -22,6 +22,12 @@ enum MeetingsAPI {
         struct Params: Codable, Equatable { var meeting: String; var attendance: String? }
         struct Result: Decodable, Equatable { let added: Int; let warnings: [String] }
     }
+    /// `rules.names`: every rule's one plain sentence by its id, the words a review row shows for an item's `rules`.
+    enum RuleNames: MeetingsServiceMethod {
+        static let name = "rules.names"
+        struct Params: Codable, Equatable {}
+        struct Result: Decodable, Equatable { let names: [String: String] }
+    }
     enum MeetingPeopleEdit: MeetingsServiceMethod {
         static let name = "meeting.people.edit"
         struct Params: Codable, Equatable {

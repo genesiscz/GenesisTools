@@ -77,9 +77,12 @@ final class MeetingsReviewRowTests: XCTestCase {
     func testWorkshopLineEvidenceKeepsRulesIgnoredIndicatorAndSkippedSwaps() throws {
         let json = #"{"id":"i1","kind":"speaker-range","status":"suggested","fromSec":20,"rules":["R20","energy"],"evidence":{"indicatorIgnored":"stretch-stuck","swap":{"skipped":[21,22]},"departure":{"name":"Carol Example"}}}"#
         let item = try JSONDecoder().decode(MeetingItem.self, from: Data(json.utf8))
-        XCTAssertTrue(item.speakerEvidenceText?.contains("R20, energy") == true)
-        XCTAssertTrue(item.speakerEvidenceText?.contains("stretch-stuck") == true)
-        XCTAssertTrue(item.speakerEvidenceText?.contains("2 contradictory lines") == true)
+        // The rules in the engine's sentences (`rules.names`); an id the table lacks is left out, never shown raw.
+        let text = try XCTUnwrap(item.speakerEvidenceText(ruleNames: ["R20": "The recording shows how loud each track was."]))
+        XCTAssertTrue(text.hasPrefix("The recording shows how loud each track was."), text)
+        XCTAssertFalse(text.contains("R20") || text.contains("energy") || text.contains("stretch-stuck"), text)
+        XCTAssertTrue(text.contains("stayed on one name through this stretch"), text)
+        XCTAssertTrue(text.contains("2 contradictory lines"), text)
         XCTAssertEqual(item.departureText, "Carol Example said goodbye at 00:20")
     }
 

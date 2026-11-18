@@ -111,6 +111,10 @@ final class MeetingsWindowModel {
     /// The same config read as JSON: the side panel's engine rows and the Contacts view's source switches read their
     /// values here, and each write names the value it replaces (`expect`).
     private(set) var settingsRaw: JSONValue?
+    /// Every rule's sentence by its id (`rules.names`), read once when the transcript inspector first asks; nil before,
+    /// and without a service (the inspector then leaves the rules out rather than show their ids).
+    private(set) var ruleNames: [String: String]?
+    @ObservationIgnored private var ruleNamesTask: Task<Void, Never>?
     private(set) var detail: MeetingDetailModel?
     var days: Int
     /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there). The
@@ -344,6 +348,19 @@ final class MeetingsWindowModel {
         try await MeetingsWindowModel.settingsRead.run(service: service)
     }
     @ObservationIgnored private var settingsGeneration = 0
+
+    /// Reads the rule sentences once (`rules.names`). A failed read is logged and tried again at the next ask.
+    func ensureRuleNames() {
+        guard ruleNames == nil, ruleNamesTask == nil, let service else { return }
+        ruleNamesTask = Task { [weak self] in
+            defer { self?.ruleNamesTask = nil }
+            do {
+                self?.ruleNames = try await service.call(MeetingsAPI.RuleNames.self, .init()).names
+            } catch {
+                HubPerf.log("meetings.ruleNames: not read (\(error)); the inspector leaves the rules out")
+            }
+        }
+    }
 
     // MARK: Config writes from the window (the side panel's engine rows, the Contacts view's sources)
 

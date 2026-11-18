@@ -139,13 +139,14 @@ struct TranscriptBlocksPane: View {
 
     /// What the line popover says about the selected lines: the range that named each one with its rules, and what the
     /// speaking indicator showed on it. One sentence per range, however many of its lines are selected.
-    static func lineEvidence(_ lines: [TranscriptLine], items: [MeetingItem]) -> [String] {
+    static func lineEvidence(_ lines: [TranscriptLine], items: [MeetingItem], ruleNames: [String: String]) -> [String] {
         var seen = Set<String>()
         var texts: [String] = []
         for line in lines {
-            if let range = namingRange(of: line, in: items), let evidence = range.speakerEvidenceText {
+            if let range = namingRange(of: line, in: items) {
                 let span = "\(MeetingsFormat.clock(range.fromSec ?? 0)) to \(MeetingsFormat.clock(range.toSec ?? 0))"
-                texts.append("Named by the speaker range \(span) · \(evidence)")
+                let evidence = range.speakerEvidenceText(ruleNames: ruleNames).map { " " + $0 } ?? ""
+                texts.append("Named by the speaker range \(span).\(evidence)")
             }
             if let indicator = line.indicator { texts.append("Speaking indicator: \(indicator.shownText)") }
         }
@@ -180,7 +181,13 @@ struct TranscriptBlocksPane: View {
             projection = TranscriptPaneProjection.make(input)
             span.end()
         }
-        .onAppear { detail.restoreRowsForReopen(); detail.ensureComments(); if detail.rows.value == nil { detail.loadRows() } }
+        .onAppear {
+            detail.restoreRowsForReopen()
+            detail.ensureComments()
+            if detail.rows.value == nil { detail.loadRows() }
+            // The line popover words a range's rules with the engine's sentences.
+            detail.window?.ensureRuleNames()
+        }
         .onChange(of: detail.rows.value, initial: true) { _, rows in
             let indexes = raisedFlash.receive(rows, enabled: flashRaised)
             guard !indexes.isEmpty else { return }
@@ -444,7 +451,7 @@ struct TranscriptBlocksPane: View {
             },
             savingClip: detail.isBusy("clip.save"),
             speakerEvidence: Self.lineEvidence(selectedLines.compactMap { shown.indices.contains($0.index) ? shown[$0.index] : nil },
-                                               items: detail.record.value?.items ?? []),
+                                               items: detail.record.value?.items ?? [], ruleNames: detail.window?.ruleNames ?? [:]),
             close: { clearSelection() })
         })
     }

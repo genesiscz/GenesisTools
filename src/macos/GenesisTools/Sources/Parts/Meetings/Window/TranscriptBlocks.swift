@@ -493,11 +493,15 @@ extension TranscriptLine.Indicator {
     /// The indicator's names, and when the engine ignores it, why in words (C2): the engine sends a code.
     var shownText: String {
         let names = names.isEmpty ? "No named indicator" : names.joined(separator: ", ")
-        switch ignored {
-        case nil: return names
-        case "meeting-dominance": return "\(names) · stuck: one name lit it through most of the meeting, so it is ignored"
-        case "stretch-stuck": return "\(names) · stuck: it stayed on one name through this stretch of the call, so it is ignored"
-        default: return "\(names) · stuck, so it is ignored"
+        return ignored.map { "\(names) · \(Self.ignoredWords($0))" } ?? names
+    }
+
+    /// Why the engine ignores the indicator, for its code.
+    static func ignoredWords(_ code: String) -> String {
+        switch code {
+        case "meeting-dominance": "stuck: one name lit it through most of the meeting, so it is ignored"
+        case "stretch-stuck": "stuck: it stayed on one name through this stretch of the call, so it is ignored"
+        default: "stuck, so it is ignored"
         }
     }
 }
