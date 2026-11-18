@@ -186,6 +186,7 @@ struct WidgetTaskUpdate: Codable, Sendable {
         var revision: Int
         var at: String
         var saved: Bool
+        var needsResume: Bool? = nil
     }
     var task: WidgetTask
     var receipt: Receipt

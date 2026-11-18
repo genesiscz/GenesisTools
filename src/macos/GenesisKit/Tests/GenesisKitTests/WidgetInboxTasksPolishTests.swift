@@ -424,6 +424,21 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(WidgetTaskAction.returning(to: "open"), [.reopen])
     }
 
+    func testOfflineTaskOffersResumeWithoutClaimingDelivery() async throws {
+        let row = task()
+        let store = WidgetTasksStore(request: { args in
+            if args.first != "update" { return try self.snapshot([row]) }
+            return try JSONEncoder().encode(WidgetTaskUpdate(task: row, receipt: .init(
+                id: row.id, action: "send", from: row.state, state: row.state, revision: row.revision,
+                at: row.updatedTs, saved: false, needsResume: true)))
+        })
+        defer { store.stop() }
+        store.perform(.send, on: row)
+        await settled(store)
+        XCTAssertEqual(store.resumeRequest?.id, row.id)
+        XCTAssertNil(store.receipt)
+    }
+
     func testTaskAssignmentActionsFollowOwnerAndReceipt() {
         var row = task()
         row.owner = "human"

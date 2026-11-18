@@ -90,7 +90,7 @@ export async function watchWidget({
         prepare?: typeof prepareWidgetAsset;
         snapshot?: typeof widgetSnapshot;
         dispatcher?: OutboxDispatcher;
-        inboxPaths?: { answerLog: string; database: string; decisions: string; work?: string };
+        inboxPaths?: { answerLog: string; database: string; decisions: string; work?: string; config?: string };
         watchInbox?: typeof createWatcher;
         watchSessions?: typeof createWatcher;
         sessionRoots?: Record<WidgetRosterProvider, string[]>;
@@ -436,16 +436,19 @@ export async function watchWidget({
                     decisions: decisionFiles().file,
                     // The session to-do items live in the work store (work-items P9).
                     work: workDbPath(),
+                    config: toolDataDir("hub", "config.json"),
                 };
                 const paths = {
                     answerLog: resolve(configured.answerLog),
                     database: resolve(configured.database),
                     decisions: resolve(configured.decisions),
+                    config: configured.config ? resolve(configured.config) : null,
                     work: configured.work !== undefined ? resolve(configured.work) : null,
                 };
                 const directories = [
                     ...new Set([
                         paths.answerLog,
+                        ...(paths.config ? [dirname(paths.config)] : []),
                         dirname(paths.database),
                         dirname(paths.decisions),
                         ...(paths.work !== null ? [dirname(paths.work)] : []),
@@ -470,6 +473,7 @@ export async function watchWidget({
                             await watchInbox(sourceDirectory, requestRefresh, {
                                 debounceMs: 100,
                                 filter: (event) =>
+                                    event.path === paths.config ||
                                     event.path === paths.database ||
                                     event.path === `${paths.database}-wal` ||
                                     event.path === paths.decisions ||

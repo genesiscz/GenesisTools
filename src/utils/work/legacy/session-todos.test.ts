@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { listItems } from "../read";
 import { openWorkDb } from "../store/db";
-import { mirrorSessionTodos, type SessionTodoRow } from "./session-todos";
+import { mirrorSessionTodos, readSessionTodos, type SessionTodoRow } from "./session-todos";
 
 function row(number: number, patch: Partial<SessionTodoRow> = {}): SessionTodoRow {
     return {
@@ -19,6 +22,23 @@ function row(number: number, patch: Partial<SessionTodoRow> = {}): SessionTodoRo
 }
 
 describe("session to-do items in the work store (P9)", () => {
+    test("a transferred task has the same owner in the work item and session row after reopen", () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-todo-transfer-")), "work.db");
+        let db = openWorkDb(file);
+        try {
+            mirrorSessionTodos(db, [row(1, { for: "human" })]);
+            mirrorSessionTodos(db, [
+                row(1, { for: "agent", state: "acknowledged", updatedTs: "2026-11-18T09:00:00.000Z" }),
+            ]);
+            db.close();
+            db = openWorkDb(file);
+            expect(db.query("SELECT state, for_who FROM items").get()).toEqual({ state: "active", for_who: "agent" });
+            expect(readSessionTodos(db).rows[0]).toMatchObject({ state: "acknowledged", for: "agent" });
+        } finally {
+            db.close();
+        }
+    });
+
     test("a row becomes one tagged task keyed by session and number; a repeat writes nothing; a state change moves it", () => {
         const db = openWorkDb(":memory:");
         let n = 0;

@@ -34,7 +34,7 @@ import { buildInbox, fromRecord, type InboxSessionInfo, inboxDelivery, scanTurns
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
 import { cachingReadDeps, fillExcerpts, locateRef, readExcerpt } from "./excerpts";
-import { DEFAULT_INBOX_KINDS } from "./kinds";
+import { DEFAULT_INBOX_KINDS, readInboxKinds, setInboxKind } from "./kinds";
 import {
     type InboxDeps,
     loadInbox,
@@ -1985,6 +1985,23 @@ describe("answering a dialog item by its option key", () => {
         });
         expect(tool.calls).toHaveLength(1);
     });
+});
+
+test("changing one inbox preference preserves the other kinds and unrelated hub settings", async () => {
+    const { Storage } = await import("@genesiscz/utils/storage");
+    const name = `test-inbox-${crypto.randomUUID()}`;
+    const storage = new Storage(name);
+    await storage.setConfigValue("prLookupCacheSeconds", 77);
+    await setInboxKind("todo.forAgent", "show", true, storage);
+    const reopened = new Storage(name);
+    expect(await readInboxKinds(reopened)).toEqual({
+        ...DEFAULT_INBOX_KINDS,
+        todo: {
+            forHuman: DEFAULT_INBOX_KINDS.todo.forHuman,
+            forAgent: { show: true, countInBadge: false },
+        },
+    });
+    expect(await reopened.getConfigValue("prLookupCacheSeconds")).toBe(77);
 });
 
 test("task visibility and badge counts follow the recipient within its session", async () => {
