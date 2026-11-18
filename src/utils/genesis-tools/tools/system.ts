@@ -202,3 +202,8 @@ export function genesisToolsRequestOpenCommand(id: string): string {
     }
     return toolCommand("genesis-tools request open", "--", id);
 }
+
+/** A recorder command that a REPL method names as its CLI twin, such as `recorder status`. */
+export function recorderCommand(...words: string[]): string {
+    return [toolCommand("recorder"), ...words].join(" ");
+}
