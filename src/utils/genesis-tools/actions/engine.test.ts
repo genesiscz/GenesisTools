@@ -10,6 +10,7 @@ import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/act
 import { createStateStore, memoryStateStore, parseStateText } from "@genesiscz/utils/genesis-tools/actions/state";
 import type { AppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { launcherFailure } from "@genesiscz/utils/genesis-tools/areas/permissions";
 import { windowOpenArgv } from "@genesiscz/utils/genesis-tools/areas/windows";
 import { parseSwiftRpcMethods } from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
 import { type Facts, parseAppManifest } from "@genesiscz/utils/genesis-tools/capability/facts";
@@ -203,6 +204,26 @@ describe("the app.grant need has no probe, so --fresh reads the saved grant", ()
             ok: false,
             code: "grant-missing",
         });
+    });
+});
+
+describe("the permission probe tells a timeout from a denied grant", () => {
+    const ran = { exit: 0, stdout: "granted\n", stderr: "", signal: null, timedOut: false, cancelled: false };
+
+    test("a run its deadline stopped names the deadline, a signal and an exit keep their own words", () => {
+        expect(launcherFailure("Permission probe", ran, 10_000)).toBeNull();
+        expect(
+            launcherFailure("Permission probe", { ...ran, exit: 143, signal: "SIGTERM", timedOut: true }, 10_000)
+        ).toBe("Permission probe gave no answer within 10 s and was stopped; the grant is unknown, not denied");
+        expect(
+            launcherFailure("Permission probe", { ...ran, exit: 143, signal: "SIGTERM", cancelled: true }, 10_000)
+        ).toBe("Permission probe was stopped: the action's caller cancelled or its deadline passed");
+        expect(launcherFailure("Permission probe", { ...ran, exit: 139, signal: "SIGSEGV" }, 10_000)).toBe(
+            "Permission probe was ended by SIGSEGV"
+        );
+        expect(launcherFailure("Permission dialog", { ...ran, exit: 2, stderr: "no such kind\n" }, 10_000)).toBe(
+            "Permission dialog failed with exit 2: no such kind"
+        );
     });
 });
 
