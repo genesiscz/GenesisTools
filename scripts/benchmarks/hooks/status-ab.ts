@@ -183,7 +183,7 @@ function endToEnd(arm: Arm, shape: Shape) {
 
 interface HookModules {
     capturePre: (payload: unknown, diff: unknown) => unknown;
-    runDiffPost: (payload: unknown, config: unknown) => { files: string[] };
+    runDiffPost: (args: { payload: unknown; config: unknown }) => { files: string[] };
     config: { diff: Record<string, unknown> } & Record<string, unknown>;
 }
 
@@ -224,7 +224,7 @@ async function countSpawns(
     const counted = await withSpawnCounter(async () => {
         hooks.capturePre(payload, hooks.config.diff);
         act(shape, `count ${arm} ${callCounter}`);
-        return hooks.runDiffPost(payload, hooks.config);
+        return hooks.runDiffPost({ payload, config: hooks.config });
     });
 
     settle(shape);
