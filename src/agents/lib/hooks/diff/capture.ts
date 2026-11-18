@@ -709,7 +709,9 @@ export function capturePre(
     writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));
 
     roots.forEach((root, index) => {
-        const entries = statusEntries(root);
+        // A reader needs only the already-deleted tracked paths. Its post phase still takes a fresh
+        // full status so a concurrent writer's untracked file is attributed correctly.
+        const entries = statusEntries(root, { trackedOnly: readOnly });
         // A DELETED path is excluded: it is gone from disk, so there is nothing to copy (one
         // such entry used to make `tar` exit 1 and discard the whole archive, 2026-09-20). The
         // post phase renders a deletion from `git diff HEAD` and needs no captured copy.
