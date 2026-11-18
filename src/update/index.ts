@@ -1,7 +1,13 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { genesisToolsMcpRegistration, installGenesisToolsMcp } from "@app/genesis-tools-mcp/lib/mcp-install";
-import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import {
+    type AppStatus,
+    appBuildSdkProblem,
+    appRebuildCommand,
+    appStatus,
+    buildApp,
+} from "@app/macos/lib/permissions/app";
 import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
 import { discoverTools } from "@app/tools/lib/discovery";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -9,9 +15,10 @@ import { findClaudeExecutable } from "@genesiscz/utils/claude";
 import { execTool, execToolInteractive, isInteractive, isVerbose, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { checkAppInstalled, describeNeedFailure, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { genesisAppBuildHint, resolveAppBuildSdk } from "@genesiscz/utils/macos/xcode";
+import { resolveAppBuildSdk } from "@genesiscz/utils/macos/xcode";
 import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { UpdateMode, UpdateOptions } from "./channel";
@@ -419,12 +426,22 @@ async function offerServiceRestarts(): Promise<void> {
  * old `install.sh` that predates the app, must not have it installed behind their back by a
  * routine update.
  */
-async function refreshGenesisApp(): Promise<void> {
-    if (process.platform !== "darwin") {
+export async function refreshGenesisApp({
+    needEnv,
+    readStatus = appStatus,
+    resolveSdk = resolveAppBuildSdk,
+    build = buildApp,
+}: {
+    needEnv?: NeedEnv;
+    readStatus?: () => Pick<AppStatus, "built" | "stale">;
+    resolveSdk?: typeof resolveAppBuildSdk;
+    build?: typeof buildApp;
+} = {}): Promise<void> {
+    if ((needEnv?.facts.platform() ?? process.platform) !== "darwin") {
         return;
     }
 
-    const status = appStatus();
+    const status = readStatus();
 
     if (genesisAppRefreshAction(status) === "skip") {
         return;
@@ -432,12 +449,13 @@ async function refreshGenesisApp(): Promise<void> {
 
     // buildApp() refuses this too, but only after the "Rebuilding" line: say it once and move on. The Command Line
     // Tools build too when one of their SDKs needs no SwiftUI macro plugin (#564).
-    const sdk = resolveAppBuildSdk();
+    const sdk = resolveSdk();
+    const sdkProblem = appBuildSdkProblem(sdk);
 
-    if (sdk.kind === "unsupported") {
-        logger.info({ toolchain: sdk.toolchain }, "update: GenesisTools.app rebuild skipped, no usable SDK");
+    if (sdkProblem) {
+        logger.info({ sdk }, "update: GenesisTools.app rebuild skipped, no usable SDK");
         out.println(pc.yellow("\n  Skipped rebuilding GenesisTools.app: no installed SDK can build it without Xcode."));
-        out.println(pc.dim(`  ${genesisAppBuildHint(sdk.toolchain)}`));
+        out.println(pc.dim(`  ${sdkProblem}`));
         return;
     }
 
@@ -448,7 +466,7 @@ async function refreshGenesisApp(): Promise<void> {
             step: (message) => out.println(pc.dim(`    ${message}`)),
             spinner: () => out.spinner(),
         });
-        const result = await buildApp({ onStep: progress.onStep, onProgress: progress.onProgress }).finally(
+        const result = await build({ onStep: progress.onStep, onProgress: progress.onProgress }).finally(
             progress.finish
         );
 
@@ -462,7 +480,11 @@ async function refreshGenesisApp(): Promise<void> {
         out.println(
             pc.yellow(`  Could not rebuild GenesisTools.app: ${err instanceof Error ? err.message : String(err)}`)
         );
-        out.println(pc.dim(`  Tools keep running under the previous bundle. ${genesisAppBuildHint()}`));
+        const installed = checkAppInstalled(needEnv);
+        const advice = installed.ok
+            ? `Tools keep running under the previous bundle. Run \`${appRebuildCommand(needEnv?.builder)}\`.`
+            : describeNeedFailure(installed);
+        out.println(pc.dim(`  ${advice}`));
     }
 }
 
@@ -526,4 +548,6 @@ function discoverSkills(skillsDir: string): Array<{ name: string; description: s
     return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-await runTool(program, { tool: "update" });
+if (import.meta.main) {
+    await runTool(program, { tool: "update" });
+}
