@@ -130,6 +130,18 @@ function clean(line: string): string {
         .replace(/\r$/, "");
 }
 
+/**
+ * An affected run (`scripts/ci/test-changed.sh`) that selected no tests: the runner wrote its completion marker with
+ * exit 0, and every Bun summary says it ran 0 tests. A missing or cut log has no marker, and a log whose test lines
+ * the parser cannot read still names a nonzero count, so both keep failing.
+ */
+export function completedEmptySelection(log: string): boolean {
+    const lines = log.split("\n").map(clean);
+    const counts = lines.flatMap((line) => line.match(/^Ran (\d+) tests? across/)?.[1] ?? []);
+
+    return lines.includes("[test] suite complete (exit 0)") && counts.length > 0 && counts.every((n) => n === "0");
+}
+
 export function analyze(
     log: string,
     options: { ceilingShare?: number; ceilingMs?: number; isConcurrent?: (file: string) => boolean } = {}
@@ -287,11 +299,17 @@ function main(argv: string[]): number {
     const requestedWarn = warnIndex === -1 ? Number.NaN : Number(argv[warnIndex + 1]);
     const warnTotal = Number.isFinite(requestedWarn) && requestedWarn > 0 ? requestedWarn : DEFAULT_WARN_TOTAL_S;
     const root = resolve(import.meta.dir, "..", "..");
-    const report = analyze(readFileSync(logPath, "utf8"), {
+    const log = readFileSync(logPath, "utf8");
+    const report = analyze(log, {
         ceilingMs,
         isConcurrent: (file) => sourceIsConcurrent(file, root),
     });
     const ceilingLabel = `${(report.ceilingMs / 1000).toFixed(0)}s ${describeCeiling(report, ceilingMs)}`;
+
+    if (report.testLines === 0 && completedEmptySelection(log)) {
+        process.stderr.write("test-runtime-guard: the affected selection held no tests and the run completed.\n");
+        return 0;
+    }
 
     // The positive control, and the reason this is not `if (violations.length === 0) pass`.
     // A log that was truncated, never written, or written by a step that died reports zero
