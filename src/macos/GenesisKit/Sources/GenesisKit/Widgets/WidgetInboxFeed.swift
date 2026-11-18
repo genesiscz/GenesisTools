@@ -72,7 +72,10 @@ struct WidgetFeedRunHeader: View, Equatable {
         let project = session?.project ?? ""
         title = external ?? (project.isEmpty ? session?.title ?? "Unknown session" : project)
         let sessions = Set(run.items.map(\.key)).count
-        subtitle = sessions > 1 ? Plural.count(sessions, "session") : (project.isEmpty ? nil : session?.title)
+        // A session named after its only item (an agent result) would print the same words twice: the row keeps them.
+        let sessionTitle = run.items.count == 1 && session?.title == first.map(WidgetInboxOverview.title)
+            ? nil : session?.title
+        subtitle = sessions > 1 ? Plural.count(sessions, "session") : (project.isEmpty ? nil : sessionTitle)
         let count = run.items.filter(\.needsAnswer).count
         waiting = count > 0
         counts = [Plural.count(run.items.count, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
