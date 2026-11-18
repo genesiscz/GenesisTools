@@ -15,6 +15,13 @@ final class MeetingsQuestionRowsTests: XCTestCase {
             raisedLines: [.init(index: 99, startSec: 60, endSec: 62, speaker: "Bob Example", text: "Raised line")])
     }
     private func rendered<V: View>(_ view: V, name: String, width: CGFloat = 460, native: Bool = false, afterMount: () -> Void = {}) throws -> String {
+        try MeetingQuestionPicture.text(view, name: name, width: width, native: native, afterMount: afterMount)
+    }
+}
+
+@MainActor
+enum MeetingQuestionPicture {
+    static func text<V: View>(_ view: V, name: String, width: CGFloat = 460, native: Bool, afterMount: () -> Void = {}) throws -> String {
         let content = view.frame(width: width).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
@@ -38,6 +45,9 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         }
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
+}
+
+extension MeetingsQuestionRowsTests {
     func testC13RefusalKeepsTheNearestLineSentence() throws {
         let error = MeetingsCLI.Failure(sentence: "No zorb at 08:28; heard at 08:33 (line 38). Correct the anchor.", detail: "engine detail")
         XCTAssertEqual(asFailure(error).sentence, error.sentence)

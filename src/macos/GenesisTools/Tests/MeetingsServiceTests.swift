@@ -1596,6 +1596,25 @@ extension MeetingsServiceTests {
 }
 
 extension MeetingsServiceTests {
+    func testTwoVoicesShowsTheOriginalWordsWithTheTranscriptPaneClosed() throws {
+        try writeServiceEntry()
+        fake.answers["people.known"] = ["result": ["query": "", "people": [], "total": 0, "sources": []] as [String: Any]]
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: makeService())
+        let row = ReviewRow(id: "q1", label: "Q1", kind: "question", status: "suggested", confidence: nil,
+                            priority: nil, what: "Who speaks?", parts: [], choices: [], edit: "answer",
+                            needs: nil, sources: [], target: .item("q1"))
+        let evidence = QuestionDetails(id: row.id, decidedLines: [.init(index: 0, startSec: 5, endSec: 8,
+            speaker: "Speaker 1", text: "First original words")], impact: .init(lines: 1, words: 3, sameDoubtLines: 0),
+            raisedLines: nil)
+        detail.rows = .loaded(.init(meeting: detail.id, rows: [row], hidden: .init(lowPriority: 0, minPriority: 0),
+                                    questionDetails: [evidence]))
+        let words = try MeetingQuestionPicture.text(ListenVoicesEditor(row: row, detail: detail, close: {}),
+                                                    name: "L10-source-words", native: true)
+        XCTAssertTrue(words.contains("original words"), words)
+        XCTAssertFalse(words.contains("No word boundary"), words)
+        XCTAssertEqual(fake.count("meeting.transcript"), 0)
+    }
+
     func testCanonicalVoiceScoresDecodeAndMarkOnlyTheirNamedTranscriptLine() throws {
         let voice = try MeetingsService.decode(MeetingRecordView.Evidence.Voice.Match.self,
             ["model": "fixture", "quality": "matched", "person": "Bob Example", "reason": "gate passed", "candidates": [["person": "Bob Example", "score": 0.8]]])
