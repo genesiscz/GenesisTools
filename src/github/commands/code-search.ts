@@ -1,5 +1,6 @@
 // Code search command implementation
 
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { getOctokit } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
@@ -10,6 +11,7 @@ import chalk from "chalk";
 import { Command } from "commander";
 
 interface CodeSearchOptions {
+    searchType?: string | boolean;
     repo?: string;
     path?: string;
     language?: string;
@@ -94,6 +96,21 @@ function formatCodeResults(results: CodeSearchResult[], format: string): string 
 }
 
 export async function codeSearchCommand(query: string, options: CodeSearchOptions): Promise<void> {
+    if (options.searchType !== undefined) {
+        const mode = await pickEnumFlag({
+            tool: "tools github code",
+            subcommand: ["code"],
+            flag: "--search-type",
+            given: options.searchType,
+            values: ["keyword"],
+            fallback: "keyword",
+            accepts: (value): value is "keyword" => value === "keyword",
+        });
+        if (!mode) {
+            return;
+        }
+    }
+
     if (options.verbose) {
         setGlobalVerbose(true);
     }
@@ -123,6 +140,7 @@ export function createCodeSearchCommand(): Command {
     const cmd = new Command("code")
         .description("Search code in GitHub repositories")
         .argument("<query>", "Search query (code content)")
+        .option("--search-type [mode]", "Code search supports keyword only")
         .option("-r, --repo <owner/repo>", "Limit to repository (recommended)")
         .option("-p, --path <path>", 'Filter by file path (e.g., "src/**/*.ts")')
         .option("-l, --language <lang>", "Filter by language (e.g., typescript, python)")

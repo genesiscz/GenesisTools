@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { maxEmbedChars } from "@genesiscz/utils/ai/local/descriptors";
 import { AIDarwinKitProvider } from "@genesiscz/utils/ai/providers/AIDarwinKitProvider";
 import type { AIEmbeddingProvider } from "@genesiscz/utils/ai/types";
-import type { SearchCommandOptions, SearchResult } from "@genesiscz/utils/github/types";
+import type { RankedIssueSearchType, SearchCommandOptions, SearchResult } from "@genesiscz/utils/github/types";
 import { parseRepo } from "@genesiscz/utils/github/url-parser";
 import { logger } from "@genesiscz/utils/logger";
 import { SearchEngine } from "@genesiscz/utils/search/drivers/sqlite-fts5";
@@ -11,8 +11,6 @@ import { ensureExtensionCapableSQLite, loadSqliteVec } from "@genesiscz/utils/se
 import { SqliteVecVectorStore } from "@genesiscz/utils/search/stores/sqlite-vec-store";
 import { SqliteVectorStore } from "@genesiscz/utils/search/stores/sqlite-vector-store";
 import { githubCachePath } from "./cache";
-
-type LocalMode = "semantic" | "hybrid";
 
 function localQuery(query: string, options: SearchCommandOptions) {
     if (
@@ -116,7 +114,7 @@ type CachedHit = Omit<SearchResult, "url" | "source"> & { id: number; body: stri
 
 export async function searchCachedIssues(
     query: string,
-    mode: LocalMode,
+    mode: RankedIssueSearchType,
     options: SearchCommandOptions,
     {
         cachePath = githubCachePath(),

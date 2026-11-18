@@ -1,9 +1,14 @@
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createCodeSearchCommand } from "@app/github/commands/code-search";
+import { createSearchCommand, searchCommand } from "@app/github/commands/search";
+import { env } from "@genesiscz/utils/env";
 import type { CommentRecord, IssueRecord, TimelineEventRecord } from "@genesiscz/utils/github/types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import {
     clearCache,
     closeDatabase,
@@ -24,7 +29,146 @@ import {
     upsertIssue,
     upsertTimelineEvents,
 } from "./cache";
-import { searchCachedIssues } from "./local-issue-search";
+import * as localIssueSearch from "./local-issue-search";
+
+const { searchCachedIssues } = localIssueSearch;
+
+describe("GitHub issue search backends", () => {
+    test.each([
+        ["semantic", "issue", "open"],
+        ["hybrid", "pr", "closed"],
+        ["semantic", "all", "all"],
+    ])("sends one hosted %s request for %s/%s and reports its source", async (mode, type, state) => {
+        const item = {
+            number: 17,
+            title: "Empty window",
+            state: state === "closed" ? "closed" : "open",
+            user: { login: "alice" },
+            created_at: "2026-01-02T00:00:00Z",
+            updated_at: "2026-01-03T00:00:00Z",
+            repository_url: "https://api.github.com/repos/acme/widgets",
+            html_url: `https://github.com/acme/widgets/${type === "pr" ? "pull" : "issues"}/17`,
+            comments: 3,
+            reactions: { total_count: 8 },
+            ...(type === "pr" && { pull_request: { url: "https://api.github.com/repos/acme/widgets/pulls/17" } }),
+        };
+        const http = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [item] }));
+        const stdout = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            await env.testing.withOverrides({ GITHUB_TOKEN: "fixture-token" }, async () => {
+                await createSearchCommand().parseAsync(
+                    [
+                        "empty window reactions:>5",
+                        "--search-type",
+                        mode,
+                        "--repo",
+                        "acme/widgets",
+                        "--type",
+                        type,
+                        "--state",
+                        state,
+                        "--limit",
+                        "8",
+                        "--format",
+                        "json",
+                    ],
+                    { from: "user" }
+                );
+            });
+            expect(http).toHaveBeenCalledTimes(1);
+            const [url, init] = http.mock.calls[0];
+            const { pathname, searchParams } = new URL(String(url));
+            expect(init?.method).toBe("GET");
+            expect(pathname).toBe("/search/issues");
+            expect(searchParams.get("advanced_search")).toBe("true");
+            expect(searchParams.get("search_type")).toBe(mode);
+            expect(searchParams.get("per_page")).toBe("8");
+            const expectedTerms = ["empty", "window", "reactions:>5", "repo:acme/widgets"];
+            if (type !== "all") {
+                expectedTerms.push(`is:${type}`);
+            }
+
+            if (state !== "all") {
+                expectedTerms.push(`is:${state}`);
+            }
+
+            expect(searchParams.get("q")?.split(" ").sort()).toEqual(expectedTerms.sort());
+            expect(stdout).toHaveBeenCalledTimes(1);
+            expect(SafeJSON.parse(String(stdout.mock.calls[0][0]))).toEqual([
+                expect.objectContaining({
+                    number: 17,
+                    repo: "acme/widgets",
+                    type: type === "pr" ? "pr" : "issue",
+                    source: mode,
+                }),
+            ]);
+        } finally {
+            stdout.mockRestore();
+            http.mockRestore();
+        }
+    });
+
+    test.each([403, 429])("reports the quota reset after HTTP %i without retrying", async (status) => {
+        const response = Response.json(
+            { message: "API rate limit exceeded" },
+            { status, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "978307200" } }
+        );
+        const http = spyOn(globalThis, "fetch").mockResolvedValue(response);
+        try {
+            await env.testing.withOverrides({ GITHUB_TOKEN: "fixture-token" }, async () => {
+                await expect(searchCommand("empty window", { searchType: "semantic" })).rejects.toThrow(
+                    new RegExp(`HTTP ${status}.*10 requests per minute.*2001-01-01T00:00:00\\.000Z`)
+                );
+            });
+            expect(http).toHaveBeenCalledTimes(1);
+        } finally {
+            http.mockRestore();
+        }
+    });
+
+    test("routes --local to the cache without a GitHub request", async () => {
+        const cached = spyOn(localIssueSearch, "searchCachedIssues").mockResolvedValue([]);
+        const http = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
+        const stdout = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            await createSearchCommand().parseAsync(["empty window", "--search-type", "hybrid", "--local"], {
+                from: "user",
+            });
+            expect(cached).toHaveBeenCalledWith("empty window", "hybrid", expect.objectContaining({ local: true }));
+            expect(stdout).toHaveBeenCalledWith("No matching issues or pull requests in the local GitHub cache.");
+            expect(http).not.toHaveBeenCalled();
+        } finally {
+            stdout.mockRestore();
+            http.mockRestore();
+            cached.mockRestore();
+        }
+    });
+
+    test("rejects repository search, code search and hosted comment scans before a request", async () => {
+        const http = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
+        const stderr = spyOn(out, "printlnErr").mockImplementation(() => {});
+        const savedExitCode = process.exitCode;
+        try {
+            for (const searchType of ["semantic", "hybrid"] as const) {
+                await expect(searchCommand("window", { type: "repo", searchType })).rejects.toThrow("--type repo");
+                await createCodeSearchCommand().parseAsync(["window", "--search-type", searchType], { from: "user" });
+                expect(process.exitCode).toBe(1);
+                expect(stderr).toHaveBeenCalledWith(
+                    expect.stringContaining(`does not accept "${searchType}". Possible: keyword`)
+                );
+            }
+
+            await expect(searchCommand("window", { searchType: "hybrid", minCommentReactions: 1 })).rejects.toThrow(
+                "--min-comment-reactions"
+            );
+            expect(http).not.toHaveBeenCalled();
+        } finally {
+            process.exitCode = savedExitCode;
+            stderr.mockRestore();
+            http.mockRestore();
+        }
+    });
+});
 
 describe("updateFetchMetadata concurrency safety", () => {
     test("two sequential calls for the same issueId result in exactly one row without UNIQUE constraint error", () => {
