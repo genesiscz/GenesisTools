@@ -153,9 +153,19 @@ struct PinCard: View {
             default: return lhs.offset < rhs.offset
             }
         }.map(\.element)
+        let voicePeople = voicePeople
         return PinChoiceChips(items: sorted.map { choice in
-            MeetingsWords.score(choice.confidence, cosine: row.isVoiceModel).map { "\(choice.label) \($0)" } ?? choice.label
+            MeetingsWords.score(choice.confidence, cosine: row.scoresByVoice(choice, voicePeople: voicePeople))
+                .map { "\(choice.label) \($0)" } ?? choice.label
         })
+    }
+
+    /// A speaker question's people whose choice score is a voice cosine (`VoiceScore.people`), as the Items row reads
+    /// them: the card is built only while its pin is hovered, so it reads them here.
+    private var voicePeople: Set<String> {
+        guard row.isQuestion, row.isOpen, let items = detail?.record.value?.items,
+              let question = items.first(where: { $0.id == row.id }) else { return [] }
+        return VoiceScore.people(decidedBy: question) { id in items.first { $0.id == id } }
     }
 
     /// Only the sources a click can open: a transcript line, a document, a commit, a work item, a URL.

@@ -1185,6 +1185,50 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(text.components(separatedBy: "Sounds like").count, 2, "one voice line, not the labeler's sentence too: \(text)")
     }
 
+    /// w_n3evy8d2: a question of the owner's meeting read "(by voice 0.63)" while its chip read "63 %". A speaker
+    /// question's chip writes the score of a person whom a voice-model range it decides names as the question's text
+    /// does, a cosine; a confidence another rule gave stays a percent. The Items tab hands each row its voice people
+    /// (`ItemsProjection.voicePeople`), and the chip asks `scoresByVoice`.
+    func testAQuestionsVoiceChipReadsItsCosineAsTheQuestionTextDoes() throws {
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Data(#"""
+        [{"id":"i201","kind":"speaker-range","status":"suggested","label":"Speaker 6","fromSec":1790,"toSec":1790,
+          "speaker":"Alice Example","confidence":0.6344,"rules":["voice-embedding"],
+          "evidence":{"labeler":"voice","reason":"named","score":0.6344}},
+         {"id":"i922","kind":"speaker-range","status":"suggested","label":"Speaker 6","fromSec":1790,"toSec":1797,
+          "speaker":"Bob Example","confidence":0.55,"rules":["agent"]},
+         {"id":"i923","kind":"question","status":"suggested","about":"speaker","fromSec":1790,"toSec":1797,
+          "choices":["Bob Example","Alice Example","Carol Example"],"decides":["i922","i201"]}]
+        """#.utf8))
+        let question = try row(["id": "i923", "label": "Q36", "kind": "question", "kindWord": "Question", "status": "suggested",
+                                "what": "29:50–29:57 Who says this? (by voice 0.63)", "edit": "person",
+                                "choices": [["value": "Alice Example", "label": "Alice Example", "role": "suggested",
+                                             "action": ["kind": "answer", "answer": "Alice Example"], "confidence": 0.6344],
+                                            ["value": "Bob Example", "label": "Bob Example", "role": "candidate",
+                                             "action": ["kind": "answer", "answer": "Bob Example"], "confidence": 0.55]]])
+        let voice = ItemsProjection.make(.init(rows: [question], items: items)).voicePeople["i923"] ?? []
+        let alice = try XCTUnwrap(question.choices.first { $0.value == "Alice Example" })
+        let bob = try XCTUnwrap(question.choices.first { $0.value == "Bob Example" })
+        XCTAssertEqual(MeetingsWords.score(alice.confidence, cosine: question.scoresByVoice(alice, voicePeople: voice)), "0.63",
+                       "the voice model named Alice on a range the question decides: the same number as its text")
+        XCTAssertEqual(MeetingsWords.score(bob.confidence, cosine: question.scoresByVoice(bob, voicePeople: voice)), "55 %",
+                       "an agent's confidence is a probability, so it stays a percent")
+
+        let voiceRange = try voiceRow()
+        let named = try XCTUnwrap(voiceRange.choices.first)
+        XCTAssertEqual(MeetingsWords.score(named.confidence, cosine: voiceRange.scoresByVoice(named)), "0.61",
+                       "a range the voice model named keeps its cosine")
+
+        // The question text leaves out a range given by exclusion and a decided one; so does the chip.
+        let question36 = try XCTUnwrap(items.last)
+        let excluded = try JSONDecoder().decode(MeetingItem.self, from: Data(#"""
+        {"id":"i201","kind":"speaker-range","status":"suggested","speaker":"Alice Example","confidence":0.7,
+         "rules":["voice-embedding"],"evidence":{"reason":"exclusion","score":0.7}}
+        """#.utf8))
+        XCTAssertEqual(VoiceScore.people(decidedBy: question36) { $0 == "i201" ? excluded : nil }, [])
+        XCTAssertEqual(VoiceScore.people(decidedBy: question36) { id in items.first { $0.id == id } },
+                       [PeopleText.personKey("Alice Example")])
+    }
+
     /// U13: the sample count is a button that opens the Voices pane.
     func testTheSampleCountOpensTheVoicesPane() throws {
         FrameProbe.enabled = true

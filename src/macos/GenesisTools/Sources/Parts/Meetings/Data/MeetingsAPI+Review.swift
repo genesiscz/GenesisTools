@@ -838,6 +838,13 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     var isVoiceModel: Bool { kind == "speaker-range" && rules?.contains("voice-embedding") == true }
     var isQuestion: Bool { kind == "question" }
 
+    /// Whether a choice's score is a voice cosine ("0.63") rather than a confidence ("63 %", U13): every choice of a
+    /// range the voice model named, and on a speaker question the people a voice-model range it decides names
+    /// (`voicePeople`, from `VoiceScore.people`).
+    func scoresByVoice(_ choice: RowChoice, voicePeople: Set<String> = []) -> Bool {
+        isVoiceModel || voicePeople.contains(PeopleText.personKey(choice.value))
+    }
+
     /// What a decided item was decided as (`decidedAs` in src/meetings/lib/review-rows.ts): a confirmed question's
     /// answer, a confirmed word's spelling, a confirmed range's speaker; nothing for an open or a rejected item.
     static func decidedAs(_ item: MeetingItem) -> String? {
