@@ -9,6 +9,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
+import { healthDistribution } from "../../../scripts/benchmarks/hub/health-latency";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
 import {
@@ -93,6 +94,18 @@ const traceDoor: CallDoor<true> = {
 };
 
 const servers: HubServerHandle[] = [];
+
+it("counts missed health probes separately from completed reply latency", () => {
+    expect(
+        healthDistribution([
+            { state: "answers", ms: 20, load1: 3 },
+            { state: "busy", ms: 10_000, load1: 8 },
+            { state: "absent", ms: 1, load1: 8 },
+            { state: "answers", ms: 10, load1: 3 },
+        ])
+    ).toEqual({ attempts: 4, answers: 2, busy: 1, absent: 1, p50Ms: 10, p95Ms: 20, p99Ms: 20, maxMs: 20 });
+    expect(healthDistribution([]).p99Ms).toBeNull();
+});
 
 afterEach(async () => {
     for (const server of servers.splice(0)) {
