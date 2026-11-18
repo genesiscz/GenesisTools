@@ -139,8 +139,11 @@ final class MeetingsSidePanelTests: XCTestCase {
     /// The engine section of `listen`, with the presets above unless `presets` says otherwise; `files` exist.
     private func engine(_ listen: [String: JSONValue], presets: TonePresetList? = nil,
                         files: Set<String> = []) -> (SidePanelSection, [String: SidePanelRow]) {
+        // Its own threshold: the shared one is loaded by any test that renders the transcript pane, which would add
+        // the threshold row to this section.
         let section = SidePanelCatalog.engineSection(listen: .object(listen), presets: presets ?? .loaded(Self.presets),
-                                                     fileExists: { files.contains($0) })
+                                                     fileExists: { files.contains($0) },
+                                                     threshold: MeetingsApplyThreshold(defaults: UserDefaults(suiteName: "test.threshold.\(UUID().uuidString)")!, migrates: false))
         return (section, Dictionary(uniqueKeysWithValues: section.rows.map { ($0.id, $0) }))
     }
 

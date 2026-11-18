@@ -323,6 +323,12 @@ extension MeetingsPreferences {
         static let wordHighlights = MeetingsWindowSetting(
             key: "meetings.transcript.wordHighlights", defaultValue: true, choices: [true, false],
             title: "Highlight the spoken word", detail: "Use saved ASR timing evidence for exact matched words; untimed words keep the line highlight.")
+        static let flashRaised = MeetingsWindowSetting(
+            key: "meetings.transcript.flashRaised", defaultValue: true, choices: [true, false],
+            title: "Flash lines raised by an answer", detail: "Briefly highlight the source lines whose confidence an answer raised, once per answer.")
+        static let raisedFlashSec = MeetingsWindowSetting(
+            key: "meetings.transcript.raisedFlashSec", defaultValue: 1.2, choices: [0.5, 1.2, 2],
+            title: "Raised-line flash length", detail: "Seconds the raised source lines stay highlighted.")
         static let dimPast = MeetingsWindowSetting(
             key: "meetings.transcript.dimPast", defaultValue: true, choices: [true, false],
             title: "Dim what was heard", detail: "Blocks the playback has passed turn fainter.")
