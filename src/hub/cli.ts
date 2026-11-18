@@ -522,7 +522,12 @@ program
     .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
     .action(async (paths: string[], opts: { pr?: boolean; fresh?: boolean; maxCacheAge?: number }) => {
         out.result(
-            await repoFactsMany({ paths, withPr: Boolean(opts.pr), maxCacheAgeSeconds: resolveMaxCacheAge(opts) })
+            await repoFactsMany({
+                paths,
+                withPr: Boolean(opts.pr),
+                maxCacheAgeSeconds: resolveMaxCacheAge(opts),
+                failOnError: true,
+            })
         );
     });
 

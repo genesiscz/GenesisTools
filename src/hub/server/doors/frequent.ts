@@ -180,7 +180,7 @@ export const repoDoor: CallDoor<RepoArgs> = {
         try {
             signal.throwIfAborted();
             const { repoFactsMany } = await import("@genesiscz/utils/git/repo-facts");
-            return ok(asResult(await repoFactsMany(args)));
+            return ok(asResult(await repoFactsMany({ ...args, signal, failOnError: true })));
         } catch (error) {
             return failed(error);
         }

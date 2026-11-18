@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { Executor } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { repoFacts } from "../repo-facts";
+import { repoFacts, repoFactsMany } from "../repo-facts";
 import { TestRepo } from "../test-repo";
 import { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
 import { FORGE_FACTS, type ForgeFacts, prNumberLabel, prWebUrl } from "./facts";
@@ -105,6 +106,49 @@ describe("detectOrigin / originDriver", () => {
 });
 
 describe("repoFacts", () => {
+    it("reports a git deadline, backs off only that checkout and retries after expiry", async () => {
+        const first = await repoWithOrigin(null);
+        const second = await repoWithOrigin(null);
+        const ok = { success: true, stdout: "/fixture\n/fixture/.git\nabc\nmain", stderr: "", exitCode: 0 };
+        const git = spyOn(Executor.prototype, "exec").mockResolvedValue(ok);
+        const clock = spyOn(Date, "now").mockReturnValue(100_000);
+        try {
+            git.mockResolvedValueOnce(ok).mockResolvedValueOnce({ ...ok, success: false, exitCode: 124 });
+            const options = { paths: [first.dir], failOnError: true };
+            await expect(repoFactsMany(options)).rejects.toThrow("git remote timed out after 10000ms");
+            expect(git.mock.calls.map(([args, flags]) => [args[0], flags?.timeout])).toEqual([
+                ["rev-parse", 10_000],
+                ["remote", 10_000],
+            ]);
+            await expect(repoFactsMany(options)).rejects.toThrow("retry after");
+            expect(git).toHaveBeenCalledTimes(2);
+            expect((await repoFacts({ path: second.dir })).root).toBe("/fixture");
+            clock.mockReturnValue(130_000);
+            expect((await repoFactsMany(options))[0]?.root).toBe("/fixture");
+            expect(git).toHaveBeenCalledTimes(6);
+        } finally {
+            clock.mockRestore();
+            git.mockRestore();
+        }
+    });
+
+    it("bounds unborn branch reads and reuses the origin for PR driver selection", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-repo-facts-", seed: false });
+        repos.push(repo);
+        const git = spyOn(Executor.prototype, "exec");
+        try {
+            expect((await repoFacts({ path: repo.dir, withPr: true })).pr).toBeNull();
+            expect(git.mock.calls.map(([args, flags]) => [args[0], flags?.timeout])).toEqual([
+                ["rev-parse", 10_000],
+                ["rev-parse", 10_000],
+                ["symbolic-ref", 10_000],
+                ["remote", 10_000],
+            ]);
+        } finally {
+            git.mockRestore();
+        }
+    });
+
     it("reports a checkout whose branch has no commits yet, with its branch and origin", async () => {
         const repo = await TestRepo.create({ prefix: "gt-review-prs-", branch: "feat/x", seed: false });
         repos.push(repo);
