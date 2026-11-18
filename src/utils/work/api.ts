@@ -5,6 +5,7 @@
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { z } from "zod";
 import { ITEM_STATES, ITEM_TYPES, LINK_KINDS, LOG_RESULTS, SEVERITIES } from "./model/vocab";
+import { listRowSchema, treeResultSchema, triageRowSchema } from "./wire";
 
 const ref = z.string().min(1).describe("an id (w_…, h_…) or <handoff>:<slot>");
 const refs = z.array(z.string().min(1)).min(1).describe("ids or <handoff>:<slot>, comma-separated on the CLI");
@@ -37,7 +38,7 @@ export const workMethods = {
                 .describe("columns: ref,state,type,severity,worker,title,project,slot"),
             limit: z.number().int().positive().max(5000).optional(),
         }),
-        result: z.unknown(),
+        result: z.array(listRowSchema),
         resultName: `${reply}, data: { ref, state, type, severity?, worker?, title, project, slot? }[]`,
         effect: "read",
         doc: "List items, one short row each, no bodies.",
@@ -56,7 +57,7 @@ export const workMethods = {
             project: z.string().optional(),
             all: z.boolean().optional().describe("also finished containers"),
         }),
-        result: z.unknown(),
+        result: treeResultSchema,
         resultName: `${reply}, data: { containers: { ref, type, state, title, open, total, members }[], spotted: number }`,
         effect: "read",
         doc: "The open handoffs and epics of a project with their members, and the count of spotted items.",
@@ -64,7 +65,7 @@ export const workMethods = {
     triage: defineMethod({
         name: "triage",
         params: z.object({ project: z.string().optional() }),
-        result: z.unknown(),
+        result: z.array(triageRowSchema),
         resultName: `${reply}, data: { ref, group, type, title, where?, why?, userSees?, spottedIn?, spottedBy?, next }[]`,
         effect: "read",
         doc: "The dangling check: what nobody owns, in four groups, with next actions per row.",

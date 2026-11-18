@@ -4,7 +4,6 @@ import { decisionFiles } from "@app/question/lib/decisions/paths";
 // lint-rules-ignore: the session to-do items are read from the question tool's decision log until P9's switch
 import { kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { toCliCommands } from "@genesiscz/utils/api-descriptor/cli";
-import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { FormatFlags } from "@genesiscz/utils/output/formats";
@@ -12,17 +11,14 @@ import { defineFormatter, emit, type Formatter } from "@genesiscz/utils/output/f
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import { WORK_CLI_POSITIONAL, type WorkMethodName, workApi, workMethods } from "@genesiscz/utils/work/api";
 import { workFormatters } from "@genesiscz/utils/work/formatters";
-import { callWork } from "@genesiscz/utils/work/handlers";
 import { type MirrorReport, mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
 import { ingestLegacyHandoff, type ParityDifference, parityOf } from "@genesiscz/utils/work/legacy/shadow";
 import { showItem } from "@genesiscz/utils/work/read";
 import { setWorkConfigValue, workConfigPath } from "@genesiscz/utils/work/rules/load";
 import { openWorkDb, withWorkDb } from "@genesiscz/utils/work/store/db";
 import type { Command } from "commander";
-import { actorHere } from "../adapters/actor";
 import { openLegacySource } from "../adapters/legacy-source";
-import { connectorsEnabled } from "../connectors";
-import { openSession } from "../session";
+import { callWorkHere } from "../doors/service";
 import { cliDoor } from "./emit";
 
 const FORMAT_OPTIONS = [
@@ -69,8 +65,6 @@ function emitAs<T>(reply: Reply<T>, formatter: Formatter<T>, flags: FormatFlags)
 }
 
 /** Runs one method of `workApi` for the CLI and prints its reply. */
-const CONNECTOR_METHODS = new Set<string>(["pair", "unpair", "pull", "sync"]);
-
 export async function runMethod(
     method: string,
     params: Record<string, unknown>,
@@ -80,45 +74,19 @@ export async function runMethod(
         return;
     }
 
-    const read = workMethods[method].effect === "read";
-    const opened = await openSession(
-        {
-            ...(typeof extra.requestId === "string" ? { request: extra.requestId } : {}),
-            ...(extra.dryRun === true ? { dryRun: true } : {}),
-            ...(typeof extra.ownerSaid === "string" ? { ownerSaid: extra.ownerSaid } : {}),
-        },
-        // The model facet reads the transcript (about 400 ms); a read records no actor, so it skips it.
-        { actor: actorHere({ model: !read }) }
-    );
-
-    try {
-        const reply = await callWork(method, params, opened.session);
-        const formatters = workFormatters({
-            ...(typeof params.section === "string" ? { section: params.section } : {}),
-            ...(extra.explain === true ? { explain: true } : {}),
-        });
-        // The formatter of this method; `callWork` returns its reply as unknown, so the door widens the formatter.
-        const formatter = formatters[method] as Formatter<unknown>;
-        emitAs(reply, formatter, formatFlags(extra));
-
-        if (reply.ok && !read && extra.dryRun !== true) {
-            await opened.afterWrite();
-        }
-
-        // The sync is a feed consumer: it runs after the commit, in its own process, so a write never waits for the
-        // network (P5 decision 4). The connector methods push themselves.
-        if (
-            reply.ok &&
-            !read &&
-            extra.dryRun !== true &&
-            !CONNECTOR_METHODS.has(method) &&
-            connectorsEnabled(opened.session.ctx.rules?.layers ?? [])
-        ) {
-            spawnToolDetached(["work", "sync"], { reparent: true });
-        }
-    } finally {
-        opened.close();
-    }
+    const reply = await callWorkHere(method, params, {
+        ...(typeof extra.requestId === "string" ? { request: extra.requestId } : {}),
+        ...(extra.dryRun === true ? { dryRun: true } : {}),
+        ...(typeof extra.ownerSaid === "string" ? { ownerSaid: extra.ownerSaid } : {}),
+        quiet: false,
+    });
+    const formatters = workFormatters({
+        ...(typeof params.section === "string" ? { section: params.section } : {}),
+        ...(extra.explain === true ? { explain: true } : {}),
+    });
+    // The formatter of this method; the door returns its reply as unknown, so the door widens the formatter.
+    const formatter = formatters[method] as Formatter<unknown>;
+    emitAs(reply, formatter, formatFlags(extra));
 }
 
 const fileFormatter = defineFormatter<{ file: string }>({ text: (d) => [`wrote ${d.file}`] });
