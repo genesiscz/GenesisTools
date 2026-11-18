@@ -56,6 +56,7 @@ async function explain(
     }
 
     out.println(pc.dim(`config: ${SafeJSON.stringify(result.config)}`));
+
     if (result.first) {
         out.println(`a run now takes ${result.first}`);
     } else if (result.ways.some((way) => !way.needsKnown)) {

@@ -20,9 +20,11 @@ export function registerServeCommand(program: Command): void {
                 out.result({ running: true });
                 return;
             }
+
             if (options.startGate && (await passStartGate(options.startGate)).status === "cancelled") {
                 return;
             }
+
             try {
                 await withInterrupt(
                     async (signal) => {
@@ -33,6 +35,7 @@ export function registerServeCommand(program: Command): void {
                             out.printlnErr("A GenesisTools service is already running.");
                             return;
                         }
+
                         const stop = (): void => start.host.stop("signal");
                         signal.addEventListener("abort", stop, { once: true });
 

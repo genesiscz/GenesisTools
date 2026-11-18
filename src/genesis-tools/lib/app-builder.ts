@@ -14,9 +14,11 @@ export function registerCliAppBuilder(): void {
         buildCommand: defaultBuildCommand,
         offerBuild: async (part) => {
             refuseHostEffectInTest("app build offer", "Inject an AppBuilder in tests.");
+
             if (!isInteractive()) {
                 return false;
             }
+
             const p = await import("@genesiscz/utils/prompts/p");
             if (
                 !(await p.confirm({
@@ -26,6 +28,7 @@ export function registerCliAppBuilder(): void {
             ) {
                 return false;
             }
+
             await build(part);
             return true;
         },

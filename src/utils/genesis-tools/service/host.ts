@@ -58,6 +58,7 @@ async function boundedCall(
             } catch (error) {
                 logger.warn({ error, method }, "Service deadline could not be written to the app monitor");
             }
+
             const error = new RpcError(1001, message);
             controller.abort(error);
             reject(error);
@@ -98,6 +99,7 @@ export async function startGenesisToolsService(
     if (isTestProcess() && (!options.dir || options.dir === genesisToolsServiceDir())) {
         throw new Error("in-test: the user's service cannot start in a test");
     }
+
     const dir = options.dir ?? genesisToolsServiceDir();
     const checkEveryMs = Math.max(100, options.checkEveryMs ?? 60_000);
     let host: ServiceHost<FaceState> | undefined;
@@ -116,6 +118,7 @@ export async function startGenesisToolsService(
             if (!face) {
                 throw new Error("The request face disconnected.");
             }
+
             return {
                 ...requestOutcomeSchema.parse(
                     await face.request("request.present", request, {
@@ -143,6 +146,7 @@ export async function startGenesisToolsService(
                 runAreaAction(AREAS, id, params, callerDeps(call.connection), { signal: call.signal });
         }
     }
+
     /** An action call's host deadline: the engine's own budget, plus the time to send its expiry outcome back. */
     const callDeadlineMs = (method: string, params: unknown): number => {
         const run = method === "actions.run" ? actionRunParams.safeParse(params) : null;
@@ -238,12 +242,14 @@ export async function startGenesisToolsService(
         if (repeating) {
             return;
         }
+
         repeating = true;
         try {
             const minutes = personConfigSchema.parse(config.resolve("person")).notification.repeatAfterMinutes;
             if (minutes <= 0) {
                 return;
             }
+
             for (const view of journal.pending()) {
                 const last = view.events.findLast((event) => event.type === "delivered");
                 if (
@@ -285,6 +291,7 @@ export async function startGenesisToolsService(
             repeating = false;
         }
     }
+
     const offConfig = config.onChange((change) => host?.emit("config.changed", { ...change }));
     const offEvents = deps.events.on((event) =>
         host?.emit(`${event.area}.${event.event}`, { payload: event.payload, at: event.at })
@@ -317,6 +324,7 @@ export async function startGenesisToolsService(
         offEvents();
         return { status: "running" };
     }
+
     host = started.host;
     try {
         offJournal = journal.followChanges((view) => started.host.emit("request.changed", view), checkEveryMs);
@@ -324,5 +332,6 @@ export async function startGenesisToolsService(
         host.stop("request journal watcher failed to start");
         throw error;
     }
+
     return { status: "started", host, deps };
 }
