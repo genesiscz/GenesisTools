@@ -1113,6 +1113,7 @@ export function questionView(
                       item.status === "suggested" &&
                       item.speaker &&
                       question.decides.includes(item.id) &&
+                      item.evidence?.reason !== "exclusion" &&
                       item.rules.includes(MeetingRule.VoiceEmbedding)
                           ? [
                                 {

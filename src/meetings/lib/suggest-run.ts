@@ -279,7 +279,9 @@ export async function runSuggest(options: {
         voice,
         labels: needsSpeakerInputs
             ? await prof.measureAsync("speakers.labels", () =>
-                  proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence)
+                  proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence, {
+                      applyAbove: config.global.suggest.applyAbove,
+                  })
               )
             : undefined,
         listenBelow: config.global.suggest.listenBelow,

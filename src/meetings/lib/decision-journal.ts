@@ -446,6 +446,16 @@ function decideItems(
                     reason: `${label} is a question; answer it by ear: ${TOOL} listen ${record.id} --item ${label}`,
                     needs: "listen",
                 });
+            } else if (
+                item.kind === "speaker-range" &&
+                item.evidence?.reason === "exclusion" &&
+                minConfidence !== undefined
+            ) {
+                skipped.push({
+                    id: item.id,
+                    reason: "A voice exclusion needs an individual speaker decision.",
+                    needs: "listen",
+                });
             } else if (item.kind === "speaker-range" && inputNeeded(item) === "speaker" && !speaker) {
                 const candidates = item.candidates?.length ? ` Candidates: ${item.candidates.join(", ")}.` : "";
                 skipped.push({ id: item.id, reason: `it has no speaker yet.${candidates}`, needs: "speaker" });

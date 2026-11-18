@@ -210,7 +210,10 @@ export async function previewVoices(
         format: "json",
         withSuggested: true,
     });
-    const labels = await proposeSpeakerLabels(opened, { ...config.global.speakerLabels, seat: { enabled: false } });
+    const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels, undefined, {
+        voiceOnly: true,
+        applyAbove: config.global.suggest.applyAbove,
+    });
     return {
         meeting: record.id,
         ...(record.project ? { project: record.project } : {}),

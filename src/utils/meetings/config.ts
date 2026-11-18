@@ -371,6 +371,8 @@ const playbackSchema = z.object({
     listen: listenSchema.prefault({}),
 });
 
+export const DEFAULT_APPLY_ABOVE = 0.7;
+
 /**
  * The speaker labelers and their keys, one block per labeler (the axis is the labeler: a new labeler is one more
  * block). `seat` names a line by the seat it was heard on, `voice` by the voice samples kept per project.
@@ -393,6 +395,20 @@ const speakerLabelsSchema = z.object({
                     unsampledScore: z.number().min(0).max(1).default(0.55),
                     /** Under this score a line on a seat of one person does not sound like that person. */
                     strangerScore: z.number().min(0).max(1).default(0.3),
+                })
+                .prefault({}),
+            /** Offer the only unsampled seat-mate for review when the enrolled voices are clearly different. */
+            exclusion: z
+                .object({
+                    enabled: z.boolean().default(true),
+                    /** Leave 0.15 cosine below the ordinary match threshold so borderline matches stay undecided. */
+                    margin: z.number().min(0).max(2).default(0.15),
+                    /** Below the default 0.70 apply threshold. The pass also respects a lower configured threshold. */
+                    maxConfidence: z.number().min(0).max(1).default(0.69),
+                    /** Require three lines in the same stay so an isolated sound cannot name someone. */
+                    minLines: z.number().int().min(1).default(3),
+                    /** Mean cosine to the group's centroid. Even two equally represented orthogonal voices fail 0.82. */
+                    coherence: z.number().min(0).max(1).default(0.82),
                 })
                 .prefault({}),
             /** A line shorter than this many seconds is not named by voice: too little sound to compare. */
@@ -604,7 +620,7 @@ const storedConfigSchema = z
                         /** Seconds a roster mute read remains evidence without another mute read or observed speech. */
                         mutedCarrySec: z.number().nonnegative().default(DEFAULT_MUTED_CARRY_SEC),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
-                        applyAbove: z.number().min(0).max(1).default(0.7),
+                        applyAbove: z.number().min(0).max(1).default(DEFAULT_APPLY_ABOVE),
                         /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */

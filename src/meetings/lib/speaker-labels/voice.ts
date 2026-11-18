@@ -16,7 +16,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import type { OpenedMeeting } from "../opened-meeting";
 import { type MeetingSound, measureSoundClock, meetingSound, readSoundClock, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
-import type { LabelContext, SpeakerLabeler } from "./types";
+import type { LabelContext, LineLabel, SpeakerLabeler } from "./types";
 
 const prof = profiler.scope("meetings-suggest");
 
@@ -182,7 +182,7 @@ export function voiceLabeler(options: {
                 return [];
             }
             const store = readVoiceStore(context.project);
-            if (!Object.keys(store.people).length) {
+            if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }
             let sound =
@@ -206,23 +206,35 @@ export function voiceLabeler(options: {
                 }
             }
             using _pass = prof.section("voices.pass");
-            return nameByVoice({
+            const lines = await embedSeatLines({
+                lines: context.lines,
+                sound,
+                config: await options.opened.config(),
+                onProgress: voiceProgressForMeeting.get(options.opened),
+                signal: voiceSignalForMeeting.get(options.opened),
+                cachePath: join(options.opened.store.folder(options.opened.record.id), "evidence", "voice-lines.json"),
+            });
+            const inputs = {
                 ...options.settings,
                 store,
+                meeting: options.opened.record.id,
+                applyAbove: context.applyAbove,
                 attended: context.attended,
-                lines: await embedSeatLines({
-                    lines: context.lines,
-                    sound,
-                    config: await options.opened.config(),
-                    onProgress: voiceProgressForMeeting.get(options.opened),
-                    signal: voiceSignalForMeeting.get(options.opened),
-                    cachePath: join(
-                        options.opened.store.folder(options.opened.record.id),
-                        "evidence",
-                        "voice-lines.json"
-                    ),
-                }),
-            });
+                lines,
+            };
+            const certain = new Map(context.certain);
+            // Several strangers on the same single-owner seat must not train one another as its owner.
+            const vetoes = new Map<number, LineLabel>();
+            if (context.seatOnlySeeds?.size && Object.keys(store.people).length) {
+                const seatLines = lines.filter((line) => context.seatOnlySeeds?.has(line.index));
+                for (const label of nameByVoice({ ...inputs, lines: seatLines, exclusion: undefined })) {
+                    if (label.reason === "not-the-seat-person") {
+                        certain.delete(label.index);
+                        vetoes.set(label.index, label);
+                    }
+                }
+            }
+            return nameByVoice({ ...inputs, certain }).map((label) => vetoes.get(label.index) ?? label);
         },
     };
 }

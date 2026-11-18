@@ -54,7 +54,8 @@ export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLab
 export async function proposeSpeakerLabels(
     opened: OpenedMeeting,
     settings: MeetingsConfig["global"]["speakerLabels"],
-    storedPresence?: Presence[]
+    storedPresence?: Presence[],
+    options: { voiceOnly?: boolean; applyAbove?: number } = {}
 ): Promise<LineLabel[]> {
     const enabled = SPEAKER_LABELER_IDS.filter((id) => settings[id].enabled);
 
@@ -66,6 +67,21 @@ export async function proposeSpeakerLabels(
     const evidence = await prof.measureAsync("speakers.evidence", () => opened.evidence());
     const energy = await prof.measureAsync("speakers.energy", () => opened.energy());
     const record = opened.record;
+    const presence = storedPresence ?? (await prof.measureAsync("speakers.presence", () => opened.presence()));
+    // A named room seat can be the only attendance evidence for someone sharing another person's device.
+    const stays = [...(presence ?? [])];
+    const seated = [
+        ...(record.seats?.room.map((name) => ({ name, fromSec: 0, toSec: Infinity })) ?? []),
+        ...(record.seats?.remote ?? []),
+    ];
+    for (const seat of seated) {
+        if (
+            !stays.some((stay) => sameName(stay.name, seat.name)) &&
+            !record.participants.some((p) => sameName(p.name, seat.name) && p.stays?.length === 0)
+        ) {
+            stays.push({ name: seat.name, fromSec: seat.fromSec ?? 0, toSec: seat.toSec ?? Infinity });
+        }
+    }
     const context: LabelContext = {
         lines: prof.measure("speakers.line-evidence", () =>
             lineChannelShares({
@@ -88,11 +104,7 @@ export async function proposeSpeakerLabels(
                 ];
             })
         ),
-        attended: (
-            storedPresence ??
-            (await prof.measureAsync("speakers.presence", () => opened.presence())) ??
-            []
-        ).flatMap((stay): LabelContext["attended"][number][] => {
+        attended: stays.flatMap((stay): LabelContext["attended"][number][] => {
             if (record.seats?.room.some((person) => sameName(person, stay.name))) {
                 return [{ person: stay.name, seat: "mic", fromSec: stay.fromSec, toSec: stay.toSec }];
             }
@@ -116,8 +128,25 @@ export async function proposeSpeakerLabels(
 
     for (const id of enabled) {
         using _labeler = prof.section(`speakers.labeler.${id}`);
+        if (id === "voice" && context.project && context.attended.some((stay) => stay.seat)) {
+            const { meetingVoiceSeeds } = await import("./voice-seeds");
+            context.applyAbove = options.applyAbove ?? (await opened.config()).global.suggest.applyAbove;
+            Object.assign(
+                context,
+                meetingVoiceSeeds({
+                    opened,
+                    meeting,
+                    evidence,
+                    energy: energy.share,
+                    presence,
+                    context,
+                    seats: byLabeler.get("seat") ?? [],
+                    applyAbove: context.applyAbove,
+                })
+            );
+        }
         byLabeler.set(id, await (await LABELERS[id](opened, settings)).propose(context));
     }
 
-    return mergeLineLabels(byLabeler);
+    return options.voiceOnly ? (byLabeler.get("voice") ?? []) : mergeLineLabels(byLabeler);
 }

@@ -186,6 +186,7 @@ export function correctionsOf(
         (opts.include?.includes(item.id) === true && item.status !== "rejected") ||
         (opts.withSuggested === true &&
             item.status === "suggested" &&
+            item.evidence?.reason !== "exclusion" &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
             (item.confidence === undefined || item.confidence >= applyAbove));
     const used = record.items
@@ -390,6 +391,7 @@ export function correctTranscript(options: {
                 (options.withSuggested || options.include?.includes(proposal?.id ?? "")) &&
                 !assigned &&
                 proposal?.status === "suggested" &&
+                proposal.evidence?.reason !== "exclusion" &&
                 proposal.speaker &&
                 proposal.rules.includes(MeetingRule.VoiceEmbedding);
             const score = typeof proposal?.evidence?.score === "number" ? proposal.evidence.score : confidence;

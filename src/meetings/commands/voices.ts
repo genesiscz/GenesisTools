@@ -176,8 +176,13 @@ export function registerVoicesCommand(program: Command): void {
                     }
                     if ("lines" in result) {
                         for (const line of result.lines) {
+                            const score =
+                                line.score === undefined
+                                    ? ""
+                                    : ` ${line.reason === "exclusion" ? "confidence" : "by voice"} ${line.score.toFixed(2)}`;
+                            const margin = line.margin === undefined ? "" : `, margin ${line.margin.toFixed(2)}`;
                             out.println(
-                                `${formatClock(line.fromSec)}–${formatClock(line.toSec)} ${line.current} → ${line.person ?? "unnamed"}${line.score === undefined ? "" : ` by voice ${line.score.toFixed(2)}`} [${line.reason}]${line.next ? `; next ${line.next.person} ${line.next.score.toFixed(2)}` : ""}: ${line.text}`
+                                `${formatClock(line.fromSec)}–${formatClock(line.toSec)} ${line.current} → ${line.person ?? "unnamed"}${score} [${line.reason}${margin}]${line.next ? `; next ${line.next.person} ${line.next.score.toFixed(2)}` : ""}: ${line.text}`
                             );
                         }
                         ui.info(`${result.lines.length} voice proposals; nothing saved.`);
