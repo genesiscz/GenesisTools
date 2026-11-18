@@ -525,6 +525,7 @@ final class EditorModel {
     /// change at once are "Changes".
     nonisolated static func changeName(from a: EditProject, to b: EditProject) -> (name: String, tab: InspectorTab?) {
         let parts = changedParts(a, b).filter { $0 != "count" }
+        if let change = EditOpDiff.laneOrLayerUndoName(from: a, to: b, parts: parts) { return change }
         // A lane change pins items to their lanes too, so it touches several parts at once.
         if parts.contains("lanes") { return ("Lane Change", nil) }
         guard parts.count == 1, let part = EditParts.all.first(where: { $0.key == parts[0] }) else { return ("Changes", nil) }

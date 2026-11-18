@@ -27,6 +27,14 @@ enum EditOpDiff {
             ops += retime(a.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
         }
         if old.audio != new.audio { ops += audio(old.audio, new.audio) }
+        if old.audio.lanes != new.audio.lanes {
+            guard let changes = audioLaneOps(from: old, to: new) else { return nil }
+            ops += changes
+        }
+        if old.layers != new.layers {
+            guard let changes = layerOps(from: old, to: new) else { return nil }
+            ops += changes
+        }
         if old.export != new.export { ops.append(.exportSettings(export(old.export, new.export))) }
         if old.clicks != new.clicks { ops.append(.clicks(clicks(new.clicks))) }
         if old.frame != new.frame { ops.append(.frame(frame(new.frame))) }
@@ -34,7 +42,9 @@ enum EditOpDiff {
         if old.captions != new.captions { ops.append(.captions(captions(new.captions))) }
         if old.keys != new.keys { ops.append(.keys(keys(new.keys))) }
         if old.motion != new.motion { ops.append(.motion(EditOp.Motion(blur: (new.motion ?? EditProject.Motion()).blur))) }
-        if old.camera != new.camera, let op = camera(old.camera, new.camera) { ops.append(.camera(op)) }
+        if old.camera != new.camera, let op = camera(old.camera, new.camera) {
+            ops.append(cameraOp(op, in: new))
+        }
         if old.transcript != new.transcript { ops += fixes(old.transcript?.fixes ?? [:], new.transcript?.fixes ?? [:]) }
         // R4 6 animated captions
         if old.captionsStyle != new.captionsStyle {
@@ -81,6 +91,195 @@ enum EditOpDiff {
     }
 
     static func seconds(_ us: Int64) -> Double { Double(us) / 1_000_000 }
+
+    private static func cameraOp(_ op: EditOp.Camera, in project: EditProject) -> EditOp {
+        // A size drag in the layer stack speaks canvas width. On an ultrawide canvas a legal bubble can be
+        // narrower than the layer op's minimum. Camera's native size still expresses that edit exactly.
+        guard project.layers != nil, let size = op.size, op == EditOp.Camera(size: size) else { return .camera(op) }
+        let source = project.source
+        let canvas = project.frame?.aspect?.ratio.map { CGSize(width: $0, height: 1) }
+            ?? CGSize(width: source.width > 0 ? source.width : 16, height: source.height > 0 ? source.height : 9)
+        let width = EditProject.layerWidth(forCameraSize: size, canvas: canvas)
+        guard (0.05...1).contains(width) else { return .camera(op) }
+        return .layer(.init(id: EditProject.cameraLayerID, width: width))
+    }
+
+    /// When the first lane edit materializes the list, its files and track indices tell us what the old list was
+    /// derived from. Its saved mute, name and volume belong only to the new revision.
+    private static func comparableAudioLanes(_ project: EditProject, counterpart: EditProject) -> [EditProject.AudioLane] {
+        if let lanes = project.audio.lanes { return lanes }
+        return (counterpart.audio.lanes ?? []).map { saved in
+            var base = saved
+            base.volume = 1
+            base.name = nil
+            switch base.source {
+            case .music: base.muted = false
+            case .voiceover:
+                base.muted = false
+                base.name = project.audio.voiceovers?.first(where: { $0.id == base.id }).flatMap(EditProject.voiceoverLaneName)
+            case .mic, .system, .movie:
+                base.muted = project.audio.mutedTracks.contains(base.track ?? 0)
+            }
+            return base
+        }
+    }
+
+    private static func audioLaneOps(from old: EditProject, to new: EditProject) -> [EditOp]? {
+        let before = comparableAudioLanes(old, counterpart: new)
+        guard let after = new.audio.lanes, before.map(\.id) == after.map(\.id) else { return nil }
+        var result: [EditOp] = []
+        for (a, b) in zip(before, after) where a != b {
+            var expected = a
+            expected.muted = b.muted
+            expected.volume = b.volume
+            expected.name = b.name
+            guard expected == b else { return nil }
+            result.append(.audioLane(.init(id: b.id, muted: a.muted == b.muted ? nil : b.muted,
+                                           volume: a.volume == b.volume ? nil : b.volume,
+                                           name: a.name == b.name ? nil : (b.name ?? ""))))
+        }
+        return result
+    }
+
+    private static func layerOps(from old: EditProject, to new: EditProject) -> [EditOp]? {
+        let before = old.layers?.media ?? [], after = new.layers?.media ?? []
+        // Only the service can issue a new id. Send layerAdd directly, then select its returned layer.
+        let oldIDs = Set(before.map(\.id)), newIDs = Set(after.map(\.id))
+        guard newIDs.isSubset(of: oldIDs) else { return nil }
+        var result: [EditOp] = before.filter { !newIDs.contains($0.id) }.map { .layerRemove(.init(id: $0.id)) }
+        for (a, b) in pairs(before, after, \.id) where a != b {
+            guard a.file == b.file, a.kind == b.kind else { return nil }
+            var op = EditOp.Layer(id: b.id)
+            if a.x != b.x { op.x = b.x }
+            if a.y != b.y { op.y = b.y }
+            if a.width != b.width { op.width = b.width }
+            if a.opacity != b.opacity { op.opacity = b.opacity }
+            if a.shape != b.shape { op.shape = .some(b.shape) }
+            if a.hidden != b.hidden { op.hidden = b.hidden }
+            if a.name != b.name { op.name = b.name ?? "" }
+            if a.startUs != b.startUs { op.startUs = b.startUs }
+            if a.endUs != b.endUs { op.endUs = b.endUs }
+            if a.videoStartMs != b.videoStartMs { op.videoStartMs = b.videoStartMs }
+            if a.videoSound != b.videoSound { op.videoSound = b.videoSound }
+            if a.loop != b.loop { op.loop = b.loop }
+            result.append(.layer(op))
+        }
+        result += reorderedLayers(from: old, to: new).map(EditOp.layerMove)
+        return result
+    }
+
+    /// Compare only surviving ids: adding or removing a layer never moves its neighbours. Emit moves using the
+    /// current positions after each preceding move, so the op list can be applied in order.
+    private static func reorderedLayers(from old: EditProject, to new: EditProject) -> [EditOp.LayerMove] {
+        let before = old.layerOrder().map(\.id), after = new.layerOrder().map(\.id)
+        let common = Set(before).intersection(after)
+        var order = before.filter(common.contains)
+        let target = after.filter(common.contains)
+        guard let first = order.indices.first(where: { order[$0] != target[$0] }) else { return [] }
+        // A drop toward the top shifts several neighbours down. Name the one drop.
+        if let to = target.firstIndex(of: order[first]) {
+            let id = order.remove(at: first)
+            order.insert(id, at: to)
+            if order == target { return [.init(id: id, to: .index(to))] }
+            order.remove(at: to)
+            order.insert(id, at: first)
+        }
+        var moves: [EditOp.LayerMove] = []
+        for (to, id) in target.enumerated() where order[to] != id {
+            guard let from = order.firstIndex(of: id) else { continue }
+            order.remove(at: from)
+            order.insert(id, at: to)
+            moves.append(.init(id: id, to: .index(to)))
+        }
+        return moves
+    }
+
+    private struct LaneOrLayerChange {
+        let name: String
+        let line: String
+        let symbol: String
+        let layerID: String?
+    }
+
+    private static func laneOrLayerChanges(from old: EditProject, to new: EditProject) -> [LaneOrLayerChange] {
+        var changes: [LaneOrLayerChange] = []
+        func add(_ name: String, _ line: String, _ symbol: String, _ id: String? = nil) {
+            changes.append(.init(name: name, line: line, symbol: symbol, layerID: id))
+        }
+        if old.audio.lanes != new.audio.lanes {
+            let before = comparableAudioLanes(old, counterpart: new), after = comparableAudioLanes(new, counterpart: old)
+            for (a, b) in pairs(before, after, \.id) where a != b {
+                let name = b.displayName
+                if a.muted != b.muted {
+                    add(b.muted ? "Mute \(name)" : "Unmute \(name)", b.muted ? "Muted \(name)" : "Unmuted \(name)", "speaker.wave.2")
+                }
+                if a.volume != b.volume {
+                    add("Change \(name) Volume", "Changed \(name) volume to \(b.volume.formatted(.percent))", "speaker.wave.2")
+                }
+                if a.name != b.name { add("Rename \(a.displayName)", "Renamed \(a.displayName) to \(name)", "pencil") }
+            }
+        }
+        guard old.layers != new.layers else { return changes }
+        let before = old.layers?.media ?? [], after = new.layers?.media ?? []
+        let oldIDs = Set(before.map(\.id)), newIDs = Set(after.map(\.id))
+        for layer in after where !oldIDs.contains(layer.id) {
+            add("Add \(layer.displayName)", "Added \(layer.displayName)", "square.stack.3d.up", layer.id)
+        }
+        for layer in before where !newIDs.contains(layer.id) {
+            add("Remove \(layer.displayName)", "Removed \(layer.displayName)", "trash", layer.id)
+        }
+        for (a, b) in pairs(before, after, \.id) where a != b {
+            let name = b.displayName
+            if a.hidden != b.hidden {
+                add(b.hidden ? "Hide \(name)" : "Show \(name)", b.hidden ? "Hid \(name)" : "Showed \(name)", "eye", b.id)
+            } else if a.x != b.x || a.y != b.y {
+                add("Move \(name)", "Moved \(name)", "arrow.up.and.down.and.arrow.left.and.right", b.id)
+            } else {
+                add("Change \(name)", "Changed \(name)", "square.stack.3d.up", b.id)
+            }
+        }
+        let stack = new.layerOrder()
+        for move in reorderedLayers(from: old, to: new) {
+            guard let index = stack.firstIndex(where: { $0.id == move.id }) else { continue }
+            let name = stack[index].displayName
+            let other = stack[index > 0 ? index - 1 : index + 1].displayName
+            // Swapping neighbours gives the same order whichever one was dragged. Report their new relation.
+            add("Reorder \(name) and \(other)", "\(name) is now \(index > 0 ? "above" : "below") \(other)", "square.3.layers.3d", move.id)
+        }
+        return changes
+    }
+
+    static func laneOrLayerUndoName(from old: EditProject, to new: EditProject, parts: [String]) -> (name: String, tab: InspectorTab?)? {
+        if parts == ["camera"], old.layers == new.layers, var before = old.camera, let after = new.camera,
+           before.show != after.show {
+            before.show = after.show
+            if before == after { return (after.show ? "Show Camera" : "Hide Camera", .style) }
+        }
+        guard parts.allSatisfy({ $0 == "audio" }), old.audio.lanes != new.audio.lanes || old.layers != new.layers else { return nil }
+        var oldAudio = old.audio
+        oldAudio.lanes = new.audio.lanes
+        guard oldAudio == new.audio else { return nil }
+        let changes = laneOrLayerChanges(from: old, to: new)
+        guard changes.count == 1, let change = changes.first else { return nil }
+        return (change.name, change.layerID == nil ? .audio : nil)
+    }
+
+    /// Adds the named changes and returns whether a separate sound change still needs the feed's audio line.
+    static func appendLaneAndLayerChanges(from old: EditProject, to new: EditProject, lines: inout [EditChange.Line],
+                                          itemIDs: inout [String], touchesPicture: inout Bool) -> Bool {
+        guard old.audio.lanes != new.audio.lanes || old.layers != new.layers else { return old.audio != new.audio }
+        let changes = laneOrLayerChanges(from: old, to: new)
+        for change in changes {
+            lines.append(.init(symbol: change.symbol, text: change.line))
+            if let id = change.layerID {
+                itemIDs.append(id)
+                touchesPicture = true
+            }
+        }
+        var oldAudio = old.audio
+        if changes.contains(where: { $0.layerID == nil }) { oldAudio.lanes = new.audio.lanes }
+        return oldAudio != new.audio
+    }
 
     private static func ids<T: Identifiable>(_ list: [T]?) -> [T.ID] { (list ?? []).map(\.id) }
 

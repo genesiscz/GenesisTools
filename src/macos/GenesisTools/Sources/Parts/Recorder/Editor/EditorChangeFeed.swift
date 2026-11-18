@@ -223,7 +223,7 @@ enum EditDiff {
                 lines.append(.init(symbol: "arrow.uturn.backward", text: "Took back \(fixes) \(Plural.count(takenBack, "caption line"))"))
             }
         }
-        if old.audio != new.audio {
+        if EditOpDiff.appendLaneAndLayerChanges(from: old, to: new, lines: &lines, itemIDs: &ids, touchesPicture: &picture) {
             lines.append(.init(symbol: "speaker.wave.2", text: "Changed the sound"))
         }
         if old.export != new.export {
