@@ -33,7 +33,7 @@ function fakeFacts(overrides: Partial<Facts> = {}): Facts {
         isTest: () => false,
         appBundle: () => ({ installed: true, launcher: true, routingOff: false, path: "/Applications/Fake.app" }),
         appManifest: () => ({ buildId: "b1", parts: ["features"], rpcMethods: ["rpc.hello"] }),
-        hasDisplay: () => true,
+        hasDisplay: async () => true,
         hasTerminal: () => false,
         ...overrides,
     };

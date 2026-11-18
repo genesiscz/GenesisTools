@@ -24,7 +24,10 @@ export interface AppManifestFacts {
     rpcMethods: string[] | null;
 }
 
-/** Live readers of this machine. Each one is cheap, reads only, and starts no process. Tests pass a fake. */
+/**
+ * Live readers of this machine. Each one reads only. All but `hasDisplay` are synchronous and start no process;
+ * `hasDisplay` asks `ioreg` on macOS, so it is async and never holds the event loop. Tests pass a fake.
+ */
 export interface Facts {
     isAgent(): boolean;
     platform(): NodeJS.Platform;
@@ -36,7 +39,7 @@ export interface Facts {
      */
     appBundle(): { installed: boolean; launcher: boolean; routingOff: boolean; path: string };
     appManifest(): AppManifestFacts | null;
-    hasDisplay(): boolean;
+    hasDisplay(): Promise<boolean>;
     hasTerminal(): boolean;
 }
 
@@ -88,22 +91,22 @@ export const LIVE_FACTS: Facts = {
         };
     },
     appManifest: readAppManifest,
-    hasDisplay: () => {
+    hasDisplay: async () => {
         if (env.get("SSH_CONNECTION") || env.get("SSH_TTY")) {
             return false;
         }
 
         if (process.platform === "darwin") {
-            const result = Bun.spawnSync(["/usr/sbin/ioreg", "-n", "Root", "-d", "1"], {
+            const proc = Bun.spawn(["/usr/sbin/ioreg", "-n", "Root", "-d", "1"], {
                 stdout: "pipe",
-                stderr: "pipe",
+                stderr: "ignore",
                 timeout: 2000,
             });
-            if (result.exitCode !== 0) {
-                logger.debug({ exit: result.exitCode }, "display probe did not answer");
+            const [exit, text] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+            if (exit !== 0) {
+                logger.debug({ exit }, "display probe did not answer");
                 return false;
             }
-            const text = new TextDecoder().decode(result.stdout);
             return !/"CGSSessionScreenIsLocked"\s*=\s*(?:Yes|true)/i.test(text) && /IOConsoleUsers/.test(text);
         }
         return process.platform === "win32" || env.device.hasGraphicalDisplay();
