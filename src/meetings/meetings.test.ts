@@ -2305,6 +2305,29 @@ describe("questions (R2.3)", () => {
         ).toEqual([["i5"], ["i6"]]);
     });
 
+    test("a question with several answer targets keeps its priority on the 1 to 3 scale and its reach in the rank", () => {
+        const [picked] = selectQuestions(
+            [
+                {
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 100,
+                    toSec: 110,
+                    question: "Who?",
+                    choices: ["Bob Example", "Carol Example"],
+                    decides: ["i1", "i2", "i3"],
+                    rules: [],
+                    confidence: 0.2,
+                    evidence: { words: 20, impact: 9, labels: ["Speaker 5"] },
+                },
+            ],
+            []
+        );
+        expect(picked?.priority).toBe(3);
+        expect(picked?.evidence).toMatchObject({ reach: 3, rank: 0.8 * 20 * 3 });
+    });
+
     test("a cluster question counts its one passage's words once and keeps the rank it was asked with", () => {
         const speaker = (id: string, fromSec: number, words: number) => ({
             kind: "question" as const,
