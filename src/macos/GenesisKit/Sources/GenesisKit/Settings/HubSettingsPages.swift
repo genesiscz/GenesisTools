@@ -6,6 +6,7 @@ import SwiftUI
 public enum HubSettingsPages {
     public static let inboxKindsChanged = Notification.Name("hub.inbox.kindsChanged")
     public static let appearancePageID = "hub.appearance"
+    public static let inboxPageID = "hub.inbox"
     public static let panesPageID = "hub.panes"
     public static let historyPageID = "hub.history"
 
@@ -33,7 +34,7 @@ public enum HubSettingsPages {
                         HubPaneSettings(preferences: preferences)
                     }
                 },
-                NativeSettingsPage(id: "hub.inbox", title: "Inbox", symbol: "tray", tint: .indigo,
+                NativeSettingsPage(id: inboxPageID, title: "Inbox", symbol: "tray", tint: .indigo,
                                    subtitle: "Choose what the hub and widget show and count.") {
                     HubInboxKindSettings()
                 },

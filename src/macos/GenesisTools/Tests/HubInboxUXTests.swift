@@ -26,6 +26,21 @@ private final class WriteLog: @unchecked Sendable {
 /// card's words, keys and states.
 final class HubInboxUXTests: XCTestCase {
     @MainActor
+    func testSessionTodoDecodesAsATaskWithItsOwnActions() throws {
+        let json = #"""
+            {"kind":"todo","id":"t_1_fixture","at":"2026-01-01T00:00:00Z","status":"waiting",
+             "task":{"id":"t_1_fixture","number":1,"title":"Check draft","summary":"Check draft",
+                     "truncated":false,"revision":1,"state":"open","updatedTs":"2026-01-01T00:00:00Z",
+                     "blocking":false,"owner":"human","sessionId":"fixture","provider":"codex",
+                     "sourceContext":{"sessionId":"fixture"}}}
+            """#
+        let item = try JSONDecoder().decode(InboxItem.self, from: Data(json.utf8))
+        let task = try XCTUnwrap(item.task)
+        XCTAssertFalse(item.isDecision)
+        XCTAssertEqual(task.addressee, "For you")
+        XCTAssertEqual(task.actions, [.acknowledge, .complete, .dismiss, .send])
+    }
+
     func testFormDraftsSurviveCardRecreationWithoutCrossingForms() {
         let inbox = HubInboxModel()
         let first = inbox.formDraft(for: "form-a")
