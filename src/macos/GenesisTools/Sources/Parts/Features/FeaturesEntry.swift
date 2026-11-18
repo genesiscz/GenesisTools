@@ -83,7 +83,12 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     func addAboutInfo(_ line: String) { aboutInfo.append(line) }
 
     func showSettings(pageID: String?) {
-        window.show(pageID: pageID)
+        showSettings(FeatureSettingsRequest(pageID: pageID))
+    }
+
+    fileprivate func showSettings(_ request: FeatureSettingsRequest, reopening: Bool = false) {
+        receive(request, reopening: reopening)
+        window.show(pageID: request.pageID)
         // The ⌘Q question names this face "Settings" only while the window is open (Host/PartQuit): closed, the
         // process stays to host the parts' services, and nothing called Settings is on screen.
         guard mode == .live, let shown = window.window else { return }
@@ -198,15 +203,14 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenu
             MainActor.assumeIsolated {
                 guard let shell = self?.shell else { return }
                 let request = FeatureSettingsRequest(userInfo: notification.userInfo)
-                shell.receive(request, reopening: true)
-                shell.showSettings(pageID: request.pageID)
+                shell.showSettings(request, reopening: true)
             }
         }
     }
 
     private func launch() {
         shell.installPlugins()
-        shell.receive(initialRequest, reopening: false)
+        if shell.mode != .live { shell.receive(initialRequest, reopening: false) }
         switch shell.mode {
         case .snapshot:
             let delay = Double(snapshotArgument("--snapshot-delay") ?? "") ?? 2
@@ -218,7 +222,7 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenu
             // `--no-activate` is a rebuild's relaunch (relaunch.ts): the services come back without the window,
             // which would take the keyboard from the app in front.
             if !CommandLine.arguments.contains("--no-activate") {
-                shell.showSettings(pageID: initialRequest.pageID)
+                shell.showSettings(initialRequest)
             }
         }
     }
