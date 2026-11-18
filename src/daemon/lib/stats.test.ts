@@ -30,7 +30,7 @@ interface FixtureRun {
     task: string;
     runId: string;
     startedAt: string;
-    exit?: { code: number | null; durationMs: number; timedOut?: boolean };
+    exit?: { code: number | null; durationMs: number; timedOut?: boolean; cpuMs?: number };
     stdout?: string[];
     stderr?: string[];
     /** Overrides the file name, which otherwise carries `startedAt` in local time like the runner's. */
@@ -53,6 +53,9 @@ function writeRun(dir: string, run: FixtureRun): void {
             code: run.exit.code,
             duration_ms: run.exit.durationMs,
             ...(run.exit.timedOut ? { timedOut: true } : {}),
+            ...(run.exit.cpuMs === undefined
+                ? {}
+                : { usage: { userMs: run.exit.cpuMs, systemMs: 0, cpuMs: run.exit.cpuMs, maxRssMb: 64 } }),
         });
     }
 
@@ -92,12 +95,17 @@ const runs: FixtureRun[] = [
     },
     { task: "alpha", runId: "a6", startedAt: "2026-10-11T11:00:00.000Z", exit: { code: null, durationMs: 5000 } },
     { task: "alpha", runId: "a7", startedAt: "2026-10-11T12:00:00.000Z", stdout: ["still going"] },
-    { task: "beta", runId: "b1", startedAt: "2026-10-10T09:00:00.000Z", exit: { code: 0, durationMs: 500 } },
+    {
+        task: "beta",
+        runId: "b1",
+        startedAt: "2026-10-10T09:00:00.000Z",
+        exit: { code: 0, durationMs: 500, cpuMs: 300 },
+    },
     {
         task: "beta",
         runId: "b2",
         startedAt: "2026-10-11T09:00:00.000Z",
-        exit: { code: 2, durationMs: 700 },
+        exit: { code: 2, durationMs: 700, cpuMs: 900 },
         stderr: betaStderr,
     },
     { task: "gamma", runId: "g1", startedAt: "2026-09-01T00:00:00.000Z", exit: { code: 0, durationMs: 100 } },
@@ -151,6 +159,16 @@ describe("collectDaemonStats", () => {
 
         const counts = Object.fromEntries(alpha.histogram.filter((b) => b.count > 0).map((b) => [b.label, b.count]));
         expect(counts).toEqual({ "1-2s": 1, "2-5s": 3, "5-10s": 1, "1-2m": 1 });
+    });
+
+    test("CPU per run comes from the exit record; a task whose runs predate it has none", () => {
+        const beta = taskOf(stats, "beta");
+        const alpha = taskOf(stats, "alpha");
+
+        expect([beta.cpuP50Ms, beta.cpuMaxMs]).toEqual([300, 900]);
+        expect(beta.recentRuns.find((run) => run.runId === "b2")).toMatchObject({ cpuMs: 900, maxRssMb: 64 });
+        expect([alpha.cpuP50Ms, alpha.cpuMaxMs]).toEqual([null, null]);
+        expect(alpha.recentRuns[0]).toMatchObject({ cpuMs: null, maxRssMb: null });
     });
 
     test("failures newest first with their stderr tail; the last run is the unfinished one", () => {

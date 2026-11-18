@@ -70,6 +70,9 @@ export interface TaskStats extends RunCounts {
     every: string | null;
     timeoutMs: number | null;
     p50Ms: number | null;
+    /** CPU time per run over the runs that logged it (since 2026-11-18). */
+    cpuP50Ms: number | null;
+    cpuMaxMs: number | null;
     p90Ms: number | null;
     p99Ms: number | null;
     maxMs: number | null;
@@ -90,6 +93,9 @@ export interface StatsRun {
     status: RunStatus;
     exitCode: number | null;
     durationMs: number | null;
+    /** CPU time of the run and the children it waited for; null in logs written before 2026-11-18. */
+    cpuMs: number | null;
+    maxRssMb: number | null;
     logFile: string;
     /** The last stderr lines, oldest first; null when this report did not read the run's output. */
     stderrTail: string[] | null;
@@ -259,23 +265,35 @@ function readRunEnds(file: string): { meta: Record<string, unknown> | null; exit
     }
 }
 
-function classify(exit: Record<string, unknown> | null): Pick<StatsRun, "status" | "exitCode" | "durationMs"> {
+function usageNumber(usage: unknown, key: "cpuMs" | "maxRssMb"): number | null {
+    if (!isObject(usage)) {
+        return null;
+    }
+
+    const value = usage[key];
+    return typeof value === "number" ? value : null;
+}
+
+function classify(
+    exit: Record<string, unknown> | null
+): Pick<StatsRun, "status" | "exitCode" | "durationMs" | "cpuMs" | "maxRssMb"> {
     if (!exit) {
-        return { status: "unfinished", exitCode: null, durationMs: null };
+        return { status: "unfinished", exitCode: null, durationMs: null, cpuMs: null, maxRssMb: null };
     }
 
     const exitCode = typeof exit.code === "number" ? exit.code : null;
     const durationMs = typeof exit.duration_ms === "number" ? exit.duration_ms : null;
+    const cost = { cpuMs: usageNumber(exit.usage, "cpuMs"), maxRssMb: usageNumber(exit.usage, "maxRssMb") };
 
     if (exit.timedOut === true) {
-        return { status: "timedOut", exitCode, durationMs };
+        return { status: "timedOut", exitCode, durationMs, ...cost };
     }
 
     if (exitCode === null) {
-        return { status: "killed", exitCode, durationMs };
+        return { status: "killed", exitCode, durationMs, ...cost };
     }
 
-    return { status: exitCode === 0 ? "ok" : "failed", exitCode, durationMs };
+    return { status: exitCode === 0 ? "ok" : "failed", exitCode, durationMs, ...cost };
 }
 
 function isFailure(status: RunStatus): boolean {
@@ -556,6 +574,7 @@ export function collectDaemonStats(opts: {
         const durations = runs
             .flatMap((run) => (run.durationMs === null ? [] : [run.durationMs]))
             .sort((a, b) => a - b);
+        const cpuTimes = runs.flatMap((run) => (run.cpuMs === null ? [] : [run.cpuMs])).sort((a, b) => a - b);
         const newestFirst = [...runs].reverse();
         const failures = newestFirst
             .filter((run) => isFailure(run.status))
@@ -570,6 +589,8 @@ export function collectDaemonStats(opts: {
             timeoutMs: config?.timeoutMs ?? null,
             ...countRuns(runs),
             p50Ms: percentile(durations, 0.5),
+            cpuP50Ms: percentile(cpuTimes, 0.5),
+            cpuMaxMs: cpuTimes.at(-1) ?? null,
             p90Ms: percentile(durations, 0.9),
             p99Ms: percentile(durations, 0.99),
             maxMs: durations.at(-1) ?? null,

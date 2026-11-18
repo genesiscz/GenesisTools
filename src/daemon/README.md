@@ -130,8 +130,8 @@ scripts: the view you named, else `run` when you gave `--run`, `task` when you g
 | `--json` | Print the stats as JSON |
 
 ```bash
-# Every task: runs, OK, failed, timed out, killed, still open, failure rate, P50, P90, max, last run,
-# and the daemon's own health lines
+# Every task: runs, OK, failed, timed out, killed, still open, failure rate, P50, P90, max, CPU P50, CPU max,
+# last run, and the daemon's own health lines
 tools daemon stats --view overview
 
 # One task: counts, a duration histogram, runs per hour (or per day past 48 hours), the last failure
@@ -385,6 +385,9 @@ The launchd job gets only `HOME` and `PATH`. These variables set in your shell c
   stdout and exits 1. A wrong value writes nothing.
 - `run <name> --json`: `{ task, ok, exitCode, duration_ms, logFile, runId }`. `exitCode` is null when the run timed
   out. The process exits 0 when the task exited 0, else 1.
+- Every run log's `exit` record carries `usage: { userMs, systemMs, cpuMs, maxRssMb }` since 2026-11-18: the rusage
+  of the task process, which includes every child it waited for. `cpuMs / duration_ms` is the average number of cores
+  the run kept busy. `stats` shows it per run and as CPU P50 and CPU max per task; older runs show none.
 - `stats --json`: `DaemonStats` version 1 (`lib/stats.ts`). Times are ISO UTC, durations are ms. A run's status is
   `ok`, `failed`, `timedOut`, `killed` (no exit code and no timeout) or `unfinished` (no exit record). The
   GenesisTools settings window reads it, so fields are only added; `version` goes up when a meaning changes.
