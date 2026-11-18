@@ -98,7 +98,7 @@ function formatCodeResults(results: CodeSearchResult[], format: string): string 
 export async function codeSearchCommand(query: string, options: CodeSearchOptions): Promise<void> {
     if (options.searchType !== undefined) {
         const mode = await pickEnumFlag({
-            tool: "tools github code",
+            tool: toolCommand("github", "code"),
             subcommand: ["code"],
             flag: "--search-type",
             given: options.searchType,

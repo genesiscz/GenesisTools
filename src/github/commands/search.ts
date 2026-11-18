@@ -261,7 +261,7 @@ export function createSearchCommand(): Command {
         .action(async (query, opts) => {
             try {
                 const searchType = await pickEnumFlag({
-                    tool: "tools github search",
+                    tool: toolCommand("github", "search"),
                     subcommand: ["search"],
                     flag: "--search-type",
                     given: opts.searchType,
