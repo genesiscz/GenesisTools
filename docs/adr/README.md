@@ -18,9 +18,9 @@ Plan `.claude/plans/2026-11-18-MeetingsArchitecture.md`.
 | 0007 | [Keep suggestion order visible in the pipeline](0007-suggestion-order.md) | Accepted | 2026-11-18 | Planner decisions |
 | 0008 | [Stage module moves with temporary re-exports](0008-temporary-reexports.md) | Accepted | 2026-11-18 | P1A–P5A |
 | 0009 | [Retire eligibility helpers after checking their callers](0009-retire-eligibility-helpers.md) | Accepted | 2026-11-18 | P5A |
-| 0010 | [Choose when R3 takes ownership of speaker evidence](0010-when-to-move-evidence.md) | Proposed | 2026-11-18 | D1 / M28 |
-| 0011 | [Choose whether to split the Meetings service contract](0011-service-contract-families.md) | Proposed | 2026-11-18 | D2 / M29 |
-| 0012 | [Choose when to plan proof grades for speaker rules](0012-proof-grades.md) | Proposed | 2026-11-18 | D3 / M30 |
+| 0010 | [Choose when R3 takes ownership of speaker evidence](0010-when-to-move-evidence.md) | Accepted | 2026-11-18 | D1 / M28 |
+| 0011 | [Choose whether to split the Meetings service contract](0011-service-contract-families.md) | Accepted | 2026-11-18 | D2 / M29 |
+| 0012 | [Choose when to plan proof grades for speaker rules](0012-proof-grades.md) | Accepted | 2026-11-18 | D3 / M30 |
 
 ## Room and call presence
 
