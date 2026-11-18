@@ -1,8 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -19,6 +20,7 @@ import {
     genesisAppLauncher,
     installedAppAccepts,
     isRunningUnderGenesisApp,
+    openGenesisAppWindow,
     responsibleIdentity,
     wrapWithGenesisApp,
 } from "./genesis-app";
@@ -33,6 +35,29 @@ import {
     widgetLockPaths,
     writeNativeInboxStateFile,
 } from "./native-inbox";
+
+it("opening the permissions window in a test returns the engine refusal without starting the app", async () => {
+    const platform = spyOn(LIVE_FACTS, "platform").mockReturnValue("darwin");
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+        throw new Error("unexpected app launch");
+    });
+    try {
+        const outcome = await openGenesisAppWindow();
+        expect(outcome).toMatchObject({
+            status: "unreachable",
+            skipped: [{
+                way: "native",
+                code: "in-test",
+                reason: "app.installed: a test process never reaches GenesisTools.app",
+                fix: null,
+            }],
+        });
+        expect(spawn).not.toHaveBeenCalled();
+    } finally {
+        spawn.mockRestore();
+        platform.mockRestore();
+    }
+});
 
 describe("responsibleIdentity", () => {
     it("reports GenesisTools.app when the launcher marker is set", async () => {

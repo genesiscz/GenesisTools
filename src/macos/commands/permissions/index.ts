@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -16,9 +16,8 @@ import {
     genesisAppBundlePath,
     genesisAppDisabledMarkerPath,
     genesisAppLauncherPath,
-    genesisAppWindowCommand,
+    openGenesisAppWindow,
 } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import * as p from "@genesiscz/utils/prompts/p";
 import { truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -549,20 +548,10 @@ export function registerPermissionsCommand(program: Command): void {
     permissions
         .command("ui")
         .description("Open the GenesisTools window (permissions with request buttons, launchd services, settings)")
-        .action(() => {
-            const bundle = genesisAppBundlePath();
-
-            if (!existsSync(bundle)) {
-                ui.err(`${bundle} is not built. ${genesisAppBuildHint()}`);
-                process.exitCode = 1;
-                return;
-            }
-
-            const opened = Bun.spawnSync(genesisAppWindowCommand());
-
-            if (opened.exitCode !== 0) {
-                ui.err(`could not open ${bundle} (exit ${opened.exitCode})`);
-                process.exitCode = 1;
+        .action(async () => {
+            const opened = await openGenesisAppWindow();
+            if (opened.status === "unreachable") {
+                reportSkipped(opened.skipped);
                 return;
             }
 

@@ -78,13 +78,11 @@ export function genesisAppInstallDir(): string {
     return genesisToolsDirIn(env.tools.getAppHome(), "app");
 }
 
-/**
- * The command that shows the permissions window (Permissions, Services and Settings tabs). A bare `open -a` follows
- * the app's "main window" setting and can open the hub instead; `--window` always names this window, and a running
- * copy of it takes the request over through its instance lock. `-n` is what hands the argument to a new process.
- */
-export function genesisAppWindowCommand(): string[] {
-    return ["/usr/bin/open", "-n", genesisAppBundlePath(), "--args", "--window"];
+/** Open the permissions window even when the app's preferred main window is the hub. */
+export async function openGenesisAppWindow() {
+    // The engine itself uses this module for bundle paths and launcher identity.
+    const { gt } = await import("@genesiscz/utils/genesis-tools");
+    return gt.windows.open({ window: "--window", args: [], activate: true });
 }
 
 export function genesisAppLauncherPath(): string {

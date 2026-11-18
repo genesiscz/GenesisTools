@@ -98,6 +98,31 @@ function runPermissions(args: string[]): Promise<void> {
 }
 
 describe("permission window commands", () => {
+    it("permissions ui sends --window without arguments and prints the engine's fix", async () => {
+        const exitCode = process.exitCode;
+        const open = spyOn(gt.windows, "open").mockResolvedValue({
+            status: "unreachable",
+            skipped: [{
+                way: "native",
+                code: "app-missing",
+                reason: "app unavailable",
+                fix: { command: "install-ui-fixture", sentence: "Install the app." },
+            }],
+            manual: null,
+        });
+        const err = spyOn(ui, "err").mockImplementation(() => {});
+        try {
+            await runPermissions(["ui"]);
+            expect(open.mock.calls).toEqual([[{ window: "--window", args: [], activate: true }]]);
+            expect(err.mock.calls).toEqual([["app unavailable\ninstall-ui-fixture"]]);
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = exitCode;
+            err.mockRestore();
+            open.mockRestore();
+        }
+    });
+
     it("requests the grant with its reason and waits for the dialog before probing again", async () => {
         const calls: string[] = [];
         const status = spyOn(gt.permissions, "status").mockImplementation(async ({ kind }) => {
