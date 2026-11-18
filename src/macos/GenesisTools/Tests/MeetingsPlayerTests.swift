@@ -1,5 +1,6 @@
 import AudioToolbox
 import Foundation
+import SwiftUI
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -221,6 +222,32 @@ final class MeetingsPlayerTests: XCTestCase {
         player.resume()
         XCTAssertEqual(player.phase, .playing)
         XCTAssertEqual(sounds[0].currentTime, 4.75, accuracy: 0.0001, "play on goes back to the tone's end, not into the tone")
+    }
+
+    func testAClipThatFinishesCuttingDuringACommentWaitsUntilTheEditorCloses() async throws {
+        let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let player = makePlayer()
+        window.player = player
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let row = TimelineFixture.questionRow
+        engine.holdCuts = true
+        player.play(row.target, in: detail.id, from: .row)
+        try await until("the cut started") { !self.engine.cuts.isEmpty }
+        var appeared = false
+        let editor = ListenCommentEditor(row: row, detail: detail, close: {}).onAppear { appeared = true }
+        let host = NSHostingView(rootView: AnyView(editor))
+        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.contentView = host
+        panel.orderInForSnapshot()
+        defer { engine.release(); player.stop(); panel.orderOut(nil); panel.close() }
+        try await until("the comment field opened during the cut") { appeared }
+        engine.release()
+        try await until("typing pauses the newly prepared clip") { player.phase == .paused }
+        XCTAssertEqual(playingCount, 0)
+        host.rootView = AnyView(EmptyView())
+        try await until("closing the editor resumes its clip") { player.phase == .playing }
+        XCTAssertEqual(engine.cuts.count, 1)
     }
 
     func testAPushedMomentPausesTheOneBelowAndGivesItBackWhenItEnds() async throws {

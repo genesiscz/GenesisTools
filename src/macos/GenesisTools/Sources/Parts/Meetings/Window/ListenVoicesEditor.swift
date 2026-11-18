@@ -99,7 +99,6 @@ struct ListenCommentEditor: View {
     @Bindable var detail: MeetingDetailModel
     var close: () -> Void
     @State private var text = ""
-    @State private var resume = false
     @FocusState private var focused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -112,8 +111,32 @@ struct ListenCommentEditor: View {
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }.padding()
-        .onAppear { resume = detail.window?.player.phase == .playing; detail.window?.player.pause(); focused = true }
-        .onDisappear { if resume { detail.window?.player.resume() } }
+        .onAppear { focused = true }
+        .modifier(PauseQuestionPlayback(player: detail.window?.player, editing: true))
+    }
+}
+
+/// A pending cut or repeat can start after the field gained focus. Resume only the clip this editor paused.
+struct PauseQuestionPlayback: ViewModifier {
+    let player: MomentPlayer?
+    let editing: Bool
+    @State private var pausedLayer: UUID?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: editing && player?.phase == .playing, initial: true) { _, shouldPause in
+                if shouldPause, let player, let id = player.top?.id {
+                    pausedLayer = id
+                    player.pause()
+                }
+            }
+            .onChange(of: editing) { _, active in if !active { resume() } }
+            .onDisappear { resume() }
+    }
+
+    private func resume() {
+        if let pausedLayer, player?.top?.id == pausedLayer, player?.phase == .paused { player?.resume() }
+        pausedLayer = nil
     }
 }
 
