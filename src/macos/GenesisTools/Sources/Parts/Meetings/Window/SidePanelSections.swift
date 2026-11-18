@@ -235,6 +235,8 @@ enum SidePanelWords {
         if key.hasSuffix("speed") { return "\(text)×" }
         if key.hasSuffix("Height") || key.hasSuffix(".height") { return "\(text) pt" }
         if key.hasSuffix("Ms") { return "\(text) ms" }
+        if key.hasSuffix("spotCheckCount") { return "\(text) lines" }
+        if key.hasSuffix("Words") { return "\(text) words" }
         if key.hasSuffix("Sec") || key.hasSuffix("Seconds") || key.hasSuffix("seconds") || key.hasSuffix("plainSeconds") { return "\(text) s" }
         return text
     }
@@ -311,6 +313,7 @@ enum SidePanelCatalog {
         typealias Panes = MeetingsPreferences.Panes
         typealias Transcript = MeetingsPreferences.Transcript
         typealias Speakers = MeetingsPreferences.Speakers
+        typealias Listen = MeetingsPreferences.Listen
         let playback = SidePanelSection(id: "playback", title: "Playback", rows: [
             row(Playback.view, value: Playback.view.value(defaults)),
             row(Playback.speed, value: Playback.speed.value(defaults)),
@@ -342,6 +345,9 @@ enum SidePanelCatalog {
             row(Rows.autoplayDelaySec, value: Rows.autoplayDelaySec.value(defaults))
                 .requiring(Rows.autoplayNext.key, [.text(Rows.AutoplayNext.afterAnswer.rawValue)], "Off while the next row does not play."),
             row(Rows.openPersonPicker, value: Rows.openPersonPicker.value(defaults)),
+            row(Listen.spotCheckCount, value: Listen.spotCheckCount.value(defaults)),
+            row(Listen.longStretchWords, value: Listen.longStretchWords.value(defaults)),
+            row(Listen.showPrepared, value: Listen.showPrepared.value(defaults)),
         ])
         let notices = SidePanelSection(id: "notices", title: "Notices", rows: [
             numberRow(key: MeetingsPreferences.noticeSecondsKey, title: "A notice with Undo stays for",

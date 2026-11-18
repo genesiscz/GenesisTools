@@ -11,6 +11,10 @@ struct MeetingDetailView: View {
     /// the split view drew the column wider than the window and cut Export, the last tab and the ends of lines.
     static let narrowWidth: CGFloat = 600
     @State private var narrow = false
+    /// The Items tab's count: the open rows, the same count as the list's "All" filter; before the rows are read, the
+    /// record's open items. Counted once per change of either, not in the header's body.
+    @State private var openRows: Int?
+    @State private var openItems: Int?
     /// The column's width, for the trailing pane's rule (`trailingPane`).
     @State private var width: CGFloat = 0
     @Environment(\.meetingsDockInset) private var dockInset
@@ -70,6 +74,10 @@ struct MeetingDetailView: View {
         .overlay { ReachOverlay(detail: detail) }
         .sheet(item: $detail.history) { history in HistorySheetView(detail: detail, history: history) }
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
+        .onChange(of: detail.rows.value?.rows, initial: true) { _, rows in openRows = rows.map { $0.lazy.filter(\.isOpen).count } }
+        .onChange(of: detail.record.value?.items, initial: true) { _, items in
+            openItems = items.map { $0.lazy.filter { $0.status == "suggested" }.count }
+        }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
 
@@ -216,7 +224,7 @@ struct MeetingDetailView: View {
         if let record {
             switch tab {
             case .items:
-                count = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
+                count = openRows ?? openItems
                 hue = .ask
             case .context: count = record.context.count
             default: break

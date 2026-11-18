@@ -90,8 +90,9 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertTrue(text.contains("Raised confidence on 1 line"), text)
     }
 
-    private func question(_ id: String = "q", status: String = "suggested", token: String? = nil) throws -> ReviewRow {
-        var row = try JSONDecoder().decode(ReviewRow.self, from: Data("{\"id\":\"\(id)\",\"label\":\"Q1\",\"kind\":\"question\",\"status\":\"\(status)\",\"what\":\"Who?\",\"parts\":[],\"choices\":[],\"edit\":\"answer\",\"sources\":[],\"target\":{\"kind\":\"item\",\"id\":\"\(id)\"}}".utf8))
+    private func question(_ id: String = "q", status: String = "suggested", token: String? = nil, group: String? = nil) throws -> ReviewRow {
+        let grouped = group.map { "\"group\":\"\($0)\"," } ?? ""
+        var row = try JSONDecoder().decode(ReviewRow.self, from: Data("{\"id\":\"\(id)\",\(grouped)\"label\":\"Q1\",\"kind\":\"question\",\"status\":\"\(status)\",\"what\":\"Who?\",\"parts\":[],\"choices\":[],\"edit\":\"answer\",\"sources\":[],\"target\":{\"kind\":\"item\",\"id\":\"\(id)\"}}".utf8))
         if let token { row.decision = .init(token: token, actor: .window, by: "you", action: "answer", reason: nil, question: id, at: nil) }
         return row
     }
@@ -127,6 +128,49 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         let view = TranscriptBlocksPane(detail: detail, entries: entries)
         XCTAssertTrue(try rendered(view, name: "X13-before", native: true).contains("Raised source line"))
         XCTAssertTrue(try rendered(view, name: "X13-after", native: true, afterMount: { detail.rows = .loaded(after) }).contains("Raised source line"))
+    }
+
+    func testX18GroupsCountAnsweredOfTotalAndTheBarShowsThem() throws {
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Data(#"[{"id":"q1","kind":"question","status":"confirmed"},{"id":"q2","kind":"question","status":"suggested"},{"id":"q3","kind":"question","status":"rejected","group":"spot-check"},{"id":"q4","kind":"question","status":"suggested","group":"spot-check"},{"id":"term","kind":"term","status":"confirmed"}]"#.utf8))
+        let counts = QuestionGroupProgress.count(rows: [try question(status: "confirmed")], items: items)
+        XCTAssertEqual(counts["rules"], .init(answered: 1, total: 2), "the record counts the questions the row filter hides")
+        XCTAssertEqual(counts["spot-check"], .init(answered: 1, total: 2), "a rejected answer is an answer")
+        XCTAssertEqual(QuestionGroupProgress.words("Spot check", try XCTUnwrap(counts["spot-check"])), "Spot check 1/2")
+
+        let rows = [try question("q1", status: "confirmed", token: "t1"), try question("q2"), try question("q4", group: "spot-check")]
+        var input = ItemsProjection.Input(rows: rows, items: items, group: "spot-check")
+        var projection = ItemsProjection.make(input)
+        XCTAssertTrue(projection.showsGroups, "two groups hold questions")
+        XCTAssertEqual(projection.ids, ["q4"])
+        input.group = "long-stretch"
+        projection = ItemsProjection.make(input)
+        XCTAssertEqual(projection.group, "all", "a group with no question in this meeting never empties the list")
+        XCTAssertEqual(projection.ids, ["q1", "q2", "q4"])
+        XCTAssertEqual(projection.open, 2)
+        XCTAssertFalse(ItemsProjection.make(.init(rows: rows, items: Array(items.prefix(2)))).showsGroups, "one group: no strip")
+
+        let detail = MeetingDetailModel(id: "copy", window: nil)
+        let text = try rendered(ItemsBar(detail: detail, projection: projection, group: .constant("all"), applyAbove: 0.5),
+                                name: "X18-bar", native: true)
+        XCTAssertTrue(text.contains("Rules 1/2"), text)
+        XCTAssertTrue(text.contains("Spot check 1/2"), text)
+        XCTAssertFalse(text.contains("samples"), "no system stepper is left: \(text)")
+    }
+
+    func testCheckByEarHoldsBothChecksWithTheirNumbersAndTheRate() throws {
+        XCTAssertEqual(SpotCheckRate(changed: 1, answered: 3).percent, 33)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "test.listen.\(UUID().uuidString)"))
+        let detail = MeetingDetailModel(id: "copy", window: nil)
+        let popover = ListenCheckPopover(detail: detail, rate: SpotCheckRate(changed: 3, answered: 20)) { _ in }.defaultAppStorage(defaults)
+        let text = try rendered(popover, name: "check-by-ear", native: true)
+        for words in ["Spot check", "Long stretches", "20 lines", "50 words", "Prepare", "changed the speaker (15 %)"] {
+            XCTAssertTrue(text.contains(words), "\(words): \(text)")
+        }
+        XCTAssertEqual(MeetingsPreferences.Listen.spotCheckCount.defaultValue, 20)
+        XCTAssertTrue(MeetingsPreferences.Listen.showPrepared.defaultValue)
+        let rows = SidePanelCatalog.windowSections(defaults).first { $0.id == "rows" }?.rows ?? []
+        XCTAssertTrue(rows.contains { $0.title == MeetingsPreferences.Listen.showPrepared.title })
+        XCTAssertEqual(rows.first { $0.title == MeetingsPreferences.Listen.spotCheckCount.title }?.valueTitle, "20 lines")
     }
 
     func testC22FailedServiceStartReportsOnceWhileTheCommandWorks() async throws {
@@ -334,6 +378,7 @@ final class MeetingsQuestionRowsTests: XCTestCase {
                                     hidden: .init(before: rows.hidden, after: rows.hidden), fields: .init(before: fields, after: fields))
         for call in 1...2 {
             measure("row patch", call: call) { patch.applying(to: rows, token: "probe", latest: [:]).rows.count }
+            measure("items projection", call: call) { ItemsProjection.make(.init(rows: rows.rows, items: record.items)).shown.count }
             measure("voice picker", call: call) { ListenVoicesEditor.offeredPeople(people, row: question, everybody: false).count }
             measure("pin layout", call: call) { layout.make().count }
             measure("raised lines", call: call) { var flash = RaisedLineFlash(); _ = flash.receive(rows, enabled: true); return flash.receive(rows, enabled: true).count }

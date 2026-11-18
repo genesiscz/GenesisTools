@@ -245,6 +245,23 @@ extension MeetingsPreferences {
             detail: "An answered row keeps its height until you scroll, so the rows under it do not move. Off folds it at once.")
     }
 
+    /// The checks by ear the Items tab prepares (`listen --spot-check`, `listen --long-stretch-words`). The keys are the
+    /// ones the Items tab stored before these settings had names, so saved counts stay.
+    enum Listen {
+        static let spotCheckCount = MeetingsWindowSetting(
+            key: "meetings.listen.spotCheckCount", defaultValue: 20, choices: [10, 20, 40, 80],
+            title: "Lines in a spot check", detail: "How many guessed lines (50 to 69 %) one spot check asks about, picked at random.")
+        static let longStretchWords = MeetingsWindowSetting(
+            key: "meetings.listen.longStretchWords", defaultValue: 50, choices: [30, 50, 100, 200],
+            title: "Words in a long stretch", detail: "A guessed stretch of this many words or more becomes one question.")
+        static let showPrepared = MeetingsWindowSetting(
+            key: "meetings.listen.showPrepared", defaultValue: true, choices: [true, false],
+            title: "Show the prepared questions", detail: "After Prepare, the Items list shows only the new group of questions.")
+        /// The range the Items tab's number fields take for the two counts.
+        static let spotCheckRange = 1...100
+        static let longStretchRange = 10...500
+    }
+
     /// The notice stack (F4 keys stay in `MeetingsPreferences`; this adds the visible count).
     enum Notices {
         static let pauseWhenInactive = MeetingsWindowSetting(
