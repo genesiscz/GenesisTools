@@ -16,6 +16,7 @@ public final class WidgetModel: ObservableObject {
             // Only the preferences changed (a live setting): the sessions and the inbox are the same, so only what
             // the preferences decide is computed again. Rebuilding the inbox was most of a live apply (2026-10-28).
             if preferencesOnlyChange {
+                if oldValue?.state.preferences.inboxFeedRuns != snapshot?.state.preferences.inboxFeedRuns { refreshInboxFeeds() }
                 refreshPreferenceDerived()
                 return
             }
@@ -1230,6 +1231,7 @@ public final class WidgetModel: ObservableObject {
         inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
         refreshRailActivity()
         inboxOverviewItems = Self.overviewItems(value.sessions)
+        refreshInboxFeeds()
         applyAlertPopup(alertPopup.inboxChanged())
         let listed = value.sessions.flatMap { $0.items ?? [] }
         reconcileStaged(value.staged ?? listed, listed: listed)
@@ -1596,6 +1598,12 @@ public final class WidgetModel: ObservableObject {
     var journalCloseGuards: [String: (opened: TimeInterval, closeRevision: Int, draft: WidgetDraft)] = [:]
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
     @Published public var draftSavedAt: [String: Date] = [:]
+
+    private(set) var inboxFeeds = WidgetInboxFeeds()
+
+    private func refreshInboxFeeds() {
+        inboxFeeds = WidgetInboxFeeds(inboxOverviewItems, by: preferences.inboxFeedRuns) { sessionIndex[$0.key]?.project }
+    }
 
     nonisolated static func overviewItems(_ sessions: [WidgetInboxSession]) -> [WidgetInboxItem] {
         sessions.flatMap { entry in entry.items ?? [entry.pendingItem, entry.unreadItem].compactMap { $0 } }
