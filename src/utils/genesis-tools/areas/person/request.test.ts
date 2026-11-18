@@ -3,7 +3,7 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { runAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -97,7 +97,7 @@ test("all live effects refuse the test process before a host call", async () => 
     await expect(runVisibly({ argv: ["/usr/bin/true"], timeoutMs: 10 })).rejects.toThrow();
     expect(await connectGenesisToolsService()).toBeNull();
     await expect(startGenesisToolsService()).rejects.toThrow("in-test");
-    const result = await runAction(AREAS, "person.notice", input, liveEngineDeps(AREAS));
+    const result = await runAreaAction(AREAS, "person.notice", input, liveEngineDeps(AREAS));
     expect(result.status).toBe("unreachable");
     expect(result.skipped[0]?.reason).toContain("in-test");
 });
@@ -221,7 +221,7 @@ test("a timed-out request action returns pending and keeps its posted request op
             },
         },
     });
-    const result = await runAction(AREAS, "person.notice", input, deps, { timeoutMs: 5 });
+    const result = await runAreaAction(AREAS, "person.notice", input, deps, { timeoutMs: 5 });
     expect(
         result.status === "ran" &&
             typeof result.value === "object" &&

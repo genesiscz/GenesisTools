@@ -203,7 +203,7 @@ function contextFor(params: {
  * Runs `<area>.<action>`: the args are checked, then each way in order (native, then the fallbacks in key order) runs
  * when its needs hold; a way that returns `ctx.pass(why)` or throws is skipped with its reason.
  */
-export async function runAction(
+export async function runAreaAction(
     registry: Record<string, Area>,
     id: string,
     args: unknown,

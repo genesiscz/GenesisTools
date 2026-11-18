@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { type MethodDescriptor, type RpcHandler, type RpcHandlers, toRpcTable } from "@genesiscz/utils/api-descriptor";
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import { type EngineDeps, liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { explainAction, runAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { createStateStore } from "@genesiscz/utils/genesis-tools/actions/state";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { createRequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
@@ -90,7 +90,7 @@ export async function startGenesisToolsService(
             const id = `${area}.${name}`;
             deadlines.set(id, Math.max(130_000, (action.timeoutMs ?? 120_000) + 10_000));
             handlers[id] = (params, connection) =>
-                runAction(
+                runAreaAction(
                     AREAS,
                     id,
                     params,
@@ -148,7 +148,7 @@ export async function startGenesisToolsService(
                 ) {
                     continue;
                 }
-                const result = await runAction(AREAS, "person.notifyThenAsk", view.request, deps, {
+                const result = await runAreaAction(AREAS, "person.notifyThenAsk", view.request, deps, {
                     timeoutMs: 15_000,
                 });
                 if (

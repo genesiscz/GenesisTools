@@ -86,7 +86,7 @@ function inTest(env: NeedEnv, what: string): NeedResult | null {
 }
 
 /** The installed bundle and its routing, or the reason it cannot be used. */
-function appInstalled(env: NeedEnv): NeedResult {
+function appBundleUsable(env: NeedEnv): NeedResult {
     const bundle = env.facts.appBundle();
 
     if (!bundle.installed) {
@@ -131,10 +131,10 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
             ? OK_PROBE
             : fail("platform", `needs ${need.platform}, this is ${env.facts.platform()}`),
 
-    "app.installed": async (_need, env) => inTest(env, "GenesisTools.app") ?? appInstalled(env),
+    "app.installed": async (_need, env) => inTest(env, "GenesisTools.app") ?? appBundleUsable(env),
 
     "app.part": async (need, env) => {
-        const refused = inTest(env, "GenesisTools.app") ?? (appInstalled(env).ok ? null : appInstalled(env));
+        const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
 
         if (refused) {
             return refused;
@@ -156,7 +156,7 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
     },
 
     "app.rpc": async (need, env) => {
-        const refused = inTest(env, "GenesisTools.app") ?? (appInstalled(env).ok ? null : appInstalled(env));
+        const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
 
         if (refused) {
             return refused;
@@ -209,7 +209,7 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
     },
 
     "app.grant": async (need, env) => {
-        const refused = inTest(env, "GenesisTools.app") ?? (appInstalled(env).ok ? null : appInstalled(env));
+        const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
 
         if (refused) {
             return refused;

@@ -6,7 +6,7 @@ import { createConfigStore, resolveConfig } from "@genesiscz/utils/genesis-tools
 import { defineAction, defineArea } from "@genesiscz/utils/genesis-tools/actions/define";
 import { createAreaEventBus } from "@genesiscz/utils/genesis-tools/actions/events";
 import { clientsOf, type EngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { explainAction, runAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { memoryStateStore, parseStateText } from "@genesiscz/utils/genesis-tools/actions/state";
 import type { AppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
@@ -86,12 +86,12 @@ function deps(overrides: Partial<EngineDeps> = {}): EngineDeps {
     };
 }
 
-describe("runAction", () => {
+describe("runAreaAction", () => {
     test("tries the ways in order and names why each one was skipped", async () => {
         const events: unknown[] = [];
         const bus = createAreaEventBus();
         bus.on((event) => events.push(event));
-        const outcome = await runAction(REGISTRY, "demo.greet", { name: "alice" }, deps({ events: bus }));
+        const outcome = await runAreaAction(REGISTRY, "demo.greet", { name: "alice" }, deps({ events: bus }));
 
         expect(outcome.status).toBe("ran");
         expect(outcome.status === "ran" && outcome.via).toBe("fallback.last");
@@ -109,7 +109,7 @@ describe("runAction", () => {
 
     test("native runs when its needs hold, and a missing way list ends unreachable with the manual text", async () => {
         const facts = fakeFacts({ appManifest: () => ({ buildId: "b1", parts: ["hub"], rpcMethods: null }) });
-        const ran = await runAction(REGISTRY, "demo.greet", { name: "bob" }, deps({ facts }));
+        const ran = await runAreaAction(REGISTRY, "demo.greet", { name: "bob" }, deps({ facts }));
         expect(ran.status === "ran" && ran.value).toEqual({ text: "hi bob", via: "native" });
 
         const testFacts = fakeFacts({ isTest: () => true, platform: () => "freebsd" });
@@ -130,7 +130,7 @@ describe("runAction", () => {
             registry: { none },
             file: join(mkdtempSync(join(tmpdir(), "gt-actions-")), "config.json"),
         });
-        const outcome = await runAction({ none }, "none.act", {}, deps({ facts: testFacts, config }));
+        const outcome = await runAreaAction({ none }, "none.act", {}, deps({ facts: testFacts, config }));
         expect(outcome).toEqual({
             status: "unreachable",
             skipped: [
@@ -157,7 +157,7 @@ describe("runAction", () => {
             buildCommand: () => "build-it",
         };
         const facts = fakeFacts({ appManifest: () => ({ buildId: "b2", parts, rpcMethods: null }) });
-        const outcome = await runAction(REGISTRY, "demo.greet", { name: "carol" }, deps({ facts, builder }));
+        const outcome = await runAreaAction(REGISTRY, "demo.greet", { name: "carol" }, deps({ facts, builder }));
 
         expect(builds).toEqual(["hub"]);
         expect(outcome.status === "ran" && outcome.via).toBe("native");
@@ -174,19 +174,19 @@ describe("runAction", () => {
             buildCommand: () => "build-it",
         };
         const facts = fakeFacts({ isTest: () => true });
-        const outcome = await runAction(REGISTRY, "demo.greet", { name: "dan" }, deps({ facts, builder }));
+        const outcome = await runAreaAction(REGISTRY, "demo.greet", { name: "dan" }, deps({ facts, builder }));
         expect(outcome.skipped[0]?.code).toBe("in-test");
     });
 
     test("wrong args throw before any way runs", async () => {
         calls.length = 0;
-        await expect(runAction(REGISTRY, "demo.greet", { name: 3 }, deps())).rejects.toThrow(
+        await expect(runAreaAction(REGISTRY, "demo.greet", { name: 3 }, deps())).rejects.toThrow(
             "the arguments do not match"
         );
         expect(calls).toEqual([]);
     });
 
-    test("clientsOf runs the same engine as runAction", async () => {
+    test("clientsOf runs the same engine as runAreaAction", async () => {
         const clients = clientsOf(REGISTRY, () => deps());
         const outcome = await clients.demo.greet({ name: "erin" });
         expect(outcome.status === "ran" && outcome.via).toBe("fallback.last");
@@ -309,8 +309,8 @@ test("app.hello reports methods to the injected state, and app.rpc returns the r
         config: createConfigStore({ registry: AREAS, file: join(dir, "config.json") }),
         app: { rpc: async <T>() => ({ ok: true, result: value as T }) },
     });
-    expect((await runAction(AREAS, "app.hello", {}, injected)).status).toBe("ran");
+    expect((await runAreaAction(AREAS, "app.hello", {}, injected)).status).toBe("ran");
     expect(state.get("app", "rpcMethods")?.value).toEqual(["rpc.hello"]);
-    const reply = await runAction(AREAS, "app.rpc", { method: "rpc.hello" }, injected);
+    const reply = await runAreaAction(AREAS, "app.rpc", { method: "rpc.hello" }, injected);
     expect(reply.status === "ran" && reply.value).toEqual(value);
 });

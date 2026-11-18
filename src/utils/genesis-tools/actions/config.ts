@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { z } from "zod";
@@ -45,12 +46,8 @@ export function genesisToolsConfigPath(): string {
     return toolDataDir("genesis-tools", "config.json");
 }
 
-function emptyConfig(): GenesisToolsConfigFile {
+function emptyConfigFile(): GenesisToolsConfigFile {
     return { version: 1, areas: {} };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The defaults a config schema gives an empty object. */
@@ -128,14 +125,14 @@ function keysOf(schema: z.ZodObject | undefined): string {
 export function parseConfigText(text: string): GenesisToolsConfigFile {
     const raw: unknown = SafeJSON.parse(text);
 
-    if (!isRecord(raw) || (raw.version !== undefined && raw.version !== 1)) {
+    if (!isObject(raw) || (raw.version !== undefined && raw.version !== 1)) {
         throw new ConfigError("config.json is not a version 1 GenesisTools config");
     }
 
     const areas: GenesisToolsConfigFile["areas"] = {};
 
-    for (const [area, values] of Object.entries(isRecord(raw.areas) ? raw.areas : {})) {
-        if (!isRecord(values)) {
+    for (const [area, values] of Object.entries(isObject(raw.areas) ? raw.areas : {})) {
+        if (!isObject(values)) {
             logger.warn({ area }, "genesis-tools config: an area's values are not an object, ignored");
             continue;
         }
@@ -159,7 +156,7 @@ export function resolveConfig(
         ...schemaDefaults(areaDef.config),
         ...schemaDefaults(actionDef?.config),
         ...storedArea,
-        ...(action && isRecord(storedActions) ? (storedActions[action] ?? {}) : {}),
+        ...(action && isObject(storedActions) ? (storedActions[action] ?? {}) : {}),
     };
 }
 
@@ -201,7 +198,7 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
 
     function read(): GenesisToolsConfigFile {
         if (!existsSync(file)) {
-            return emptyConfig();
+            return emptyConfigFile();
         }
 
         return parseConfigText(readFileSync(file, "utf8"));
@@ -213,7 +210,7 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
             return read();
         } catch (error) {
             logger.warn({ error, file }, "genesis-tools config: unreadable, running with the defaults");
-            return emptyConfig();
+            return emptyConfigFile();
         }
     }
 
