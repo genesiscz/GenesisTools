@@ -158,7 +158,6 @@ describe("OpenedMeeting", () => {
             audioPath,
             speaking: [],
             files: [],
-            sourceLayout: "left-mic",
             segments: Array.from({ length: 60 }, (_, i) => ({
                 startSec: i * 2,
                 endSec: i * 2 + 2,
@@ -170,7 +169,7 @@ describe("OpenedMeeting", () => {
             const opened = OpenedMeeting.of(
                 store,
                 record,
-                { source: fakeSource({ evidence }), sourceMeetingId: "abc" },
+                { source: { ...fakeSource({ evidence }), sourceLayout: "left-mic" }, sourceMeetingId: "abc" },
                 config
             );
             return (await opened.energy()).calibration?.layout;

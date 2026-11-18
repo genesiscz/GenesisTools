@@ -362,9 +362,17 @@ export class OpenedMeeting {
 
     /** The microphone's energy share per time range, with the calibration it was read with. Writes nothing. */
     energy(): Promise<MicEnergy> {
-        this.energyOnce ??= this.sourceEvidence().then((evidence) =>
-            energyMicShareFor(this.store, this.current, evidence)
-        );
+        this.energyOnce ??= this.sourceEvidence().then(async (evidence) => {
+            if (!evidence?.audioPath) {
+                return {};
+            }
+            const { global } = await this.config();
+            const { source } = await this.linked();
+            return energyMicShareFor(this.store, this.current, evidence, {
+                minSeparation: global.speakerLabels.channels.minSeparation,
+                sourceLayout: source.sourceLayout,
+            });
+        });
         return this.energyOnce;
     }
 

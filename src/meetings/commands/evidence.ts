@@ -280,6 +280,8 @@ async function evidence(
             ui.dim("audio energy: not checked (no audio on this Mac, or ffmpeg is missing)");
         } else if (channels.layout === "unknown") {
             ui.warn(`audio energy: not used, the microphone channel is unknown: ${channels.reason}`);
+        } else if (channels.reason) {
+            ui.dim(`audio energy: ${channels.layout} (${channels.reason})`);
         } else {
             ui.dim(
                 `audio energy: ${channels.layout} (mic segments median left share ${channels.micMedian}, call ${channels.systemMedian}; ${channels.segments.mic} + ${channels.segments.system} segments)`

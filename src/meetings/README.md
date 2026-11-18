@@ -304,6 +304,11 @@ malformed attendance files still fail.
   microphone is the user (0.85, or 0.75 where the segments said the call; E3 and E4 never overrule it), 10 % or less
   is never the user. Where the segments are mixed (neither channel holds 90 %), 70 % or more is the user (0.55, to
   ask) and under 50 % is not. A line no segment covers is the user only at 90 % or more.
+- Channel calibration compares the median left-channel RMS share of microphone tags with that of call tags.
+  It skips intervals tagged as both. A difference of at least 0.30 identifies the microphone side in either order.
+  Change it with `tools meetings config set global.speakerLabels.channels.minSeparation <fraction>`.
+  When too few tags qualify, Wispr's stereo order can identify the microphone if loud windows on both sides
+  show separation. `tools meetings acoustic collect <meeting>` refreshes the saved layout and acoustic evidence.
 - The label's own voice: a label the platform named after a person (`origin: platform`) is that person's voice. The
   rules do not move its call lines to another person, even when E3 and E4 both name someone else. A mixed line under
   it stays with that person when E3 shows only that person speaking, unless 80 % or more of the energy is on the

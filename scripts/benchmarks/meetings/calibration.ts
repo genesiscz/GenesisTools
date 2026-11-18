@@ -3,35 +3,96 @@
  * Positive offset means looking later in the audio. The sweep uses the original calibration's mean RMS share
  * and 1.5 s minimum duration. Both the numerator and denominator are measured in the production cache's units.
  */
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { out } from "@genesiscz/utils/logger";
-import { ENERGY_BLOCKS_PER_SEC, energyShare, median, readCachedChannelEnergy } from "@genesiscz/utils/meetings/energy";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type ChannelCalibration,
+    calibrateChannels,
+    channelEnergy,
+    ENERGY_BLOCKS_PER_SEC,
+    energyShare,
+    median,
+    readCachedChannelEnergy,
+} from "@genesiscz/utils/meetings/energy";
+import { MEETING_FILE, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { EvidenceSegment } from "@genesiscz/utils/transcribe/evidence";
 
 const store = new MeetingStore();
 const ref = process.argv[2];
 if (!ref) {
-    throw new Error("Usage: calibration.ts <meeting-copy> | --census");
+    throw new Error("Usage: calibration.ts <meeting-copy> | --census <base-checkout>");
 }
 
 if (ref === "--census") {
-    for (const record of store.list()) {
-        const stored = record.evidence?.channels;
-        const opened = OpenedMeeting.of(store, record);
-        const measured = opened.sourceRef ? (await opened.energy()).calibration : undefined;
-        out.result({
-            id: record.id,
-            stored: stored?.layout ?? null,
-            layout: measured?.layout ?? null,
-            micMedian: measured?.micMedian ?? null,
-            systemMedian: measured?.systemMedian ?? null,
-            reason: measured?.reason ?? (measured ? null : "no cached measurement"),
-        });
+    const base = process.argv[3];
+    if (!base) {
+        throw new Error("Supply the checkout containing the base calibrateChannels implementation.");
     }
+    await census(base);
 } else {
     await sweep(ref);
+}
+
+async function census(baseCheckout: string): Promise<void> {
+    const baseline: { calibrateChannels: typeof calibrateChannels } = await import(
+        join(resolve(baseCheckout), "src/utils/meetings/energy.ts")
+    );
+    const scratch = mkdtempSync(join(tmpdir(), "meetings-census-"));
+    const records = [];
+    const changes = [];
+    const failures = [];
+    for (const entry of readdirSync(store.root, { withFileTypes: true })) {
+        const id = entry.name;
+        if (!entry.isDirectory() || !existsSync(join(store.root, id, MEETING_FILE))) {
+            continue;
+        }
+        let base: ChannelCalibration | undefined, head: ChannelCalibration | undefined;
+        let stored: ChannelCalibration | undefined;
+        let unavailable: string | undefined;
+        try {
+            const record = store.read(id);
+            if (!record) {
+                throw new Error("Record failed schema validation");
+            }
+            stored = record.evidence?.channels;
+            const opened = OpenedMeeting.of(store, record);
+            const evidence = opened.sourceRef ? await opened.sourceEvidence() : null;
+            if (evidence?.audioPath) {
+                // Only the scratch cache is writable. Both revisions receive the same samples and tagged spans.
+                const energy =
+                    readCachedChannelEnergy(join(store.folder(id), "evidence", "energy.bin"), evidence.audioPath) ??
+                    (await channelEnergy(evidence.audioPath, join(scratch, Bun.hash(evidence.audioPath).toString())));
+                if (!energy) {
+                    throw new Error("Could not read channel energy");
+                }
+                base = baseline.calibrateChannels(energy, evidence.segments);
+                head = calibrateChannels(energy, evidence.segments, {
+                    minSeparation: (await opened.config()).global.speakerLabels.channels.minSeparation,
+                    sourceLayout: (await opened.linked()).source.sourceLayout,
+                });
+            } else {
+                unavailable = "no source audio";
+            }
+        } catch (error) {
+            unavailable = error instanceof Error ? error.message : String(error);
+            failures.push({ id, reason: unavailable });
+        }
+        const row = { id, stored: stored?.layout ?? null, base: base ?? null, head: head ?? null, unavailable };
+        records.push(row);
+        if (head && (base?.layout !== head.layout || (stored && stored.layout !== head.layout))) {
+            changes.push(id);
+        }
+        if ([base, stored].some((before) => before && before.layout !== "unknown" && before.layout !== head?.layout)) {
+            failures.push({ id, reason: "formerly known layout changed or could not be checked" });
+        }
+    }
+    out.result({ records, changes, failures });
+    if (!records.length || failures.length) {
+        process.exitCode = 1;
+    }
 }
 
 async function sweep(ref: string): Promise<void> {
@@ -42,7 +103,7 @@ async function sweep(ref: string): Promise<void> {
     const opened = OpenedMeeting.of(store, record);
     const evidence = await opened.sourceEvidence();
     const cache = join(store.folder(record.id), "evidence", "energy.bin");
-    const energy = evidence?.audioPath && readCachedChannelEnergy(cache, evidence.audioPath);
+    const energy = evidence?.audioPath ? readCachedChannelEnergy(cache, evidence.audioPath) : undefined;
     if (!evidence || !energy) {
         throw new Error("Run meetings acoustic collect on the isolated copy first; there is no current energy cache.");
     }
@@ -109,7 +170,17 @@ async function sweep(ref: string): Promise<void> {
             long.filter((s) => !overlap.has(s)),
             0
         ),
-        sweep: { firstSec: -30, lastSec: 30, stepSec: 0.1, zero: offsets[300], best },
+        sweep: {
+            firstSec: -30,
+            lastSec: 30,
+            stepSec: 0.1,
+            zero: offsets[300],
+            best,
+            halves: [
+                interior.filter((s) => s.startSec < duration / 2),
+                interior.filter((s) => s.startSec >= duration / 2),
+            ].map((part) => ({ zero: measure(part, 0), atBest: measure(part, best.offsetSec) })),
+        },
         current: (await opened.energy()).calibration,
     });
 }

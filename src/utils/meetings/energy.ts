@@ -156,28 +156,20 @@ export type ChannelLayout = (typeof CHANNEL_LAYOUTS)[number];
 
 export interface ChannelCalibration {
     layout: ChannelLayout;
-    /** The median left share over segments the recorder tagged as the microphone, and as the call. */
+    /** Median left RMS share of the uncontested part of each counted tag. */
     micMedian?: number;
     systemMedian?: number;
     /** How many tagged segments were long and loud enough to count. */
     segments: { mic: number; system: number };
-    /** Why the layout is unknown, ready to print. */
+    /** Why the layout is unknown, or the audio evidence used in the absence of usable tags. */
     reason?: string;
 }
 
 /** A tagged segment shorter than this says too little about its channel. */
 const CALIBRATION_MIN_SEC = 1.5;
-/** Fewer counted segments than this per tag, and the layout stays unknown. */
+/** The minimum independent observations per channel when using recorder tags. */
 const CALIBRATION_MIN_SEGMENTS = 20;
-/** The microphone's side holds at least this median share of its own segments. */
-const CALIBRATION_SIDE = 0.8;
-/**
- * The call's side holds at least this median share of the call's segments. Lower than CALIBRATION_SIDE: a microphone
- * near loudspeakers hears the call too (2026-11-09: mic segments 0.972 on the left, call segments 0.25, so 75 % on the
- * call's side), and that recording was left unknown while its channels plainly told the voices apart. A mono file
- * (both near 0.5) still fails the microphone's side.
- */
-const CALIBRATION_CALL_SIDE = 0.6;
+export const DEFAULT_CHANNEL_MIN_SEPARATION = 0.3;
 
 /** The middle value (the mean of the two middle ones for an even count); undefined for none. */
 export function median(values: number[]): number | undefined {
@@ -190,34 +182,75 @@ export function median(values: number[]): number | undefined {
     return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
-/**
- * Decides which channel is the microphone from the segments the recorder tagged "mic" and "system" (Wispr's live
- * segments). Measured on one Wispr recording: mic segments had a median left share of 0.964, call segments 0.004, so
- * left was the microphone there; another recorder, FaceTime or a system setting may differ, so nothing is assumed.
- * A mono recording (both channels alike) and a recorder with no tags come out "unknown".
- */
-export function calibrateChannels(
-    energy: ChannelEnergy,
-    segments: Array<{ startSec: number; endSec: number; channel: string }>
-): ChannelCalibration {
+type TaggedSpan = { startSec: number; endSec: number; channel: string };
+
+/** Each tag votes once, on audio where only its source is tagged. Keep short tags in the overlap mask. */
+function uncontestedShares(energy: ChannelEnergy, segments: TaggedSpan[]) {
     const shares: Record<"mic" | "system", number[]> = { mic: [], system: [] };
-
+    const mask = new Uint8Array(Math.min(energy.left.length, energy.right.length));
+    const spans: Array<{ from: number; to: number; channel: keyof typeof shares; bit: number }> = [];
     for (const segment of segments) {
-        if (segment.endSec - segment.startSec < CALIBRATION_MIN_SEC) {
-            continue;
-        }
-
         if (segment.channel !== "mic" && segment.channel !== "system") {
             continue;
         }
-
-        const { share } = energyShare(energy, segment.startSec, segment.endSec);
-
-        if (share !== undefined) {
-            shares[segment.channel].push(share);
+        const from = Math.max(0, Math.floor(segment.startSec * ENERGY_BLOCKS_PER_SEC));
+        const to = Math.min(mask.length, Math.ceil(segment.endSec * ENERGY_BLOCKS_PER_SEC));
+        if (!(segment.startSec < segment.endSec && from < to)) {
+            continue;
+        }
+        const bit = segment.channel === "mic" ? 1 : 2;
+        for (let i = from; i < to; i++) {
+            mask[i] = mask[i]! | bit;
+        }
+        if (segment.endSec - segment.startSec >= CALIBRATION_MIN_SEC) {
+            spans.push({ from, to, channel: segment.channel, bit });
         }
     }
+    for (const { from, to, channel, bit } of spans) {
+        let left = 0,
+            right = 0,
+            blocks = 0;
+        for (let i = from; i < to; i++) {
+            if (mask[i] === bit) {
+                left += energy.left[i]!;
+                right += energy.right[i]!;
+                blocks++;
+            }
+        }
+        if (blocks >= CALIBRATION_MIN_SEC * ENERGY_BLOCKS_PER_SEC && left + right >= QUIET * blocks) {
+            shares[channel].push(left / (left + right));
+        }
+    }
+    return shares;
+}
 
+/** Pick the loudest 15% independently on each channel, before observing either group's left share. */
+function loudWindowShare(channel: Float32Array, energy: ChannelEnergy): number | undefined {
+    const sorted = channel.slice().sort();
+    const loud = Math.max(QUIET, sorted[Math.floor(0.85 * sorted.length)] ?? QUIET);
+    const shares = [];
+    for (let i = 0; i < channel.length; i++) {
+        if (channel[i]! >= loud) {
+            shares.push(energy.left[i]! / (energy.left[i]! + energy.right[i]!));
+        }
+    }
+    return shares.length >= CALIBRATION_MIN_SEC * CALIBRATION_MIN_SEGMENTS * ENERGY_BLOCKS_PER_SEC
+        ? median(shares)
+        : undefined;
+}
+
+export interface ChannelCalibrationOptions {
+    minSeparation?: number;
+    sourceLayout?: Exclude<ChannelLayout, "unknown">;
+}
+
+/** Tags establish the order in either direction. Without usable tags, separated audio can verify a source's order. */
+export function calibrateChannels(
+    energy: ChannelEnergy,
+    segments: TaggedSpan[],
+    { minSeparation = DEFAULT_CHANNEL_MIN_SEPARATION, sourceLayout }: ChannelCalibrationOptions = {}
+): ChannelCalibration {
+    const shares = uncontestedShares(energy, segments);
     const counted = { mic: shares.mic.length, system: shares.system.length };
     const micMedian = median(shares.mic);
     const systemMedian = median(shares.system);
@@ -227,6 +260,24 @@ export function calibrateChannels(
     };
 
     if (counted.mic < CALIBRATION_MIN_SEGMENTS || counted.system < CALIBRATION_MIN_SEGMENTS) {
+        if (sourceLayout) {
+            const left = loudWindowShare(energy.left, energy);
+            const right = loudWindowShare(energy.right, energy);
+            if (
+                left !== undefined &&
+                right !== undefined &&
+                left > 0.5 &&
+                right < 0.5 &&
+                left - right >= minSeparation
+            ) {
+                return {
+                    layout: sourceLayout,
+                    ...medians,
+                    segments: counted,
+                    reason: `source channel order verified by loud windows (median left shares ${left.toFixed(3)} and ${right.toFixed(3)})`,
+                };
+            }
+        }
         return {
             layout: "unknown",
             ...medians,
@@ -235,12 +286,9 @@ export function calibrateChannels(
         };
     }
 
-    if (micMedian! >= CALIBRATION_SIDE && systemMedian! <= 1 - CALIBRATION_CALL_SIDE) {
-        return { layout: "left-mic", ...medians, segments: counted };
-    }
-
-    if (micMedian! <= 1 - CALIBRATION_SIDE && systemMedian! >= CALIBRATION_CALL_SIDE) {
-        return { layout: "right-mic", ...medians, segments: counted };
+    const difference = micMedian! - systemMedian!;
+    if (difference !== 0 && Math.abs(difference) + Number.EPSILON >= minSeparation) {
+        return { layout: difference > 0 ? "left-mic" : "right-mic", ...medians, segments: counted };
     }
 
     return {
