@@ -23,8 +23,8 @@ import { startGenesisToolsService } from "../../service/host";
 import {
     createRequestJournal,
     type RequestEvent,
-    requestEventSchema,
     type RequestView,
+    requestEventSchema,
     requestViewSchema,
     stateOf,
 } from "./journal";
@@ -384,8 +384,8 @@ test("a subscribed face receives each worker and service settlement transition e
         const external = changes.filter((view) => view.id === input.id);
         expect(local.map((view) => view.state)).toEqual(["waiting", "accepted", "done"]);
         expect(external.map((view) => view.state)).toEqual(["accepted", "done"]);
-        expect(local.at(-1)).toEqual(worker.get(serviceId));
-        expect(external.at(-1)).toEqual(worker.get(input.id));
+        expect(local.at(-1)).toEqual(worker.get(serviceId) ?? undefined);
+        expect(external.at(-1)).toEqual(worker.get(input.id) ?? undefined);
 
         await worker.withdraw(nextId);
         face.close();
