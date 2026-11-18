@@ -52,6 +52,7 @@ final class MeetingsLibraryAPITests: XCTestCase {
     func testEveryLibraryExampleDecodesWithTheSwiftTypes() throws {
         var decoded: [String: Int] = [:]
         var refusals: [String] = []
+        var removedProjectBackup: String?
         for example in try LibraryFixture.examples() {
             let method = try XCTUnwrap(example["method"] as? String)
             guard Self.methods.contains(method) else { continue }
@@ -71,11 +72,14 @@ final class MeetingsLibraryAPITests: XCTestCase {
                 if let result {
                     let removal = try MeetingsService.decode(MeetingsAPI.ProjectsRemove.Result.self, result)
                     XCTAssertEqual(removal.unassigned, [Self.review])
-                    XCTAssertTrue(removal.backup.hasSuffix("-project-Harbor.json"), removal.backup)
+                    XCTAssertNotNil(removal.backup.range(of: #"-project-Harbor(-[0-9]+)?\.json$"#, options: .regularExpression), removal.backup)
+                    removedProjectBackup = removal.backup
                 }
             case MeetingsAPI.ProjectsRestore.name:
                 try roundTrip(MeetingsAPI.ProjectsRestore.Params.self, params, label)
                 if let result {
+                    let request = try MeetingsService.decode(MeetingsAPI.ProjectsRestore.Params.self, params)
+                    XCTAssertEqual(request.backup, try XCTUnwrap(removedProjectBackup))
                     let restore = try MeetingsService.decode(MeetingsAPI.ProjectsRestore.Result.self, result)
                     XCTAssertEqual(restore, .init(name: "Harbor", meetings: [Self.review], sources: ["wisprflow"]))
                 }
