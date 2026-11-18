@@ -5,6 +5,8 @@ import SwiftUI
 /// one page; the editor and the library on the other. Each row edits the key its reader already reads.
 @MainActor
 enum RecorderSettingsPages {
+    static let frameRateHelp = "These rates apply to the next recording. A running movie keeps its current rate. To change it during a take, use Frame rate in the recording control bar."
+
     static func section(model: RecorderSettingsModel) -> NativeSettingsSection {
         NativeSettingsSection(
             id: "recorder", title: "Recorder",
@@ -37,9 +39,6 @@ private struct RecorderRecordingSettings: View {
             cameraCard
             shortcutsCard
             menuBarCard
-            Text("The capture picker, the menu bar menu and this page change the same settings. A running recorder follows a change at once.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -65,7 +64,7 @@ private struct RecorderRecordingSettings: View {
             .disabled(!countdown.wrappedValue)
             Divider()
             NativeSettingsSegmented(
-                "Frame rate", detail: "Frames per second while something moves.", identifier: "recorder.settings.fps",
+                "Frame rate", detail: RecorderSettingsPages.frameRateHelp, identifier: "recorder.settings.fps",
                 options: CaptureOptions.frameRates.map { NativeSettingsOption($0, "\($0) fps") },
                 selection: model.capture(\.fps), minSegmentWidth: 52)
             Divider()

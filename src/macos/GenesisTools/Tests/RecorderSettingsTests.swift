@@ -7,6 +7,13 @@ import XCTest
 /// camera preview shows, what an idle shortcut does), and the page's bindings writing the keys the readers read.
 @MainActor
 final class RecorderSettingsTests: XCTestCase {
+    func testFrameRateHelpDistinguishesSavedAndLiveChanges() {
+        let help = RecorderSettingsPages.frameRateHelp
+        XCTAssertTrue(help.contains("next recording"))
+        XCTAssertTrue(help.contains("running movie keeps its current rate"))
+        XCTAssertTrue(help.contains("recording control bar"))
+    }
+
     private var suiteName = ""
     private var defaults: UserDefaults!
 
