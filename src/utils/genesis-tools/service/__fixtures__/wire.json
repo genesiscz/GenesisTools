@@ -16,6 +16,22 @@
     }
   },
   {
+    "method": "app.hello",
+    "params": {},
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "app.rpc",
     "params": {
       "method": "rpc.hello",
@@ -26,6 +42,25 @@
       "via": "fixture",
       "value": null,
       "skipped": []
+    }
+  },
+  {
+    "method": "app.rpc",
+    "params": {
+      "method": "rpc.hello",
+      "params": {}
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -41,6 +76,24 @@
         "part": "features"
       },
       "skipped": []
+    }
+  },
+  {
+    "method": "app.build",
+    "params": {
+      "part": "features"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -62,7 +115,86 @@
     }
   },
   {
+    "method": "windows.open",
+    "params": {
+      "window": "--features",
+      "args": [],
+      "activate": true,
+      "wait": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "person.ask",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "person.ask",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.confirm",
     "params": {
       "kind": "notice",
       "id": "fixture",
@@ -101,8 +233,30 @@
       "reason": "fixture",
       "open": {
         "window": "--features",
-        "args": []
+        "args": [
+          "fixture"
+        ]
       }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.notice",
+    "params": {
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture"
     },
     "result": {
       "status": "ran",
@@ -131,22 +285,16 @@
       "reason": "fixture"
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "id": "fixture",
-        "status": "done",
-        "reason": "fixture",
-        "method": "click",
-        "via": "fixture",
-        "elevation": "fixture",
-        "note": "fixture",
-        "exitCode": -9007199254740991,
-        "outputTail": "fixture",
-        "verified": true,
-        "manual": "fixture"
-      },
-      "skipped": []
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -180,7 +328,97 @@
     }
   },
   {
+    "method": "person.windowNotice",
+    "params": {
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "person.showWindow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "person.showWindow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.notifyThenAsk",
     "params": {
       "kind": "notice",
       "id": "fixture",
@@ -222,6 +460,36 @@
       "reason": "fixture",
       "open": {
         "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.askNow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
         "args": []
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
@@ -249,6 +517,36 @@
   },
   {
     "method": "person.askNow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.askElseNotify",
     "params": {
       "kind": "notice",
       "id": "fixture",
@@ -290,29 +588,25 @@
       "reason": "fixture",
       "open": {
         "window": "--features",
-        "args": []
+        "args": [
+          "fixture"
+        ]
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "id": "fixture",
-        "status": "done",
-        "reason": "fixture",
-        "method": "click",
-        "via": "fixture",
-        "elevation": "fixture",
-        "note": "fixture",
-        "exitCode": -9007199254740991,
-        "outputTail": "fixture",
-        "verified": true,
-        "manual": "fixture"
-      },
-      "skipped": []
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -350,7 +644,73 @@
     }
   },
   {
+    "method": "terminal.prompt",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "terminal.runVisibly",
+    "params": {
+      "argv": [
+        "fixture"
+      ]
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "opened": true
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "terminal.runVisibly",
+    "params": {
+      "argv": [
+        "fixture"
+      ]
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "permissions.openTerminalRequest",
     "params": {
       "argv": [
         "fixture"
@@ -373,12 +733,16 @@
       ]
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "opened": true
-      },
-      "skipped": []
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -397,6 +761,24 @@
     }
   },
   {
+    "method": "permissions.status",
+    "params": {
+      "kind": "input-monitoring"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "permissions.require",
     "params": {
       "kind": "input-monitoring",
@@ -410,6 +792,25 @@
         "status": "fixture"
       },
       "skipped": []
+    }
+  },
+  {
+    "method": "permissions.require",
+    "params": {
+      "kind": "input-monitoring",
+      "reason": "fixture"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -438,6 +839,26 @@
     }
   },
   {
+    "method": "actions.run",
+    "params": {
+      "id": "fixture",
+      "args": null,
+      "timeoutMs": 1
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "actions.explain",
     "params": {
       "id": "fixture",
@@ -449,6 +870,36 @@
       "summary": "fixture",
       "ways": [],
       "first": "fixture",
+      "config": {}
+    }
+  },
+  {
+    "method": "actions.explain",
+    "params": {
+      "id": "fixture",
+      "fresh": false,
+      "args": null
+    },
+    "result": {
+      "id": "fixture",
+      "summary": "fixture",
+      "ways": [
+        {
+          "way": "fixture",
+          "needsKnown": true,
+          "needs": [
+            {
+              "need": "fixture",
+              "ok": true,
+              "code": "fixture",
+              "reason": "fixture",
+              "fix": null,
+              "from": "state"
+            }
+          ]
+        }
+      ],
+      "first": null,
       "config": {}
     }
   },
@@ -543,6 +994,412 @@
     }
   },
   {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "delivered",
+          "at": "2026-11-17T12:00:00.000Z",
+          "channel": "dialog",
+          "noticeId": null
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "accepted",
+          "at": "2026-11-17T12:00:00.000Z",
+          "via": "fixture",
+          "elevation": "fixture",
+          "method": "click"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "declined",
+          "at": "2026-11-17T12:00:00.000Z",
+          "via": "fixture",
+          "note": null
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "started",
+          "at": "2026-11-17T12:00:00.000Z",
+          "runnerPid": 1,
+          "where": "terminal"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "finished",
+          "at": "2026-11-17T12:00:00.000Z",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": null
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "obsolete",
+          "at": "2026-11-17T12:00:00.000Z",
+          "reason": "fixture"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "withdrawn",
+          "at": "2026-11-17T12:00:00.000Z",
+          "reason": "fixture"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
     "method": "requests.get",
     "params": {
       "id": "fixture"
@@ -580,6 +1437,151 @@
     }
   },
   {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": null
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "accepted",
+          "at": "2026-11-17T12:00:00.000Z",
+          "via": "fixture",
+          "elevation": "fixture",
+          "method": "click"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "started",
+          "at": "2026-11-17T12:00:00.000Z",
+          "runnerPid": 1,
+          "where": "terminal"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "obsolete",
+          "at": "2026-11-17T12:00:00.000Z",
+          "reason": "fixture"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
     "method": "requests.list",
     "params": {
       "limit": 100
@@ -587,10 +1589,385 @@
     "result": []
   },
   {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "delivered",
+            "at": "2026-11-17T12:00:00.000Z",
+            "channel": "dialog",
+            "noticeId": null
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "accepted",
+            "at": "2026-11-17T12:00:00.000Z",
+            "via": "fixture",
+            "elevation": "fixture",
+            "method": "click"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "declined",
+            "at": "2026-11-17T12:00:00.000Z",
+            "via": "fixture",
+            "note": null
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "started",
+            "at": "2026-11-17T12:00:00.000Z",
+            "runnerPid": 1,
+            "where": "terminal"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "finished",
+            "at": "2026-11-17T12:00:00.000Z",
+            "exitCode": -9007199254740991,
+            "outputTail": "fixture",
+            "verified": null
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "obsolete",
+            "at": "2026-11-17T12:00:00.000Z",
+            "reason": "fixture"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "withdrawn",
+            "at": "2026-11-17T12:00:00.000Z",
+            "reason": "fixture"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
     "method": "requests.present",
     "params": {
       "id": "fixture",
       "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
+      "status": "done",
+      "reason": "fixture",
+      "method": "click",
+      "via": "fixture",
+      "elevation": "fixture",
+      "note": "fixture",
+      "exitCode": -9007199254740991,
+      "outputTail": "fixture",
+      "verified": true,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "requests.present",
+    "params": {
+      "id": "fixture",
+      "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
+      "status": "done",
+      "reason": null,
+      "method": "click",
+      "via": "fixture",
+      "elevation": null,
+      "note": null,
+      "exitCode": null,
+      "outputTail": "fixture",
+      "verified": null,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "requests.withdraw",
+    "params": {
+      "id": "fixture"
     },
     "result": {
       "id": "fixture",
@@ -614,14 +1991,14 @@
     "result": {
       "id": "fixture",
       "status": "done",
-      "reason": "fixture",
+      "reason": null,
       "method": "click",
       "via": "fixture",
-      "elevation": "fixture",
-      "note": "fixture",
-      "exitCode": -9007199254740991,
+      "elevation": null,
+      "note": null,
+      "exitCode": null,
       "outputTail": "fixture",
-      "verified": true,
+      "verified": null,
       "manual": "fixture"
     }
   },
@@ -651,6 +2028,37 @@
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
       "verified": true,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "request.present",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
+      "status": "done",
+      "reason": null,
+      "method": "click",
+      "via": "fixture",
+      "elevation": null,
+      "note": null,
+      "exitCode": null,
+      "outputTail": "fixture",
+      "verified": null,
       "manual": "fixture"
     }
   }

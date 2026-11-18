@@ -132,7 +132,10 @@ export function renderSwiftSchema(schema: WireSchema, name: string, declarations
             return fail();
     }
 }
-function sample(schema: WireSchema): unknown {
+/** A value of `schema`. Every union (and every type list) takes its alternative `variant % count`, so variant 1 is
+ * the second branch of an action reply and the null of a nullable field, and every variant below `unionWidth` is a
+ * different wire shape. */
+function sample(schema: WireSchema, variant = 0): unknown {
     if (schema.default !== undefined) {
         return schema.default;
     }
@@ -142,19 +145,22 @@ function sample(schema: WireSchema): unknown {
     if (schema.enum) {
         return schema.enum[0];
     }
-    if (schema.anyOf ?? schema.oneOf) {
-        return sample((schema.anyOf ?? schema.oneOf)![0]);
+    const options = schema.anyOf ?? schema.oneOf;
+    if (options) {
+        return sample(options[variant % options.length], variant);
     }
     if (Array.isArray(schema.type)) {
-        return sample({ ...schema, type: schema.type[0] });
+        return sample({ ...schema, type: schema.type[variant % schema.type.length] }, variant);
     }
     switch (schema.type) {
         case "object":
             return Object.fromEntries(
-                Object.entries(schema.properties ?? {}).map(([key, value]) => [key, sample(value)])
+                Object.entries(schema.properties ?? {}).map(([key, value]) => [key, sample(value, variant)])
             );
         case "array":
-            return Array.from({ length: schema.minItems ?? 0 }, () => sample(schema.items ?? {}));
+            return Array.from({ length: Math.max(schema.minItems ?? 0, variant > 0 ? 1 : 0) }, () =>
+                sample(schema.items ?? {}, variant)
+            );
         case "string":
             return schema.format === "date-time" ? "2026-11-17T12:00:00.000Z" : "fixture";
         case "integer":
@@ -165,6 +171,21 @@ function sample(schema: WireSchema): unknown {
         default:
             return null;
     }
+}
+
+/** The most alternatives any one union in `schema` has: the number of `sample` variants worth writing. */
+function unionWidth(schema: WireSchema): number {
+    const nested = [
+        ...(schema.anyOf ?? schema.oneOf ?? []),
+        ...Object.values(schema.properties ?? {}),
+        ...(schema.items ? [schema.items] : []),
+        ...(typeof schema.additionalProperties === "object" ? [schema.additionalProperties] : []),
+    ];
+    const own = Math.max(
+        (schema.anyOf ?? schema.oneOf ?? []).length,
+        Array.isArray(schema.type) ? schema.type.length : 1
+    );
+    return Math.max(own, ...nested.map(unionWidth));
 }
 
 const JSON_TYPE = `public indirect enum GenesisToolsJSON: Codable, Sendable {
@@ -206,7 +227,7 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
     const declarations: string[] = [];
     const methods = [...genesisToolsApi.methods, ...requestPresentApi.methods];
     const models = new Map<string, { params: string; result: string }>();
-    const fixtures = methods.map((method) => {
+    const fixtures = methods.flatMap((method) => {
         let paramsSchema: WireSchema;
         let resultSchema: WireSchema;
         try {
@@ -219,11 +240,18 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
             params: renderSwiftSchema(paramsSchema, `${title(method.name)}Params`, declarations, method.name),
             result: renderSwiftSchema(resultSchema, `${title(method.name)}Result`, declarations, method.name),
         });
-        return {
-            method: method.name,
-            params: method.params.parse(sample(paramsSchema)),
-            result: method.result.parse(sample(resultSchema)),
-        };
+        // One row per variant, so every union arm and every null of a nullable field reaches both decoders.
+        const rows = new Map<string, { method: string; params: unknown; result: unknown }>();
+        const width = Math.max(unionWidth(paramsSchema), unionWidth(resultSchema));
+        for (let variant = 0; variant < width; variant++) {
+            const row = {
+                method: method.name,
+                params: method.params.parse(sample(paramsSchema, variant)),
+                result: method.result.parse(sample(resultSchema, variant)),
+            };
+            rows.set(SafeJSON.stringify(row), row);
+        }
+        return [...rows.values()];
     });
     const areas = Object.entries(AREAS)
         .map(
