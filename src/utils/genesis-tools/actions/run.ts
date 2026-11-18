@@ -429,7 +429,7 @@ export async function explainAction(
         const answers: ActionExplain["ways"][number]["needs"] = [];
 
         for (const need of wayNeeds ?? []) {
-            const result = await checkNeed(need, env);
+            const result = await checkedNeed(need, env);
             answers.push(
                 result.ok
                     ? { need: describeNeed(need), ok: true, from: result.from }
