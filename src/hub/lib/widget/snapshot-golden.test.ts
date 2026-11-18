@@ -459,6 +459,32 @@ describe("the golden widget snapshots", () => {
     });
 });
 
+it("publishes bounded question and answer text only for plain answers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "widget-reply-"));
+    const question = "Which layout?";
+    const answerMd = "<fromImage>hidden</fromImage>" + "a".repeat(900);
+
+    try {
+        const rows = [
+            answer({ id: "alpha", ts: NOW, question, answerMd }),
+            answer({ id: "beta", ts: NOW, tag: "message", question: "Update", answerMd: "A message" }),
+        ];
+        const sources = { ...everyKindSources, inboxData: undefined, answers: () => rows };
+        const snapshot = await widgetSnapshot({ root, now: NOW, sources });
+        const items = snapshot.notifications?.sessions.flatMap((session) => session.items ?? []);
+        expect(items?.find((item) => item.sourceId === "alpha")?.reply).toEqual({
+            question,
+            text: "a".repeat(800),
+            more: true,
+        });
+        const message = items?.find((item) => item.sourceId === "beta");
+        expect(message?.message?.text).toBe("A message");
+        expect(message?.reply).toBeUndefined();
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 it("counts configured message groups beyond the visible rows while showing uncounted agent tasks", async () => {
     const root = await mkdtemp(join(tmpdir(), "widget-inbox-kinds-"));
     try {

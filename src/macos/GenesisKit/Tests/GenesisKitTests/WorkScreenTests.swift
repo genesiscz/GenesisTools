@@ -57,6 +57,11 @@ final class WorkScreenTests: XCTestCase {
         )
     }
 
+    private func settle(_ until: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(3)
+        while !until() && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+
     private func awaitSnapshot(_ model: WorkScreenModel, trigger: () -> Void) async {
         let received = expectation(description: "Work snapshot published")
         let watch = model.$snapshot.dropFirst().compactMap { $0 }.first().sink { _ in received.fulfill() }

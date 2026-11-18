@@ -6687,7 +6687,7 @@ describe("inbox card images and agent messages", () => {
                 expect(preview).toMatchObject({ origin: "Harbor · backup", more: true });
                 expect(preview?.text).toStartWith("Inspect **backups**.");
                 expect(preview?.text).not.toContain("End.");
-                expect(readWidgetMessageBody("notice-b")).toEqual({ body: markdown });
+                expect(readWidgetMessageBody("notice-b")).toEqual({ body: markdown, question: "Backup delayed" });
                 expect(snapshot.cards.find((card) => card.sourceId === "notice-a")?.messageOrigin).toBe(
                     "Orchard · cli"
                 );
