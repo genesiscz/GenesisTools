@@ -81,6 +81,8 @@ export const widgetPreferencesSchema = z.object({
     alertSummary: z.boolean().default(true),
     /** Show a compact answer field instead of a footer button in the alert popup. */
     alertCompactAnswer: z.boolean().default(true),
+    /** Show session rows or a newest-first feed of inbox entries in the hover list. */
+    previewView: z.enum(["sessions", "items"]).default("sessions"),
     /** The agents hover list: only sessions that need you, or every active session too. */
     previewFilter: z.enum(["needs-you", "active"]).default("needs-you"),
     /** The agents hover list's order: waiting for you first, newest activity first, or by project. */
@@ -140,8 +142,9 @@ export const widgetPreferencesSchema = z.object({
     stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
     /** Seconds before a successful send-and-close folds the panel; 0 keeps it open. */
     sendCloseSeconds: z.number().min(0).max(60).default(2.5),
-    /** The inbox of every session: entries grouped under their session ("session"), or one list. */
-    inboxGrouping: z.enum(["session", "list"]).default("session"),
+    /** The newest-first feed, all entries of each session together, or one waiting-first list. */
+    inboxGrouping: z.enum(["feed", "session", "list"]).default("feed"),
+    inboxFeedRuns: z.enum(["session", "project"]).default("session"),
     /** The filter a session's inbox opens with: every entry ("all"), the inbox entries, or the decisions. */
     inboxFilter: z.enum(["all", "inbox", "decisions"]).default("all"),
     /** The filter the inbox of every session opens with: every entry ("all"), the ones that need you, or unread. */

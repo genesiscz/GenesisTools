@@ -349,11 +349,20 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().accessibilityIdentifier("widget.sendCloseSeconds")
                 }
                 Divider()
-                NativeSettingsRow("Inbox of every session", detail: "The inbox button's list: grouped under each session, or one list.") {
+                NativeSettingsRow("Inbox of every session", detail: "The inbox button's list: newest first under a header per run of one session, grouped under each session, or one list with waiting items first.") {
                     Picker("Inbox of every session", selection: field(\.inboxGrouping)) {
+                        Text("Newest first").tag("feed")
                         Text("By session").tag("session")
                         Text("One list").tag("list")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                if prefs.inboxGrouping == "feed" {
+                    Divider()
+                    NativeSettingsSegmented(
+                        "Feed headers", detail: "A new header starts when the next item comes from another session (or project).",
+                        identifier: "widget.settings.feedHeaders",
+                        options: [.init("session", "Per session"), .init("project", "Per project")],
+                        selection: field(\.inboxFeedRuns))
                 }
                 openingFilters
                 Divider()
@@ -738,6 +747,13 @@ private struct WidgetSessionSettings: View {
     /// The agents hover list. Its settings button opens this page at `#inbox-preview`, and the card pulses.
     private var previewCard: some View {
         NativeSettingsCard("Inbox preview", subtitle: "The list that opens when the pointer rests on the agents button.") {
+            NativeSettingsSegmented(
+                "Hover list shows", detail: "Sessions with their state, or every inbox item newest first.",
+                identifier: "widget.settings.previewView",
+                options: [.init("sessions", "Sessions"), .init("items", "Inbox items")],
+                selection: Binding(get: { prefs.previewView }, set: { view in
+                    model.writePreferences { $0.previewView = view }
+                }))
             NativeSettingsSegmented(
                 "Show", identifier: "widget.preview.filter",
                 options: WidgetPreviewChoices.filters,
