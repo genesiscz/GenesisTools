@@ -42,6 +42,9 @@ public protocol FeatureSettingsPlugin: AnyObject {
     /// `settingsReady` for a snapshot of `page` (nil: the first page). A page that loads only when it appears answers
     /// here, so a snapshot of another page does not wait for it.
     func settingsReady(page: String?) -> Bool
+    /// The external destination that opened Settings, delivered after installation and again on each new request.
+    /// The part that owns the requested page interprets its optional context.
+    func settingsRequested(pageID: String?, context: String?)
     /// The window was asked for again while it runs (a second launch, a click in another window): reload what may be
     /// stale.
     func settingsReopened()
@@ -52,6 +55,7 @@ public protocol FeatureSettingsPlugin: AnyObject {
 extension FeatureSettingsPlugin {
     public var settingsReady: Bool { true }
     public func settingsReady(page: String?) -> Bool { settingsReady }
+    public func settingsRequested(pageID: String?, context: String?) {}
     public func settingsReopened() {}
     public func stop() async {}
 }

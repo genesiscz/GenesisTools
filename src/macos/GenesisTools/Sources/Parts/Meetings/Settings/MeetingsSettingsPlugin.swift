@@ -4,7 +4,7 @@ import SwiftUI
 /// executable (Sources/GenesisTools/Parts.swift); it knows no other part.
 @MainActor
 package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
-    private var model: MeetingsSettingsModel?
+    private(set) var model: MeetingsSettingsModel?
 
     package init() {}
 

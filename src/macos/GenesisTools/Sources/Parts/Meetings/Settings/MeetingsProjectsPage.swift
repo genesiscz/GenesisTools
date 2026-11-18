@@ -859,22 +859,21 @@ struct MeetingsDictionaryPage: View {
     }
 }
 
-/// Settings runs in its own process, so the meeting to preview is chosen explicitly here.
+/// The caller's meeting is selected on open. The picker also works when Settings opens on its own.
 private struct MeetingDictionaryPreview: View {
-    let model: MeetingsSettingsModel
+    @Bindable var model: MeetingsSettingsModel
     let entry: SavedDictionaryEntry
     let valid: Bool
     @State private var result: PhraseTest?
     @State private var failure: MeetingsCLI.Failure?
     @State private var busy = false
     @State private var task: Task<Void, Never>?
-    @State private var meetingOptions = [NativeSettingsOption("", "Choose a meeting…")]
-    @State private var meeting = ""
+    private var meeting: String { model.dictionaryPreviewMeetings.selection }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             NativeSettingsPicker("Preview meeting", identifier: "meetings.dictionary.previewMeeting",
-                options: meetingOptions, selection: $meeting)
+                options: model.dictionaryPreviewMeetings.options, selection: $model.dictionaryPreviewMeetings.selection)
             Button("Preview draft on this meeting") { preview() }
                 .buttonStyle(.genHoverPlain()).disabled(!valid || meeting.isEmpty || busy)
                 .instantTooltip("Show the source lines this draft entry would change, without saving it")
@@ -891,9 +890,10 @@ private struct MeetingDictionaryPreview: View {
         .task {
             do {
                 let meetings = try await MeetingsWindowModel.overviewRead(days: MeetingsPreferences.days(.standard)).run(service: model.service).meetings
-                meetingOptions = [NativeSettingsOption("", "Choose a meeting…")] + meetings.map { NativeSettingsOption($0.id, $0.displayTitle) }
+                guard !Task.isCancelled else { return }
+                model.dictionaryPreviewMeetings.receive(meetings)
             }
-            catch { failure = asFailure(error) }
+            catch { if !Task.isCancelled { failure = asFailure(error) } }
         }
     }
 
