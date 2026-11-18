@@ -102,6 +102,28 @@ otherwise eligible file and checks its signature, so renaming a database to `.js
 `du-cold-compress` task registers disabled through `tools du compression-schedule` and requires explicit operator
 approval before it is enabled.
 
+#### Check a proposed harness root
+
+Run the corresponding command while that harness is writing. Keep the four JSON files in private scratch.
+Each command collects five whole-system `lsof -nP -Fn0` snapshots five seconds apart. The `0` selects NUL
+field terminators. The JSON includes only paths inside the selected root and their PIDs. It also records which
+text files grew on the same inode, appeared, or rotated between the beginning and end.
+
+```bash
+evidence_dir=$(mktemp -d "${TMPDIR:-/tmp}/transparent-writers.XXXXXX")
+python3 scripts/benchmarks/compress/transparent_open_files.py codex > "$evidence_dir/codex.json"
+python3 scripts/benchmarks/compress/transparent_open_files.py grok  > "$evidence_dir/grok.json"
+python3 scripts/benchmarks/compress/transparent_open_files.py t3    > "$evidence_dir/t3.json"
+python3 scripts/benchmarks/compress/transparent_open_files.py logs  > "$evidence_dir/logs.json"
+```
+
+These sample `~/.codex/sessions`, `~/.grok/sessions`, `~/.t3/userdata/logs` and `~/.genesis-tools/logs`
+respectively. A missing root, failed scan or lsof warning yields `incomplete` and exit 1. An idle window
+needs a new sample during a write. A held session or log file is evidence against adding that root by default.
+Even with growth and five clear snapshots, a descriptor could have opened between snapshots. To qualify a
+root, retain the writer version and its append call site or an active writer trace that shows the pathname
+opened for append, written and closed on each operation. The sampler never changes compression configuration.
+
 #### Rerun the transparent benchmark
 
 From the checkout root on an APFS Mac with Python 3 and `rg`, use a fresh private scratch directory.
