@@ -1,0 +1,287 @@
+import Foundation
+import GenesisKitBase
+
+// The hub's Work screen (work-items P8): the open handoffs of a project with their tasks, the spotted items, the items
+// reopened with nobody working on them, and who hears about each kind of change. The data comes from the `work` area of
+// the actions service through the generated client; the screen never runs `tools`.
+
+/// One item as a row.
+public struct WorkRowValue: Identifiable, Equatable, Sendable, Decodable {
+    public var ref: String
+    public var state: String
+    public var type: String
+    public var severity: String?
+    public var worker: String?
+    public var title: String
+    public var project: String?
+    public var slot: String?
+    public var id: String { ref }
+
+    public init(ref: String, state: String, type: String, severity: String? = nil, worker: String? = nil,
+                title: String, project: String? = nil, slot: String? = nil) {
+        self.ref = ref; self.state = state; self.type = type; self.severity = severity
+        self.worker = worker; self.title = title; self.project = project; self.slot = slot
+    }
+
+    public var isOpen: Bool { ["spotted", "open", "active", "reopened"].contains(state) }
+}
+
+/// An open handoff or epic with its members.
+public struct WorkContainerValue: Identifiable, Equatable, Sendable, Decodable {
+    public var ref: String
+    public var type: String
+    public var state: String
+    public var title: String
+    public var open: Int
+    public var total: Int
+    public var members: [WorkRowValue]
+    public var id: String { ref }
+
+    public init(ref: String, type: String, state: String, title: String, open: Int, total: Int, members: [WorkRowValue]) {
+        self.ref = ref; self.type = type; self.state = state; self.title = title
+        self.open = open; self.total = total; self.members = members
+    }
+}
+
+/// An item that waits for a look: spotted, or reopened with nobody working on it.
+public struct WorkTriageValue: Identifiable, Equatable, Sendable, Decodable {
+    public var ref: String
+    public var group: String
+    public var type: String
+    public var state: String
+    public var title: String
+    public var `where`: String?
+    public var why: String?
+    public var userSees: String?
+    public var severity: String?
+    public var spottedBy: String?
+    public var worker: String?
+    public var id: String { ref }
+
+    public init(ref: String, group: String, type: String, state: String, title: String, where: String? = nil,
+                why: String? = nil, userSees: String? = nil, severity: String? = nil, spottedBy: String? = nil,
+                worker: String? = nil) {
+        self.ref = ref; self.group = group; self.type = type; self.state = state; self.title = title
+        self.where = `where`; self.why = why; self.userSees = userSees; self.severity = severity
+        self.spottedBy = spottedBy; self.worker = worker
+    }
+}
+
+/// What the Work screen shows of one project.
+public struct WorkSnapshotValue: Equatable, Sendable {
+    public var project: String
+    public var containers: [WorkContainerValue]
+    public var triage: [WorkTriageValue]
+
+    public init(project: String, containers: [WorkContainerValue], triage: [WorkTriageValue]) {
+        self.project = project; self.containers = containers; self.triage = triage
+    }
+
+    public var spotted: [WorkTriageValue] { triage.filter { $0.group == "spotted" } }
+    public var reopened: [WorkTriageValue] { triage.filter { $0.group == "reopened-no-worker" } }
+    public var openHandoffs: [WorkContainerValue] { containers.filter { $0.type == "handoff" } }
+}
+
+/// One cell of the notify grid: who hears about one action on one type, each layer's level, and the layer that decides.
+public struct WorkNotifyCell: Identifiable, Equatable, Sendable {
+    public struct Layer: Equatable, Sendable {
+        public var layer: String
+        public var level: String?
+        public init(layer: String, level: String?) { self.layer = layer; self.level = level }
+    }
+
+    public var action: String
+    public var level: String
+    public var from: String
+    public var layers: [Layer]
+    public var id: String { action }
+
+    public init(action: String, level: String, from: String, layers: [Layer]) {
+        self.action = action; self.level = level; self.from = from; self.layers = layers
+    }
+}
+
+public struct WorkNotifyRow: Identifiable, Equatable, Sendable {
+    public var type: String
+    public var cells: [WorkNotifyCell]
+    public var id: String { type }
+
+    public init(type: String, cells: [WorkNotifyCell]) { self.type = type; self.cells = cells }
+}
+
+/// A write the screen offers on one item.
+public enum WorkScreenAction: Equatable, Sendable {
+    case accept(ref: String)
+    case drop(ref: String, why: String)
+    case finish(ref: String, proof: String)
+    case reopen(ref: String, why: String)
+    case addMember(ref: String, handoff: String)
+
+    public var ref: String {
+        switch self {
+        case let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _), let .addMember(ref, _): return ref
+        }
+    }
+
+    /// The past tense for the notice after the write.
+    public var done: String {
+        switch self {
+        case .accept: return "Accepted"
+        case .drop: return "Dropped"
+        case .finish: return "Finished"
+        case .reopen: return "Reopened"
+        case let .addMember(_, handoff): return "Added to \(handoff)"
+        }
+    }
+}
+
+/// The answer of a write: ok, or the first reason it did not happen.
+public struct WorkActionOutcome: Equatable, Sendable {
+    public var ok: Bool
+    public var message: String
+    public init(ok: Bool, message: String) { self.ok = ok; self.message = message }
+}
+
+public struct WorkSourceError: LocalizedError, Equatable, Sendable {
+    public var message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
+}
+
+/// Where the Work screen reads and writes. Tests give a fake; the app gives `LiveWorkSource`.
+@MainActor
+public protocol WorkSource: AnyObject {
+    func projects() async throws -> [String]
+    func snapshot(project: String) async throws -> WorkSnapshotValue
+    func notify(project: String) async throws -> [WorkNotifyRow]
+    func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
+    /// A tick for each change of the store, from any writer (the service's `work.changed`, a CLI or MCP write).
+    func changes() -> AsyncStream<Void>
+}
+
+/// The `work` area through the generated client. Each answer is an `ActionOutcome` around the method's reply; it is
+/// encoded once and read into the screen's own small models, so the views never name the generated types.
+@MainActor
+public final class LiveWorkSource: WorkSource {
+    private let rpc: GenesisToolsRPC
+    private let walPath: String
+
+    public init(rpc: GenesisToolsRPC = .shared,
+                walPath: String = GenesisToolsHome.path("work/work.db-wal")) {
+        self.rpc = rpc
+        self.walPath = walPath
+    }
+
+    public func projects() async throws -> [String] {
+        let rows: [WorkRowValue] = try reply(await rpc.work.list(WorkListParams(fields: ["ref", "state", "type", "title", "project"], limit: 5000)))
+        return Array(Set(rows.compactMap(\.project))).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    public func snapshot(project: String) async throws -> WorkSnapshotValue {
+        let call = WorkTreeParamsCall(project: project)
+        async let tree = rpc.work.tree(WorkTreeParams(project: project, call: call))
+        async let triage = rpc.work.triage(WorkTriageParams(project: project, call: WorkTriageParamsCall(project: project)))
+        let treeData: TreeData = try reply(await tree)
+        let rows: [WorkTriageValue] = try reply(await triage)
+        return WorkSnapshotValue(project: project, containers: treeData.containers, triage: rows)
+    }
+
+    public func notify(project: String) async throws -> [WorkNotifyRow] {
+        let data: ConfigData = try reply(await rpc.work.config(WorkConfigParams(project: project, call: WorkConfigParamsCall(project: project))))
+        return data.rows.map { row in
+            WorkNotifyRow(type: row.type, cells: row.notify.map { cell in
+                WorkNotifyCell(action: cell.action, level: cell.resolved.level, from: cell.resolved.from,
+                               layers: cell.resolved.layers.map { .init(layer: $0.layer, level: $0.value) })
+            })
+        }
+    }
+
+    public func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
+        let outcome: Envelope<IgnoredData>
+        switch action {
+        case let .accept(ref):
+            outcome = try decode(await rpc.work.accept(WorkAcceptParams(refs: [ref], call: .init(project: project))))
+        case let .drop(ref, why):
+            outcome = try decode(await rpc.work.drop(WorkDropParams(refs: [ref], why: why, call: .init(project: project))))
+        case let .finish(ref, proof):
+            outcome = try decode(await rpc.work.finish(WorkFinishParams(ref: ref, proof: proof, call: .init(project: project))))
+        case let .reopen(ref, why):
+            outcome = try decode(await rpc.work.reopen(WorkReopenParams(ref: ref, why: why, call: .init(project: project))))
+        case let .addMember(ref, handoff):
+            outcome = try decode(await rpc.work.addMember(WorkAddMemberParams(refs: [ref], to: handoff, call: .init(project: project))))
+        }
+        if let value = outcome.value {
+            return value.ok
+                ? WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
+                : WorkActionOutcome(ok: false, message: value.diagnostics.first?.message ?? "The store refused it")
+        }
+        return WorkActionOutcome(ok: false, message: outcome.skipped.first?.reason ?? "The work service could not run it")
+    }
+
+    public func changes() -> AsyncStream<Void> {
+        let rpc = rpc
+        let wal = walPath
+        return AsyncStream { continuation in
+            // A write through the service sends `work.changed`; a write of the CLI or the MCP tools only touches the
+            // store's WAL file, which every write changes (a write after a checkpoint creates it again).
+            let events = Task { @MainActor in
+                for await _ in rpc.events.workChanged { continuation.yield(()) }
+            }
+            let watcher = DirectoryWatcher(paths: [(wal as NSString).deletingLastPathComponent], latency: 0.3,
+                                           accepts: { $0 == wal }) { _ in continuation.yield(()) }
+            continuation.onTermination = { _ in
+                events.cancel()
+                watcher.stop()
+            }
+        }
+    }
+
+    // MARK: Decoding
+
+    private struct Diagnostic: Decodable { var message: String }
+    private struct Skipped: Decodable { var reason: String }
+    private struct Reply<D: Decodable>: Decodable {
+        var ok: Bool
+        var data: D?
+        var diagnostics: [Diagnostic]
+    }
+    private struct Envelope<D: Decodable>: Decodable {
+        var status: String
+        var value: Reply<D>?
+        var skipped: [Skipped]
+    }
+    private struct IgnoredData: Decodable {}
+    private struct TreeData: Decodable { var containers: [WorkContainerValue] }
+    private struct ConfigData: Decodable {
+        struct Row: Decodable {
+            struct Notify: Decodable {
+                struct Resolved: Decodable {
+                    struct Layer: Decodable { var layer: String; var value: String? }
+                    var level: String
+                    var from: String
+                    var layers: [Layer]
+                }
+                var action: String
+                var resolved: Resolved
+            }
+            var type: String
+            var notify: [Notify]
+        }
+        var rows: [Row]
+    }
+
+    private func decode<D: Decodable, E: Encodable>(_ result: E) throws -> Envelope<D> {
+        try JSONDecoder().decode(Envelope<D>.self, from: JSONEncoder().encode(result))
+    }
+
+    private func reply<D: Decodable, E: Encodable>(_ result: E) throws -> D {
+        let outcome: Envelope<D> = try decode(result)
+        guard let value = outcome.value else {
+            throw WorkSourceError(outcome.skipped.first?.reason ?? "The work service could not answer")
+        }
+        guard value.ok, let data = value.data else {
+            throw WorkSourceError(value.diagnostics.first?.message ?? "The store refused the read")
+        }
+        return data
+    }
+}

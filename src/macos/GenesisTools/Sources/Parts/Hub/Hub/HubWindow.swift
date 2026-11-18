@@ -575,11 +575,12 @@ struct HubNotice: Equatable {
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
 /// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
 enum HubMode: String, CaseIterable {
-    case sessions, worktrees, prs, inbox, timeline, agents, usage
+    case sessions, worktrees, prs, inbox, timeline, agents, usage, work
 
     var title: String {
         switch self {
         case .usage: return "Usage"
+        case .work: return "Work"
         case .sessions: return "Sessions"
         case .worktrees: return "Worktrees"
         case .prs: return "PRs"
@@ -599,6 +600,7 @@ enum HubMode: String, CaseIterable {
         case .timeline: return "Activity: sessions, commits, pushes, PR events, review comments, decisions and CI results across your projects, by day"
         case .agents: return "Agents: every session's sub-agents, teammates and codex or grok workers, live, each with its whole transcript"
         case .usage: return "Usage: every AI account's limits, burn and forecast, spend over time, who ate the bar, plans and workers"
+        case .work: return "Work: each project's handoffs and their tasks, the spotted items, the reopened ones and who hears about them"
         }
     }
 
@@ -612,6 +614,7 @@ enum HubMode: String, CaseIterable {
         case .timeline: return "clock"
         case .agents: return "person.2"
         case .usage: return "chart.bar.xaxis"
+        case .work: return "checklist"
         }
     }
 }
@@ -889,12 +892,15 @@ final class HubModel {
     let agents: HubAgentsModel
     /// Usage mode state (`tools ai usage … --json`), Usage/HubUsageModel.swift.
     let usage: HubUsageModel
+    /// Work mode state (the `work` area of the actions service), Work/HubWork.swift.
+    let work: HubWorkModel
 
     init(wantedSession: String?, tab: HubTab) {
         prs = MainActor.assumeIsolated { PRsModel() }
         inbox = MainActor.assumeIsolated { HubInboxModel() }
         timeline = MainActor.assumeIsolated { HubTimelineModel() }
         agents = MainActor.assumeIsolated { HubAgentsModel() }
+        work = MainActor.assumeIsolated { HubWorkModel() }
         // A scripted run reads and writes its scratch copy of the settings, and tells no other process.
         usage = MainActor.assumeIsolated {
             HubUsageModel(preferences: HubDefaults.isolated
@@ -1081,7 +1087,7 @@ final class HubModel {
             if let shown = shownCommit, shown.repo == place.selection {
                 return HubNavTarget(place: place, commit: shown.commit, repo: shown.repo)
             }
-        case .sessions, .inbox, .timeline, .agents, .usage:
+        case .sessions, .inbox, .timeline, .agents, .usage, .work:
             break
         }
         return HubNavTarget(place: place)
@@ -1247,6 +1253,8 @@ final class HubModel {
                     usage.section = place.section
                 }
             }
+        case .work:
+            if id != Self.wholeList { work.screen.project = id }
         case .agents:
             if id == Self.wholeList {
                 agents.selectedID = nil
@@ -1352,6 +1360,7 @@ final class HubModel {
             // The two modes that watch or poll stop when they leave the screen.
             if next != .agents { agents.deactivate() }
             if next != .usage { usage.deactivate() }
+            if next != .work { work.deactivate() }
             // No `default`: the compiler names this switch for a new mode, which never opens as Sessions unnoticed.
             switch next {
             case .agents:
@@ -1367,6 +1376,8 @@ final class HubModel {
                 }
             case .usage:
                 usage.activate()
+            case .work:
+                work.activate()
             case .inbox:
                 inbox.loadIfStale()
             case .timeline:
@@ -1930,7 +1941,7 @@ final class HubModel {
             if let path = selectedWorktree, path != WorktreeCleanup.selectionID { return path }
         case .prs:
             if let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot { return path }
-        case .sessions, .inbox, .timeline, .agents, .usage:
+        case .sessions, .inbox, .timeline, .agents, .usage, .work:
             break
         }
         return selected.map { $0.cwd.isEmpty ? nil : projectRoot(of: $0.cwd) } ?? nil
@@ -2398,7 +2409,7 @@ struct HubRootView: View {
                 parts.append(String(session.displayTitle.prefix(40)))
             }
             showsPanes = true
-        case .worktrees, .prs, .inbox, .timeline, .usage:
+        case .worktrees, .prs, .inbox, .timeline, .usage, .work:
             showsPanes = false
         }
         if showsPanes {
@@ -2423,7 +2434,7 @@ struct HubRootView: View {
         case .agents:
             // An agent's transcript is the full session screen, as a session's transcript alone is.
             return model.agents.selected != nil || model.agents.selectedMain != nil ? 761 : 520
-        case .worktrees, .inbox, .timeline, .usage:
+        case .worktrees, .inbox, .timeline, .usage, .work:
             return 520
         case .sessions:
             break
@@ -2474,6 +2485,9 @@ struct HubRootView: View {
                 }
             case .usage:
                 UsageMain(model: model, usage: model.usage)
+                    .flexiblePane(neighbourOf: "hub.sidebar")
+            case .work:
+                WorkMain(screen: model.work.screen)
                     .flexiblePane(neighbourOf: "hub.sidebar")
             case .agents:
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
@@ -2573,7 +2587,7 @@ extension HubModel {
         switch mode {
         case .prs: return prs.review
         case .sessions, .worktrees, .agents: return review
-        case .inbox, .timeline, .usage: return nil
+        case .inbox, .timeline, .usage, .work: return nil
         }
     }
 
@@ -2584,7 +2598,7 @@ extension HubModel {
     var visibleReview: ReviewModel? {
         switch mode {
         case .sessions, .agents: return panes.contains(.changes) ? mainReview : nil
-        case .prs, .worktrees, .inbox, .timeline, .usage: return mainReview
+        case .prs, .worktrees, .inbox, .timeline, .usage, .work: return mainReview
         }
     }
 
@@ -2596,7 +2610,7 @@ extension HubModel {
     var snapshotShowsDiff: Bool {
         switch mode {
         case .prs: return true
-        case .inbox, .timeline, .usage: return false
+        case .inbox, .timeline, .usage, .work: return false
         case .worktrees: return selectedWorktree != WorktreeCleanup.selectionID && review != nil
         case .agents: return (agents.selectedMain != nil || agents.selected?.parent != nil) && panes.contains(.changes) && review != nil
         case .sessions: return selected != nil && selectedID != AgentProcs.selectionID && panes.contains(.changes) && review != nil
@@ -2811,6 +2825,7 @@ private struct SessionListView: View {
         case .timeline: return "Filter activity, authors, SHAs…"
         case .agents: return "Filter agents, sessions, models, accounts…"
         case .usage: return "Filter accounts…"
+        case .work: return "Filter projects…"
         case .worktrees: return "Filter repos, branches…"
         // The field searches PRs (`PRQuery`): title, repo, branch, author, number.
         case .prs: return "Filter PRs: title, #123, @author…"
@@ -2992,6 +3007,8 @@ private struct SessionListView: View {
                 case "b": UsageSettingsSketchSidebarB(usage: model.usage, filter: model.filter)
                 default: UsageListView(usage: model.usage, filter: model.filter)
                 }
+            case .work:
+                WorkProjectsList(screen: model.work.screen, filter: model.filter)
             case .agents:
                 AgentsListView(model: model, agents: model.agents)
             case .sessions:

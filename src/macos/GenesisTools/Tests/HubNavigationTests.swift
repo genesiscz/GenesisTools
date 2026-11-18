@@ -294,7 +294,7 @@ final class HubNavigationTests: XCTestCase {
 
     /// What a request names and the hub cannot open is said, never dropped without a word.
     func testARequestNamesWhatItCannotOpen() {
-        XCTAssertEqual(HubRequest(["--mode", "pr"]).problems, ["mode=pr is no hub mode (sessions, worktrees, prs, inbox, timeline, agents, usage)"])
+        XCTAssertEqual(HubRequest(["--mode", "pr"]).problems, ["mode=pr is no hub mode (sessions, worktrees, prs, inbox, timeline, agents, usage, work)"])
         XCTAssertEqual(HubRequest(["--tab", "diff"]).problems, ["tab=diff is no hub tab (transcript, changes, files, decisions)"])
         XCTAssertEqual(HubRequest(["--reveal", "a.swift"]).problems, ["reveal=a.swift opens a file in a PR's review: the link names no PR (pr=)"])
         XCTAssertEqual(HubRequest(["--pr", "acme/app#7", "--reveal", "a.swift", "--mode", "prs", "--tab", "files"]).problems, [])
@@ -592,7 +592,7 @@ final class HubNavigationTests: XCTestCase {
             switch mode {
             case .prs: XCTAssertTrue(model.mainReview === pr)
             case .sessions, .worktrees, .agents: XCTAssertTrue(model.mainReview === session, "\(mode)")
-            case .inbox, .timeline, .usage: XCTAssertNil(model.mainReview, "\(mode)")
+            case .inbox, .timeline, .usage, .work: XCTAssertNil(model.mainReview, "\(mode)")
             }
             for command in diffCommands {
                 XCTAssertEqual(command.enabled?(model), model.mainReview != nil, "\(mode) \(command.title)")
@@ -619,6 +619,7 @@ final class HubNavigationTests: XCTestCase {
             case (.timeline, .model(let owner)): XCTAssertTrue(owner === model.timeline)
             case (.agents, .model(let owner)): XCTAssertTrue(owner === model.agents)
             case (.usage, .model(let owner)): XCTAssertTrue(owner === model.usage)
+            case (.work, .model(let owner)): XCTAssertTrue(owner === model.work)
             default: XCTFail("\(mode) has the wrong owner")
             }
         }
@@ -635,7 +636,7 @@ final class HubNavigationTests: XCTestCase {
         let picked: [HubMode: String] = [
             .sessions: "claude:one", .worktrees: "/work/app", .prs: "github.com/acme/app#7", .inbox: "item",
             .timeline: HubModel.wholeList, .agents: AgentTree.key(parent: "parent", child: "child"),
-            .usage: HubUsageSection.spend.rawValue,
+            .usage: HubUsageSection.spend.rawValue, .work: "GenesisTools",
         ]
         for mode in HubMode.allCases {
             let selection = try XCTUnwrap(picked[mode], "\(mode) needs a sample place")

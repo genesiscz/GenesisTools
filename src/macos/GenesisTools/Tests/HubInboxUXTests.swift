@@ -620,7 +620,15 @@ final class HubInboxUXTests: XCTestCase {
             .padding(10)
             .background(Color.black)
             .environment(\.colorScheme, .dark)
-        let host = NSHostingView(rootView: AnyView(view))
+        return try render(view: AnyView(view), name: name, folderKey: "HUB_INBOX_SHOTS")
+    }
+
+    /// Any view hosted in a window that is never ordered front, drawn after a second of run loop; written to
+    /// `<folderKey>/<name>.png` when that variable is set.
+    @MainActor
+    static func render(view: AnyView, name: String, folderKey: String) throws -> NSBitmapImageRep {
+        _ = NSApplication.shared
+        let host = NSHostingView(rootView: view)
         let size = host.fittingSize
         let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: size.width, height: size.height),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -635,7 +643,7 @@ final class HubInboxUXTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)
-        if let folder = ProcessInfo.processInfo.environment["HUB_INBOX_SHOTS"] {
+        if let folder = ProcessInfo.processInfo.environment[folderKey] {
             try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
             let url = URL(fileURLWithPath: folder).appendingPathComponent(name + ".png")
             try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
