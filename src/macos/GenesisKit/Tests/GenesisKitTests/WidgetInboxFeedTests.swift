@@ -50,6 +50,9 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(runs.map { $0.items.count }, [1, 2, 2])
         XCTAssertEqual(runs.flatMap(\.items), items, "The newer note comes before the two older waiting decisions")
         XCTAssertEqual(model.inboxFeeds["needs"].map { $0.items.map(\.sourceId) }, [["d1", "d5", "d6"]])
+        let headers = runs.map { WidgetFeedRunHeader(run: $0, model: model) }
+        XCTAssertEqual(headers.map(\.counts), ["", "2 items", "2 items · 2 waiting"])
+        XCTAssertEqual(headers.first?.inboxTooltip, "Open the whole inbox of Alpha")
     }
 
     func testExternalMessagesUseTheirSenderAndEqualTimesUseTheItemID() {
@@ -181,6 +184,7 @@ final class WidgetInboxFeedTests: XCTestCase {
         defer { model.stop() }
         let run = WidgetFeedRun(id: "r", runKey: named.key, items: [item])
         XCTAssertNil(WidgetFeedRunHeader(run: run, model: model).subtitle)
+        XCTAssertEqual(WidgetFeedRunHeader(run: run, model: model).counts, "", "one item says what it is in its own row")
         var other = item
         other.title = "Sort the crates"
         let otherRun = WidgetFeedRun(id: "o", runKey: named.key, items: [other])
