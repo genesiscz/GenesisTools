@@ -462,62 +462,72 @@ test("a join after blank lines still reports a missing predecessor", () => {
 });
 
 describe("question-owned transcript uncertainty", () => {
-    test.each([0.4, 0.5, 0.6, 0.95, 1])("keeps a %s guess until a real answer, across readers", async (confidence) => {
-        const record = meetingRecordSchema.parse({
-            ...base,
-            items: [
-                item({
-                    id: "i1",
-                    kind: "speaker-range",
-                    status: "suggested",
-                    label: "Voice",
-                    fromSec: 5,
-                    toSec: 5,
-                    speaker: "B Example",
-                    confidence,
-                }),
-                item({
-                    id: "i2",
-                    kind: "question",
-                    status: "suggested",
-                    about: "speaker",
-                    fromSec: 0,
-                    toSec: 10,
-                    question: "Who?",
-                    choices: ["A Example", "B Example", "both"],
-                    decides: ["i1"],
-                }),
-            ],
-        });
-        const source = [line("Voice", 5, "Raw words."), line("Other", 20, "Unchanged.")];
-        const render = (withSuggested: boolean) =>
-            correctTranscript({ record, transcript: source, config, format: "txt", withSuggested, dictionary: false });
-        const guess = `[B Example: ${Math.round(confidence * 100)} %]`;
-        expect(render(true).entries[0]).toMatchObject({ speaker: guess, guess: true, band: "guess" });
-        expect(render(false).entries[0]).toMatchObject({
-            speaker: '[nejasné: "Voice"; 1) A Example 2) B Example 3) both]',
-            band: "open",
-            guess: false,
-            unclear: { label: "Voice", readings: ["A Example", "B Example", "both"] },
-        });
-        expect(render(true).entries[0]?.unclear).toBeUndefined();
-        const entries = render(true).entries;
-        expect(transcriptTextLines(groupTurns(entries), false).join("\n")).toContain(guess);
-        expect(transcriptMarkdown(groupTurns(entries), false)).toContain(guess);
-        expect(SafeJSON.parse(SafeJSON.stringify(entries))).toEqual(entries);
-        expect(source[0]).toEqual(line("Voice", 5, "Raw words."));
-        expect(entries[1]).toEqual(source[1]!);
-        answerQuestion(record, "i2", { answer: "A Example", now: "2026-11-03T10:00:00.000Z" });
-        const dir = await mkdtemp(join(tmpdir(), "uncertainty-answer-"));
-        const stored = `${dir}/record.json`;
-        await writeFile(stored, SafeJSON.stringify(record));
-        const reopened = meetingRecordSchema.parse(SafeJSON.parse(await readFile(stored, "utf8")));
-        expect(reopened.items[0]?.status).toBe("confirmed");
-        expect(
-            correctTranscript({ record: reopened, transcript: source, config, format: "json", withSuggested: true })
-                .entries[0]?.speaker
-        ).toBe("A Example");
-    });
+    test.each([0.4, 0.5, 0.6, 0.69, 0.7, 0.95, 1])(
+        "keeps a %s guess until a real answer, across readers",
+        async (confidence) => {
+            const record = meetingRecordSchema.parse({
+                ...base,
+                items: [
+                    item({
+                        id: "i1",
+                        kind: "speaker-range",
+                        status: "suggested",
+                        label: "Voice",
+                        fromSec: 5,
+                        toSec: 5,
+                        speaker: "B Example",
+                        confidence,
+                    }),
+                    item({
+                        id: "i2",
+                        kind: "question",
+                        status: "suggested",
+                        about: "speaker",
+                        fromSec: 0,
+                        toSec: 10,
+                        question: "Who?",
+                        choices: ["A Example", "B Example", "both"],
+                        decides: ["i1"],
+                    }),
+                ],
+            });
+            const source = [line("Voice", 5, "Raw words."), line("Other", 20, "Unchanged.")];
+            const render = (withSuggested: boolean) =>
+                correctTranscript({
+                    record,
+                    transcript: source,
+                    config,
+                    format: "txt",
+                    withSuggested,
+                    dictionary: false,
+                });
+            const guess = confidence < 0.7 ? `[B Example: ${Math.round(confidence * 100)} %]` : "[B Example]";
+            expect(render(true).entries[0]).toMatchObject({ speaker: guess, guess: true, band: "guess", confidence });
+            expect(render(false).entries[0]).toMatchObject({
+                speaker: '[nejasné: "Voice"; 1) A Example 2) B Example 3) both]',
+                band: "open",
+                guess: false,
+                unclear: { label: "Voice", readings: ["A Example", "B Example", "both"] },
+            });
+            expect(render(true).entries[0]?.unclear).toBeUndefined();
+            const entries = render(true).entries;
+            expect(transcriptTextLines(groupTurns(entries), false).join("\n")).toContain(guess);
+            expect(transcriptMarkdown(groupTurns(entries), false)).toContain(guess);
+            expect(SafeJSON.parse(SafeJSON.stringify(entries))).toEqual(entries);
+            expect(source[0]).toEqual(line("Voice", 5, "Raw words."));
+            expect(entries[1]).toEqual(source[1]!);
+            answerQuestion(record, "i2", { answer: "A Example", now: "2026-11-03T10:00:00.000Z" });
+            const dir = await mkdtemp(join(tmpdir(), "uncertainty-answer-"));
+            const stored = `${dir}/record.json`;
+            await writeFile(stored, SafeJSON.stringify(record));
+            const reopened = meetingRecordSchema.parse(SafeJSON.parse(await readFile(stored, "utf8")));
+            expect(reopened.items[0]?.status).toBe("confirmed");
+            expect(
+                correctTranscript({ record: reopened, transcript: source, config, format: "json", withSuggested: true })
+                    .entries[0]?.speaker
+            ).toBe("A Example");
+        }
+    );
 
     test.each([0.5, 0.6])("unasked speaker suggestions use the configured threshold of %s", (applyAbove) => {
         const source = [line("Voice", 5, "Raw words.")];

@@ -446,7 +446,9 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             if (open) {
                 speakerMarked.add(line);
                 line.speaker = passageMarker(unclearLabel, passage.speaker!, passage);
-                if (!passage.guess) {
+                if (passage.guess) {
+                    line.guess = true;
+                } else {
                     // The window draws the question from these, never from the mark's text.
                     const readings = passage.readings.filter((reading) => !isUnclearMarker(reading, unclearLabel));
                     line.unclear = { label: passage.speaker!, readings };

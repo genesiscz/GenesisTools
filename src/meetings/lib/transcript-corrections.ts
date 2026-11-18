@@ -117,7 +117,15 @@ function unclearPassages(
                               speaker: item.label,
                               readings: question.choices,
                               ...(opts.guesses && item.speaker
-                                  ? { guess: { name: item.speaker, confidence: item.confidence } }
+                                  ? {
+                                        guess: {
+                                            name: item.speaker,
+                                            confidence:
+                                                item.confidence !== undefined && item.confidence < opts.below
+                                                    ? item.confidence
+                                                    : undefined,
+                                        },
+                                    }
                                   : {}),
                           },
                       ]
@@ -392,7 +400,7 @@ export function correctTranscript(options: {
             } else if (proposal?.status === "confirmed") {
                 band = "confirmed";
             } else if (proposal) {
-                band = entry.speaker.includes(" %]") ? "guess" : "applied";
+                band = entry.guess ? "guess" : "applied";
             }
 
             return [
