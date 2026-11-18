@@ -1533,6 +1533,28 @@ describe("decision journal", () => {
         expect(fx.store.read(fx.meeting.id)?.items.map((item) => item.id)).toEqual(["i1", "i3"]);
     });
 
+    test("an agent's add saved before the plain-words rule still reads and undoes; only a new add is refused (U18)", async () => {
+        const fx = await fixture([term("i1", 10)]);
+        const finding = { kind: "term" as const, at: 20, heard: "harbour", proposed: "Harbor", confidence: 0.7 };
+        const coded = "seat-of-one and rule RA agree";
+        const added = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "add", findings: [{ ...finding, reason: "the agenda" }] },
+            actor: { kind: "agent", harness: "codex", session: null },
+        });
+        const file = fx.journal.path(fx.meeting.id);
+        writeFileSync(file, readFileSync(file, "utf8").replace('"the agenda"', SafeJSON.stringify(coded)));
+
+        const entries = fx.journal.read(fx.meeting.id);
+        expect(entries).toHaveLength(1);
+        expect(journalEntrySchema.safeParse(entries[0]).success).toBe(true);
+        expect(decisionActionSchema.safeParse({ kind: "add", findings: [{ ...finding, reason: coded }] }).success).toBe(
+            false
+        );
+        await fx.journal.revert({ meeting: fx.meeting.id, token: added.entry!.token, actor: person });
+        expect(fx.store.read(fx.meeting.id)?.items.map((item) => item.id)).toEqual(["i1"]);
+    });
+
     test("a set is one entry with the fields before and after, and its Undo puts them back until changed again", async () => {
         const fx = await fixture([]);
         const set = await fx.journal.apply({
