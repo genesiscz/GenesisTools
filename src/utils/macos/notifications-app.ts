@@ -2,15 +2,11 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { checkAppInstalled, describeNeedFailure, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { notifyAuthorizeCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
-import {
-    type GenesisAppRpcOutcome,
-    genesisAppRpc,
-    isGenesisAppRpcAvailable,
-    isNotifyPostResult,
-} from "@genesiscz/utils/macos/genesis-app-rpc";
+import { type GenesisAppRpcOutcome, genesisAppRpc, isNotifyPostResult } from "@genesiscz/utils/macos/genesis-app-rpc";
 import {
     isObject,
     type NotificationAppBackend,
@@ -19,7 +15,6 @@ import {
     type NotificationReply,
     postNotification,
 } from "@genesiscz/utils/macos/notifications";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 
 /**
  * The GenesisTools.app side of notifications: the `genesis-app` backend (first in the chain, with the app's icon,
@@ -224,8 +219,11 @@ export async function openNotificationSettings(): Promise<GenesisAppRpcOutcome<{
 }
 
 /** What notifications.ts asks of this module. */
-export const appNotificationBackend: NotificationAppBackend = {
-    available: isGenesisAppRpcAvailable,
+export const appNotificationBackend = {
+    available: (env?: NeedEnv) => checkAppInstalled(env).ok,
     send: sendViaGenesisApp,
-    terminalNotifierFixHint: () => `, or install GenesisTools.app (${genesisAppBuildHint()})`,
-};
+    terminalNotifierFixHint: (env?: NeedEnv) => {
+        const hint = describeNeedFailure(checkAppInstalled(env));
+        return hint ? ` (${hint})` : "";
+    },
+} satisfies NotificationAppBackend;
