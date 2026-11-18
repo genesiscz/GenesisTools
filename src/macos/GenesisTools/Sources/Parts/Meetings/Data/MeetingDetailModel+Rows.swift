@@ -827,8 +827,10 @@ extension MeetingsWords {
         }
     }
 
-    /// Who made a decision, in the engine's words (decision-journal.ts, G44): "you", "you in the terminal", "you at the
-    /// command line", "an agent (Claude Code, session 3f98b772)", "rule E2", "someone, before the history existed".
+    /// Who made a decision, in the engine's words (`actorText` in decision-journal.ts, G44): "you", "you in the
+    /// terminal", "you at the command line", "an agent (Claude Code, session 3f98b772)", "a rule", "someone, before the
+    /// history existed". A rule is never named by its id ("E2"): the window has no rule table here, so it says "a rule",
+    /// and a row's `decision.by` from the engine adds what the rule looked at.
     static func actor(_ actor: DecisionActor) -> String {
         switch actor.kind {
         case "window": return "you"
@@ -837,7 +839,7 @@ extension MeetingsWords {
         case "agent":
             let harness = actor.harness.map { Harness(runtimeAgent: $0)?.label ?? $0 } ?? "an agent"
             return "an agent (\([harness, actor.session.map { "session \($0.prefix(8))" }].compactMap { $0 }.joined(separator: ", ")))"
-        case "rule": return "rule \(actor.rule ?? "?")"
+        case "rule": return "a rule"
         default: return "someone, before the history existed"
         }
     }

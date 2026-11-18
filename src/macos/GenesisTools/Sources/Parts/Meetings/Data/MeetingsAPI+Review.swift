@@ -783,7 +783,8 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     struct Decision: Decodable, Equatable, Hashable {
         let token: String
         let actor: DecisionActor
-        /// The actor in words: "you", "an agent (Claude Code, session 3f98b772)", "rule E2".
+        /// The actor in words: "you", "an agent (Claude Code, session 3f98b772)", "a rule (the attendance record shows
+        /// who was there)"; never a rule's id.
         let by: String
         let action: String
         let reason: String?

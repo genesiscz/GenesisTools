@@ -773,7 +773,9 @@ final class MeetingsReviewRowTests: XCTestCase {
                        "an agent (Claude Code, session 3f98b772)")
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "grok")), "an agent (Grok)")
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "other-agent")), "an agent (other-agent)")
-        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2")), "rule E2")
+        // A rule is never named by its id on screen (w_r1n8lvx5): the row's `decision.by` from the engine says what it
+        // looked at, and the window's own words say "a rule".
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2")), "a rule")
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "unknown")), "someone, before the history existed")
         let confirm = try entry(token: "t1", action: #"{"kind":"confirm","items":["i2","i4"]}"#,
                                 changes: [("i2", "suggested", "confirmed"), ("i4", "suggested", "confirmed")])

@@ -969,6 +969,31 @@ describe("decision journal", () => {
         expect(actorText({ kind: "unknown" })).toBe("someone, before the history existed");
     });
 
+    test("a rule's decision reads as what the rule looked at, never its id, in the words a row shows after 'by'", () => {
+        const rule = { kind: "rule", rule: MeetingRule.Attendance } as const;
+        const record = meetingRecord("rule-decided", {
+            items: [
+                term("i1", 10, {
+                    status: "confirmed",
+                    proposed: "Ada",
+                    decision: {
+                        token: "t1",
+                        previous: { status: "suggested" },
+                        actor: rule,
+                        entry: { action: "confirm" },
+                    },
+                }),
+            ],
+        });
+
+        expect(actorText(rule)).toBe("a rule (the attendance record shows who was there)");
+        expect(reviewRow(record, record.items[0]!).decision?.by).toBe(
+            "a rule (the attendance record shows who was there)"
+        );
+        // An id this build has no words for (a record from another build) still never reaches the screen.
+        expect(actorText({ kind: "rule", rule: "E2" })).toBe("a rule");
+    });
+
     test("a future journal action remains visible, cannot be undone, and does not block known decisions", async () => {
         const fx = await fixture([term("i1", 10, { proposed: "Wiki" })]);
         const result = await fx.journal.apply({
