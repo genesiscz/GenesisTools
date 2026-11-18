@@ -58,7 +58,7 @@ final class WorkScreenTests: XCTestCase {
 
     func testTheModelLoadsTheFirstProjectReloadsOnAChangeAndRunsAWrite() async throws {
         let source = FakeWorkSource(fixture())
-        let model = WorkScreenModel(source: source)
+        let model = WorkScreenModel(source: source, reloadInterval: 0.2, settle: 0.05)
         model.activate()
         await settle { model.snapshot != nil }
         XCTAssertEqual(model.project, "App")
@@ -74,6 +74,42 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertEqual(source.performed, [.drop(ref: "w_spot0002", why: "not worth it")])
         XCTAssertEqual(model.notice, WorkActionOutcome(ok: true, message: "Dropped: w_spot0002"))
         XCTAssertTrue(model.pending.isEmpty)
+        model.deactivate()
+    }
+
+    /// Every session writes the store, and a reload costs the service about 1.3 s of CPU: a burst is one reload, a
+    /// hidden screen reloads nothing, and the first look after that reloads once.
+    func testABurstOfChangesIsOneReloadAndAHiddenScreenWaits() async throws {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0.4, settle: 0.1)
+        model.activate()
+        await settle { model.snapshot != nil }
+        let first = source.reads
+
+        for _ in 0..<20 {
+            source.tick()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await settle { source.reads > first }
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(source.reads - first, 1, "twenty changes in 0.1 s are one reload")
+        XCTAssertEqual(model.changeReloads, 1)
+
+        model.setVisible(false)
+        let hidden = source.reads
+        for _ in 0..<5 { source.tick() }
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(source.reads, hidden, "nothing reloads while nobody can see the screen")
+
+        model.setVisible(true)
+        await settle { source.reads > hidden }
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(source.reads - hidden, 1, "the first look reads what changed meanwhile, once")
+
+        model.setVisible(false)
+        model.setVisible(true)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(source.reads - hidden, 1, "a look after no change reads nothing")
         model.deactivate()
     }
 
