@@ -1,3 +1,5 @@
+import { logger } from "@genesiscz/utils/logger";
+
 /**
  * The in-process bus of area events (`ctx.emit`). Phase 2's service forwards each event as `<area>.<event>`; until
  * then a listener in the same process (and a test) observes them here.
@@ -20,7 +22,15 @@ export function createAreaEventBus(): AreaEventBus {
     return {
         emit(event) {
             for (const listener of listeners) {
-                listener(event);
+                // A listener observes; its failure must not stop the others or fail the way that emitted.
+                try {
+                    listener(event);
+                } catch (error) {
+                    logger.warn(
+                        { error, area: event.area, event: event.event },
+                        "genesis-tools events: a listener threw"
+                    );
+                }
             }
         },
         on(listener) {
