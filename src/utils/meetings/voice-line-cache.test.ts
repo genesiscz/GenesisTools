@@ -2,6 +2,7 @@ import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as converter from "@genesiscz/utils/audio/converter";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
@@ -127,8 +128,13 @@ test("the background worker owns model work and returns validated line results",
     const spawn = spyOn(Bun, "spawn").mockReturnValue(child);
     spies.push(spawn);
     const prefix = ["fixture-priority", "fixture-worker"];
-    expect(await voice.embedVoiceLines({ ...f.options, workerPrefix: prefix })).toEqual(result);
+    const workerHome = join(f.store.root, "worker-home");
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: workerHome, TMPDIR: workerHome }, async () => {
+        expect(await voice.embedVoiceLines({ ...f.options, workerPrefix: prefix })).toEqual(result);
+    });
     expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn.mock.calls[0]?.[1]?.env?.GENESIS_TOOLS_HOME).toBe(workerHome);
+    expect(spawn.mock.calls[0]?.[1]?.env?.TMPDIR).toBe(workerHome);
     const command = spawn.mock.calls[0]?.[0];
     if (!Array.isArray(command)) {
         throw new Error("Expected worker argv");
