@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import {
     type ComputedSessionChanges,
     computeChanges,
@@ -143,6 +144,7 @@ export function loadRecentSessionChanges(input: {
     initialTurns?: number;
     onRound?: (round: ChangesRound) => void;
 }): ComputedSessionChanges & { transcriptPath: string | null } {
+    using _rounds = profiler.scope("session-changes").section("rounds");
     const { sessionId, count } = input;
     const rows = input.log ?? readChangeLog(sessionId);
     const full = () => loadSessionChanges({ sessionId, log: rows });
@@ -179,10 +181,9 @@ export function loadRecentSessionChanges(input: {
         if (!window || window.complete) {
             return fallback(window ? "F1" : "F4");
         }
-        const { changes, cover, triggers } = computeChanges(
-            { sessionId, log: rows, transcript: window.transcript },
-            window
-        );
+        const { changes, cover, triggers } = profiler
+            .scope("session-changes")
+            .measure("compute", () => computeChanges({ sessionId, log: rows, transcript: window.transcript }, window));
         const changed = changes.turns.filter((turn) => turn.files.length).length;
         total.late += window.lateResultCovers ?? 0;
         total.writers += triggers.writers;

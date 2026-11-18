@@ -6,7 +6,7 @@ import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { applyReplacement, computeSessionChanges } from "@genesiscz/utils/session-changes";
-import { readClaudeTranscriptFolded } from "./claude-changes";
+import { advanceFrom, readClaudeTranscriptFolded } from "./claude-changes";
 import { emptyParseState, parseClaudeTranscript, parseLines, readClaudeTranscript } from "./claude-changes-parse";
 import { AmbiguousSessionIdError, canonicalClaudeTranscript, canonicalClaudeTranscriptSync } from "./claude-locate";
 
@@ -298,4 +298,22 @@ describe("readChanges finds the canonical copy of a duplicated id", () => {
             ]);
         });
     });
+});
+
+it("invalidates a nonzero-start fold when the prefix changes without moving the cut", () => {
+    const main = join(mkdtempSync(join(tmpdir(), "gt-window-")), "rewrite.jsonl");
+    const prefix = jsonl([prompt("p1", "aaa", 0)]);
+    const tail = jsonl([prompt("p2", "window", 10)]);
+    writeFileSync(main, `${prefix}\n${tail}\n`);
+    const start = Buffer.byteLength(prefix) + 1;
+    const old = advanceFrom(main, null, null, start);
+    if (!old) {
+        throw new Error("missing initial fold");
+    }
+    writeFileSync(main, `${prefix.replace("aaa", "bbb")}\n${tail}\n`);
+    const next = advanceFrom(main, null, old, start);
+    expect(next).not.toBeNull();
+    expect(next).not.toBe(old);
+    expect(next?.mark).not.toEqual(old.mark);
+    expect([...(next?.state.turns.keys() ?? [])]).toEqual(["p2"]);
 });

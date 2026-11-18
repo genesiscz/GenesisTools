@@ -59,6 +59,7 @@ export interface LineFold<T> {
 export function advanceLines<T>(options: {
     path: string;
     start?: number;
+    until?: number;
     kept?: LineFold<T>;
     initial: () => T;
     line: (state: T, bytes: Buffer, offset: number) => void;
@@ -67,7 +68,8 @@ export function advanceLines<T>(options: {
     const fd = openSync(path, "r");
     try {
         const { size, ino, mtimeMs, ctimeMs } = fstatSync(fd);
-        if (start > size) {
+        const until = options.until ?? size;
+        if (start > until || until > size) {
             throw new Error("cut beyond end of transcript");
         }
         const candidate = kept && kept.start === start && kept.ino === ino && kept.consumed <= size ? kept : undefined;
@@ -81,8 +83,8 @@ export function advanceLines<T>(options: {
             : { ino, consumed: start, start, mark: "", state: options.initial(), size, mtime: mtimeMs, ctime: ctimeMs };
         const fragments: Buffer[] = [];
         let offset = fold.consumed;
-        while (offset < size) {
-            const chunk = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, size - offset));
+        while (offset < until) {
+            const chunk = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, until - offset));
             const count = readSync(fd, chunk, 0, chunk.length, offset);
             if (!count) {
                 throw new Error("transcript shortened during scan");

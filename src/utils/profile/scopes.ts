@@ -4,6 +4,7 @@ export const PROFILER_SCOPE_NAMES = [
     "cli",
     "claude-history",
     "agent-sessions",
+    "session-changes",
     "agent-history",
     "codex-run",
     "codex-account",

@@ -51,7 +51,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     classifyPath: claudeClassifyPath,
     readSpawnLink: claudeReadSpawnLink,
     midWork: claudeMidWork,
-    readChangesWindow: noChangesWindow("built in phase 7"),
+    readChangesWindow: deferredReadChangesWindow(import.meta, "./readers/claude-changes-window", "claudeChangesWindow"),
     readChanges: deferredReadChanges(import.meta, "./readers/claude-changes", "claudeSessionChanges"),
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
     // which comes from an earlier row, never enters the searched text).

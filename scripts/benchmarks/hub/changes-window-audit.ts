@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { auditClaudeChanges, auditClaudeFacts } from "@genesiscz/utils/agent-sessions/readers/claude-changes-audit";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 
@@ -52,7 +53,66 @@ for (const [index, file] of files.sort((a, b) => b.mtime - a.mtime).entries()) {
     }
 }
 
+if (process.argv.includes("--equal")) {
+    const { excludedOf, turnChangesJson } = await import("../../../src/agents/lib/changes/tool-changes");
+    const { changeLogPath, readChangeLog } = await import("@genesiscz/utils/agents/change-log");
+    const { loadSessionChanges, loadRecentSessionChanges, lastChangedTurns, mergeTurnFiles } = await import(
+        "@genesiscz/utils/session-changes"
+    );
+    const seen = new Set<string>();
+    for (const file of [...files].sort((a, b) => b.size - a.size)) {
+        const sessionId = basename(file.path).replace(/\.jsonl(?:\.zst)?$/, "");
+        if (seen.has(sessionId)) {
+            continue;
+        }
+        seen.add(sessionId);
+        try {
+            const log = readChangeLog(sessionId);
+            const full = loadSessionChanges({ sessionId, log });
+            for (const count of [1, 5, 20]) {
+                const render = (changes: typeof full) => {
+                    const selected = lastChangedTurns(changes, count);
+                    const files = mergeTurnFiles(selected);
+                    const excluded = excludedOf(selected, files);
+                    return SafeJSON.stringify(
+                        turnChangesJson(
+                            sessionId,
+                            changeLogPath(sessionId),
+                            {},
+                            {
+                                changes,
+                                selected,
+                                files,
+                                excluded,
+                                diffs: null,
+                            }
+                        ),
+                        { strict: true }
+                    );
+                };
+                const recent = loadRecentSessionChanges({
+                    sessionId,
+                    log,
+                    count,
+                    onRound: (round) => {
+                        if (round.fallback) {
+                            totals.equalFallbacks = (totals.equalFallbacks ?? 0) + 1;
+                        }
+                    },
+                });
+                totals.equalChecked = (totals.equalChecked ?? 0) + 1;
+                totals.equalMismatch = (totals.equalMismatch ?? 0) + Number(render(full) !== render(recent));
+            }
+        } catch {
+            unreadable++;
+        }
+        if (seen.size === 30) {
+            break;
+        }
+    }
+}
+
 out.result({ ...totals, unreadable });
-if (unreadable || !totals.sessions || totals.factsMismatch) {
+if (unreadable || !totals.sessions || totals.factsMismatch || totals.equalMismatch) {
     process.exitCode = 1;
 }
