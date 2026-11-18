@@ -55,8 +55,9 @@ final class MediaFeed: @unchecked Sendable {
         guard us >= 0 else { return nil }
         lock.lock()
         defer { lock.unlock() }
-        let seek = camera ? current.map { us < $0.us || us - $0.us > 2_000_000 } ?? (reader == nil)
-            : requestedUs.map { us < $0 || us - $0 > 2_000_000 } ?? true
+        let seek: Bool = camera
+            ? (current.map { us < $0.us || us - $0.us > 2_000_000 } ?? (reader == nil))
+            : (requestedUs.map { us < $0 || us - $0 > 2_000_000 } ?? true)
         if seek {
             restart(at: us)
         }
