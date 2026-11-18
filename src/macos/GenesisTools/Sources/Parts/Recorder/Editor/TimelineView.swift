@@ -29,15 +29,17 @@ struct TimelineView: View {
     @Bindable var model: EditorModel
     let viewportWidth: CGFloat
     @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
+    @AppStorage(EditorModel.soundLanesShownKey) private var soundsShown = true
 
     static let rulerHeight: CGFloat = 26
     static let clipLaneHeight: CGFloat = 64
     static let audioLaneHeight: CGFloat = 30
+    static let sourceRowHeight: CGFloat = 34
     static let musicLaneHeight: CGFloat = 14
     static let marksLaneHeight: CGFloat = 16
     static let displayLaneHeight: CGFloat = 20
     static let laneGap: CGFloat = 8
-    /// Where the effect lanes start, under the ruler.
+    /// First row below the ruler (the effects begin here on a recording with no picture layers).
     static let effectsTop: CGFloat = rulerHeight + 10
 
     /// Fitted, the whole edit fills the strip between the two insets, so nothing runs past the window's edge.
@@ -51,17 +53,22 @@ struct TimelineView: View {
 
     var body: some View {
         let scale = scale
-        let layout = TimelineLayout(model: model, lanesShown: lanesShown)
+        let layout = TimelineLayout(model: model, lanesShown: lanesShown, soundsShown: soundsShown)
         let contentWidth = max(viewportWidth, scale.x(model.durationUs) + scale.inset)
-        ScrollView(.horizontal, showsIndicators: true) {
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
             ZStack(alignment: .topLeading) {
                 RulerView(durationUs: model.durationUs, scale: scale)
                     .frame(width: contentWidth, height: Self.rulerHeight)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in model.seek(scale.us(value.location.x)) })
                 // Each lane is a named group for VoiceOver, so "Zooms, 3 items" says which lane the cursor is in.
+                if !model.layerRows.isEmpty {
+                    LayerRowsView(model: model, scale: scale)
+                        .frame(width: contentWidth)
+                        .offset(y: Self.effectsTop)
+                }
                 EffectLanesArea(model: model, lanes: layout.lanes, scale: scale, width: contentWidth, height: layout.effectsHeight)
-                    .offset(y: Self.effectsTop)
+                    .offset(y: layout.effectRowsTop)
                 if let plan = model.displayPlan, layout.displays {
                     DisplayLaneView(model: model, plan: plan, scale: scale)
                         .accessibilityElement(children: .contain)
@@ -87,6 +94,11 @@ struct TimelineView: View {
                     AudioLaneView(model: model, scale: scale)
                         .offset(y: layout.audioTop)
                 }
+                if layout.soundHeight > 0 {
+                    SoundLanesView(model: model, scale: scale)
+                        .frame(width: contentWidth)
+                        .offset(y: layout.soundTop)
+                }
                 if layout.music, let music = model.project.audio.music {
                     MusicLaneView(model: model, music: music, scale: scale)
                         .offset(y: layout.musicTop)
@@ -97,6 +109,10 @@ struct TimelineView: View {
                 PlayheadView(clock: model.clock, scale: scale, model: model, layout: layout)
             }
             .frame(width: contentWidth, height: layout.totalHeight, alignment: .topLeading)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard urls.count == 1, let url = urls.first else { return false }
+                return model.acceptLayerFile(url)
+            }
         }
         .background(RecorderPalette.window)
         .onAppear { model.fittedPointsPerSecond = fit }
@@ -104,12 +120,12 @@ struct TimelineView: View {
     }
 }
 
-/// Where each lane sits, from what the edit has: the effect lanes on top (scrolling past `EditorModel.lanesShown`), the
-/// clips, a marks lane only with markers, captions or shortcuts to show, the sound lane only for a movie with sound,
-/// and a music lane under it.
+/// Positions on the shared ruler: picture layers, effects, clips and marks, the overview waveform, source rows and music.
 struct TimelineLayout: Equatable {
     var lanes: [EffectLanes.Resolved]
     var effectsHeight: CGFloat
+    var layerHeight: CGFloat
+    var soundHeight: CGFloat
     /// A frames recording's proxy with a display plan: the lane that says which display shows when.
     var displays: Bool
     var marks: Bool
@@ -117,27 +133,33 @@ struct TimelineLayout: Equatable {
     var music: Bool
 
     @MainActor
-    init(model: EditorModel, lanesShown: Int = EditorModel.lanesShown) {
+    init(model: EditorModel, lanesShown: Int = EditorModel.lanesShown,
+         soundsShown: Bool = UserDefaults.standard.object(forKey: EditorModel.soundLanesShownKey) as? Bool ?? true) {
         let project = model.project
         lanes = model.effectLanes
         effectsHeight = EffectLaneMetrics.areaHeight(lanes, maxLanes: lanesShown)
+        layerHeight = CGFloat(model.layerRows.count) * TimelineView.sourceRowHeight
+        soundHeight = soundsShown ? CGFloat(model.soundRows.count) * TimelineView.sourceRowHeight : 0
         displays = !(model.displayPlan?.ranges.isEmpty ?? true)
         marks = !model.markers.isEmpty || !model.reviewComments.isEmpty
             || (project.captions?.show == true && !model.zoom.captionLines.isEmpty)
             || (project.keys?.show == true && !(model.cursor?.keys ?? []).isEmpty)
         // Until the waveform is read, keep the lane, so a movie with sound does not jump once it loads.
-        audio = !model.waveform.loaded || model.waveform.hasAudio
+        audio = !model.waveform.loaded || model.waveform.hasAudio || !model.overviewPeaks.isEmpty
         music = project.audio.music != nil
     }
 
-    var displaysTop: CGFloat { TimelineView.effectsTop + effectsHeight + TimelineView.laneGap }
+    var effectRowsTop: CGFloat { TimelineView.effectsTop + layerHeight }
+    var displaysTop: CGFloat { effectRowsTop + effectsHeight + TimelineView.laneGap }
     var clipTop: CGFloat { displaysTop + (displays ? TimelineView.displayLaneHeight + 4 : 0) }
     var marksTop: CGFloat { clipTop + TimelineView.clipLaneHeight + 4 }
     var audioTop: CGFloat { marksTop + (marks ? TimelineView.marksLaneHeight + 4 : 0) }
-    var musicTop: CGFloat { audio ? audioTop + TimelineView.audioLaneHeight + 4 : audioTop }
+    var soundTop: CGFloat { audio ? audioTop + TimelineView.audioLaneHeight + 4 : audioTop }
+    var musicTop: CGFloat { soundTop + soundHeight }
     /// The bottom of the last lane shown.
     var lanesBottom: CGFloat {
         if music { return musicTop + TimelineView.musicLaneHeight }
+        if soundHeight > 0 { return musicTop }
         return audio ? audioTop + TimelineView.audioLaneHeight : audioTop - 2
     }
     var totalHeight: CGFloat { lanesBottom + 16 }
@@ -544,14 +566,10 @@ private struct AudioLaneView: View {
     let scale: TimelineScale
 
     var body: some View {
-        let waveform = model.waveform
-        // The tracks the preview and the export mix; with none playing the lane keeps every track's shape, dimmed.
-        let audible = model.project.audio.audibleTracks(count: waveform.trackCount)
-        let muted = audible.isEmpty
-        let tracks = muted ? IndexSet(integersIn: 0..<waveform.trackCount) : audible
+        let peaks = model.overviewPeaks
+        let muted = model.overviewMuted
         Canvas { context, size in
-            guard waveform.hasAudio else { return }
-            for placed in TimelineMap.placed(model.project) {
+            for placed in model.rowClips {
                 let x0 = scale.x(placed.outStartUs) + 1.5
                 let width = max(2, scale.width(placed.clip.outputDurationUs) - 3)
                 context.fill(Path(roundedRect: CGRect(x: x0, y: 0, width: width, height: size.height), cornerRadius: 6),
@@ -561,8 +579,7 @@ private struct AudioLaneView: View {
                     let a = Double(bar) / Double(bars), b = Double(bar + 1) / Double(bars)
                     let from = placed.clip.fromUs + Int64(Double(placed.clip.sourceDurationUs) * a)
                     let to = placed.clip.fromUs + Int64(Double(placed.clip.sourceDurationUs) * b)
-                    let peak = CGFloat(waveform.peak(fromUs: from, toUs: to, durationUs: model.project.source.durationUs,
-                                                     tracks: tracks))
+                    let peak = CGFloat(Waveform.peak(in: peaks, fromUs: from, toUs: to, durationUs: model.project.source.durationUs))
                     let level = min(1, peak * CGFloat(model.project.audio.volume))
                     let height = max(1, level * (size.height - 6))
                     let rect = CGRect(x: x0 + CGFloat(bar) * 3, y: (size.height - height) / 2, width: 2, height: height)
@@ -572,7 +589,7 @@ private struct AudioLaneView: View {
         }
         .frame(height: TimelineView.audioLaneHeight)
         .instantTooltip("Sound (the waveform of the tracks that play, over the kept clips)")
-        .accessibilityLabel(waveform.hasAudio ? "Audio waveform" : "No audio")
+        .accessibilityLabel(peaks.isEmpty ? "No audio" : "Audio waveform")
     }
 }
 
