@@ -1,10 +1,15 @@
-import { parseTranscriptLine } from "@genesiscz/utils/ai/usage/spend/parse";
 import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import type { SessionAnalysisReader, SessionCall, SessionCompaction } from "../analysis-types";
 import { factsOrFailure, forEachTranscriptLine, isoOf, parseRow } from "./analysis-lines";
 
-/** Claude Code writes local notices (API errors, "No response.") as assistant rows of this model: not model calls. */
-const SYNTHETIC_MODEL = "<synthetic>";
+import {
+    claudeCall,
+    decodeClaudeRow,
+    isCompactBoundary,
+    lastClaudeContext,
+    readClaudeLoops,
+} from "./claude-analysis-loops";
+import { collectResumes } from "./claude-resumes";
 
 /**
  * Claude's analysis facts. Calls are the assistant rows with usage, deduplicated by message id (Claude Code writes one
@@ -12,6 +17,10 @@ const SYNTHETIC_MODEL = "<synthetic>";
  * Claude transcripts carry no quota reading: the limits live in response headers the CLI does not write down.
  */
 export const claudeAnalysis: SessionAnalysisReader = {
+    lastContext: lastClaudeContext,
+    resumes(path, selection = {}) {
+        return readClaudeLoops(path, selection, collectResumes);
+    },
     async callTrace(transcriptPath) {
         const seen = new Set<string>();
         const items: SessionCall[] = [];
@@ -21,29 +30,14 @@ export const claudeAnalysis: SessionAnalysisReader = {
                 return;
             }
 
-            const event = parseTranscriptLine(line);
-
-            // An unreadable timestamp skips the row; `toISOString` would throw and lose the whole trace.
-            const t = event ? isoOf(event.timestamp) : null;
-
-            if (!event || !t || event.model === SYNTHETIC_MODEL || seen.has(event.messageId)) {
+            const row = decodeClaudeRow(line, transcriptPath);
+            const call = row && claudeCall(row);
+            if (!call || seen.has(call.id)) {
                 return;
             }
 
-            seen.add(event.messageId);
-            items.push({
-                id: event.messageId,
-                t,
-                model: event.model,
-                input: event.inputTokens,
-                cacheRead: event.cacheReadTokens,
-                cacheWrite: event.cacheCreationTokens,
-                ...(event.cacheCreation1hTokens === undefined ? {} : { cacheWrite1h: event.cacheCreation1hTokens }),
-                output: event.outputTokens,
-                sidechain: event.isSidechain === true,
-                aggregate: false,
-                ...(event.serviceTier ? { serviceTier: event.serviceTier } : {}),
-            });
+            seen.add(call.id);
+            items.push(call);
         });
 
         return factsOrFailure(items, failed);
@@ -59,7 +53,7 @@ export const claudeAnalysis: SessionAnalysisReader = {
 
             const row = parseRow(line, transcriptPath);
 
-            if (!row || row.type !== "system" || row.subtype !== "compact_boundary") {
+            if (!row || !isCompactBoundary(row)) {
                 return;
             }
 

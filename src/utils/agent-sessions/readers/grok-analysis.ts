@@ -15,6 +15,8 @@ function updatesPath(transcriptPath: string): string {
  * so both members answer that they cannot.
  */
 export const grokAnalysis: SessionAnalysisReader = {
+    lastContext: () => null, // No on-disk teammate tail.
+    resumes: async () => ({ supported: false, reason: "Grok records per-turn usage and no subagent chat history" }),
     async callTrace(transcriptPath) {
         const file = updatesPath(transcriptPath);
         return callsOfParser(

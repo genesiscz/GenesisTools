@@ -49,6 +49,8 @@ export function noSessionChanges(): null {
 
 /** `analysis` for a test reader whose test never analyses a session: every fact answers that it cannot. */
 export const noAnalysis: SessionAnalysisReader = {
+    lastContext: () => null,
+    resumes: async () => ({ supported: false, reason: "test reader" }),
     callTrace: async () => ({ supported: false, reason: "test reader" }),
     compactions: async () => ({ supported: false, reason: "test reader" }),
     quotaReadings: async () => ({ supported: false, reason: "test reader" }),

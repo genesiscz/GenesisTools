@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -11,6 +11,87 @@ function transcript(name: string, rows: readonly unknown[]): string {
     writeFileSync(path, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
     return path;
 }
+
+test("resumes join a workflow revival, time streamed calls, and distinguish waits and cache outcomes", async () => {
+    const path = transcript("lead.jsonl", []);
+    const agents = join(path, "..", "lead", "subagents");
+    const run = join(agents, "workflows", "wf-first");
+    mkdirSync(run, { recursive: true });
+    const at = (minute: number) => new Date(Date.UTC(2025, 0, 1) + minute * 60_000).toISOString();
+    const call = (
+        id: string,
+        minute: number,
+        read: number,
+        five: number,
+        hour: number,
+        stop: string,
+        model = "model-a"
+    ) => ({
+        type: "assistant",
+        timestamp: at(minute),
+        message: {
+            id,
+            model,
+            stop_reason: stop,
+            usage: {
+                cache_read_input_tokens: read,
+                cache_creation: { ephemeral_5m_input_tokens: five, ephemeral_1h_input_tokens: hour },
+            },
+        },
+    });
+    const user = (minute: number, content: unknown) => ({ type: "user", timestamp: at(minute), message: { content } });
+    const original = [user(0, "go"), call("one", 1, 0, 100, 0, ""), call("one", 2, 0, 100, 0, "end_turn")];
+    const revived = [
+        user(8, "again"),
+        call("two", 9, 10, 0, 95, "tool_use"),
+        user(10, [{ type: "tool_result" }]),
+        call("three", 11, 95, 5, 5, "end_turn"),
+        { type: "system", subtype: "compact_boundary" },
+        user(18, "<task-notification>ready"),
+        call("four", 19, 55, 120, 0, "end_turn", "model-b"),
+    ];
+    writeFileSync(join(run, "agent-a.jsonl"), original.map((r) => SafeJSON.stringify(r)).join("\n"));
+    writeFileSync(join(agents, "agent-a.jsonl"), revived.map((r) => SafeJSON.stringify(r)).join("\n"));
+    const facts = await claudeHistoryReader.analysis.resumes(path, { main: false });
+    if (!facts.supported) {
+        throw new Error(facts.reason);
+    }
+    expect(facts.items).toHaveLength(1);
+    const [loop] = facts.items;
+    expect(loop.kind).toBe("workflow");
+    expect(loop.calls.map((c) => c.writeTtl)).toEqual(["5m", "1h", "mixed", "5m"]);
+    expect(loop.calls[0]).toMatchObject({ start: at(0), end: at(2), stop: "end_turn" });
+    expect(loop.pauses).toMatchObject([
+        {
+            resumed: true,
+            cause: "message",
+            gapMs: 360_000,
+            outcome: "miss",
+            expected: 100,
+            rewrittenTokens: 90,
+            writeTtl: "5m",
+        },
+        { resumed: false, cause: "tool", outcome: "hit", writeTtl: "1h" },
+        {
+            resumed: true,
+            cause: "notification",
+            outcome: "partial",
+            compacted: true,
+            modelChanged: true,
+            writeTtl: "mixed",
+        },
+    ]);
+    expect(claudeHistoryReader.analysis.lastContext(revived)).toBe(175);
+    expect(
+        claudeHistoryReader.analysis.lastContext([
+            ...revived,
+            { type: "system", subtype: "compact_boundary", compactMetadata: { postTokens: 12 } },
+        ])
+    ).toBe(12);
+    for (const reader of [codexHistoryReader, grokHistoryReader]) {
+        expect(await reader.analysis.resumes(path)).toMatchObject({ supported: false, reason: expect.any(String) });
+    }
+});
 
 describe("the analysis members of the three readers", () => {
     test("Claude: one call per message id, synthetic notices skipped, a compact boundary, no quota readings", async () => {

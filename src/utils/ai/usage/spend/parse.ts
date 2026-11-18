@@ -85,6 +85,11 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
         return null;
     }
 
+    return claudeUsageOfRow(rawUnknown);
+}
+
+/** Usage from an already decoded row, shared by spend and the native transcript reader. */
+export function claudeUsageOfRow(rawUnknown: unknown): UsageEvent | null {
     if (!isRawLine(rawUnknown)) {
         return null;
     }
