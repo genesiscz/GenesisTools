@@ -117,7 +117,6 @@ struct ReviewRowView: View, Equatable {
                 }
             }
             .opacity(row.isOpen || editing ? 1 : 0.6)
-            if row.isQuestion { QuestionEvidence(row: row, detail: detail, expanded: true) }
             if let meanwhile {
                 HStack(spacing: 8) {
                     Label("Decided meanwhile by \(MeetingsWords.actor(meanwhile.actor)): \(MeetingsWords.entryAction(meanwhile, label: detail.rowName))",
@@ -151,6 +150,9 @@ struct ReviewRowView: View, Equatable {
                     revertButton(words: true)
                 }
             }
+            // The answers come first (genesiscz.md 5): the lines the question decides follow them, folded to three, so
+            // Q1's 16 lines no longer pushed every answer below the window.
+            if row.isQuestion { QuestionEvidence(row: row, detail: detail, expanded: true, speaker: Self.who(row)) }
             if let comment = row.comment { Text(comment).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
             if !Self.shownSources(row).isEmpty { sources }
         }
@@ -172,13 +174,11 @@ struct ReviewRowView: View, Equatable {
                 MomentButton(player: player, meeting: detail.id, target: row.target, label: row.whenText, source: .row,
                              shown: play.button(row.target))
             }
+            // The score says what it is. The priority number is not drawn: the list is already in priority order, and at
+            // 900 pt it broke one syllable per line down the card.
             if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
-                Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
+                Text(verbatim: "\(confidence) sure").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
-            }
-            if let priority = row.priority, row.isOpen {
-                Text(verbatim: "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))")
-                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
             if let player, let span = playingSpan() {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
@@ -365,7 +365,8 @@ struct ReviewRowView: View, Equatable {
                         ListenVoicesEditor(row: row, detail: detail) { editingVoices = false }
                     }
             }
-            if row.edit != "none" {
+            // A speaker question has its "Somebody else…" above; a second one beside it did the same thing.
+            if row.edit != "none", !(row.isQuestion && asksSpeaker) {
                 GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
                     detail.edit(row)
                 }
@@ -873,13 +874,14 @@ private struct QuestionEvidence: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
     let expanded: Bool
+    /// The question's own speaker: its lines drop the name the card already shows.
+    var speaker: String? = nil
 
     var body: some View {
         Group {
             if let evidence = detail.rows.value?.questionDetailsByID[row.id] {
-                QuestionLines(evidence: evidence, expanded: expanded, answered: !row.isOpen) { line in
-                    if let start = line.startSec { detail.window?.player.play(.time(start), in: detail.id, from: .row) }
-                }
+                QuestionLines(evidence: evidence, expanded: expanded, answered: !row.isOpen, speaker: speaker,
+                              player: detail.window?.player, meeting: detail.id)
             } else if expanded {
                 ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
                     if case .said(let text, _, _) = part { Text(verbatim: text).font(.system(size: 12)).italic() }
@@ -897,19 +899,29 @@ struct QuestionLines: View {
     let evidence: QuestionDetails
     let expanded: Bool
     let answered: Bool
-    var play: (QuestionDetails.Line) -> Void = { _ in }
+    /// The question's own speaker: a line said by that speaker drops the name the card already shows.
+    var speaker: String? = nil
+    /// Each line's time plays it as a `MomentButton`, the one play control of the card (the header's time is one).
+    /// Without a player (a test, a card outside the window) the time is plain text.
+    var player: MomentPlayer? = nil
+    var meeting: String? = nil
+    /// The lines shown before "All N lines".
+    static let foldedLines = 3
+    @State private var showsAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             if expanded {
                 Text("Decides \(Plural.count(evidence.impact.lines, "line")), \(Plural.count(evidence.impact.words, "word")); same doubt on \(Plural.count(evidence.impact.sameDoubtLines, "line"))")
                     .foregroundStyle(.secondary)
-                ForEach(evidence.decidedLines, id: \.index) { line in
-                    HStack(alignment: .top, spacing: 6) {
-                        if let start = line.startSec {
-                            GhostButton(MeetingsFormat.clock(start), symbol: "play.fill", tooltip: "Play this source line") { play(line) }
+                ForEach(evidence.decidedLines.prefix(Self.foldedLines), id: \.index) { line in lineRow(line) }
+                if evidence.decidedLines.count > Self.foldedLines {
+                    GenDisclosure(isExpanded: $showsAll, minHeight: 22, identifier: "meetings.question.lines") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(evidence.decidedLines.dropFirst(Self.foldedLines), id: \.index) { line in lineRow(line) }
                         }
-                        Text(verbatim: "\(line.speaker): \(line.text)").textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    } label: {
+                        Text(verbatim: Self.allLinesWords(evidence)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -917,6 +929,28 @@ struct QuestionLines: View {
                 Text("Raised confidence on \(Plural.count(raised.count, "line"))").foregroundStyle(.secondary)
             }
         }.font(.system(size: 12))
+    }
+
+    /// "All 16 lines (276 words)", or the lines alone when the words count covers more than the listed lines.
+    static func allLinesWords(_ evidence: QuestionDetails) -> String {
+        let lines = Plural.count(evidence.decidedLines.count, "line")
+        return evidence.decidedLines.count == evidence.impact.lines ? "All \(lines) (\(Plural.count(evidence.impact.words, "word")))" : "All \(lines)"
+    }
+
+    /// One decided line: its time in a fixed column, so every text starts at the same x, then its words.
+    private func lineRow(_ line: QuestionDetails.Line) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Group {
+                if let start = line.startSec, let player, let meeting {
+                    MomentButton(player: player, meeting: meeting, target: .time(start), label: MeetingsFormat.clock(start), source: .row)
+                } else if let start = line.startSec {
+                    Text(verbatim: MeetingsFormat.clock(start)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 76, alignment: .leading)
+            Text(verbatim: line.speaker == speaker ? line.text : "\(line.speaker): \(line.text)")
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

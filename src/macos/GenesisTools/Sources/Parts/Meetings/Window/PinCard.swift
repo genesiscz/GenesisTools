@@ -46,9 +46,8 @@ struct PinCard: View {
             }
             if row.isQuestion, let evidence {
                 FittedScroll(maxHeight: 260, initialHeight: 260) {
-                    QuestionLines(evidence: evidence, expanded: true, answered: !row.isOpen) { line in
-                        if let start = line.startSec, let detail { detail.window?.player.play(.time(start), in: detail.id, from: .row) }
-                    }
+                    QuestionLines(evidence: evidence, expanded: true, answered: !row.isOpen, speaker: ReviewRowView.who(row),
+                                  player: detail?.window?.player, meeting: detail?.id)
                 }
             }
             if !Self.shownChoices(row).isEmpty { choices }
