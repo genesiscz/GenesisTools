@@ -524,6 +524,16 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.CommentSend.name:
                 try roundTrip(MeetingsAPI.CommentSend.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentSend.Result.self, result).entry?.action.kind, "comment") }
+            case MeetingsAPI.MeetingSourcesNear.name:
+                try roundTrip(MeetingsAPI.MeetingSourcesNear.Params.self, params, label)
+                if let result {
+                    let near = try MeetingsService.decode(MeetingsAPI.MeetingSourcesNear.Result.self, result)
+                    XCTAssertEqual(near.meetings.first?.ref, "wisprflow:wf-2041", label)
+                    XCTAssertNotNil(near.meetings.first?.linkedTo, "\(label): the record that holds it")
+                }
+            case MeetingsAPI.MeetingLink.name:
+                try roundTrip(MeetingsAPI.MeetingLink.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.MeetingLink.Result.self, result) }
             case MeetingsAPI.RuleNames.name:
                 try roundTrip(MeetingsAPI.RuleNames.Params.self, params, label)
                 if let result {
@@ -602,6 +612,7 @@ final class MeetingsServiceTests: XCTestCase {
         MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.MomentSave.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
         MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingTimeline.name,
         MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name, MeetingsAPI.RuleNames.name,
+        MeetingsAPI.MeetingSourcesNear.name, MeetingsAPI.MeetingLink.name,
         MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,
         MeetingsAPI.CommentStage.name, MeetingsAPI.CommentList.name, MeetingsAPI.CommentUnstage.name, MeetingsAPI.CommentSend.name,
     ]
@@ -1055,6 +1066,21 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(model.ruleNames?["E3"], "The call shows who is speaking.")
         model.ensureRuleNames()
         XCTAssertEqual(fake.count("rules.names"), 1, "one read for the window")
+    }
+
+    func testALinkCandidateSaysItsSourceTimeAndWhoHoldsIt() {
+        let free = MeetingsAPI.MeetingSourcesNear.Candidate(ref: "wisprflow:a", source: "Wispr Flow", title: "Planning",
+                                                            start: "2026-11-12T13:15:00.000Z", end: "2026-11-12T14:15:00.000Z",
+                                                            hasTranscript: true, linkedTo: nil)
+        let facts = LinkSourceSheet.facts(free, start: "2026-11-12T13:17:00.000Z")
+        XCTAssertTrue(facts.hasPrefix("Wispr Flow · "), facts)
+        XCTAssertTrue(facts.contains("2 min before") && facts.contains("1 h"), facts)
+        XCTAssertEqual(LinkSourceSheet.offsetWords("2026-11-12T13:17:20.000Z", from: "2026-11-12T13:17:00.000Z"), "at the same minute")
+        let held = MeetingsAPI.MeetingSourcesNear.Candidate(ref: "wisprflow:b", source: "Wispr Flow", title: "Retro",
+                                                            start: "2026-11-12T15:00:00.000Z", end: nil, hasTranscript: false,
+                                                            linkedTo: .init(id: "m2", title: "Retro notes"))
+        let heldFacts = LinkSourceSheet.facts(held, start: "2026-11-12T13:17:00.000Z")
+        XCTAssertTrue(heldFacts.contains("no transcript") && heldFacts.contains("linked to “Retro notes”"), heldFacts)
     }
 
     func testTheSuggestStepReadsAsWords() {

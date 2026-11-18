@@ -1011,7 +1011,8 @@ extension MeetingDetailModel {
     /// The empty state of a pane the CLI refuses with `[no-transcript-source]`; its button opens the screen recording.
     func noTranscriptSource(_ what: String) -> NoTranscriptSource {
         let screen = window?.meeting(id)?.hasRecording ?? (record.value?.recording != nil)
-        return NoTranscriptSource(what: what, showScreen: screen ? { [weak self] in self?.show(.screen) } : nil)
+        return NoTranscriptSource(what: what, showScreen: screen ? { [weak self] in self?.show(.screen) } : nil,
+                                  linkTo: service == nil ? nil : self)
     }
 
     /// The tab a meeting opens on: its screen recording when it has nothing else, since the transcript, speakers and
@@ -1193,5 +1194,28 @@ extension MeetingsWords {
     static func contextNote(_ ref: MeetingContextRef) -> String? {
         if ref.kind == "note" { return ref.title?.isEmpty == false ? ref.ref : nil }
         return ref.note
+    }
+}
+
+// MARK: - Link a source meeting (audit M9)
+
+extension MeetingDetailModel {
+    static let noServiceToLink = MeetingsCLI.Failure(
+        sentence: "The Meetings service does not answer, so the source meetings cannot be listed or linked.",
+        detail: "No Meetings service answers this window.")
+
+    /// The source meetings that started near this one (`meeting.sources.near`), nearest first.
+    func sourceMeetingsNear() async throws -> MeetingsAPI.MeetingSourcesNear.Result {
+        guard let service else { throw Self.noServiceToLink }
+        return try await service.call(MeetingsAPI.MeetingSourcesNear.self, .init(meeting: id, hours: nil))
+    }
+
+    /// Links one (`meeting.link`) and reads every part of the meeting again: its transcript, speakers and people come
+    /// from the source now.
+    func linkSource(_ candidate: MeetingsAPI.MeetingSourcesNear.Candidate) async throws {
+        guard let service else { throw Self.noServiceToLink }
+        _ = try await service.call(MeetingsAPI.MeetingLink.self, .init(meeting: id, source: candidate.ref), timeout: 120)
+        notices.push(StackedNotice(text: "Linked “\(candidate.title)”; its transcript and people are read now"))
+        refreshLoaded(force: true)
     }
 }
