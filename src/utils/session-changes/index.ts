@@ -222,6 +222,14 @@ export function loadRecentSessionChanges(input: {
                         { session: sessionId, turn: selected[mismatch]?.turnId ?? other[selected.length]?.turnId },
                         "window differs from full changes"
                     );
+                    input.onRound?.({
+                        round,
+                        requested,
+                        changed,
+                        late: window.lateResultCovers ?? 0,
+                        ...triggers,
+                        fallback: "verification mismatch",
+                    });
                     return expected;
                 }
             }
