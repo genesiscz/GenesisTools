@@ -53,6 +53,23 @@ export const requestOutcomeSchema = z.object({
 export type RequestOutcome = z.infer<typeof requestOutcomeSchema>;
 export const requestConfigSchema = z.object({ delivery: deliverySchema.default(Delivery.askNow) });
 
+/** What an app window's answer needs besides the window itself: starting the app, and sending the answer back. */
+export const WINDOW_REPLY_RESERVE_MS = 5_000;
+
+/**
+ * One deadline for a request window and the call that waits for it. The window counts its seconds from when it
+ * arrives, after the app started, so it gets the caller's time less a reserve for that start and the reply: an answer
+ * given before the deadline the window shows still reaches the caller.
+ */
+export function requestWindowDeadline(
+    timeoutMs: number,
+    deadlineSeconds: number | undefined
+): { windowSeconds: number; callTimeoutMs: number } {
+    const reserveMs = Math.min(WINDOW_REPLY_RESERVE_MS, Math.floor(timeoutMs / 4));
+    const windowMs = Math.max(1, Math.min((deadlineSeconds ?? Number.POSITIVE_INFINITY) * 1000, timeoutMs - reserveMs));
+    return { windowSeconds: windowMs / 1000, callTimeoutMs: Math.max(1, Math.min(timeoutMs, windowMs + reserveMs)) };
+}
+
 /**
  * A click consumes a pending request only after its target opens or the person answers the request window. One worker
  * at a time presents a request, and it reads the request's state again under that claim before any effect.

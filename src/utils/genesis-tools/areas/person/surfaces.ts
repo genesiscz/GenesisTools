@@ -5,15 +5,19 @@ import { genesisToolsRequestOpenCommand } from "@genesiscz/utils/genesis-tools/t
 import { out } from "@genesiscz/utils/logger";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { personConfigSchema } from "./deliveries";
-import { type PersonRequest, type RequestOutcome, requestOutcomeSchema } from "./request";
+import { type PersonRequest, type RequestOutcome, requestOutcomeSchema, requestWindowDeadline } from "./request";
 import { DIALOG_SYSTEM, dialogEnvironment, PERSON_DIALOGS } from "./system-dialog";
 
 export type RequestContext = ActionContext<PersonRequest, Record<string, unknown>>;
 
 export async function presentInApp(ctx: RequestContext): Promise<RequestOutcome | Pass> {
     refuseHostEffectInTest("request.present", "Inject a request surface in tests.");
-    const timeoutMs = Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000));
-    const reply = await ctx.app.rpc("request.present", ctx.args, { timeoutMs });
+    const { windowSeconds, callTimeoutMs } = requestWindowDeadline(ctx.timeoutMs, ctx.args.deadlineSeconds);
+    const reply = await ctx.app.rpc(
+        "request.present",
+        { ...ctx.args, deadlineSeconds: windowSeconds },
+        { timeoutMs: callTimeoutMs }
+    );
     return reply.ok
         ? { ...requestOutcomeSchema.parse(reply.result), via: "app-window", method: "click" as const }
         : reply.error.code === "timeout"
