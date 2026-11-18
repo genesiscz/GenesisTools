@@ -902,4 +902,67 @@ test("collect persists only a canonically identified departure and read-only pre
         )?.toSec
     ).toBe(40);
     expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
+    await OpenedMeeting.of(store, reopened, { source, sourceMeetingId: "abc" }).collect();
+    expect(new MeetingStore(store.storage).read(record.id)!.participants).toEqual(reopened.participants);
+    expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
+});
+
+test("a final call-channel goodbye uses a matched voice and later speech reopens the stay", async () => {
+    const { store, record } = await newRecord({
+        participants: [
+            { name: "River Example", self: true, firstSeenSec: 0, from: ["platform-roster"] },
+            { name: "Sky Example", firstSeenSec: 10, from: ["platform-roster"] },
+            { name: "Lake Example", firstSeenSec: 0, from: ["platform-roster"] },
+        ],
+    });
+    const source = fakeSource({
+        evidence: {
+            selfName: "River Example",
+            segments: [{ startSec: 0, endSec: 3000, channel: "system" }],
+            speaking: [],
+            files: [],
+        },
+    });
+    const meeting = await source.load("abc");
+    source.load = async () => ({
+        ...meeting,
+        transcript: [
+            { speaker: "Room", startSec: 0, text: "Welcome." },
+            { speaker: "Remote", startSec: 2400, text: "I have to go." },
+            { speaker: "Room", startSec: 2403, text: "Thanks." },
+            { speaker: "Other", startSec: 2500, text: "One more question." },
+        ],
+    });
+    let later = false;
+    const collect = async () => {
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        const opened = OpenedMeeting.of(store, reopened, { source, sourceMeetingId: "abc" });
+        const share = Object.assign(() => 0.1, {
+            voice: (sec: number) =>
+                sec === 2400 || (later && sec === 2500)
+                    ? {
+                          person: "Sky Example",
+                          quality: "matched" as const,
+                          candidates: [],
+                          model: "fixture",
+                          reason: "matched",
+                      }
+                    : undefined,
+        });
+        spyOn(opened, "energy").mockResolvedValue({ share });
+        await opened.collect();
+        return new MeetingStore(store.storage).read(record.id)!.participants.map((person) => person.stays?.[0]);
+    };
+    const first = await collect();
+    expect(first[1]).toEqual({
+        fromSec: 10,
+        toSec: 2400,
+        source: "platform-roster",
+        leaveSource: "goodbye",
+        confidence: 0.8,
+    });
+    expect(first[2]?.toSec).toBeUndefined();
+    expect(await collect()).toEqual(first);
+    later = true;
+    expect((await collect())[1]).toEqual({ fromSec: 10, source: "platform-roster", confidence: 1 });
 });

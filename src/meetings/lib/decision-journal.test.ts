@@ -2447,6 +2447,49 @@ test("a resolved departure is vetoed by later valid speech, and silence needs ob
     ]);
 });
 
+test("a silent call ends at the last good indicator time inside a transcript line", async () => {
+    const fx = await fixture(
+        [],
+        {},
+        {
+            participants: [
+                { name: "River Example", firstSeenSec: 0, from: ["platform-roster"] },
+                { name: "Sky Example", from: [], stays: [{ fromSec: 0, toSec: 180, source: "hand" }] },
+            ],
+        }
+    );
+    const speaking = [
+        { tSec: 27, speaking: ["River Example"] },
+        { tSec: 40, speaking: [], speakingUnknown: true },
+    ];
+    const lines = lineEvidence(
+        [
+            { startSec: 0, speaker: "Voice", text: "We should start now." },
+            { startSec: 180, speaker: "Room", text: "Any questions?" },
+        ],
+        { segments: [], speaking }
+    );
+    await fx.store.update(fx.meeting.id, { command: "test", change: "derive stays" }, (record) => {
+        const derived = personStays({
+            record,
+            durationSec: 900,
+            lines,
+            speaking,
+            departures: [{ name: "River Example", atSec: 15, reason: "indicator" }],
+            silenceMinutes: 10,
+            callSilent: [{ fromSec: 27, toSec: 900 }],
+        });
+        record.participants.forEach((person, index) => {
+            person.stays = derived[index]!.stays;
+        });
+    });
+    const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    expect(reopened.participants.map((person) => person.stays?.[0])).toEqual([
+        { fromSec: 0, toSec: 27, source: "platform-roster", leaveSource: "silence", confidence: 0.5 },
+        { fromSec: 0, toSec: 180, source: "hand", leaveSource: "hand", confidence: 1 },
+    ]);
+});
+
 test("a later matched voice vetoes a silence departure, as it vetoes an explicit one", () => {
     const transcript = [
         { speaker: "Voice", startSec: 5, text: "Hello" },

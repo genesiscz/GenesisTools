@@ -588,6 +588,40 @@ describe("speaker-label integration", () => {
         ).toBe(true);
     });
 
+    test("suggest persists a final goodbye identified by the current voice pass", async () => {
+        const { store, record, meeting, opened, config } = await runnerFixture({
+            participants: [
+                { name: "River Example", self: true, from: ["fixture"], firstSeenSec: 0 },
+                { name: "Sky Example", from: ["fixture"], firstSeenSec: 0 },
+                { name: "Lake Example", from: ["fixture"], firstSeenSec: 0 },
+            ],
+        });
+        meeting.transcript = [
+            { startSec: 2400, speaker: "Remote", text: "I have to go now." },
+            { startSec: 2500, speaker: "Other", text: "We can continue." },
+        ];
+        config.global.speakerLabels.voice.enabled = true;
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec: 2600, channel: "system" }],
+                speaking: [],
+                files: [],
+            })
+        );
+        const labelers = await import("./index");
+        spies.push(
+            spyOn(labelers, "proposeSpeakerLabels").mockResolvedValue([
+                { labeler: "voice", index: 0, seat: "call", person: "Sky Example", score: 0.82, reason: "named" },
+            ])
+        );
+        await runSuggest({ store, record, rules: ["speakers"] });
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        expect(reopened.participants[1]?.stays).toEqual([
+            { fromSec: 0, toSec: 2400, source: "platform-roster", leaveSource: "goodbye", confidence: 0.8 },
+        ]);
+        expect(reopened.participants[2]?.stays?.[0]?.toSec).toBeUndefined();
+    });
+
     test("voice names carry their source and score through transcript, rows and listen; human names do not", async () => {
         const { record, meeting, config } = await runnerFixture();
         meeting.transcript = [0, 10].map((startSec) => ({

@@ -1,5 +1,5 @@
 import type { MeetingParticipant, MeetingRecord } from "@genesiscz/utils/meetings/record";
-import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import type { LineEvidence, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { IdentifiedDeparture } from "./departure";
 
@@ -11,6 +11,18 @@ export function stayLeaveSource(stay: Stay): Stay["source"] | undefined {
         stay.leaveSource ??
         (stay.toSec !== undefined && (stay.source === "goodbye" || stay.source === "silence") ? stay.source : undefined)
     );
+}
+
+/** Re-evaluate inferred ends against the original join, including records predating leaveSource. */
+function beforeInferredLeave(stay: Stay): Stay {
+    const source = stayLeaveSource(stay);
+    return source === "goodbye" || source === "silence"
+        ? {
+              fromSec: stay.fromSec,
+              source: stay.leaveSource === undefined ? "platform-roster" : stay.source,
+              confidence: 1,
+          }
+        : stay;
 }
 
 /** A stay a person's presence starts from; `inexactEnd` when the platform did not record the leave exactly. */
@@ -53,7 +65,7 @@ function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | un
                 stay.toSec !== undefined &&
                 (stay.source === "hand" || stay.source === "attendance") &&
                 !stay.leaveSource
-                    ? { ...stay, leaveSource: stay.source }
+                    ? { ...stay, leaveSource: stay.source, confidence: stay.confidence ?? 1 }
                     : stay,
         }));
     }
@@ -75,6 +87,47 @@ export interface PersonStays {
     inexactEnds?: ReadonlySet<Stay>;
 }
 
+/** Read individual indicator times when available: two reads can fall inside one transcript line. */
+export function speechAfter(options: {
+    record: MeetingRecord;
+    name: string;
+    after: number;
+    lines?: readonly LineEvidence[];
+    speaking?: readonly SpeakingObservation[];
+    matchedVoices?: ReadonlyMap<number, string>;
+}): boolean {
+    const { record, name, after } = options;
+    const laterRead = options.speaking
+        ? options.speaking.some(
+              (read) => read.tSec > after && !read.speakingUnknown && read.speaking.some((one) => sameName(one, name))
+          )
+        : options.lines?.some(
+              (line) =>
+                  line.startSec > after &&
+                  !line.speakingUnknown &&
+                  Object.keys(line.speaking).some((one) => sameName(one, name))
+          );
+    return (
+        Boolean(laterRead) ||
+        record.items.some(
+            (item) =>
+                item.kind === "speaker-range" &&
+                item.status === "confirmed" &&
+                item.speaker &&
+                sameName(item.speaker, name) &&
+                item.toSec > after
+        ) ||
+        Boolean(
+            options.lines?.some((line) => {
+                const match = line.voice ?? record.evidence?.voice?.lines[String(line.index)];
+                const person =
+                    options.matchedVoices?.get(line.index) ?? (match?.quality === "matched" ? match.person : undefined);
+                return line.startSec > after && person && sameName(person, name);
+            })
+        )
+    );
+}
+
 /** Whether the record's stays put a person in the call at a time; true when it knows nothing of them. */
 export function storedPresentAt(record: MeetingRecord, name: string, sec: number): boolean {
     const stays = baselineStays(record, name);
@@ -89,58 +142,26 @@ export function personStays(options: {
     record: MeetingRecord;
     durationSec: number;
     lines?: readonly LineEvidence[];
+    speaking?: readonly SpeakingObservation[];
     departures?: readonly IdentifiedDeparture[];
+    matchedVoices?: ReadonlyMap<number, string>;
     silenceMinutes?: number;
     callSilent?: readonly { fromSec: number; toSec: number }[];
 }): PersonStays[] {
     return options.record.participants.map((person) => {
         const baseline = baselineStays(options.record, person.name) ?? [];
-        const stays: Stay[] = baseline.map(({ stay }) => {
-            const leaveSource = stayLeaveSource(stay);
-            return options.lines && (leaveSource === "goodbye" || leaveSource === "silence")
-                ? {
-                      fromSec: stay.fromSec,
-                      source: stay.leaveSource === undefined ? "platform-roster" : stay.source,
-                      confidence: 1,
-                  }
-                : { ...stay };
-        });
+        const stays: Stay[] = baseline.map(({ stay }) => ({ ...(options.lines ? beforeInferredLeave(stay) : stay) }));
         // An open stay, or one whose end the platform only bounded (`leftAtExact: false`), may end at an inferred
         // departure before that bound; an exact attendance leave stays as recorded.
         const inexact = new Set(stays.filter((_, index) => baseline[index]?.inexactEnd));
         const endable = (stay: Stay, atSec: number) =>
             stay.fromSec <= atSec && (stay.toSec === undefined || (inexact.has(stay) && atSec < stay.toSec));
-        const laterMatchedVoice = (afterSec: number) =>
-            options.lines?.some((line) => {
-                const voice = options.record.evidence?.voice?.lines[String(line.index)];
-                return (
-                    line.startSec > afterSec &&
-                    voice?.quality === "matched" &&
-                    voice.person &&
-                    sameName(voice.person, person.name)
-                );
-            }) ?? false;
-        // What vetoes an inferred departure: a confirmed range of theirs, or a matched voice of theirs, after it.
-        const laterEvidence = (afterSec: number) =>
-            options.record.items.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "confirmed" &&
-                    item.speaker &&
-                    sameName(item.speaker, person.name) &&
-                    item.toSec > afterSec
-            ) || laterMatchedVoice(afterSec);
+        const laterEvidence = (after: number) => speechAfter({ ...options, name: person.name, after });
         for (const event of options.departures ?? []) {
             if (!sameName(event.name, person.name)) {
                 continue;
             }
-            const later = options.lines?.some(
-                (line) =>
-                    line.startSec > event.atSec + 5 &&
-                    !line.speakingUnknown &&
-                    Object.keys(line.speaking).some((name) => sameName(name, person.name))
-            );
-            if (later || laterEvidence(event.atSec + 5)) {
+            if (laterEvidence(event.atSec + 5)) {
                 continue;
             }
             const stay = stays.findLast((one) => endable(one, event.atSec));
@@ -151,42 +172,46 @@ export function personStays(options: {
                 stay.confidence = event.reason === "attendance" ? 1 : 0.8;
             }
         }
-        if (options.silenceMinutes && options.callSilent?.length && !person.self) {
-            const spoken =
-                options.lines?.filter(
-                    (line) =>
-                        !line.speakingUnknown && Object.keys(line.speaking).some((name) => sameName(name, person.name))
-                ) ?? [];
-            const last = spoken.at(-1);
-            const stay = last && stays.findLast((one) => endable(one, last.endSec));
-            const quiet =
-                last &&
-                options.callSilent.find(
-                    (span) =>
-                        span.fromSec <= last.endSec + 5 && span.toSec >= last.endSec + options.silenceMinutes! * 60
-                );
-            // The same vetoes as an explicit departure: a later confirmed range or a later matched voice of theirs.
-            const laterVoice = last && laterEvidence(last.endSec + 5);
-            if (
-                last &&
-                stay &&
-                quiet &&
-                !laterVoice &&
-                options.durationSec - last.endSec >= options.silenceMinutes * 60
-            ) {
-                inexact.delete(stay);
-                stay.toSec = last.endSec;
-                stay.leaveSource = "silence";
-                stay.confidence = 0.5;
+        if (
+            options.silenceMinutes &&
+            options.callSilent?.length &&
+            !person.self &&
+            !options.record.seats?.room.some((name) => sameName(name, person.name))
+        ) {
+            const lastSec = options.speaking
+                ? options.speaking.findLast(
+                      (read) => !read.speakingUnknown && read.speaking.some((name) => sameName(name, person.name))
+                  )?.tSec
+                : options.lines?.findLast(
+                      (line) =>
+                          !line.speakingUnknown &&
+                          Object.keys(line.speaking).some((name) => sameName(name, person.name))
+                  )?.endSec;
+            if (lastSec !== undefined) {
+                const stay = stays.findLast((one) => endable(one, lastSec));
+                const until = lastSec + options.silenceMinutes * 60;
+                const quiet = options.callSilent.some((span) => span.fromSec <= lastSec + 5 && span.toSec >= until);
+                if (stay && quiet && options.durationSec >= until && !laterEvidence(lastSec + 5)) {
+                    inexact.delete(stay);
+                    stay.toSec = lastSec;
+                    stay.leaveSource = "silence";
+                    stay.confidence = 0.5;
+                }
             }
         }
         return { name: person.name, self: person.self, stays, ...(inexact.size > 0 ? { inexactEnds: inexact } : {}) };
     });
 }
 
-export function rosterPresence(record: MeetingRecord, durationSec: number): Presence[] {
+export function rosterPresence(
+    record: MeetingRecord,
+    durationSec: number,
+    options?: { rederiveLeaves: boolean }
+): Presence[] {
     return personStays({ record, durationSec }).flatMap((person) =>
-        person.stays.map((stay) => presenceOf(person, stay, durationSec))
+        person.stays.map((stay) =>
+            presenceOf(person, options?.rederiveLeaves ? beforeInferredLeave(stay) : stay, durationSec)
+        )
     );
 }
 
