@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { HistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { changesCache } from "@genesiscz/utils/agent-sessions/readers/changes-window-cache";
 import type { SessionChangesRead, SessionChangesWindow } from "@genesiscz/utils/agent-sessions/types";
 import { readChangeLog } from "@genesiscz/utils/agents/change-log";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
@@ -9,6 +11,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import {
     type ComputedSessionChanges,
+    changesFilesystem,
     computeChanges,
     computeSessionChanges,
     lastChangedTurns,
@@ -137,6 +140,17 @@ export interface ChangesRound {
     fallback?: string;
 }
 
+interface RecentAnswer {
+    key: string;
+    unchanged: () => boolean;
+    changes: ComputedSessionChanges & { transcriptPath: string };
+}
+function copyAnswer(changes: RecentAnswer["changes"]): RecentAnswer["changes"] {
+    const { blobs, ...rest } = changes;
+    return { ...structuredClone(rest), blobs: new Map(Array.from(blobs, ([oid, bytes]) => [oid, Buffer.from(bytes)])) };
+}
+const answers = changesCache<{ last?: RecentAnswer }>("session-changes recent answers");
+
 export function loadRecentSessionChanges(input: {
     sessionId: string;
     count: number;
@@ -147,10 +161,41 @@ export function loadRecentSessionChanges(input: {
     using _rounds = profiler.scope("session-changes").section("rounds");
     const { sessionId, count } = input;
     const rows = input.log ?? readChangeLog(sessionId);
-    const full = () => loadSessionChanges({ sessionId, log: rows });
+    const verify = env.agents.verifyChangesWindow();
+    const hash = createHash("sha256");
+    for (let i = 0; i < rows.length; i += 128) {
+        hash.update(SafeJSON.stringify(rows.slice(i, i + 128), { strict: true }));
+    }
+    const key = `${count}:${input.initialTurns}:${hash.digest("hex")}`;
+    const entry = answers.get(sessionId, () => ({}));
+    if (!verify && entry.last?.key === key && entry.last.unchanged()) {
+        log.debug({ session: sessionId, count, rounds: 0 }, "recent session changes");
+        return copyAnswer(entry.last.changes);
+    }
+    entry.last = undefined;
+    const filesystem = changesFilesystem();
+    const full = () => loadSessionChanges({ sessionId, log: rows, ...filesystem });
+    let priorProviders: string[] = [];
+    const remember = (result: ReturnType<typeof full>, window?: SessionChangesWindow) => {
+        const current = window?.unchanged;
+        if (current && !verify && result.transcriptPath && result.transcriptPath === window?.transcriptPath) {
+            entry.last = {
+                key,
+                changes: copyAnswer({ ...result, transcriptPath: result.transcriptPath }),
+                unchanged: () =>
+                    priorProviders.every(
+                        (kind) => !historyProvider(kind).reader.readChangesWindow(sessionId, { turns: requested })
+                    ) &&
+                    current() &&
+                    filesystem.unchanged(),
+            };
+        }
+        return result;
+    };
     let requested = input.initialTurns ?? Math.max(2 * count, 8);
     let round = 1;
     const covers = new Set<string>();
+    let settled: { changes: ComputedSessionChanges; unchanged: () => boolean } | undefined;
     const total = { late: 0, writers: 0, rows: 0 };
     const fallback = (reason: string) => {
         const info = { session: sessionId, round, requested, count, ...total, changed: 0, fallback: reason };
@@ -165,6 +210,7 @@ export function loadRecentSessionChanges(input: {
 
     for (; round <= 17; round++) {
         let window: SessionChangesWindow | undefined;
+        priorProviders = [];
         for (const kind of ACCOUNT_PROVIDER_ALIASES) {
             const read = historyProvider(kind).reader.readChangesWindow(sessionId, {
                 turns: requested,
@@ -177,15 +223,20 @@ export function loadRecentSessionChanges(input: {
             if (read && /^F[1-7]/.test(read.reason)) {
                 return fallback(read.reason);
             }
+            priorProviders.push(kind);
         }
         if (!window || window.complete) {
-            return fallback(window ? "F1" : "F4");
+            return remember(fallback(window ? "F1" : "F4"), window);
         }
         const current = window;
         const { changes, cover, triggers } = profiler
             .scope("session-changes")
             .measure("compute", () =>
-                computeChanges({ sessionId, log: rows, transcript: current.transcript }, current)
+                computeChanges(
+                    { sessionId, log: rows, transcript: current.transcript, ...filesystem },
+                    current,
+                    settled?.unchanged() ? settled.changes : undefined
+                )
             );
         const changed = changes.turns.filter((turn) => turn.files.length).length;
         total.late += window.lateResultCovers ?? 0;
@@ -204,7 +255,7 @@ export function loadRecentSessionChanges(input: {
                 },
                 "recent session changes"
             );
-            if (env.agents.verifyChangesWindow()) {
+            if (verify) {
                 const expected = full();
                 const selected = lastChangedTurns(changes, count);
                 const other = lastChangedTurns(expected, count);
@@ -233,14 +284,14 @@ export function loadRecentSessionChanges(input: {
                     return expected;
                 }
             }
-            return { ...changes, transcriptPath: window.transcriptPath };
+            return remember({ ...changes, transcriptPath: window.transcriptPath }, window);
         }
         for (const id of cover) {
             covers.add(id);
         }
-        if (changed < count) {
-            requested *= 2;
-        }
+        settled = !cover.length && window.unchanged ? { changes, unchanged: window.unchanged } : undefined;
+        // A writer cover can expose another writer one turn earlier, even when we already have enough changes.
+        requested = Math.min(window.sessionTurns, 2 * Math.max(1, requested, window.windowTurns));
     }
     return fallback("F2");
 }

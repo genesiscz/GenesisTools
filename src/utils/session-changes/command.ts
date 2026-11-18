@@ -132,6 +132,8 @@ export interface AnalyzeCommandInput {
     files?: Map<string, string>;
     /** Nesting of scripts analyzed through `files`; stops runaway recursion. */
     depth?: number;
+    /** A script the interpreter looked up, including one missing from the supplied file map. */
+    onScript?: (path: string) => void;
 }
 
 /**
@@ -323,12 +325,22 @@ export function analyzeCommand(input: AnalyzeCommandInput): CommandAnalysis {
                         : /\/.*\.(?:sh|zsh|bash)$/.test(invoked)
                           ? invoked
                           : null;
-                const script = scriptPath ? heredocFiles.get(absolute(scriptPath)) : undefined;
+                const targetScript = scriptPath ? absolute(scriptPath) : null;
+                if (targetScript) {
+                    input.onScript?.(targetScript);
+                }
+                const script = targetScript ? heredocFiles.get(targetScript) : undefined;
 
                 if (script !== undefined && depth < 3) {
                     mergeAnalysis(
                         analysis,
-                        analyzeCommand({ command: script, cwd: current, files: heredocFiles, depth: depth + 1 })
+                        analyzeCommand({
+                            command: script,
+                            cwd: current,
+                            files: heredocFiles,
+                            depth: depth + 1,
+                            onScript: input.onScript,
+                        })
                     );
                     continue;
                 }

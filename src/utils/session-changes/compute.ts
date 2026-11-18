@@ -59,6 +59,25 @@ function directoryNow(path: string): boolean {
     }
 }
 
+/** All rounds of an ask consult the same repository roots and directory answers. Recheck them on a warm hit. */
+export function changesFilesystem() {
+    function remember<T>(read: (path: string) => T) {
+        const values = new Map<string, T>();
+        return {
+            get(path: string) {
+                if (!values.has(path)) {
+                    values.set(path, read(path));
+                }
+                return values.get(path) as T;
+            },
+            unchanged: () => [...values].every(([path, value]) => read(path) === value),
+        };
+    }
+    const roots = remember(repoRootOf);
+    const dirs = remember(directoryNow);
+    return { repoRoot: roots.get, isDirectory: dirs.get, unchanged: () => roots.unchanged() && dirs.unchanged() };
+}
+
 /** One detected change before per-path merging. */
 interface Touch {
     path: string;
@@ -615,7 +634,11 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     return computeChanges(input, null).changes;
 }
 
-export function computeChanges(input: SessionChangesInput, window: SessionChangesWindow | null) {
+export function computeChanges(
+    input: SessionChangesInput,
+    window: SessionChangesWindow | null,
+    settled?: ComputedSessionChanges
+) {
     const cover = new Set<string>();
     const triggers = { writers: 0, rows: 0 };
     const rows = input.log ?? [];
@@ -667,11 +690,25 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
         : null;
     const inScope = (turnId: string) => scope === null || scope.has(turnId);
     const turns = new Map<string, TurnChanges>();
+    const previous = new Map(settled?.turns.map((turn) => [turn.turnId, turn]));
+    const reused = new Set<string>();
 
     for (const turn of input.transcript?.turns ?? []) {
-        turns.set(turn.turnId, { turnId: turn.turnId, index: turn.index, at: turn.at, files: [], excluded: [] });
+        // Only prompt turns have a fixed position. Rediscover log-only and phantom turns in this window's order.
+        const ready = previous.get(turn.turnId);
+        if (ready) {
+            reused.add(turn.turnId);
+        }
+        turns.set(turn.turnId, {
+            turnId: turn.turnId,
+            index: turn.index,
+            at: turn.at,
+            files: ready?.files ?? [],
+            excluded: ready?.excluded ?? [],
+        });
     }
 
+    const promptTurns = window?.finishedShellTurns ? new Set(turns.keys()) : null;
     for (const row of rows) {
         if (!turns.has(row.turn) && !window?.earlierTurns.has(row.turn)) {
             turns.set(row.turn, { turnId: row.turn, index: null, at: row.ts, files: [], excluded: [] });
@@ -692,6 +729,10 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
             return false;
         }
         if (row.toolUseId && !named && window.shellCalls.has(row.toolUseId)) {
+            const finishedTurn = window.finishedShellTurns?.get(row.toolUseId);
+            if (finishedTurn && window.earlierTurns.has(finishedTurn) && !promptTurns?.has(row.turn)) {
+                return false;
+            }
             cover.add(row.toolUseId);
             triggers.rows++;
             return false;
@@ -760,7 +801,7 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
 
         if (window) {
             const trace = keptByCall.get(call.id);
-            if (trace && trusted) {
+            if (trace && trusted && !reused.has(call.turnId)) {
                 for (const [path] of trace.read) {
                     const prior = written.trustedSince(path);
                     const writer = window.writersOf(path).findLast((candidate) => {
@@ -804,7 +845,7 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
     };
 
     for (const call of calls) {
-        if (!inScope(call.turnId) || window?.earlierTurns.has(call.turnId)) {
+        if (!inScope(call.turnId) || window?.earlierTurns.has(call.turnId) || reused.has(call.turnId)) {
             continue;
         }
 
@@ -841,7 +882,7 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
     const fileRows = input.transcript ? [] : rows.filter((row) => row.source !== "bash");
 
     for (const row of [...orphans, ...fileRows]) {
-        if (!inScope(row.turn) || window?.earlierTurns.has(row.turn)) {
+        if (!inScope(row.turn) || window?.earlierTurns.has(row.turn) || reused.has(row.turn)) {
             continue;
         }
 
@@ -867,7 +908,7 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
         ]);
     }
 
-    const blobs = new Map<string, Buffer>();
+    const blobs = new Map(settled?.blobs);
 
     for (const [turnId, touches] of touchesByTurn) {
         let turn = turns.get(turnId);

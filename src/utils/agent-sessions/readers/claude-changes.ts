@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { SessionToolCall, SessionTranscript } from "@genesiscz/utils/session-changes/types";
 import type { SessionChangesRead } from "../types";
-import { CHUNK_BYTES, changesCache } from "./changes-window-cache";
+import { CHUNK_BYTES, changesCache, type LineFold, sameGeneration } from "./changes-window-cache";
 import {
     applyToolResult,
     backupReader,
@@ -68,17 +68,25 @@ export function advanceFrom(
     path: string,
     agentId: string | null,
     fold: FileFold | null,
-    start: number
+    start: number,
+    verified?: LineFold<unknown>
 ): FileFold | null {
     const fd = openSync(path, "r");
     try {
-        const { size, ino } = fstatSync(fd);
+        const stat = fstatSync(fd);
+        const { size, ino } = stat;
+        if (verified && !sameGeneration(verified, stat)) {
+            return null;
+        }
         if (start > size) {
             return null;
         }
         const candidate = fold?.start === start && fold.ino === ino && fold.consumed <= size;
-        let prefix = readPrefixMark(fd, candidate ? fold.consumed : start);
-        const usable = candidate && prefix.digest() === fold.mark;
+        if (verified && candidate && fold.consumed === verified.consumed && fold.mark === verified.mark) {
+            return fold;
+        }
+        let prefix = verified && !candidate ? undefined : readPrefixMark(fd, candidate ? fold.consumed : start);
+        const usable = candidate && prefix?.digest() === fold.mark;
         const current: FileFold =
             usable && fold
                 ? fold
@@ -123,16 +131,19 @@ export function advanceFrom(
             const lines = splitLinesSync([bytes.subarray(0, lastNewline)], { containing: PARSED_LINE_MARKERS });
             parseLines(lines, agentId, current.state, current.cursor, hooks);
             current.consumed += lastNewline + 1;
-            prefix.update(bytes.subarray(0, lastNewline + 1));
+            prefix?.update(bytes.subarray(0, lastNewline + 1));
             carry = Buffer.from(bytes.subarray(lastNewline + 1));
         }
 
-        const checkpoint = prefix.finish();
-        if (!checkpoint.stable) {
+        const checkpoint = prefix?.finish();
+        if (
+            checkpoint?.stable === false ||
+            (verified && (current.consumed !== verified.consumed || !sameGeneration(verified, fstatSync(fd))))
+        ) {
             return null;
         }
 
-        current.mark = checkpoint.digest;
+        current.mark = checkpoint?.digest ?? verified?.mark ?? "";
         const tail = carry.toString("utf8");
         if (tail.length > 0 && isParsedLine(tail)) {
             try {

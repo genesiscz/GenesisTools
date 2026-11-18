@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -599,10 +599,30 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
 }
 
 /** Reads one of Claude's checkpoint backups of a session by file name, or returns null. */
-export function backupReader(sessionId: string): (name: string) => string | null {
-    const backups = join(nativeHome("claude"), "file-history", sessionId);
+function backupsDirectory(sessionId: string): string {
+    return join(nativeHome("claude"), "file-history", sessionId);
+}
+
+/** The full-read fallback may consult any checkpoint, including one created after this ask. */
+export function backupFiles(sessionId: string): string[] {
+    const dir = backupsDirectory(sessionId);
+    try {
+        return readdirSync(dir)
+            .sort()
+            .map((name) => join(dir, name));
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+        throw error;
+    }
+}
+
+export function backupReader(sessionId: string, observe?: (path: string) => void): (name: string) => string | null {
+    const backups = backupsDirectory(sessionId);
     return (name) => {
         const path = join(backups, basename(name));
+        observe?.(path);
 
         try {
             return readFileSync(path, "utf8");

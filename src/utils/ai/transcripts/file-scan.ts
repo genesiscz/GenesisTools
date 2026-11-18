@@ -207,13 +207,20 @@ class PrefixHash {
     }
 }
 
+// hashRange is synchronous and PrefixHash copies its tail. Verifying hundreds of files can share this buffer.
+let hashBuffer: Buffer | undefined;
+
 /** Feeds the bytes `[from, until)` of the file to the hash, in reads of at most 4 MB. */
 function hashRange(fd: number, hash: PrefixHash, from: number, until: number): void {
     if (until <= from) {
         return;
     }
 
-    const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, until - from));
+    const length = Math.min(CHUNK_BYTES, until - from);
+    if (!hashBuffer || hashBuffer.length < length) {
+        hashBuffer = Buffer.allocUnsafe(length);
+    }
+    const buffer = hashBuffer;
     let position = from;
     while (position < until) {
         const read = readSync(fd, buffer, 0, Math.min(buffer.length, until - position), position);

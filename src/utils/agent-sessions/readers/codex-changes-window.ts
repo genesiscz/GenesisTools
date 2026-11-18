@@ -1,5 +1,7 @@
 import { statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
 import type { ChangesWindowRead, ChangesWindowRequest, WindowWriter } from "../types";
 import { advanceLines, CHUNK_BYTES, changesCache, type LineFold } from "./changes-window-cache";
@@ -44,6 +46,7 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
             return { supported: false, reason: "F5: small rollout" };
         }
         const cache = windows.get(path, () => ({}));
+        const identity = fileIdentity(path);
         cache.facts = advanceLines({
             path,
             kept: cache.facts,
@@ -142,6 +145,8 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
             supported: true,
             window: {
                 transcriptPath: path,
+                unchanged: () =>
+                    findCodexRollout(sessionId) === path && isDeepStrictEqual(fileIdentity(path), identity),
                 transcript,
                 earlierTurns,
                 editedDirs: [...facts.dirs],

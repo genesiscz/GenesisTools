@@ -1,9 +1,8 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
-import { readLinesBackwardSync, readLinesSync } from "@genesiscz/utils/fs/read-lines";
+import { readLinesBackwardSync, readLinesSync, readPlainLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmBashWrite } from "@genesiscz/utils/rm";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -197,21 +196,24 @@ function parseLine(line: string): ChangeLogRow | null {
  * caller can say so. A missing log has no rows and carries `missing: true`; any other read error throws.
  */
 export function readChangeLogFile(path: string): { rows: ChangeLogRow[]; skipped: number; missing?: true } {
-    const read = readJsonlRows<unknown>(path);
     const rows: ChangeLogRow[] = [];
-    let skipped = read.skipped;
-
-    for (const value of read.rows) {
-        const row = parseChangeLogRow(value);
-
-        if (row) {
-            rows.push(row);
-        } else {
-            skipped++;
+    let skipped = 0;
+    try {
+        for (const line of readPlainLinesSync(path, 256 * 1024)) {
+            const row = parseLine(line);
+            if (row) {
+                rows.push(row);
+            } else if (line.trim()) {
+                skipped++;
+            }
         }
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return { rows: [], skipped: 0, missing: true };
+        }
+        throw error;
     }
-
-    return { rows, skipped, ...(read.missing ? { missing: true as const } : {}) };
+    return { rows, skipped };
 }
 
 /** Every row of one session's change log; none when it has no log. Throws on an id that is not one path segment. */
