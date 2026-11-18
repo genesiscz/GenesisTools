@@ -115,6 +115,8 @@ export type FixDecision =
 export interface FixContext<A, C> {
     args: A;
     config: C;
+    /** The machine facts, so a fix can see whether a person at a terminal can watch a build. */
+    facts: Facts;
     failed: { way: WayName; need: NeedSpec; code: UnavailableCode };
     build(part?: AppPartId | null): FixDecision;
     offerBuild(part?: AppPartId | null): FixDecision;

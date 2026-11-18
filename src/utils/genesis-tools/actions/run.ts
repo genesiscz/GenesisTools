@@ -124,6 +124,7 @@ async function firstFailedNeed(params: {
             const fixContext: FixContext<unknown, Record<string, unknown>> = {
                 args: params.args,
                 config: params.config,
+                facts: params.deps.facts,
                 failed: { way: params.way, need, code: result.code },
                 build: (part = null) => ({ kind: "build", part }),
                 offerBuild: (part = null) => ({ kind: "offer-build", part }),

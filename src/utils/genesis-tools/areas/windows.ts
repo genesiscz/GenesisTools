@@ -109,6 +109,12 @@ export const windows = defineArea({
                 const policy = ctx.config.fix ?? "offer";
                 const part = ctx.failed.need.kind === "app.part" ? ctx.failed.need.part : null;
 
+                // A notification click runs with no terminal and is killed after 30 s, so it never starts a build
+                // (40 s to over 2 min): the outcome names the fix command instead.
+                if (!ctx.facts.hasTerminal()) {
+                    return ctx.skip();
+                }
+
                 if (policy === "build") {
                     return ctx.build(part);
                 }
