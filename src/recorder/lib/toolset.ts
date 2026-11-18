@@ -127,6 +127,7 @@ import {
     spreadTimes,
 } from "./moments";
 import { serviceRoutedMovie } from "./movie-client";
+import { recordingAudioIssues } from "./proxy";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
 import { type ScreenHitWithOps, screenHitsWithOps } from "./screen-ops";
@@ -1594,6 +1595,7 @@ export class Movie {
     async check() {
         const opened = await openProject(this.recording);
         const issues = checkProject(opened.project, facts(opened));
+        issues.push(...recordingAudioIssues(opened.project.source.video));
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
         // ok: nothing that breaks the export; clean: nothing to look at either (a "note" is the export handling it).
         // R6 9: the groups (one per kind, with a count) and their lines come first; issues stays the full list.

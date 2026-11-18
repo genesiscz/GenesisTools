@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import type { AudioFacts } from "@genesiscz/utils/recording-editor/audio-lanes";
 import {
     applyOp,
     type EditOp,
@@ -16,6 +17,7 @@ import {
     ARBITER_BUSY_WAIT_MS,
     computeEdit,
     EDIT_REPLAYS,
+    editorAudioFacts,
     editPathOf,
     inItsFolder,
     type OwnedEdit,
@@ -142,6 +144,7 @@ export class EditSession {
     private constructor(
         readonly path: string,
         opened: { project: EditProject; fresh: boolean; text: string | null },
+        private readonly sound: { movie: string; facts?: AudioFacts },
         private readonly options: { onChange: (change: ProjectChanged) => void; saveDelayMs: number }
     ) {
         this.project = opened.project;
@@ -169,18 +172,30 @@ export class EditSession {
         value: string,
         options: { onChange: (change: ProjectChanged) => void; saveDelayMs?: number }
     ): Promise<EditSession> {
-        const opened = await openProject(value);
+        const opened = await openProject(value, { prepareAudio: true });
         // The text and the project of one read, so a save between two reads is never taken for this session's own.
         const disk = readDiskFile(opened.path);
+        const base = disk ? { ...disk, fresh: false } : { ...opened, text: null };
+        const movie = base.project.source.video;
+        const facts =
+            (opened.fresh || opened.audioFacts) && movie === opened.project.source.video
+                ? opened.audioFacts
+                : await editorAudioFacts({ project: base.project, prepare: true });
         log.debug({ path: opened.path, revision: opened.project.revision, fresh: opened.fresh }, "edit session opened");
-        return new EditSession(opened.path, disk ? { ...disk, fresh: false } : { ...opened, text: null }, {
-            onChange: options.onChange,
-            saveDelayMs: options.saveDelayMs ?? SAVE_DELAY_MS,
-        });
+        return new EditSession(
+            opened.path,
+            base,
+            { movie, facts },
+            {
+                onChange: options.onChange,
+                saveDelayMs: options.saveDelayMs ?? SAVE_DELAY_MS,
+            }
+        );
     }
 
-    get current(): { project: EditProject; revision: number } {
-        return { project: this.project, revision: this.project.revision };
+    get current(): { project: EditProject; revision: number; audioFacts?: AudioFacts } {
+        const audioFacts = this.project.source.video === this.sound.movie ? this.sound.facts : undefined;
+        return { project: this.project, revision: this.project.revision, ...(audioFacts ? { audioFacts } : {}) };
     }
 
     get undoDepth(): number {
@@ -197,7 +212,10 @@ export class EditSession {
     }
 
     /** Applies ops as one change and one undo step. `baseRevision`: refused when the edit is at another revision. */
-    apply(ops: readonly EditOp[], options: ChangeWriter & { baseRevision?: number }): Promise<EditAnswer> {
+    apply(
+        ops: readonly EditOp[],
+        options: ChangeWriter & { baseRevision?: number; playheadUs?: number }
+    ): Promise<EditAnswer> {
         return this.exclusive(async () => {
             this.syncWithDisk();
 
@@ -209,7 +227,14 @@ export class EditSession {
 
             let base = this.project;
             const recordedMarkers = recordedMarkersOf({ path: this.path, project: base });
-            let edit = await computeEdit({ project: base, ops, fresh: this.fresh, recordedMarkers });
+            let edit = await computeEdit({
+                project: base,
+                ops,
+                fresh: this.fresh,
+                recordedMarkers,
+                audioFacts: this.current.audioFacts,
+                playheadUs: options.playheadUs,
+            });
 
             // A save during the computation (the timer, a render) may have taken in another writer's file: the ops
             // run again on the edit as it is now, with the measurements they had, so this change keeps that file.
@@ -497,7 +522,12 @@ export class EditSession {
             gesture.waiting = undefined;
 
             try {
-                const edit = await computeEdit({ project: this.project, ops: preview.ops, fresh: false });
+                const edit = await computeEdit({
+                    project: this.project,
+                    ops: preview.ops,
+                    fresh: false,
+                    audioFacts: this.current.audioFacts,
+                });
                 gesture.ops = preview.ops;
                 gesture.draft = edit.project;
                 preview.answer.resolve({ project: edit.project });

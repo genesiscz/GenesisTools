@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import { type AudioFacts, audioLanesOf } from "@genesiscz/utils/recording-editor/audio-lanes";
 import { bubbleFromSidecar, cameraMoviePath, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import {
@@ -59,7 +60,11 @@ import {
 } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { audioFileDurationUs, voiceoverFile } from "@genesiscz/utils/recording-editor/voiceovers";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
-import { readRecordingManifest, readRecordingManifestSafe } from "@genesiscz/utils/screen-recorder/library";
+import {
+    type RecordingManifest,
+    readRecordingManifest,
+    readRecordingManifestSafe,
+} from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -73,6 +78,7 @@ import {
     exportChapterPoints,
     recordedMarkersOf,
 } from "./moments";
+import { PROXY_FILE, proxySoundSources } from "./proxy";
 import { hostExport } from "./service-client";
 
 const { log } = logger.scoped("recorder-edit");
@@ -82,6 +88,8 @@ export interface OpenedProject {
     project: EditProject;
     /** The file did not exist: this project keeps the whole movie and is not saved yet. */
     fresh: boolean;
+    /** Runtime facts only. A fresh project can pass its first probe on to the session. */
+    audioFacts?: AudioFacts;
     /** The source stretches a removeIdle op cut, in microseconds. */
     removedIdleUs?: Array<[number, number]>;
     /** A normalize op: the loudness it measured at volume 1 (null: no audio) and the volume it set. */
@@ -174,11 +182,11 @@ export const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
  * current.
  */
 export interface OwnedEdit {
-    readonly current: { project: EditProject; revision: number };
+    readonly current: { project: EditProject; revision: number; audioFacts?: AudioFacts };
     readonly undoDepth: number;
     apply(
         ops: readonly EditOp[],
-        options: { by: string; baseRevision?: number }
+        options: { by: string; baseRevision?: number; playheadUs?: number }
     ): Promise<{
         project: EditProject;
         warnings?: string[];
@@ -231,13 +239,55 @@ export function editPathOf(value: string): string {
     return resolved.endsWith(".json") ? resolved : projectPathFor(movieFor(resolved));
 }
 
-export async function openProject(value: string): Promise<OpenedProject> {
+/** The actual movie tracks and the original files that can replace the mixed track of a frames proxy. */
+export async function audioFactsOf(
+    movie: string,
+    options: { manifest?: RecordingManifest; prepare?: boolean } = {}
+): Promise<AudioFacts> {
+    const movieTracks = await audioTrackCount(movie);
+    if (basename(movie) !== PROXY_FILE) {
+        return { movieTracks, mixedFrom: [] };
+    }
+
+    const folder = dirname(movie);
+    const manifest = options.manifest ?? readRecordingManifestSafe(folder)?.manifest;
+    return { movieTracks, mixedFrom: await proxySoundSources({ folder, manifest, prepare: options.prepare ?? false }) };
+}
+
+/** Opening an edit with its movie offline still permits inspecting the project and its undo history. */
+export async function editorAudioFacts(options: {
+    project: EditProject;
+    manifest?: RecordingManifest;
+    prepare: boolean;
+}): Promise<AudioFacts | undefined> {
+    const movie = options.project.source.video;
+    if (!existsSync(movie)) {
+        return undefined;
+    }
+    try {
+        const facts = await audioFactsOf(movie, options);
+        const lanes = options.project.audio.lanes;
+        if (basename(movie) === PROXY_FILE && !facts.mixedFrom.length && lanes) {
+            // A saved file lane still replaces track 0 if an original goes missing. Re-enabling the mix here
+            // would play any surviving source twice and unmute a source the user had muted.
+            facts.mixedFrom = lanes.flatMap(({ source, file, offsetMs }) =>
+                file && (source === "mic" || source === "system") ? [{ source, file, offsetMs }] : []
+            );
+        }
+        return facts;
+    } catch (error) {
+        log.warn({ movie, error }, "the editor cannot read the recording's sound sources");
+        return undefined;
+    }
+}
+
+export async function openProject(value: string, options: { prepareAudio?: boolean } = {}): Promise<OpenedProject> {
     const resolved = resolveRecording(value);
     const path = editPathOf(value);
     const owned = ownedEdit(path);
 
     if (owned) {
-        return { path, project: owned.current.project, fresh: false };
+        return { path, project: owned.current.project, audioFacts: owned.current.audioFacts, fresh: false };
     }
 
     if (existsSync(path)) {
@@ -263,7 +313,20 @@ export async function openProject(value: string): Promise<OpenedProject> {
         project.cursor = { show: false, size: 1, smoothing: 0.5, hideAfterMs: 0 };
     }
 
-    return { path, project: camera ? { ...project, camera: bubbleFromSidecar(camera) } : project, fresh: true };
+    const audioFacts = await editorAudioFacts({ project, manifest, prepare: options.prepareAudio ?? false });
+    if (audioFacts) {
+        const lanes = audioLanesOf(project, audioFacts);
+        if (lanes.length > 1) {
+            project.audio.lanes = lanes;
+        }
+    }
+
+    return {
+        path,
+        project: camera ? { ...project, camera: bubbleFromSidecar(camera) } : project,
+        fresh: true,
+        audioFacts,
+    };
 }
 
 /**
@@ -320,6 +383,8 @@ export async function computeEdit({
     ops,
     fresh,
     facts: known,
+    playheadUs,
+    audioFacts,
     recordedMarkers = [],
 }: {
     project: EditProject;
@@ -327,6 +392,9 @@ export async function computeEdit({
     /** The project has no file yet: it changes, and is saved, even when the ops change nothing. */
     fresh: boolean;
     facts?: readonly OpFacts[];
+    /** The active window's playhead in source time, when supplied. */
+    playheadUs?: number;
+    audioFacts?: AudioFacts;
     /** The markers set while it recorded (recordedMarkersOf), so a cut that hides one says so. */
     recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
 }): Promise<ComputedEdit> {
@@ -339,7 +407,7 @@ export async function computeEdit({
 
     for (const [index, op] of ops.entries()) {
         try {
-            const measured = known?.[index] ?? (await probeFacts(next, op));
+            const measured = known?.[index] ?? (await probeFacts({ project: next, op, audioFacts, playheadUs }));
             const before = next;
             next = applyOp(next, op, measured);
             warnings.push(...opPlacementWarnings(op, before, next));
@@ -405,19 +473,19 @@ export const ARBITER_BUSY_WAIT_MS = 25;
 export async function editProject(
     value: string,
     ops: readonly EditOp[],
-    options: { baseRevision?: number } = {}
+    options: { baseRevision?: number; playheadUs?: number } = {}
 ): Promise<OpenedProject> {
     const path = editPathOf(value);
     const owned = ownedEdit(path);
     const { baseRevision } = options;
 
     if (owned) {
-        const answer = await owned.apply(ops, { by: "agent", baseRevision });
+        const answer = await owned.apply(ops, { by: "agent", ...options });
         owned.flush();
         return { path, fresh: false, ...answer };
     }
 
-    let opened = await openProject(value);
+    let opened = await openProject(value, { prepareAudio: true });
 
     if (baseRevision !== undefined && opened.project.revision !== baseRevision) {
         throw notAtBase(opened.project.revision, baseRevision);
@@ -427,6 +495,8 @@ export async function editProject(
         project: opened.project,
         ops,
         fresh: opened.fresh,
+        audioFacts: opened.audioFacts,
+        playheadUs: options.playheadUs,
         recordedMarkers: recordedMarkersOf(opened),
     });
     let saved: EditProject | undefined;
@@ -637,7 +707,33 @@ export async function transcriptWords(value: string, options: { at?: TimeValue }
 }
 
 /** What an op needs measured on the movie before it applies: idle stretches, the loudness, or the transcript. */
-async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
+async function probeFacts({
+    project,
+    op,
+    audioFacts,
+    playheadUs,
+}: {
+    project: EditProject;
+    op: EditOp;
+    audioFacts?: AudioFacts;
+    playheadUs?: number;
+}): Promise<OpFacts> {
+    if (op.op === "audioLane" && !project.audio.lanes) {
+        return { audioFacts: audioFacts ?? (await audioFactsOf(project.source.video, { prepare: true })) };
+    }
+
+    if (op.op === "layerAdd") {
+        const facts: OpFacts = op.startUs === undefined && playheadUs !== undefined ? { playheadUs } : {};
+        if (op.kind === "video" && op.endUs === undefined) {
+            const info = await probeVideo({
+                input: resolve(dirname(project.source.video), op.file),
+                limits: EDITOR_VIDEO_LIMITS,
+            });
+            facts.videoDurationUs = info.durationUs;
+        }
+        return facts;
+    }
+
     if (op.op === "removeIdle") {
         return {
             idleUs: await findIdle({
@@ -981,7 +1077,7 @@ function overwritesInput(target: string, inputs: string[]): ExportAnswer | undef
     return input ? { ok: false, error: `the export would overwrite its input ${input}; pick another file` } : undefined;
 }
 
-/** The files an export of the edit reads: the source movie, the camera movie, the music and every voiceover. */
+/** The source movie and every media input an export must never replace. */
 export function exportInputsOf(project: EditProject): string[] {
     const video = project.source.video;
     return [
@@ -989,6 +1085,8 @@ export function exportInputsOf(project: EditProject): string[] {
         ...(project.camera ? [cameraMoviePath(project.camera, video)] : []),
         ...(project.audio.music ? [resolve(dirname(video), project.audio.music.file)] : []),
         ...(project.audio.voiceovers ?? []).map((voiceover) => resolve(dirname(video), voiceover.file)),
+        ...(project.audio.lanes ?? []).flatMap((lane) => (lane.file ? [resolve(dirname(video), lane.file)] : [])),
+        ...(project.layers?.media ?? []).map((layer) => resolve(dirname(video), layer.file)),
     ];
 }
 
@@ -1248,12 +1346,26 @@ export function denoisedRenderProject(options: { opened: OpenedProject; cleanedP
         return [{ id: `recorded-${index}`, atUs: Math.round(marker.atMs * 1000), label }];
     });
     const markers = [...recorded, ...(project.markers ?? [])].sort((a, b) => a.atUs - b.atUs);
+    const folder = dirname(project.source.video);
 
     return {
         ...project,
         source: { ...project.source, video: options.cleanedPath },
-        ...(camera ? { camera: { ...camera, file: resolve(dirname(project.source.video), camera.file) } } : {}),
-        audio,
+        ...(camera ? { camera: { ...camera, file: resolve(folder, camera.file) } } : {}),
+        ...(project.layers
+            ? {
+                  layers: {
+                      ...project.layers,
+                      media: project.layers.media.map((layer) => ({ ...layer, file: resolve(folder, layer.file) })),
+                  },
+              }
+            : {}),
+        audio: audio.lanes
+            ? {
+                  ...audio,
+                  lanes: audio.lanes.map((lane) => (lane.file ? { ...lane, file: resolve(folder, lane.file) } : lane)),
+              }
+            : audio,
         ...(markers.length ? { markers } : {}),
     };
 }
