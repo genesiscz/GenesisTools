@@ -330,11 +330,9 @@ async function readSuggestInputs(
         measuredLines: evidence
             ? prof.measure("rules.line-evidence", () => lineEvidence(meeting.transcript, evidence, presence, share))
             : [],
-        localSpeech: rules.includes("evidence")
-            ? prof.measure("evidence.local-speech-history", () =>
-                  localSpeechDuring({ start: meeting.start, end: meeting.end })
-              )
-            : [],
+        localSpeech: prof.measure("evidence.local-speech-history", () =>
+            localSpeechDuring({ start: meeting.start, end: meeting.end })
+        ),
         record: collected,
         meeting,
         rules,

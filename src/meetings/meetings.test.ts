@@ -7937,9 +7937,13 @@ test("local speech tolerates two word edits inside the clock window and keeps un
 
 test("every suggest rule offers the same local speech removals as raw evidence", () => {
     const start = "2026-11-02T15:00:00.000Z";
-    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 100, "Fixture task done.")];
+    const transcript = [
+        line("Alice", 5, "Fixture task done."),
+        line("Voice", 5, "Fixture task done."),
+        line("Alice", 100, "Fixture task done."),
+    ];
     const calls = [{ ts: Date.parse(start) + 5_000, text: "Fixture task done" }];
-    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0]);
+    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0, 1]);
     const current = { ...meeting, start, transcript };
     const suggest = (rules: Parameters<typeof suggestItems>[0]["rules"]) =>
         suggestItems({
@@ -7953,7 +7957,8 @@ test("every suggest rule offers the same local speech removals as raw evidence",
         });
     const raw = rawMeeting({ record, meeting: current, evidence: null, points: [], localSpeech: calls });
     expect(raw.lines[0]?.localSpeechOutput).toBe(true);
-    expect(raw.lines[1]?.localSpeechOutput).toBeUndefined();
+    expect(raw.lines[1]?.localSpeechOutput).toBe(true);
+    expect(raw.lines[2]?.localSpeechOutput).toBeUndefined();
     for (const rule of ["terms", "speakers", "evidence"] as const) {
         const removals = suggest([rule]).filter((item) => item.kind === "removal");
         expect(removals.map((item) => item.evidence?.transcriptLine)).toEqual(

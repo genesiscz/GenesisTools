@@ -261,7 +261,10 @@ function speakerItems(options: {
 /** Two items say the same thing: the same kind on the same label, time or word. */
 export function itemKey(item: NewItem | MeetingItem): string {
     if (item.kind === "removal") {
-        return `removal|${item.fromSec}|${item.heard}`;
+        const line = item.evidence?.transcriptLine;
+        return typeof line === "number"
+            ? `removal-line|${line}|${item.fromSec}|${item.heard}`
+            : `removal|${item.fromSec}|${item.heard}`;
     }
     if (item.kind === "speaker-range") {
         return `range|${item.label}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}|${item.speaker ?? ""}`;
@@ -679,14 +682,13 @@ export function suggestItems(options: {
     const meeting = unlabeled.meeting;
     const found: NewItem[] = [...prehistory];
 
-    // Speech this Mac played into the room is evidence of who did not speak: only the evidence rules remove it.
-    if (options.rules.includes("evidence")) {
+    if (options.localSpeech?.length) {
         using _local = prof.section("evidence.local-speech");
         found.push(
             ...localSpeechLines({
                 transcript: meeting.transcript,
                 start: meeting.start,
-                calls: options.localSpeech ?? [],
+                calls: options.localSpeech,
             }).map(
                 (line): NewItem => ({
                     kind: "removal",
@@ -1074,7 +1076,8 @@ export function suggestItems(options: {
     for (const item of merged.values()) {
         const key = itemKey(item);
 
-        if (known.has(key)) {
+        // Older removals can address a passage only by its time and words.
+        if (known.has(key) || (item.kind === "removal" && known.has(`removal|${item.fromSec}|${item.heard}`))) {
             continue;
         }
 
