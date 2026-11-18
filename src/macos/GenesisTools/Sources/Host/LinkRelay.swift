@@ -110,6 +110,10 @@ enum LinkRelay {
 
     /// Unreachable in practice; keeps the face running when it cannot run itself again.
     private static func runOn(_ arguments: [String]) -> Never {
+        // The host's own resident face: the settings window would leave its requests with no renderer.
+        if arguments.first == "--requests" {
+            MainActor.assumeIsolated { runRequestFace(Array(arguments.dropFirst())) }
+        }
         if let face = arguments.first, AppParts.has(face: face) {
             AppParts.run(face: face, Array(arguments.dropFirst()))
         }
