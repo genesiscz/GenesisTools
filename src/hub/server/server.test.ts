@@ -721,6 +721,22 @@ describe("SessionRowsRunner", () => {
         }
     });
 
+    it("shares live location work on a cache hit only while the same request is pending", async () => {
+        const reads: SessionRowsJob[] = [];
+        const runner = new SessionRowsRunner({
+            cached: async (request) => {
+                reads.push(request);
+                return { text: "hit", stale: false };
+            },
+        });
+        const journal = { ...job, liveLocations: false };
+        const other = { ...job, listing: { hours: 72 } };
+        await Promise.all([runner.run(job), runner.run(job), runner.run(journal), runner.run(other)]);
+        expect(reads).toEqual([job, journal, other]);
+        await runner.run(job);
+        expect(reads).toHaveLength(4);
+    });
+
     it("expires a silent worker and allows a fresh rebuild", async () => {
         const { workers, createWorker } = fakeWorkers();
         const runner = new SessionRowsRunner({ createWorker, cached: noCache, jobTimeoutMs: 20 });
