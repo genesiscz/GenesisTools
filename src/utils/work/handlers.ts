@@ -18,10 +18,18 @@ import { originFor, type Pairing } from "./connectors/types";
 import { type ContextReport, stampOf } from "./context";
 import type { Item } from "./model/item";
 import { ITEM_TYPES, type ItemType, isOpenState } from "./model/vocab";
+import { type ResolvedNotify, resolveNotify } from "./notify";
 import { type ItemRow, type Liveness, listItems, type ShowResult, showItem, type TriageRow, triage } from "./read";
 import { type ReopenData, reopen } from "./reopen";
 import type { FieldRule, RoleRule } from "./rules/config";
-import { RULE_FIELDS, type RuleField, WRITE_VERBS, type WriteVerb } from "./rules/config";
+import {
+    NOTIFY_ACTIONS,
+    type NotifyAction,
+    RULE_FIELDS,
+    type RuleField,
+    WRITE_VERBS,
+    type WriteVerb,
+} from "./rules/config";
 import { loadWorkRules } from "./rules/load";
 import type { Resolved } from "./rules/resolve";
 import { randomItemSuffix, type WorkContext, type WriteData, write } from "./service";
@@ -69,6 +77,8 @@ export interface ConfigRow {
     type: ItemType;
     fields: { field: RuleField; resolved: Resolved<FieldRule> }[];
     writes: { verb: WriteVerb; resolved: Resolved<RoleRule> }[];
+    /** Who hears about each action on this type (P8 decision 4): the level of each layer and the one that decides. */
+    notify: { action: NotifyAction; resolved: ResolvedNotify }[];
 }
 
 export interface ConfigResult {
@@ -270,6 +280,10 @@ export const workHandlers: WorkHandlers = {
                 (entry) => entry.resolved.value.level !== "optional"
             ),
             writes: WRITE_VERBS.map((verb) => ({ verb, resolved: loaded.rules.mayWrite(type, verb) })),
+            notify: NOTIFY_ACTIONS.map((action) => ({
+                action,
+                resolved: resolveNotify(loaded.rules.layers, { type, action }),
+            })),
         }));
         return okReply("config", { project, sources: loaded.sources, rows }, { diagnostics: loaded.problems });
     },

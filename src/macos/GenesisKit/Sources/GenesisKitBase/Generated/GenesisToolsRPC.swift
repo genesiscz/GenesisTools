@@ -7142,6 +7142,313 @@ public enum WorkConfigResultOption0Status: String, Codable, Sendable {
 
 public enum WorkConfigResultOption0ValueV: Double, Codable, Sendable { case value0 = 1 }
 
+public struct WorkConfigResultOption0ValueDataSourcesItem: Codable, Sendable {
+    public var `layer`: String
+    public var `path`: String?
+    public init(`layer`: String, `path`: String? = nil) {
+        self.`layer` = `layer`
+        self.`path` = `path`
+    }
+    private enum CodingKeys: String, CodingKey { case `layer`; case `path` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`layer` = try box.decode(String.self, forKey: .`layer`)
+        self.`path` = try box.decode(String?.self, forKey: .`path`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`layer`, forKey: .`layer`)
+        try box.encode(`path`, forKey: .`path`)
+    }
+}
+
+public enum WorkConfigResultOption0ValueDataRowsItemType: String, Codable, Sendable {
+    case value0 = "epic"
+    case value1 = "handoff"
+    case value2 = "feature"
+    case value3 = "bug"
+    case value4 = "incident"
+    case value5 = "task"
+    case value6 = "test"
+    case value7 = "cleanup"
+    case value8 = "check"
+    case value9 = "idea"
+    case value10 = "risk"
+    case value11 = "limit"
+    case value12 = "todo"
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemFieldsItemResolvedLayersItem: Codable, Sendable {
+    public var `layer`: String
+    public var `value`: GenesisToolsJSON?
+    public init(`layer`: String, `value`: GenesisToolsJSON? = nil) {
+        self.`layer` = `layer`
+        self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `layer`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`layer` = try box.decode(String.self, forKey: .`layer`)
+        self.`value` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`layer`, forKey: .`layer`)
+        try box.encodeIfPresent(`value`, forKey: .`value`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemFieldsItemResolved: Codable, Sendable {
+    public var `value`: GenesisToolsJSON
+    public var `from`: String
+    public var `layers`: [WorkConfigResultOption0ValueDataRowsItemFieldsItemResolvedLayersItem]
+    public init(`value`: GenesisToolsJSON, `from`: String, `layers`: [WorkConfigResultOption0ValueDataRowsItemFieldsItemResolvedLayersItem]) {
+        self.`value` = `value`
+        self.`from` = `from`
+        self.`layers` = `layers`
+    }
+    private enum CodingKeys: String, CodingKey { case `value`; case `from`; case `layers` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`from` = try box.decode(String.self, forKey: .`from`)
+        self.`layers` = try box.decode([WorkConfigResultOption0ValueDataRowsItemFieldsItemResolvedLayersItem].self, forKey: .`layers`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`from`, forKey: .`from`)
+        try box.encode(`layers`, forKey: .`layers`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemFieldsItem: Codable, Sendable {
+    public var `field`: String
+    public var `resolved`: WorkConfigResultOption0ValueDataRowsItemFieldsItemResolved
+    public init(`field`: String, `resolved`: WorkConfigResultOption0ValueDataRowsItemFieldsItemResolved) {
+        self.`field` = `field`
+        self.`resolved` = `resolved`
+    }
+    private enum CodingKeys: String, CodingKey { case `field`; case `resolved` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`field` = try box.decode(String.self, forKey: .`field`)
+        self.`resolved` = try box.decode(WorkConfigResultOption0ValueDataRowsItemFieldsItemResolved.self, forKey: .`resolved`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`field`, forKey: .`field`)
+        try box.encode(`resolved`, forKey: .`resolved`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemWritesItemResolvedLayersItem: Codable, Sendable {
+    public var `layer`: String
+    public var `value`: GenesisToolsJSON?
+    public init(`layer`: String, `value`: GenesisToolsJSON? = nil) {
+        self.`layer` = `layer`
+        self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `layer`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`layer` = try box.decode(String.self, forKey: .`layer`)
+        self.`value` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`layer`, forKey: .`layer`)
+        try box.encodeIfPresent(`value`, forKey: .`value`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemWritesItemResolved: Codable, Sendable {
+    public var `value`: GenesisToolsJSON
+    public var `from`: String
+    public var `layers`: [WorkConfigResultOption0ValueDataRowsItemWritesItemResolvedLayersItem]
+    public init(`value`: GenesisToolsJSON, `from`: String, `layers`: [WorkConfigResultOption0ValueDataRowsItemWritesItemResolvedLayersItem]) {
+        self.`value` = `value`
+        self.`from` = `from`
+        self.`layers` = `layers`
+    }
+    private enum CodingKeys: String, CodingKey { case `value`; case `from`; case `layers` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`from` = try box.decode(String.self, forKey: .`from`)
+        self.`layers` = try box.decode([WorkConfigResultOption0ValueDataRowsItemWritesItemResolvedLayersItem].self, forKey: .`layers`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`from`, forKey: .`from`)
+        try box.encode(`layers`, forKey: .`layers`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemWritesItem: Codable, Sendable {
+    public var `verb`: String
+    public var `resolved`: WorkConfigResultOption0ValueDataRowsItemWritesItemResolved
+    public init(`verb`: String, `resolved`: WorkConfigResultOption0ValueDataRowsItemWritesItemResolved) {
+        self.`verb` = `verb`
+        self.`resolved` = `resolved`
+    }
+    private enum CodingKeys: String, CodingKey { case `verb`; case `resolved` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`verb` = try box.decode(String.self, forKey: .`verb`)
+        self.`resolved` = try box.decode(WorkConfigResultOption0ValueDataRowsItemWritesItemResolved.self, forKey: .`resolved`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`verb`, forKey: .`verb`)
+        try box.encode(`resolved`, forKey: .`resolved`)
+    }
+}
+
+public enum WorkConfigResultOption0ValueDataRowsItemNotifyItemAction: String, Codable, Sendable {
+    case value0 = "spotted"
+    case value1 = "accepted"
+    case value2 = "claimed"
+    case value3 = "finished"
+    case value4 = "reopened"
+    case value5 = "reopen-undelivered"
+    case value6 = "dropped"
+    case value7 = "commented"
+    case value8 = "sync-held"
+    case value9 = "sync-failed"
+}
+
+public enum WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLevel: String, Codable, Sendable {
+    case value0 = "off"
+    case value1 = "list"
+    case value2 = "inbox"
+    case value3 = "banner"
+}
+
+public enum WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItemValue: String, Codable, Sendable {
+    case value0 = "off"
+    case value1 = "list"
+    case value2 = "inbox"
+    case value3 = "banner"
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItem: Codable, Sendable {
+    public var `layer`: String
+    public var `value`: WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItemValue?
+    public init(`layer`: String, `value`: WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItemValue? = nil) {
+        self.`layer` = `layer`
+        self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `layer`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`layer` = try box.decode(String.self, forKey: .`layer`)
+        self.`value` = try box.decodeIfPresent(WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItemValue.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`layer`, forKey: .`layer`)
+        try box.encodeIfPresent(`value`, forKey: .`value`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemNotifyItemResolved: Codable, Sendable {
+    public var `level`: WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLevel
+    public var `from`: String
+    public var `layers`: [WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItem]
+    public init(`level`: WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLevel, `from`: String, `layers`: [WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItem]) {
+        self.`level` = `level`
+        self.`from` = `from`
+        self.`layers` = `layers`
+    }
+    private enum CodingKeys: String, CodingKey { case `level`; case `from`; case `layers` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`level` = try box.decode(WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLevel.self, forKey: .`level`)
+        self.`from` = try box.decode(String.self, forKey: .`from`)
+        self.`layers` = try box.decode([WorkConfigResultOption0ValueDataRowsItemNotifyItemResolvedLayersItem].self, forKey: .`layers`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`level`, forKey: .`level`)
+        try box.encode(`from`, forKey: .`from`)
+        try box.encode(`layers`, forKey: .`layers`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemNotifyItem: Codable, Sendable {
+    public var `action`: WorkConfigResultOption0ValueDataRowsItemNotifyItemAction
+    public var `resolved`: WorkConfigResultOption0ValueDataRowsItemNotifyItemResolved
+    public init(`action`: WorkConfigResultOption0ValueDataRowsItemNotifyItemAction, `resolved`: WorkConfigResultOption0ValueDataRowsItemNotifyItemResolved) {
+        self.`action` = `action`
+        self.`resolved` = `resolved`
+    }
+    private enum CodingKeys: String, CodingKey { case `action`; case `resolved` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`action` = try box.decode(WorkConfigResultOption0ValueDataRowsItemNotifyItemAction.self, forKey: .`action`)
+        self.`resolved` = try box.decode(WorkConfigResultOption0ValueDataRowsItemNotifyItemResolved.self, forKey: .`resolved`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`action`, forKey: .`action`)
+        try box.encode(`resolved`, forKey: .`resolved`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItem: Codable, Sendable {
+    public var `type`: WorkConfigResultOption0ValueDataRowsItemType
+    public var `fields`: [WorkConfigResultOption0ValueDataRowsItemFieldsItem]
+    public var `writes`: [WorkConfigResultOption0ValueDataRowsItemWritesItem]
+    public var `notify`: [WorkConfigResultOption0ValueDataRowsItemNotifyItem]
+    public init(`type`: WorkConfigResultOption0ValueDataRowsItemType, `fields`: [WorkConfigResultOption0ValueDataRowsItemFieldsItem], `writes`: [WorkConfigResultOption0ValueDataRowsItemWritesItem], `notify`: [WorkConfigResultOption0ValueDataRowsItemNotifyItem]) {
+        self.`type` = `type`
+        self.`fields` = `fields`
+        self.`writes` = `writes`
+        self.`notify` = `notify`
+    }
+    private enum CodingKeys: String, CodingKey { case `type`; case `fields`; case `writes`; case `notify` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`type` = try box.decode(WorkConfigResultOption0ValueDataRowsItemType.self, forKey: .`type`)
+        self.`fields` = try box.decode([WorkConfigResultOption0ValueDataRowsItemFieldsItem].self, forKey: .`fields`)
+        self.`writes` = try box.decode([WorkConfigResultOption0ValueDataRowsItemWritesItem].self, forKey: .`writes`)
+        self.`notify` = try box.decode([WorkConfigResultOption0ValueDataRowsItemNotifyItem].self, forKey: .`notify`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`type`, forKey: .`type`)
+        try box.encode(`fields`, forKey: .`fields`)
+        try box.encode(`writes`, forKey: .`writes`)
+        try box.encode(`notify`, forKey: .`notify`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueData: Codable, Sendable {
+    public var `project`: String
+    public var `sources`: [WorkConfigResultOption0ValueDataSourcesItem]
+    public var `rows`: [WorkConfigResultOption0ValueDataRowsItem]
+    public init(`project`: String, `sources`: [WorkConfigResultOption0ValueDataSourcesItem], `rows`: [WorkConfigResultOption0ValueDataRowsItem]) {
+        self.`project` = `project`
+        self.`sources` = `sources`
+        self.`rows` = `rows`
+    }
+    private enum CodingKeys: String, CodingKey { case `project`; case `sources`; case `rows` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`project` = try box.decode(String.self, forKey: .`project`)
+        self.`sources` = try box.decode([WorkConfigResultOption0ValueDataSourcesItem].self, forKey: .`sources`)
+        self.`rows` = try box.decode([WorkConfigResultOption0ValueDataRowsItem].self, forKey: .`rows`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`project`, forKey: .`project`)
+        try box.encode(`sources`, forKey: .`sources`)
+        try box.encode(`rows`, forKey: .`rows`)
+    }
+}
+
 public enum WorkConfigResultOption0ValueDiagnosticsItemSeverity: String, Codable, Sendable {
     case value0 = "error"
     case value1 = "warning"
@@ -7258,12 +7565,12 @@ public struct WorkConfigResultOption0Value: Codable, Sendable {
     public var `v`: WorkConfigResultOption0ValueV
     public var `verb`: String
     public var `ok`: Bool
-    public var `data`: GenesisToolsJSON?
+    public var `data`: WorkConfigResultOption0ValueData?
     public var `diagnostics`: [WorkConfigResultOption0ValueDiagnosticsItem]
     public var `next`: [WorkConfigResultOption0ValueNextItem]
     public var `dryRun`: WorkConfigResultOption0ValueDryRun?
     public var `receipt`: WorkConfigResultOption0ValueReceipt?
-    public init(`v`: WorkConfigResultOption0ValueV, `verb`: String, `ok`: Bool, `data`: GenesisToolsJSON? = nil, `diagnostics`: [WorkConfigResultOption0ValueDiagnosticsItem], `next`: [WorkConfigResultOption0ValueNextItem], `dryRun`: WorkConfigResultOption0ValueDryRun? = nil, `receipt`: WorkConfigResultOption0ValueReceipt? = nil) {
+    public init(`v`: WorkConfigResultOption0ValueV, `verb`: String, `ok`: Bool, `data`: WorkConfigResultOption0ValueData? = nil, `diagnostics`: [WorkConfigResultOption0ValueDiagnosticsItem], `next`: [WorkConfigResultOption0ValueNextItem], `dryRun`: WorkConfigResultOption0ValueDryRun? = nil, `receipt`: WorkConfigResultOption0ValueReceipt? = nil) {
         self.`v` = `v`
         self.`verb` = `verb`
         self.`ok` = `ok`
@@ -7279,7 +7586,7 @@ public struct WorkConfigResultOption0Value: Codable, Sendable {
         self.`v` = try box.decode(WorkConfigResultOption0ValueV.self, forKey: .`v`)
         self.`verb` = try box.decode(String.self, forKey: .`verb`)
         self.`ok` = try box.decode(Bool.self, forKey: .`ok`)
-        self.`data` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`data`)
+        self.`data` = try box.decodeIfPresent(WorkConfigResultOption0ValueData.self, forKey: .`data`)
         self.`diagnostics` = try box.decode([WorkConfigResultOption0ValueDiagnosticsItem].self, forKey: .`diagnostics`)
         self.`next` = try box.decode([WorkConfigResultOption0ValueNextItem].self, forKey: .`next`)
         self.`dryRun` = try box.decodeIfPresent(WorkConfigResultOption0ValueDryRun.self, forKey: .`dryRun`)

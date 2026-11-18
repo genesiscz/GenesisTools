@@ -5,7 +5,7 @@
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { z } from "zod";
 import { ITEM_STATES, ITEM_TYPES, LINK_KINDS, LOG_RESULTS, SEVERITIES } from "./model/vocab";
-import { listRowSchema, treeResultSchema, triageRowSchema } from "./wire";
+import { configResultSchema, listRowSchema, treeResultSchema, triageRowSchema } from "./wire";
 
 const ref = z.string().min(1).describe("an id (w_…, h_…) or <handoff>:<slot>");
 const refs = z.array(z.string().min(1)).min(1).describe("ids or <handoff>:<slot>, comma-separated on the CLI");
@@ -81,8 +81,8 @@ export const workMethods = {
     config: defineMethod({
         name: "config",
         params: z.object({ project: z.string().optional(), type: z.array(type).optional() }),
-        result: z.unknown(),
-        resultName: `${reply}, data: { project, rows: { type, fields, writes }[] }`,
+        result: configResultSchema,
+        resultName: `${reply}, data: { project, rows: { type, fields, writes, notify }[] }`,
         effect: "read",
         doc: "The effective rules of a project; each value names the layer that set it.",
     }),
