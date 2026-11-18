@@ -118,7 +118,7 @@ export function withStartOptions(command: Command): Command {
         .option("--window <ids>", "record these windows (CG window ids, comma separated)")
         .option("--app <name>", "record this app's windows (name, bundle id or pid)")
         .option("--region <x,y,w,h>", "record this area of a display, in screen points from the top-left corner")
-        .option("--exclude-window-ids <ids>", "leave these windows out of the movie (CG window ids, comma separated)")
+        .option("--exclude-window-ids <ids>", "leave these windows out of each take (CG window ids, comma separated)")
         .option(
             "--camera",
             "record the camera beside the screen into camera.mov (the menu bar recorder records it and must run; the editor draws the bubble)"

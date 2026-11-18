@@ -45,6 +45,9 @@ Read the `id` from the listed sample. Playback accepts `player` to choose a play
 To preview a move, rejection or removal in the REPL, add `preview: true`. To confirm, call it again with
 the preview's `planToken` and omit `preview`. Undo takes the applied receipt's `token`.
 
+`await recorder.start({ excludeWindowIds: [91, 105] })` starts a frames recording and returns its handle. The CLI
+equivalent is `tools recorder start --frames --exclude-window-ids 91,105`.
+
 ## Presets (save a script that worked, run it again)
 
 1. Get the script right in the REPL first. A preset is the body of an async function: it reads `params` and `return`s
