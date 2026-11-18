@@ -91,6 +91,18 @@ import { prepareAnsweredVoiceSamples, transitionAnsweredVoiceSamples, type Voice
 
 const { log } = logger.scoped("meetings-journal");
 
+/** A confirm that names, by hand, a speaker range the voice model named: its lines may become voice samples. */
+function confirmsVoiceNames(action: JournalAction, record: MeetingRecord): boolean {
+    if (action.kind !== "confirm" || action.minConfidence !== undefined) {
+        return false;
+    }
+
+    const named = new Set(action.items);
+    return record.items.some(
+        (item) => named.has(item.id) && item.kind === "speaker-range" && item.rules.includes(MeetingRule.VoiceEmbedding)
+    );
+}
+
 export {
     type Decided,
     type DecisionAction,
@@ -2128,7 +2140,12 @@ export class DecisionJournal {
             return result;
         }
 
-        if (action.kind === "answer" && saved.project && ["window", "listen", "cli"].includes(request.actor.kind)) {
+        // A person's speaker answer, or confirm of a voice-named range, keeps the confirmed lines as voice samples.
+        if (
+            (action.kind === "answer" || confirmsVoiceNames(action, saved)) &&
+            saved.project &&
+            ["window", "listen", "cli"].includes(request.actor.kind)
+        ) {
             decide(structuredClone(saved));
             if (result.entry) {
                 try {
@@ -2140,9 +2157,9 @@ export class DecisionJournal {
                         voiceBase = saved;
                     }
                 } catch (error) {
-                    log.warn({ error, meeting }, "speaker answer could not prepare voice samples");
+                    log.warn({ error, meeting }, "speaker decision could not prepare voice samples");
                     notes.push(
-                        "The answer was saved without voice samples: source sound or voice extraction was unavailable."
+                        `The ${action.kind === "answer" ? "answer" : "confirmation"} was saved without voice samples: source sound or voice extraction was unavailable.`
                     );
                 }
             }

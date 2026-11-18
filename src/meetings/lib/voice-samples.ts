@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
     addVoicePrint,
     readVoiceStore,
@@ -12,6 +13,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { JournalEntry } from "./decision-actions";
 import { recordPeople } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
+import type { Seat } from "./sound";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines } from "./speaker-labels/voice";
 
@@ -23,30 +25,103 @@ export interface VoicePrintChange {
     after: VoicePrint;
 }
 
-/** Extract without writing: the journal publishes these prints together with the answer. */
+/** The stretch of a decision that a person confirmed by ear, and whose voice it is (`item`: the deciding item). */
+interface ConfirmedVoice {
+    item: string;
+    person: string;
+    fromSec: number;
+    /** The end of the stretch: its own end, or the end of its last line (`evidence.endSec`) when later. */
+    endSec: number;
+    seat?: Seat;
+}
+
+function stretchEnd(item: { toSec: number; evidence?: Record<string, unknown> }): number {
+    const end = item.evidence?.endSec;
+    return typeof end === "number" && Number.isFinite(end) ? Math.max(item.toSec, end) : item.toSec;
+}
+
+/**
+ * What a person's decision confirmed by ear: the answer of a speaker question by one person (P5, decision 3), or a
+ * confirm of speaker ranges the voice model named (P7, decision 2: "a confirm adds a sample"), each item listed by
+ * hand. A confirm of every item above a confidence (`minConfidence`) is no one's ear and confirms nothing here.
+ */
+function confirmedVoices(entry: JournalEntry, people: readonly string[]): ConfirmedVoice[] {
+    const action = entry.action;
+    if (action.kind === "answer") {
+        const question = entry.changes.map((change) => change.after).find((item) => item?.id === entry.question);
+        if (
+            question?.kind !== "question" ||
+            question.about !== "speaker" ||
+            question.status !== "confirmed" ||
+            !question.answer?.trim()
+        ) {
+            return [];
+        }
+
+        const person = question.answer.trim();
+        // A split or a comment is not a single person's confirmed name. A missing attendance row is not a veto.
+        return [...question.choices, ...people].some((name) => sameName(name, person))
+            ? [{ item: question.id, person, fromSec: question.fromSec, endSec: stretchEnd(question) }]
+            : [];
+    }
+
+    if (action.kind !== "confirm" || action.minConfidence !== undefined) {
+        return [];
+    }
+
+    return entry.changes.flatMap((change): ConfirmedVoice[] => {
+        const after = change.after;
+        if (
+            after?.kind !== "speaker-range" ||
+            after.status !== "confirmed" ||
+            change.before?.status === "confirmed" ||
+            after.decision?.token !== entry.token ||
+            !after.speaker ||
+            !after.rules.includes(MeetingRule.VoiceEmbedding)
+        ) {
+            return [];
+        }
+
+        const named =
+            change.before?.kind === "speaker-range" ? [change.before.speaker, ...(change.before.candidates ?? [])] : [];
+        const person = after.speaker;
+        if (![...named, ...people].some((name) => name !== undefined && sameName(name, person))) {
+            return [];
+        }
+
+        const seat = after.evidence?.seat;
+        return [
+            {
+                item: after.id,
+                person,
+                fromSec: after.fromSec,
+                endSec: stretchEnd(after),
+                ...(seat === "mic" || seat === "call" ? { seat } : {}),
+            },
+        ];
+    });
+}
+
+/** Extract without writing: the journal publishes these prints together with the decision. */
 export async function prepareAnsweredVoiceSamples(options: {
     opened: OpenedMeeting;
     entry: JournalEntry;
 }): Promise<VoicePrintChange[]> {
     const { opened, entry } = options;
     const record = opened.record;
-    if (!record.project || entry.action.kind !== "answer" || !["window", "listen", "cli"].includes(entry.actor.kind)) {
-        return [];
-    }
-    const question = entry.changes.map((change) => change.after).find((item) => item?.id === entry.question);
     if (
-        question?.kind !== "question" ||
-        question.about !== "speaker" ||
-        question.status !== "confirmed" ||
-        !question.answer?.trim()
+        !record.project ||
+        !["answer", "confirm"].includes(entry.action.kind) ||
+        !["window", "listen", "cli"].includes(entry.actor.kind)
     ) {
         return [];
     }
-    const person = question.answer.trim();
-    // A split or a comment is not a single person's confirmed name. A missing attendance row is not a veto.
-    if (![...question.choices, ...recordPeople(record)].some((name) => sameName(name, person))) {
+
+    const confirmed = confirmedVoices(entry, recordPeople(record));
+    if (confirmed.length === 0) {
         return [];
     }
+
     const energy = await opened.energy();
     const lines = lineEvidence(
         (await opened.meeting()).transcript,
@@ -54,35 +129,58 @@ export async function prepareAnsweredVoiceSamples(options: {
         undefined,
         energy.share
     );
-    const questionEnd =
-        typeof question.evidence?.endSec === "number" && Number.isFinite(question.evidence.endSec)
-            ? Math.max(question.toSec, question.evidence.endSec)
-            : question.toSec;
-    const eligible: LabelContext["lines"][number][] = lines.flatMap((line) => {
-        const share = line.micShare ?? line.energyMic;
-        if (share === undefined || share === 0.5 || line.startSec < question.fromSec || line.endSec > questionEnd) {
-            return [];
-        }
-        const seat = share > 0.5 ? "mic" : "call";
-        return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
-    });
-    const embeddings = await embedSeatLines({ lines: eligible, sound: await opened.sound() });
+    const changes: VoicePrintChange[] = [];
     const hashes = new Map<string, string>();
+    for (const voice of confirmed) {
+        const eligible: LabelContext["lines"][number][] = lines.flatMap((line) => {
+            const share = line.micShare ?? line.energyMic;
+            if (share === undefined || share === 0.5 || line.startSec < voice.fromSec || line.endSec > voice.endSec) {
+                return [];
+            }
+
+            const seat = share > 0.5 ? "mic" : "call";
+            return voice.seat && voice.seat !== seat
+                ? []
+                : [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
+        });
+        changes.push(...(await printsOf({ opened, entry, voice, eligible, hashes })));
+    }
+
+    return changes;
+}
+
+async function printsOf(options: {
+    opened: OpenedMeeting;
+    entry: JournalEntry;
+    voice: ConfirmedVoice;
+    eligible: LabelContext["lines"][number][];
+    hashes: Map<string, string>;
+}): Promise<VoicePrintChange[]> {
+    const { opened, entry, voice, hashes } = options;
+    const record = opened.record;
+    const project = record.project;
+    if (!project || options.eligible.length === 0) {
+        return [];
+    }
+
+    const embeddings = await embedSeatLines({ lines: options.eligible, sound: await opened.sound() });
     const changes: VoicePrintChange[] = [];
     for (const line of embeddings) {
-        const voice = line.channels[0];
-        if (voice?.quality !== "ready") {
+        const channel = line.channels[0];
+        if (channel?.quality !== "ready") {
             continue;
         }
-        let sourceSha = hashes.get(voice.source.audioPath);
+
+        let sourceSha = hashes.get(channel.source.audioPath);
         if (!sourceSha) {
             const hash = createHash("sha256");
-            for await (const chunk of createReadStream(voice.source.audioPath)) {
+            for await (const chunk of createReadStream(channel.source.audioPath)) {
                 hash.update(chunk);
             }
             sourceSha = hash.digest("hex");
-            hashes.set(voice.source.audioPath, sourceSha);
+            hashes.set(channel.source.audioPath, sourceSha);
         }
+
         const after: VoicePrint = {
             meeting: record.id,
             sourceSha,
@@ -90,11 +188,11 @@ export async function prepareAnsweredVoiceSamples(options: {
             track: line.track,
             fromSec: line.fromSec!,
             toSec: line.toSec!,
-            embedding: voice.embedding,
+            embedding: channel.embedding,
             confirmedAt: entry.at,
-            question: question.id,
+            question: voice.item,
         };
-        const before = readVoiceStore(record.project).people[person]?.samples.find(
+        const before = readVoiceStore(project).people[voice.person]?.samples.find(
             (sample) =>
                 sample.meeting === after.meeting &&
                 sample.sourceSha === after.sourceSha &&
@@ -102,8 +200,9 @@ export async function prepareAnsweredVoiceSamples(options: {
                 sample.fromSec === after.fromSec &&
                 sample.toSec === after.toSec
         );
-        changes.push({ project: record.project, person, model: voice.model, ...(before ? { before } : {}), after });
+        changes.push({ project, person: voice.person, model: channel.model, ...(before ? { before } : {}), after });
     }
+
     return changes;
 }
 
@@ -129,7 +228,9 @@ export async function saveAnsweredVoiceSamples(options: {
     return changes;
 }
 
-/** Restore only samples owned by questions whose answer changed, including Undo of an Undo. */
+const CONFIRMING_KINDS = new Set(["question", "speaker-range"]);
+
+/** Restore only samples owned by items whose confirmation changed, including Undo of an Undo. */
 export function transitionAnsweredVoiceSamples(options: {
     entry: JournalEntry;
     entryOf: (token: string) => JournalEntry | undefined;
@@ -139,7 +240,8 @@ export function transitionAnsweredVoiceSamples(options: {
     for (const change of options.entry.changes) {
         const was = change.before;
         const next = change.after;
-        if (was?.kind !== "question" && next?.kind !== "question") {
+        // The items whose confirmation owns prints: a speaker question's answer, a voice-named range's confirm.
+        if (!CONFIRMING_KINDS.has(was?.kind ?? "") && !CONFIRMING_KINDS.has(next?.kind ?? "")) {
             continue;
         }
         const beforeToken = was?.status === "confirmed" ? was.decision?.token : undefined;

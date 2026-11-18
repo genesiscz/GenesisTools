@@ -683,6 +683,40 @@ describe("speaker-label integration", () => {
         ]);
     });
 
+    test("a voice name a person rejected (Not this person) is not suggested again for that line", async () => {
+        const { record, meeting } = await runnerFixture();
+        meeting.speakers = [{ name: "Speaker 1", origin: "platform", speakerId: 1 }];
+        meeting.transcript = [{ speaker: "Speaker 1", speakerId: 1, startSec: 4, text: "A line." }];
+        const named: LineLabel = {
+            labeler: "voice",
+            index: 0,
+            seat: "call",
+            person: "Bob Example",
+            reason: "named",
+            score: 0.71,
+        };
+        const inputs = {
+            record,
+            meeting,
+            labels: [named],
+            rules: ["speakers" as const],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            now: START,
+        };
+        const first = suggestItems(inputs).find((item) => item.kind === "speaker-range");
+        expect(first?.speaker).toBe("Bob Example");
+        expect(first?.rules).toContain(MeetingRule.VoiceEmbedding);
+        expect(reviewRow(record, first!).choices.map((choice) => [choice.label, choice.action.kind])).toContainEqual([
+            "Not this person",
+            "reject",
+        ]);
+        record.items.push({ ...first!, status: "rejected", decidedAt: START });
+        expect(suggestItems(inputs).filter((item) => item.kind === "speaker-range")).toEqual([]);
+        const other = suggestItems({ ...inputs, labels: [{ ...named, person: "Carol Example" }] });
+        expect(other.find((item) => item.kind === "speaker-range")?.speaker).toBe("Carol Example");
+    });
+
     test("labels win over platform and reference names; confirmed ranges remain unchanged", async () => {
         const { record, meeting, config } = await runnerFixture();
         meeting.speakers = [{ name: "Alice Example", origin: "platform", speakerId: 1 }];

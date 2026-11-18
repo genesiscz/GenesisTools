@@ -356,14 +356,15 @@ test("the voice labeler measures and saves recorder clocks before taking recorde
     expect(embedded.mock.calls[0]?.[0].audioPath).toBe("/fixture/piece");
     expect(embedded.mock.calls[0]?.[0].spans[0]?.fromSec).toBe(4);
 });
-test("only human speaker answers wholly containing a line persist prints; Undo reopens the store", async () => {
-    const store = new MeetingStore(new Storage("voice-answer-fixture"));
+/** A meeting of the project `project` whose three lines (0, 5, 10 s) sit on the microphone, embedded as [1, 0]. */
+async function sampledMeeting(project: string) {
+    const store = new MeetingStore(new Storage(`voice-${project}`));
     const record = await store.create(
         {
             title: "Planning",
             start: "2026-11-01T10:00:00Z",
             createdBy: "new",
-            project: "answer-voice-fixture",
+            project,
             seats: { room: [alice.person], remote: [] },
         },
         { command: "new", change: "fixture" }
@@ -371,30 +372,6 @@ test("only human speaker answers wholly containing a line persist prints; Undo r
     const opened = OpenedMeeting.of(store, record);
     const audio = `${store.folder(record.id)}/fixture.wav`;
     writeFileSync(audio, "fixture audio");
-    const question = {
-        id: "i1",
-        kind: "question" as const,
-        about: "speaker" as const,
-        group: "rules" as const,
-        question: "Who speaks?",
-        choices: [alice.person],
-        fromSec: 0,
-        toSec: 0,
-        evidence: { endSec: 5 },
-        status: "confirmed" as const,
-        suggestedAt: "2026-11-01T10:00:00Z",
-        answer: alice.person,
-        rules: [],
-    };
-    const entry = journalEntrySchema.parse({
-        token: "d1",
-        at: "2026-11-01T10:00:00Z",
-        meeting: record.id,
-        question: "i1",
-        actor: { kind: "listen" },
-        action: { kind: "answer", question: "i1", answer: alice.person },
-        changes: [{ id: "i1", after: question }],
-    });
     spies.push(
         spyOn(opened, "presence").mockResolvedValue([{ name: alice.person, fromSec: 0, toSec: 30 }]),
         spyOn(opened, "energy").mockResolvedValue({}),
@@ -444,6 +421,35 @@ test("only human speaker answers wholly containing a line persist prints; Undo r
             }))
         )
     );
+    return { store, record, opened };
+}
+
+test("only human speaker answers wholly containing a line persist prints; Undo reopens the store", async () => {
+    const { record, opened } = await sampledMeeting("answer-voice-fixture");
+    const question = {
+        id: "i1",
+        kind: "question" as const,
+        about: "speaker" as const,
+        group: "rules" as const,
+        question: "Who speaks?",
+        choices: [alice.person],
+        fromSec: 0,
+        toSec: 0,
+        evidence: { endSec: 5 },
+        status: "confirmed" as const,
+        suggestedAt: "2026-11-01T10:00:00Z",
+        answer: alice.person,
+        rules: [],
+    };
+    const entry = journalEntrySchema.parse({
+        token: "d1",
+        at: "2026-11-01T10:00:00Z",
+        meeting: record.id,
+        question: "i1",
+        actor: { kind: "listen" },
+        action: { kind: "answer", question: "i1", answer: alice.person },
+        changes: [{ id: "i1", after: question }],
+    });
     expect(
         await saveAnsweredVoiceSamples({
             opened,
@@ -463,4 +469,56 @@ test("only human speaker answers wholly containing a line persist prints; Undo r
     );
     undoAnsweredVoiceSamples(changes);
     expect(readVoiceStore(record.project!).people[alice.person]?.samples).toHaveLength(1);
+});
+
+test("a person's confirm of a name the voice model gave keeps that line as a sample; a confirm by threshold keeps none", async () => {
+    const { record, opened } = await sampledMeeting("confirm-voice-fixture");
+    const suggested = {
+        id: "i7",
+        kind: "speaker-range" as const,
+        label: "Speaker 1",
+        fromSec: 5,
+        toSec: 5,
+        speaker: alice.person,
+        status: "suggested" as const,
+        confidence: 0.71,
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: { labeler: "voice", reason: "named", seat: "mic", score: 0.71, transcriptLine: 1, endSec: 10 },
+        suggestedAt: "2026-11-01T10:00:00Z",
+    };
+    const confirmed = {
+        ...suggested,
+        status: "confirmed" as const,
+        decidedAt: "2026-11-01T10:05:00Z",
+        decision: { token: "d7", previous: { status: "suggested" as const } },
+    };
+    const entry = journalEntrySchema.parse({
+        token: "d7",
+        at: "2026-11-01T10:05:00Z",
+        meeting: record.id,
+        actor: { kind: "window" },
+        action: { kind: "confirm", items: ["i7"] },
+        decided: ["i7"],
+        changes: [{ id: "i7", before: suggested, after: confirmed }],
+    });
+    expect(
+        await saveAnsweredVoiceSamples({
+            opened,
+            entry: { ...entry, action: { kind: "confirm", items: ["i7"], minConfidence: 0.5 } },
+        })
+    ).toEqual([]);
+    expect(
+        await saveAnsweredVoiceSamples({
+            opened,
+            entry: { ...entry, changes: [{ id: "i7", before: suggested, after: { ...confirmed, rules: [] } }] },
+        })
+    ).toEqual([]);
+    const changes = await saveAnsweredVoiceSamples({ opened, entry });
+    // Only the line the range names (5 s to 10 s), at the voice's seat, under the range's id.
+    expect(
+        changes.map((change) => [change.person, change.after.fromSec, change.after.toSec, change.after.question])
+    ).toEqual([[alice.person, 5, 10, "i7"]]);
+    expect(readVoiceStore(record.project!).people[alice.person]?.samples).toHaveLength(1);
+    undoAnsweredVoiceSamples(changes);
+    expect(readVoiceStore(record.project!).people[alice.person]).toBeUndefined();
 });
