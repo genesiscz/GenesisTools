@@ -1047,7 +1047,7 @@ test("an identified remote departure removes that person after a goodbye under t
     expect(later?.candidates).not.toContain("Carol Example");
 });
 
-test("a linear echo residual does not turn a mixed microphone line into a remote identity", () => {
+test("R3 an echo residual leaves a strong call line unnamed and its choices on the call", () => {
     const sample = scene([{ label: "Bob Example", mic: 0.02 }]);
     const audio = Float32Array.from({ length: 1000 }, (_, i) => Math.sin(i / 12));
     const acoustic = correlateEcho({ mic: audio, call: audio, rate: 1000 });
@@ -1055,7 +1055,7 @@ test("a linear echo residual does not turn a mixed microphone line into a remote
     const found = ranges(suggestItems({ ...base, ...sample, energyMicShare: share }));
     expect(found).toHaveLength(1);
     expect(found[0]?.speaker).toBeUndefined();
-    expect(found[0]?.candidates?.[0]).toBe(USER);
+    expect(found[0]?.candidates).toEqual(["Bob Example", "Carol Example"]);
     expect(found[0]?.rules).toContain("R18");
 });
 

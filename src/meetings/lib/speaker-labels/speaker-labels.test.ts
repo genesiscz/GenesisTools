@@ -1149,7 +1149,7 @@ describe("speaker-label integration", () => {
         expect(range).toEqual(before);
     });
 
-    test("an agreeing old channel rule joins the item, while a different person gives one question even on a short line", async () => {
+    test("R3 an agreeing channel rule joins the seat but an ineligible name cannot reopen the line", async () => {
         const { record, meeting } = await runnerFixture({
             participants: [{ name: "Alice Example", self: true, from: ["fixture"] }],
         });
@@ -1180,10 +1180,9 @@ describe("speaker-label integration", () => {
         const ranges = fresh.filter((item) => item.kind === "speaker-range");
         const questions = fresh.filter((item) => item.kind === "question");
         expect(ranges).toHaveLength(1);
-        expect(ranges[0]?.speaker).toBeUndefined();
-        expect(questions).toHaveLength(1);
-        expect(questions[0]?.choices).toEqual(expect.arrayContaining(["Alice Example", "Bob Example"]));
-        expect(questions[0]?.decides).toEqual([ranges[0]!.id]);
+        expect(ranges[0]?.speaker).toBe("Alice Example");
+        expect(ranges[0]?.candidates ?? []).not.toContain("Bob Example");
+        expect(questions).toHaveLength(0);
         record.items.push(...fresh);
         expect(suggestItems({ ...inputs, labels: [{ ...labels[0]!, person: "Bob Example" }] })).toEqual([]);
     });
