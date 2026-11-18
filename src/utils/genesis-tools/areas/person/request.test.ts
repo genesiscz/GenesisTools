@@ -30,6 +30,36 @@ const input = {
 };
 const now = () => new Date("2026-11-17T12:00:00Z");
 const scratch = () => mkdtempSync(join(tmpdir(), "gt-person-"));
+const open = { window: "--meetings" as const, args: ["--meeting", "fixture with spaces"] };
+
+test("a posted event keeps its window target when reopened and an older line still parses", async () => {
+    const dir = scratch();
+    await createRequestJournal({ dir, now }).post({ input: { ...input, open } });
+    const reopened = createRequestJournal({ dir, now });
+    expect(reopened.get(input.id)?.request.open).toEqual(open);
+    expect(reopened.get(input.id)?.events[0]).toMatchObject({ type: "posted", request: { open } });
+
+    const at = now().toISOString();
+    const request = { ...input, createdAt: at };
+    const legacy = { type: "posted", at, request, asker: null };
+    writeFileSync(join(dir, `${encodeURIComponent(input.id)}.jsonl`), `${SafeJSON.stringify(legacy)}\n`);
+    expect(createRequestJournal({ dir }).get(input.id)?.request).toEqual(request);
+});
+
+test("a window target requires a known face and up to twenty strings of at most 500 characters", () => {
+    const request = { ...input, createdAt: now().toISOString() };
+    const largest = { window: open.window, args: Array<string>(20).fill("x".repeat(500)) };
+    expect(requestSchema.parse({ ...request, open: largest }).open).toEqual(largest);
+    for (const target of [
+        { ...open, window: "--unknown" },
+        { window: open.window },
+        { ...open, args: [1] },
+        { ...open, args: [...largest.args, ""] },
+        { ...open, args: ["x".repeat(501)] },
+    ]) {
+        expect(requestSchema.safeParse({ ...request, open: target }).success).toBe(false);
+    }
+});
 
 test("postOnce, append-only recovery, and persisted answers survive a reopen", async () => {
     const dir = scratch();
