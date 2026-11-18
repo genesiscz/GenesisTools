@@ -6,7 +6,7 @@ import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { expandTilde } from "@genesiscz/utils/paths";
 import { hubStatus } from "./proposal";
 
-export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents", "usage"] as const;
+export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents", "usage", "work"] as const;
 export type HubMode = (typeof HUB_MODES)[number];
 export const HUB_TABS = ["transcript", "changes", "files", "decisions"] as const;
 export type HubTab = (typeof HUB_TABS)[number];
@@ -46,6 +46,7 @@ export interface OpenHubOptions {
     repo?: string;
     /** Opens the Worktrees mode on this checkout folder. */
     worktree?: string;
+    work?: string;
     /** Opens the Inbox at this decision or todo card (`d_3_<session>`). */
     decision?: string;
     /** Opens the Inbox at this pending form (`ask_…`). */
@@ -109,6 +110,7 @@ export type HubLinkOptions = Pick<
     | "tab"
     | "filter"
     | "worktree"
+    | "work"
     | "decision"
     | "question"
     | "usageSection"
@@ -183,6 +185,7 @@ export function hubArgs(options: OpenHubOptions): string[] {
     }
 
     for (const [flag, value] of [
+        ["--work", options.work],
         ["--decision", options.decision],
         ["--question", options.question],
     ] as const) {
@@ -294,6 +297,7 @@ function hubLinkData(options: HubLinkOptions): HubLinkQuery {
         tab: options.tab,
         filter: options.filter,
         worktree: options.worktree ? worktreeTarget(options.worktree) : undefined,
+        work: options.work,
         decision: options.decision,
         question: options.question,
         "usage-section": options.usageSection,

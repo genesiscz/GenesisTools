@@ -82,6 +82,8 @@ struct HubRequest {
     var widgetProvider: String?
     /// Selects this worktree path in the Worktrees mode, or the cleanup panel (`--worktree cleanup`).
     var worktree: String?
+    /// --work <ref> opens one task or handoff in Work.
+    var workItem: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
     var inboxResume: String?
@@ -216,6 +218,11 @@ struct HubRequest {
             case "--widget-cwd": widgetCwd = value; index += 1
             case "--widget-provider": widgetProvider = value; index += 1
             case "--worktree": worktree = value; index += 1
+            case "--work":
+                mode = .work
+                workItem = Self.optionalText(value)
+                if workItem?.isEmpty != false { workItem = nil; problems.append("--work needs an item id") }
+                index += 1
             case "--inbox-resume": inboxResume = value; index += 1
             case "--inbox-info": inboxInfo = value; index += 1
             case "--decision", "--question": inboxItem = value; index += 1
@@ -936,6 +943,7 @@ final class HubModel {
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
+            work.screen.$itemRef.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             work.screen.$project.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
@@ -1048,7 +1056,7 @@ final class HubModel {
         if let linked = prLinkedCommit, place.mode == .prs, place.selection != linked.prID {
             prLinkedCommit = nil
         }
-        guard place.selection != nil else {
+        guard place.selection != nil || place.workItem != nil else {
             history.visit(navTarget(place), title: navTitle(place), provisional: true)
             return
         }
@@ -1101,6 +1109,7 @@ final class HubModel {
     /// Whether the hub now shows the place a request asked for.
     @MainActor
     func navRequestMatches(_ asked: HubNavRequest) -> Bool {
+        if let ref = asked.workItem { return mode == .work && work.screen.itemRef == ref }
         if let pr = asked.pr {
             return mode == .prs && prs.selected.map(pr.matches) == true
         }
@@ -1155,7 +1164,8 @@ final class HubModel {
         switch owner(of: mode) {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
-        case .model(let model): return HubNavEntry(mode: mode, selection: model.navSelection)
+        case .model(let model):
+            return HubNavEntry(mode: mode, selection: model.navSelection, workItem: mode == .work ? work.screen.itemRef : nil)
         }
     }
 
@@ -1215,6 +1225,10 @@ final class HubModel {
     @MainActor
     private func restorePlace(_ entry: HubNavEntry, commit: String?, repo: String?) {
         setMode(entry.mode)
+        if entry.mode == .work, let ref = entry.workItem {
+            work.screen.openItem(ref)
+            return
+        }
         guard let id = entry.selection else { return }
         switch entry.mode {
         case .sessions:
@@ -1303,6 +1317,7 @@ final class HubModel {
     /// What a history entry shows, for the arrows' tooltips.
     @MainActor
     func navTitle(_ entry: HubNavEntry) -> String {
+        if let ref = entry.workItem { return "Work: \(ref)" }
         guard let id = entry.selection else { return entry.mode.title }
         let name: String
         switch owner(of: entry.mode) {
@@ -2058,6 +2073,15 @@ final class HubModel {
         }
         if request.opensUsage {
             MainActor.assumeIsolated { usage.open(request) }
+        }
+        if request.mode == .work {
+            MainActor.assumeIsolated {
+                if let ref = request.workItem { work.screen.openItem(ref) }
+                else {
+                    work.screen.closeItem()
+                    work.screen.pane = .items
+                }
+            }
         }
         if let text = request.filter {
             filter = text

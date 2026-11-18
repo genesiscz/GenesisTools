@@ -132,6 +132,7 @@ program
     )
     .option("--repo <path|owner/repo>", "with --commit and no --pr: the commit's checkout path or forge project")
     .option("--worktree <path>", "open the Worktrees mode on this checkout folder")
+    .option("--work <ref>", "open a task or handoff in Work")
     .option("--tab [tab]", `${HUB_TABS.join("|")}: the pane to show`)
     .option("--filter <text>", "filter the session list (also searches every project's history)")
     .option("--palette [text]", "open the command palette (⌘K), optionally with this text: 'gt pr 424'")
@@ -164,6 +165,7 @@ program
             commit?: string;
             repo?: string;
             worktree?: string;
+            work?: string;
             tab?: string | true;
             filter?: string;
             palette?: string | true;
@@ -236,6 +238,7 @@ program
                         tab,
                         filter: opts.filter,
                         worktree: opts.worktree,
+                        work: opts.work,
                         usageSection,
                         usageSession: opts.usageSession,
                         usageHarness: opts.usageHarness,
@@ -261,6 +264,7 @@ program
                     commit,
                     repo,
                     worktree: opts.worktree,
+                    work: opts.work,
                     session: opts.session,
                     filter: opts.filter,
                     palette: opts.palette === true ? "" : opts.palette,

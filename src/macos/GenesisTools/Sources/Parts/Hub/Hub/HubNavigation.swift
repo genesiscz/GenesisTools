@@ -12,6 +12,7 @@ struct HubNavEntry: Equatable {
     var mode: HubMode
     /// The session row id, worktree path or PR id the mode shows; nil while nothing is picked yet.
     var selection: String?
+    var workItem: String?
 }
 
 /// A place in the history: the hub's link keys (`HubLink.linkKeys`) plus `selection`, the row the hub's own mode
@@ -22,7 +23,7 @@ struct HubNavTarget: Codable, Hashable, Sendable {
     private(set) var fields: [String: String]
 
     /// The keys a place keeps, in the order `arguments` writes them.
-    static let keys = ["mode", "selection", "session", "agent", "pr", "reveal", "repo", "commit", "tab", "worktree"]
+    static let keys = ["mode", "selection", "session", "agent", "pr", "reveal", "repo", "commit", "tab", "worktree", "work"]
 
     init(_ fields: [String: String]) {
         self.fields = fields.filter { Self.keys.contains($0.key) && !$0.value.isEmpty }
@@ -32,6 +33,7 @@ struct HubNavTarget: Codable, Hashable, Sendable {
     init(place: HubNavEntry, commit: String? = nil, repo: String? = nil) {
         var fields = ["mode": place.mode.rawValue]
         fields["selection"] = place.selection
+        fields["work"] = place.workItem
         fields["commit"] = commit
         fields["repo"] = repo
         self.init(fields)
@@ -52,8 +54,8 @@ struct HubNavTarget: Codable, Hashable, Sendable {
 
     /// The hub's own place, when it has one.
     var place: HubNavEntry? {
-        guard let mode, let selection = fields["selection"] else { return nil }
-        return HubNavEntry(mode: mode, selection: selection)
+        guard let mode, fields["selection"] != nil || fields["work"] != nil else { return nil }
+        return HubNavEntry(mode: mode, selection: fields["selection"], workItem: fields["work"])
     }
 
     /// The `--hub` flags of a place an agent or a link named.
@@ -89,6 +91,7 @@ struct HubNavRequest {
     var session: String?
     var agent: String?
     var worktree: String?
+    var workItem: String?
     var mode: HubMode?
     var reveal: String?
     var tab: HubTab?
@@ -111,6 +114,7 @@ struct HubNavRequest {
         session = request.session
         agent = request.agent
         worktree = request.worktree
+        workItem = request.workItem
         mode = request.mode
         reveal = request.reveal
         tab = request.tab
@@ -133,6 +137,7 @@ struct HubNavRequest {
         fields["commit"] = commit
         fields["repo"] = repo
         fields["worktree"] = worktree
+        fields["work"] = workItem
         fields["reveal"] = reveal
         fields["tab"] = tab?.rawValue
         return HubNavTarget(fields)
@@ -149,6 +154,7 @@ struct HubNavRequest {
         }
         if let worktree { return "worktree " + (worktree as NSString).lastPathComponent }
         if let agent { return "agent \(agent)" }
+        if let workItem { return "Work: \(workItem)" }
         if let session { return "session \(session.prefix(8))" }
         return mode?.title ?? "Hub"
     }

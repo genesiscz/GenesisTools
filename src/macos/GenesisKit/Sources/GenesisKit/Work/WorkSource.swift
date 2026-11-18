@@ -6,7 +6,7 @@ private let workSourceLog = Logger(subsystem: "genesiskit", category: "work.sour
 
 // The hub's Work screen (work-items P8): the open handoffs of a project with their tasks, the spotted items, the items
 // reopened with nobody working on them, and who hears about each kind of change. The data comes from the `work` area of
-// the actions service through the generated client; the screen never runs `tools`.
+// the actions service through the generated client. A session TODO still in the old ledger has its own read door.
 
 public struct WorkPairingValue: Identifiable, Equatable, Sendable, Decodable {
     public enum State: String, Decodable, Sendable {
@@ -189,11 +189,12 @@ public struct WorkSourceError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? { message }
 }
 
-/// Where the Work screen reads and writes. Tests give a fake; the app gives `LiveWorkSource`.
+/// Where the Work screen reads and writes. Tests give a fake; the app gives LiveWorkSource.
 @MainActor
 public protocol WorkSource: AnyObject {
     func projects() async throws -> [String]
     func snapshot(project: String) async throws -> WorkSnapshotValue
+    func detail(ref: String) async throws -> WorkItemDetail
     func notify(project: String) async throws -> [WorkNotifyRow]
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
     /// A tick for each change of the store, from any writer (the service's `work.changed`, a CLI or MCP write).
@@ -225,6 +226,27 @@ public final class LiveWorkSource: WorkSource {
         let treeData: TreeData = try reply(await tree)
         let rows: [WorkTriageValue] = try reply(await triage)
         return WorkSnapshotValue(project: project, containers: treeData.containers, triage: rows)
+    }
+
+    public func detail(ref: String) async throws -> WorkItemDetail {
+        if ref.hasPrefix("t_") {
+            // An older listing, or a TODO before its first import, has only the id used by question show.
+            struct Todo: Decodable {
+                var id: String
+                var title: String?
+                var prompt: String
+                var state: String
+                var project: String?
+            }
+            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
+                .run(subcommand: "question", args: ["show", ref, "--json"])
+            guard result.exitCode == 0 else { throw WorkSourceError(result.stderr) }
+            let todo = try JSONDecoder().decode(Todo.self, from: Data(result.stdout.utf8))
+            return WorkItemDetail(item: .init(id: todo.id, title: todo.title ?? todo.prompt, type: "task",
+                                              state: WidgetTask.label(for: todo.state), project: todo.project,
+                                              body: todo.prompt, acceptance: nil))
+        }
+        return try reply(await rpc.work.show(WorkShowParams(ref: ref)))
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {

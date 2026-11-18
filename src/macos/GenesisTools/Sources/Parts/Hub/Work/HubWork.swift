@@ -55,8 +55,11 @@ final class HubWorkModel: ObservableObject {
     private func watchFirstLoad() {
         guard onLoaded != nil else { loadWatch = nil; return }
         let screen = screen
-        loadWatch = screen.$snapshot.combineLatest(screen.$failure, screen.$projectsLoaded)
-            .first { snapshot, failure, loaded in snapshot != nil || failure != nil || (loaded && screen.project == nil) }
+        loadWatch = screen.$snapshot.combineLatest(screen.$failure, screen.$projectsLoaded, screen.$itemDetail)
+            .first { snapshot, failure, loaded, detail in
+                if screen.itemRef != nil { return detail != nil || failure != nil }
+                return snapshot != nil || failure != nil || (loaded && screen.project == nil)
+            }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 let done = self?.onLoaded
@@ -158,7 +161,7 @@ struct WorkMain: View {
                 Group {
                     Image(systemName: "checklist").foregroundColor(ReviewPalette.renamed)
                     Text("Work").font(.system(size: 14, weight: .semibold))
-                    Text(verbatim: screen.project ?? "")
+                    Text(verbatim: (screen.itemRef == nil ? screen.project : screen.itemDetail?.item.project) ?? "")
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                         .lineLimit(1)
@@ -180,7 +183,7 @@ struct WorkMain: View {
     }
 
     private var summary: String? {
-        guard let snapshot = screen.snapshot else { return nil }
+        guard screen.itemRef == nil, let snapshot = screen.snapshot else { return nil }
         return [Plural.count(snapshot.containers.count, "container"),
                 Plural.count(snapshot.spotted.count, "spotted item"),
                 Plural.count(snapshot.reopened.count, "reopened item")].joined(separator: " · ")
@@ -188,7 +191,50 @@ struct WorkMain: View {
 
     @ViewBuilder
     private var content: some View {
-        if let failure = screen.failure, screen.snapshot == nil {
+        if let ref = screen.itemRef {
+            VStack(alignment: .leading, spacing: 12) {
+                Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
+                    .buttonStyle(.genHoverPlain())
+                if let failure = screen.failure {
+                    FailureInline(.unexpected(failure, outcome: "Could not open \(ref)", action: "Read the item"),
+                                  form: .pane) { screen.reload() }
+                } else if let detail = screen.itemDetail {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            Text(detail.item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
+                            Text(verbatim: "\(detail.item.type.capitalized) · \(detail.item.state.capitalized) · \(detail.item.id)")
+                                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                            if let body = detail.item.body, !body.isEmpty, body != detail.item.title {
+                                Text(verbatim: body).textSelection(.enabled)
+                            }
+                            if let acceptance = detail.item.acceptance, !acceptance.isEmpty {
+                                Text("Acceptance").font(.headline)
+                                Text(verbatim: acceptance).textSelection(.enabled)
+                            }
+                            if let members = detail.members {
+                                Text("Tasks").font(.headline)
+                                if members.isEmpty { EmptyState(text: "This handoff has no tasks") }
+                                ForEach(members) { member in
+                                    Button { screen.openItem(member.ref) } label: {
+                                        Label(member.title, systemImage: WorkStateLook.symbol(member.state))
+                                            .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(RowButtonStyle())
+                                    .accessibilityValue(member.state)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("work.detail.\(detail.item.id)")
+                    }
+                    .id(detail.item.id)
+                } else {
+                    Text("Opening \(ref)…").foregroundStyle(.secondary)
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if let failure = screen.failure, screen.snapshot == nil {
             FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                           form: .pane) { screen.reload() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

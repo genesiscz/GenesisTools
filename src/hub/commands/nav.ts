@@ -67,6 +67,7 @@ interface NavOpenFlags {
     commit?: string;
     repo?: string;
     worktree?: string;
+    work?: string;
     session?: string;
     agent?: string;
     mode?: string;
@@ -86,6 +87,7 @@ function flagTarget(flags: NavOpenFlags): NavTarget {
         commit: flags.commit,
         repo: flags.repo ? (/^\.{1,2}(?:[/\\]|$)/.test(flags.repo) ? resolve(flags.repo) : flags.repo) : undefined,
         worktree: flags.worktree ? resolveNavWorktree(flags.worktree) : undefined,
+        work: flags.work,
         session: flags.session,
         agent: flags.agent,
         mode: flags.mode,
@@ -146,6 +148,7 @@ async function navOpen(input: string | undefined, flags: NavOpenFlags): Promise<
         commit: target.commit,
         tab,
         worktree: target.worktree,
+        work: target.work,
         actor,
         note,
         from,
@@ -268,6 +271,7 @@ export function registerNavCommands(program: Command): void {
         .option("--commit <sha>", "a commit (7 to 40 hex characters) or <from>..<to>, in --pr or in --repo")
         .option("--repo <path|owner/repo>", "with --commit and no --pr: the commit's checkout or forge project")
         .option("--worktree <path>", "open the Worktrees mode on this checkout")
+        .option("--work <ref>", "open a task or handoff in Work")
         .option("--session <id>", "select this session (id or prefix)")
         .option("--agent <id>", "open this agent in the Agents mode")
         .option("--mode <mode>", HUB_MODES.join("|"))
