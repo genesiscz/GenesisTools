@@ -7,13 +7,8 @@ import SwiftUI
 /// was there when is the transcript's "Who was there" strip.
 struct MeetingPeopleChip: View {
     @Bindable var detail: MeetingDetailModel
-    @State private var name = ""
-    @State private var from = "0"
-    @State private var to = ""
-    @State private var atMic = true
-    @State private var owner = ""
-    @State private var failure: String?
-    @State private var busy = false
+    /// The person the editor opened on; nil adds one.
+    @State private var editing: PersonStay?
     @State private var warnings: [String] = []
 
     var body: some View {
@@ -51,47 +46,15 @@ struct MeetingPeopleChip: View {
         Array(Set(suggested + (attendance.map { [$0] } ?? []))).sorted()
     }
 
+    /// The one editor of who was there (`PersonStayEditor`), on this person or on a new one.
     private func edit(_ person: String) {
-        name = person
-        let stay = detail.record.value?.attendance?.people.first { $0.name == person }
-        let participant = detail.record.value?.participants?.first { $0.name == person }
-        from = String(stay?.fromSec ?? participant?.stays?.first?.fromSec ?? participant?.firstSeenSec ?? 0)
-        to = (stay?.toSec ?? participant?.stays?.last?.toSec).map { String($0) } ?? ""
-        let group = detail.record.value?.seats?.microphones?.first { $0.people.contains(person) }
-        atMic = group?.id == "self" || person.isEmpty
-        owner = group?.deviceId ?? ""
-        failure = nil
+        editing = person.isEmpty ? nil : PersonStay.of(person, in: detail.record.value)
         detail.showingMeetingPeopleEditor = true
     }
 
     private var editor: some View {
-        Form {
-            TextField("Person name", text: $name)
-            TextField("From, transcript seconds", text: $from)
-            TextField("To, blank uses meeting end", text: $to)
-            Toggle("At own microphone", isOn: $atMic)
-            if !atMic { TextField("Device owner, blank for own device", text: $owner) }
-            if let failure { Text(failure).foregroundStyle(.red) }
-            HStack {
-                Button("Cancel") { detail.showingMeetingPeopleEditor = false }.keyboardShortcut(.cancelAction)
-                Button("Remove person", role: .destructive) { save(remove: true) }.disabled(busy || name.isEmpty)
-                Button("Save") { save(remove: false) }.disabled(busy || name.isEmpty).keyboardShortcut(.defaultAction)
-            }
-        }.formStyle(.grouped).padding().frame(width: 460)
-    }
-
-    private func save(remove: Bool) {
-        guard remove || (Double(from) != nil && (to.isEmpty || Double(to) != nil)) else {
-            failure = "Use transcript seconds for join and leave times."; return
-        }
-        busy = true; failure = nil
-        Task {
-            defer { busy = false }
-            do {
-                try await detail.editMeetingPerson(.init(meeting: detail.id, name: name, action: remove ? "remove" : "add",
-                    fromSec: Double(from), toSec: Double(to), atMic: atMic, via: !atMic && !owner.isEmpty ? owner : nil))
-                detail.showingMeetingPeopleEditor = false
-            } catch { failure = asFailure(error).sentence }
+        PersonStayEditor(detail: detail, original: editing, duration: detail.window?.meeting(detail.id)?.durationSec) {
+            detail.showingMeetingPeopleEditor = false
         }
     }
 }
