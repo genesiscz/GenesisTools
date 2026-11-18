@@ -192,9 +192,10 @@ export function windowsOpenCommand({ window, args }: { window: AppFaceFlag; args
     return toolCommand("genesis-tools action windows.open", "--json", json);
 }
 
+/** Opens a posted request; `--` ends the options, so an id such as `--help` stays the id. */
 export function genesisToolsRequestOpenCommand(id: string): string {
     if (!/^[a-zA-Z0-9:._-]{1,500}$/.test(id)) {
         throw new Error("Invalid request id");
     }
-    return `${toolCommand("genesis-tools request open")} ${id}`;
+    return toolCommand("genesis-tools request open", "--", id);
 }

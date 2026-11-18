@@ -61,10 +61,16 @@ export function registerRequestCommand(program: Command): void {
     request
         .command("open")
         .argument("<id>")
-        .action((id: string) => {
+        .action(async (id: string) => {
             refuseHostEffectInTest("request worker", "Inject a worker launcher in tests.");
-            spawnToolDetached(["genesis-tools", "request", "run", id, "--from-notification"], { reparent: true });
-            out.result({ id, opened: true });
+            const remote = await callRunningService("requests.get", { id });
+            if (!(remote.called ? remote.value : createRequestJournal().get(id))) {
+                throw new Error(`Request ${id} does not exist.`);
+            }
+            // `--` ends the options, so an id such as `--help` reaches the worker as the id.
+            spawnToolDetached(["genesis-tools", "request", "run", "--from-notification", "--", id], { reparent: true });
+            // The worker opens the window by itself; this command only knows that it started one.
+            out.result({ id, workerStarted: true });
         });
     request
         .command("run")
