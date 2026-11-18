@@ -503,7 +503,8 @@ describe("--with-suggested (R4.2)", () => {
                 correctionsOf(withItems, config, { withSuggested, dictionary: false, format: "txt" })
             ).entries.map((entry) => entry.speaker);
 
-        expect(shown(true)).toEqual(["[Alice Example: 50 %]", "[Bob Example: 44 %]", "Dave Example"]);
+        // The default threshold `global.suggest.applyAbove` 0.5 applies a speaker range at 50 % (w_t5dr3s6q).
+        expect(shown(true)).toEqual(["Alice Example", "[Bob Example: 44 %]", "Dave Example"]);
         expect(shown(false)).toEqual(["Carol Example", "Carol Example", "Carol Example"]);
     });
 });
