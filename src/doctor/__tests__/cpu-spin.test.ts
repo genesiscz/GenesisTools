@@ -96,6 +96,8 @@ describe("processOwner", () => {
         expect(processOwner("/Users/dev/.genesis-tools/bin/gt-ai /Users/dev/GenesisTools/src/ai/index.ts")).toBe(
             "genesis-tool"
         );
+        expect(processOwner("bun C:\\Projects\\GenesisTools\\src\\doctor\\index.ts")).toBe("genesis-tool");
+        expect(processOwner("C:\\Users\\dev\\.genesis-tools\\bin\\gt-ai.exe")).toBe("genesis-tool");
         expect(processOwner("/usr/libexec/logd")).toBeNull();
     });
 });

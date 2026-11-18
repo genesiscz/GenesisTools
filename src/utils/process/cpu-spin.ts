@@ -6,7 +6,7 @@ import { listProcessesWithUsage } from "@genesiscz/utils/process/processes";
  */
 
 const GENESIS_FACE = /GenesisTools\.app\/Contents\/MacOS\/GenesisTools(?:\s+--(?:rpc|window)\b|\s*$)/;
-const GENESIS_TOOL = /\/GenesisTools\/(?:src|scripts)\/|\/\.genesis-tools\/bin\/gt-/;
+const GENESIS_TOOL = /[/\\]GenesisTools[/\\](?:src|scripts)[/\\]|[/\\]\.genesis-tools[/\\]bin[/\\]gt-/;
 
 export const DEFAULT_CPU_SPIN_WINDOW_MS = 1_500;
 export const DEFAULT_CPU_SPIN_THRESHOLD_PERCENT = 25;
