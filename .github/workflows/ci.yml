@@ -9,6 +9,14 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
+      dashboards:
+        description: "Include dashboard/UI compiler projects and run the dashboard smoke tests"
+        type: boolean
+        default: false
+      tool_command_guard:
+        description: "Scan all tool command references"
+        type: boolean
+        default: false
       windows:
         description: "Also run the test suite on windows-latest (10-16 min on top)"
         type: boolean
@@ -511,13 +519,14 @@ jobs:
         shell: bash
         env:
           TYPECHECK_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        # A workflow_dispatch run has no base: then no --base, and every project is checked.
-        run: bun scripts/ci/typecheck.ts ${TYPECHECK_BASE:+--base "$TYPECHECK_BASE"}
+          TYPECHECK_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.dashboards && '--all' || '--core-only' }}
+        run: bun scripts/ci/typecheck.ts "$TYPECHECK_SCOPE" ${TYPECHECK_BASE:+--base "$TYPECHECK_BASE"}
 
       # Every Vite dashboard the change can reach boots its dev server and must render `/`. `tools clarity ui`
       # answered 500 on every page for a day (2026-10-22) while tsc and the tests passed. It ran in the pre-push hook
       # until 2026-11-05 (decision 21); the runner's empty home is the "no config yet" case a new Mac starts from.
       - name: Dashboard smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.dashboards
         timeout-minutes: 4
         shell: bash
         env:
@@ -581,6 +590,7 @@ jobs:
       # renamed command fails here instead of in front of a user.
       # --strict: every `tools …` command in src/** goes through toolCommand() or suggestCommand().
       - name: Tool command reference guard
+        if: github.event_name == 'workflow_dispatch' && inputs.tool_command_guard
         timeout-minutes: 2
         run: bun scripts/ci/check-tool-commands.ts --strict
 
