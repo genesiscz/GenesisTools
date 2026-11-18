@@ -184,6 +184,28 @@ describe("the app.rpc need reads saved method lists of this build only", () => {
     });
 });
 
+describe("the app.grant need has no probe, so --fresh reads the saved grant", () => {
+    test("a recent granted report answers with fresh set; an old one still fails", async () => {
+        const env = { ...appNeedFixture(), fresh: true };
+        await env.state.report("app", "grant.accessibility", {
+            value: "granted",
+            at: env.now().toISOString(),
+            source: "app",
+        });
+        expect(await checkNeed(Need.app.grant("accessibility"), env)).toEqual({ ok: true, from: "state" });
+
+        await env.state.report("app", "grant.accessibility", {
+            value: "granted",
+            at: "2026-11-17T09:00:00.000Z",
+            source: "app",
+        });
+        expect(await checkNeed(Need.app.grant("accessibility"), env)).toMatchObject({
+            ok: false,
+            code: "grant-missing",
+        });
+    });
+});
+
 describe("runAreaAction", () => {
     test("tries the ways in order and names why each one was skipped", async () => {
         const events: unknown[] = [];
