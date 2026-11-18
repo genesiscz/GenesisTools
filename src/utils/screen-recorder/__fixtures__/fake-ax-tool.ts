@@ -251,7 +251,7 @@ const latePng = fixtureMode?.match(/^--fixture-late-png(-old)?=(\d+)$/);
 const capturedAt = latePng ? Number(latePng[2]) : undefined;
 mkdirSync(outDir, { recursive: true });
 
-const keep = (reason: string) => {
+const keep = (sample: { reason: string; timestampMs?: number; changePercent?: number }) => {
     const file = `keep-${String(frames.length + 1).padStart(4, "0")}.png`;
     const path = join(outDir, file);
     writeFileSync(path, "png");
@@ -259,9 +259,9 @@ const keep = (reason: string) => {
         index: frames.length,
         file,
         path,
-        timestampMs: frames.length * 100,
-        changePercent: 5,
-        reason,
+        timestampMs: sample.timestampMs ?? frames.length * 100,
+        changePercent: sample.changePercent ?? 5,
+        reason: sample.reason,
         displayId,
     };
     frames.push(frame);
@@ -317,11 +317,23 @@ const finish = (cancelled: boolean) => {
 };
 
 process.on("SIGINT", () => finish(true));
-const firstPng = keep("first");
-
-if (capturedAt !== undefined) {
-    const landed = new Date(capturedAt + 800);
-    utimesSync(firstPng, landed, landed);
+if (fixtureMode === "--fixture-screen-changes") {
+    // Percentage of a fixed image painted so far, compared with the last kept image.
+    let lastKept = 0;
+    keep({ reason: "first", timestampMs: 0, changePercent: 100 });
+    for (const [index, painted] of [1, 4, 4, 10].entries()) {
+        const changePercent = Math.abs(painted - lastKept);
+        if (changePercent > 0 && changePercent >= Number(value("--threshold"))) {
+            keep({ reason: "change", timestampMs: (index + 1) * 500, changePercent });
+            lastKept = painted;
+        }
+    }
+} else {
+    const firstPng = keep({ reason: "first" });
+    if (capturedAt !== undefined) {
+        const landed = new Date(capturedAt + 800);
+        utimesSync(firstPng, landed, landed);
+    }
 }
 
 print({ event: "state", state: "recording", displayId }, "stderr");
@@ -350,7 +362,7 @@ process.stdin.on("data", (chunk) => {
 
             print({ event: "display-switch", from: displayId, to: command.displayId }, "stderr");
             displayId = command.displayId;
-            keep("display-switch");
+            keep({ reason: "display-switch" });
         } else if (command.cmd === "pause" || command.cmd === "resume") {
             print({ event: "state", state: command.cmd === "pause" ? "paused" : "recording" }, "stderr");
         } else if (command.cmd === "mute" || command.cmd === "unmute") {

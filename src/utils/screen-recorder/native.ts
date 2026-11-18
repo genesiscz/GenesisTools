@@ -674,15 +674,6 @@ export class NativeFrameRecorder extends FrameRecorder {
                   }
                 : {}),
         });
-        log.debug({ exitCode: run.exitCode, argv, timedOut: run.timedOut }, "native capture");
-
-        if (run.timedOut) {
-            throw new CaptureError(
-                "timeout",
-                `ax-tool capture did not end within ${request.durationSec} s + ${CAPTURE_TIMEOUT_GRACE_MS / 1000} s`
-            );
-        }
-
         let json: unknown = null;
 
         try {
@@ -690,10 +681,22 @@ export class NativeFrameRecorder extends FrameRecorder {
         } catch (error) {
             log.debug({ error }, "native capture result is incomplete; trying frame salvage");
         }
-        const parsed = nativeResult.safeParse(json);
+        const data = nativeResult.safeParse(json).data?.data;
+        log.debug(
+            {
+                exitCode: run.exitCode,
+                argv,
+                timedOut: run.timedOut,
+                spawnedAt,
+                firstFrameEpochMs: data?.firstFrameEpochMs,
+                stats: data?.stats,
+            },
+            "native capture"
+        );
 
-        if (run.exitCode === 0 && parsed.success) {
-            const { frames, cancelled, endedEarly, stats, tracks, firstFrameEpochMs } = parsed.data.data;
+        // A piece can cross its deadline while closing sound sidecars after its screen frames landed.
+        if (run.exitCode === 0 && data && (!run.timedOut || data.frames.length > 0)) {
+            const { frames, cancelled, endedEarly, stats, tracks, firstFrameEpochMs } = data;
             const first = frames[0];
             // The first PNG lands up to a second after its frame was captured, while markers use the true wall
             // clock, so its file time is only the fallback for an ax-tool that does not report the capture time.
@@ -712,7 +715,9 @@ export class NativeFrameRecorder extends FrameRecorder {
                     : {}),
                 ...(frame.motionBoxes ? { motionBoxes: frame.motionBoxes } : {}),
             }));
-            const ending = endedEarly ?? (cancelled || run.aborted ? "stopped" : undefined);
+            const ending = run.timedOut
+                ? "stream-error"
+                : (endedEarly ?? (cancelled || run.aborted ? "stopped" : undefined));
             return {
                 startedAtMs:
                     firstFrameEpochMs ??
@@ -731,6 +736,13 @@ export class NativeFrameRecorder extends FrameRecorder {
         if (salvaged) {
             log.warn({ message, frames: salvaged.frames.length }, "native capture failed; kept its frames");
             return salvaged;
+        }
+
+        if (run.timedOut) {
+            throw new CaptureError(
+                "timeout",
+                `ax-tool capture did not end within ${request.durationSec} s + ${CAPTURE_TIMEOUT_GRACE_MS / 1000} s`
+            );
         }
 
         throw new CaptureError(
