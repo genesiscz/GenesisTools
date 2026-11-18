@@ -1,8 +1,8 @@
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import { logger } from "@genesiscz/utils/logger";
 import type { AgentsTree } from "../agents/types";
-import { WIDGET_EXACT_PATHS_LIMIT, type WidgetRoster, type WidgetRosterScope } from "./roster-index";
-import { newestRows, type RosterPage } from "./roster-pages";
+import { newestRosterRows, WIDGET_EXACT_PATHS_LIMIT, type WidgetRoster, type WidgetRosterScope } from "./roster-index";
+import type { RosterPage } from "./roster-pages";
 
 /**
  * A roster read, after refreshing the named parts of the shared index when `index` is not empty. With
@@ -257,7 +257,10 @@ export class WidgetRosterReader {
                             this.fail("Missing widget roster page");
                             return;
                         }
-                        this.rows = newestRows([...(resume ? this.rows : []), ...page.rows]);
+                        this.rows =
+                            page.rows.length || !resume
+                                ? newestRosterRows([...(resume ? this.rows : []), ...page.rows])
+                                : this.rows;
                         this.agents =
                             page.agents ??
                             (resume

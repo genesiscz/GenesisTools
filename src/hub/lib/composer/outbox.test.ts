@@ -37,6 +37,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as nativeInbox from "@genesiscz/utils/macos/native-inbox";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as fileLock from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -5469,6 +5470,9 @@ describe("background Widget roster", () => {
             const { rows, agents, backfill } = f.reader;
             await writeWidgetRosterCache({ root: directory, roster: { rows, agents, backfill } });
             const joined = await oneShotWidgetSources(directory);
+            // A pin must resolve the session unambiguously across the complete roster, including later pages.
+            const forPin = await oneShotWidgetSources(directory, { requireComplete: true });
+            expect(forPin.rosterStatus).toBeUndefined();
             f.reply({ id: 1, ok: true, revision: "r", page: { offset: 1, next: 2, rows: [next] } });
             expect(await joined.sessions(false)).toEqual([first]);
             expect(joined.rosterStatus?.().loading).toBe(true);
@@ -5476,6 +5480,20 @@ describe("background Widget roster", () => {
             expect(f.reader.backfill).toEqual({ revision: "r", cursor: 2 });
         } finally {
             f.reader.stop();
+        }
+    });
+
+    test("settings joining a new watch before page one can display the loading state immediately", async () => {
+        const directory = await root();
+        await writeFile(join(directory, "worker.lock"), "fixture");
+        const live = spyOn(nativeInbox, "runningWidgetRoot").mockReturnValue(directory);
+        try {
+            const sources = await oneShotWidgetSources(directory);
+            expect(live).toHaveBeenCalledWith({ root: directory });
+            expect(sources.rosterStatus?.().loading).toBe(true);
+            expect(await sources.sessions(false)).toEqual([]);
+        } finally {
+            live.mockRestore();
         }
     });
 
@@ -6637,7 +6655,7 @@ describe("inbox card images and agent messages", () => {
             { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
             async () => {
                 const db = openReadModel(toolDataDir("question", "qa.db"));
-                const markdown = "Inspect **backups**.\n\n" + "more text ".repeat(120) + "\nEnd.";
+                const markdown = `Inspect **backups**.\n\n${"more text ".repeat(120)}\nEnd.`;
                 const now = Date.now();
                 try {
                     const insert = db.query(
