@@ -21,7 +21,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and the Worktree cleanup pane."
+                    subtitle: "Defaults for Work, the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and Worktree cleanup."
                 ) {
                     // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
                     HubLayoutView(.usageSettings) {
@@ -107,6 +107,23 @@ private struct HubAppearanceSettings: View {
 }
 
 @MainActor
+struct HubWorkOpeningProjectPicker: View {
+    @AppStorage(HubWorkOpeningProject.key) private var choice: HubWorkOpeningProject = .recentSession
+
+    var body: some View {
+        NativeSettingsPicker(
+            "Opening project", detail: "Work opens the first project in the list if your choice is unavailable.",
+            identifier: HubWorkOpeningProject.key,
+            options: [
+                NativeSettingsOption(.recentSession, "Most recently active session’s project"),
+                NativeSettingsOption(.lastOpened, "Project I opened last"),
+                NativeSettingsOption(.firstInList, "First in the list"),
+            ],
+            selection: $choice, width: 245)
+    }
+}
+
+@MainActor
 private struct HubPaneSettings: View {
     @ObservedObject var preferences: HubPreferences
     @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
@@ -182,6 +199,8 @@ private struct HubPaneSettings: View {
                     detail: "Adds macOS energy impact to each process. Every refresh takes one top sample of about 1 s.",
                     identifier: "hub.procs.energy", isOn: $preferences.processEnergy)
             }
+            NativeSettingsCard("Work") { HubWorkOpeningProjectPicker() }
+                .nativeSettingsAnchor("work")
             NativeSettingsCard("Worktree cleanup") {
                 NativeSettingsRow(
                     "Idle for at least",

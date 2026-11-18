@@ -1,3 +1,4 @@
+import Combine
 import GenesisKit
 import SwiftUI
 import XCTest
@@ -7,8 +8,9 @@ import XCTest
 @MainActor
 private final class FakeWorkSource: WorkSource {
     var performed: [WorkScreenAction] = []
+    var projectNames = ["App", "Quiet"]
 
-    func projects() async throws -> [String] { ["App", "Quiet"] }
+    func projects() async throws -> [String] { projectNames }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
         guard project == "App" else { return WorkSnapshotValue(project: project, containers: [], triage: []) }
         return WorkSnapshotValue(
@@ -37,6 +39,96 @@ private final class FakeWorkSource: WorkSource {
 
 @MainActor
 final class HubWorkTests: XCTestCase {
+    private func isolatedDefaults(suite: String = "HubWorkTests.\(UUID().uuidString)") -> UserDefaults {
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        return UserDefaults(suiteName: suite)!
+    }
+
+    /// Wait for this entry's project list, even on a return visit with an existing snapshot.
+    private func enter(_ model: HubWorkModel, sessions: [HubSession] = [], beforeProjectsLoad: () -> Void = {}) async {
+        let loaded = expectation(description: "Read the Work projects")
+        let watch = model.screen.$projectsLoaded.dropFirst().first(where: { $0 }).sink { _ in loaded.fulfill() }
+        model.activate(sessions: sessions)
+        beforeProjectsLoad()
+        await fulfillment(of: [loaded], timeout: 3)
+        watch.cancel()
+    }
+
+    func testOpeningProjectDefaultsToTheMostRecentlyActiveSession() async {
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
+        defer { model.deactivate() }
+        await enter(model, sessions: [
+            HubSession(sessionId: "older", project: "App", mtime: 300, lastCacheAt: 100),
+            HubSession(sessionId: "active", project: "quiet", mtime: 200),
+        ])
+        XCTAssertEqual(model.screen.project, "Quiet")
+    }
+
+    func testOpeningProjectUsesTheCachedWorkingDirectory() async {
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
+        defer { model.deactivate() }
+        await enter(model, sessions: [HubSession(sessionId: "active", cwd: "/repos/Quiet/.worktrees/feature", mtime: 200)])
+        XCTAssertEqual(model.screen.project, "Quiet")
+    }
+
+    func testLastOpenedRemembersTheChosenProjectAcrossHubInstances() async {
+        let suite = "HubWorkTests.\(UUID().uuidString)"
+        let defaults = isolatedDefaults(suite: suite)
+        let first = HubWorkModel(source: FakeWorkSource(), defaults: defaults)
+        await enter(first)
+        first.openProject("Quiet")
+        first.deactivate()
+        defaults.set(HubWorkOpeningProject.lastOpened.rawValue, forKey: HubWorkOpeningProject.key)
+        let reopened = HubWorkModel(source: FakeWorkSource(), defaults: UserDefaults(suiteName: suite)!)
+        defer { reopened.deactivate() }
+        await enter(reopened, sessions: [HubSession(sessionId: "active", project: "App", mtime: 200)])
+        XCTAssertEqual(reopened.screen.project, "Quiet")
+    }
+
+    func testFirstInListReopensTheFirstProjectAfterAManualPick() async {
+        let defaults = isolatedDefaults()
+        defaults.set(HubWorkOpeningProject.firstInList.rawValue, forKey: HubWorkOpeningProject.key)
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: defaults)
+        defer { model.deactivate() }
+        let sessions = [HubSession(sessionId: "active", project: "Quiet", mtime: 200)]
+        await enter(model, sessions: sessions)
+        model.openProject("Quiet")
+        model.deactivate()
+        await enter(model, sessions: sessions)
+        XCTAssertEqual(model.screen.project, "App")
+    }
+
+    func testUnavailableOpeningProjectFallsBackToTheFirstOrNilForAnEmptyList() async {
+        let defaults = isolatedDefaults()
+        let source = FakeWorkSource()
+        let model = HubWorkModel(source: source, defaults: defaults)
+        defer { model.deactivate() }
+        await enter(model, sessions: [
+            HubSession(sessionId: "older", project: "Quiet", mtime: 100),
+            HubSession(sessionId: "newest", project: "Missing", mtime: 200),
+        ])
+        XCTAssertEqual(model.screen.project, "App")
+        model.openProject("Quiet")
+        model.deactivate()
+        defaults.set(HubWorkOpeningProject.lastOpened.rawValue, forKey: HubWorkOpeningProject.key)
+        source.projectNames = ["App"]
+        await enter(model)
+        XCTAssertEqual(model.screen.project, "App")
+        model.deactivate()
+        source.projectNames = []
+        await enter(model)
+        XCTAssertNil(model.screen.project)
+    }
+
+    func testAnExplicitProjectOpenedDuringEntryWins() async {
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
+        defer { model.deactivate() }
+        await enter(model, sessions: [HubSession(sessionId: "active", project: "App", mtime: 200)]) {
+            model.openProject("Quiet")
+        }
+        XCTAssertEqual(model.screen.project, "Quiet")
+    }
+
     func testTheWorkModeIsAModeOfTheHub() {
         XCTAssertTrue(HubMode.allCases.contains(.work))
         XCTAssertEqual(HubMode.work.title, "Work")
@@ -44,7 +136,7 @@ final class HubWorkTests: XCTestCase {
 
     /// A launch with `--mode work` settles on the Work screen's first load (the snapshot waits for it).
     func testOnLoadedFiresOnceOnTheFirstLoad() async {
-        let model = HubWorkModel(source: FakeWorkSource())
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
         var calls = 0
         model.onLoaded = { calls += 1 }
         model.activate()
@@ -59,7 +151,7 @@ final class HubWorkTests: XCTestCase {
 
     /// The hub window's visibility reaches the Work screen, so a covered or hidden hub reloads nothing.
     func testTheWorkScreenFollowsTheHubWindowsVisibility() {
-        let model = HubWorkModel(source: FakeWorkSource())
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
         XCTAssertTrue(model.screen.visible)
         HubVisibility.shared.set(false)
         XCTAssertFalse(model.screen.visible)
@@ -71,7 +163,7 @@ final class HubWorkTests: XCTestCase {
     /// renderer cannot draw): the header names the project and its counts, the rows and their buttons draw. A handoff
     /// starts folded with its open count (the real project has 35 of them), so its tasks are not on screen yet.
     func testTheWorkPaneDrawsTheProjectInARealWindow() async throws {
-        let model = HubWorkModel(source: FakeWorkSource())
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
         model.activate()
         let deadline = Date().addingTimeInterval(3)
         while model.screen.snapshot == nil && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
@@ -79,7 +171,7 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(model.navSelection, "App")
 
         let view = HStack(spacing: 0) {
-            WorkProjectsList(screen: model.screen, filter: "").frame(width: 200)
+            WorkProjectsList(screen: model.screen, filter: "", openProject: model.openProject).frame(width: 200)
             WorkMain(screen: model.screen)
         }
         .frame(width: 1000, height: 460)

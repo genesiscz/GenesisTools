@@ -17,7 +17,16 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var projects: [String] = []
     /// The first read of the projects ended, whatever it found: a store with no project settles here.
     @Published public private(set) var projectsLoaded = false
-    @Published public var project: String? { didSet { if project != oldValue { reload() } } }
+    @Published public var project: String? {
+        didSet {
+            openingCandidates = nil // A row click or history navigation takes precedence over the pending opening choice.
+            if project != oldValue {
+                snapshot = nil
+                notifyRows = []
+                reload()
+            }
+        }
+    }
     @Published public var pane: Pane = .items { didSet { if pane != oldValue { reload() } } }
     @Published public private(set) var snapshot: WorkSnapshotValue?
     @Published public private(set) var notifyRows: [WorkNotifyRow] = []
@@ -29,11 +38,13 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var pending: Set<String> = []
 
     private let source: WorkSource
+    private var openingCandidates: [String]?
     /// The shortest time between two reloads that a change of the store starts.
     let reloadInterval: TimeInterval
     /// How long a burst must be quiet before its reload, within `reloadInterval`.
     let settle: TimeInterval
     private var listening: Task<Void, Never>?
+    private var opening: Task<Void, Never>?
     private var loading: Task<Void, Never>?
     /// The load that owns `loading`; a cancelled older one never clears it.
     private var loadToken = UUID()
@@ -64,24 +75,27 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
-    /// The screen is on screen: read the projects and the chosen one, and follow the store's changes.
-    public func activate() {
+    /// On entry, open the first matching candidate or the first listed project. Without an opening preference,
+    /// keep the current selection. A choice made while the list loads takes precedence.
+    public func activate(preferring projects: [String]? = nil) {
         guard listening == nil else { return }
+        openingCandidates = projects
         let stream = source.changes()
         listening = Task { [weak self] in
             for await _ in stream { self?.changed() }
         }
-        // Back on the screen: the changes made while it was away were not followed, so read once more (a new
-        // project choice reads by itself).
-        Task {
-            let before = project
+        let previousLoad = loadToken
+        opening = Task {
+            guard !Task.isCancelled else { return }
             await loadProjects()
-            if project == before { reload() }
+            if !Task.isCancelled && loadToken == previousLoad { reload() }
         }
     }
 
     /// The screen left: no more reloads while nobody sees it.
     public func deactivate() {
+        opening?.cancel()
+        opening = nil
         listening?.cancel()
         listening = nil
         trailing?.cancel()
@@ -90,17 +104,30 @@ public final class WorkScreenModel: ObservableObject {
 
     public func loadProjects() async {
         do {
-            projects = try await source.projects()
-            if project == nil || !(projects.contains(project ?? "")) { project = projects.first }
+            let names = try await source.projects()
+            guard !Task.isCancelled else { return }
+            projects = names
+            let candidates = openingCandidates ?? [project].compactMap { $0 }
+            let match = candidates.lazy.compactMap { candidate in
+                names.first { $0 == candidate } ?? names.first { $0.caseInsensitiveCompare(candidate) == .orderedSame }
+            }.first
+            openingCandidates = nil
+            let next = match ?? names.first
+            if project != next { project = next }
         } catch {
+            guard !Task.isCancelled else { return }
             failure = error.localizedDescription
         }
         projectsLoaded = true
     }
 
     public func reload() {
-        guard let project else { return }
         loading?.cancel()
+        guard let project else {
+            loading = nil
+            isLoading = false
+            return
+        }
         stale = false
         lastReload = Date()
         isLoading = true
