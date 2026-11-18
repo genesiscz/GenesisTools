@@ -178,7 +178,7 @@ describe("worktree backup", () => {
 
         try {
             const plan = await planWorktreeBackup({ path: detached, remove: true });
-            expect(plan.blockers.some((blocker) => blocker.startsWith(`Process ${sleeper.pid} `))).toBe(true);
+            expect(plan.blockers.some((blocker) => blocker.includes(`(${sleeper.pid})`))).toBe(true);
         } finally {
             sleeper.kill();
             await sleeper.exited;
@@ -262,6 +262,27 @@ describe("worktree backup", () => {
         } finally {
             spy.mockRestore();
         }
+    });
+
+    it("keeps a proven backup when an agent starts using the worktree before removal", async () => {
+        let reads = 0;
+        const result = await backupWorktree({
+            path: spare,
+            backupRoot,
+            remove: true,
+            readUsers: async () => ({
+                processes: [],
+                sessionsError: null,
+                sessions:
+                    ++reads === 1
+                        ? []
+                        : [{ provider: "codex", sessionId: "fixture", title: "editing", mtime: 1, cwd: spare }],
+            }),
+        });
+        expect(reads).toBe(2);
+        expect(result.proven).toBe(true);
+        expect(result.refusal).toContain("editing");
+        expect(existsSync(spare)).toBe(true);
     });
 
     it("refuses to remove a locked worktree before writing anything", async () => {

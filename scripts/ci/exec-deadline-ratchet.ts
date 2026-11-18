@@ -22,7 +22,6 @@ export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string
     ["src/git/lib/rebranch/apply.ts", 5],
     ["src/git/lib/rebranch/history.ts", 1],
     ["src/github/lib/stack-restack.ts", 7],
-    ["src/hub/lib/worktrees.ts", 4],
     ["src/macos/commands/clones/daemon.ts", 1],
     ["src/shops/commands/daemon.ts", 1],
     ["src/utils/git/base-detect.ts", 3],
@@ -33,5 +32,6 @@ export const EXEC_DEADLINE_RATCHET: ReadonlyMap<string, number> = new Map<string
     ["src/utils/git/repo-facts.ts", 3],
     ["src/utils/git/worktree.ts", 7],
     ["src/utils/git/worktree-backup.ts", 1],
+    ["src/utils/git/worktrees.ts", 4],
     ["src/utils/github/url-parser.ts", 1],
 ]);

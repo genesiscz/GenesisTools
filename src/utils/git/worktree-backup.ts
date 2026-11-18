@@ -43,6 +43,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { createGit } from "./core";
 import { porcelain } from "./porcelain";
+import { DEFAULT_LIVE_MINUTES, type LiveUsers, readLiveUsers, worktreeUse, worktreeUseBlockers } from "./worktrees";
 
 const log = logger.child({ component: "git:worktree-backup" });
 
@@ -167,11 +168,15 @@ export interface PlanWorktreeBackupOptions {
     maxCopyBytes?: number;
     /** Also report what would stop the removal: a lock, a process working inside the worktree. */
     remove?: boolean;
+    /** A fresh snapshot at each removal check. */
+    readUsers?: () => Promise<LiveUsers>;
 }
 
 export interface BackupWorktreeOptions {
     path: string;
     remove?: boolean;
+    /** A fresh snapshot at each removal check. */
+    readUsers?: () => Promise<LiveUsers>;
     /** What the work was, for the README. */
     note?: string;
     maxCopyBytes?: number;
@@ -821,57 +826,13 @@ function readLock(gitdir: string): string | null {
     return readFileSync(file, "utf8").replace(/\r?\n$/, "");
 }
 
-/**
- * Every live process with a short name. The kernel table is one `sysctl`; `ps` cost about 400 ms with 2,000
- * processes (measured 2026-11-10) and runs only where that table is not available. Loaded on first use, because the
- * `@genesiscz/utils/git` index re-exports this file and only a removal needs the process readers.
- */
-async function listProcesses(): Promise<Array<{ pid: number; command: string }>> {
-    const { listProcessTable } = await import("@genesiscz/utils/process/libproc-table");
-    const table = listProcessTable();
-
-    if (table !== null) {
-        return table.filter((row) => !row.zombie).map((row) => ({ pid: row.pid, command: row.comm }));
-    }
-
-    const { listProcessRows } = await import("@genesiscz/utils/process/processes");
-    return (await listProcessRows({ timeoutMs: 10_000 })).map((row) => ({ pid: row.pid, command: row.command }));
-}
-
-/**
- * Processes whose working directory lies inside the worktree, as blocker sentences: the process list plus the
- * kernel's cwd per pid. This process's own cwd is the positive control, so a reader that answers nothing is a
- * blocker, not "none".
- */
-async function processBlockers(path: string): Promise<string[]> {
-    const rows = await listProcesses();
-
-    if (rows.length === 0) {
-        return ["The process list could not be read, so a process working inside the worktree cannot be ruled out."];
-    }
-
-    const { batchCwd } = await import("@genesiscz/utils/process/cwd");
-    const cwds = batchCwd(rows.map((row) => row.pid));
-
-    if (!cwds.has(process.pid)) {
-        return [
-            "The working directories of running processes could not be read (not even this process's own), so a process working inside the worktree cannot be ruled out.",
-        ];
-    }
-
-    const blockers: string[] = [];
-
-    for (const row of rows) {
-        const cwd = cwds.get(row.pid);
-
-        if (cwd !== undefined && isInside(cwd, path)) {
-            blockers.push(
-                `Process ${row.pid} (${row.command.slice(0, 80)}) has its working directory inside the worktree (${cwd}).`
-            );
-        }
-    }
-
-    return blockers;
+async function removalBlockers(
+    path: string,
+    locked: string | null,
+    readUsers?: () => Promise<LiveUsers>
+): Promise<string[]> {
+    const live = await (readUsers?.() ?? readLiveUsers({ liveMinutes: DEFAULT_LIVE_MINUTES, includeOwnLineage: true }));
+    return worktreeUseBlockers({ locked, ...worktreeUse(path, [path], live) }).map((blocker) => blocker.text);
 }
 
 interface Inspection {
@@ -966,13 +927,7 @@ async function inspectWorktree(options: PlanWorktreeBackupOptions): Promise<Insp
             );
         }
 
-        if (locked !== null) {
-            blockers.push(
-                `The worktree is locked${locked === "" ? "" : ` (${locked})`}; unlock it with git worktree unlock first.`
-            );
-        }
-
-        blockers.push(...(await processBlockers(path)));
+        blockers.push(...(await removalBlockers(path, locked, options.readUsers)));
     }
 
     const plan: WorktreeBackupPlan = {
@@ -1598,10 +1553,12 @@ function writeReport({
  * still refuses). Returns the refusal, or null when the folder is gone.
  */
 async function removeAfterBackup({
+    readUsers,
     inspection,
     maxCopyBytes,
 }: {
     inspection: Inspection;
+    readUsers?: () => Promise<LiveUsers>;
     maxCopyBytes: number;
 }): Promise<string | null> {
     const { plan } = inspection;
@@ -1611,10 +1568,10 @@ async function removeAfterBackup({
         return "The worktree changed during the backup, so it was kept; the backup stays.";
     }
 
-    const processes = await processBlockers(plan.path);
+    const blockers = await removalBlockers(plan.path, readLock(plan.gitdir), readUsers);
 
-    if (processes.length > 0) {
-        return processes.join(" ");
+    if (blockers.length > 0) {
+        return blockers.join(" ");
     }
 
     const removal = await runGit({ cwd: plan.repoRoot, args: ["worktree", "remove", "--force", plan.listed] });
@@ -1638,7 +1595,12 @@ async function removeAfterBackup({
 export async function backupWorktree(options: BackupWorktreeOptions): Promise<WorktreeBackupResult> {
     const maxCopyBytes = options.maxCopyBytes ?? DEFAULT_WORKTREE_BACKUP_MAX_COPY_BYTES;
     const now = options.now ?? new Date();
-    const inspection = await inspectWorktree({ path: options.path, maxCopyBytes, remove: options.remove });
+    const inspection = await inspectWorktree({
+        path: options.path,
+        maxCopyBytes,
+        remove: options.remove,
+        readUsers: options.readUsers,
+    });
     const { plan, identity, state } = inspection;
     const result: WorktreeBackupResult = {
         plan,
@@ -1735,7 +1697,7 @@ export async function backupWorktree(options: BackupWorktreeOptions): Promise<Wo
             const { uncommitted, staged, commits, copies } = result.proof;
             result.refusal = `The proof failed, so nothing was removed: uncommitted ${uncommitted}; staged ${staged}; commits ${commits}; copies ${copies}.`;
         } else if (options.remove) {
-            result.refusal = await removeAfterBackup({ inspection, maxCopyBytes });
+            result.refusal = await removeAfterBackup({ inspection, maxCopyBytes, readUsers: options.readUsers });
             result.removed = result.refusal === null;
         }
     } catch (err) {
