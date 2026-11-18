@@ -195,24 +195,32 @@ struct ItemsBar: View {
 
     /// Below this width the actions show their glyphs, with their words as tooltip and label.
     static let compactWidth: CGFloat = 600
+    /// Below this width the question groups are one menu in the first row, not a row of their own: at 900 x 600 the
+    /// headers above the first question took 250 of 600 pt (w_gae6rjx9).
+    static let inlineGroupsWidth: CGFloat = 1000
 
     var body: some View {
         let compact = width.map { $0 < Self.compactWidth } ?? false
+        let inlineGroups = projection.showsGroups && (width.map { $0 < Self.inlineGroupsWidth } ?? false)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 leading
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { room = $0 }
                     .layoutPriority(1)
+                if inlineGroups {
+                    groupMenu(groupItems)
+                }
                 HStack(spacing: compact ? 2 : 4) {
                     FindingComposerButton(detail: detail, compact: compact)
                     ListenCheckButton(detail: detail, rate: projection.spotCheck, compact: compact, show: show)
                     if projection.suggestionsWait { confirmAll(compact: compact) }
+                    RunRulesButton(detail: detail, compact: compact)
                 }
                 .fixedSize()
             }
             .padding(.horizontal, 14).padding(.vertical, 6)
-            if projection.showsGroups {
+            if projection.showsGroups, !inlineGroups {
                 groupStrip
                     .padding(.horizontal, 14).padding(.bottom, 6)
             }
@@ -312,22 +320,27 @@ struct ItemsBar: View {
                                  selection: Binding(get: { projection.group }, set: choose),
                                  minSegmentWidth: 0, identifier: "meetings.items.group", size: .small)
             } else {
-                MenuButton(items: {
-                    items.map { item in .action(item.title, checked: item.id == projection.group) { choose(item.id) } }
-                }) {
-                    HStack(spacing: 4) {
-                        Text(verbatim: items.first { $0.id == projection.group }?.title ?? "All questions")
-                            .font(.system(size: 12, weight: .medium))
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                    }
-                    .fixedSize()
-                }
-                .instantTooltip("Which question group the list shows, with answered of total")
-                .accessibilityIdentifier("meetings.items.group")
+                groupMenu(items)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { groupRoom = $0 }
+    }
+
+    /// The question groups as one menu with the same words: in a narrow column, and in the first row of a small window.
+    private func groupMenu(_ items: [GenSegmentedTabs<String>.Item]) -> some View {
+        MenuButton(items: {
+            items.map { item in .action(item.title, checked: item.id == projection.group) { choose(item.id) } }
+        }) {
+            HStack(spacing: 4) {
+                Text(verbatim: items.first { $0.id == projection.group }?.title ?? "All questions")
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .fixedSize()
+        }
+        .instantTooltip("Which question group the list shows, with answered of total")
+        .accessibilityIdentifier("meetings.items.group")
     }
 
     private var groupItems: [GenSegmentedTabs<String>.Item] {
@@ -522,5 +535,69 @@ struct ListenCheckPopover: View {
                 failure = (group, asFailure(error))
             }
         }
+    }
+}
+
+// MARK: - Run the rules again (w_7ogmeryo)
+
+/// "Run the rules again…": `meeting.suggest` on a meeting that has items already, after a question says what the run
+/// does to them. Before, only the empty Items tab could start the rules.
+struct RunRulesButton: View {
+    @Bindable var detail: MeetingDetailModel
+    let compact: Bool
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            ItemsBarLabel(title: "Run the rules again…", symbol: "arrow.clockwise", compact: compact)
+        }
+        .buttonStyle(.genHoverPlain())
+        .disabled(detail.isBusy("suggest"))
+        .instantTooltip("Run the rules on the transcript again: new suggestions are added, your decisions stay")
+        .accessibilityLabel("Run the rules again")
+        .accessibilityIdentifier("meetings.items.runRules")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            RunRulesPopover(cancel: { open = false }) {
+                open = false
+                detail.suggest()
+            }
+        }
+    }
+}
+
+/// What a second run does to the items there are, before it starts: the rule a reader needs to trust it.
+struct RunRulesPopover: View {
+    let cancel: () -> Void
+    let run: () -> Void
+
+    static let lines = [
+        "Confirmed and rejected items stay as they are.",
+        "A suggestion you rejected is not suggested again.",
+        "New suggestions and questions are added.",
+        "An open suggestion that a dictionary entry or a voice name now settles is retired.",
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Run the rules on the transcript again?").font(.system(size: 13, weight: .semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Self.lines, id: \.self) { line in
+                    Label { Text(line).fixedSize(horizontal: false, vertical: true) } icon: {
+                        Image(systemName: "circle.fill").font(.system(size: 4)).foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 12))
+                }
+            }
+            Text("A run on a long meeting can take a minute; its progress shows above the list, with Cancel.")
+                .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Run the rules", action: run).keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("meetings.items.runRules.confirm")
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
     }
 }
