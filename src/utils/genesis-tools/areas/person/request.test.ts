@@ -26,6 +26,7 @@ import {
     type RequestEvent,
     type RequestView,
     requestEventSchema,
+    requestFileName,
     requestViewSchema,
     stateOf,
 } from "./journal";
@@ -60,8 +61,10 @@ test("a posted event keeps its window target when reopened and an older line sti
     const at = now().toISOString();
     const request = { ...input, createdAt: at };
     const legacy = { type: "posted", at, request, asker: null };
-    writeFileSync(join(dir, `${encodeURIComponent(input.id)}.jsonl`), `${SafeJSON.stringify(legacy)}\n`);
-    expect(createRequestJournal({ dir }).get(input.id)?.request).toEqual(request);
+    // An earlier build named the journal after the encoded id; that file is still read.
+    const legacyDir = scratch();
+    writeFileSync(join(legacyDir, `${encodeURIComponent(input.id)}.jsonl`), `${SafeJSON.stringify(legacy)}\n`);
+    expect(createRequestJournal({ dir: legacyDir }).get(input.id)?.request).toEqual(request);
 });
 
 test("a window target requires a known face and up to twenty strings of at most 500 characters", () => {
@@ -84,7 +87,7 @@ test("postOnce, append-only recovery, and persisted answers survive a reopen", a
     const journal = createRequestJournal({ dir, now });
     const posted = await journal.post({ input });
     expect(await journal.post({ input })).toEqual(posted);
-    const file = join(dir, `${encodeURIComponent(input.id)}.jsonl`);
+    const file = join(dir, requestFileName(input.id));
     const before = readFileSync(file, "utf8");
     appendFileSync(file, '{"type":');
     const torn = readFileSync(file, "utf8");
@@ -485,7 +488,7 @@ test("every byte prefix of a journal has a defined read state without changing b
     const journal = createRequestJournal({ dir, now });
     await journal.post({ input });
     await journal.settle(input.id, "done");
-    const file = join(dir, `${encodeURIComponent(input.id)}.jsonl`);
+    const file = join(dir, requestFileName(input.id));
     const full = readFileSync(file, "utf8");
     for (let length = 0; length <= full.length; length++) {
         const prefix = full.slice(0, length);
@@ -499,6 +502,7 @@ test("every byte prefix of a journal has a defined read state without changing b
 test("a timed-out request action returns pending and keeps its posted request open", async () => {
     const journal = createRequestJournal({ dir: scratch() });
     let shown = 0;
+    const presented = Promise.withResolvers<void>();
     const deps = liveEngineDeps(AREAS, {
         facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true },
         service: {
@@ -506,11 +510,14 @@ test("a timed-out request action returns pending and keeps its posted request op
             hasClient: () => true,
             present: async () => {
                 shown++;
+                presented.resolve();
                 return new Promise(() => {});
             },
         },
     });
     const result = await runAreaAction(AREAS, "person.notice", input, deps, { timeoutMs: 5 });
+    // The post takes the request's write lock, so it can finish after a deadline this short.
+    await withTimeout(presented.promise, 2_000, new Error("the request was never presented"));
     expect(
         result.status === "ran" &&
             typeof result.value === "object" &&
@@ -579,4 +586,118 @@ test("the service stays for an open request and exits on the idle check once it 
     } finally {
         start.host.stop("test complete");
     }
+});
+
+test("every valid id gets a short file name, and ids that differ only in case stay apart", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    const long = `notice:${"x".repeat(493)}`;
+    expect(long.length).toBe(500);
+    expect((await journal.post({ input: { ...input, id: long } })).id).toBe(long);
+    expect(Buffer.byteLength(requestFileName(long))).toBeLessThan(255);
+    await journal.post({ input: { ...input, id: "notice:Build" } });
+    await journal.post({ input: { ...input, id: "notice:build", title: "Lower case" } });
+    expect(journal.get("notice:Build")?.request.title).toBe(input.title);
+    expect(journal.get("notice:build")?.request.title).toBe("Lower case");
+    expect(
+        journal
+            .list()
+            .map((view) => view.id)
+            .sort()
+    ).toEqual(["notice:Build", "notice:build", long].sort());
+});
+
+test("racing posts create one request, and racing answers and a withdrawal record one terminal event", async () => {
+    const dir = scratch();
+    const service = createRequestJournal({ dir, now });
+    const worker = createRequestJournal({ dir, now });
+    const posts = await Promise.all([service.postOnce({ input }), worker.postOnce({ input })]);
+    expect(posts.filter((post) => post.created)).toHaveLength(1);
+    expect(service.get(input.id)?.events.map((event) => event.type)).toEqual(["posted"]);
+
+    const answers = await Promise.all([
+        service.settle(input.id, "done", null, { via: "app-window" }),
+        worker.settle(input.id, "done", null, { via: "notification" }),
+        worker.withdraw(input.id),
+    ]);
+    const events = service.get(input.id)!.events.map((event) => event.type);
+    expect(events.filter((type) => type === "accepted").length).toBeLessThanOrEqual(1);
+    expect(events.filter((type) => ["finished", "withdrawn"].includes(type))).toHaveLength(1);
+    expect(new Set(answers.map((answer) => SafeJSON.stringify(answer))).size).toBe(1);
+});
+
+test("an answer whose finish was lost completes it without a second acceptance", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    await journal.post({ input });
+    journal.append(input.id, {
+        type: "accepted",
+        at: now().toISOString(),
+        via: "app-window",
+        elevation: null,
+        method: "click",
+    });
+    expect((await journal.settle(input.id, "done")).status).toBe("done");
+    expect(journal.get(input.id)?.events.map((event) => event.type)).toEqual(["posted", "accepted", "finished"]);
+});
+
+test("a wait rejects when the journal cannot be read at its deadline", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    await journal.post({ input });
+    const waiting = journal.wait(input.id, 50);
+    appendFileSync(join(dir, requestFileName(input.id)), '{"type":"unknown"}\n');
+    await expect(waiting).rejects.toThrow();
+});
+
+test("a journal that cannot be read leaves only itself out of the list", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    await journal.post({ input });
+    await journal.post({ input: { ...input, id: "notice:damaged" } });
+    appendFileSync(join(dir, requestFileName("notice:damaged")), '{"type":"unknown"}\n');
+    expect(journal.list().map((view) => view.id)).toEqual([input.id]);
+    expect(journal.pending().map((view) => view.id)).toEqual([input.id]);
+    expect(() => journal.get("notice:damaged")).toThrow();
+});
+
+test("the list returns the newest requests by post time and reads a settled journal once", async () => {
+    const dir = scratch();
+    let minute = 0;
+    const journal = createRequestJournal({ dir, now: () => new Date(Date.UTC(2026, 10, 17, 12, minute++)) });
+    for (const id of ["notice:c", "notice:a", "notice:b"]) {
+        await journal.post({ input: { ...input, id } });
+    }
+
+    expect(journal.list({ limit: 2 }).map((view) => view.id)).toEqual(["notice:a", "notice:b"]);
+    await journal.settle("notice:c", "done");
+    expect(journal.pending().map((view) => view.id)).toEqual(["notice:a", "notice:b"]);
+    const settledView = journal.list().find((view) => view.id === "notice:c");
+    expect(settledView?.state).toBe("done");
+    // A settled journal is not read again: a damaged copy on disk does not change the listed view.
+    appendFileSync(join(dir, requestFileName("notice:c")), '{"type":"unknown"}\n');
+    expect(journal.list().find((view) => view.id === "notice:c")).toEqual(settledView);
+});
+
+test("one worker at a time presents a waiting request, and a settled request is not presented", async () => {
+    const journal = createRequestJournal({ dir: scratch(), now });
+    await journal.post({ input });
+    const release = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const first = journal.claim(input.id, async () => {
+        entered.resolve();
+        await release.promise;
+        return "first";
+    });
+    await entered.promise;
+    const second = await journal.claim(input.id, async () => "second");
+    expect(second).toMatchObject({ claimed: false, view: { state: "waiting" } });
+    release.resolve();
+    expect(await first).toEqual({ claimed: true, value: "first" });
+
+    await journal.withdraw(input.id);
+    expect(await journal.claim(input.id, async () => "late")).toMatchObject({
+        claimed: false,
+        view: { state: "withdrawn" },
+    });
 });

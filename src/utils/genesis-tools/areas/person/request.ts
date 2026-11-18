@@ -6,9 +6,12 @@ import { z } from "zod";
 import { Delivery, type DeliveryName, deliverySchema, personConfigSchema } from "./deliveries";
 import type { RequestJournal, RequestView } from "./journal";
 
+/** A request id: the journal stores it whole in the posted event and names the file by its digest. */
+export const REQUEST_ID_PATTERN = /^[a-zA-Z0-9:._-]{1,500}$/;
+
 export const noticeInputSchema = z.object({
     kind: z.literal("notice"),
-    id: z.string().regex(/^[a-zA-Z0-9:._-]{1,500}$/),
+    id: z.string().regex(REQUEST_ID_PATTERN),
     title: z.string().min(1).max(200),
     reason: z.string().min(1).max(20_000),
     /** The window a click on this request opens. */
