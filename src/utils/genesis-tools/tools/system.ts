@@ -1,9 +1,11 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { AppFaceFlag } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * The GenesisTools commands the other modules under `src/utils` name: the agent bus, Claude sessions and terminals,
  * the browser router, macOS grants and the app build, git, search, source maps and speech. This file imports
- * `toolCommand()` and nothing else, so a util that imports it loads no logger, commander or process helper.
+ * no logger, commander or process helper.
  *
  * Every parameter goes into the line as given. A caller that quoted a value with `shellWord()` before passes the
  * quoted value, so each message stays what it was.
@@ -187,6 +189,12 @@ export function musicSamplesInstallCommand(set?: string): string {
 
 export function macosPermissionsCommand(): string {
     return toolCommand("macos permissions");
+}
+
+/** A notification click checks the requested window when the person clicks it. */
+export function windowsOpenCommand({ window, args }: { window: AppFaceFlag; args: readonly string[] }): string {
+    const json = SafeJSON.stringify({ window, args }, { strict: true });
+    return toolCommand("genesis-tools action windows.open", "--json", json);
 }
 
 export function genesisToolsRequestOpenCommand(id: string): string {

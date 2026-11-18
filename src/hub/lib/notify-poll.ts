@@ -1,16 +1,15 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { windowsOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { type ProjectRef, projectRefFromRemote } from "@genesiscz/utils/git";
 import { prNumberLabel } from "@genesiscz/utils/git/origins/facts";
 import { type RepoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { dispatchNotification, type NotificationEvent } from "@genesiscz/utils/notifications";
 import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { escapeShellArg } from "@genesiscz/utils/string";
 import { diffPr, type NotifyItem, type PrMemory, pruneMemory } from "./notify";
 import {
     type NotifyConfig,
@@ -123,10 +122,8 @@ export function hubPrRef(item: Pick<NotifyItem, "project" | "number" | "provider
  * The shell line a banner click runs: the hub's PRs, at `ref` when given (`open -n` hands the flags to a
  * running hub).
  */
-export function openHubCommand(ref: string | null, bundle = genesisAppBundlePath()): string {
-    return ["/usr/bin/open", "-n", bundle, "--args", "--hub", "--mode", "prs", ...(ref ? ["--pr", ref.trim()] : [])]
-        .map(escapeShellArg)
-        .join(" ");
+export function openHubCommand(ref: string | null, _bundle?: string): string {
+    return windowsOpenCommand({ window: "--hub", args: ["--mode", "prs", ...(ref ? ["--pr", ref.trim()] : [])] });
 }
 
 const TITLES: Record<NotifyEvent, string> = {
@@ -165,7 +162,7 @@ export const postToNotificationCenter: NotifyPoster = async (item, summary) => {
 };
 
 /** `tools hub notify test`: marked as a test, and its click opens the hub's PRs, at `pr` when given. */
-export function testNotification(pr: string | null, bundle = genesisAppBundlePath()): NotificationEvent {
+export function testNotification(pr: string | null, bundle?: string): NotificationEvent {
     return {
         app: "hub",
         title: "TEST · hub PR notification",
