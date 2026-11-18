@@ -15,7 +15,7 @@ export const APP_CHECK_RATCHET: ReadonlyMap<string, number> = new Map<string, nu
     ["src/update/index.ts", 2],
     ["src/utils/ai/stt/capture/pcm-source.ts", 1],
     ["src/utils/browser-router/capabilities.ts", 1],
-    ["src/utils/macos/full-disk-access.ts", 2],
+    ["src/utils/macos/full-disk-access.ts", 1],
     ["src/utils/macos/native-inbox.ts", 1],
     ["src/utils/macos/notifications-app.ts", 1],
     ["src/utils/macos/voice-capsule.ts", 1],

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { checkAppInstalled, describeNeedFailure, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { macosPermissionsOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
@@ -12,7 +13,6 @@ import {
 } from "./genesis-app";
 import { appleScriptString } from "./jxa";
 import { MacOS } from "./MacOS";
-import { genesisAppBuildHint } from "./xcode";
 
 /**
  * Full Disk Access has no system prompt: the user adds the app to a list by hand. This is the
@@ -96,18 +96,30 @@ export function buildFullDiskAccessMessage(context: FullDiskAccessContext): stri
 }
 
 /** Terminal version of the same explanation, for the error a command throws after the dialog. */
-export function fullDiskAccessInstructions(context: FullDiskAccessContext): string {
+export function fullDiskAccessInstructions(context: FullDiskAccessContext, env?: NeedEnv): string {
     const others = FULL_DISK_ACCESS_FEATURES.filter((capability) => capability.id !== context.feature).map(
         (capability) => capability.label
     );
 
-    return [
+    const lines = [
         `Full Disk Access is required to ${context.reason}.`,
         `Add ${fullDiskAccessSubject()} in System Settings > Privacy & Security > Full Disk Access and switch it on. ${others.join(" and ")} start working too, from any terminal and from background services.`,
-        isRunningUnderGenesisApp()
-            ? `There is no prompt for this one. \`${macosPermissionsOpenCommand("full-disk-access")}\` opens the list and reveals the app in Finder.`
-            : `${genesisAppBuildHint()} That build makes GenesisTools hold the grant instead of whichever terminal ran the command.`,
-    ].join("\n");
+    ];
+    if (isRunningUnderGenesisApp()) {
+        lines.push(
+            `There is no prompt for this one. \`${macosPermissionsOpenCommand("full-disk-access")}\` opens the list and reveals the app in Finder.`
+        );
+    } else {
+        const installed = checkAppInstalled(env);
+        if (!installed.ok) {
+            const detail = installed.fix
+                ? " That build makes GenesisTools hold the grant instead of whichever terminal ran the command."
+                : "";
+            lines.push(describeNeedFailure(installed) + detail);
+        }
+    }
+
+    return lines.join("\n");
 }
 
 function recentlyPrompted(dir: string): boolean {
