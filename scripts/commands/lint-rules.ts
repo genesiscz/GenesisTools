@@ -5,21 +5,20 @@
  * By default it checks the files changed since the merge base with `origin/master`, edits on disk included, with the
  * flags of the pre-push hook (`--no-rosters`). Measured 2026-11-18: one full scan of the 10,936 tracked files took
  * 72.6 s and 252.7 CPU-seconds with a 2.79 GB peak, and agents ran it about 66 times a day before a report or a push.
- * `--all`, and any run with `CI` set, keeps the full audit with the roster rules.
+ * `--all`, and any run with `CI` set, keeps the full audit with the roster rules, and still refuses a ratchet list or
+ * roster allowance that grew against the base.
  */
 
 import { join } from "node:path";
+import { runTool } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { logger, out } from "@genesiscz/utils/logger";
+import { Command } from "commander";
 
 const CHECKER = join(import.meta.dir, "..", "ci", "lint-rules.ts");
 const DEFAULT_BASE = "origin/master";
 /** The checker waits up to 15 minutes for the heavy-check slot that other worktrees share, then scans. */
 const RUN_DEADLINE_MS = 30 * 60_000;
-
-const USAGE = `usage: bun run lint:rules [--base <ref>] [--all]
-
-  (default)     the files changed since the merge base with ${DEFAULT_BASE}, edits on disk included
-  --base <ref>  compare with <ref> instead of ${DEFAULT_BASE}
-  --all         every tracked file, roster rules included (the full audit; also the mode when CI is set)`;
 
 export interface LintRulesPlan {
     /** The arguments for `scripts/ci/lint-rules.ts`. */
@@ -28,31 +27,20 @@ export interface LintRulesPlan {
     note: string;
 }
 
-export function lintRulesPlan({ argv, ci }: { argv: string[]; ci: boolean }): LintRulesPlan {
-    let base = DEFAULT_BASE;
-    let all = false;
-
-    for (let index = 0; index < argv.length; index++) {
-        const arg = argv[index];
-
-        if (arg === "--all") {
-            all = true;
-        } else if (arg === "--base") {
-            const ref = argv[index + 1];
-
-            if (!ref || ref.startsWith("-")) {
-                throw new Error(`lint:rules: --base needs a ref\n${USAGE}`);
-            }
-
-            base = ref;
-            index++;
-        } else {
-            throw new Error(`lint:rules: unknown argument ${arg}\n${USAGE}`);
-        }
-    }
-
+export function lintRulesPlan({
+    base = DEFAULT_BASE,
+    all = false,
+    ci,
+}: {
+    base?: string;
+    all?: boolean;
+    ci: boolean;
+}): LintRulesPlan {
     if (all || ci) {
-        return { args: [], note: `lint:rules: every tracked file${ci && !all ? " (CI is set)" : ""}` };
+        return {
+            args: ["--ratchet-base", base],
+            note: `lint:rules: every tracked file${ci && !all ? " (CI is set)" : ""}`,
+        };
     }
 
     return {
@@ -61,24 +49,8 @@ export function lintRulesPlan({ argv, ci }: { argv: string[]; ci: boolean }): Li
     };
 }
 
-function main(): number {
-    const argv = process.argv.slice(2);
-
-    if (argv.includes("--help") || argv.includes("-h")) {
-        console.log(USAGE);
-        return 0;
-    }
-
-    let plan: LintRulesPlan;
-
-    try {
-        plan = lintRulesPlan({ argv, ci: Boolean(process.env.CI) });
-    } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
-        return 2;
-    }
-
-    console.log(plan.note);
+function runChecker(plan: LintRulesPlan): number {
+    out.println(plan.note);
     const run = Bun.spawnSync([process.execPath, CHECKER, ...plan.args], {
         stdin: "inherit",
         stdout: "inherit",
@@ -88,7 +60,10 @@ function main(): number {
     });
 
     if (run.exitedDueToTimeout) {
-        console.error(`lint:rules: the check did not finish within ${RUN_DEADLINE_MS / 60_000} minutes and was killed`);
+        logger.error(
+            { deadlineMs: RUN_DEADLINE_MS, args: plan.args },
+            `lint:rules: the check did not finish within ${RUN_DEADLINE_MS / 60_000} minutes and was killed`
+        );
         return 1;
     }
 
@@ -96,5 +71,15 @@ function main(): number {
 }
 
 if (import.meta.main) {
-    process.exitCode = main();
+    const program = new Command("lint:rules")
+        .description("The repo lint rules on the files changed since a base, or on every tracked file")
+        .option("--base <ref>", "compare with <ref> (the merge base with it)", DEFAULT_BASE)
+        .option("--all", "every tracked file, roster rules included (the full audit; also the mode when CI is set)")
+        .action((options: { base: string; all?: boolean }) => {
+            process.exitCode = runChecker(
+                lintRulesPlan({ base: options.base, all: options.all === true, ci: Boolean(env.get("CI")) })
+            );
+        });
+
+    await runTool(program, { tool: "lint-rules" });
 }

@@ -2699,6 +2699,14 @@ export async function targetFiles(): Promise<string[]> {
     const changedIndex = process.argv.indexOf("--changed");
 
     if (changedIndex === -1) {
+        const ratchetIndex = process.argv.indexOf("--ratchet-base");
+
+        // A full audit lints every file and still refuses a ratchet list or roster allowance that grew against the
+        // base, as a changed-files run does (`changedFiles` throws on growth).
+        if (ratchetIndex !== -1) {
+            changedFiles(process.argv[ratchetIndex + 1] ?? "origin/master", { workingTree: true });
+        }
+
         return included;
     }
 
