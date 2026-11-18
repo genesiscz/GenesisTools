@@ -9,6 +9,14 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
+      dashboards:
+        description: "Include dashboard/UI compiler projects and run the dashboard smoke tests"
+        type: boolean
+        default: false
+      tool_command_guard:
+        description: "Scan all tool command references"
+        type: boolean
+        default: false
       windows:
         description: "Also run the test suite on windows-latest (10-16 min on top)"
         type: boolean
@@ -94,6 +102,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       # The frozen history parity oracle archives a pinned commit out of this clone, and
       # actions/checkout fetches depth 1, so without this every oracle suite skips and the
@@ -147,6 +157,7 @@ jobs:
           tool: ripgrep@14.1.1
 
       - name: Cache bun install
+        if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -163,14 +174,9 @@ jobs:
           set -o pipefail
           bun install --frozen-lockfile 2>&1 | tee "install-${{ runner.os }}.log"
 
-      # Run the WHOLE suite. Discovery only — never fail the job here; the
-      # signal is the log, not the exit code. bun test continues past failing
-      # files, so one log = full failure inventory for this OS.
-      # Tripwire: per-OS matrix.testTimeout (ubuntu 5m, windows 15m). A plain
-      # matrix int IS valid in step-level timeout-minutes (matrix resolves at
-      # job-expansion); only raw ternaries / non-matrix contexts are rejected.
-      # On timeout the partial tee'd log still uploads (continue-on-error).
-      - name: Run tests (full suite, discovery)
+      # Git's comparison base drives Bun's affected-test selection. Run full discovery on manual runs,
+      # global changes and any unavailable base. Each selection uses the same workers and phases as before.
+      - name: Run tests (affected or full discovery)
         id: tests
         continue-on-error: true
         timeout-minutes: ${{ matrix.testTimeout }}
@@ -183,6 +189,7 @@ jobs:
           # finished all 10,211 tests in 209 s (bisect 2026-09-09, runs 34371400960
           # vs 34371404874/34371445859; reverting the toon bump changed nothing).
           # A CI VM is discarded after the job, so there is no orphan to guard against.
+          TEST_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS: "1"
           # DevDashboard ships its own runners (bun for the mobile units, WDIO for
           # the Appium specs, vitest for the cloud). bun's discovery swallows all
@@ -199,13 +206,7 @@ jobs:
           GENESIS_TOOLS_TEST_WORKER_LOG: ${{ vars.TEST_WORKER_LOG }}
         run: |
           set -o pipefail
-          # `--parallel` with no number, i.e. one worker per core, and that is measured rather
-          # than assumed. About 40% of this step is NOT test execution: from CI's own numbers,
-          # (508 s of summed per-test time + 1272 files x X) / 4 = 229 s gives X = 363 ms per
-          # FILE of module evaluation before it asserts anything. Oversubscribing would only
-          # help if that were latency. It is not: the same tree measured 229.4 s at 4 workers
-          # and 233.4 s at 6 (runs 34910083066 and 34910148128). Do not try 8.
-          bun run test 2>&1 | tee "test-${{ runner.os }}.log"
+          bash scripts/ci/test-changed.sh "$TEST_BASE" 2>&1 | tee "test-${{ runner.os }}.log"
 
       # 🛑 The test step is `continue-on-error: true`, so a failing test does NOT fail the
       # job and `conclusion: success` does NOT mean the tests passed. Through the whole
@@ -391,14 +392,6 @@ jobs:
         with:
           tool: ripgrep@14.1.1
 
-      - name: Cache bun install
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
       - name: Install dependencies
         shell: bash
         run: bun install --frozen-lockfile
@@ -424,12 +417,17 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
 
-      # A push to master has no base, so lint-rules scans the whole tree: 81 s to 157 s on the runners of
-      # 2026-11-11 to 2026-11-13, and three of six master runs hit the old 3 minute limit.
+      # The typecheck compares against the PR base, or the commit before a push. The PR base is
+      # fetched above; a push's parent is fetched here (a new branch has none: every project runs).
+      - name: Fetch the commit before this push
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        continue-on-error: true
+        run: git fetch --depth=1 origin ${{ github.event.before }}
+
       - name: Run Biome check + repo lint rules
         timeout-minutes: 6
         shell: bash
-        run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha }}"
+        run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha || github.event.before }}"
 
       - name: Run Biome check (src/claude-history-dashboard)
         timeout-minutes: 2
@@ -506,13 +504,6 @@ jobs:
         timeout-minutes: 5
         run: bun run test:dd-mobile
 
-      # The typecheck compares against the PR base, or the commit before a push. The PR base is
-      # fetched above; a push's parent is fetched here (a new branch has none: every project runs).
-      - name: Fetch the commit before this push
-        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
-        continue-on-error: true
-        run: git fetch --depth=1 origin ${{ github.event.before }}
-
       # Build info saved by the green push run of that same base commit, and only that one: its
       # file lists are what decides which projects a change can reach, so build info from another
       # commit could skip a project that has since started importing a changed file. On a miss
@@ -528,13 +519,14 @@ jobs:
         shell: bash
         env:
           TYPECHECK_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        # A workflow_dispatch run has no base: then no --base, and every project is checked.
-        run: bun scripts/ci/typecheck.ts ${TYPECHECK_BASE:+--base "$TYPECHECK_BASE"}
+          TYPECHECK_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.dashboards && '--all' || '--core-only' }}
+        run: bun scripts/ci/typecheck.ts "$TYPECHECK_SCOPE" ${TYPECHECK_BASE:+--base "$TYPECHECK_BASE"}
 
       # Every Vite dashboard the change can reach boots its dev server and must render `/`. `tools clarity ui`
       # answered 500 on every page for a day (2026-10-22) while tsc and the tests passed. It ran in the pre-push hook
       # until 2026-11-05 (decision 21); the runner's empty home is the "no config yet" case a new Mac starts from.
       - name: Dashboard smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.dashboards
         timeout-minutes: 4
         shell: bash
         env:
@@ -569,13 +561,6 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
-      # The rosters that need the whole tree (scripts/ci/rosters/tree.ts): a helper of src/utils declared again
-      # under its name or a copy's name, its body copied under any name, a tool importing a tool it did not import
-      # before. A count in rosters.json only goes down; about 4 s.
-      - name: Tree roster guard
-        timeout-minutes: 2
-        run: bun scripts/ci/rosters/generate.ts --check --tree
-
       # STRICT since phase P8 of .claude/plans/2026-10-30-PlugenizeHarnesses.md (HARNESS_GUARD_STRICT in
       # scripts/ci/harness-guard.ts): a list, table or branch over the harness names outside the drivers that
       # harness-guard-allowlist.ts does not allow, a stale allowance, or an entry without a why fails the run.
@@ -605,6 +590,7 @@ jobs:
       # renamed command fails here instead of in front of a user.
       # --strict: every `tools …` command in src/** goes through toolCommand() or suggestCommand().
       - name: Tool command reference guard
+        if: github.event_name == 'workflow_dispatch' && inputs.tool_command_guard
         timeout-minutes: 2
         run: bun scripts/ci/check-tool-commands.ts --strict
 

@@ -29,6 +29,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
+import { singleFlight } from "@genesiscz/utils/storage/single-flight";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type CheckoutSource,
@@ -478,9 +479,20 @@ export interface HubPrProject {
  * cloned one level deeper (`Projects/Reservine/ReservineBack`) is there too. Read-only, local only.
  */
 export async function hubPrProjects(): Promise<HubPrProject[]> {
+    const config = await loadConfig();
+    // Several simultaneous picker opens used to rediscover the same repositories and start hundreds of git children.
+    return singleFlight({
+        key: "hub-pr-projects:" + cacheHash({ roots: config.repoRoots, repos: config.repos, cwd: process.cwd() }),
+        ttlMs: 2_000,
+        waitMs: 15_000,
+        run: () => discoverPrProjects(config),
+    });
+}
+
+async function discoverPrProjects(config: Awaited<ReturnType<typeof loadConfig>>): Promise<HubPrProject[]> {
     const mains = [
         ...new Set(
-            configuredCheckouts(await loadConfig())
+            configuredCheckouts(config)
                 .filter((checkout) => checkout.isMain)
                 .map((checkout) => checkout.root)
         ),

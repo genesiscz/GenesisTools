@@ -979,7 +979,15 @@ bun run typecheck:all            # every project (root, dashboards, fable-replac
 
 Formatting is Biome with a 120-column line width and 4-space indent. Imports are sorted by
 module specifier, named imports are sorted case-insensitively inside the braces, and the
-pre-commit hook runs `biome check --write --staged`.
+pre-commit hook runs `biome check --write --staged`. Pre-push typechecks affected projects one at a time across
+linked worktrees, using `tsc-rs` on PATH or the checkout’s `tsc`. A Rust-only TS5115 recursion diagnostic is
+rechecked with the checkout compiler. Automatic repo lint checks the pushed diff, including when the checker
+itself changes. Run full-tree and roster audits explicitly with `bun run lint:rules` and
+`bun scripts/ci/rosters/generate.ts --check --tree`.
+
+Automatic CI checks the root, utils and fable-replace TypeScript projects. The manual CI workflow has separate
+switches for dashboard/UI typechecks and smoke tests, and for the full tool-command reference guard
+(`bun scripts/ci/check-tool-commands.ts --strict`).
 
 ### Adding a tool
 

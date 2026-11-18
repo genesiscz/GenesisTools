@@ -643,11 +643,10 @@ describe("round 33 nested mirror configuration", () => {
     });
 });
 
-describe("pre-commit hook: the typecheck binary", () => {
-    test("runs the checkout's own tsc, never bunx, which can write a partial node_modules in a worktree", () => {
-        const hook = readFileSync(join(ROOT, ".githooks/pre-commit"), "utf8");
-        const tscLine = hook.split("\n").find((line) => line.startsWith("tsc_output="));
-        expect(tscLine).toStartWith("tsc_output=$(./node_modules/.bin/tsc --noEmit");
-        expect(hook).not.toMatch(/^[^#]*\bbunx tsc\b/m);
-    });
+test("committing a staged type error leaves project typechecking to pre-push", () => {
+    write("ok.ts", 'export const ok: number = "not a number";\n');
+    expect(git("add", "ok.ts").code).toBe(0);
+    const commit = git("commit", "-qm", "defer typecheck");
+    expect(commit.code, commit.out).toBe(0);
+    expect(existsSync(join(repo, ".git/genesis-typecheck"))).toBe(false);
 });

@@ -38,6 +38,7 @@ common_excludes=(
     --exclude-dir=.git
     --exclude-dir=dist
     --exclude-dir=build
+    --exclude-dir=.build
     --exclude=*.md
     --exclude=pid-safety-guard.sh
 )
@@ -53,7 +54,7 @@ common_excludes=(
 # `.claude/worktrees/`, neither of which is a source root, so the scan no longer
 # walks another branch's full checkout (100s+ down to ~24s locally, and it no
 # longer reports violations belonging to a different branch). Nothing under a
-# source root is excluded by directory name any more.
+# source root named logs or worktrees is excluded. SwiftPM's generated .build is excluded like node_modules.
 scan_roots=(src apps scripts plugins tools)
 
 for scan_root in "${scan_roots[@]}"; do

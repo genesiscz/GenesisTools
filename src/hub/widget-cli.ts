@@ -204,7 +204,13 @@ widget
                     : () => {};
                 const selections = new Set<(key: string, decision?: { id: string; token: string }) => void>();
                 let pendingSelection: { key: string; decision?: { id: string; token: string } } | undefined;
+                let reuseSessions = false;
+                let sentSessions: Awaited<ReturnType<typeof widgetSnapshot>>["sessions"] | undefined;
                 const lines = new StdinLines((line) => {
+                    if (line.trim() === '{"reuseSessions":true}') {
+                        reuseSessions = true;
+                        return;
+                    }
                     const key = widgetSelectionLine(line);
                     if (!key) {
                         return;
@@ -231,7 +237,20 @@ widget
                         root: command.optsWithGlobals().stateRoot,
                         selectedKey: options.selected,
                         signal: owner.signal,
-                        emit: (snapshot) => out.print(`${SafeJSON.stringify(snapshot)}\n`),
+                        emit: (snapshot, serialized) => {
+                            // Only an opted-in reader can carry the last roster across lines of this stream.
+                            const line =
+                                reuseSessions && sentSessions && Bun.deepEquals(sentSessions, snapshot.sessions)
+                                    ? SafeJSON.stringify(
+                                          { ...snapshot, sessions: [], reuseSessions: true },
+                                          { strict: true }
+                                      )
+                                    : serialized;
+                            out.print(`${line}\n`);
+                            if (reuseSessions) {
+                                sentSessions = snapshot.sessions;
+                            }
+                        },
                         selections: (listener) => {
                             selections.add(listener);
                             if (pendingSelection) {

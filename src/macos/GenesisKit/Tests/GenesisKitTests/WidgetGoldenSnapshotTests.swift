@@ -8,6 +8,26 @@ import XCTest
 /// them must have a kind this build knows. A field the builder renames, or a kind it adds, fails here and not in the
 /// running widget.
 final class WidgetGoldenSnapshotTests: XCTestCase {
+    @MainActor
+    func testWatchReusesSessionsOnlyWithinOneStream() async throws {
+        let original = try XCTUnwrap(snapshots().first { !$0.snapshot.sessions.isEmpty }).snapshot
+        let full = String(decoding: try JSONEncoder().encode(original), as: UTF8.self)
+        var update = original
+        update.sessions = []
+        update.reuseSessions = true
+        let compact = String(decoding: try JSONEncoder().encode(update), as: UTF8.self)
+        let decoder = WidgetSnapshotDecoder()
+        func read(_ lines: [String]) async -> [Result<WidgetSnapshot, Error>] {
+            await withCheckedContinuation { reply in decoder.decode(lines) { reply.resume(returning: $0) } }
+        }
+        let results = await read([full, compact])
+        XCTAssertEqual(try results.map { try $0.get().sessions }, [original.sessions, original.sessions])
+        decoder.reset()
+        let restarted = await read([compact, full])
+        XCTAssertThrowsError(try restarted[0].get())
+        XCTAssertEqual(try restarted[1].get().sessions, original.sessions)
+    }
+
     /// Every known case; `testTheGoldenSnapshotsHoldEveryCardKind` fails when a golden file stops carrying one.
     private static let known: [WidgetCardKind] = [.decision, .dialog, .todo, .form, .answer, .result]
 
