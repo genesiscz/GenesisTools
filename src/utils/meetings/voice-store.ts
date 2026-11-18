@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { projectNameSchema } from "@genesiscz/utils/meetings/config";
+import { nameKey } from "@genesiscz/utils/meetings/people";
 import { localVoiceBackend } from "@genesiscz/utils/meetings/voice";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -46,9 +47,8 @@ export function readVoiceStore(project: string): VoiceStore {
 }
 
 /** A single model owns a store; incompatible prints must never be silently mixed. */
-export function addVoicePrint(project: string, person: string, print: VoicePrint, model?: string): void {
+function putVoicePrint(store: VoiceStore, person: string, print: VoicePrint, model?: string): void {
     const checked = voicePrintSchema.parse(print);
-    const store = readVoiceStore(project);
     if (!person.trim()) {
         throw new Error("A voice print needs a person");
     }
@@ -68,26 +68,67 @@ export function addVoicePrint(project: string, person: string, print: VoicePrint
         sample.fromSec === checked.fromSec &&
         sample.toSec === checked.toSec;
     store.people[person] = { samples: [...samples.filter((sample) => !same(sample)), checked] };
+}
+
+/** Historical samples identify the confirmed source interval, even if another track describes it. */
+export function voicePrintKey(person: string, print: VoicePrint): string {
+    return SafeJSON.stringify([nameKey(person), print.meeting, print.sourceSha, print.fromSec, print.toSec]);
+}
+
+/** Publish all recovered samples in one project-file replacement. Check the plan again under the writer lock. */
+export function addVoicePrints(
+    project: string,
+    changes: readonly { person: string; after: VoicePrint; model?: string }[],
+    requireMissing = false
+): void {
+    if (!changes.length) {
+        return;
+    }
     const file = storeFile(project);
-    mkdirSync(dirname(file), { recursive: true });
-    atomicWriteFileSync(file, SafeJSON.stringify(store));
+    withPathArbitrationSync(file, () => {
+        const store = readVoiceStore(project);
+        if (requireMissing) {
+            const keys = new Set(
+                Object.entries(store.people).flatMap(([name, row]) =>
+                    row.samples.map((print) => voicePrintKey(name, print))
+                )
+            );
+            if (changes.some(({ person, after }) => keys.has(voicePrintKey(person, after)))) {
+                throw new Error("The project's voice samples changed during backfill. Retry to count the new samples.");
+            }
+        }
+        for (const change of changes) {
+            putVoicePrint(store, change.person, change.after, change.model);
+        }
+        atomicWriteFileSync(file, SafeJSON.stringify(store));
+    });
+}
+
+export function addVoicePrint(project: string, person: string, print: VoicePrint, model?: string): void {
+    addVoicePrints(project, [{ person, after: print, model }]);
 }
 
 export function removeVoicePrint(project: string, person: string, at?: { meeting: string; fromSec: number }): number {
-    const store = readVoiceStore(project);
-    const samples = store.people[person]?.samples ?? [];
-    const remaining = at
-        ? samples.filter((sample) => sample.meeting !== at.meeting || sample.fromSec !== at.fromSec)
-        : [];
-    const removed = samples.length - remaining.length;
-    if (removed === 0) {
+    const file = storeFile(project);
+    if (!existsSync(file)) {
         return 0;
     }
-    if (remaining.length) {
-        store.people[person] = { samples: remaining };
-    } else {
-        delete store.people[person];
-    }
-    atomicWriteFileSync(storeFile(project), SafeJSON.stringify(store));
-    return removed;
+    return withPathArbitrationSync(file, () => {
+        const store = readVoiceStore(project);
+        const samples = store.people[person]?.samples ?? [];
+        const remaining = at
+            ? samples.filter((sample) => sample.meeting !== at.meeting || sample.fromSec !== at.fromSec)
+            : [];
+        const removed = samples.length - remaining.length;
+        if (removed === 0) {
+            return 0;
+        }
+        if (remaining.length) {
+            store.people[person] = { samples: remaining };
+        } else {
+            delete store.people[person];
+        }
+        atomicWriteFileSync(file, SafeJSON.stringify(store));
+        return removed;
+    });
 }

@@ -224,7 +224,7 @@ const show = defineMethod({
     positional: ["ref"],
     result: meetingRecordSchema,
     resultName: "MeetingRecord",
-    doc: "One meeting record, as `show <meeting> --json` prints it. No meeting: `meeting-not-found`; a prefix of two: `meeting-ref`.",
+    doc: "Read one stored meeting record. No meeting: `meeting-not-found`; a prefix of two: `meeting-ref`.",
     effect: "read",
 });
 
@@ -1623,7 +1623,37 @@ export const voicesWorkers = defineMethod({
     effect: "read",
 });
 
-/** Pending dispatch integration: these descriptors and people-handlers share the CLI implementation. */
+export const voiceBackfill = defineMethod({
+    name: "voice.backfill",
+    params: z
+        .object({
+            meetings: z.array(meetingRef).min(1).optional(),
+            project: z.string().min(1).optional(),
+            dryRun: z.boolean().optional(),
+        })
+        .strict()
+        .refine(
+            (input) => (input.meetings !== undefined) !== (input.project !== undefined),
+            "Choose meetings or a project"
+        ),
+    result: z.object({
+        dryRun: z.boolean(),
+        added: z.number().int().nonnegative(),
+        present: z.number().int().nonnegative(),
+        rows: z.array(
+            z.object({
+                meeting: z.string(),
+                person: z.string().nullable(),
+                added: z.number().int().nonnegative(),
+                present: z.number().int().nonnegative(),
+                skipped: z.record(z.string(), z.number().int().nonnegative()),
+            })
+        ),
+    }),
+    doc: "Recover samples from active human speaker decisions, oldest first. dryRun returns the same counts without publishing samples.",
+    effect: "reversible",
+});
+
 export const VOICES_METHODS = [
     voicesList,
     voicesPreview,
@@ -1631,6 +1661,7 @@ export const VOICES_METHODS = [
     voicesRemove,
     voicesSample,
     voicesWorkers,
+    voiceBackfill,
 ] as const;
 export type VoicesMethod = (typeof VOICES_METHODS)[number]["name"];
 type VoiceMethodNamed<M extends VoicesMethod> = Extract<(typeof VOICES_METHODS)[number], { name: M }>;

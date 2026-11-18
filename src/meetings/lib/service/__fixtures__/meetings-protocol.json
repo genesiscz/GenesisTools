@@ -98,6 +98,7 @@
             "voices.remove",
             "voices.sample",
             "voices.workers",
+            "voice.backfill",
             "subscribe",
             "unsubscribe"
           ],
@@ -1464,6 +1465,7 @@
             "voices.remove",
             "voices.sample",
             "voices.workers",
+            "voice.backfill",
             "subscribe",
             "unsubscribe"
           ],
@@ -6134,6 +6136,7 @@
             "voices.remove",
             "voices.sample",
             "voices.workers",
+            "voice.backfill",
             "subscribe",
             "unsubscribe"
           ],
@@ -6950,6 +6953,29 @@
           "issue": {
             "tool": "meetings"
           }
+        }
+      }
+    },
+    {
+      "method": "voice.backfill",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 119,
+        "method": "voice.backfill",
+        "params": {
+          "project": "Unassigned-fixture",
+          "dryRun": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 119,
+        "result": {
+          "dryRun": true,
+          "added": 0,
+          "present": 0,
+          "rows": []
         }
       }
     }

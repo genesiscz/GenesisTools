@@ -5,11 +5,12 @@ import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts"
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { autoVoiceWorkers } from "../speaker-labels/voice";
+import { backfillVoices } from "../voice-backfill";
 import { applyVoices, listProjectVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
 import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
 import { type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
 
-/** Five handlers ready for the service's central dispatch table; reads use the same functions as the CLI. */
+/** Project voice operations shared with the CLI. */
 export function voicesHandlers(
     store: MeetingStore,
     deps: MeetingsHandlerDeps = {}
@@ -17,6 +18,13 @@ export function voicesHandlers(
     const access = { store, linkedSource: deps.linkedSource, config: deps.config };
     return {
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
+        "voice.backfill": async (params, context) => {
+            const result = await backfillVoices({ ...access, ...params });
+            if (!result.dryRun && result.added) {
+                context.emit?.("people.changed", {});
+            }
+            return result;
+        },
         "voices.preview": (params, context) =>
             previewVoices({ ...access, ...params, onProgress: voicePassProgress(context), signal: context.signal }),
         "voices.sample": (params) => voiceSample({ ...access, ...params }),

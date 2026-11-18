@@ -7,6 +7,7 @@ import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { callerActor } from "../lib/decision-journal";
 import { fail } from "../lib/shared";
+import { backfillVoices } from "../lib/voice-backfill";
 import {
     addVoiceSample,
     applyVoices,
@@ -107,6 +108,50 @@ export function registerVoicesCommand(program: Command): void {
                     }
                 }
                 out.println(table.toString());
+            })
+        );
+
+    voices
+        .command("backfill [meetings...]")
+        .description("Recover project samples from the meeting journal's human speaker decisions")
+        .option("--project <name>", "process all meetings in this project")
+        .option("--dry-run", "count recoverable samples without writing")
+        .option("--json", "print per-meeting and per-person counts")
+        .action((meetings: string[], opts: VoiceOptions & { dryRun?: boolean }) =>
+            guarded(async () => {
+                const flags = { ...voices.opts<VoiceOptions>(), ...opts };
+                const result = await backfillVoices({
+                    store: new MeetingStore(),
+                    meetings,
+                    project: flags.project,
+                    dryRun: flags.dryRun,
+                });
+                if (flags.json) {
+                    out.result(SafeJSON.stringify(result));
+                    return;
+                }
+                const table = createBoxTable([
+                    "MEETING",
+                    "PERSON",
+                    result.dryRun ? "WOULD ADD" : "SAMPLES ADDED",
+                    "SKIPPED AS PRESENT",
+                    "SKIPPED (WHY)",
+                ]);
+                for (const row of result.rows) {
+                    table.push([
+                        row.meeting,
+                        row.person ?? "—",
+                        row.added,
+                        row.present,
+                        Object.entries(row.skipped)
+                            .map(([why, count]) => `${count} × ${why}`)
+                            .join(", "),
+                    ]);
+                }
+                out.println(table.toString());
+                ui.info(
+                    `${result.dryRun ? "Would add" : "Added"} ${result.added} samples. ${result.present} already present.`
+                );
             })
         );
 
