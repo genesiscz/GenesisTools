@@ -21,6 +21,11 @@ struct LiveRecordingControlsView: View {
                     .accessibilityIdentifier("live-recording.title")
                 controls
             }
+            .contextMenu {
+                Toggle("Use the full bar for recordings started elsewhere", isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: LiveRecordingBarPresentation.foreignPreference) },
+                    set: { UserDefaults.standard.set($0, forKey: LiveRecordingBarPresentation.foreignPreference) }))
+            }
             if let error = recording.lastError {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
@@ -146,20 +151,42 @@ private struct LiveRecordingControlsHost: View {
     }
 }
 
-/// One always-on-top, non-activating panel bound to one live recording, in `RecordingControlsPanel`.
+/// The recorder part supplies its full bar here. Other hosts keep the compact controls.
+@MainActor
+public struct LiveRecordingBarPresentation {
+    public static let foreignPreference = "recorder.bar.forForeignRecordings"
+    public static var resolve: ((LiveRecording, @escaping () -> Void) -> Self?)?
+    let show: () -> Void
+    let update: (LiveRecording) -> Void
+    let close: () -> Void
+
+    public init(show: @escaping () -> Void, update: @escaping (LiveRecording) -> Void,
+                close: @escaping () -> Void) {
+        self.show = show
+        self.update = update
+        self.close = close
+    }
+}
+
+/// One always-on-top, non-activating panel bound to one live recording.
 @MainActor
 final class LiveRecordingPanel {
     let id: String
     let slot: Int
-    private let panel = RecordingControlsPanel()
+    private lazy var panel = RecordingControlsPanel()
     private let model: LiveRecordingPanelModel
+    private let hide: () -> Void
+    private var bar: LiveRecordingBarPresentation?
 
     /// `stack` is the number of controls already open: each next one goes under the one before.
     init(recording: LiveRecording, stack: Int, send: @escaping (LiveRecordingCommand) -> Void,
          hide: @escaping () -> Void) {
         id = recording.id
         slot = stack
+        self.hide = hide
         model = LiveRecordingPanelModel(recording: recording)
+        bar = LiveRecordingBarPresentation.resolve?(recording, hide)
+        if bar != nil { return }
         panel.window.title = "Recording controls: \(recording.title)"
         panel.window.identifier = NSUserInterfaceItemIdentifier("live-recording.controls")
         panel.setContent(LiveRecordingControlsHost(model: model, send: send, hide: hide))
@@ -178,9 +205,19 @@ final class LiveRecordingPanel {
 
     func update(_ recording: LiveRecording) {
         if recording != model.recording { model.recording = recording }
+        if let bar { bar.update(recording); return }
+        if let replacement = LiveRecordingBarPresentation.resolve?(recording, hide) {
+            panel.close()
+            bar = replacement
+            replacement.show()
+        }
     }
 
-    func show() { panel.show() }
+    func show() {
+        if let bar { bar.show() } else { panel.show() }
+    }
 
-    func close() { panel.close() }
+    func close() {
+        if let bar { bar.close() } else { panel.close() }
+    }
 }

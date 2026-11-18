@@ -11,7 +11,10 @@ import AppKit
 /// when the menu opens, on a background queue; the menu shows the previous read until the new one lands.
 @MainActor
 final class RecorderMenu: NSObject, NSMenuDelegate {
-    static let shared = RecorderMenu()
+    static let shared: RecorderMenu = {
+        LiveRecordingBarPresentation.resolve = CapturePicker.presentation
+        return RecorderMenu()
+    }()
 
     init(routesToRecorder: Bool = false) {
         self.routesToRecorder = routesToRecorder
@@ -455,10 +458,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         }
     }
 
-    /// The display in use, through the picker's one start path (the Screen Recording grant, the countdown, the camera
-    /// preview left out) with the saved options, as the Start shortcut does.
+    /// Open the setup bar with the menu's sources. Record confirms the draft.
     func startRecording(audio: Bool) {
-        CapturePicker.shared.choose(.followPointer, options: Self.menuOptions(audio: audio, saved: .load()))
+        CapturePicker.shared.show(preset: Self.menuOptions(audio: audio, saved: .load()))
     }
 
     /// The saved options; "Record Screen with Audio" turns both audio sources on, "Record Screen" keeps the saved ones.
@@ -471,20 +473,31 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         return options
     }
 
-    /// The one start path: `tools recorder start` in its own process (it owns the recording and its socket); the live
-    /// recordings' item and the floating controls (on by default) appear when its live entry does. `onFailure` runs
-    /// when it does not start or stops at once (the capture picker's countdown, held until the first frame, ends then).
-    func startRecording(arguments args: [String], onFailure: (() -> Void)? = nil) {
+    /// Retain this start's stdout: its started line identifies the socket, and its result confirms finalization.
+    func startRecording(arguments args: [String], onLines: @escaping @MainActor ([String]) -> Void,
+                        onExit: @escaping @MainActor (Int32, String) -> Void) throws -> DetachedToolsJob {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
+        // Files keep the recorder alive if the face exits; a pipe would break on its next elapsed event.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("recorder-start-" + UUID().uuidString)
+        let (record, process) = try DetachedToolsJob.start(bridge: ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()),
+                                                          subcommand: "recorder", args: Array(args.dropFirst()),
+                                                          outputPath: folder.appendingPathComponent("events.jsonl").path,
+                                                          errorPath: folder.appendingPathComponent("stderr.log").path)
         do {
-            try ToolsRunner.detachedRun(args) { failure in
-                onFailure?()
-                // Try again runs the same start; the picker's countdown is over by then, so it has no `onFailure`.
-                RecorderNotice.startFailed(failure) { [weak self] in self?.startRecording(arguments: args) }
+            return try DetachedToolsJob(record: record, process: process, onLines: onLines) { exit in
+                let status = exit.status ?? -1
+                onExit(status, exit.stderr)
+                if status != 0, !exit.stopped {
+                    let failure = ToolsRunner.EarlyFailure(argv: args, status: status, output: exit.stderr,
+                                                           logFile: record.errorPath, logLine: 1)
+                    RecorderNotice.startFailed(failure, retry: nil)
+                } else {
+                    try? FileManager.default.removeItem(at: folder)
+                }
             }
         } catch {
-            onFailure?()
-            RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)
+            if process.isRunning { process.terminate() }
+            throw error
         }
     }
 
