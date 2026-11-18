@@ -8,7 +8,11 @@ import { actionBudgetMs, explainAction, runAreaAction } from "@genesiscz/utils/g
 import { createStateStore } from "@genesiscz/utils/genesis-tools/actions/state";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { createRequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
-import { type RequestOutcome, requestOutcomeSchema } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import {
+    type RequestOutcome,
+    requestOutcomeSchema,
+    requestWindowDeadline,
+} from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { logger } from "@genesiscz/utils/logger";
 import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
@@ -119,14 +123,14 @@ export async function startGenesisToolsService(
                 throw new Error("The request face disconnected.");
             }
 
+            const { windowSeconds, callTimeoutMs } = requestWindowDeadline(timeoutMs, request.deadlineSeconds);
             return {
                 ...requestOutcomeSchema.parse(
-                    await face.request("request.present", request, {
-                        timeoutMs: Math.max(
-                            1,
-                            Math.min(timeoutMs, (request.deadlineSeconds ?? timeoutMs / 1000) * 1000)
-                        ),
-                    })
+                    await face.request(
+                        "request.present",
+                        { ...request, deadlineSeconds: windowSeconds },
+                        { timeoutMs: callTimeoutMs }
+                    )
                 ),
                 via: "app-window",
                 method: "click",

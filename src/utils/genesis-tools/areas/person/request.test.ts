@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
-import { runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
+import { actionBudgetMs, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { genesisToolsRequestOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
@@ -35,7 +35,13 @@ import {
     requestViewSchema,
     stateOf,
 } from "./journal";
-import { type PersonRequest, presentPostedRequest, requestSchema } from "./request";
+import {
+    type PersonRequest,
+    presentPostedRequest,
+    requestSchema,
+    requestWindowDeadline,
+    WINDOW_REPLY_RESERVE_MS,
+} from "./request";
 import {
     notifyRequest,
     notifyViaChannels,
@@ -287,6 +293,15 @@ test("a system dialog tells an Approve and a Cancel from a deadline and a failed
     expect(cases.map(([platform, result]) => PERSON_DIALOGS[platform]?.answer(result))).toEqual(
         cases.map(([, , answer]) => answer)
     );
+});
+
+test("a request window ends before the call that waits for it, so an answer inside its shown deadline arrives", () => {
+    // A 10 s request: the window shows 7.5 s, and the 2.5 s left cover the app's start and the reply.
+    expect(requestWindowDeadline(10_000, 10)).toEqual({ windowSeconds: 7.5, callTimeoutMs: 10_000 });
+    // A short window inside a long budget keeps its seconds; the call waits the reserve longer.
+    expect(requestWindowDeadline(120_000, 10)).toEqual({ windowSeconds: 10, callTimeoutMs: 15_000 });
+    expect(requestWindowDeadline(120_000, undefined)).toEqual({ windowSeconds: 115, callTimeoutMs: 120_000 });
+    expect(requestWindowDeadline(2, undefined)).toEqual({ windowSeconds: 0.002, callTimeoutMs: 2 });
 });
 
 test("the request open command ends its options before the id", () => {
@@ -789,6 +804,10 @@ test("a client cannot hand in a person's answer; the service records what its ow
             via: "app-window",
         });
         expect(shown.map((request) => request.takesFocus)).toEqual([true]);
+        // The face's window ends a reply reserve before the service stops waiting for it.
+        expect((shown[0]?.deadlineSeconds ?? Number.POSITIVE_INFINITY) * 1000).toBeLessThanOrEqual(
+            actionBudgetMs(AREAS.person.actions.showWindow) - WINDOW_REPLY_RESERVE_MS
+        );
         expect(await client.call("requests.present", { id: input.id })).toMatchObject({ status: "declined" });
         expect(shown).toHaveLength(1);
 
