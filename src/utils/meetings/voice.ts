@@ -10,6 +10,7 @@ import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { clearOwnBackground } from "@genesiscz/utils/process/priority";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { VoiceLineCache, voiceLineCachePath } from "./voice-line-cache";
@@ -82,6 +83,8 @@ export async function embedVoice(options: {
     fromSec: number;
     toSec: number;
     workerPrefix?: readonly string[];
+    /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
+    clearBackground?: boolean;
 }): Promise<{ model: string; embedding: number[] }> {
     if (options.toSec - options.fromSec < 1.5) {
         throw new VoiceUnavailableError("Voice sample needs at least 1.5 seconds of confirmed single-speaker speech");
@@ -91,6 +94,7 @@ export async function embedVoice(options: {
         return voiceSampleSchema.pick({ model: true, embedding: true }).parse(
             await runVoiceWorker({
                 workerPrefix: options.workerPrefix,
+                clearBackground: options.clearBackground === true,
                 request: { kind: "sample", input },
             })
         );
@@ -215,7 +219,11 @@ const voiceWorkerRequestSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("lines"), input: voiceLineRequestSchema }),
     z.object({ kind: z.literal("sample"), input: voiceSampleRequestSchema }),
 ]);
-const voiceWorkerEnvelopeSchema = z.object({ request: voiceWorkerRequestSchema, modelFile: z.string() });
+const voiceWorkerEnvelopeSchema = z.object({
+    request: voiceWorkerRequestSchema,
+    modelFile: z.string(),
+    clearBackground: z.boolean().default(false),
+});
 const workerResultSchema = z.array(
     z.object({
         index: z.number().int(),
@@ -244,18 +252,19 @@ const workerResultSchema = z.array(
 async function runVoiceWorker(options: {
     request: z.infer<typeof voiceWorkerRequestSchema>;
     workerPrefix: readonly string[];
+    clearBackground: boolean;
 }): Promise<unknown> {
-    const { workerPrefix, request } = options;
+    const { workerPrefix, request, clearBackground } = options;
     const child = Bun.spawn([...workerPrefix, process.execPath, fileURLToPath(import.meta.url)], {
         env: env.getProcessEnv(),
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        // Background QoS may yield for minutes while the foreground is busy.
+        // A background pass (taskpolicy -b) may yield for minutes while the foreground is busy.
         timeout: 1_800_000,
         killSignal: "SIGKILL",
     });
-    child.stdin.write(SafeJSON.stringify({ request, modelFile: selectedModelFile }, { strict: true }));
+    child.stdin.write(SafeJSON.stringify({ request, modelFile: selectedModelFile, clearBackground }, { strict: true }));
     child.stdin.end();
     const [stdout, stderr, code] = await Promise.all([
         new Response(child.stdout).text(),
@@ -279,6 +288,8 @@ export async function embedVoiceLines(options: {
     channels: readonly { channel: 0 | 1; track: VoiceEmbeddingProvenance["track"] }[];
     cachePath?: string;
     workerPrefix?: readonly string[];
+    /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
+    clearBackground?: boolean;
 }): Promise<LineEmbedding[]> {
     const stat = statSync(options.audioPath);
     const source = { audioPath: options.audioPath, size: stat.size, mtimeMs: stat.mtimeMs };
@@ -324,6 +335,7 @@ export async function embedVoiceLines(options: {
             await runVoiceWorker({
                 request: { kind: "lines", input: voiceLineRequestSchema.parse(options) },
                 workerPrefix: options.workerPrefix,
+                clearBackground: options.clearBackground === true,
             })
         );
     }
@@ -397,6 +409,10 @@ export async function embedVoiceLines(options: {
 
 async function runWorkerMain(): Promise<void> {
     const envelope = voiceWorkerEnvelopeSchema.parse(SafeJSON.parse(await Bun.stdin.text(), { strict: true }));
+    if (envelope.clearBackground && !clearOwnBackground()) {
+        logger.warn("Voice worker could not leave background priority; it runs at its parent's priority");
+    }
+
     selectedModelFile = envelope.modelFile;
     const request = envelope.request;
     try {

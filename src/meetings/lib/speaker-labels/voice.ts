@@ -1,5 +1,6 @@
-import { availableParallelism } from "node:os";
+import { availableParallelism, loadavg } from "node:os";
 import { join } from "node:path";
+import { readPerformanceCores } from "@genesiscz/utils/macos/host-stats";
 import {
     type MeetingsConfig,
     MeetingsConfigStore,
@@ -9,26 +10,45 @@ import {
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines } from "@genesiscz/utils/meetings/voice";
 import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
-import { priorityShellArgv } from "@genesiscz/utils/process/priority";
+import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import type { OpenedMeeting } from "../opened-meeting";
 import { type MeetingSound, measureSoundClock, meetingSound, readSoundInputs, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
 import type { LabelContext, SpeakerLabeler } from "./types";
 
-/**
- * The argv prefix that starts a voice worker at `priority`. `normal` clears any background state the caller inherited
- * (a service started by launchd), so the worker runs on the fast cores; `background` is `taskpolicy -b`.
- */
-export function voiceWorkerPrefix(priority: VoiceComputePriority): string[] {
-    return [...priorityShellArgv('exec "$@"', priority === "background" ? "low" : "high"), "voice-worker"];
+/** How a voice worker starts: an argv prefix, and whether it takes itself out of background as its first act. */
+export interface VoiceWorkerStart {
+    prefix: string[];
+    clearBackground: boolean;
 }
 
-/** How a voice pass runs here, from `speakerLabels.voice.compute` (the store's config when none is passed). */
-export async function voiceWorkerSettings(config?: MeetingsConfig): Promise<{ prefix: string[]; workers: number }> {
+/**
+ * The start of a voice worker at `priority`. `normal`: Bun starts directly and the worker calls `clearOwnBackground`
+ * (setpriority through bun:ffi), so it runs on the fast cores even under a background service, with no perl or shell
+ * process. `background`: `taskpolicy -b`.
+ */
+export function voiceWorkerStart(priority: VoiceComputePriority): VoiceWorkerStart {
+    return priority === "background"
+        ? { prefix: backgroundPrefix(), clearBackground: false }
+        : { prefix: [], clearBackground: true };
+}
+
+/**
+ * How a voice pass runs here, from `speakerLabels.voice.compute` (the store's config when none is passed). The free
+ * cores are read once, when the pass starts.
+ */
+export async function voiceWorkerSettings(
+    config?: MeetingsConfig,
+    free: () => { performanceCores: number; load1: number } = freeCores
+): Promise<VoiceWorkerStart & { workers: number }> {
     const compute = (config ?? (await new MeetingsConfigStore().read())).global.speakerLabels.voice.compute;
+    return { ...voiceWorkerStart(compute.priority), workers: voiceWorkerCount(compute.workers, free()) };
+}
+
+function freeCores(): { performanceCores: number; load1: number } {
     return {
-        prefix: voiceWorkerPrefix(compute.priority),
-        workers: voiceWorkerCount(compute.workers, availableParallelism()),
+        performanceCores: readPerformanceCores() ?? Math.max(1, Math.floor(availableParallelism() / 2)),
+        load1: loadavg()[0] ?? 0,
     };
 }
 
@@ -48,7 +68,7 @@ export async function embedSeatLines(
         }
     >();
     const result: VoiceLine[] = [];
-    const { prefix } = await voiceWorkerSettings();
+    const worker = await voiceWorkerSettings();
     for (const line of context.lines) {
         const slice = context.sound.slice({ ...line, purpose: "voice" });
         if (!slice) {
@@ -66,7 +86,8 @@ export async function embedSeatLines(
         const embeddings = await embedVoiceLines({
             audioPath: group.path,
             cachePath: context.cachePath,
-            workerPrefix: prefix,
+            workerPrefix: worker.prefix,
+            clearBackground: worker.clearBackground,
             spans: group.lines.map(({ line, slice }) => ({
                 index: line.index,
                 fromSec: slice.fileFromSec,

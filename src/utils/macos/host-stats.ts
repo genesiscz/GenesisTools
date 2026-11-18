@@ -115,6 +115,11 @@ function sysctlWordsOf(name: string, bytes: number): number | null {
     return Number(sysctlSize[0]);
 }
 
+/** The performance cores of this Mac (`hw.perflevel0.physicalcpu`; `hw.physicalcpu` on a Mac with one core kind). */
+export function readPerformanceCores(): number | null {
+    return sysctlInteger("hw.perflevel0.physicalcpu") ?? sysctlInteger("hw.physicalcpu");
+}
+
 /** An integer sysctl of 4 or 8 bytes (`hw.memsize`, `hw.pagesize`, `kern.memorystatus_level`). */
 function sysctlInteger(name: string): number | null {
     const written = sysctlWordsOf(name, 8);

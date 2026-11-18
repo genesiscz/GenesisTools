@@ -406,7 +406,10 @@ const speakerLabelsSchema = z.object({
                      * seconds (251 CPU s and 32 minutes for the same meeting under load).
                      */
                     priority: z.enum(VOICE_COMPUTE_PRIORITIES).default("normal"),
-                    /** Worker processes that embed lines side by side; `auto` is half the cores, at most four. */
+                    /**
+                     * Worker processes that embed lines side by side. `auto` takes what is free when the pass starts:
+                     * the performance cores minus the one-minute load average, at least one and at most four.
+                     */
                     workers: z
                         .union([z.literal("auto"), z.number().int().min(1).max(MAX_VOICE_WORKERS)])
                         .default("auto"),
@@ -416,13 +419,16 @@ const speakerLabelsSchema = z.object({
         .prefault({}),
 });
 
-/** The worker count `auto` means on this Mac: half the cores, at least one, at most four. */
-export function voiceWorkerCount(workers: "auto" | number, cores: number): number {
+/**
+ * The worker count `auto` means right now: the performance cores minus the one-minute load average, at least one and at
+ * most four, read once when a pass starts. A busy Mac (load 100 to 700 from agent builds, 2026-11-18) gets one worker.
+ */
+export function voiceWorkerCount(workers: "auto" | number, free: { performanceCores: number; load1: number }): number {
     if (workers !== "auto") {
         return workers;
     }
 
-    return Math.max(1, Math.min(4, Math.floor(cores / 2)));
+    return Math.max(1, Math.min(4, Math.floor(free.performanceCores - free.load1)));
 }
 
 /** The audio a clip keeps before and after the heard stretch. */

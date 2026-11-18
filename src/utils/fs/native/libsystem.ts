@@ -54,6 +54,8 @@ export const libSystem = defineSystemLibrary({
         inet_ntop: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.ptr },
         /** `struct passwd *getpwuid(uid_t)`: `pw_name` is the struct's first field. Null for an unknown uid. */
         getpwuid: { args: [FFIType.u32], returns: FFIType.ptr },
+        /** `int setpriority(int which, id_t who, int prio)`: with PRIO_DARWIN_PROCESS (4), 0, 0 a process leaves background. */
+        setpriority: { args: [FFIType.i32, FFIType.u32, FFIType.i32], returns: FFIType.i32 },
     },
 });
 
