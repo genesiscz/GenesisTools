@@ -997,12 +997,20 @@ func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller,
     GateAudit.appendLine(data, to: path)
 }
 
-private func emitVaultKey(remembered: Bool, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo) -> Never {
+/// `sessionAnchor`: the agent process whose session approval releases this key. It must still be the caller's ancestor
+/// when the key goes out, read again after the keychain (which can block): a session approval ends with its process.
+private func emitVaultKey(remembered: Bool, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
+                          sessionAnchor: VaultSessionAnchor? = nil) -> Never {
     switch VaultKeychain.key() {
     case let .key(key, fromCopy):
         logClick("vault.unlock key from=\(fromCopy ? "app copy" : "keychain item")")
         // Keychain access can block: inspect the recipient after it finishes, immediately before serialization.
         if let reason = VaultRecipient.releaseRejection(caller: caller.identity) {
+            vaultAudit("denied", params: params, caller: caller, session: session, detail: reason)
+            vaultDeny(reason)
+        }
+        if let anchor = sessionAnchor, !anchor.isIn(VaultProcess.lineage(of: caller.pid)) {
+            let reason = "the approved session \(anchor.label) ended before the key was released"
             vaultAudit("denied", params: params, caller: caller, session: session, detail: reason)
             vaultDeny(reason)
         }
@@ -1069,12 +1077,15 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
-    let lineage = VaultProcess.lineage(of: caller.pid)
-    let anchor = VaultSessionAnchor.nearest(in: lineage)
-    let sessionGrant = { (at: Int64) in VaultSessionGrants.live(lineage: lineage, now: at, in: VaultSessionGrants.load()) }
+    let anchor = VaultSessionAnchor.nearest(in: VaultProcess.lineage(of: caller.pid))
+    // The parent chain is read again for every check: the approved agent can exit while this request waits for the
+    // window lock (up to 150 s), and its surviving child is then reparented out of the approved tree.
+    let sessionGrant = { (at: Int64) in
+        VaultSessionGrants.live(lineage: VaultProcess.lineage(of: caller.pid), now: at, in: VaultSessionGrants.load())
+    }
     if let grant = sessionGrant(now) {
         vaultAudit("session-allowed", params: params, caller: caller, session: session, detail: "session approval: \(grant.anchor.label)")
-        emitVaultKey(remembered: true, params: params, caller: caller, session: session)
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session, sessionAnchor: grant.anchor)
     }
 
     // The caller waits 180 s in all (VAULT_UNLOCK_TIMEOUT_MS); a window of its own needs at least 20 s of that.
@@ -1095,7 +1106,7 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     if lock.waited > 0, let grant = sessionGrant(Int64(Date().timeIntervalSince1970 * 1_000)) {
         vaultAudit("session-allowed", params: params, caller: caller, session: session, detail: "session approval: \(grant.anchor.label)")
-        emitVaultKey(remembered: true, params: params, caller: caller, session: session)
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session, sessionAnchor: grant.anchor)
     }
 
     let deadlineSeconds = windowSeconds - lock.waited
