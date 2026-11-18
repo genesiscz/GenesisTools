@@ -135,7 +135,17 @@ export function projectRuleLoader(caller: ProjectLocation & { configPath?: strin
 
 /** Finish loading before delivery starts. An item's creator can supply a checkout only for its own project. */
 export async function loadRulesForItems<T extends { item: Item }>(batch: readonly T[], load: LoadProjectRules) {
-    const groups = Map.groupBy(batch, ({ item }) => item.project);
+    // A loop, not Map.groupBy: the dev-dashboard UI program compiles this file against lib ES2023.
+    const groups = new Map<string, T[]>();
+    for (const entry of batch) {
+        const group = groups.get(entry.item.project);
+        if (group) {
+            group.push(entry);
+        } else {
+            groups.set(entry.item.project, [entry]);
+        }
+    }
+
     const projects = Array.from(groups, async ([project, entries]) => {
         const creator = entries.find(
             ({ item }) => item.createdBy.project === project && existingCheckout(item.createdBy.repoRoot)
