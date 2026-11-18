@@ -86,9 +86,9 @@ export function parseRunningApplications(text: string): RunningApplication[] {
 
 /**
  * The running applications Launch Services knows, oldest check-in first; with `bundleId`, only that bundle's instances.
- * Empty off macOS and when `lsappinfo` fails (logged).
+ * Empty off macOS. Null when `lsappinfo` fails or times out (logged): an unread inventory is not an empty one.
  */
-export function runningApplications(bundleId?: string): RunningApplication[] {
+export function runningApplications(bundleId?: string): RunningApplication[] | null {
     if (process.platform !== "darwin") {
         return [];
     }
@@ -96,11 +96,11 @@ export function runningApplications(bundleId?: string): RunningApplication[] {
     const proc = Bun.spawnSync(["lsappinfo", "list"], { stdout: "pipe", stderr: "pipe", timeout: 5_000 });
 
     if (proc.exitCode !== 0) {
-        logger.debug(
+        logger.warn(
             { exitCode: proc.exitCode, stderr: new TextDecoder().decode(proc.stderr).slice(-300) },
             "launch-services: lsappinfo list failed"
         );
-        return [];
+        return null;
     }
 
     return parseRunningApplications(new TextDecoder().decode(proc.stdout))

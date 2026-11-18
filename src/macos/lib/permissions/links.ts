@@ -1,7 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import { type RunningApplication, runningApplications } from "@genesiscz/utils/macos/launch-services";
-import { childPids, readProcessRows } from "@genesiscz/utils/process/processes";
+import { childPids, readProcessRows, signalProcessTree } from "@genesiscz/utils/process/processes";
 
 /**
  * What a GenesisTools.app process is, read from its command line: the link relay (`--link-relay`), a face (no argument
@@ -24,6 +24,8 @@ export interface LinkHolder {
  * instance took the link, failed with -600 and turned into a UIElement, as a Claude session's launcher did that day.
  */
 export interface LinkRoute {
+    /** False when Launch Services could not be read (`lsappinfo` failed): then nothing below is known. */
+    known: boolean;
     /** The oldest instance; null when none runs and macOS starts a router for each link. */
     target: LinkHolder | null;
     relay: LinkHolder | null;
@@ -43,7 +45,8 @@ export function linkHolderKind(command: string | null): LinkHolderKind {
         return "relay";
     }
 
-    if (first === "" || first.startsWith("-")) {
+    // A hub link starts the hub window in the process it reached (HostMain.swift), so that process is a face.
+    if (first === "" || first.startsWith("-") || first.startsWith("genesis-tools://hub")) {
         return "face";
     }
 
@@ -79,7 +82,8 @@ export function holderArgs(command: string | null): string | null {
             continue;
         }
 
-        kept.push(word);
+        // A link's query and fragment can carry a token; the scheme, host and path name the run well enough.
+        kept.push(word.includes("://") ? word.replace(/[?#].*$/, "?…") : word);
     }
 
     const args = kept.join(" ");
@@ -105,6 +109,7 @@ export function linkRoute(
     const relayIndex = holders.findIndex((holder) => holder.kind === "relay");
 
     return {
+        known: true,
         target: holders[0] ?? null,
         relay: relayIndex >= 0 ? holders[relayIndex] : null,
         olderThanRelay: relayIndex > 0 ? holders.slice(0, relayIndex) : [],
@@ -114,13 +119,22 @@ export function linkRoute(
 /** The route on this Mac now: one `lsappinfo list` and the command lines of the bundle's instances. */
 export function currentLinkRoute(bundleId = GENESIS_APP_BUNDLE_ID): LinkRoute {
     const instances = runningApplications(bundleId);
+
+    if (instances === null) {
+        return { known: false, target: null, relay: null, olderThanRelay: [] };
+    }
+
     const rows = readProcessRows(instances.map((app) => app.pid));
     const processes = new Map(
         [...rows].map(([pid, row]) => [pid, { command: row.command, startMs: row.startTime?.getTime() ?? null }])
     );
     const route = linkRoute(instances, processes);
     logger.debug(
-        { target: route.target, relay: route.relay?.pid, olderThanRelay: route.olderThanRelay.length },
+        {
+            target: route.target && { pid: route.target.pid, kind: route.target.kind },
+            relay: route.relay?.pid,
+            olderThanRelay: route.olderThanRelay.length,
+        },
         "links: route read"
     );
     return route;
@@ -135,6 +149,10 @@ function when(startMs: number | null): string {
 /** One line for `app:status` and the build: who takes a link now. */
 export function describeLinkRoute(route: LinkRoute): string {
     const target = route.target;
+
+    if (!route.known) {
+        return "unknown: Launch Services could not be read (lsappinfo failed)";
+    }
 
     if (target === null) {
         return "no GenesisTools process runs: macOS starts a router for each link";
@@ -154,6 +172,10 @@ export function describeLinkRoute(route: LinkRoute): string {
 export function linkRouteProblem(route: LinkRoute): string | null {
     const target = route.target;
 
+    if (!route.known) {
+        return "Launch Services could not be read (lsappinfo failed), so who takes a link is unknown.";
+    }
+
     if (target === null || target.kind === "relay" || target.kind === "router") {
         return null;
     }
@@ -169,15 +191,21 @@ export function linkRouteProblem(route: LinkRoute): string | null {
 }
 
 /**
- * Runs `<launcher> /bin/sleep 3` and asks Launch Services whether that launcher run checked in. One that does becomes
+ * Runs `<launcher> /bin/sleep 30` and asks Launch Services whether that launcher run checked in. One that does becomes
  * the oldest instance as soon as a rebuild restarts the link relay, and from then on it takes every link. True when it
- * checked in, false when not, null when the run did not reach its program within the deadline.
+ * checked in, false when not, null when the run did not reach its program within the deadline, the inventory could not
+ * be read, or the run ended before the inventory was read (then its absence proves nothing). The run is stopped once
+ * the answer is in, so the sleep only has to outlast `lsappinfo` (5 s at most).
  */
 export async function launcherChecksIn(
     launcherPath: string,
     { bundleId = GENESIS_APP_BUNDLE_ID, deadlineMs = 10_000 }: { bundleId?: string; deadlineMs?: number } = {}
 ): Promise<boolean | null> {
-    const child = Bun.spawn([launcherPath, "/bin/sleep", "3"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    const child = Bun.spawn([launcherPath, "/bin/sleep", "30"], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+    });
     const deadline = Date.now() + deadlineMs;
 
     try {
@@ -194,12 +222,23 @@ export async function launcherChecksIn(
             await Bun.sleep(100);
         }
 
-        return runningApplications(bundleId).some((app) => app.pid === child.pid);
+        const instances = runningApplications(bundleId);
+
+        if (instances === null || child.exitCode !== null) {
+            logger.warn(
+                { pid: child.pid, exitCode: child.exitCode, inventoryRead: instances !== null },
+                "links: the launcher check could not read Launch Services while the launcher ran"
+            );
+            return null;
+        }
+
+        return instances.some((app) => app.pid === child.pid);
     } finally {
+        signalProcessTree(child.pid, { includeSelf: true });
         const exited = await Promise.race([child.exited.then(() => true), Bun.sleep(5_000).then(() => false)]);
 
         if (!exited) {
-            child.kill();
+            child.kill("SIGKILL");
         }
     }
 }

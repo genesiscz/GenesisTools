@@ -622,6 +622,9 @@ describe("link route", () => {
             )
         ).toBe("gt-cc run work --resume abc");
         expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub --resume");
+        expect(holderArgs(`${APP} https://example.test/reset?token=fixture-secret#x`)).toBe(
+            "https://example.test/reset?…"
+        );
         expect(holderArgs(null)).toBeNull();
     });
 
@@ -631,6 +634,7 @@ describe("link route", () => {
         expect(linkHolderKind(`${APP} --rpc {}`)).toBe("face");
         expect(linkHolderKind(APP)).toBe("face");
         expect(linkHolderKind(`${APP} https://example.test/a`)).toBe("router");
+        expect(linkHolderKind(`${APP} genesis-tools://hub?session=abc`)).toBe("face");
         expect(linkHolderKind(`${APP} --link-relay`)).toBe("relay");
         expect(linkHolderKind(null)).toBe("unknown");
     });
