@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
 import { explainAction, findAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
@@ -81,7 +82,9 @@ export function registerActionCommand(program: Command): void {
             ) => {
                 if (id === "explain") {
                     if (!target) {
-                        out.error("explain needs an action: tools genesis-tools action explain <area>.<action>");
+                        out.error(
+                            `explain needs an action: ${toolCommand("genesis-tools action explain")} <area>.<action>`
+                        );
                         process.exitCode = 1;
                         return;
                     }
