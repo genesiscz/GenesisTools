@@ -61,6 +61,7 @@ struct WidgetFeedRunHeader: View, Equatable {
     let subtitle: String?
     let counts: String
     let waiting: Bool
+    let inboxTooltip: String
     let openInbox: (() -> Void)?
 
     @MainActor init(run: WidgetFeedRun, model: WidgetModel, surface: WidgetSurfaceID? = nil) {
@@ -78,8 +79,10 @@ struct WidgetFeedRunHeader: View, Equatable {
         subtitle = sessions > 1 ? Plural.count(sessions, "session") : (project.isEmpty ? nil : sessionTitle)
         let count = run.items.filter(\.needsAnswer).count
         waiting = count > 0
-        counts = [Plural.count(run.items.count, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
+        // One item says what it is in its own row (kind, waiting, time); a count only adds words.
+        counts = run.items.count < 2 ? "" : [Plural.count(run.items.count, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
             .compactMap { $0 }.joined(separator: " · ")
+        inboxTooltip = "Open the whole inbox of " + (session?.title ?? "this session")
         if let session {
             openInbox = {
                 model.select(session.key)
@@ -93,7 +96,8 @@ struct WidgetFeedRunHeader: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.provider == rhs.provider && lhs.title == rhs.title && lhs.subtitle == rhs.subtitle
-            && lhs.counts == rhs.counts && lhs.waiting == rhs.waiting && (lhs.openInbox == nil) == (rhs.openInbox == nil)
+            && lhs.counts == rhs.counts && lhs.waiting == rhs.waiting && lhs.inboxTooltip == rhs.inboxTooltip
+            && (lhs.openInbox == nil) == (rhs.openInbox == nil)
     }
 
     var body: some View {
@@ -105,10 +109,14 @@ struct WidgetFeedRunHeader: View, Equatable {
                 Text(subtitle).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 0)
-            Text(counts).font(.system(size: 10)).foregroundStyle(waiting ? Color.orange : .secondary)
-                .lineLimit(1).fixedSize()
+            if !counts.isEmpty {
+                Text(counts).font(.system(size: 10)).foregroundStyle(waiting ? Color.orange : .secondary)
+                    .lineLimit(1).fixedSize()
+            }
             if let openInbox {
-                Button("Whole inbox", action: openInbox).buttonStyle(.genHoverPlain()).font(.system(size: 10.5)).fixedSize()
+                // A glyph, not words: the feed has a header per run, and "Whole inbox" on each one read as a column.
+                IconButton(systemName: "tray", tooltip: inboxTooltip, size: 11, action: openInbox)
+                    .accessibilityLabel(inboxTooltip)
             }
         }
         .font(.system(size: 11.5))
