@@ -372,6 +372,7 @@ describe("a label that tracks no one person", () => {
             '[nejasné: "Speaker 5"]',
             "Speaker 5",
         ]);
+        expect(result.entries.map((entry) => entry.band)).toEqual(["open", "confirmed", "open", undefined]);
         expect(result.outcomes.find((outcome) => outcome.item === "i1")).toEqual({
             item: "i1",
             status: "applied",
@@ -492,9 +493,12 @@ describe("question-owned transcript uncertainty", () => {
         const render = (withSuggested: boolean) =>
             correctTranscript({ record, transcript: source, config, format: "txt", withSuggested, dictionary: false });
         const guess = `[B Example: ${Math.round(confidence * 100)} %]`;
-        expect(render(true).entries[0]!.speaker).toBe(guess);
-        const choices = render(false).entries[0]!.speaker;
-        expect(choices).toBe('[nejasné: "Voice"; 1) A Example 2) B Example 3) both]');
+        expect(render(true).entries[0]).toMatchObject({ speaker: guess, guess: true, band: "guess" });
+        expect(render(false).entries[0]).toMatchObject({
+            speaker: '[nejasné: "Voice"; 1) A Example 2) B Example 3) both]',
+            band: "open",
+            guess: false,
+        });
         const entries = render(true).entries;
         expect(transcriptTextLines(groupTurns(entries), false).join("\n")).toContain(guess);
         expect(transcriptMarkdown(groupTurns(entries), false)).toContain(guess);
@@ -513,7 +517,7 @@ describe("question-owned transcript uncertainty", () => {
         ).toBe("A Example");
     });
 
-    test("unasked suggestions retain their threshold and explicit confirmations render plainly", () => {
+    test.each([0.5, 0.6])("unasked speaker suggestions use the configured threshold of %s", (applyAbove) => {
         const source = [line("Voice", 5, "Raw words.")];
         const range = item({
             id: "i1",
@@ -523,21 +527,57 @@ describe("question-owned transcript uncertainty", () => {
             fromSec: 5,
             toSec: 5,
             speaker: "B Example",
-            confidence: 0.6,
         });
+        const thresholdConfig = meetingsConfigSchema.parse({ global: { suggest: { applyAbove } } });
         const render = (status: "suggested" | "confirmed", confidence: number, withSuggested: boolean) =>
             correctTranscript({
                 record: meetingRecordSchema.parse({ ...base, items: [{ ...range, status, confidence }] }),
                 transcript: source,
-                config,
+                config: thresholdConfig,
                 format: "txt",
                 withSuggested,
                 dictionary: false,
-            });
-        expect(render("suggested", 0.6, false).entries[0]?.speaker).toBe("Voice");
-        expect(render("suggested", 0.6, true).entries[0]?.speaker).toBe("[B Example: 60 %]");
-        expect(render("suggested", 0.4, true).entries[0]?.speaker).toBe("[B Example: 40 %]");
-        expect(render("confirmed", 0.4, false).entries[0]?.speaker).toBe("B Example");
+            }).entries[0];
+        expect(render("suggested", applyAbove, false)?.speaker).toBe("Voice");
+        expect(render("suggested", applyAbove, true)).toMatchObject({ speaker: "B Example", band: "applied" });
+        expect(render("suggested", 0.65, true)).toMatchObject({ speaker: "B Example", band: "applied" });
+        const belowPercent = applyAbove * 100 - 1;
+        expect(render("suggested", belowPercent / 100, true)).toMatchObject({
+            speaker: `[B Example: ${belowPercent} %]`,
+            band: "guess",
+        });
+        expect(render("confirmed", 0.4, false)).toMatchObject({ speaker: "B Example", band: "confirmed" });
+    });
+
+    test("a range with candidates but no proposed name keeps the speaker open above the threshold", () => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [
+                item({
+                    id: "i1",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Voice",
+                    fromSec: 5,
+                    toSec: 5,
+                    candidates: ["A Example", "B Example"],
+                    confidence: 0.95,
+                }),
+            ],
+        });
+        const { entries } = correctTranscript({
+            record,
+            transcript: [line("Voice", 5, "Raw words.")],
+            config: meetingsConfigSchema.parse({ languages: { cs: { render: { unclearLabel: "unresolved" } } } }),
+            format: "json",
+            withSuggested: true,
+        });
+        expect(entries[0]).toMatchObject({
+            speaker: '[unresolved: "Voice"; 1) A Example 2) B Example]',
+            confidence: 0.95,
+            band: "open",
+            guess: false,
+        });
     });
 
     test.each(["txt", "md", "json"] as const)("keeps a supplied final term mark once in %s", (format) => {
@@ -867,6 +907,7 @@ test("a multi-voice split cuts only its own source line, with distinct ids, word
         ["l1#1", "Bob Example", "Second sentence.", 11.5],
         ["l2", "[unclear: Alice Example + Bob Example]", "Another sentence here.", 15],
     ]);
+    expect(entries[2]).toMatchObject({ band: "open", guess: false });
     expect(entries[0]?.words?.map((word) => word.range)).toEqual([
         { location: 0, length: 5 },
         { location: 6, length: 9 },

@@ -171,7 +171,6 @@ export function correctionsOf(
     if (!Number.isFinite(applyAbove) || applyAbove < 0 || applyAbove > 1) {
         throw new RangeError("applyAbove must be between 0 and 1");
     }
-    const markBelow = opts.applyAbove ?? Math.max(0.7, applyAbove);
     const questionOwned = questionOwnedItems(record);
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
@@ -180,8 +179,7 @@ export function correctionsOf(
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
-            (item.confidence === undefined ||
-                item.confidence >= (item.kind === "speaker-range" ? markBelow : applyAbove)));
+            (item.confidence === undefined || item.confidence >= applyAbove));
     const used = record.items
         .filter(applies)
         .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
@@ -191,7 +189,7 @@ export function correctionsOf(
     );
     const passages = [
         ...(opts.withSuggested
-            ? unclearPassages(record, { below: markBelow, applied: applies, guesses: true, unclearLabel })
+            ? unclearPassages(record, { below: applyAbove, applied: applies, guesses: true, unclearLabel })
             : unclearPassages(record, { below: config.global.suggest.listenBelow, unclearLabel })),
         ...unlabeled,
     ];
@@ -344,7 +342,7 @@ export function correctTranscript(options: {
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applied = {
         ...corrected,
-        entries: corrected.entries.flatMap((rawEntry) => {
+        entries: corrected.entries.flatMap((rawEntry): TranscriptEntry[] => {
             const sourceIndex =
                 (rawEntry.id ? sources.byId.get(rawEntry.id) : undefined) ?? sources.byStart.get(rawEntry.startSec);
             const entry =
@@ -360,7 +358,9 @@ export function correctTranscript(options: {
                 if (finding.segments?.length && atSec === finding.fromSec) {
                     return splitEntry(entry, finding.segments);
                 }
-                return [{ ...entry, speaker: `[${unclearLabel}: ${finding.voices.join(" + ")}]` }];
+
+                const speaker = `[${unclearLabel}: ${finding.voices.join(" + ")}]`;
+                return [{ ...entry, speaker, band: "open", guess: false }];
             }
             const proposals = speakerRanges.filter(
                 (item) => item.status !== "rejected" && covers(item, { atSec, sourceIndex })
@@ -384,7 +384,16 @@ export function correctTranscript(options: {
                 proposal.speaker &&
                 proposal.rules.includes(MeetingRule.VoiceEmbedding);
             const score = typeof proposal?.evidence?.score === "number" ? proposal.evidence.score : confidence;
-            const guess = entry.speaker.includes(" %]");
+            let band: TranscriptEntry["band"];
+
+            if (isUnclearMarker(entry.speaker, unclearLabel)) {
+                band = "open";
+            } else if (proposal?.status === "confirmed") {
+                band = "confirmed";
+            } else if (proposal) {
+                band = entry.speaker.includes(" %]") ? "guess" : "applied";
+            }
+
             return [
                 {
                     ...entry,
@@ -403,15 +412,9 @@ export function correctTranscript(options: {
                                         ...(score === undefined ? {} : { nameScore: score }),
                                     }
                                   : {}),
-                              guess,
-                              band:
-                                  proposal.status === "confirmed"
-                                      ? ("confirmed" as const)
-                                      : guess
-                                        ? ("guess" as const)
-                                        : ("applied" as const),
                           }
                         : {}),
+                    ...(band ? { band, guess: band === "guess" } : {}),
                 },
             ];
         }),
