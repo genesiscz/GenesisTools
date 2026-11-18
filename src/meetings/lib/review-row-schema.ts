@@ -130,6 +130,8 @@ export const reviewRowSchema = z.object({
     priority: z.number().optional(),
     reach: z.number().nonnegative().optional(),
     group: z.enum(QUESTION_GROUPS).optional(),
+    /** The rule ids that raised the item, for the terminal and agents; the row shows their names (`meetingRuleNames`). */
+    rules: z.array(z.string()).optional(),
     /** A question of the group `words`: how many times the word is heard, so how many places one answer fixes. */
     occurrences: z.number().int().positive().optional(),
     guess: z.boolean().optional(),
