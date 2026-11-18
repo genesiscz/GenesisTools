@@ -5,6 +5,7 @@ import { out } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
 import { type Command, Option } from "commander";
 import { registerCliAppBuilder } from "../lib/app-builder";
+import { registerCliWorkDoor } from "../lib/work-door";
 
 export function registerServeCommand(program: Command): void {
     program
@@ -26,6 +27,7 @@ export function registerServeCommand(program: Command): void {
                 await withInterrupt(
                     async (signal) => {
                         registerCliAppBuilder();
+                        registerCliWorkDoor();
                         const start = await startGenesisToolsService();
                         if (start.status === "running") {
                             out.printlnErr("A GenesisTools service is already running.");

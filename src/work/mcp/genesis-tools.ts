@@ -10,9 +10,8 @@ import type { Door, Formatter } from "@genesiscz/utils/output/formatter";
 import { replyToToolAnswer } from "@genesiscz/utils/output/mcp";
 import { type WorkMethodName, workMethods } from "@genesiscz/utils/work/api";
 import { workFormatters } from "@genesiscz/utils/work/formatters";
-import { type CallOptions, callWork } from "@genesiscz/utils/work/handlers";
-import { actorHere } from "../adapters/actor";
-import { openSession } from "../session";
+import type { CallOptions } from "@genesiscz/utils/work/handlers";
+import { callWorkHere } from "../doors/service";
 
 const OWN_TOOLS = ["context", "list", "show", "spot", "reopen"] as const satisfies readonly WorkMethodName[];
 const WRITE_METHODS = (Object.keys(workMethods) as WorkMethodName[]).filter(
@@ -54,22 +53,10 @@ async function answer(
     call: CallOptions,
     view: { section?: string; explain?: boolean }
 ) {
-    const read = workMethods[method].effect === "read";
-    const opened = await openSession(call, { actor: actorHere({ model: !read }), quiet: true });
-
-    try {
-        const reply = await callWork(method, params, opened.session);
-
-        if (reply.ok && !read && call.dryRun !== true) {
-            await opened.afterWrite();
-        }
-
-        // `callWork` answers unknown data, so the formatter of this method is widened to match.
-        const formatter = workFormatters(view)[method] as Formatter<unknown>;
-        return replyToToolAnswer(reply, formatter, mcpDoor);
-    } finally {
-        opened.close();
-    }
+    const reply = await callWorkHere(method, params, call);
+    // The door answers unknown data, so the formatter of this method is widened to match.
+    const formatter = workFormatters(view)[method] as Formatter<unknown>;
+    return replyToToolAnswer(reply, formatter, mcpDoor);
 }
 
 function schemaWith(method: WorkMethodName, envelope: boolean): Record<string, unknown> {

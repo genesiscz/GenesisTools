@@ -413,6 +413,833 @@
     }
   },
   {
+    "method": "work.list",
+    "params": {
+      "project": "fixture",
+      "under": "fixture",
+      "spottedIn": "fixture",
+      "state": [],
+      "type": [],
+      "tag": "fixture",
+      "severity": [],
+      "worker": "fixture",
+      "fields": [],
+      "limit": 1,
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": [],
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.show",
+    "params": {
+      "ref": "fixture",
+      "section": "all",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.tree",
+    "params": {
+      "project": "fixture",
+      "all": true,
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": {
+          "project": "fixture",
+          "containers": [],
+          "spotted": -9007199254740991
+        },
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.triage",
+    "params": {
+      "project": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": [],
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.context",
+    "params": {
+      "network": true,
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.config",
+    "params": {
+      "project": "fixture",
+      "type": [],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.spot",
+    "params": {
+      "title": "fixture",
+      "type": "epic",
+      "where": "fixture",
+      "why": "fixture",
+      "userSees": "fixture",
+      "cost": "fixture",
+      "severity": "critical",
+      "existedBefore": true,
+      "production": true,
+      "during": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.add",
+    "params": {
+      "title": "fixture",
+      "type": "epic",
+      "parent": "fixture",
+      "under": "fixture",
+      "for": "fixture",
+      "body": "fixture",
+      "acceptance": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.edit",
+    "params": {
+      "ref": "fixture",
+      "type": "epic",
+      "severity": "critical",
+      "parent": "fixture",
+      "for": "fixture",
+      "title": "fixture",
+      "where": "fixture",
+      "why": "fixture",
+      "userSees": "fixture",
+      "cost": "fixture",
+      "during": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.link",
+    "params": {
+      "ref": "fixture",
+      "kind": "related",
+      "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.unlink",
+    "params": {
+      "ref": "fixture",
+      "kind": "related",
+      "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.accept",
+    "params": {
+      "refs": [
+        "fixture"
+      ],
+      "type": "epic",
+      "severity": "critical",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.claim",
+    "params": {
+      "ref": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.release",
+    "params": {
+      "ref": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.finish",
+    "params": {
+      "ref": "fixture",
+      "proof": "fixture",
+      "commits": [],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.drop",
+    "params": {
+      "refs": [
+        "fixture"
+      ],
+      "why": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.comment",
+    "params": {
+      "ref": "fixture",
+      "text": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.log",
+    "params": {
+      "ref": "fixture",
+      "result": "fixed",
+      "note": "fixture",
+      "measured": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.reopen",
+    "params": {
+      "ref": "fixture",
+      "why": "fixture",
+      "deliver": "auto",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.pair",
+    "params": {
+      "ref": "fixture",
+      "connector": "fixture",
+      "key": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.unpair",
+    "params": {
+      "ref": "fixture",
+      "connector": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.pull",
+    "params": {
+      "connector": "fixture",
+      "keys": [
+        "fixture"
+      ],
+      "project": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.sync",
+    "params": {
+      "release": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.handoff",
+    "params": {
+      "title": "fixture",
+      "from": [
+        "fixture"
+      ],
+      "target": "fixture",
+      "body": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.batch",
+    "params": {
+      "calls": [
+        {
+          "method": "fixture",
+          "params": {}
+        }
+      ],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
     "method": "hello",
     "params": {
       "methods": [],

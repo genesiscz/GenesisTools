@@ -8,6 +8,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { registerCliAppBuilder } from "../lib/app-builder";
+import { registerCliWorkDoor } from "../lib/work-door";
 
 function parseArgs(json: string | boolean | undefined): unknown {
     return typeof json === "string" ? SafeJSON.parse(json, { strict: true }) : {};
@@ -103,6 +104,7 @@ export function registerActionCommand(program: Command): void {
                 const remote = await callRunningService(id, parseArgs(options.json), timeoutMs + 10_000);
                 if (!remote.called) {
                     registerCliAppBuilder();
+                    registerCliWorkDoor();
                 }
                 const outcome = remote.called
                     ? remote.value
