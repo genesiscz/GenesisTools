@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ArtifactStore } from "@genesiscz/utils/ai/local/artifacts";
 import { EMBEDDING_MODEL } from "@genesiscz/utils/ai/local/runtimes/sherpa/models";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -79,14 +80,15 @@ export class VoiceUnavailableError extends Error {
 }
 
 let runtime: { model: string; extractor: Extractor } | undefined;
+let selectedModelFile = EMBEDDING_MODEL.file;
 export function localVoiceBackend(): { model: string; extractor: Extractor } {
     if (runtime) {
         return runtime;
     }
-    if (!existsSync(EMBEDDING_MODEL.file)) {
+    if (!existsSync(selectedModelFile)) {
         throw new VoiceUnavailableError("Speaker model unavailable; run meetings voice prepare explicitly");
     }
-    const model = `campplus:${createHash("sha256").update(readFileSync(EMBEDDING_MODEL.file)).digest("hex")}`;
+    const model = `campplus:${createHash("sha256").update(readFileSync(selectedModelFile)).digest("hex")}`;
     let extractor: Extractor | undefined;
     runtime = {
         model,
@@ -94,7 +96,7 @@ export function localVoiceBackend(): { model: string; extractor: Extractor } {
             if (!extractor) {
                 const sherpa: Sherpa = createRequire(import.meta.url)("sherpa-onnx-node");
                 extractor = new sherpa.SpeakerEmbeddingExtractor({
-                    model: EMBEDDING_MODEL.file,
+                    model: selectedModelFile,
                     numThreads: 1,
                     provider: "cpu",
                     debug: false,
@@ -249,6 +251,7 @@ const voiceWorkerRequestSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("lines"), input: voiceLineRequestSchema }),
     z.object({ kind: z.literal("sample"), input: voiceSampleRequestSchema }),
 ]);
+const voiceWorkerEnvelopeSchema = z.object({ request: voiceWorkerRequestSchema, modelFile: z.string() });
 const workerResultSchema = z.array(
     z.object({
         index: z.number().int(),
@@ -280,13 +283,14 @@ async function runVoiceWorker(options: {
 }): Promise<unknown> {
     const { workerPrefix, request } = options;
     const child = Bun.spawn([...workerPrefix, process.execPath, fileURLToPath(import.meta.url)], {
+        env: env.getProcessEnv(),
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
         timeout: 600_000,
         killSignal: "SIGKILL",
     });
-    child.stdin.write(SafeJSON.stringify(request, { strict: true }));
+    child.stdin.write(SafeJSON.stringify({ request, modelFile: selectedModelFile }, { strict: true }));
     child.stdin.end();
     const [stdout, stderr, code] = await Promise.all([
         new Response(child.stdout).text(),
@@ -414,7 +418,9 @@ export async function embedVoiceLines(options: {
 }
 
 async function runWorkerMain(): Promise<void> {
-    const request = voiceWorkerRequestSchema.parse(SafeJSON.parse(await Bun.stdin.text(), { strict: true }));
+    const envelope = voiceWorkerEnvelopeSchema.parse(SafeJSON.parse(await Bun.stdin.text(), { strict: true }));
+    selectedModelFile = envelope.modelFile;
+    const request = envelope.request;
     try {
         const result =
             request.kind === "sample" ? await embedVoice(request.input) : await embedVoiceLines(request.input);
