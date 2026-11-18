@@ -5,10 +5,15 @@ import type { RecordingSpan } from "@genesiscz/utils/meetings/record";
 import type { AudioCaptureChange } from "@genesiscz/utils/screen-recorder/audio-session";
 import { AUDIO_SOURCES, type AudioSource } from "@genesiscz/utils/screen-recorder/control";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { z } from "zod";
 import { AUDIO_INDEX, audioRowSchema, audioRowZeroMs } from "./sound";
 
 type Interval = [number, number];
 const savedRow = audioRowSchema.loose();
+const missingMedia = audioRowSchema.pick({ source: true, at: true }).extend({
+    event: z.literal("sound-loss"),
+    lostSpans: audioRowSchema.shape.lostSpans.unwrap(),
+});
 
 /** Native writers tolerate 5 ms of timestamp jitter before declaring samples missing. */
 function uncovered(from: number, to: number, excluded: Interval[]): Interval[] {
@@ -54,10 +59,19 @@ export function markMeetingSoundLoss(options: {
     if (lines.at(-1) === "") {
         lines.pop();
     }
+    const savedLoss: Record<AudioSource, Interval[]> = { mic: [], system: [] };
     const entries = lines.flatMap((line, lineNumber) => {
         // Keep damaged lines and other writers' fields byte for byte.
-        const parsed = savedRow.safeParse(parseJSON<unknown>(line));
+        const raw = parseJSON<unknown>(line);
+        const parsed = savedRow.safeParse(raw);
         if (!parsed.success) {
+            const loss = missingMedia.safeParse(raw);
+            if (loss.success) {
+                const zero = Date.parse(loss.data.at);
+                for (const [start, end] of loss.data.lostSpans) {
+                    savedLoss[loss.data.source].push([zero + start, zero + end]);
+                }
+            }
             return [];
         }
         const row = parsed.data;
@@ -80,7 +94,7 @@ export function markMeetingSoundLoss(options: {
     }
     let dirty = false;
     for (const source of AUDIO_SOURCES) {
-        const excluded = [...paused];
+        const excluded = [...paused, ...savedLoss[source]];
         let muted: number | undefined;
         for (const change of changes) {
             if (change.kind === "mute" && change.source === source) {
@@ -131,11 +145,12 @@ export function markMeetingSoundLoss(options: {
             }
         };
         let previous: (typeof tracks)[number] | undefined;
+        let uncertain = false;
         for (const track of tracks) {
             const { row, from } = track;
             if (row.clockGuess || row.durationGuess) {
                 // There is recovered media here, but its sample interval could not be established.
-                previous = undefined;
+                uncertain = true;
                 continue;
             }
             if (row.lostSpans?.length && !row.lostSpanReasons) {
@@ -145,7 +160,7 @@ export function markMeetingSoundLoss(options: {
                 lines[track.lineNumber] = SafeJSON.stringify(row);
                 dirty = true;
             }
-            if (previous && from > previous.end) {
+            if (previous && !uncertain && from > previous.end) {
                 const reason =
                     !files.has(previous.row.file) && files.has(row.file)
                         ? "recorder interrupted"
@@ -156,6 +171,7 @@ export function markMeetingSoundLoss(options: {
             }
             if (!previous || track.end > previous.end) {
                 previous = track;
+                uncertain = false;
             }
         }
         // With no next file, only a reported failure establishes loss. A normal stop can take
@@ -184,7 +200,7 @@ export function markMeetingSoundLoss(options: {
                 dirty = true;
             }
         }
-        if (previous && last && last.atMs >= previous.from) {
+        if (previous && !uncertain && last && last.atMs >= previous.from) {
             addGap(previous, previous.end, stoppedMs, last.reason);
         }
     }
