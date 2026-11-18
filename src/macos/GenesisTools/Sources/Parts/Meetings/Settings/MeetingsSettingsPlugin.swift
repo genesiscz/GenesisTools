@@ -19,6 +19,7 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
 
     package func settingsReady(page: String?) -> Bool {
         guard let page, page.hasPrefix("meetings.") else { return true }
+        if page == MeetingsSettingsPages.thresholdsPage { return model?.thresholdsReady ?? true }
         // The Window and Speakers pages show the engine's values from the config: a snapshot waits for that read only.
         if page == MeetingsSettingsPages.windowPage || page == MeetingsSettingsPages.speakersPage {
             guard let model else { return true }
@@ -49,6 +50,7 @@ enum MeetingsSettingsPages {
     static let projectsPage = "meetings.projects"
     static let dictionaryPage = "meetings.dictionary"
     static let speakersPage = "meetings.speakers"
+    static let thresholdsPage = "meetings.thresholds"
     /// The card on the Speakers page that sets how the voice pass runs.
     static let voicePassAnchor = "voicePass"
     static let windowPage = "meetings.window"
@@ -83,6 +85,10 @@ enum MeetingsSettingsPages {
             NativeSettingsPage(id: speakersPage, title: "Speakers", symbol: "person.wave.2", tint: .purple,
                                subtitle: "How the engine names who spoke, and what the voice pass costs this Mac.") {
                 MeetingsSpeakersPage(model: model)
+            },
+            NativeSettingsPage(id: thresholdsPage, title: "Thresholds", symbol: "slider.horizontal.3", tint: .blue,
+                               subtitle: "Preview how global suggestion settings change a meeting before saving.") {
+                MeetingsThresholdsPage(model: model)
             },
             NativeSettingsPage(id: windowPage, title: "Window", symbol: "macwindow", tint: .gray,
                                subtitle: "How the Meetings window opens and what it shows.") {
@@ -125,7 +131,7 @@ struct MeetingsSettingsFrame<Content: View>: View {
 }
 
 /// The settings pages' notices over the visible page; none while the search index draws the page off screen.
-private struct PageNotices: ViewModifier {
+struct PageNotices: ViewModifier {
     let model: NoticeStackModel
     let shown: Bool
 

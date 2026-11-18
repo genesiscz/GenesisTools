@@ -73,6 +73,7 @@ final class MeetingsSettingsModel {
     }
     var phrase = ""
     var dictionaryPreviewMeetings = DictionaryPreviewMeetings()
+    var thresholdsReady = false
     /// False in a snapshot: nothing is written.
     let writes: Bool
     /// The Meetings service the config reads and writes go through; nil runs them as commands (XCTest, the preview).
@@ -513,8 +514,8 @@ final class MeetingsSettingsModel {
         case library(@MainActor () async throws -> Void)
     }
 
-    private func readLibrary<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
-                                                       orRun args: [String]) async throws -> M.Result {
+    func readLibrary<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
+                                              orRun args: [String]) async throws -> M.Result {
         let read = MeetingsRead.service(method, params, orRun: args)
         return try await read.run(service: service, command: { [self] args, _ in
             try await readCommand(M.Result.self, args)
