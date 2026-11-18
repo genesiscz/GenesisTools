@@ -17,7 +17,7 @@ import {
     type FixDecision,
     isPass,
     needsFor,
-    type Pass,
+    passFor,
     type RunOptions,
     type SkippedWay,
     type UnavailableCode,
@@ -187,7 +187,7 @@ function contextFor(params: {
         facts: deps.facts,
         service: deps.service ?? null,
         timeoutMs,
-        pass: (reason): Pass => ({ pass: true, reason }),
+        pass: passFor,
         emit: (event, payload) => {
             const schema = area.events?.[event];
 

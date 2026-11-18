@@ -53,13 +53,20 @@ export type ActionOutcome<R> =
     | { status: "ran"; via: WayName; value: R; skipped: SkippedWay[] }
     | { status: "unreachable"; skipped: SkippedWay[]; manual: string | null };
 
+/** The brand of `ctx.pass(why)`: a symbol no JSON result can carry, so a result shaped `{ pass, reason }` stays a result. */
+const PASS: unique symbol = Symbol("genesis-tools.actions.pass");
+
 export interface Pass {
-    readonly pass: true;
+    readonly [PASS]: true;
     readonly reason: string;
 }
 
+export function passFor(reason: string): Pass {
+    return { [PASS]: true, reason };
+}
+
 export function isPass(value: unknown): value is Pass {
-    return typeof value === "object" && value !== null && "pass" in value && value.pass === true && "reason" in value;
+    return typeof value === "object" && value !== null && PASS in value;
 }
 
 /** The one-shot `GenesisTools --rpc` door. A test process gets `{ ok: false, error: { code: "refused_in_test" } }`. */
