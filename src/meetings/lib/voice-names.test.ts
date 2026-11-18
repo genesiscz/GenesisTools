@@ -566,10 +566,16 @@ test("voice preview uses this meeting's independent seats, indicators and human 
             voiceOnly: true,
             applyAbove: config.global.suggest.applyAbove,
         });
+    // Both legacy room seats cover the whole meeting. Bob joining the call at 5 s cannot identify Alice at 0 s.
+    expect(await preview()).toEqual([]);
+
+    record.seats.room = [alice.person, { name: bob.person, fromSec: 5 }];
     const labels = await preview();
-    expect(labels[0]?.person).toBeUndefined();
-    expect(labels[1]).toMatchObject({ person: alice.person, reason: "named" });
-    expect(labels.slice(2, 5).map((row) => row.person)).toEqual(Array(3).fill(bob.person));
+    expect(labels[0]!.person).toBeUndefined();
+    expect(labels[1]).toMatchObject({ index: 1, person: alice.person, reason: "named" });
+    expect(labels.slice(2, 5).map(({ person, reason }) => [person, reason])).toEqual(
+        Array(3).fill([bob.person, "exclusion"])
+    );
     expect(readVoiceStore(record.project!).people).toEqual({});
     config.global.speakerLabels.seat.enabled = false;
     expect(await preview()).toEqual([]);
@@ -581,7 +587,7 @@ test("voice preview uses this meeting's independent seats, indicators and human 
         label: "Speaker 1",
         speaker: alice.person,
         fromSec: 0,
-        toSec: 0,
+        toSec: 5,
         rules: [MeetingRule.SpeakingIndicator],
         confidence: 0.75,
     });
@@ -612,6 +618,25 @@ test("voice preview uses this meeting's independent seats, indicators and human 
     record.items[1]!.decision!.actor = { kind: "agent", harness: "fixture", session: null };
     expect(await preview()).toEqual([]);
     expect(readVoiceStore(record.project!).people).toEqual({});
+});
+
+test("voice preview names a legacy room occupant before joining and after leaving the call", async () => {
+    const { record, opened } = await sampledMeeting("legacy-room-call-stay-fixture");
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    addVoicePrint(record.project!, bob.person, { ...basePrint, sourceSha: "legacy-room-training" }, "fixture-model");
+    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
+    const { speakerLabels, suggest } = meetingsConfigSchema.parse({}).global;
+    speakerLabels.seat.enabled = false;
+    const preview = await preparePreviewLabels(opened, speakerLabels, [
+        { name: alice.person, fromSec: 0, toSec: 15 },
+        { name: bob.person, fromSec: 5, toSec: 10 },
+    ]);
+    const labels = await preview(speakerLabels.voice, suggest.applyAbove);
+    expect(labels.map(({ index, person, reason }) => [index, person, reason])).toEqual([
+        [0, bob.person, "named"],
+        [1, bob.person, "named"],
+        [2, bob.person, "named"],
+    ]);
 });
 
 test("threshold preview rescores a shared seat from local voice evidence without saving embeddings", async () => {
