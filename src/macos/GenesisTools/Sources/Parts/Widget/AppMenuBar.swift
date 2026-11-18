@@ -6,6 +6,7 @@ import GenesisKit
 package final class AppMenuBar {
     /// The executable supplies the linked recorder part's menu before it starts the widget.
     package static var recorderMenu: (() -> NSMenu)?
+    package static var keepRecorder: ((Bool) -> Void)?
     private let install: () -> (() -> Void)
     private var remove: (() -> Void)?
 

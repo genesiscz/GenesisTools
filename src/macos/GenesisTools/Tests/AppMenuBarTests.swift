@@ -7,11 +7,12 @@ import XCTest
 final class AppMenuBarTests: XCTestCase {
     @MainActor
     func testInstalledPartsAndSharedRecorderMenu() throws {
+        _ = NSApplication.shared
         let recorder = RecorderMenu()
         var routed: [[String]] = []
         let menu = AppMenuBar.makeMenu(
             installed: ["hub", "features", "widget", "recorder", "meetings", "markdown", "clicky"],
-            recorderMenu: { recorder.makeMenu() }, launch: { routed.append($0) })
+            recorderMenu: makeRecorderAppSubmenu, launch: { routed.append($0) })
         XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.map(\.title),
                        ["Open Hub", "Settings…", "Permissions…", "Meetings", "Work", "Recorder", "Clicky", "Markdown", "Features"])
         let submenu = try XCTUnwrap(menu.item(withTitle: "Recorder")?.submenu)

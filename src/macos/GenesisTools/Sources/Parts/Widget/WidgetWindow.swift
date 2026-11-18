@@ -124,7 +124,9 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateMenuBar() {
+        guard !terminating else { return }
         appMenu.update(shown: MenuBarSettings.showsApp())
+        AppMenuBar.keepRecorder?(MenuBarSettings.separateRecorder())
     }
     /// While "Show the widget" is off, the coordinator opens the settings instead of a panel.
     private func openSession(_ key: String) { coordinator?.openSession(key) }
@@ -199,6 +201,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
         terminating = true
+        AppMenuBar.keepRecorder?(false)
         Task { [self] in
             await coordinator?.shutdown()
             replyToTermination(sender)

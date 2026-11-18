@@ -15,6 +15,8 @@ package enum MenuBarSettings {
     package static var changed: Notification.Name { .init(NativePreview.namespace + ".menuBar.changed") }
 
     package static func postChanged() {
+        // The other faces read the shared defaults domain as soon as the notification arrives.
+        UserDefaults.standard.synchronize()
         DistributedNotificationCenter.default().postNotificationName(
             changed, object: NativePreview.namespace, userInfo: nil, deliverImmediately: true)
     }

@@ -33,13 +33,13 @@ package enum WidgetLaunch {
         arguments.first != "--widget" && !arguments.contains(where: scriptedRunFlags.contains)
     }
 
-    /// Starts the widget when this build has it, staging lets it run and "Show the widget" is on. Every window face but
-    /// the widget calls it at its start (HostMain): "Quit All" in the hub quits the widget too, and the next hub or
-    /// settings window brings it back (Martin, 2026-11-04, D44). Silent: no alert when the part or staging says no.
+    /// Window faces bring back the widget when it owns a visible panel, the app menu, or the recorder keeper.
+    /// Staging still controls whether the widget face may start.
     package static func ensureRunningIfShown() {
         guard AppParts.has(face: "--widget"),
               AppParts.stagingRefusal(face: "--widget", facesEnabled: NativeStaging.facesEnabled) == nil,
-              (MenuBarSettings.showsApp() || showWidget(stateFile: stateFile())),
+              (MenuBarSettings.showsApp() || (AppParts.isLinked("recorder") && MenuBarSettings.separateRecorder())
+                || showWidget(stateFile: stateFile())),
               !isRunning()
         else { return }
         PerfLog.mark("widget.boot: starting the widget face for its panels or menu bar")
