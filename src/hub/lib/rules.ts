@@ -10,15 +10,14 @@ import { decisionFiles } from "@app/question/lib/decisions/read";
 import { awaitsAnswer, type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { byId } from "@genesiscz/utils/ai/catalog/static";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { windowsOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { FORGE_FACTS } from "@genesiscz/utils/git/origins/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { dispatchNotification, type NotificationEvent } from "@genesiscz/utils/notifications";
 import { LockTimeoutError, Storage, withFileLock } from "@genesiscz/utils/storage";
 import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { escapeShellArg } from "@genesiscz/utils/string";
 import type { NotifyItem } from "./notify";
 import { notifyDir } from "./notify-config";
 import { type NotifyState, readNotifyState } from "./notify-poll";
@@ -721,8 +720,8 @@ export async function readRuleInputs(
 }
 
 /** The shell line a banner click runs: the hub at the session (its Decisions pane) or the PR. */
-export function ruleClickCommand(target: RuleTarget, bundle = genesisAppBundlePath()): string {
-    const args = ["/usr/bin/open", "-n", bundle, "--args", "--hub"];
+export function ruleClickCommand(target: RuleTarget, _bundle?: string): string {
+    const args: string[] = [];
 
     if (target.pr) {
         args.push("--mode", "prs", "--pr", target.pr);
@@ -734,7 +733,7 @@ export function ruleClickCommand(target: RuleTarget, bundle = genesisAppBundlePa
         }
     }
 
-    return args.map(escapeShellArg).join(" ");
+    return windowsOpenCommand({ window: "--hub", args });
 }
 
 export function ruleNotification(firing: RuleFiring, bundle?: string): NotificationEvent {

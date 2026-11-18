@@ -4,6 +4,7 @@ import type { ChannelName, NotificationEvent } from "@genesiscz/utils/notificati
 import { memoryActTokenStore } from "../act/tokens";
 import { postDecisionNotices } from "../decisions/notify";
 import type { DecisionRecord } from "../decisions/store";
+import { hubItemClickCommand } from "../hub-link";
 import { closeNoticeItems, NOTICE_IDS, type NoticeDeps, noticeItem, postNotice, recordNotice } from "./notices";
 import { memoryNoticeStore } from "./store";
 
@@ -145,6 +146,16 @@ describe("notices", () => {
 });
 
 describe("decision notices", () => {
+    test.if(process.platform === "darwin")("inbox clicks open decisions and questions through windows.open", () => {
+        expect(hubItemClickCommand("decision", "d_1", tmpdir())).toBe(
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","inbox","--decision","d_1"]}'`
+        );
+        expect(hubItemClickCommand("question", "ask_2", tmpdir())).toBe(
+            `tools genesis-tools action windows.open --json '{"window":"--hub","args":["--mode","inbox","--question","ask_2"]}'`
+        );
+        expect(hubItemClickCommand("question", "ask_2", "/missing/bundle")).toBeNull();
+    });
+
     test.if(process.platform !== "darwin")("phone answers work without a Mac banner", async () => {
         const { deps, posted, store } = fakeDeps();
         const tokens = memoryActTokenStore();
