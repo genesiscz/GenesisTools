@@ -26,4 +26,11 @@ export interface TranscriptEntry {
     questioned?: boolean;
     guess?: boolean;
     band?: "confirmed" | "applied" | "guess" | "open";
+    /**
+     * The open speaker question on this line, for a reader that draws it (the Meetings window): the source label it is
+     * about and the answers on offer. `speaker` keeps the export's mark (`[unclear: "<label>"; 1) … 2) …]`).
+     */
+    unclear?: { label: string; readings: string[] };
+    /** The voices a confirmed answer heard together on this line; `speaker` keeps the export's mark. */
+    voices?: string[];
 }

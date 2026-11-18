@@ -498,7 +498,9 @@ describe("question-owned transcript uncertainty", () => {
             speaker: '[nejasné: "Voice"; 1) A Example 2) B Example 3) both]',
             band: "open",
             guess: false,
+            unclear: { label: "Voice", readings: ["A Example", "B Example", "both"] },
         });
+        expect(render(true).entries[0]?.unclear).toBeUndefined();
         const entries = render(true).entries;
         expect(transcriptTextLines(groupTurns(entries), false).join("\n")).toContain(guess);
         expect(transcriptMarkdown(groupTurns(entries), false)).toContain(guess);
@@ -907,7 +909,8 @@ test("a multi-voice split cuts only its own source line, with distinct ids, word
         ["l1#1", "Bob Example", "Second sentence.", 11.5],
         ["l2", "[unclear: Alice Example + Bob Example]", "Another sentence here.", 15],
     ]);
-    expect(entries[2]).toMatchObject({ band: "open", guess: false });
+    expect(entries[2]).toMatchObject({ band: "open", guess: false, voices: ["Alice Example", "Bob Example"] });
+    expect(entries[2]?.unclear).toBeUndefined();
     expect(entries[0]?.words?.map((word) => word.range)).toEqual([
         { location: 0, length: 5 },
         { location: 6, length: 9 },
