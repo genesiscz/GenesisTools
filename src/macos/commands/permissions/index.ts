@@ -4,7 +4,12 @@ import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
+import { gt, type SkippedWay } from "@genesiscz/utils/genesis-tools";
+import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
 import { retiredAtOf } from "@genesiscz/utils/genesis-tools/app-binary";
+import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
+import { windowFailureMessage } from "@genesiscz/utils/genesis-tools/areas/windows";
+import { checkNeed, describeNeed, Need } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import {
@@ -43,7 +48,6 @@ import {
 import {
     type PermissionsReport,
     permissionsReport,
-    runPermissionStatus,
     SETTINGS_PANES,
     settingsUrl,
 } from "../../lib/permissions/report";
@@ -51,6 +55,14 @@ import { createBuildProgressDisplay } from "../../lib/permissions/swift-progress
 import { runCodesignTrust } from "./codesign-trust";
 
 const PANES = Object.keys(SETTINGS_PANES);
+
+function reportSkipped(skipped: SkippedWay[]): void {
+    for (const failure of skipped) {
+        ui.err(windowFailureMessage(failure));
+    }
+
+    process.exitCode = 1;
+}
 
 const LAN_LABELS: Record<LocalNetworkAnswer, string> = {
     allowed: "allowed",
@@ -431,20 +443,9 @@ export function registerPermissionsCommand(program: Command): void {
                 return;
             }
 
-            const bundle = genesisAppBundlePath();
-
-            if (!existsSync(bundle)) {
-                ui.info(
-                    `${bundle} is not built, so tools run under the terminal's own identity: macOS asks the terminal app the first time a tool needs ${kind}.`
-                );
-                return;
-            }
-
-            const readStatus = () =>
-                permissionStatusLabel(new TextDecoder().decode(runPermissionStatus(kind, 10_000).stdout));
-
             // An existing grant needs no dialog, and `open` would take the focus for nothing.
-            if (readStatus() === "granted") {
+            const before = await gt.permissions.status({ kind });
+            if (before.status === "ran" && permissionStatusLabel(before.value.status) === "granted") {
                 ui.ok(`${kind}: already granted`);
                 return;
             }
@@ -452,24 +453,26 @@ export function registerPermissionsCommand(program: Command): void {
             // Launch Services starts the dialog face, so it is its own responsible process and the prompt names
             // GenesisTools. -W waits until the dialog closes.
             const reason = options.reason ? ["--reason", options.reason] : [];
-            ui.info("The GenesisTools dialog is open. It closes when the grant is answered or you close it.");
-            const dialog = Bun.spawn(
-                ["open", "-n", "-W", "-a", bundle, "--args", "--permission-dialog", kind, ...reason],
-                {
-                    stdout: "pipe",
-                    stderr: "pipe",
-                }
-            );
-            const code = await dialog.exited;
+            ui.info("Waiting for the permission dialog. Answer the grant or close the dialog to continue.");
+            const dialog = await gt.windows.open({
+                window: "--permission-dialog",
+                args: [kind, ...reason],
+                activate: true,
+                wait: true,
+            });
 
-            if (code !== 0) {
-                const stderr = await new Response(dialog.stderr).text();
-                ui.err(`the dialog did not start (open exit ${code}): ${stderr.trim()}`);
-                process.exitCode = 1;
+            if (dialog.status === "unreachable") {
+                reportSkipped(dialog.skipped);
                 return;
             }
 
-            const label = readStatus();
+            const after = await gt.permissions.status({ kind });
+            if (after.status === "unreachable") {
+                reportSkipped(after.skipped);
+                return;
+            }
+
+            const label = permissionStatusLabel(after.value.status);
 
             if (label === "granted") {
                 ui.ok(`${kind}: granted`);
@@ -611,8 +614,10 @@ export function registerPermissionsCommand(program: Command): void {
 
             const bundle = genesisAppBundlePath();
 
-            if (!existsSync(bundle)) {
-                ui.err(`${bundle} is not built, so there is nothing to grant yet. ${genesisAppBuildHint()}`);
+            const need = Need.app.installed;
+            const installed = await checkNeed(need, { ...liveEngineDeps(AREAS), fresh: false, write: false });
+            if (!installed.ok) {
+                ui.err(`${describeNeed(need)}: ${windowFailureMessage(installed)}`);
                 process.exitCode = 1;
                 return;
             }
