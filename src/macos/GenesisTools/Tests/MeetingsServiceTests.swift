@@ -1,16 +1,21 @@
 import AppKit
 import Darwin
 import Foundation
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
 /// The fixture TypeScript writes for this side: src/meetings/lib/service/__fixtures__/meetings-protocol.json, one real
 /// request and reply per Meetings service method and event.
 private enum MeetingsFixture {
-    static var url: URL {
+    static var checkout: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("meetings/lib/service/__fixtures__/meetings-protocol.json")
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    }
+
+    static var url: URL {
+        checkout.appendingPathComponent("src/meetings/lib/service/__fixtures__/meetings-protocol.json")
     }
 
     static func examples() throws -> [[String: Any]] {
@@ -48,6 +53,8 @@ private final class FakeMeetingsService: @unchecked Sendable {
     var silent: Set<String> = []
     /// A method's reply (without its id) in place of the fixture's.
     var answers: [String: [String: Any]] = [:]
+    /// Some interaction tests need successive replies from the journal they actually changed.
+    var fixtureReply: ((String, [String: Any]) throws -> Any)?
     /// The `$/progress` params (without the id) a method sends for each call before its reply, also when it is silent.
     var progress: [String: [[String: Any]]] = [:]
     private var listener: Int32 = -1
@@ -178,6 +185,13 @@ private final class FakeMeetingsService: @unchecked Sendable {
         guard !silent.contains(method) else { return }
         if method == "hello" {
             send(["jsonrpc": "2.0", "id": id].merging(helloAnswer) { $1 })
+        } else if let fixtureReply, ["decision.apply", "meeting.show", "meeting.rows"].contains(method) {
+            do {
+                send(["jsonrpc": "2.0", "id": id, "result": try fixtureReply(method, params)])
+            } catch {
+                send(["jsonrpc": "2.0", "id": id, "error": ["code": MeetingsAPI.refusedCode, "data": ["code": "fixture-error"],
+                                                             "message": String(describing: error)]])
+            }
         } else if let reply = answers[method] {
             send(["jsonrpc": "2.0", "id": id].merging(reply) { $1 })
         } else if let reply = MeetingsFixture.reply(method, params: params) {
@@ -195,6 +209,113 @@ private final class CommandLog {
     var starts = 0
     /// What the start throws; nil: it works.
     var startFailure: Error?
+}
+
+/// The socket and the terminal both reach Bun's real journal. The test reads the files independently of either reply.
+private struct WindowWriteStore {
+    let home: URL
+    var root: URL { GenesisToolsHome.url("meetings", in: home.path) }
+
+    func seed(_ items: [[String: Any]]) throws -> String {
+        let id = "window-writes-\(UUID().uuidString.lowercased())"
+        let date = "2026-02-03T10:00:00.000Z"
+        let record: [String: Any] = [
+            "id": id, "version": 1, "title": id, "createdBy": "new", "createdAt": date, "start": date,
+            "labels": [], "sources": [:], "speakers": ["labels": [:]], "context": [], "history": [],
+            "participants": ["Ari Example", "Robin Example"].map { ["name": $0, "from": ["user"]] as [String: Any] },
+            "items": items.map { $0.merging(["status": "suggested", "rules": [], "suggestedAt": date]) { old, _ in old } },
+        ]
+        let directory = root.appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: record).write(to: directory.appendingPathComponent("meeting.json"))
+        return id
+    }
+
+    func record(_ id: String) throws -> MeetingRecordView {
+        try JSONDecoder().decode(MeetingRecordView.self, from: Data(contentsOf: root.appendingPathComponent("\(id)/meeting.json")))
+    }
+
+    func journal(_ id: String) throws -> [JournalEntry] {
+        let url = root.appendingPathComponent("\(id)/decisions.ndjson")
+        return try Data(contentsOf: url).split(separator: 10).map { try JSONDecoder().decode(JournalEntry.self, from: Data($0)) }
+    }
+
+    func call(_ method: String, _ params: [String: Any], hello: [String: Any]? = nil) throws -> Any {
+        let script = MeetingsFixture.url.deletingLastPathComponent().appendingPathComponent("window-write.ts")
+        var envelope: [String: Any] = ["method": method, "params": params]
+        envelope["hello"] = hello
+        let request = try JSONSerialization.data(withJSONObject: envelope)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["bun", script.path, home.path, String(decoding: request, as: UTF8.self)]
+        process.currentDirectoryURL = MeetingsFixture.checkout
+        process.environment = ProcessInfo.processInfo.environment.merging([GenesisToolsHome.variable: home.path]) { _, new in new }
+        let result = try process.runCapturing(timeout: 20)
+        guard result.status == 0 else {
+            throw NSError(domain: "Window write fixture \(method)", code: Int(result.status),
+                          userInfo: [NSLocalizedDescriptionKey: String(decoding: result.stderr, as: UTF8.self)])
+        }
+        return try JSONSerialization.jsonObject(with: result.stdout, options: .fragmentsAllowed)
+    }
+}
+
+/// Sends events to this test's window. Text positions come from the same pixels that go into the picture.
+@MainActor
+private enum WindowWriteControls {
+    static func host<V: View>(_ view: V, width: CGFloat = 600, height: CGFloat = 350) -> NSWindow {
+        _ = NSApplication.shared
+        let size = NSSize(width: width, height: height)
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.contentView = NSHostingView(rootView: view.frame(width: width, height: height)
+            .background(Color.white).environment(\.colorScheme, .light))
+        panel.orderInForSnapshot()
+        return panel
+    }
+
+    static func controls<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        (view as? T).map { [$0] } ?? view.subviews.flatMap { controls(type, in: $0) }
+    }
+
+    static func until<T>(_ description: String, _ value: () throws -> T?) async throws -> T {
+        let deadline = ContinuousClock.now + .seconds(30)
+        repeat {
+            if let result = try value() { return result }
+            try await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        throw NSError(domain: "Timed out waiting for \(description)", code: 1)
+    }
+
+    static func picture(_ window: NSWindow, containing words: String, named name: String? = nil) throws -> NSPoint? {
+        let view = try XCTUnwrap(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let ocr = VNRecognizeTextRequest()
+        ocr.recognitionLevel = .accurate
+        ocr.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        for line in ocr.results ?? [] {
+            guard let text = line.topCandidates(1).first, let range = text.string.range(of: words, options: .caseInsensitive),
+                  let box = try text.boundingBox(for: range)?.boundingBox else { continue }
+            if let name, let folder = ProcessInfo.processInfo.environment["MEETINGS_P10_SHOTS"] {
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))
+            }
+            let y = view.isFlipped ? 1 - box.midY : box.midY
+            return view.convert(NSPoint(x: box.midX * view.bounds.width, y: y * view.bounds.height), to: nil)
+        }
+        return nil
+    }
+
+    static func click(_ point: NSPoint, in window: NSWindow) throws {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)))
+        }
+    }
 }
 
 /// The two halves agree: every example the TypeScript service wrote decodes with this side's types (and its params
@@ -666,6 +787,226 @@ final class MeetingsServiceTests: XCTestCase {
                                    log.starts += 1
                                    if let failure = log.startFailure { throw failure }
                                })
+    }
+
+    // MARK: Window controls that write the record
+
+    private func writeWindow(store: WindowWriteStore) throws -> MeetingsWindowModel {
+        try writeServiceEntry()
+        fake.fixtureReply = { [weak server = fake] method, params in
+            let hello = server?.received.last { $0["method"] as? String == "hello" }?["params"] as? [String: Any]
+            return try store.call(method, params, hello: hello)
+        }
+        fake.answers["meetings.overview"] = try XCTUnwrap(MeetingsFixture.reply("meetings.overview", params: ["days": 3650]))
+        let suite = "meetings.window-writes.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key)
+        defaults.set(MeetingsPreferences.Rows.AutoplayNext.off.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        return MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: makeService(), loadDetail: { _ in })
+    }
+
+    func testWindowWriteCleanDuplicateCreatesOneEmptyCopyOfTheMenuTarget() async throws {
+        guard #available(macOS 14.4, *) else { throw XCTSkip("NSHostingMenu needs macOS 14.4") }
+        // Duplicate alone starts a tools process. Use the runner's scratch home if supplied, otherwise this case's.
+        let environment = ProcessInfo.processInfo.environment
+        let scratchHome = environment[GenesisToolsHome.variable].flatMap { home -> String? in
+            guard !home.isEmpty, canonicalHome(home) != canonicalHome(NSHomeDirectory()) else { return nil }
+            return ["/tmp", FileManager.default.temporaryDirectory.path].contains(where: {
+                  canonicalHome(home).hasPrefix(canonicalHome($0) + "/")
+            }) ? home : nil
+        } ?? folder.path
+        let tools = MeetingsFixture.checkout.appendingPathComponent("tools")
+        let overrides = [GenesisToolsHome.variable: scratchHome, "GENESIS_TOOLS_BIN": tools.path]
+        defer {
+            for key in overrides.keys {
+                if let original = environment[key] { setenv(key, original, 1) } else { unsetenv(key) }
+            }
+        }
+        for (key, value) in overrides {
+            guard setenv(key, value, 1) == 0 else { throw POSIXError(.EINVAL) }
+        }
+        guard canonicalHome(GenesisToolsHome.home()) == canonicalHome(scratchHome),
+              canonicalHome(ToolsBridge.defaultBinaryPath()) == canonicalHome(tools.path) else {
+            return XCTFail("Clean Duplicate must resolve this checkout and the isolated store before it writes")
+        }
+        let store = WindowWriteStore(home: URL(fileURLWithPath: scratchHome))
+        let original = try store.seed([["id": "i1", "kind": "term", "atSec": 0, "heard": "glimmer", "proposed": "Glimmer"]])
+        let originalFolder = store.root.appendingPathComponent(original)
+        defer { try? FileManager.default.removeItem(at: originalFolder) }
+        let initial = try Data(contentsOf: originalFolder.appendingPathComponent("meeting.json"))
+        let existing = Set(try FileManager.default.contentsOfDirectory(atPath: store.root.path))
+        let model = try writeWindow(store: store)
+        defer { model.stopLiveUpdates() }
+        model.select("other-selected-row")
+        _ = NSApplication.shared
+        let menu = NSHostingMenu(rootView: MeetingRowMenu(id: original, model: model))
+        menu.update()
+        let index = try XCTUnwrap(menu.items.firstIndex { $0.title == "Duplicate clean copy" })
+        XCTAssertTrue(menu.items[index].isEnabled)
+        menu.performActionForItem(at: index)
+        XCTAssertTrue(model.duplicating.contains(original))
+        let busyMenu = NSHostingMenu(rootView: MeetingRowMenu(id: original, model: model))
+        busyMenu.update()
+        XCTAssertFalse(try XCTUnwrap(busyMenu.item(withTitle: "Duplicate clean copy")).isEnabled)
+        _ = try await WindowWriteControls.until("the duplicate command to return") { model.duplicating.isEmpty ? true : nil }
+        let copyID = try XCTUnwrap(model.renamingMeetingID, model.notices.notices.map(\.text).joined(separator: "\n"))
+        let copies = try FileManager.default.contentsOfDirectory(atPath: store.root.path).filter { id in
+            !existing.contains(id) && (try? store.record(id).copySource) == original
+        }
+        defer { for id in copies { try? FileManager.default.removeItem(at: store.root.appendingPathComponent(id)) } }
+        XCTAssertEqual(copies, [copyID])
+        XCTAssertEqual(model.selectedMeetingID, copyID)
+        let copy = try store.record(copyID)
+        XCTAssertEqual(copy.title, "\(original) (copy)")
+        XCTAssertEqual(copy.items, [])
+        XCTAssertEqual(try Data(contentsOf: originalFolder.appendingPathComponent("meeting.json")), initial)
+        let notice = try MeetingQuestionPicture.text(NoticeStackView(model.notices), name: "clean-duplicate-notice", native: true)
+        XCTAssertTrue(notice.contains("Duplicated as"), notice)
+    }
+
+    func testWindowWriteFindingTwiceShowsAlreadyOpenAndKeepsOneTerm() async throws {
+        let store = WindowWriteStore(home: folder)
+        let id = try store.seed([])
+        let model = try writeWindow(store: store)
+        model.select(id, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        let host = WindowWriteControls.host(FindingComposerButton(detail: detail).pickerStyle(.menu), width: 300, height: 90)
+        defer { detail.cancelReads(); host.close() }
+
+        func openForm() async throws -> (NSWindow, NSPopUpButton) {
+            let alreadyVisible = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+            let button = try await WindowWriteControls.until("Add question or term") {
+                try WindowWriteControls.picture(host, containing: "Add question or term")
+            }
+            try WindowWriteControls.click(button, in: host)
+            return try await WindowWriteControls.until("the finding form's picker") {
+                for window in NSApp.windows where !alreadyVisible.contains(ObjectIdentifier(window)) && window.isVisible {
+                    if let view = window.contentView, let picker = WindowWriteControls.controls(NSPopUpButton.self, in: view)
+                        .first(where: { $0.itemTitles.contains("Question") && $0.itemTitles.contains("Term") }) {
+                        return (window, picker)
+                    }
+                }
+                return nil
+            }
+        }
+        func add(in popover: NSWindow) async throws {
+            let add = try await WindowWriteControls.until("enabled Add button") {
+                popover.contentView.flatMap { root in WindowWriteControls.controls(NSButton.self, in: root)
+                    .first { ($0.title == "Add" || $0.keyEquivalent == "\r") && $0.isEnabled } }
+            }
+            add.performClick(nil)
+        }
+
+        let (first, picker) = try await openForm()
+        let menu = try XCTUnwrap(picker.menu)
+        let termIndex = try XCTUnwrap(menu.items.firstIndex { $0.title == "Term" })
+        if menu.items[termIndex].action != nil {
+            menu.performActionForItem(at: termIndex)
+        } else {
+            picker.selectItem(at: termIndex)
+            XCTAssertTrue(picker.sendAction(picker.action, to: picker.target))
+        }
+        let fields: [NSTextField] = try await WindowWriteControls.until("the term's time, heard words and proposed spelling") {
+            guard let content = first.contentView else { return nil }
+            let inputs = WindowWriteControls.controls(NSTextField.self, in: content).filter(\.isEditable)
+            return inputs.count == 3 ? inputs.sorted { $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY } : nil
+        }
+        for (field, words) in zip(fields.dropFirst(), ["glimmer", "Glimmer"]) {
+            XCTAssertTrue(first.makeFirstResponder(field))
+            let editor = try await WindowWriteControls.until("the term's text editor") { field.currentEditor() as? NSTextView }
+            editor.selectAll(nil)
+            editor.insertText(words, replacementRange: editor.selectedRange())
+            first.makeFirstResponder(nil)
+        }
+        try await add(in: first)
+        _ = try await WindowWriteControls.until("the first add to close its form") { first.isVisible ? nil : true }
+        let term = try XCTUnwrap(store.record(id).items.first)
+        XCTAssertEqual(term.heard, "glimmer")
+        XCTAssertEqual(term.proposed, "Glimmer")
+        XCTAssertEqual(term.atSec, 0)
+        XCTAssertEqual(term.evidence?["transcriptLine"], .number(0))
+
+        let (second, _) = try await openForm()
+        try await add(in: second)
+        let warning = "Already open: \(term.id)"
+        _ = try await WindowWriteControls.until(warning) {
+            guard second.isVisible else { throw NSError(domain: "The duplicate dismissed the finding form", code: 1) }
+            return try WindowWriteControls.picture(second, containing: warning, named: "already-open-finding")
+        }
+        XCTAssertEqual(try store.record(id).items, [term])
+        XCTAssertEqual(fake.count("decision.apply"), 2)
+    }
+
+    private func pressChoice(_ label: String, rowID: String, detail: MeetingDetailModel, picture: String) async throws {
+        let rows = try await MeetingDetailModel.rowsRead(detail.id, lowPriority: .show).run(service: detail.service)
+        detail.settleDecisionRecord(try await MeetingDetailModel.recordRead(detail.id).run(service: detail.service))
+        detail.rows = .loaded(rows)
+        let row = try XCTUnwrap(rows.rows.first { $0.id == rowID })
+        let panel = WindowWriteControls.host(ReviewRowView(row: row, detail: detail, player: nil, selected: true,
+            asksSpeaker: row.isQuestion))
+        defer { panel.close() }
+        let point = try await WindowWriteControls.until("the \(label) choice") {
+            try WindowWriteControls.picture(panel, containing: label, named: picture)
+        }
+        try WindowWriteControls.click(point, in: panel)
+        _ = try await WindowWriteControls.until("the \(label) decision and record refresh to finish") {
+            guard !detail.busyItems.contains(rowID), let item = detail.record.value?.items.first(where: { $0.id == rowID }),
+                  item.status != "suggested" else { return nil as MeetingItem? }
+            return item
+        }
+    }
+
+    func testWindowWriteRealWordRejectsOnlyTheDisplayedTermOnce() async throws {
+        let store = WindowWriteStore(home: folder)
+        let id = try store.seed([
+            ["id": "i1", "kind": "term", "heard": "glimmer", "proposed": "Glimmer", "atSec": 0],
+            ["id": "i2", "kind": "term", "heard": "garden", "proposed": "Garden", "atSec": 5],
+        ])
+        let model = try writeWindow(store: store)
+        model.select(id, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        defer { detail.cancelReads() }
+        try await pressChoice("keep as heard", rowID: "i1", detail: detail, picture: "real-word-before-dismissal")
+        let items = try store.record(id).items
+        XCTAssertEqual(items.map(\.status), ["rejected", "suggested"])
+        let entries = try store.journal(id)
+        XCTAssertEqual(entries.map(\.action), [.reject(["i1"])])
+        XCTAssertEqual(entries.map(\.decided), [["i1"]])
+        XCTAssertEqual(fake.count("decision.apply"), 1)
+    }
+
+    func testWindowWriteSpeakerAnswerMatchesTheReopenedTerminalRecord() async throws {
+        let store = WindowWriteStore(home: folder)
+        let items: [[String: Any]] = [
+            ["id": "i1", "kind": "speaker-range", "fromSec": 0, "toSec": 5, "label": "Speaker 1", "speaker": "Ari Example"],
+            ["id": "i2", "kind": "question", "about": "speaker", "fromSec": 0, "toSec": 5, "question": "Who spoke?",
+             "choices": ["Ari Example", "Robin Example"], "decides": ["i1"]],
+        ]
+        let windowID = try store.seed(items), terminalID = try store.seed(items)
+        let model = try writeWindow(store: store)
+        model.select(windowID, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        defer { detail.cancelReads() }
+        try await pressChoice("Robin Example", rowID: "i2", detail: detail, picture: "speaker-before-answer")
+        try await Task.detached {
+            _ = try store.call("listen", ["meeting": terminalID, "question": "i2", "answer": "Robin Example"])
+        }.value
+        let window = try store.record(windowID), terminal = try store.record(terminalID)
+        XCTAssertEqual(window.items.map(\.status), ["confirmed", "confirmed"])
+        XCTAssertEqual(window.items.first?.speaker, "Robin Example")
+        XCTAssertEqual(window.items.last?.answer, "Robin Example")
+        XCTAssertEqual(window.items.last?.decides, ["i1"])
+        XCTAssertEqual(window.items, terminal.items)
+        XCTAssertEqual(window.speakers, terminal.speakers)
+        let click = try store.journal(windowID), answer = try store.journal(terminalID)
+        XCTAssertEqual(click.map(\.actor.kind), ["window"])
+        XCTAssertEqual(answer.map(\.actor.kind), ["listen"])
+        let hello = try XCTUnwrap(fake.received.first { $0["method"] as? String == "hello" }?["params"] as? [String: Any])
+        XCTAssertEqual(hello["role"] as? String, "window")
+        XCTAssertEqual(click.map(\.decided), answer.map(\.decided))
+        XCTAssertEqual(click.map(\.settled), answer.map(\.settled))
+        XCTAssertEqual(fake.count("decision.apply"), 1)
     }
 
     /// What a read's command fallback does here: it records the argv and fails, so a test sees whether it ran.
