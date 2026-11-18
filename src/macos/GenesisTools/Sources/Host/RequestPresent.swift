@@ -176,7 +176,15 @@ func runRequestFace(_ arguments: [String]) -> Never {
     }
     let descriptor = open(lockPath, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
     guard descriptor >= 0 else { HubPerf.log("request.face error opening its lock: \(errno)"); exit(73) }
-    guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { close(descriptor); exit(0) }
+    var locked = flock(descriptor, LOCK_EX | LOCK_NB)
+    while locked != 0, errno == EINTR { locked = flock(descriptor, LOCK_EX | LOCK_NB) }
+    if locked != 0 {
+        let code = errno
+        close(descriptor)
+        // Only contention means another face renders the requests; any other error leaves none.
+        guard code == EWOULDBLOCK else { HubPerf.log("request.face error taking its lock: \(code)"); exit(73) }
+        exit(0)
+    }
     let rpc = GenesisToolsRPC(path: socket)
     residentRequests = rpc
     rpc.serve.requestPresent { params in await RequestPresenter.shared.show(params) }
