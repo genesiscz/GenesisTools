@@ -64,10 +64,10 @@ public final class RecordingPickerOverlays: ObservableObject {
     }
 
     /// The host closed the entire picker (for example, the take ended during a switch).
-    public func dismiss() {
+    public func dismiss(keepingChoice: Bool = false) {
         completion = nil
         closeSelector(restoreParent: false)
-        pulse.clear()
+        if keepingChoice { pulse.pickerClosed() } else { pulse.clear() }
     }
 
     private func closeSelector(restoreParent: Bool) {

@@ -152,7 +152,9 @@ final class CapturePicker {
         bar.$phase.removeDuplicates().dropFirst().sink { [weak self] phase in
             guard let self else { return }
             switch phase {
-            case .countdown, .starting, .finishing, .failed, .done:
+            case .countdown, .starting:
+                detachPicker(keepingChoice: true)
+            case .finishing, .failed, .done:
                 detachPicker()
             case .setup:
                 if controls.window.isVisible {
@@ -223,7 +225,7 @@ final class CapturePicker {
     private func present() {
         guard let bar, let overlays, let controls else { return }
         picker.closesOnFocusLoss = CapturePickerFocusLoss.load(defaults).closesPicker
-        let chosen = { [weak self] in self?.detachPicker() }
+        let chosen = { [weak self] in self?.detachPicker(keepingChoice: true) }
         let cancel = { [weak self] in self?.cancelPicker() }
         let retry = { [weak self] in self?.refresh() }
         let filtered: (RecordingPickerTab, String) -> Void = { [weak self] tab, query in self?.filter = (tab, query) }
@@ -258,10 +260,10 @@ final class CapturePicker {
                                              y: max(visible.minY, frame.minY - size.height - 4)))
     }
 
-    private func detachPicker() {
+    private func detachPicker(keepingChoice: Bool = false) {
         picker.window.parent?.removeChildWindow(picker.window)
         picker.dismiss()
-        overlays?.dismiss()
+        overlays?.dismiss(keepingChoice: keepingChoice)
         read?.cancel()
         read = nil
     }
