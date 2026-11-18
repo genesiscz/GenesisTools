@@ -1,7 +1,36 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it, spyOn, test } from "bun:test";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
+import { printRemindersDoctorReport } from "../../commands/reminders/doctor";
 import { isThisProcessRow } from "../calendar/doctor";
 import type { RemindersDoctorReport } from "./doctor";
 import { buildRemindersVerdict, type RemindersDoctorDeps, readTccRemindersRows, runRemindersDoctor } from "./doctor";
+
+test("Reminders doctor prints the install reason and fix only for an unavailable launcher", () => {
+    const report: RemindersDoctorReport = {
+        status: "fullAccess",
+        promptSkipped: false,
+        authorized: true,
+        listCount: 0,
+        binary: { path: "/fixture/reader", inAppBundle: false, hasRemindersUsageString: null },
+        hostApp: { responsible: { kind: "host-app", bundleId: "example.terminal" }, executablePath: "/fixture/bun" },
+        tcc: { readable: true, rows: [] },
+        verdict: "full access",
+    };
+    const printed = spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+        printRemindersDoctorReport(report, appNeedFixture({ installed: false }));
+        expect(printed.mock.calls.flat().join("")).toContain(
+            "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."
+        );
+        printed.mockClear();
+        printRemindersDoctorReport(report, appNeedFixture());
+        const text = printed.mock.calls.flat().join("");
+        expect(text).toContain("example.terminal (launching app)");
+        expect(text).not.toContain("build");
+    } finally {
+        printed.mockRestore();
+    }
+});
 
 function doctorDeps(status: string, calls: string[]): RemindersDoctorDeps {
     return {

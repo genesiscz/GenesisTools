@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { checkAppInstalled, describeNeedFailure, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -210,6 +211,25 @@ export function launchdJobsOutsideApp(launcherPath: string, dir = LAUNCH_AGENTS_
     }
 
     return labels.sort();
+}
+
+/** How the calendar and reminders doctors identify the process whose grants they inspected. */
+export function doctorResponsibleLabel(identity: ResponsibleIdentity, needEnv?: NeedEnv): string {
+    if (identity.kind === "genesis-app") {
+        return `GenesisTools.app (${identity.bundleId})`;
+    }
+
+    if (identity.kind === "unknown") {
+        return "unknown (no bundle; launchd or a bare shell)";
+    }
+
+    const installed = checkAppInstalled(needEnv);
+    if (installed.ok) {
+        return `${identity.bundleId} (launching app)`;
+    }
+
+    const purpose = installed.fix ? "build GenesisTools.app to own the grants. " : "";
+    return `${identity.bundleId} (launching app; ${purpose}${describeNeedFailure(installed)})`;
 }
 
 export function collectProblems(report: Omit<PermissionsReport, "problems">): string[] {
