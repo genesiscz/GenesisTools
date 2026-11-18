@@ -15,9 +15,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import { TERMINAL_ENV_KEYS } from "@genesiscz/utils/agent/identity/terminals";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
-import { lintRulesPlan } from "../commands/lint-rules";
+import { isCiRun, lintRulesPlan } from "../commands/lint-rules";
 import {
     AGENT_BINARY_TABLE_RATCHET,
     HARDCODED_ACCOUNT_ENV_RATCHET,
@@ -1759,6 +1760,15 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             "--ratchet-base",
             "feat/parent",
         ]);
+    });
+
+    test("CI set to an empty value still means the full audit", async () => {
+        await env.testing.withOverrides({ CI: "" }, () => {
+            expect(isCiRun()).toBe(true);
+        });
+        await env.testing.withOverrides({ CI: undefined }, () => {
+            expect(isCiRun()).toBe(false);
+        });
     });
 
     test("a linked worktree and a shared clone of it wait in the original repository's slot", () => {
