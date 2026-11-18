@@ -256,6 +256,7 @@ interface MeetingsHandle {
     seats(input: unknown): Promise<unknown>;
     thresholds(input?: unknown): Promise<unknown>;
     voiceReadiness(input: unknown): Promise<unknown>;
+    voices(input: unknown): Promise<{ people: Array<{ person: string; meetings: string[] }> }>;
     look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
@@ -373,6 +374,80 @@ describe("toolset method names", () => {
         ]) {
             expect(describeMethod([new MeetingsToolset().api], `meetings.${method}`)).toContain(`meetings ${cli}`);
         }
+    });
+
+    test("meetings parity t2 carries timed room and remote stays from preview through reopen", async () => {
+        const { id: meeting } = await new MeetingStore().create(
+            {
+                title: "Timed rehearsal seats",
+                start: "2026-11-01T13:00:00Z",
+                createdBy: "new",
+                seats: {
+                    room: ["Fern Example", "Reed Example"],
+                    remote: [],
+                    microphones: [{ id: "self", people: ["Fern Example", "Reed Example"] }],
+                },
+            },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        const room = [{ name: "Fern Example", fromSec: 10, toSec: 30 }];
+        const remote = [{ name: "Fern Example", label: "Guest", fromSec: 30 }];
+        const expected = {
+            room: ["Reed Example", ...room],
+            remote,
+            microphones: [{ id: "self", people: ["Fern Example", "Reed Example"] }],
+        };
+        const view = await meetings.seats({ meeting, room, remote });
+        expect(view).toMatchObject({
+            current: { room: ["Fern Example", "Reed Example"] },
+            suggestion: { seats: expected },
+        });
+        await expect(
+            meetings.applySeats({ meeting, room, remote: [{ name: "Fern Example", fromSec: 29 }], replace: true })
+        ).rejects.toThrow("overlap");
+        expect(new MeetingStore().read(meeting)?.seats?.room).toEqual(["Fern Example", "Reed Example"]);
+        expect(await meetings.applySeats({ meeting, room, remote, replace: true })).toMatchObject({
+            saved: true,
+            suggestion: { seats: expected },
+        });
+        expect(new MeetingStore().read(meeting)?.seats).toEqual(expected);
+        expect(await meetings.seats({ meeting })).toMatchObject({ current: expected, suggestion: { seats: expected } });
+    });
+
+    test("meetings parity t2 browses the requested meeting, project or global voice library", async () => {
+        const meetings = await loadMeetings();
+        const store = new MeetingStore();
+        const person = "Willow Rehearsal";
+        const records = [];
+        for (const [index, project] of ["repl-scope-a", "repl-scope-a", "repl-scope-b"].entries()) {
+            records.push(
+                await store.create(
+                    {
+                        title: `Scope rehearsal ${index}`,
+                        start: "2026-11-01T14:00:00Z",
+                        createdBy: "new",
+                        project,
+                        seats: { room: [person], remote: [] },
+                    },
+                    { command: "test", change: "fixture" }
+                )
+            );
+        }
+        const ids = records.map((record) => record.id);
+        const reads = [
+            [{ scope: "meeting", meeting: ids[0], person }, ids.slice(0, 1)],
+            [{ scope: "project", project: "repl-scope-a", person }, ids.slice(0, 2)],
+            [{ scope: "global", person }, ids],
+        ] as const;
+        for (const [input, expected] of reads) {
+            const { people } = await meetings.voices(input);
+            expect(people).toHaveLength(1);
+            expect(people[0]?.person).toBe(person);
+            expect(people[0]?.meetings.toSorted()).toEqual(expected.toSorted());
+        }
+        await expect(meetings.voices({ scope: "meeting" })).rejects.toThrow();
+        expect(describeMethod([new MeetingsToolset().api], "meetings.voices")).toContain("meetings voices");
     });
 
     test("meetings.look documents its CLI twin and accepts a meeting and two clocks", async () => {

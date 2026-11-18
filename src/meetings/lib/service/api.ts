@@ -14,7 +14,12 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
-import { meetingSeatsSchema, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import {
+    meetingSeatsSchema,
+    remoteSeatSchema,
+    roomSeatSchema,
+    storedMeetingSeatsSchema,
+} from "@genesiscz/utils/meetings/seats";
 import { lineVoiceSchema } from "@genesiscz/utils/meetings/voice-features";
 import { idSchema, ownerSchema, sourceSchema } from "@genesiscz/utils/meetings/voice-library";
 import {
@@ -1430,10 +1435,15 @@ const dictionaryTest = defineMethod({
     effect: "read",
 });
 
-const seatNames = z.array(z.string().trim().min(1)).optional();
 const meetingSeatsSuggest = defineMethod({
     name: "meeting.seats.suggest",
-    params: z.object({ meeting: meetingRef, room: seatNames, remote: seatNames }).strict(),
+    params: z
+        .object({
+            meeting: meetingRef,
+            room: z.array(roomSeatSchema).optional(),
+            remote: z.array(z.union([z.string().trim().min(1), remoteSeatSchema])).optional(),
+        })
+        .strict(),
     result: z.object({
         meeting: z.string(),
         current: storedMeetingSeatsSchema.nullable(),
@@ -1450,7 +1460,7 @@ const meetingSeatsSuggest = defineMethod({
         }),
     }),
     resultName: "{ meeting, current, suggestion: { seats, people } }",
-    doc: "Preview room and remote seats from decided speakers, channel energy and call attendance. Optional room and remote names override the preview. Unsure people have reasons and no seat.",
+    doc: "Preview room and remote seats from decided speakers, channel energy and call attendance. Override a person by name or supply their room and remote stays. Unsure people have reasons.",
     effect: "read",
 });
 

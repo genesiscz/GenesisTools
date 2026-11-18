@@ -22,6 +22,12 @@ in a fresh process). Bindings survive between `js` calls of the MCP server, neve
 | `meetings.seats({ meeting })` | `tools meetings seats <meeting> --json` |
 | `meetings.thresholds({ meeting, set: { "term.applyAbove": 0.8 }, preview: true })` | `tools meetings thresholds <meeting> --set term.applyAbove=0.8 --preview --json` |
 | `meetings.voiceReadiness({ meeting })` | The `voice` field of `tools meetings show <meeting> --json` |
+| `meetings.voices({ scope: "project", project })` | `tools meetings voices --project <p> --json` |
+
+For one meeting use `meetings.voices({ scope: "meeting", meeting: id })`. For all projects use
+`meetings.voices({ scope: "global" })`. Each scope accepts a `person` filter.
+To preview or apply a timed seat, pass `room: [{ name, fromSec: 30, toSec: 90 }]` to
+`meetings.seats` or `meetings.applySeats`. A stay includes its start and ends just before its leave time.
 
 ## Presets (save a script that worked, run it again)
 

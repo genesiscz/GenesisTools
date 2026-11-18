@@ -24,6 +24,7 @@ import {
     momentSave,
     voiceBackfill,
     voiceEnrol,
+    voicesList,
 } from "./api";
 
 /**
@@ -631,7 +632,7 @@ export const applySeats = defineMethod({
     params: seatsRpc.params.extend({ replace: z.boolean().optional() }),
     result: seatsRpc.result.extend({ saved: z.boolean() }),
     effect: "reversible",
-    doc: `Return the seat preview and saved flag. Save when seats are absent, or replace them with replace: true. CLI: ${toolCommand("meetings", "seats")} <meeting> --apply --json.`,
+    doc: `Return the seat preview and saved flag. Accept names or timed room and remote entries. Save when seats are absent, or replace them with replace: true. CLI: ${toolCommand("meetings", "seats")} <meeting> --apply --json.`,
 });
 export const backfillVoices = defineMethod({
     ...voiceBackfill,
@@ -641,7 +642,7 @@ export const backfillVoices = defineMethod({
 export const seats = defineMethod({
     ...seatsRpc,
     name: "seats",
-    doc: `Return the current seats, suggested seats and the reason and confidence for each person. CLI: ${toolCommand("meetings", "seats")} <meeting> --json.`,
+    doc: `Return the current seats, suggested seats and the reason and confidence for each person. Room and remote accept names or half-open stays { name, fromSec?, toSec? }. CLI: ${toolCommand("meetings", "seats")} <meeting> --json.`,
 });
 export const thresholds = defineMethod({
     name: "thresholds",
@@ -667,6 +668,18 @@ export const voiceReadiness = defineMethod({
     doc: `Return the voice field of ${toolCommand("meetings", "show")} <meeting> --json, including seat coverage, per-person sample counts, readiness and next commands.`,
 });
 
+const browsePerson = voicesList.params.pick({ person: true });
+export const voices = defineMethod({
+    ...voicesList,
+    name: "voices",
+    params: z.discriminatedUnion("scope", [
+        browsePerson.extend({ scope: z.literal("meeting"), meeting: seatsRpc.params.shape.meeting }),
+        browsePerson.extend({ scope: z.literal("project"), project: voicesList.params.shape.project.unwrap() }),
+        browsePerson.extend({ scope: z.literal("global") }),
+    ]),
+    doc: `Return people, samples, learnt voice quality and conflicts for one meeting ID, project or the global library. CLI: ${toolCommand("meetings", "voices")} --json.`,
+});
+
 export const meetingsToolsetApi = defineApi({
     id: "meetings",
     global: "meetings",
@@ -679,6 +692,7 @@ export const meetingsToolsetApi = defineApi({
         seats,
         thresholds,
         voiceReadiness,
+        voices,
         list,
         open,
         look,

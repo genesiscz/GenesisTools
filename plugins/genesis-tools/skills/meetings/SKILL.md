@@ -60,6 +60,8 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
    - Run `tools meetings seats <meeting>` or `await meetings.seats({ meeting })` and read the reasons. Someone listed in the call may have sat in the room.
      Run `tools meetings seats <meeting> --apply` or `await meetings.applySeats({ meeting })` to save the suggestion when seats are missing. Ask where anyone
      marked unsure sat. Use `--room` and `--remote` for corrections. Use `--replace` to change saved seats.
+     Both REPL calls also accept timed entries, e.g. `room: [{ name, fromSec: 30, toSec: 90 }]`. Supply the person's
+     room and remote intervals together when they move. Omitting the end keeps the seat through the rest of the meeting.
    - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`, or call `await meetings.voiceReadiness({ meeting })`.
      `people` counts project samples per attendee. `ready` means seats are set and each occupied side of the recording
      has samples from at least one person on that side. Without seats or usable samples, voice naming is off and
@@ -235,7 +237,8 @@ Cosine and margin are evidence, not probabilities. Missing models, quiet audio, 
 scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
 estimated-clean tracks separately.
 
-`voices [--project <p>]` lists each person's samples (meeting, seat, track, time, words); `voices play <person>
+`tools meetings voices --project <p> --json` or `await meetings.voices({ scope: "project", project })` lists each person's samples.
+Use `scope: "meeting", meeting: id` for one meeting or `scope: "global"` for the library. Each row gives the meeting, seat, track, time and words. `voices play <person>
 [--sample <n>]` plays one. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
 refusal reasons. A preview can cache line embeddings. `voices apply <meeting>` saves the names as suggestions.
 `voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first. `play <meeting> --track

@@ -66,6 +66,7 @@ import {
     voiceFeatures,
     type voiceReadiness,
     voiceScore,
+    type voices,
 } from "@app/meetings/lib/service/toolset-api";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
@@ -145,6 +146,15 @@ export class MeetingsToolset extends ReplToolset {
                     withMeetingsClient(async (client) =>
                         readVoiceReadiness(await client.call("meeting.show", { ref: meeting }))
                     ),
+                voices: async (input: z.input<typeof voices.params>) => {
+                    const scope =
+                        input.scope === "meeting"
+                            ? { kind: "meeting" as const, meeting: input.meeting }
+                            : input.scope === "project"
+                              ? { kind: "project" as const, project: input.project }
+                              : { kind: "all" as const };
+                    return withMeetingsClient((client) => client.call("voices.list", { scope, person: input.person }));
+                },
                 audio: {
                     plan: async (input: z.input<typeof audioPlan.params> = {}) => {
                         audioPlan.params.parse(input);
