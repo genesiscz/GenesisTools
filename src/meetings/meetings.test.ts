@@ -487,14 +487,16 @@ describe("--with-suggested (R4.2)", () => {
             ...record,
             items: [
                 range("i1", 0, "Alice Example", 0.5),
-                range("i2", 10, "Bob Example", 0.44),
+                range("i2", 10, "Bob Example", 0.69),
                 range("i3", 20, "Dave Example"),
+                range("i4", 30, "Alice Example", 0.7),
             ],
         });
         const entries = [
             line("Carol Example", 0, "Já to udělám."),
             line("Carol Example", 10, "Možná já."),
             line("Carol Example", 20, "Já taky."),
+            line("Carol Example", 30, "Ještě něco."),
         ];
         const config = meetingsConfigSchema.parse({});
         const shown = (withSuggested: boolean) =>
@@ -503,9 +505,8 @@ describe("--with-suggested (R4.2)", () => {
                 correctionsOf(withItems, config, { withSuggested, dictionary: false, format: "txt" })
             ).entries.map((entry) => entry.speaker);
 
-        // The default threshold `global.suggest.applyAbove` 0.5 applies a speaker range at 50 % (w_t5dr3s6q).
-        expect(shown(true)).toEqual(["Alice Example", "[Bob Example: 44 %]", "Dave Example"]);
-        expect(shown(false)).toEqual(["Carol Example", "Carol Example", "Carol Example"]);
+        expect(shown(true)).toEqual(["[Alice Example: 50 %]", "[Bob Example: 69 %]", "Dave Example", "Alice Example"]);
+        expect(shown(false)).toEqual(entries.map((entry) => entry.speaker));
     });
 });
 

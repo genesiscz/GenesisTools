@@ -827,6 +827,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         fail(`--group must be ${QUESTION_GROUPS.join(", ")} or all`);
         return;
     }
+    let sampled: string[] | undefined;
     if (opts.spotCheck || opts.longStretchWords) {
         const spotCheck = opts.spotCheck === undefined ? undefined : Number(opts.spotCheck);
         const longStretchWords = opts.longStretchWords === undefined ? undefined : Number(opts.longStretchWords);
@@ -842,11 +843,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         const client = await openMeetingsClient({ role: "cli" });
         try {
             if (spotCheck !== undefined) {
-                await client.call("meeting.listen.prepare", {
+                const prepared = await client.call("meeting.listen.prepare", {
                     meeting: meeting.id,
                     group: "spot-check",
                     count: spotCheck,
                 });
+                sampled = prepared.questions;
             }
 
             if (longStretchWords !== undefined) {
@@ -866,23 +868,23 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         meeting = store.read(meeting.id) ?? meeting;
     }
+    let selected: string[] | undefined =
+        group === "spot-check" && sampled !== undefined
+            ? sampled
+            : group === "all"
+              ? undefined
+              : openQuestions(meeting)
+                    .filter((question) => (question.group ?? "rules") === group)
+                    .map((question) => question.id);
     if (opts.prepareOnly) {
         out.result(
             SafeJSON.stringify({
                 meeting: meeting.id,
-                questions: openQuestions(meeting)
-                    .filter((question) => group === "all" || (question.group ?? "rules") === group)
-                    .map((question) => question.id),
+                questions: selected ?? openQuestions(meeting).map((question) => question.id),
             })
         );
         return;
     }
-    let selected: string[] | undefined =
-        group === "all"
-            ? undefined
-            : openQuestions(meeting)
-                  .filter((question) => (question.group ?? "rules") === group)
-                  .map((question) => question.id);
     for (const name of QUESTION_GROUPS) {
         ui.dim(name + ": " + openQuestions(meeting).filter((question) => (question.group ?? "rules") === name).length);
     }
@@ -1097,38 +1099,19 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             }
 
             if (opts.spotCheck) {
-                const roundIds = new Set(selected ?? session.applied().flatMap((entry) => entry.decided));
-                const sample =
-                    store
-                        .read(meeting.id)
-                        ?.items.filter(
-                            (item) =>
-                                roundIds.has(item.id) &&
-                                item.kind === "question" &&
-                                item.group === "spot-check" &&
-                                item.status === "confirmed"
-                        ) ?? [];
-                const changed = sample.filter(
-                    (item) => item.kind === "question" && item.answer !== item.evidence?.originalSpeaker
-                ).length;
+                const result = session.spotCheckResult();
                 await store.update(meeting.id, { command: "listen", change: "spot-check result" }, (record) => {
                     record.review ??= {};
                     record.review.listen ??= {};
                     record.review.listen.spotChecks ??= [];
                     record.review.listen.spotChecks.push({
                         at: new Date().toISOString(),
-                        answered: sample.length,
-                        changed,
-                        questionIds: sample.map((item) => item.id),
+                        ...result,
                     });
                 });
                 ui.info(
-                    "Spot check: " +
-                        changed +
-                        "/" +
-                        sample.length +
-                        " changed" +
-                        (sample.length ? " (" + Math.round((100 * changed) / sample.length) + " %)" : "")
+                    `Spot check: ${result.changed}/${result.answered} changed` +
+                        (result.answered ? ` (${Math.round((100 * result.changed) / result.answered)} %)` : "")
                 );
             }
         } finally {

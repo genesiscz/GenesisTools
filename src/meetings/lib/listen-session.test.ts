@@ -329,6 +329,28 @@ describe("listen session", () => {
         expect(fx.ledger).toEqual([]);
     });
 
+    test("spot check reports only this round's confirmed answers after undo and skip", async () => {
+        const sampled = (id: string, priority: number) =>
+            question(id, {
+                group: "spot-check",
+                priority,
+                evidence: { originalSpeaker: "Alice Example" },
+            });
+        const fx = await fixture([sampled("i1", 4), sampled("i2", 3), sampled("i3", 2), sampled("i4", 1)]);
+        const session = fx.session(
+            new ScriptedAdapter([
+                { answer: "Alice Example" },
+                { answer: "Alice Example" },
+                "back",
+                { answer: "Bob Example" },
+                "skip",
+                "stop",
+            ])
+        );
+        await session.run();
+        expect(session.spotCheckResult()).toEqual({ answered: 2, changed: 1, questionIds: ["i1", "i2"] });
+    });
+
     test("a refused Undo still counts the answer against the round budget", async () => {
         const fx = await fixture([
             term("i1", 50, { proposed: "ADA" }),

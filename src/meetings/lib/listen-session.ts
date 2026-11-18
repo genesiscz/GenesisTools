@@ -5,6 +5,7 @@ import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/util
 import { type AnswerEvent, appendAnswerEvent, type RoundEndReason, roundRunning } from "./answer-log";
 import type { Decided, DecisionAction, DecisionSkip } from "./decision-actions";
 import { DecisionJournal, type JournalEntry, type MicShare, type SplitInputs } from "./decision-journal";
+import { personKey } from "./listen-answers";
 import { openQuestions, type QuestionItem, questionLabel } from "./questions";
 
 export type { MicShare, SplitInputs } from "./decision-journal";
@@ -94,6 +95,8 @@ interface Step {
     question: QuestionItem;
     token: string;
     answer?: string;
+    /** Present only for a sampled speaker the listener actually confirmed or corrected. */
+    spotCheckChanged?: boolean;
     /** The look-alikes the answer settled. */
     settled: string[];
     /** A split: the parts it made. It uses no budget; its parts share its unit. */
@@ -154,6 +157,15 @@ export class ListenSession {
     /** The decision journal entries this round made, oldest first (an Esc'd one stays: its revert is an entry too). */
     applied(): JournalEntry[] {
         return [...this.entries];
+    }
+
+    spotCheckResult(): { answered: number; changed: number; questionIds: string[] } {
+        const sampled = this.steps.filter((step) => step.spotCheckChanged !== undefined);
+        return {
+            answered: sampled.length,
+            changed: sampled.filter((step) => step.spotCheckChanged).length,
+            questionIds: sampled.map((step) => step.question.id),
+        };
     }
 
     /** Asks question after question until none is left, the budget is used, or the person stops. */
@@ -371,6 +383,7 @@ export class ListenSession {
                           kind: "answer",
                           question: question.id,
                           answer: outcome.answer,
+                          ...(question.group === "spot-check" ? { lookAlikes: "leave" as const } : {}),
                           ...(outcome.comment ? { comment: outcome.comment } : {}),
                       },
             ...this.reason(),
@@ -383,11 +396,22 @@ export class ListenSession {
         }
 
         this.entries.push(entry);
+        const saved =
+            question.group === "spot-check" && outcome !== "skip"
+                ? entry.changes.find((change) => change.id === question.id)?.after
+                : undefined;
+        const original = question.evidence?.originalSpeaker;
         this.steps.push({
             question,
             token: entry.token,
             settled: entry.settled,
             ...(outcome === "skip" ? {} : { answer: outcome.answer }),
+            ...(saved?.kind === "question" &&
+            saved.status === "confirmed" &&
+            saved.answer &&
+            typeof original === "string"
+                ? { spotCheckChanged: personKey(saved.answer) !== personKey(original) }
+                : {}),
         });
         log.debug(
             { meeting: this.options.meeting.id, question: question.id, outcome, settled: entry.settled },

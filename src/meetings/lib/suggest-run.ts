@@ -328,27 +328,18 @@ export async function runSuggest(options: {
                 return;
             }
             using _quality = prof.section("evidence.quality");
-            // The long-stretch questions are evidence questions, and they share the meeting's one question budget.
-            const open = current.items.filter(
-                (item) => item.kind === "question" && item.status === "suggested" && item.group !== "words"
+            const before = current.items.length;
+            const quality = new Set(
+                addQualityQuestions({
+                    record: current,
+                    entries: meeting.transcript,
+                    longStretchWords: config.global.suggest.longStretchWords,
+                    below: Math.max(0.7, config.global.suggest.applyAbove),
+                    features,
+                    channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+                })
             );
-            const room = Math.max(0, config.global.suggest.questionCap - open.length);
-
-            if (room > 0) {
-                const before = current.items.length;
-                const quality = new Set(
-                    addQualityQuestions({
-                        record: current,
-                        entries: meeting.transcript,
-                        longStretchWords: config.global.suggest.longStretchWords,
-                        below: Math.max(0.7, config.global.suggest.applyAbove),
-                        features,
-                        channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
-                        limit: room,
-                    })
-                );
-                fresh.push(...current.items.slice(before).filter((item) => quality.has(item.id)));
-            }
+            fresh.push(...current.items.slice(before).filter((item) => quality.has(item.id)));
         });
     } finally {
         wordCheck?.dispose();
