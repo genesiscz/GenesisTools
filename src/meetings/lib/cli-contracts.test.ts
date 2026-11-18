@@ -16,6 +16,7 @@ import { addVoicePrint, readVoiceStore, type VoicePrint } from "@genesiscz/utils
 import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
 import * as p from "@genesiscz/utils/prompts/p";
 import { renderBrief } from "@genesiscz/utils/repl/discovery";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
@@ -58,6 +59,46 @@ import {
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
  * an error code leads its sentence, a JSON shape stays. Each test pins one promise.
  */
+test("missing meeting names the searched store and locates an exact id across the scratch boundary", async () => {
+    const { missingMeetingMessage } = await import("./shared");
+    const base = new Storage("meetings-location-fixture").getBaseDir();
+    const ordinary = genesisToolsDirIn(join(base, "user"), "meetings");
+    const scratchRoot = join(base, "sessions");
+    const scratch = genesisToolsDirIn(join(scratchRoot, "Fixture", "round", "gap", "home"), "meetings");
+    const ref = "2026-11-02_15-00-fixture";
+    const locations = { ordinary, scratchRoots: [scratchRoot] };
+    const list = "List them: tools meetings list";
+    mkdirSync(join(scratch, ref), { recursive: true });
+    writeFileSync(join(scratch, ref, "meeting.json"), "{}");
+    expect(missingMeetingMessage({ ref, root: ordinary, ...locations })).toBe(
+        `No meeting "${ref}" in ${ordinary}. Found in ${scratch} with GENESIS_TOOLS_HOME=${join(scratchRoot, "Fixture", "round", "gap", "home")}. ${list}`
+    );
+    mkdirSync(join(ordinary, ref), { recursive: true });
+    writeFileSync(join(ordinary, ref, "meeting.json"), "{}");
+    expect(missingMeetingMessage({ ref, root: scratch, ...locations })).toBe(
+        `No meeting "${ref}" in ${scratch}. Found in ${ordinary} with GENESIS_TOOLS_HOME unset. ${list}`
+    );
+    expect(missingMeetingMessage({ ref: "absent", root: ordinary, ...locations })).toBe(
+        `No meeting "absent" in ${ordinary}. ${list}`
+    );
+
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(["listen", "absent-location-fixture"], { from: "user" });
+        expect(process.exitCode).toBe(1);
+        expect(human.mock.calls.at(-1)?.[0]).toBe(
+            `No meeting "absent-location-fixture" in ${new MeetingStore().root}. ${list}`
+        );
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("brief meeting help exposes the screen attribution instruction", () => {
     const help = renderBrief(meetingsToolsetApi).split("\n");
     for (const method of ["meeting.evidence(", "meeting.items.byChannel("]) {

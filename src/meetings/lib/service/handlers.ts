@@ -24,7 +24,7 @@ import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
 import type { SuggestionReads } from "../project-suggestions";
-import { TOOL } from "../shared";
+import { missingMeetingMessage } from "../shared";
 import { preservedSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
@@ -228,7 +228,7 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
     }
 
     if (!record) {
-        throw refusal("meeting-not-found", `No meeting "${ref}". List them: ${TOOL} list`);
+        throw refusal("meeting-not-found", missingMeetingMessage({ ref, root: store.root }));
     }
 
     return record;

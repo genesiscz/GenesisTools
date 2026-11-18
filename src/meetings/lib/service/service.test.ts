@@ -1069,14 +1069,16 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 
     test("meeting.show answers the record by id or prefix; a missing or ambiguous ref is refused with its code", async () => {
-        const { client } = await ADAPTERS[kind]();
+        const { client, store } = await ADAPTERS[kind]();
         const record = await client.call("meeting.show", { ref: "2026-11-03-10" });
 
         expect(record).toEqual(meetingRecordSchema.parse(REVIEW));
         const missing = await failure(client.call("meeting.show", { ref: "nope" }));
         expect(missing).toBeInstanceOf(MeetingsServiceError);
         expect(missing).toMatchObject({ code: "meeting-not-found" });
-        expect(errorText(missing)).toBe('[meeting-not-found] No meeting "nope". List them: tools meetings list');
+        expect(errorText(missing)).toBe(
+            `[meeting-not-found] No meeting "nope" in ${store.root}. List them: tools meetings list`
+        );
         const ambiguous = await failure(client.call("meeting.show", { ref: "2026-11-03" }));
         expect(ambiguous).toMatchObject({ code: "meeting-ref" });
         expect(errorText(ambiguous)).toBe(`[meeting-ref] "2026-11-03" fits 2 meetings: ${RETRO.id}, ${REVIEW.id}`);

@@ -1,10 +1,18 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { formatMissingEnumHelp, isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { MEETING_FILE, type MeetingRecord } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
+import { sharedTempRoot } from "@genesiscz/utils/rm/paths";
+import { scratchRootNames } from "@genesiscz/utils/rm/scratch-dirs";
 import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
+import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
+import { globIterateSync } from "glob";
 
 export const TOOL = "tools meetings";
 
@@ -12,6 +20,67 @@ export function hintIfSeatsUnset(record: Pick<MeetingRecord, "id" | "seats">): v
     if (!record.seats) {
         ui.warn(`Seats are not set, so voice naming is off. Run: ${TOOL} seats ${record.id} --apply`);
     }
+}
+
+const skipScratchChildren = new Set([
+    ".genesis-tools",
+    ".git",
+    ".build",
+    "node_modules",
+    "worktrees",
+    "Pods",
+    "removals",
+    "dist",
+    "build",
+    "target",
+    "vendor",
+]);
+
+function scratchStoreWith(ref: string, roots: string[]): string | undefined {
+    for (const cwd of roots) {
+        if (!existsSync(cwd)) {
+            continue;
+        }
+        // A session home may be nested, e.g. project/session/round/home. Skip checkouts, generated
+        // trees and the contents of each store. Read only the requested record's path.
+        for (const folder of globIterateSync("*/*/**/.genesis-tools", {
+            cwd,
+            absolute: true,
+            follow: false,
+            ignore: { childrenIgnored: (entry) => skipScratchChildren.has(entry.name) },
+        })) {
+            const meetings = join(folder, "meetings");
+            if (existsSync(join(meetings, ref, MEETING_FILE))) {
+                return meetings;
+            }
+        }
+    }
+}
+
+/** Only a missing exact id looks outside the active store. Never hydrate someone else's meeting to print a hint. */
+export function missingMeetingMessage(options: {
+    ref: string;
+    root: string;
+    ordinary?: string;
+    scratchRoots?: string[];
+}): string {
+    const { ref, root } = options;
+    const ordinary = options.ordinary ?? genesisToolsDirIn(homedir(), "meetings");
+    let found: string | undefined;
+    if (ref !== "last" && /^[A-Za-z0-9][\w.-]*$/.test(ref) && basename(root) === "meetings") {
+        if (resolve(root) !== resolve(ordinary)) {
+            found = existsSync(join(ordinary, ref, MEETING_FILE)) ? ordinary : undefined;
+        } else {
+            const configured = env.doctor.getAgentScratchRoot();
+            const roots =
+                options.scratchRoots ??
+                (configured ? [configured] : [...scratchRootNames()].map((dir) => join(sharedTempRoot(), dir)));
+            found = scratchStoreWith(ref, roots);
+        }
+    }
+    const setting =
+        found === ordinary ? "GENESIS_TOOLS_HOME unset" : found && `GENESIS_TOOLS_HOME=${dirname(dirname(found))}`;
+    return `No meeting "${ref}" in ${root}.${found ? ` Found in ${found} with ${setting}.` : ""} List them: ${TOOL} list`;
 }
 
 /**
@@ -99,7 +168,7 @@ export function localStamp(at: Date): string {
 }
 
 /** An additive stderr record for native callers; stdout remains the command's result. */
-export function errorJSON(error: unknown): string {
+export function errorJSON(error: unknown, message = errorText(error)): string {
     const body = rpcErrorBody(error, "meetings");
     const cause =
         error instanceof Error && error.cause instanceof Error ? rpcErrorBody(error.cause, "meetings") : undefined;
@@ -109,7 +178,7 @@ export function errorJSON(error: unknown): string {
         error: {
             code: body.code,
             ...(errorCode(error) ? { data: { code: errorCode(error) } } : {}),
-            message: redactCurrentRunText(errorText(error)),
+            message: redactCurrentRunText(message),
             ...(stack ? { stack: redactCurrentRunText(stack) } : {}),
             issue: {
                 tool: body.issue.tool,
@@ -120,9 +189,10 @@ export function errorJSON(error: unknown): string {
 }
 
 export function fail(error: unknown): void {
-    const failure = error instanceof Error ? error : new Error(errorText(error));
-    ui.raw(errorJSON(failure));
-    ui.err(errorText(error));
+    const message = errorText(error);
+    const failure = error instanceof Error ? error : new Error(message);
+    ui.raw(errorJSON(failure, message));
+    ui.err(message);
     process.exitCode = 1;
 }
 
@@ -132,7 +202,11 @@ export function fail(error: unknown): void {
  */
 export function errorText(err: unknown): string {
     const code = errorCode(err);
-    const message = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    const missing = /^No meeting "([^"\r\n]+)"(?:\.|\. List them: tools meetings list| \(tools meetings list\))?$/.exec(
+        raw
+    );
+    const message = missing ? missingMeetingMessage({ ref: missing[1]!, root: toolDataDir("meetings") }) : raw;
     return code ? `[${code}] ${message}` : message;
 }
 

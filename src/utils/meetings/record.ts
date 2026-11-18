@@ -780,7 +780,7 @@ export class MeetingStore {
         const hint = this.layoutHint();
 
         if (hint) {
-            throw new Error(`No meeting "${ref}". ${hint}`);
+            throw new Error(`No meeting "${ref}" in ${this.root}. ${hint}`);
         }
 
         return undefined;
