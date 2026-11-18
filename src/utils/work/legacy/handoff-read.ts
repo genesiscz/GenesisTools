@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { FoldOutcome, Handoff, HandoffClaim, HandoffPublicEvent } from "./handoff-types";
 
 interface HandoffRow {
@@ -186,6 +187,59 @@ function listHandoffEvents({ db, handoffId, limit = 200, before, beforeUid }: Ha
     });
 
     return { events, total };
+}
+
+interface StoredAttachment {
+    handoffId: string;
+    attachmentId: string;
+    filename: string;
+    mime: string;
+    missing: boolean;
+}
+
+export function findHandoffAttachment(db: Database, attachmentId: string): StoredAttachment | null {
+    const rows = db
+        .query<{ id: string; attachments: string }, [string]>(
+            "SELECT id, attachments FROM handoffs WHERE attachments LIKE ?"
+        )
+        .all(`%${attachmentId}%`);
+
+    for (const row of rows) {
+        let attachments: unknown;
+        try {
+            attachments = SafeJSON.parse(row.attachments, { strict: true });
+        } catch (err) {
+            logger.warn({ err, handoffId: row.id }, "handoff.attachments column is not valid JSON — skipping");
+            continue;
+        }
+
+        if (!Array.isArray(attachments)) {
+            logger.warn({ handoffId: row.id }, "handoff.attachments column is not an array — skipping");
+            continue;
+        }
+
+        const found: unknown = attachments.find(
+            (entry: unknown) => isJsonObject(entry) && entry.attachmentId === attachmentId
+        );
+        if (!isJsonObject(found)) {
+            continue;
+        }
+
+        if (typeof found.filename !== "string" || typeof found.mime !== "string") {
+            logger.warn({ handoffId: row.id, attachmentId }, "attachment entry missing string filename/mime — skipping");
+            continue;
+        }
+
+        return {
+            handoffId: row.id,
+            attachmentId,
+            filename: found.filename,
+            mime: found.mime,
+            missing: found.missing === true,
+        };
+    }
+
+    return null;
 }
 
 /** The handoff compatibility tables in work.db retain fields the item view cannot represent. */

@@ -9,15 +9,17 @@ import {
     attachHandoffBytes,
     DASHBOARD_ACTOR,
     executeHandoffActions,
-    getHandoff,
     type HandoffDeps,
-    listHandoffs,
     postHandoff,
-    resolveAttachment,
 } from "@app/handoff/executor";
 import { normalizeHandoffId } from "@app/handoff/ids";
-import { catchUpHandoffs, getHandoffById, listHandoffEvents, openHandoffModel } from "@app/handoff/read-model";
-import type { HandoffActionInput, HandoffEventBy, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
+import { readHandoffAttachment, readHandoffEventPage, workHandoffReader } from "@app/handoff/work-reader";
+import type {
+    HandoffActionInput,
+    HandoffEventBy,
+    HandoffTarget,
+    HandoffTaskInput,
+} from "@genesiscz/utils/work/legacy/handoff-types";
 
 /**
  * Dashboard actor (G7): sessionTitle = configured Basic Auth username;
@@ -45,7 +47,7 @@ export function handoffRoutes(): RouteDef[] {
                 const deps = await dashboardDeps();
                 const limitRaw = ctx.query.get("limit");
                 const offsetRaw = ctx.query.get("offset");
-                const res = listHandoffs(
+                const res = workHandoffReader.listHandoffs(
                     {
                         limit: limitRaw !== null ? Number.parseInt(limitRaw, 10) : 100,
                         offset: offsetRaw !== null ? Number.parseInt(offsetRaw, 10) : undefined,
@@ -67,7 +69,7 @@ export function handoffRoutes(): RouteDef[] {
                 const deps = await dashboardDeps();
                 const id = ctx.query.get("id") ?? "";
                 const name = ctx.query.get("name") ?? undefined;
-                const res = getHandoff({ id, name }, deps);
+                const res = workHandoffReader.getHandoff({ id, name }, deps);
 
                 return { kind: "json", status: 200, body: res };
             } catch (err) {
@@ -86,24 +88,16 @@ export function handoffRoutes(): RouteDef[] {
                     return { kind: "json", status: 400, body: { error: "id query param required" } };
                 }
 
-                const db = openHandoffModel();
-
-                try {
-                    catchUpHandoffs(db);
-
-                    if (getHandoffById(db, id) === null) {
-                        return {
-                            kind: "json",
-                            status: 404,
-                            body: { error: `No handoff ${id} — re-check the paste block or call handoff_list` },
-                        };
-                    }
-
-                    const body = listHandoffEvents({ db, handoffId: id, limit, before, beforeUid });
-                    return { kind: "json", status: 200, body };
-                } finally {
-                    db.close();
+                const body = readHandoffEventPage({ handoffId: id, limit, before, beforeUid });
+                if (body === null) {
+                    return {
+                        kind: "json",
+                        status: 404,
+                        body: { error: `No handoff ${id} — re-check the paste block or call handoff_list` },
+                    };
                 }
+
+                return { kind: "json", status: 200, body };
             } catch (err) {
                 return errorResult(err);
             }
@@ -195,7 +189,7 @@ export function handoffRoutes(): RouteDef[] {
             try {
                 const deps = await dashboardDeps();
                 const attachmentId = ctx.query.get("id") ?? "";
-                const resolved = resolveAttachment(attachmentId, deps);
+                const resolved = readHandoffAttachment(attachmentId, deps);
 
                 if (resolved === null) {
                     return { kind: "json", status: 404, body: { error: `unknown attachment: ${attachmentId}` } };

@@ -1,4 +1,4 @@
-import type { Handoff, HandoffActionResult, HandoffListRow } from "@app/handoff/types";
+import type { FoldOutcome, Handoff, HandoffActionResult, HandoffListRow } from "@genesiscz/utils/work/legacy/handoff-types";
 
 export type {
     Handoff,
@@ -13,7 +13,7 @@ export type {
     HandoffTarget,
     HandoffTask,
     HandoffTaskInput,
-} from "@app/handoff/types";
+} from "@genesiscz/utils/work/legacy/handoff-types";
 
 /** Route/tool response shape of a handoff: editId stripped, attachment paths resolved. */
 export type PublicHandoff = Omit<Handoff, "editId"> & {
@@ -75,18 +75,7 @@ export type HandoffPublicEvent = {
         repoRoot?: string | null;
         commitSha?: string | null;
     };
-    /**
-     * Present on a REFUSED action: the fold journals the attempt with `applied: false`
-     * and the reason. Declared explicitly because the index signature below types it as
-     * `unknown`, which made every `event.outcome?.applied` read a type error in the UI.
-     * Mirrors `FoldOutcome` in @app/handoff/types, which this browser-safe copy cannot import.
-     */
-    outcome?: {
-        applied: boolean;
-        error?: string;
-        info?: string[];
-        noop?: boolean;
-        assignedTaskIds?: string[];
-    };
+    /** A refused action stays in the activity trace with the reason the fold rejected it. */
+    outcome?: FoldOutcome;
     [key: string]: unknown;
 };
