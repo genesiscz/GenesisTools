@@ -362,11 +362,21 @@ export const ANSWERED_ELSEWHERE_MAX = 20;
 /** The entries one session lists in the widget's inbox overview; its counts still cover every item. */
 export const INBOX_ITEMS_PER_SESSION = 8;
 
-/** A session's entries for the overview: the ones waiting for an answer first, then newest first, capped. */
+/** The newest entries that do not wait for an answer, which a session keeps listed however many entries wait. */
+export const INBOX_UNREAD_KEPT_PER_SESSION = 3;
+
+/**
+ * A session's entries for the overview: the ones waiting for an answer first, then newest first, capped. The newest
+ * unread entries keep their places, so a session with many waiting decisions still shows its newest answer in the
+ * newest-first feed.
+ */
 export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
-    return [...items]
-        .sort((a, b) => Number(b.needsAnswer) - Number(a.needsAnswer) || b.at - a.at)
-        .slice(0, INBOX_ITEMS_PER_SESSION);
+    const newest = (a: WidgetInboxItem, b: WidgetInboxItem) => b.at - a.at;
+    const waiting = items.filter((item) => item.needsAnswer).sort(newest);
+    const unread = items.filter((item) => !item.needsAnswer).sort(newest);
+    const keptUnread = Math.min(unread.length, INBOX_UNREAD_KEPT_PER_SESSION);
+    const listedWaiting = waiting.slice(0, INBOX_ITEMS_PER_SESSION - keptUnread);
+    return [...listedWaiting, ...unread.slice(0, INBOX_ITEMS_PER_SESSION - listedWaiting.length)];
 }
 export interface WidgetInboxSummary {
     badgeCount?: number;

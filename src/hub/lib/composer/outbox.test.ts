@@ -2396,6 +2396,24 @@ test("a session lists its waiting entries first, then the newest, at most eight"
     expect(listed.map((entry) => entry.id)).not.toContain("old");
 });
 
+test("a session with more waiting entries than the cap still lists its newest unread answers", () => {
+    const item = (id: string, at: number, needsAnswer = false) => ({
+        id,
+        sourceId: id,
+        kind: needsAnswer ? ("decision" as const) : ("answer" as const),
+        key: "k",
+        at,
+        needsAnswer,
+    });
+    const asks = Array.from({ length: 10 }, (_, i) => item(`ask${i}`, 10 + i, true));
+    const answers = [item("a1", 100), item("a2", 101), item("a3", 102), item("a4", 103)];
+    const listed = listedInboxItems([...asks, ...answers]).map((entry) => entry.id);
+    expect(listed).toHaveLength(INBOX_ITEMS_PER_SESSION);
+    expect(listed.slice(0, 5)).toEqual(["ask9", "ask8", "ask7", "ask6", "ask5"]);
+    expect(listed.slice(5)).toEqual(["a4", "a3", "a2"]);
+    expect(listedInboxItems(asks)).toHaveLength(INBOX_ITEMS_PER_SESSION);
+});
+
 test("alert preferences default on with the Glass sound, load from an older state, and refuse a bad sound", async () => {
     const directory = await root();
     await writeFile(
