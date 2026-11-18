@@ -28,17 +28,17 @@ interface StageRecord {
     exitCode: number;
     userMs: number;
     systemMs: number;
-    /** The largest sum of RSS over the stage's process tree at one sample. */
-    peakTreeMB: number;
-    /** The largest single process of any sample, and its command. */
-    peakProcessMB: number;
+    /** The largest sum of RSS over the stage's process tree at one sample; null when no sample found the stage alive. */
+    peakTreeMB: number | null;
+    /** The largest single process of any sample, and its command; null as above. */
+    peakProcessMB: number | null;
     peakProcess: string;
     load1AtStart: number;
     freeMBAtStart: number;
 }
 
 /** The RSS sum of `root` and every descendant, and the largest one, from the shared process reader. */
-function treeMemory(root: number): { totalBytes: number; topBytes: number; topName: string } {
+function treeMemory(root: number): { found: boolean; totalBytes: number; topBytes: number; topName: string } {
     let totalBytes = 0;
     let topBytes = 0;
     let topName = "";
@@ -51,7 +51,8 @@ function treeMemory(root: number): { totalBytes: number; topBytes: number; topNa
         }
     }
 
-    return { totalBytes, topBytes, topName };
+    // A row with no resident memory is a process that already ended (or was not read): it measures nothing.
+    return { found: totalBytes > 0, totalBytes, topBytes, topName };
 }
 
 async function runStage(dir: string, stage: string, argv: string[]): Promise<number> {
@@ -66,14 +67,21 @@ async function runStage(dir: string, stage: string, argv: string[]): Promise<num
     let peakTreeBytes = 0;
     let peakProcessBytes = 0;
     let peakProcess = "";
+    let sampled = false;
     const sample = () => {
         const tree = treeMemory(child.pid);
+        if (!tree.found) {
+            return;
+        }
+        sampled = true;
         peakTreeBytes = Math.max(peakTreeBytes, tree.totalBytes);
         if (tree.topBytes > peakProcessBytes) {
             peakProcessBytes = tree.topBytes;
             peakProcess = tree.topName;
         }
     };
+    // One sample at once, so a stage shorter than the interval still gets a measured peak while its tree exists.
+    sample();
     const timer = setInterval(sample, SAMPLE_MS);
     const exitCode = await child.exited;
     clearInterval(timer);
@@ -85,13 +93,20 @@ async function runStage(dir: string, stage: string, argv: string[]): Promise<num
         exitCode,
         userMs: usage ? Number(usage.cpuTime.user) / 1000 : 0,
         systemMs: usage ? Number(usage.cpuTime.system) / 1000 : 0,
-        peakTreeMB: Math.round(peakTreeBytes / 1_048_576),
-        peakProcessMB: Math.round(peakProcessBytes / 1_048_576),
+        peakTreeMB: sampled ? Math.round(peakTreeBytes / 1_048_576) : null,
+        peakProcessMB: sampled ? Math.round(peakProcessBytes / 1_048_576) : null,
         peakProcess,
         load1AtStart: Math.round(load1AtStart * 100) / 100,
         freeMBAtStart,
     };
-    appendFileSync(join(dir, "stages.jsonl"), `${SafeJSON.stringify(record)}\n`);
+    // The profile is optional: a record that cannot be written never changes the stage's own result.
+    try {
+        appendFileSync(join(dir, "stages.jsonl"), `${SafeJSON.stringify(record)}\n`);
+    } catch (error) {
+        console.error(
+            `pre-push-profile: could not record stage ${stage}: ${error instanceof Error ? error.message : error}`
+        );
+    }
     return exitCode;
 }
 
@@ -132,8 +147,8 @@ function report(dir: string, hookExit: number): void {
             seconds(wall),
             seconds(cpu),
             `${wall > 0 ? Math.round((cpu / wall) * 100) : 0}%`,
-            `${s.peakTreeMB}`,
-            s.peakProcess ? `${s.peakProcess.split("/").pop()} ${s.peakProcessMB} MB` : "",
+            s.peakTreeMB === null ? "not sampled" : `${s.peakTreeMB}`,
+            s.peakProcess && s.peakProcessMB !== null ? `${s.peakProcess.split("/").pop()} ${s.peakProcessMB} MB` : "",
             wait,
             `${s.load1AtStart}`,
             `${s.exitCode}`,
