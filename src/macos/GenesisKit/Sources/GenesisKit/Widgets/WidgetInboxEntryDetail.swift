@@ -224,6 +224,7 @@ private struct WidgetReceiptBlock: View {
             if let failure {
                 Text("The full \(label.lowercased()) could not be read: \(failure)")
                     .font(.caption).foregroundStyle(.secondary)
+                // lint-rules-ignore: short list (at most five earlier answers, and only after a failed read)
                 Button("Try again") { attempt += 1 }.buttonStyle(.genHoverPlain()).font(.caption)
             }
         }.task(id: attempt) {
