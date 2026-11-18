@@ -610,7 +610,18 @@ struct MeetingBadgesView: View {
             badge(Badge("Recording only", color: KitPalette.dim, symbol: "rectangle.on.rectangle"),
                   opens: .screen, tooltip: "Show the screen recording")
         }
-        if badges.transcriptOnly { Badge("Transcript only", color: KitPalette.dim, symbol: "text.alignleft") }
+        if badges.transcriptOnly {
+            let words = Self.noScreenRecording(hasSound: meeting.sourceAudio != nil)
+            Badge(words.title, color: KitPalette.dim, symbol: "video.slash", tooltip: words.tooltip)
+                .accessibilityIdentifier("meetings.badge.noScreenRecording")
+        }
+    }
+
+    /// A meeting with a transcript and no screen recording. The pill read "Transcript only" with no tooltip, which
+    /// hid that the sound was kept too (U4); it names what is missing, and the tooltip says what was kept.
+    static func noScreenRecording(hasSound: Bool) -> (title: String, tooltip: String) {
+        let kept = hasSound ? "Only the transcript and the sound were saved." : "Only the transcript was saved."
+        return ("No screen recording", "\(kept) No screen recording exists for this meeting.")
     }
 
     @ViewBuilder
