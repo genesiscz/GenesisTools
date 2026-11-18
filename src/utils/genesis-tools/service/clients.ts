@@ -78,10 +78,11 @@ export function serviceActionClientTimeoutMs(actionBudgetMs: number | undefined)
     return serviceActionDeadlineMs(actionBudgetMs) + SERVICE_CALL_GRACE_MS;
 }
 
+/** The default wait outlasts the host bound of a call that runs no action (130 s), so the host always answers first. */
 export async function callRunningService(
     method: string,
     params: unknown,
-    timeoutMs = 130_000
+    timeoutMs = 130_000 + SERVICE_CALL_GRACE_MS
 ): Promise<{ called: false } | { called: true; value: unknown }> {
     const client = await connectGenesisToolsService();
     if (!client) {
