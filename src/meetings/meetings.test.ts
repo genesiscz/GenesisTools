@@ -72,7 +72,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import { z } from "zod";
 import { registerRecordCommands } from "./commands/record";
-import { claimWatcher } from "./commands/watch";
+import { askProjectAtEnd, claimWatcher } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
@@ -1271,6 +1271,37 @@ test.each([
         }
     });
 });
+
+test.each([
+    ["scratch", false, 0],
+    ["scratch", true, 1],
+    ["default", false, 1],
+] as const)(
+    "a meeting end in the %s store with autostart enabled=%s asks for the watcher as record start does",
+    async (store, enabled, starts) => {
+        const scratch = mkdtempSync(join(tmpdir(), "meeting-end-watcher-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+            await new MeetingsConfigStore().setAutoRecord(enabled);
+            const asked = spyOn(await import("./lib/assign"), "askAtMeetingEnd").mockResolvedValue({
+                outcome: "asked",
+                formId: "form-1",
+            });
+            const watcher = spyOn(await import("./lib/watcher"), "ensureWatcher").mockResolvedValue("started");
+            const sandbox = spyOn(
+                await import("@genesiscz/utils/storage/real-home-guard"),
+                "sandboxInstalled"
+            ).mockReturnValue(store === "scratch");
+            try {
+                await askProjectAtEnd(new MeetingStore(), "2026-11-02_15-00-planning");
+                expect(watcher).toHaveBeenCalledTimes(starts);
+            } finally {
+                sandbox.mockRestore();
+                watcher.mockRestore();
+                asked.mockRestore();
+            }
+        });
+    }
+);
 
 describe("watchOnce", () => {
     const settings = { enabled: true, liveWithinSec: 30, notify: true };

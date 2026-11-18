@@ -7,13 +7,14 @@ import type { Command } from "commander";
 import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
 import { fail, resolveEnum } from "../lib/shared";
 import { hasSourceAudioToWatch, watchLoop, watchOnce } from "../lib/watch";
-import { ensureWatcher, watcherPidPath } from "../lib/watcher";
+import { ensureWatcher, shouldStartWatcherForRecording, watcherPidPath } from "../lib/watcher";
 
 const { log } = logger.scoped("meetings-watch-cmd");
 
 /**
  * "Ask each time" at the end of a meeting (the recorder's stop, a source link that ends it), then the watcher, so the
- * answer is read back even while autoRecord is off. Never throws; every failure is a warning naming the meeting.
+ * answer is read back even while autoRecord is off. A scratch store with autostart off gets no watcher, as at
+ * `record start` (`shouldStartWatcherForRecording`). Never throws; every failure is a warning naming the meeting.
  */
 export async function askProjectAtEnd(store: MeetingStore, meetingId: string): Promise<void> {
     const asked = await askAtMeetingEnd(store, meetingId);
@@ -22,9 +23,16 @@ export async function askProjectAtEnd(store: MeetingStore, meetingId: string): P
         return;
     }
 
-    await ensureWatcher().catch((err: unknown) =>
-        log.warn({ err, meeting: meetingId }, "the watcher that reads the project answer back did not start")
-    );
+    try {
+        if (!(await shouldStartWatcherForRecording())) {
+            log.info({ meeting: meetingId }, "no watcher at the meeting end: a scratch store with autostart off");
+            return;
+        }
+
+        await ensureWatcher();
+    } catch (err) {
+        log.warn({ err, meeting: meetingId }, "the watcher that reads the project answer back did not start");
+    }
 }
 
 /**
