@@ -15,7 +15,7 @@ public struct ScreenRecordingHost {
     public var onDiscard: () -> Void
     /// A recording that could not start or failed, or a use that threw.
     public var onError: (String) -> Void
-    /// The recording has started (the picker closed and the controls are up): a host can step aside here.
+    /// Capture is starting. The host can step aside before the first movie frame.
     public var onStart: () -> Void
 
     public init(useTitle: String, useSymbol: String = "stop.fill", permissionReason: String,
@@ -31,45 +31,62 @@ public struct ScreenRecordingHost {
     }
 }
 
-/// The whole screen recording flow for one host: the target picker, the Screen Recording grant, the session in
-/// `tools control capture session`, the floating controls, switching target (the recording pauses while the picker is
-/// open, so the movie never shows it) and the end. One recording runs at a time across every recorder in the process;
-/// `begin` while another runs brings that one's controls forward.
+/// Refresh the existing picker in place, including while an area selector has hidden its window.
+@MainActor
+private final class WidgetTargetInventory: ObservableObject {
+    @Published var load: RecordingTargetPicker.Load = .loading
+    var initial: RecordingTarget?
+}
+
+@MainActor
+private struct WidgetPickerContent: View {
+    @ObservedObject var inventory: WidgetTargetInventory
+    let content: (RecordingTargetPicker.Load, RecordingTarget?) -> RecordingTargetPicker
+
+    var body: some View { content(inventory.load, inventory.initial) }
+}
+
+/// A widget recording belongs to its opening host until that host has received the finished movie.
 @MainActor
 public final class ScreenRecorder: ObservableObject {
-    /// True from the picker's first appearance until the recording ended.
+    static let entryTitle = "Record the screen…"
+    static let entryDetail = "Choose what to record, then press Record (up to 10 min)"
     @Published public private(set) var isActive = false
-
+    @Published private(set) var phase: RecordingBarPhase?
     public let settings: RecordingSettings
+
     private let makeController: @MainActor () -> RecordingSessionController
     private let defaults: UserDefaults
     private let forSnapshot: Bool
     private let permissionGate: @MainActor (PermissionNeed) async -> Bool
     private let loadTargets: @MainActor () async throws -> RecordingTargets
-    private var host: ScreenRecordingHost?
-    private var controller: RecordingSessionController?
-    private var controllerWatch: AnyCancellable?
-    /// Waits for the recorder to confirm a pause before the Switch picker opens (`switchTarget`).
-    private var pauseWatch: AnyCancellable?
-    private var settingsWatch: AnyCancellable?
-    private var controls: RecordingControlsPanel?
-    private var controlsModel: RecordingControlsModel?
-    private var outline: RecordingTargetOutline?
-    /// The target the outline is drawn around now; nil while it is hidden.
-    private var outlinedTarget: RecordingTarget?
-    private let picker = RecordingPickerPanel()
-    private var targets: RecordingTargets?
-    private var pickerLoad: RecordingTargetPicker.Load = .loading
-    private var pickerInitial: RecordingTarget?
-    /// The picker's tab and filter text, kept here because every `presentPicker` builds a new view; nil until the person
-    /// changes either, so a list that arrives later does not reset what they typed while it loaded.
-    private var pickerFilter: (tab: RecordingPickerTab, query: String)?
-    private var pickerTitle = "Choose what to record"
-    private var pickerChoose: ((RecordingTarget) -> Void)?
-    private var pickerCancel: (() -> Void)?
-    private var pickerAnchor = CGPoint.zero
-
     private static weak var running: ScreenRecorder?
+
+    private var host: ScreenRecordingHost?
+    private var bar: RecordingBarModel?
+    private var controls: RecordingBarPanel?
+    private lazy var picker: RecordingPickerPanel = {
+        let panel = RecordingPickerPanel()
+        if forSnapshot {
+            panel.window.alphaValue = 0
+            panel.window.ignoresMouseEvents = true
+        }
+        return panel
+    }()
+    private var overlays: RecordingPickerOverlays?
+    private var outline: RecordingTargetOutline?
+    private var outlinedTarget: RecordingTarget?
+    private var targets: RecordingTargets?
+    private let inventory = WidgetTargetInventory()
+    private var preferredPid: Int32?
+    private var widgetRate: Int?
+    private var usesCustomSettings = false
+    private var started = false
+    private var delivering = false
+    private var opening: Task<Void, Never>?
+    private var reading: Task<Void, Never>?
+    private var waitingForPause: Task<Void, Never>?
+    private var observers = Set<AnyCancellable>()
 
     public convenience init(bridge: ToolsBridge, settings: RecordingSettings? = nil,
                             permissionGate: (@MainActor (PermissionNeed) async -> Bool)? = nil) {
@@ -85,6 +102,7 @@ public final class ScreenRecorder: ObservableObject {
             }
             return try JSONDecoder().decode(RecordingTargets.self, from: Data(result.stdout.utf8))
         })
+        usesCustomSettings = settings.map { $0 !== RecordingSettings.shared } ?? false
     }
 
     init(settings: RecordingSettings, defaults: UserDefaults, forSnapshot: Bool = false,
@@ -97,309 +115,315 @@ public final class ScreenRecorder: ObservableObject {
         self.permissionGate = permissionGate
         self.makeController = makeController
         self.loadTargets = loadTargets
-        if forSnapshot { picker.window.alphaValue = 0; picker.window.ignoresMouseEvents = true }
     }
 
-    /// Opens the picker near `anchor` (a Cocoa screen point; the pointer when nil), starting on the front window of
-    /// `preferredPid` (the app the person was in), then records what they choose.
     public func begin(host: ScreenRecordingHost, anchor: CGPoint? = nil, preferredPid: Int32? = nil) {
         if let running = Self.running, running.isActive {
-            running.controls?.show()
-            if running !== self { host.onError("A screen recording is already running. Use its controls to end it.") }
+            running.showControls()
+            if running !== self { host.onError("A screen recording is already open. Use its controls to end it.") }
             return
         }
         Self.running = self
         self.host = host
-        isActive = true
-        let preferred = preferredPid ?? NSWorkspace.shared.frontmostApplication.flatMap { app in
-            app.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : app.processIdentifier
+        self.preferredPid = preferredPid ?? NSWorkspace.shared.frontmostApplication.flatMap {
+            $0.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : $0.processIdentifier
         }
-        openPicker(title: "Choose what to record", anchor: anchor ?? NSEvent.mouseLocation, preferredPid: preferred,
-                   choose: { [weak self] target in self?.start(target) },
-                   cancel: { [weak self] in self?.finish() })
+        phase = .setup
+        isActive = true
+        let need = PermissionNeed(.screenRecording, reason: host.permissionReason, grantWorksInNewProcess: true)
+        opening = Task { [weak self, permissionGate] in
+            let granted = await permissionGate(need)
+            guard let self, !Task.isCancelled else { return }
+            opening = nil
+            guard granted else { finish(); return }
+            presentSetup(host: host, anchor: anchor)
+        }
     }
 
-    /// Stops and hands the movie to the host, as the controls' use button does.
-    public func stopAndUse() { controller?.stop() }
+    private func presentSetup(host: ScreenRecordingHost, anchor: CGPoint?) {
+        var setup = RecordingSetup.load(defaults)
+        let storedRate = usesCustomSettings ? settings.frameRate : defaults.integer(forKey: RecordingSettings.Key.frameRate)
+        widgetRate = RecordingSettings.frameRates.contains(storedRate) ? storedRate : nil
+        if let widgetRate {
+            if setup.stillFrameRate == Double(setup.frameRate) { setup.stillFrameRate = 0 }
+            setup.frameRate = widgetRate
+        }
+        let engine = WidgetSessionEngine(makeController: makeController, showsBorder: { [settings] in settings.showsBorder })
+        let bar = RecordingBarModel(engine: engine, setup: setup, defaults: defaults,
+                                    countdownTick: { try? await Task.sleep(for: .seconds(1)) })
+        self.bar = bar
+        let overlays = RecordingPickerOverlays()
+        let outline = RecordingTargetOutline()
+        self.overlays = overlays
+        self.outline = outline
+        bar.excludeWindowIDs = overlays.windowIDs + outline.windowIDs + [picker.window.windowNumber]
+        let actions = RecordingBarActions(chooseTarget: { [weak self] kind in self?.requestPicker(kind) },
+                                          useTitle: host.useTitle, useMovie: { [weak self] url in self?.use(url) },
+                                          hide: { [weak self] in self?.didHide() })
+        let controls = RecordingBarPanel(model: bar, actions: actions, defaults: defaults) { [weak self] target in
+            guard let rects = self?.rects(target), let first = rects.first else { return nil }
+            return rects.dropFirst().reduce(first) { $0.union($1) }
+        }
+        self.controls = controls
+        if forSnapshot {
+            controls.window.alphaValue = 0
+            controls.window.ignoresMouseEvents = true
+        }
+        for window in [controls.window as NSWindow, picker.window as NSWindow] {
+            NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: window)
+                .sink { [weak self] _ in self?.positionPicker() }.store(in: &observers)
+        }
+        bar.$phase.removeDuplicates().dropFirst().sink { [weak self] phase in
+            self?.didChange(phase)
+        }.store(in: &observers)
+        settings.$showsBorder.removeDuplicates().dropFirst().sink { [weak self] enabled in
+            self?.updateOutline(enabled: enabled)
+        }.store(in: &observers)
+        controls.show()
+        if let anchor, let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor) }) {
+            let frame = RecordingPanelLayout.picker(size: controls.window.frame.size, anchor: anchor, visible: screen.visibleFrame)
+            controls.window.setFrameOrigin(frame.origin)
+        }
+        openPicker(nil)
+    }
 
-    public func discard() { controller?.discard() }
+    public func stopAndUse() {
+        switch phase {
+        case .recording, .paused: bar?.stop()
+        default: break
+        }
+    }
 
-    /// Brings the controls of a running recording forward.
-    public func showControls() { controls?.show() }
+    public func discard() {
+        if phase == .setup { finish() }
+        else { bar?.discard() }
+    }
 
-    /// Chooses in the open picker as a click on its row does (the widget's driver and tests). False when no picker is
-    /// open or `pick` finds nothing in the listed targets.
+    public func showControls() {
+        if case .done = phase { return } // The host is copying the file.
+        controls?.show()
+        if picker.isVisible, !forSnapshot { picker.window.makeKeyAndOrderFront(nil) }
+    }
+
+    /// The widget driver uses the same selection callback as a picker row.
     @discardableResult
     public func choose(_ pick: (RecordingTargets) -> RecordingTarget?) -> Bool {
-        guard picker.isVisible, let targets, let target = pick(targets) else { return false }
-        picker.dismiss()
-        pickerChoose?(target)
+        guard picker.isVisible, case let .loaded(targets) = inventory.load, let target = pick(targets),
+              bar?.capabilities.targets.contains(target.kind) == true else { return false }
+        chose(target)
         return true
     }
 
-    /// One line for logs and the driver: the phase, why a start is slow, and whether the target outline shows.
     public var stateDescription: String {
-        guard let controller else { return "idle picker=\(picker.isVisible)" }
-        return "phase=\(controller.phase.rawValue) preparing=\(controller.preparing ?? "-") "
-            + "outline=\(outlinedTarget?.title ?? "-") elapsedMs=\(Int(controller.elapsedMs))"
+        let name: String
+        switch phase {
+        case nil: name = "idle"
+        case .setup: name = "setup"
+        case .countdown: name = "countdown"
+        case .starting: name = "starting"
+        case .recording: name = "recording"
+        case .paused: name = "paused"
+        case .finishing: name = "finishing"
+        case .done: name = "done"
+        case .failed: name = "failed"
+        }
+        return "phase=\(name) picker=\(picker.isVisible) target=\(bar?.setup.target?.title ?? "-") preparing=\(bar?.notice?.message ?? "-") "
+            + "outline=\(outlinedTarget?.title ?? "-") elapsedMs=\(Int(bar?.elapsedMs ?? 0))"
     }
 
     // MARK: Picker
 
-    private func openPicker(title: String, anchor: CGPoint, preferredPid: Int32?,
-                            choose: @escaping (RecordingTarget) -> Void, cancel: @escaping () -> Void) {
-        pickerTitle = title
-        pickerAnchor = anchor
-        pickerChoose = choose
-        pickerCancel = cancel
-        pickerLoad = targets.map { .loaded($0) } ?? .loading
-        pickerInitial = controller?.target ?? targets?.defaultTarget(preferredPid: preferredPid)
-        pickerFilter = nil
-        presentPicker()
-        Task { [weak self] in await self?.refreshTargets(preferredPid: preferredPid) }
-    }
-
-    private func refreshTargets(preferredPid: Int32?) async {
-        let previousLoad = pickerLoad
-        let previousInitial = pickerInitial
-        do {
-            let own = ProcessInfo.processInfo.processIdentifier
-            let loaded = try await loadTargets().excluding(pids: [own])
-            targets = loaded
-            pickerLoad = .loaded(loaded)
-            if controller?.target == nil { pickerInitial = loaded.defaultTarget(preferredPid: preferredPid) }
-        } catch {
-            PerfLog.mark("recording.targets failed \(error.localizedDescription)")
-            pickerLoad = .failed("Could not list what to record: \(error.localizedDescription)")
-        }
-        // A new picker view resets the person's query, tab and arrow selection: skip it when nothing changed.
-        guard picker.isVisible, pickerLoad != previousLoad || pickerInitial != previousInitial else { return }
-        presentPicker()
-    }
-
-    private func presentPicker() {
-        let view = RecordingTargetPicker(
-            load: pickerLoad, title: pickerTitle, initial: pickerInitial,
-            onChoose: { [weak self] target in
-                guard let self else { return }
-                self.picker.dismiss()
-                self.pickerChoose?(target)
-            },
-            onCancel: { [weak self] in
-                guard let self else { return }
-                self.picker.dismiss()
-                self.pickerCancel?()
-            },
-            onRetry: { [weak self] in
-                guard let self else { return }
-                self.pickerLoad = .loading
-                self.presentPicker()
-                Task { await self.refreshTargets(preferredPid: nil) }
-            },
-            restoring: pickerFilter,
-            onFilterChange: { [weak self] tab, query in self?.pickerFilter = (tab, query) })
-        picker.present(view, near: pickerAnchor, focus: !forSnapshot) { [weak self] in self?.pickerCancel?() }
-    }
-
-    // MARK: Session
-
-    private func start(_ target: RecordingTarget) {
-        guard let host else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            let need = PermissionNeed(.screenRecording, reason: host.permissionReason, grantWorksInNewProcess: true)
-            guard await self.permissionGate(need) else {
-                self.finish()
-                return
-            }
-            self.record(target)
-        }
-    }
-
-    private func record(_ target: RecordingTarget) {
-        guard let host else { return }
-        let controller = makeController()
-        let controls = RecordingControlsPanel()
-        if forSnapshot { controls.window.alphaValue = 0; controls.window.ignoresMouseEvents = true }
-        self.controller = controller
-        self.controls = controls
-        controller.onDone = { [weak self] url, _ in self?.use(url) }
-        controller.onDiscarded = { [weak self] in
-            self?.host?.onDiscard()
-            self?.finish()
-        }
-        controller.onFailed = { [weak self] message, code in self?.failed(message, code: code) }
-        controllerWatch = controller.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.renderControls() }
-        }
-        settingsWatch = settings.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.renderControls() }
-        }
-        let outline = RecordingTargetOutline()
-        self.outline = outline
-        renderControls()
-        place(target)
-        // The controls are on screen before the recorder lists windows, so it can leave them out by id.
-        controls.show()
-        do {
-            try controller.start(target: target, excludeWindowIDs: [controls.windowID] + outline.windowIDs,
-                                 frameRate: settings.frameRate, showsBorder: settings.showsBorder)
-            host.onStart()
-        } catch {
-            failed("Could not start the recorder: \(error.localizedDescription)", code: nil)
-        }
-    }
-
-    /// The view goes in once per recording; each tick only changes its state, so what the view holds itself (an open
-    /// discard question) survives the clock.
-    private func renderControls() {
-        guard let controller, let controls, let host else { return }
-        renderOutline(phase: controller.phase, target: controller.target)
-        let state = RecordingControlsState(
-            phase: controller.phase, elapsedMs: controller.elapsedMs, limitMs: controller.limitMs,
-            target: controller.target, pauseReason: controller.pauseReason, notice: controller.notice,
-            preparing: controller.preparing, useTitle: host.useTitle, useSymbol: host.useSymbol,
-            confirmsDiscard: settings.confirmsDiscard)
-        if let controlsModel {
-            if controlsModel.state != state { controlsModel.state = state }
+    private func requestPicker(_ kind: RecordingTargetKind?) {
+        guard let bar, waitingForPause == nil else { return }
+        if picker.window.parent != nil {
+            if kind == .area && picker.isVisible { selectArea() }
+            else { showControls() }
             return
         }
-        let model = RecordingControlsModel(state: state)
-        controlsModel = model
-        controls.setContent(RecordingControlsHost(model: model, actions: RecordingControlsActions(
-            pause: { [weak controller] in controller?.pause() },
-            resume: { [weak controller] in controller?.resume() },
-            switchTarget: { [weak self] in self?.switchTarget() },
-            restart: { [weak controller] in controller?.restart() },
-            use: { [weak controller] in controller?.stop() },
-            discard: { [weak controller] in controller?.discard() },
-            dismissNotice: { [weak controller] in controller?.notice = nil },
-            moved: { [weak controls] in controls?.noteMoved() })))
+        switch bar.phase {
+        case .setup, .paused: openPicker(kind)
+        case let .recording(take):
+            // RecordingBarView already requested the picker pause. A pipe write alone does not stop capture.
+            let command = bar.pendingCommand
+            waitingForPause = Task { [weak self, weak bar] in
+                await command?.value
+                guard let self, !Task.isCancelled else { return }
+                waitingForPause = nil
+                if case let .paused(current, _) = bar?.phase, current == take { openPicker(kind) }
+            }
+        default: break
+        }
     }
 
-    /// Pauses (so the picker never shows in the movie), lets the person choose, then switches or resumes. The picker
-    /// is a window the recorder was not told to leave out, so it opens only once the recorder confirms the pause: a
-    /// display recording would otherwise capture it in the frames before the pause takes effect.
-    private func switchTarget() {
-        guard let controller, !picker.isVisible, pauseWatch == nil else { return }
-        let wasRecording = controller.phase == .recording || controller.phase == .starting
-        guard wasRecording else { return openSwitchPicker(resumeOnCancel: false) }
-        controller.pause()
-        pauseWatch = controller.$phase
-            .first { $0 != .recording && $0 != .starting }
-            .timeout(.seconds(Self.pauseConfirmSeconds), scheduler: DispatchQueue.main)
-            .receive(on: DispatchQueue.main)
-            .sink(receiveCompletion: { [weak self] _ in
-                guard let self, self.pauseWatch != nil else { return }
-                self.pauseWatch = nil
-                guard let controller = self.controller, controller.phase != .paused else { return }
-                if controller.phase == .recording || controller.phase == .starting {
-                    controller.notice = "The recording did not pause, so the picker stayed closed. Try Switch again."
-                }
-            }, receiveValue: { [weak self] phase in
-                guard let self else { return }
-                self.pauseWatch = nil
-                if phase == .paused { self.openSwitchPicker(resumeOnCancel: true) }
-            })
+    private func openPicker(_ kind: RecordingTargetKind?) {
+        presentPicker(kind)
+        refreshTargets()
+        if kind == .area { selectArea() }
     }
 
-    /// How long `switchTarget` waits for the recorder's pause before it gives up and keeps the picker closed.
-    static let pauseConfirmSeconds = 3
+    private func selectArea() {
+        guard let overlays else { return }
+        AreaSelector.begin(overlays: overlays, parent: picker.window) { [weak self] target in
+            if let target { self?.chose(target) }
+        }
+    }
 
-    private func openSwitchPicker(resumeOnCancel: Bool) {
-        guard let controls else { return }
-        let wasRecording = resumeOnCancel
+    private func refreshTargets() {
+        reading?.cancel()
+        reading = Task { [weak self, loadTargets] in
+            let next: RecordingTargetPicker.Load
+            do { next = .loaded(try await loadTargets().excluding(pids: [ProcessInfo.processInfo.processIdentifier])) }
+            catch { next = .failed("Could not list what to record: \(error.localizedDescription)") }
+            guard let self, !Task.isCancelled else { return }
+            reading = nil
+            if case let .loaded(loaded) = next {
+                targets = loaded
+                inventory.initial = loaded.defaultTarget(preferredPid: preferredPid)
+            }
+            if next != inventory.load { inventory.load = next }
+        }
+    }
+
+    private func presentPicker(_ kind: RecordingTargetKind?) {
+        guard let bar, let controls, let overlays, let host else { return }
+        let configuring = bar.phase == .setup
+        let accessory = configuring ? AnyView(VStack(alignment: .leading, spacing: 3) {
+            Label("Silent video · \(host.useTitle) when finished", systemImage: host.useSymbol)
+            if let widgetRate { Text("Widget frame rate override · \(widgetRate) fps") }
+        }.font(.caption).foregroundStyle(.secondary)) : nil
+        let view = WidgetPickerContent(inventory: inventory) { [weak self] load, initial in
+            RecordingTargetPicker(load: load, title: configuring ? "Choose what to record" : "Switch to",
+                                  initial: bar.setup.target ?? initial, onChoose: { [weak self] in self?.chose($0) },
+                                  onCancel: { [weak self] in self?.cancelPicker() },
+                                  onRetry: { [weak self] in self?.refreshTargets() }, restoring: kind == .area ? (.area, "") : nil,
+                                  accessory: accessory, footerHint: "↑ ↓ to browse · Return chooses · Esc cancels · \(RecordingPickerKey.tabLabels) tabs",
+                                  capabilities: bar.capabilities, overlays: overlays)
+        }
+        picker.closesOnFocusLoss = defaults.string(forKey: "recorder.picker.focusLoss") == "close"
         let frame = controls.window.frame
-        openPicker(title: "Switch to", anchor: CGPoint(x: frame.midX, y: frame.minY), preferredPid: nil,
-                   choose: { [weak self] target in
-                       self?.controller?.switchTo(target)
-                       self?.place(target)
-                   },
-                   cancel: { [weak self] in
-                       if wasRecording { self?.controller?.resume() }
-                   })
+        picker.present(view, near: CGPoint(x: frame.midX, y: frame.minY), focus: !forSnapshot) { [weak self] in self?.cancelPicker() }
+        if picker.window.parent !== controls.window { controls.window.addChildWindow(picker.window, ordered: .above) }
+        positionPicker()
     }
 
-    /// The dashed outline stands in for the recorder's own border until the first frame: it shows what was chosen
-    /// at once, also through a slow start. It follows the border setting.
-    private func renderOutline(phase: RecordingPhase, target: RecordingTarget?) {
-        guard let outline else { return }
-        let wanted = phase == .starting && settings.showsBorder ? target : nil
+    private func positionPicker() {
+        guard let parent = picker.window.parent, picker.isVisible, let visible = parent.screen?.visibleFrame else { return }
+        let size = picker.window.frame.size
+        let bottom = visible.minY + size.height + 4
+        if parent.frame.minY < bottom {
+            parent.setFrameOrigin(CGPoint(x: parent.frame.minX, y: min(visible.maxY - parent.frame.height, bottom)))
+        }
+        let x = min(parent.frame.midX - size.width / 2, visible.maxX - size.width)
+        picker.window.setFrameOrigin(CGPoint(x: max(visible.minX, x), y: max(visible.minY, parent.frame.minY - size.height - 4)))
+    }
+
+    private func chose(_ target: RecordingTarget) {
+        guard picker.window.parent != nil else { return }
+        detachPicker(keepChoicePulse: true)
+        bar?.endTargetSelection(target)
+    }
+
+    private func cancelPicker() {
+        let wasPicking = picker.window.parent != nil || waitingForPause != nil
+        detachPicker()
+        if wasPicking { bar?.endTargetSelection(nil) }
+    }
+
+    private func detachPicker(keepChoicePulse: Bool = false) {
+        waitingForPause?.cancel()
+        waitingForPause = nil
+        reading?.cancel()
+        reading = nil
+        picker.window.parent?.removeChildWindow(picker.window)
+        picker.dismiss()
+        picker.window.contentView = nil
+        if !keepChoicePulse { overlays?.dismiss() }
+    }
+
+    // MARK: Take and host
+
+    private func didChange(_ next: RecordingBarPhase) {
+        let previous = phase
+        phase = next
+        updateOutline(enabled: settings.showsBorder)
+        switch next {
+        case .countdown, .starting, .finishing:
+            if picker.window.parent != nil || waitingForPause != nil { detachPicker() }
+            if case .starting = next, !started {
+                started = true
+                host?.onStart()
+            }
+        case .setup:
+            if case .countdown = previous { break }
+            let onDiscard = host?.onDiscard
+            finish()
+            onDiscard?()
+        case let .done(url):
+            if let url { use(url) } else { fail("The recorder stopped without returning a movie.") }
+        case let .failed(message): fail(message)
+        default: break
+        }
+    }
+
+    private func rects(_ target: RecordingTarget) -> [CGRect] {
+        RecordingPickerGeometry.rects(target, windows: targets?.windows ?? [], screens: NSScreen.screens.map(\.frame))
+    }
+
+    private func updateOutline(enabled: Bool) {
+        let wanted: RecordingTarget?
+        if case .starting = phase, enabled { wanted = bar?.setup.target } else { wanted = nil }
         guard wanted != outlinedTarget else { return }
         outlinedTarget = wanted
-        guard let wanted else { return outline.hide() }
-        outline.show(outlineRects(wanted))
+        if let wanted { outline?.show(rects(wanted)) } else { outline?.hide() }
     }
 
-    private func outlineRects(_ target: RecordingTarget) -> [CGRect] {
-        guard let windows = listedWindows(target) else {
-            guard case let .display(index, _) = target, NSScreen.screens.indices.contains(index) else { return [] }
-            return [NSScreen.screens[index].frame]
-        }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        return windows.map { RecordingPanelLayout.cocoa(rect($0), primaryHeight: primaryHeight) }
-    }
-
-    private func place(_ target: RecordingTarget) {
-        guard let controls else { return }
-        var display: Int?
-        if case let .display(index, _) = target { display = index }
-        let bounds = listedWindows(target).flatMap { windows in
-            windows.map(rect).reduce(nil) { partial, rect in partial.map { $0.union(rect) } ?? rect }
-        }
-        controls.place(settings.placement, targetCG: bounds, displayIndex: display)
-    }
-
-    /// The listed windows a target records (CG points); nil for a display.
-    private func listedWindows(_ target: RecordingTarget) -> [RecordingWindow]? {
-        switch target {
-        case let .window(ids, _, _, _): return targets?.windows.filter { ids.contains($0.id) } ?? []
-        case let .app(app, _): return targets?.windows.filter { String($0.pid) == app } ?? []
-        case .display, .area, .displays: return nil
-        }
-    }
-
-    private func rect(_ window: RecordingWindow) -> CGRect {
-        CGRect(x: window.bounds.x, y: window.bounds.y, width: window.bounds.width, height: window.bounds.height)
+    private func didHide() {
+        if phase == .setup { finish() } else { cancelPicker() }
     }
 
     private func use(_ url: URL) {
-        guard let host else { return finish() }
+        guard let host, phase == .done(url), !delivering else { return }
+        delivering = true
+        detachPicker()
+        controls?.window.orderOut(nil)
         Task { [weak self] in
-            do {
-                try await host.onUse(url)
-            } catch {
-                host.onError("The recording is saved at \(url.path), but it could not be used: \(error.localizedDescription)")
-            }
+            do { try await host.onUse(url) }
+            catch { host.onError("The recording is saved at \(url.path), but it could not be used: \(error.localizedDescription)") }
             self?.finish()
         }
     }
 
-    private func failed(_ message: String, code: String?) {
+    private func fail(_ message: String) {
         let host = self.host
         finish()
-        if code == WidgetCaptureError.screenRecordingDenied, let host {
+        guard let host else { return }
+        if WidgetCaptureError.isScreenRecordingDenied(message: message) {
             let need = PermissionNeed(.screenRecording, reason: host.permissionReason, grantWorksInNewProcess: true)
-            Task { [permissionGate] in
-                if await permissionGate(need) { host.onError(message) }
-            }
-            return
+            Task { [permissionGate] in if await permissionGate(need) { host.onError(message) } }
+        } else {
+            host.onError(message)
         }
-        host?.onError(message)
     }
 
     private func finish() {
-        picker.dismiss()
-        controls?.close()
+        opening?.cancel()
+        opening = nil
+        observers.removeAll()
+        detachPicker()
+        controls?.window.close()
         controls = nil
         outline?.close()
         outline = nil
+        overlays = nil
         outlinedTarget = nil
-        controlsModel = nil
-        controllerWatch = nil
-        settingsWatch = nil
-        controller = nil
+        bar = nil
         host = nil
+        targets = nil
+        inventory.initial = nil
+        inventory.load = .loading
+        started = false
+        delivering = false
+        phase = nil
         isActive = false
         if Self.running === self { Self.running = nil }
     }

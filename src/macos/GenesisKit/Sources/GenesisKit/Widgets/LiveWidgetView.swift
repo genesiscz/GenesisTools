@@ -14,6 +14,36 @@ private struct WidgetOutgoingPosition: Equatable {
     let messageID: String?
 }
 
+private struct ComposerRecordingButton: View {
+    @ObservedObject var recorder: ScreenRecorder
+    let toggle: () -> Void
+
+    var body: some View {
+        switch recorder.phase {
+        case nil:
+            IconButton(systemName: "video", tooltip: ScreenRecorder.entryDetail, action: toggle)
+                .accessibilityLabel(ScreenRecorder.entryTitle)
+                .accessibilityHint(ScreenRecorder.entryDetail)
+        case .setup:
+            IconButton(systemName: "slider.horizontal.3", tooltip: "Show recording setup", action: recorder.showControls)
+                .accessibilityLabel("Show recording setup")
+        case .countdown, .starting:
+            IconButton(systemName: "hourglass", tooltip: "Recording is starting. Show controls", action: recorder.showControls)
+                .accessibilityLabel("Starting recording. Show controls")
+        case .recording, .paused:
+            IconButton(systemName: "stop.circle.fill", tooltip: "Stop the recording and paste it into the draft",
+                       tint: .red, action: toggle)
+                .accessibilityLabel("Stop and paste the recording")
+        case .finishing, .done:
+            ProgressView().controlSize(.small).frame(width: 22, height: 22)
+                .accessibilityLabel("Saving recording")
+        case .failed:
+            IconButton(systemName: "exclamationmark.circle", tooltip: "Recording failed", action: recorder.showControls)
+                .accessibilityLabel("Recording failed")
+        }
+    }
+}
+
 public struct LiveWidgetView: View {
     @ObservedObject var model: WidgetModel
     let edge: EdgePanelPlacement
@@ -1402,11 +1432,7 @@ public struct LiveWidgetView: View {
                 .accessibilityLabel("Paste media")
                 IconButton(systemName: "camera", tooltip: "Capture a screenshot", action: model.capture)
                     .accessibilityLabel("Capture screenshot")
-                IconButton(systemName: model.recordingVideo ? "stop.circle.fill" : "video",
-                           tooltip: model.recordingVideo ? "Stop the recording and paste it into the draft"
-                               : "Record a window, an app or a display (up to 10 min)",
-                           tint: model.recordingVideo ? Color.red : nil, action: model.toggleVideoCapture)
-                    .accessibilityLabel(model.recordingVideo ? "Stop and paste the recording" : "Record the screen")
+                ComposerRecordingButton(recorder: model.screenRecorder, toggle: model.toggleVideoCapture)
                 voiceButton
             }
             .disabled(parked != nil)
