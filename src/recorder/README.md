@@ -26,7 +26,7 @@ in front in the editor; with one window open, that one), a meeting id, a recordi
 Each command's `--help` names the forms it takes. Every command takes `--json`; where its help says "accepted for
 scripts", the answer is the same with or without it.
 
-Two clocks. SOURCE seconds are the recording as recorded: every op takes them, and a cut never moves them. OUTPUT
+Most edit times use source seconds. Layer fields named `startUs` or `endUs` use source microseconds. OUTPUT
 seconds are the edited movie, what plays after cuts and speed changes: `items-at`, `comment`, `edit --at`,
 `export --from/--to`, `subtitles --from/--to`, `still` and `sheet` (without `--source`) and the `range` op take them.
 A time is seconds, `m:ss` or `h:mm:ss`.
@@ -87,11 +87,8 @@ reach the capture; without them a movie keeps one rate. The countdown runs after
 a second from its start to the first frame, so the recorder starts as the last second begins, and the last second
 stays on screen ("Starting the recording…" past it) until the movie has its first frame, at most 10 s longer. Zero
 never shows before the movie records, so the first thing done after it is in the movie. The overlay is kept out of
-the movie (its sharing type, and its window id in the excluded windows); a frames recording, which cannot exclude
-windows, relies on the sharing type alone. The picker's countdown does the same: it starts `tools recorder start` as
-its last second begins and holds that number until the live entry has its first frame (`lastFrameAt`, which a movie
-sets at each segment's first frame and every second after it). Escape cancels the picker's countdown until the
-recorder starts.
+the movie through its sharing type and window ID. The native control bar runs its own countdown.
+It shows Starting… until the current take reports its first frame.
 
 With `--json`, `start` prints these events: `preparing` (the one-time ax-tool build), `countdown` (its seconds,
 before it runs), `started` (id, folder, liveId), `warning` (another recording runs), `state`, `error` and `result`.
@@ -393,23 +390,117 @@ planner is pure (`demoEditOps` in `lib/demo.ts`), so the result stays an ordinar
 again. Save a demo that worked as a preset and run it again with other values: `presets.save(…)` in the REPL,
 `tools node-repl preset run <name> --param key=value` from a shell ([node-repl](../node-repl/README.md), "Presets").
 
-### The capture picker (⌘7)
+### The recording control bar and target picker
 
-The recorder's menu bar item and a global shortcut (⌘7 by default) open one panel: what to record (a window, an app,
-a display, or "Select an area…" / ⌘4, a rectangle dragged on any display) and the recording's options in the same
-panel: countdown (on, 3 s), frame rate (60), the rate while still ("Same"), the change needed to leave it (0.5 %),
-system audio, microphone, the drawn cursor, the shortcuts overlay and the camera bubble. A choice runs
-`tools recorder start` with those flags, the one start path the menu uses too.
+Press ⌘7 or select **Capture Picker…** in the recorder menu. The picker opens below the control bar.
+The widget opens the same bar for a silent movie of up to ten minutes.
 
-The panel's Shortcuts section rebinds or turns off each global shortcut: open the picker (⌘7), start with the
-picker's options without it (⌥⌘7), stop (⌥⌘8), pause or resume (⌥⌘9) and mark (⌥⌘0). Stop, pause and mark hold
-their keys only while a recording runs, unless "Hold stop, pause and mark keys" is on. The shortcuts work in any app
-while the recorder's menu bar item runs. `GenesisTools --recorder --picker` opens the picker; with `--no-focus` (or the
-service's `window.show { which: "picker", focus: false }`) it comes to the front without taking the keyboard from the
-app in front, and its first click takes it.
+| Picker tab | Action |
+|---|---|
+| Windows (⌘1) | Choose a window from the list. |
+| Apps (⌘2) | Choose an app to record its windows. |
+| Displays (⌘3) | Check the displays and confirm the selection. One display makes a movie. Several displays use frames capture in the full recorder. |
+| Area (⌘4) | Drag a rectangle of at least 16 by 16 points. Escape returns to the picker with the filter and draft intact. |
+| Pick a window (⌘5) | Click a window on the desktop. Escape cancels the selection. |
 
-While a recording runs, the menu bar item and the floating controls (hidden from the capture) control it, and so do
-`tools recorder stop` and the REPL.
+Hover over a row or move the highlight with the arrow keys. After 120 ms, the accent outline pulses twice.
+The outline then stays on the target until the highlight moves. A choice can bring a background window forward.
+The picker requests a confirmation pulse after the choice. The full recorder currently clears the overlay when it closes the picker.
+Reduce Motion uses a steady outline.
+
+**Setup.** Select a target and check the sources on the first row. A choice sets the target in the bar.
+Press **Record** to start. The full recorder can also follow the display in use.
+Select **Lock to This Display** to keep one display. Close setup to cancel draft changes.
+Select **Save as Defaults** to keep them for later takes.
+
+**Countdown and start.** Cancel is available during the countdown and while the recorder waits for a frame.
+The bar shows **Still waiting** if the first frame takes longer than the configured delay.
+The clock starts when this take reports its first frame.
+
+**Recording and paused.** Use Pause, Resume or Stop. Space pauses or resumes when the bar has keyboard focus.
+Command-period stops the take. Opening the target picker during capture pauses the take.
+Choose or cancel to resume a pause that the picker started. A manual pause stays in effect until Resume.
+A live control shows the change after the engine accepts it. A disabled control gives its reason on hover and through VoiceOver.
+
+**Saving and done.** Stop shows **Saving…**. A Stop failure on the bar offers **Retry Stop** for the same take.
+After a successful save, the full recorder offers **Open in editor**, **Show in Finder** and **New recording**.
+The widget sends the movie to the composer or the shelf. A start failure shows its reason in the bar of the full recorder.
+
+The first row has the target, microphone, input menu, system audio, camera and active frame rate.
+Select **…** to show the other rows. The video row has Quality, While still, Change needed, Countdown, Cursor and placement.
+The device row has camera size and shape, microphone inputs, the system output and Displays….
+The output is read-only. The expanded bar also has Add marker, Restart and Discard during a take.
+
+In the REPL, attach to the take with `const r = await recorder.attach("LIVE_ID")`.
+Get the live ID with `tools recorder list --live --json`.
+For a control without a direct recorder command, use this shell function.
+Replace `LIVE_ID` with the ID of your take.
+
+```sh
+live() {
+    tools node-repl run --toolset recorder "const r = await recorder.attach('LIVE_ID'); await r.$1"
+}
+```
+
+| Control | REPL call | CLI command |
+|---|---|---|
+| Available controls and reasons | `r.capabilities()` | `live 'capabilities()'` |
+| State and time | `r.status()` | `tools recorder status LIVE_ID` |
+| Pause or resume | `r.pause()`, `r.resume()` | `tools recorder pause LIVE_ID`, `tools recorder resume LIVE_ID` |
+| Stop or retry Stop | `r.stop()` | `tools recorder stop LIVE_ID` |
+| Restart or discard | `r.restart()`, `r.discard()` | `live 'restart()'`, `live 'discard()'` |
+| Switch target | `r.switchTarget({ window: 42 })` | `live 'switchTarget({ window: 42 })'` |
+| Lock to one display | `r.displays.switch(displayId)` | `live 'displays.switch(37)'` |
+| List, add or remove displays | `r.displays.list()`, `r.displays.add(displayId)`, `r.displays.remove(displayId)` | `live 'displays.list()'`, `live 'displays.add(37)'`, `live 'displays.remove(37)'` |
+| Mute or restore a sound source | `r.audio.mute("mic")`, `r.audio.unmute("mic")`. Use `"system"` for system sound. | `live 'audio.mute("mic")'`, `live 'audio.unmute("mic")'` |
+| Read inputs and outputs or select a microphone | `r.audio.list()`, `r.audio.setInput(deviceId)` | `live 'audio.list()'`, `live 'audio.setInput("INPUT_UID")'` |
+| Read or change the active and still rates | `r.settings()`, `r.set({ fps: 30, idleFps: 2 })` | `live 'settings()'`, `live 'set({ fps: 30, idleFps: 2 })'` |
+| Add a marker | `r.mark("Step 1")` | `tools recorder mark "Step 1" LIVE_ID` |
+
+Use the display IDs from `r.displays.list()` in place of 37. Use an input ID from `r.audio.list()` in place of `INPUT_UID`.
+The service forwards `switchTarget` as `target.switch`. It forwards `restart` as `restart` through `recording.call`.
+The Area tab uses `--region` at movie start. A live area switch uses a tagged target such as
+`r.switchTarget({ kind: "region", x: 20, y: 30, width: 640, height: 480 })`.
+The rate call takes `fps` in the REPL. The `settings.set` RPC takes `activeFps`.
+
+Select the sources before you start. A full recorder window or app movie has no audio track.
+Choose **Select an Area** or a display for a movie with sound. The movie engine keeps its start-time audio settings.
+A frames take can mute a source or switch the microphone when it has the track and the live command.
+The widget records silent video. Its bar disables the camera and Add marker.
+The camera starts with a movie. The bar disables Change needed when both frame rates are equal.
+“This take” identifies a live edit. “Next recording” identifies a setting to choose before capture.
+Restart replaces the current take. Discard ends it without saving.
+
+| Setup or result | REPL | CLI |
+|---|---|---|
+| Record a movie with sound and camera | `movies.record({ display: 0, audio: ["system", "mic"], camera: true })` | `tools recorder start --display 0 --audio system,mic --camera` |
+| Select a microphone at start | `movies.record({ display: 0, audio: ["mic"], micDevice: uid })` | `tools recorder start --display 0 --audio mic --mic-device UID` |
+| Record several displays | `recorder.start({ displays: "all" })` | `tools recorder start --frames --displays all` |
+| Quality for frames (High, Max) | `recorder.start({ maxLongSide: 3840 })` or `16384` | `tools recorder start --frames --max-long-side 3840` or `16384`. Movies require Standard. |
+| Countdown, change threshold and system cursor | `movies.record({ countdown: 3, idleFps: 2, threshold: 0.5, systemCursor: true })` | `tools recorder start --countdown 3 --idle-fps 2 --threshold 0.5 --system-cursor` |
+| Open a saved movie or show it in Finder | `m.show()`, `m.reveal()` on the open Movie handle | `tools recorder edit last`, `tools recorder reveal last` |
+
+Set camera size and shape in setup. The picker, expansion, placement, hiding the bar and saving defaults are native controls.
+The bar starts at 60 fps with While still set to Same. The default threshold is 0.5 percent.
+The countdown starts at 3 seconds. The microphone, system audio and camera default to off.
+The camera defaults to a 200 pt circle. The widget shows a saved frame rate override in its picker.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `recorder.picker.choiceStarts` | `false` | Start on choice in full recorder setup. The widget always waits for Record. |
+| `recorder.picker.pulse` | `hoverAndChoice` | Use `choiceOnly` for selection only. Use `off` to turn off the outline. |
+| `recorder.picker.frontChosenWindow` | `true` | Bring a selected background window forward. |
+| `recorder.picker.focusLoss` | `stayOpen` | Use `close` to close the picker when it loses focus. |
+| `recorder.bar.placement` | `nearTarget` | Use the saved placement from `recording.panelPlacement` if the bar has no setting. |
+| `recorder.bar.expandedByDefault` | `false` | Start with the extra rows closed. |
+| `recorder.bar.startWaitSeconds` | `5` | Show “Still waiting” after this many seconds without a first frame. |
+| `recorder.bar.noticeSeconds` | `4` | Clear a temporary notice after this many seconds. A Stop failure keeps its retry action. |
+| `recorder.bar.forForeignRecordings` | `false` | Use compact controls for a recording that starts elsewhere. Turn this on to use the full bar for a compatible recording. |
+| `recording.confirmsDiscard` | `true` | Ask for confirmation before Restart or Discard on the bar. |
+
+Open **Recorder Settings and Shortcuts…** to change the global shortcuts.
+The defaults are ⌘7 for the picker, ⌥⌘7 for direct start, ⌥⌘8 for Stop, ⌥⌘9 for Pause or Resume, and ⌥⌘0 for a marker.
+`GenesisTools --recorder --picker --no-focus` opens the picker without taking keyboard focus.
 
 ### Camera bubble
 
@@ -599,6 +690,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `music {file?, volume?, duck?, fadeMs?, enabled?}`; the Audio tab's Music section. Also `voiceovers` (sound files
   placed at source times, so they move with cuts), `ducking` (decibels quieter under speech, which replaces `duck`
   once set) and `denoise`.
+- `audio.lanes` holds the saved sound mix. `layers.media` holds added images and videos.
+  `layers.order` lists the layer IDs from bottom to top. The camera retains its settings in `camera`.
 - `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4), `subtitles` (`srt`
   or `vtt`: a subtitle file beside every export, from the cached transcript with its fixes, in the movie's time;
   absent is none; `exportSettings {subtitles: "none"}` stops it), `chapters` (absent is on: an MP4 gets the
@@ -632,8 +725,9 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 
 ### Ops (`tools recorder apply`, `movie.apply`)
 
-Ops apply in order to the file as it is now and save once. Times are source seconds or `"mm:ss"` (the `range` op
-takes OUTPUT times). `help("movies")` in the REPL documents each op's fields. The 75 ops by job:
+The editor applies the ops in order and saves once. Most times use source seconds or `"mm:ss"`.
+The `range` op uses output time. Layer fields named `startUs` or `endUs` use source microseconds.
+Use `help("movies")` in the REPL for the fields of each op.
 
 - Time: `split {at}`, `cut {from,to}`, `keep {from,to}`, `speed {from,to,factor}`, `trim`, `deleteClip`,
   `clipSpeed`, `removeIdle {minSeconds? 2, keepSeconds? 0.3, speed?}` (`speed` 2 to 16 plays the still parts faster instead of
@@ -675,6 +769,46 @@ as a REPL call (`fix`) and as edit ops (`action.ops`). An edit whose cut causes 
 to the nearest kept moment, lengthens what is too short to read, moves a text off another) in one save and one undo
 step; the Export tab's Fix All does the same, and its Remove, Move, Lengthen and Move After buttons run one issue's ops
 through `tools recorder apply`.
+
+### Sound lanes and the layer stack
+
+Use the timeline or the Audio tab to change a lane's mute state or volume.
+A volume of 0 is silent. A volume of 1 keeps the recorded level. The maximum is 2.
+Select **Add Image or Video…** or drop a file on the preview to add a layer at the playhead.
+Drag a layer row or use its context menu to change the drawing order.
+A move accepts `top`, `bottom`, `up`, `down` or a numeric index. Index 0 is the bottom.
+Use the eye control to hide a layer.
+
+Open the edit with `const m = await movies.open("last")`. List its lanes with `await m.audioLanes()`.
+The Microphone source file has the ID `mic`. The System sound source file has the ID `system`.
+These files replace the mixed track in a frames recording.
+A movie track has the ID `movie-0`, `movie-1`, and so on.
+A voiceover uses its clip ID. The music lane uses `music`.
+A mute or volume change applies to the whole lane.
+
+List the layers with `await m.layers()`. This call returns the IDs from bottom to top.
+The timeline shows the top layer first. The camera has the ID `camera` when the edit has a camera file.
+Each image or video has its own ID. Use the ID from `addLayer` or `layers()` for later changes.
+
+Pass each JSON example as one shell argument, as in `tools recorder apply last '{"op":"audioLane","id":"mic","muted":true}'`.
+Use the path to your image for `logo.png`. Replace `l12345678` with its ID from `layers.media` in the CLI result.
+
+| Operation | JSON for the CLI | Movie handle |
+|---|---|---|
+| Mute the microphone lane | `{"op":"audioLane","id":"mic","muted":true}` | `await m.audioLane("mic", { muted: true })` |
+| Add an image above the other layers | `{"op":"layerAdd","kind":"image","file":"logo.png"}` | `const id = await m.addLayer("logo.png", { kind: "image" })` |
+| Hide the camera | `{"op":"layer","id":"camera","hidden":true}` | `await m.layer("camera", { hidden: true })` |
+| Move the image below the other layers | `{"op":"layerMove","id":"l12345678","to":"bottom"}` | `await m.moveLayer(id, "bottom")` |
+| Remove the image | `{"op":"layerRemove","id":"l12345678"}` | `await m.removeLayer(id)` |
+
+To hide the camera, use `layer {id: "camera", hidden: true}`.
+The editor refuses to delete the camera. Set `hidden` to `false` to show it again.
+
+Layer times `startUs` and `endUs` use source microseconds.
+An image defaults to five seconds. A video defaults to its length. The source end limits both.
+The timeline shows sound lanes by default (`recorder.editor.soundLanesShown` is `true`).
+A dropped layer defaults to the centre at 35 percent of the canvas width.
+The default value of `recorder.editor.layerDropDefaults` is `{ width: 0.35, at: "centre" }`.
 
 ### Export
 
@@ -726,7 +860,7 @@ The recorder has no config file. Its choices live in GenesisTools.app's Settings
 - **Recording**: the capture picker's options (countdown, frame rates, change threshold), what the movie keeps
   (system audio, microphone, the drawn cursor, ⌘ and ⌃ shortcuts), the camera bubble, the global shortcuts with "Hold
   stop, pause and mark keys", and the menu bar item. They apply to the next recording, also one started from the menu
-  bar or a shortcut.
+  bar or a shortcut. Use the control bar to change the rate of the current take.
 - **Recording editor**: the timeline (snap while dragging, a tap when snapping, single-key shortcuts, what a dragged
   range does), what an open editor does when the CLI or an agent changes the edit (a banner, flash the changed items,
   move the playhead), the choices the Clip, Captions and Export tabs keep (`recorder.captions.fillerLevel`, show the
@@ -783,8 +917,8 @@ const area = await movies.record({ region: "0,0,1280,800", idleFps: 1, threshold
 `hideText`, …) and the reads and actions of the CLI (`info`, `check`, `fix`, `sheet`, `still`, `itemsAt`, `events`,
 `snap`, `waits`, `privateData`, `findText`, `verifyHidden`, `transcript`, `say`, `export`, `subtitles`, `comment`,
 `duplicate`, `trash`, …). `movie.trash()` refuses when the removal policy would ask, and asks no one; only
-`tools recorder trash`, run as a command, files the request. Every edit call answers `summary` (the edit after it) and
-`changed` (what it did). A
+`tools recorder trash`, run as a command, files the request. `movie.apply(ops)` returns `summary` and `changed`.
+`movie.addLayer(file)` returns the new layer ID. A
 `MovieRecording` has `status`, `pause`, `resume`, `mark`, `settings`, `setSettings` and `stop`.
 
 The flags of `start`, their limits and their parse live once in `lib/start-options.ts`: `tools recorder start`

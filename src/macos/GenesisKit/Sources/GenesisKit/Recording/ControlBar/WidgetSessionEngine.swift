@@ -4,7 +4,8 @@ import Foundation
 @MainActor
 public final class WidgetSessionEngine: RecordingEngineAdapter {
     /// A change to active FPS, idle FPS or the motion threshold starts a new segment, or waits for Resume when paused.
-    public let capabilities = RecordingCapabilities(
+    public var capabilities: RecordingCapabilities { Self.movieCapabilities }
+    public static let movieCapabilities = RecordingCapabilities(
         targets: [.window, .app, .display, .area], liveTargetSwitch: true, liveFrameRate: true,
         maxDurationMs: RecordingSessionController.maximumDurationMs, reasonUnavailable: [
             "displays": "Record several displays with the full recorder (⌘7).",

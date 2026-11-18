@@ -95,12 +95,15 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     }
 
     var capabilities: RecordingCapabilities {
-        let methods = entry.map { Set($0.controls) }
+        Self.capabilities(methods: entry.map { Set($0.controls) }, recordedSources: recordedSources)
+    }
+
+    static func capabilities(methods: Set<String>?, recordedSources: Set<LiveRecordingCommand.Source>) -> RecordingCapabilities {
         func supports(_ name: String) -> Bool { methods?.contains(name) ?? true }
         let frames = methods?.contains("displays.add") == true
         var targets = Set(RecordingTargetKind.allCases)
         if frames { targets = [.display, .displays] }
-        else if entry != nil { targets.remove(.displays) }
+        else if methods != nil { targets.remove(.displays) }
         // A window or app movie never carries sound in this recorder, before a take as well as during it.
         var reasons = [
             "camera": "The camera starts with the recording",
@@ -113,8 +116,8 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
             reasons["systemAudio"] = reasons["microphone"]
         }
         if !supports("audio.setInput") { reasons["microphoneDevice"] = "This recorder keeps the microphone chosen at start." }
-        let mic = entry == nil || recordedSources.contains(.mic)
-        let system = entry == nil || recordedSources.contains(.system)
+        let mic = methods == nil || recordedSources.contains(.mic)
+        let system = methods == nil || recordedSources.contains(.system)
         if !mic { reasons["microphone"] = "This take has no microphone track." }
         if !system { reasons["systemAudio"] = "This take has no system audio track." }
         return RecordingCapabilities(targets: targets, liveTargetSwitch: supports("target.switch") || frames,

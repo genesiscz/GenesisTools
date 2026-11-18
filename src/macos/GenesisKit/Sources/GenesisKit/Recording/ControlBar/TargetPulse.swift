@@ -12,6 +12,7 @@ public final class TargetPulse {
 
     private static let animationKey = "recording.targetPulse"
     private static let animationDuration: CFTimeInterval = 0.9
+    private static let peakWidth: CGFloat = 4
     private let overlays: [Overlay]
     private let reduceMotion: () -> Bool
     private let installCompletion: (@escaping @MainActor () -> Void) -> Void
@@ -135,8 +136,7 @@ public final class TargetPulse {
             for rect in rects where !rect.intersection(overlay.screen).isEmpty {
                 // The window clips the complete border. Stroking the intersection would draw a seam between displays.
                 let local = rect.offsetBy(dx: -overlay.screen.minX, dy: -overlay.screen.minY)
-                let radius = min(8, min(local.width, local.height) / 2)
-                path.addRoundedRect(in: local, cornerWidth: radius, cornerHeight: radius)
+                Self.addOutline(local, to: path)
             }
             let stroke = overlay.stroke
             stroke.removeAnimation(forKey: Self.animationKey)
@@ -157,12 +157,33 @@ public final class TargetPulse {
         }
     }
 
+    private static func addOutline(_ rect: CGRect, to path: CGMutablePath) {
+        let radius = min(8, min(rect.width, rect.height) / 2)
+        path.addRoundedRect(in: rect, cornerWidth: radius, cornerHeight: radius)
+    }
+
+    /// Draw the peak of a hover beat into an offscreen fixture instead of ordering a screen overlay.
+    public static func still(size: CGSize, rect: CGRect) -> NSView {
+        let view = NSView(frame: CGRect(origin: .zero, size: size))
+        view.wantsLayer = true
+        let path = CGMutablePath()
+        addOutline(rect, to: path)
+        let stroke = CAShapeLayer()
+        stroke.frame = view.bounds
+        stroke.path = path
+        stroke.fillColor = nil
+        stroke.strokeColor = NSColor.controlAccentColor.cgColor
+        stroke.lineWidth = peakWidth
+        view.layer?.addSublayer(stroke)
+        return view
+    }
+
     /// Both properties share the same two peaks and settle at their model-layer values.
     private static func beats() -> CAAnimationGroup {
         let opacity = CAKeyframeAnimation(keyPath: "opacity")
         opacity.values = [0.75, 1, 0.75, 1, 0.75]
         let width = CAKeyframeAnimation(keyPath: "lineWidth")
-        width.values = [1.5, 4, 1.5, 4, 1.5]
+        width.values = [1.5, peakWidth, 1.5, peakWidth, 1.5]
         for track in [opacity, width] {
             track.keyTimes = [0, 0.22, 0.5, 0.72, 1]
             track.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)

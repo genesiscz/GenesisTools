@@ -78,6 +78,7 @@ struct LayerRowsView: View {
     @State private var renaming: EditorLayerRow?
     @State private var name = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.snapshotLayerMenu) private var snapshotLayerMenu
 
     var body: some View {
         LazyVStack(spacing: 0) {
@@ -122,6 +123,13 @@ struct LayerRowsView: View {
                     if over { target = row.id } else if target == row.id { target = nil }
                 }
                 .contextMenu { actions(row) }
+                .background {
+                    if snapshotLayerMenu == row.id {
+                        Color.clear.anchorPreference(key: LayerMenuStill.self, value: .bounds) { bounds in
+                            LayerMenuStill.Menu(bounds: bounds, commands: AnyView(actions(row)))
+                        }
+                    }
+                }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(row.name)
                 .accessibilityValue(row.hidden ? "hidden" : "visible")
