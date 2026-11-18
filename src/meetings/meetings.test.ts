@@ -112,6 +112,7 @@ import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./
 import { InProcessMeetingsClient } from "./lib/service/client";
 import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
+import { audioRowZeroMs, readAudioRows } from "./lib/sound";
 import { preservedSourceAudio, preserveSourceAudio } from "./lib/source-audio";
 import {
     addPolish,
@@ -5866,6 +5867,148 @@ test("characterization (stage 5): a live recorder's claim is refused and left as
     expect(readFileSync(files.pid, "utf8")).toBe(before);
     expect(existsSync(files.state)).toBe(false);
 });
+
+/** Three frame pieces on a generated sample clock. Each frame releases the corresponding sound segment. */
+async function recordSoundTimeline(interrupted: boolean) {
+    const store = new MeetingStore(new Storage(interrupted ? "sound-timeline-restart" : "sound-timeline"));
+    const zero = Date.now();
+    const iso = (offset: number) => new Date(zero + offset).toISOString();
+    const record = await store.create(
+        { title: "Sound timeline", start: iso(-3500), createdBy: "record" },
+        { command: "test", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    if (interrupted) {
+        // A closed file survived a recorder crash. No frame or sound was kept during the next 2.5 seconds.
+        await store.update(record.id, { command: "test", change: "interrupted run" }, (next) => {
+            next.recording = { status: "recording", startedAt: iso(-3500), spans: [{ from: iso(-3500) }] };
+        });
+        mkdirSync(join(folder, "audio"), { recursive: true });
+        const file = "audio/earlier-mic.m4a";
+        writeFileSync(join(folder, file), "previous file");
+        writeFileSync(
+            join(folder, "audio.jsonl"),
+            SafeJSON.stringify({
+                file,
+                source: "mic",
+                at: iso(-3500),
+                zeroAt: iso(-3500),
+                durationMs: 1000,
+                mutedSpans: [],
+            }) + "\n"
+        );
+    }
+
+    const liveDir = mkdtempSync(join(tmpdir(), "meeting-timeline-live-"));
+    const third = Promise.withResolvers<void>();
+    const allSound = Promise.withResolvers<void>();
+    const requests: CaptureRequest[] = [];
+    let starts = 0;
+    let segments = 0;
+    class TimelineRecorder extends NativeFrameRecorder {
+        override startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+            starts++;
+            return super.startAudioSession({
+                ...options,
+                onSegment: (row) => {
+                    options.onSegment?.(row);
+                    if (++segments === 6) {
+                        allSound.resolve();
+                    }
+                },
+            });
+        }
+
+        override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+            const piece = requests.push(request);
+            const path = join(request.outDir, "keep.png");
+            writeFileSync(path, "png");
+            writeFileSync(join(folder, ".piece", `frame-${piece}`), "");
+            if (piece === 3) {
+                third.resolve();
+                if (!signal?.aborted) {
+                    await new Promise<void>((resolve) =>
+                        signal?.addEventListener("abort", () => resolve(), { once: true })
+                    );
+                }
+            }
+            return {
+                startedAtMs: zero + (piece - 1) * 30_000,
+                frames: [{ path, atMs: 0, displayId: 1, changePercent: 10, reason: "first" }],
+            };
+        }
+    }
+    const recorder = new TimelineRecorder({
+        axTool: async () => [
+            process.execPath,
+            join(moduleDir(import.meta), "../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),
+            `--fixture-meeting-timeline=${zero}`,
+        ],
+        launch: (argv) => argv,
+    });
+    const capture = meetingsConfigSchema.parse({
+        global: {
+            capture: {
+                displays: "main",
+                ...(interrupted ? { recorders: { native: { audio: { mode: "session" } } } } : {}),
+            },
+        },
+    }).global.capture;
+    const running = runRecorder({
+        store,
+        meetingId: record.id,
+        capture,
+        deps: {
+            recorder,
+            liveDir,
+            startOcr: () => undefined,
+            notify: async () => {},
+            toJpeg: async (_png, jpg) => {
+                await Bun.write(jpg, "jpeg");
+            },
+        },
+    });
+    try {
+        await withTimeout(third.promise, 5000, new Error("missing third frame piece"));
+        expect(starts).toBe(1);
+        expect(requests.map((request) => request.audio)).toEqual([undefined, undefined, undefined]);
+        await withTimeout(allSound.promise, 5000, new Error("missing continuous sound"));
+    } finally {
+        await callRecorder({ id: meetingLiveId(record.id), method: "stop", dir: liveDir });
+        await running;
+    }
+    return { folder, zero, rows: readAudioRows(folder), frames: store.read(record.id)?.recording?.frames };
+}
+
+test("default meeting sound covers two frame piece restarts without a gap", async () => {
+    const { rows, folder, zero, frames } = await recordSoundTimeline(false);
+    expect(frames).toBe(3);
+    for (const source of ["mic", "system"]) {
+        const tracks = rows.filter((row) => row.source === source);
+        expect(tracks.map((row) => audioRowZeroMs(row) - zero)).toEqual([0, 30_000, 60_000]);
+        let samples = 0;
+        for (const row of tracks) {
+            const pcm = readFileSync(join(folder, row.file));
+            expect(pcm.toString("ascii", 0, 4)).toBe("RIFF");
+            expect(pcm.readUInt32LE(24)).toBe(16_000);
+            expect(pcm.length - 44).toBe(row.durationMs * 16 * 2);
+            expect(row.lostSpans ?? []).toEqual([]);
+            samples += (pcm.length - 44) / 2;
+        }
+        expect(samples).toBe(1_440_000);
+        out.result(`${source}: ${samples / 16_000}/90 s, 3 pieces, 0 ms missing`);
+    }
+}, 15_000);
+
+test("an interrupted recorder writes the uncovered sound span and its reason", async () => {
+    const { rows } = await recordSoundTimeline(true);
+    expect(rows.find((row) => row.file === "audio/earlier-mic.m4a")).toMatchObject({
+        durationMs: 1000,
+        lostSpans: [[1000, 3500]],
+        lostSpanReasons: ["recorder interrupted"],
+    });
+    expect(rows.filter((row) => row.source === "system").every((row) => !row.lostSpans?.length)).toBe(true);
+}, 15_000);
 
 test("native sound mode and each fallback reach live status, the meeting record and recorder-last.json", async () => {
     for (const [mode, fixture, reason] of [

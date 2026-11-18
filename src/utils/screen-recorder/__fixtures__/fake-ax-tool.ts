@@ -7,6 +7,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 
@@ -82,6 +83,26 @@ if (args[0] === "screens") {
 
 const value = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const outDir = value("--out") ?? ".";
+
+/** Decodable mono PCM under the native track name, for file-clock and recovery fixtures. */
+function fixturePcm(durationMs: number): Buffer {
+    const bytes = durationMs * 16 * 2;
+    const sound = Buffer.alloc(44 + bytes);
+    sound.write("RIFF", 0);
+    sound.writeUInt32LE(sound.length - 8, 4);
+    sound.write("WAVEfmt ", 8);
+    sound.writeUInt32LE(16, 16);
+    sound.writeUInt16LE(1, 20);
+    sound.writeUInt16LE(1, 22);
+    sound.writeUInt32LE(16_000, 24);
+    sound.writeUInt32LE(32_000, 28);
+    sound.writeUInt16LE(2, 32);
+    sound.writeUInt16LE(16, 34);
+    sound.write("data", 36);
+    sound.writeUInt32LE(bytes, 40);
+    return sound;
+}
+
 if (args[0] === "audio-record" && args.includes("--monitor")) {
     print({ event: "state", state: "recording", sources: ["mic", "system"] }, "stderr");
     print(
@@ -109,7 +130,8 @@ if (args[0] === "audio-record") {
         mic: initiallyMuted.includes("mic"),
         system: initiallyMuted.includes("system"),
     };
-    const start = Date.parse("2026-11-03T12:00:00.000Z");
+    const timeline = fixtureMode?.match(/^--fixture-meeting-timeline=(\d+)$/);
+    const start = timeline ? Number(timeline[1]) : Date.parse("2026-11-03T12:00:00.000Z");
     let sequence = 0;
     let position = 0;
     let paused = args.includes("--paused");
@@ -121,8 +143,8 @@ if (args[0] === "audio-record") {
         sequence += 1;
         for (const source of sources) {
             const file = `audio-${String(sequence).padStart(6, "0")}-${source}.m4a`;
-            writeFileSync(join(outDir, file), "invented sound");
-            const at = new Date(start + (sequence - 1) * 60_000).toISOString();
+            writeFileSync(join(outDir, file), timeline ? fixturePcm(durationMs) : "invented sound");
+            const at = new Date(start + (sequence - 1) * (timeline ? 30_000 : 60_000)).toISOString();
             openSegment(file, source, at);
             print({
                 file,
@@ -179,23 +201,18 @@ if (args[0] === "audio-record") {
             emitSegment(60_000);
         }
     }
+    if (timeline) {
+        for (let piece = 1; piece <= 3; piece++) {
+            if (!(await waitForPath(join(outDir, "..", `frame-${piece}`), { timeoutMs: 5000 }))) {
+                throw new Error(`frame piece ${piece} did not start`);
+            }
+            emitSegment(30_000);
+        }
+    }
     if (fixtureMode === "--fixture-audio-crash") {
         // A decodable 1.25 s file under the native name: recovery must ignore its unrelated file times.
-        const sound = Buffer.alloc(44 + 40_000);
-        sound.write("RIFF", 0);
-        sound.writeUInt32LE(sound.length - 8, 4);
-        sound.write("WAVEfmt ", 8);
-        sound.writeUInt32LE(16, 16);
-        sound.writeUInt16LE(1, 20);
-        sound.writeUInt16LE(1, 22);
-        sound.writeUInt32LE(16_000, 24);
-        sound.writeUInt32LE(32_000, 28);
-        sound.writeUInt16LE(2, 32);
-        sound.writeUInt16LE(16, 34);
-        sound.write("data", 36);
-        sound.writeUInt32LE(40_000, 40);
         const file = "audio-000001-system.m4a";
-        writeFileSync(join(outDir, file), sound);
+        writeFileSync(join(outDir, file), fixturePcm(1250));
         openSegment(file, "system", new Date(start + 700).toISOString());
         process.exit(1);
     }
@@ -221,7 +238,7 @@ if (args[0] === "audio-record") {
             if (
                 !paused &&
                 !(
-                    (fixtureMode === "--fixture-audio-three" || fixtureMode === "--fixture-audio-loss") &&
+                    (timeline || fixtureMode === "--fixture-audio-three" || fixtureMode === "--fixture-audio-loss") &&
                     command.cmd === "stop" &&
                     position === 0
                 )
