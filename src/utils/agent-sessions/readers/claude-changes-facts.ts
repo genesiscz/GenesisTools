@@ -278,6 +278,7 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
         }
     }
     const byTime = (a: WindowWriter, b: WindowWriter) => (a.at ?? 0) - (b.at ?? 0);
+    wildcards.sort(byTime);
     const sorted = new Map<string, WindowWriter[]>();
     return {
         cwds: [...cwds],
@@ -286,9 +287,13 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
         calls,
         ambiguous,
         writersOf(path: string): readonly WindowWriter[] {
+            const direct = writers.get(path);
+            if (!direct) {
+                return wildcards;
+            }
             let list = sorted.get(path);
             if (!list) {
-                list = [...(writers.get(path) ?? []), ...wildcards].sort(byTime);
+                list = [...direct, ...wildcards].sort(byTime);
                 sorted.set(path, list);
             }
             return list;

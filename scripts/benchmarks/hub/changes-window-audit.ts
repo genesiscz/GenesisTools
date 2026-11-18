@@ -1,32 +1,48 @@
 #!/usr/bin/env bun
-import { readdirSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { auditClaudeChanges, auditClaudeFacts } from "@genesiscz/utils/agent-sessions/readers/claude-changes-audit";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 
+// The public audit output is counts only, even on a machine with verbose stderr logging enabled.
+logger.level = "silent";
 const files: Array<{ path: string; size: number; mtime: number }> = [];
 let unreadable = 0;
 for (const root of nativeSessionRoots("claude")) {
+    let projects: Dirent[];
     try {
-        for (const project of readdirSync(root, { withFileTypes: true })) {
-            if (!project.isDirectory()) {
-                continue;
-            }
-            const folder = join(root, project.name);
-            for (const name of readdirSync(folder)) {
-                if (!/\.jsonl(?:\.zst)?$/.test(name) || name.startsWith("agent-") || name === "sessions-index.jsonl") {
-                    continue;
-                }
-                const path = join(folder, name);
-                const { size, mtimeMs } = statSync(path);
-                files.push({ path, size, mtime: mtimeMs });
-            }
-        }
+        projects = readdirSync(root, { withFileTypes: true });
     } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
             unreadable++;
+        }
+        continue;
+    }
+    for (const project of projects) {
+        if (!project.isDirectory()) {
+            continue;
+        }
+        const folder = join(root, project.name);
+        let names: string[];
+        try {
+            names = readdirSync(folder);
+        } catch {
+            unreadable++;
+            continue;
+        }
+        for (const name of names) {
+            if (!/\.jsonl(?:\.zst)?$/.test(name) || name.startsWith("agent-") || name === "sessions-index.jsonl") {
+                continue;
+            }
+            const path = join(folder, name);
+            try {
+                const { size, mtimeMs } = statSync(path);
+                files.push({ path, size, mtime: mtimeMs });
+            } catch {
+                unreadable++;
+            }
         }
     }
 }
