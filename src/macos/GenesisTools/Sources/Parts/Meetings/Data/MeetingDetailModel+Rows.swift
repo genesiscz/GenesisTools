@@ -717,8 +717,10 @@ extension MeetingDetailModel {
         case "reopen":
             return ["reopen", meeting] + (action.items ?? []) + why + ["--json"]
         case "answer":
-            // The command passes excluded items and the earlier answer's token through to the same journal.
-            guard let question = action.question, let answer = action.answer, action.lookAlikes == nil else {
+            // The short listen command handles plain answers. Send richer ones intact to the journal,
+            // including a comment with no answer and the precise word where the second speaker begins.
+            guard let question = action.question, let answer = action.answer,
+                  action.lookAlikes == nil, action.segments == nil, action.comment == nil else {
                 return journalCommand(meeting: meeting, action: action, reason: reason)
             }
             var args = ["listen", meeting, "--item", question, "--answer", answer]

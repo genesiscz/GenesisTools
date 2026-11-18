@@ -489,6 +489,22 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ReviewRowView.sourceQuote("Who speaks?", in: rows[0]), "Who speaks?", "a row that quotes nothing keeps its source's words")
     }
 
+    func testCommentAndWordSplitReachTheJournalIntactWithoutTheService() throws {
+        let comment = DecisionAction.answer("q1", "", comment: "Please listen again")
+        var split = DecisionAction.answer("q2", "Alice Example, then Bob Example", segments: [
+            .init(fromWord: 0, speaker: "Alice Example"), .init(fromWord: 4, speaker: "Bob Example")
+        ])
+        split.except = ["i3"]
+        split.replaces = "previous"
+        for action in [comment, split] {
+            let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "copy", action: action, reason: "by ear"))
+            XCTAssertEqual(Array(args.prefix(3)), ["decide", "copy", "--action"])
+            let payload = try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8))
+            XCTAssertEqual(payload, action)
+            XCTAssertEqual(Array(args.dropFirst(4)), ["--reason", "by ear", "--json"])
+        }
+    }
+
     func testOnlyThisQuestionKeepsItsWireKeyWithoutTheService() throws {
         var only = DecisionAction.answer("q1", "Dana Example")
         XCTAssertNotNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
