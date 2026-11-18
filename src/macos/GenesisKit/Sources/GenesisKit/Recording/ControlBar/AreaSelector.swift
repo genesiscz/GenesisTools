@@ -63,8 +63,9 @@ public final class RecordingPickerOverlays: ObservableObject {
         completion(target)
     }
 
-    /// The host closed the entire picker (for example, the take ended during a switch).
-    public func dismiss(keepingChoice: Bool = false) {
+    /// Close the input windows. A committed choice can finish on its own click-through panel.
+    /// Cancellation or teardown also clears the confirmation.
+    public func dismiss(keepingChoice: Bool = true) {
         completion = nil
         closeSelector(restoreParent: false)
         if keepingChoice { pulse.pickerClosed() } else { pulse.clear() }

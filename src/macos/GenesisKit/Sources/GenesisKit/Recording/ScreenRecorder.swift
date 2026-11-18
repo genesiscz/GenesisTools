@@ -337,7 +337,7 @@ public final class ScreenRecorder: ObservableObject {
         picker.window.parent?.removeChildWindow(picker.window)
         picker.dismiss()
         picker.window.contentView = nil
-        if !keepChoicePulse { overlays?.dismiss() }
+        overlays?.dismiss(keepingChoice: keepChoicePulse)
     }
 
     // MARK: Take and host
