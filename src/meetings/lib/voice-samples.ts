@@ -16,6 +16,7 @@ import type { OpenedMeeting } from "./opened-meeting";
 import type { Seat } from "./sound";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines } from "./speaker-labels/voice";
+import type { VoiceLine } from "./voice-names";
 
 export interface VoicePrintChange {
     project: string;
@@ -108,20 +109,33 @@ export async function prepareAnsweredVoiceSamples(options: {
     entry: JournalEntry;
 }): Promise<VoicePrintChange[]> {
     const { opened, entry } = options;
-    const record = opened.record;
-    if (
-        !record.project ||
-        !["answer", "confirm"].includes(entry.action.kind) ||
-        !["window", "listen", "cli"].includes(entry.actor.kind)
-    ) {
+    if (!opened.record.project) {
         return [];
     }
+    const targets = answeredVoiceTargets(entry, recordPeople(opened.record));
+    return (await prepareVoicePrints(opened, targets)).flatMap(({ changes }) => changes);
+}
 
-    const confirmed = confirmedVoices(entry, recordPeople(record));
-    if (confirmed.length === 0) {
+export interface VoiceTarget {
+    entry: JournalEntry;
+    voice: ConfirmedVoice;
+    /** Already journaled for this item and project; replay these windows without embedding them again. */
+    saved?: VoicePrintChange[];
+}
+
+export function answeredVoiceTargets(entry: JournalEntry, people: readonly string[]): VoiceTarget[] {
+    if (!["answer", "confirm"].includes(entry.action.kind) || !["window", "listen", "cli"].includes(entry.actor.kind)) {
         return [];
     }
+    return confirmedVoices(entry, people).map((voice) => ({ entry, voice }));
+}
 
+/** A backfill can decode all the confirmed windows of one recording in the same pass. */
+export async function prepareVoicePrints<T extends VoiceTarget>(opened: OpenedMeeting, targets: T[], dryRun = false) {
+    const project = opened.record.project;
+    if (!project || !targets.length) {
+        return [];
+    }
     const energy = await opened.energy();
     const lines = lineEvidence(
         (await opened.meeting()).transcript,
@@ -129,43 +143,65 @@ export async function prepareAnsweredVoiceSamples(options: {
         undefined,
         energy.share
     );
-    const changes: VoicePrintChange[] = [];
+    const spans: LabelContext["lines"][number][] = lines.flatMap((line) => {
+        const share = line.micShare ?? line.energyMic;
+        if (share === undefined || share === 0.5) {
+            return [];
+        }
+        return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat: share > 0.5 ? "mic" : "call" }];
+    });
+    const eligible = targets.map(({ voice, saved }) =>
+        spans.filter(
+            (line) =>
+                line.fromSec >= voice.fromSec &&
+                line.toSec <= voice.endSec &&
+                (!voice.seat || voice.seat === line.seat) &&
+                !saved?.some(
+                    ({ after }) =>
+                        after.fromSec === line.fromSec && after.toSec === line.toSec && after.seat === line.seat
+                )
+        )
+    );
+    const wanted = new Set(eligible.flat().map((line) => line.index));
+    const embeddings = wanted.size
+        ? await embedSeatLines({
+              lines: spans.filter((line) => wanted.has(line.index)),
+              sound: await opened.sound(),
+              // An explicit empty path selects the call-local VoiceLineCache without an on-disk file.
+              ...(dryRun ? { cachePath: "" } : {}),
+          })
+        : [];
+    const byLine = new Map(embeddings.map((line) => [line.index, line]));
     const hashes = new Map<string, string>();
-    for (const voice of confirmed) {
-        const eligible: LabelContext["lines"][number][] = lines.flatMap((line) => {
-            const share = line.micShare ?? line.energyMic;
-            if (share === undefined || share === 0.5 || line.startSec < voice.fromSec || line.endSec > voice.endSec) {
-                return [];
-            }
-
-            const seat = share > 0.5 ? "mic" : "call";
-            return voice.seat && voice.seat !== seat
-                ? []
-                : [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
+    const people = readVoiceStore(project).people;
+    const results = [];
+    for (const [i, target] of targets.entries()) {
+        const lines = eligible[i]!.flatMap(({ index }) => byLine.get(index) ?? []);
+        const changes = await printsOf({
+            ...target,
+            meeting: opened.record.id,
+            project,
+            lines,
+            hashes,
+            samples: people[target.voice.person]?.samples ?? [],
         });
-        changes.push(...(await printsOf({ opened, entry, voice, eligible, hashes })));
+        results.push({ target, changes });
     }
-
-    return changes;
+    return results;
 }
 
 async function printsOf(options: {
-    opened: OpenedMeeting;
+    meeting: string;
+    project: string;
     entry: JournalEntry;
     voice: ConfirmedVoice;
-    eligible: LabelContext["lines"][number][];
+    lines: VoiceLine[];
+    samples: VoicePrint[];
     hashes: Map<string, string>;
 }): Promise<VoicePrintChange[]> {
-    const { opened, entry, voice, hashes } = options;
-    const record = opened.record;
-    const project = record.project;
-    if (!project || options.eligible.length === 0) {
-        return [];
-    }
-
-    const embeddings = await embedSeatLines({ lines: options.eligible, sound: await opened.sound() });
+    const { project, entry, voice, hashes } = options;
     const changes: VoicePrintChange[] = [];
-    for (const line of embeddings) {
+    for (const line of options.lines) {
         const channel = line.channels[0];
         if (channel?.quality !== "ready") {
             continue;
@@ -182,7 +218,7 @@ async function printsOf(options: {
         }
 
         const after: VoicePrint = {
-            meeting: record.id,
+            meeting: options.meeting,
             sourceSha,
             seat: line.seat,
             track: line.track,
@@ -192,7 +228,7 @@ async function printsOf(options: {
             confirmedAt: entry.at,
             question: voice.item,
         };
-        const before = readVoiceStore(project).people[voice.person]?.samples.find(
+        const before = options.samples.find(
             (sample) =>
                 sample.meeting === after.meeting &&
                 sample.sourceSha === after.sourceSha &&

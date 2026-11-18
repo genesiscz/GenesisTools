@@ -368,6 +368,47 @@ describe("speaker answers and their project voice prints", () => {
         );
     });
 
+    test("voice backfill honors a partial Undo of a human confirm and ignores an agent answer", async () => {
+        const fx = await voiceAnswerFixture(undefined, [
+            speakerRange("i4", 0, {
+                speaker: "Alice Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 5 },
+            }),
+            speakerRange("i5", 10, {
+                speaker: "Bob Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 15 },
+            }),
+        ]);
+        try {
+            const meeting = fx.meeting.id;
+            fx.embed.mockResolvedValueOnce([]);
+            const confirm = await fx.journal.apply({
+                meeting,
+                actor: { kind: "cli" },
+                action: { kind: "confirm", items: ["i4", "i5"] },
+            });
+            await fx.journal.revert({ meeting, actor: person, token: confirm.entry!.token, items: ["i4"] });
+            await fx.journal.apply({
+                meeting,
+                actor: { kind: "agent", harness: "fixture", session: null },
+                action: { kind: "answer", question: "i2", answer: "Alice Example", lookAlikes: "leave" },
+            });
+            const client = new InProcessMeetingsClient({ deps: { store: () => fx.store } });
+            expect(await client.call("voice.backfill", { meetings: [meeting] })).toMatchObject({
+                added: 1,
+                present: 0,
+            });
+            expect(readVoiceStore(fx.project).people).toMatchObject({
+                "Bob Example": { samples: [{ question: "i5", fromSec: 10 }] },
+            });
+            expect(readVoiceStore(fx.project).people["Alice Example"]).toBeUndefined();
+        } finally {
+            fx.restore();
+        }
+    });
+
     test("an ear answer can teach a person missing from seats and attendance", async () => {
         const fx = await voiceAnswerFixture();
         try {

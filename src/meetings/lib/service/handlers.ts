@@ -623,6 +623,8 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
         // The voices methods (P6): the same functions as `tools meetings voices`, loaded with the people module.
+        "voice.backfill": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voice.backfill"](params, context),
         "voices.list": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.list"](params, context),
         "voices.preview": async (params, context) =>

@@ -3102,6 +3102,7 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: RETRO.id, source: "wisprflow:wf-2041" },
         "A source meeting another record holds: refused, so two records never share one source meeting."
     );
+    await ask(window, "voice.backfill", { project: "Unassigned-fixture", dryRun: true });
     return examples;
 }
 

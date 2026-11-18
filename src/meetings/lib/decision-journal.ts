@@ -31,6 +31,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import { addVoicePrints } from "@genesiscz/utils/meetings/voice-store";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
 import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -53,7 +54,7 @@ import {
     type LabelChange,
     MEETING_FIELDS,
 } from "./decision-actions";
-import { appendLines } from "./ndjson-lines";
+import { appendLines, parseJsonLine } from "./ndjson-lines";
 import { OpenedMeeting } from "./opened-meeting";
 import { projectRequired } from "./project";
 import {
@@ -90,6 +91,7 @@ import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections
 import { prepareAnsweredVoiceSamples, transitionAnsweredVoiceSamples, type VoicePrintChange } from "./voice-samples";
 
 const { log } = logger.scoped("meetings-journal");
+const backfilledEntry = journalEntrySchema.pick({ meeting: true, token: true, voices: true });
 
 /** A confirm that names, by hand, a speaker range the voice model named: its lines may become voice samples. */
 function confirmsVoiceNames(action: JournalAction, record: MeetingRecord): boolean {
@@ -1941,6 +1943,35 @@ export class DecisionJournal {
         return join(this.options.store.folder(meeting), JOURNAL_FILE);
     }
 
+    /** Called under the record lock. Keep late embeddings with their original decision for Undo and replay. */
+    publishBackfilledVoices(
+        meeting: string,
+        project: string,
+        changes: VoicePrintChange[],
+        recovered: Map<string, VoicePrintChange[]>
+    ): void {
+        const path = this.backfillPath(meeting);
+        const rollback = undoableAppend(path, () =>
+            appendLines(
+                path,
+                Array.from(recovered, ([token, voices]) =>
+                    SafeJSON.stringify({ meeting, token, voices }, { jsonl: true })
+                ),
+                { mode: 0o600 }
+            )
+        );
+        try {
+            addVoicePrints(project, changes, true);
+        } catch (error) {
+            rollback();
+            throw error;
+        }
+    }
+
+    private backfillPath(meeting: string): string {
+        return join(this.options.store.folder(meeting), "voice-backfill.ndjson");
+    }
+
     private entries(meeting: string): JournalEntry[] {
         const path = this.path(meeting);
 
@@ -1948,6 +1979,18 @@ export class DecisionJournal {
             return [];
         }
 
+        const recovered = new Map<string, VoicePrintChange[]>();
+        const backfill = this.backfillPath(meeting);
+        if (existsSync(backfill)) {
+            for (const line of readLinesSync(backfill)) {
+                const extra = backfilledEntry.safeParse(parseJsonLine(line, backfill));
+                if (extra.success && extra.data.meeting === meeting && extra.data.voices) {
+                    const known = recovered.get(extra.data.token) ?? [];
+                    known.push(...extra.data.voices);
+                    recovered.set(extra.data.token, known);
+                }
+            }
+        }
         return Array.from(readLinesSync(path))
             .filter((line) => line.trim())
             .flatMap((line) => {
@@ -1969,7 +2012,16 @@ export class DecisionJournal {
                     return [];
                 }
 
-                return [parsed.data];
+                const entry = parsed.data;
+                // A copied journal may carry the source meeting's embeddings. Its Undo owns only its own prints.
+                if (entry.copiedFrom && entry.voices) {
+                    entry.voices = entry.voices.filter((change) => change.after.meeting === meeting);
+                }
+                const extra = recovered.get(entry.token);
+                if (extra) {
+                    entry.voices = [...(entry.voices ?? []), ...extra];
+                }
+                return [entry];
             });
     }
 
