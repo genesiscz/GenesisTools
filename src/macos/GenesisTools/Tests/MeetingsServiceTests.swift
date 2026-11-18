@@ -524,6 +524,12 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.CommentSend.name:
                 try roundTrip(MeetingsAPI.CommentSend.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentSend.Result.self, result).entry?.action.kind, "comment") }
+            case MeetingsAPI.RuleNames.name:
+                try roundTrip(MeetingsAPI.RuleNames.Params.self, params, label)
+                if let result {
+                    let names = try MeetingsService.decode(MeetingsAPI.RuleNames.Result.self, result).names
+                    XCTAssertEqual(names["E3"], "The call shows who is speaking.", label)
+                }
             default:
                 // A method the window does not mirror (b-people's people.*): nothing to decode.
                 continue
@@ -595,7 +601,7 @@ final class MeetingsServiceTests: XCTestCase {
         MeetingsAPI.DecisionPlan.name, MeetingsAPI.DecisionApply.name, MeetingsAPI.DecisionRevert.name, MeetingsAPI.JournalRead.name,
         MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.MomentSave.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
         MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingTimeline.name,
-        MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
+        MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name, MeetingsAPI.RuleNames.name,
         MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,
         MeetingsAPI.CommentStage.name, MeetingsAPI.CommentList.name, MeetingsAPI.CommentUnstage.name, MeetingsAPI.CommentSend.name,
     ]
@@ -1035,6 +1041,20 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertTrue(ended, "the run ends with the answer")
         XCTAssertNil(detail.suggestProgress, "no step stays after the answer")
         XCTAssertEqual(detail.suggestionWarnings, ["One warning"])
+    }
+
+    func testTheWindowReadsTheRuleSentencesOnceFromTheService() async throws {
+        try writeServiceEntry()
+        let service = makeService()
+        let model = MeetingsWindowModel(service: service, loadDetail: { _ in })
+        XCTAssertNil(model.ruleNames)
+        model.ensureRuleNames()
+        model.ensureRuleNames()
+        let read = await waitUntil(3) { model.ruleNames != nil }
+        XCTAssertTrue(read, "the sentences arrive")
+        XCTAssertEqual(model.ruleNames?["E3"], "The call shows who is speaking.")
+        model.ensureRuleNames()
+        XCTAssertEqual(fake.count("rules.names"), 1, "one read for the window")
     }
 
     func testTheSuggestStepReadsAsWords() {

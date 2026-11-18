@@ -119,15 +119,20 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
               case .string(let name)? = event["name"] else { return nil }
         return "\(name) said goodbye at \(MeetingsFormat.clock(fromSec ?? 0))"
     }
-    var speakerEvidenceText: String? {
+    /// What named this speaker range, in sentences: each rule in the engine's words (`ruleNames`, the `rules.names`
+    /// read; an id it lacks is left out, as a review row leaves it), the speaking indicator it ignored, the swap's
+    /// skipped lines and a goodbye. Nil for another kind or when there is nothing to say.
+    func speakerEvidenceText(ruleNames: [String: String]) -> String? {
         guard kind == "speaker-range" else { return nil }
-        var parts = ["Rules: " + (rules ?? []).joined(separator: ", ")]
-        if case .string(let ignored)? = evidence?["indicatorIgnored"] { parts.append("Indicator ignored: " + ignored) }
-        if case .object(let swap)? = evidence?["swap"], case .array(let skipped)? = swap["skipped"] {
-            parts.append("Swap skips \(skipped.count) contradictory lines")
+        var parts = (rules ?? []).compactMap { ruleNames[$0] }
+        if case .string(let ignored)? = evidence?["indicatorIgnored"] {
+            parts.append("The speaking indicator was \(TranscriptLine.Indicator.ignoredWords(ignored)).")
         }
-        if let departureText { parts.append(departureText) }
-        return parts.joined(separator: " · ")
+        if case .object(let swap)? = evidence?["swap"], case .array(let skipped)? = swap["skipped"] {
+            parts.append("The swap skips \(Plural.count(skipped.count, "contradictory line")).")
+        }
+        if let departureText { parts.append(departureText + ".") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
     var reason: String? {
         if case .string(let text)? = evidence?["reason"] { return text }

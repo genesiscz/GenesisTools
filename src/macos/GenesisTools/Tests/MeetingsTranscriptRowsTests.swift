@@ -171,8 +171,10 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         let named = line("Speaker 2", at: 10, confidence: 0.8, suggested: "Alice Example", band: "applied")
         XCTAssertEqual(TranscriptBlocksPane.namingRange(of: named, in: all)?.id, "i3")
         XCTAssertNil(TranscriptBlocksPane.namingRange(of: line("Alice Example", at: 10), in: all), "no suggestion, no range")
-        let evidence = TranscriptBlocksPane.lineEvidence([named, named], items: all)
-        XCTAssertEqual(evidence, ["Named by the speaker range 00:05 to 00:30 · Rules: roster-solo"])
+        let evidence = TranscriptBlocksPane.lineEvidence([named, named], items: all, ruleNames: ["roster-solo": "Only one person was in the call."])
+        XCTAssertEqual(evidence, ["Named by the speaker range 00:05 to 00:30. Only one person was in the call."])
+        XCTAssertEqual(TranscriptBlocksPane.lineEvidence([named], items: all, ruleNames: [:]), ["Named by the speaker range 00:05 to 00:30."],
+                       "before the sentences arrive the range is named, its rule ids are not shown")
 
         let confirmed = try items("""
         [{"id":"c1","kind":"speaker-range","status":"confirmed","fromSec":0,"toSec":60,"speaker":"Alice Example","confidence":0.8,"rules":["answer"]},
@@ -189,7 +191,7 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertFalse(stuck.contains("meeting-dominance"))
         XCTAssertFalse(TranscriptLine.Indicator(names: [], ignored: "stretch-stuck").shownText.contains("stretch-stuck"))
         let lines = [line("Bob Example", at: 3, indicator: .init(names: ["Bob Example"], ignored: nil))]
-        XCTAssertEqual(TranscriptBlocksPane.lineEvidence(lines, items: []), ["Speaking indicator: Bob Example"])
+        XCTAssertEqual(TranscriptBlocksPane.lineEvidence(lines, items: [], ruleNames: [:]), ["Speaking indicator: Bob Example"])
     }
 
     /// L21: a guessed block takes the guess style; a name or an open question does not.
