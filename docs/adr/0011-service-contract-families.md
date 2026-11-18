@@ -1,5 +1,5 @@
 ---
-status: Proposed
+status: Accepted
 date: 2026-11-18
 ---
 
@@ -9,5 +9,7 @@ R1, P2 and P6 add methods to the same contract in successive waves. Option A, re
 `service/api.ts` together and accepts that scheduling constraint. Option B runs P6A after P6 in wave 5. Family
 files would own method schemas, with shared schemas in `api/shared.ts`. The public imports, method order,
 protocol fingerprint and fixture must stay identical. Only P6A waits for this choice.
+
+Option A is accepted (2026-11-18 23:58, owner decision D2). `service/api.ts` stays one file; P6A is denied.
 
 `.claude/plans/2026-11-18-MeetingsArchitecture.md`, "`service/api/<family>.ts` (P6A, only on D2 b)", "P6A: A6. The service contract splits by method family", "Decisions".

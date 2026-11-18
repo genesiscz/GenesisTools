@@ -44,7 +44,7 @@ export interface LineLabel {
 }
 
 export interface LabelContext {
-    lines: readonly { index: number; fromSec: number; toSec: number; seat: Seat }[];
+    lines: readonly { index: number; fromSec: number; toSec: number; seat: Seat; energyMic?: number }[];
     /** People who attended, with the seat each holds in this meeting and the time they were there. */
     attended: readonly { person: string; seat: Seat | undefined; fromSec: number; toSec: number }[];
     /** A caller-supplied track selection. The voice labeler opens the meeting's sound on demand otherwise. */

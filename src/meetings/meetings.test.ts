@@ -8128,11 +8128,49 @@ test("compact evidence bounds 509 line prefixes and prints microphone percent or
     expect(Buffer.byteLength(compact)).toBeLessThan(50_000);
 });
 
-test("local speech matches words and clock, emits removal at 0.9 and raw facts", () => {
+test("raw microphone share uses calibrated line windows before segment overlap", () => {
+    const current = {
+        ...meeting,
+        transcript: [0, 5, 10, 15, 20].map((start) => line("Voice", start, "A fixture line.")),
+    };
+    const raw = rawMeeting({
+        record,
+        meeting: current,
+        points: [],
+        evidence: { speaking: [], files: [], segments: [{ channel: "mic", startSec: 0, endSec: 15 }] },
+        energyMicShare: Object.assign((from: number, to: number) => (from === 0 && to === 5 ? 0 : undefined), {
+            raw: (from: number) => (from === 5 ? 0.12 : from === 15 ? 0.87 : undefined),
+        }),
+    });
+    expect(raw.lines.map((entry) => entry.channel.micShare)).toEqual([0, 0.12, 1, 0.87, null]);
+});
+
+test("local speech tolerates two word edits inside the clock window and keeps unrelated speech", () => {
+    const calls = [{ ts: Date.parse(meeting.start) + 20_000, text: "Fixture nightly render job complete" }];
+    const transcript = [
+        line("Voice", 5, "Fixture nightly renderer job complete."),
+        line("Voice", 12, "Fixture daily render job finished."),
+        line("Voice", 19, "Fixture render job almost complete."),
+        line("Voice", 20, "Fixture weekly cleanup job failed."),
+        line("Voice", 21, "Complete."),
+        line("Voice", 35.001, "Fixture nightly render job complete."),
+    ];
+    expect(localSpeechLines({ calls, transcript, start: meeting.start }).map((entry) => entry.index)).toEqual([
+        0, 1, 2,
+    ]);
+    const short = [{ ts: calls[0]!.ts, text: "Waiting" }];
+    expect(localSpeechLines({ calls: short, transcript, start: meeting.start })).toEqual([]);
+});
+
+test("every suggest rule offers the same local speech removals as raw evidence", () => {
     const start = "2026-11-02T15:00:00.000Z";
-    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 100, "Fixture task done.")];
+    const transcript = [
+        line("Alice", 5, "Fixture task done."),
+        line("Voice", 5, "Fixture task done."),
+        line("Alice", 100, "Fixture task done."),
+    ];
     const calls = [{ ts: Date.parse(start) + 5_000, text: "Fixture task done" }];
-    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0]);
+    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0, 1]);
     const current = { ...meeting, start, transcript };
     const suggest = (rules: Parameters<typeof suggestItems>[0]["rules"]) =>
         suggestItems({
@@ -8144,15 +8182,17 @@ test("local speech matches words and clock, emits removal at 0.9 and raw facts",
             localSpeech: calls,
             now: start,
         });
-    const items = suggest(["evidence"]);
-    // A run of other rules leaves local speech alone: `--rules terms` proposes no removal.
-    expect(suggest(["terms"]).some((item) => item.kind === "removal")).toBe(false);
-    expect(suggest(["speakers"]).some((item) => item.kind === "removal")).toBe(false);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "removal", confidence: 0.9, evidence: { reason: "local speech output" } });
     const raw = rawMeeting({ record, meeting: current, evidence: null, points: [], localSpeech: calls });
     expect(raw.lines[0]?.localSpeechOutput).toBe(true);
-    expect(raw.lines[1]?.localSpeechOutput).toBeUndefined();
+    expect(raw.lines[1]?.localSpeechOutput).toBe(true);
+    expect(raw.lines[2]?.localSpeechOutput).toBeUndefined();
+    for (const rule of ["terms", "speakers", "evidence"] as const) {
+        const removals = suggest([rule]).filter((item) => item.kind === "removal");
+        expect(removals.map((item) => item.evidence?.transcriptLine)).toEqual(
+            raw.lines.filter((entry) => entry.localSpeechOutput).map((entry) => entry.index)
+        );
+        expect(removals[0]).toMatchObject({ confidence: 0.9, evidence: { reason: "local speech output" } });
+    }
     expect(localSpeechDuring({ start, dbPath: join(tmpdir(), "missing-fixture-speech.db") })).toEqual([]);
 });
 

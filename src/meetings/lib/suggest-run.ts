@@ -331,11 +331,9 @@ async function readSuggestInputs(
         measuredLines: evidence
             ? prof.measure("rules.line-evidence", () => lineEvidence(meeting.transcript, evidence, presence, share))
             : [],
-        localSpeech: rules.includes("evidence")
-            ? prof.measure("evidence.local-speech-history", () =>
-                  localSpeechDuring({ start: meeting.start, end: meeting.end })
-              )
-            : [],
+        localSpeech: prof.measure("evidence.local-speech-history", () =>
+            localSpeechDuring({ start: meeting.start, end: meeting.end })
+        ),
         record: collected,
         meeting,
         rules,
@@ -357,6 +355,7 @@ async function readSuggestInputs(
                 ? await prof.measureAsync("speakers.labels", () =>
                       proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence, {
                           applyAbove: config.global.suggest.applyAbove,
+                          energyMicShare: share,
                       })
                   )
                 : undefined,
@@ -536,6 +535,7 @@ function applySuggestionRun(
         suggestItems({
             ...inputs,
             record: current,
+            applyAbove: config.global.suggest.applyAbove,
             termThresholds: config.global.suggest.terms,
             listenBelow: config.global.suggest.listenBelow,
             questionBudget: config.global.suggest.questionCap,

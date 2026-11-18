@@ -58,7 +58,7 @@ export interface RawMeeting {
         label: string;
         labelOrigin?: string;
         text: string;
-        /** The microphone's share of the line's channel segments; absent when no segment overlaps it. */
+        /** Calibrated microphone energy, falling back to the capture segments. Null when neither covers the line. */
         channel: { micShare: number | null };
         energyMicShare?: number;
         rawEnergyMicShare?: number;
@@ -206,6 +206,7 @@ export function rawMeeting(options: {
         }),
         lines: lines.map((line) => {
             const origin = originOf(line.label);
+            const micShare = line.energyMic ?? line.energyMicRaw ?? line.micShare;
             return {
                 index: line.index,
                 ...(local.has(line.index) ? { localSpeechOutput: true as const } : {}),
@@ -217,7 +218,7 @@ export function rawMeeting(options: {
                 label: line.label,
                 ...(origin ? { labelOrigin: origin } : {}),
                 text: line.text,
-                channel: { micShare: line.micShare === undefined ? null : Math.round(line.micShare * 1000) / 1000 },
+                channel: { micShare: micShare === undefined ? null : Math.round(micShare * 1000) / 1000 },
                 ...(line.energyMic !== undefined ? { energyMicShare: Math.round(line.energyMic * 1000) / 1000 } : {}),
                 ...(line.energyMicRaw !== undefined ? { rawEnergyMicShare: line.energyMicRaw } : {}),
                 ...(line.acoustic ? { acoustic: line.acoustic } : {}),

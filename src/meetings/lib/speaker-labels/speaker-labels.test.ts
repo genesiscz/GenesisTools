@@ -18,6 +18,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
 import * as terms from "@genesiscz/utils/transcribe/terms";
+import * as speechHistory from "../local-speech";
 import { OpenedMeeting } from "../opened-meeting";
 import { questionView } from "../questions";
 import { rawMeeting } from "../raw";
@@ -141,14 +142,14 @@ describe("suggest runner word settings", () => {
         );
     });
 
-    test("seat lines use the segment share before energy and skip evidence unrelated to a seat", async () => {
+    test("seat lines prefer calibrated energy, keep the segment fallback and skip unrelated evidence", async () => {
         const { opened, meeting, config } = await runnerFixture();
         config.global.speakerLabels.seat.enabled = true;
         config.global.speakerLabels.voice.enabled = false;
-        meeting.transcript = [0, 5, 10].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        meeting.transcript = [0, 5, 10, 15].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
         const share = Object.assign(
-            mock(() => 0.1),
-            { acoustic: mock(() => undefined) }
+            mock((from: number) => (from === 0 ? 0 : undefined)),
+            { raw: (from: number) => (from === 5 ? 0.9 : undefined), acoustic: mock(() => undefined) }
         );
         spies.push(
             spyOn(opened, "energy").mockResolvedValue({ share }),
@@ -158,16 +159,106 @@ describe("suggest runner word settings", () => {
                 segments: [
                     { startSec: 0, endSec: 10, channel: "mic" },
                     { startSec: 5, endSec: 10, channel: "system" },
+                    { startSec: 10, endSec: 15, channel: "mic" },
                 ],
             })
         );
         const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
         expect(labels.map(({ index, seat }) => [index, seat])).toEqual([
-            [0, "mic"],
-            [2, "call"],
+            [0, "call"],
+            [1, "mic"],
+            [2, "mic"],
         ]);
-        expect(share).toHaveBeenCalledTimes(1);
+        expect(share).toHaveBeenCalledTimes(4);
         expect(share.acoustic).not.toHaveBeenCalled();
+    });
+
+    test("calibrated seat answers stay below apply in the unsure band, including after reopening old answers", async () => {
+        const owner = "Alice Example";
+        const { opened, meeting, config, store, record } = await runnerFixture({
+            seats: { room: [owner], remote: [] },
+        });
+        config.global.speakerLabels.voice.enabled = false;
+        config.global.suggest.applyAbove = 0.45;
+        meeting.transcript = [0, 5, 10, 15, 20].map((startSec) => ({ speaker: "Voice", startSec, text: "A line." }));
+        const evidence = {
+            selfName: owner,
+            files: [],
+            speaking: [],
+            segments: [{ startSec: 0, endSec: 30, channel: "mic" as const }],
+        };
+        spies.push(spyOn(opened, "evidence").mockResolvedValue(evidence));
+        const run = () => runSuggest({ store, record, rules: ["speakers", "evidence"] });
+        await run();
+        const shares = new Map([
+            [0, 0.2],
+            [5, 0.62],
+            [10, 0.7],
+            [20, 0.5],
+        ]);
+        spies.push(spyOn(opened, "energy").mockResolvedValue({ share: (from) => shares.get(from) }));
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.filter((label) => label.person === owner).map((label) => label.index)).toEqual([1, 2, 3]);
+        const preview = await labelers.preparePreviewLabels({
+            opened,
+            settings: config.global.speakerLabels,
+            presence: [],
+        });
+        const weak = (await preview(config.global.speakerLabels.voice, 0.35)).find((label) => label.index === 1);
+        expect(weak?.score).toBeLessThan(0.35);
+        const allApply = await preview(config.global.speakerLabels.voice, 0);
+        expect(allApply.some((label) => label.index === 1 && label.person)).toBe(false);
+
+        // An agreeing legacy channel rule must not push the fresh seat answer over the threshold either.
+        const fresh = suggestItems({
+            record,
+            meeting,
+            labels,
+            rules: ["evidence"],
+            evidence,
+            energyMicShare: (from) => shares.get(from),
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            now: START,
+        });
+        expect(
+            fresh.find((item) => item.evidence?.reason === "seat-of-one" && item.evidence.transcriptLine === 1)
+                ?.confidence
+        ).toBeLessThan(0.45);
+
+        await run();
+        const savedSeats = new MeetingStore(store.storage)
+            .read(record.id)!
+            .items.filter((item) => item.status === "suggested" && item.evidence?.reason === "seat-of-one");
+        expect(savedSeats.map((item) => item.evidence?.transcriptLine)).toEqual([1, 2, 3]);
+        expect(savedSeats[0]?.confidence).toBeLessThan(0.45);
+        expect(savedSeats.slice(1).map((item) => item.confidence)).toEqual([0.95, 0.95]);
+    });
+
+    test("a speakers-only voice pass saves each local speech removal once", async () => {
+        const { store, record, meeting, config } = await runnerFixture();
+        config.global.speakerLabels.voice.enabled = true;
+        meeting.transcript = [{ startSec: 5, speaker: "Voice", text: "Fixture render complete." }];
+        spies.push(
+            spyOn(speechHistory, "localSpeechDuring").mockReturnValue([
+                { ts: Date.parse(START) + 5000, text: "Fixture render complete" },
+            ]),
+            spyOn(labelers, "proposeSpeakerLabels").mockResolvedValue([
+                { index: 0, seat: "mic", reason: "named", labeler: "voice", person: "Alice Example", score: 0.8 },
+            ])
+        );
+        const run = () => runSuggest({ store, record, rules: ["speakers"] });
+        await run();
+        await run();
+        const saved = new MeetingStore(store.storage).read(record.id)!.items;
+        expect(saved.some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))).toBe(true);
+        expect(saved.filter((item) => item.kind === "removal")).toEqual([
+            expect.objectContaining({
+                confidence: 0.9,
+                rules: [MeetingRule.LocalSpeech],
+                evidence: { reason: "local speech output", transcriptLine: 0 },
+            }),
+        ]);
     });
 
     test("a speakers-only run does not read term dictionaries or open sound for the seat labeler", async () => {

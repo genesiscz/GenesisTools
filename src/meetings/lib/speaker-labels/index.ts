@@ -1,6 +1,7 @@
 import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import type { AcousticShare } from "@genesiscz/utils/meetings/echo";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { seatSpan } from "@genesiscz/utils/meetings/seats";
 import { readVoiceLibrary, type VoiceLibrarySnapshot } from "@genesiscz/utils/meetings/voice-library";
@@ -9,6 +10,7 @@ import { lineChannelShares } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { OpenedMeeting } from "../opened-meeting";
 import type { VoiceLine } from "../voice-names";
+import { ENERGY_CALL_LEANS } from "./seat";
 import type { LabelContext, LineLabel, SpeakerLabeler, SpeakerLabelerId } from "./types";
 import { SPEAKER_LABELER_IDS } from "./types";
 
@@ -71,10 +73,10 @@ export function mergeLineLabels(byLabeler: ReadonlyMap<SpeakerLabelerId, LineLab
         });
 }
 
-async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) {
+async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[], measuredEnergy?: AcousticShare) {
     const meeting = await opened.meeting();
     const evidence = await prof.measureAsync("speakers.evidence", () => opened.evidence());
-    const energy = await prof.measureAsync("speakers.energy", () => opened.energy());
+    const energy = measuredEnergy ?? (await prof.measureAsync("speakers.energy", () => opened.energy())).share;
     const record = opened.record;
     const presence = storedPresence ?? (await prof.measureAsync("speakers.presence", () => opened.presence()));
     const attended: LabelContext["attended"][number][] = [];
@@ -124,10 +126,10 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
             lineChannelShares({
                 entries: meeting.transcript,
                 segments: evidence?.segments ?? [],
-                energy: energy.share,
-            }).flatMap(({ index, fromSec, toSec, share }): LabelContext["lines"][number][] => {
+                energy,
+            }).flatMap(({ index, fromSec, toSec, share, energyMic }): LabelContext["lines"][number][] => {
                 // A missing channel or an exact tie establishes neither seat.
-                if (share === undefined || share === 0.5) {
+                if (share === undefined || share === ENERGY_CALL_LEANS) {
                     return [];
                 }
 
@@ -136,7 +138,8 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
                         index,
                         fromSec,
                         toSec,
-                        seat: share > 0.5 ? "mic" : "call",
+                        seat: share > ENERGY_CALL_LEANS ? "mic" : "call",
+                        energyMic,
                     },
                 ];
             })
@@ -144,21 +147,20 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
         attended,
         project: record.project,
     };
-    async function forVoice(seats: LineLabel[], applyAbove?: number): Promise<LabelContext> {
+    async function forVoice(seats: LineLabel[], applyAbove: number): Promise<LabelContext> {
         if (!context.project || !context.attended.some((stay) => stay.seat)) {
             return context;
         }
-        const threshold = applyAbove ?? (await opened.config()).global.suggest.applyAbove;
         const { meetingVoiceSeeds } = await import("./voice-seeds");
         const seeds = meetingVoiceSeeds({
             opened,
             meeting,
             evidence,
-            energy: energy.share,
+            energy,
             presence,
             context,
             seats,
-            applyAbove: threshold,
+            applyAbove,
         });
         const seatOwners = new Map<number, string>();
         for (const label of seats) {
@@ -167,7 +169,7 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
             }
         }
 
-        return { ...context, ...seeds, seatOwners, applyAbove: threshold };
+        return { ...context, ...seeds, seatOwners, applyAbove };
     }
     return { context, forVoice };
 }
@@ -176,18 +178,20 @@ export async function proposeSpeakerLabels(
     opened: OpenedMeeting,
     settings: MeetingsConfig["global"]["speakerLabels"],
     storedPresence?: Presence[],
-    options: { voiceOnly?: boolean; applyAbove?: number } = {}
+    options: { voiceOnly?: boolean; applyAbove?: number; energyMicShare?: AcousticShare } = {}
 ): Promise<LineLabel[]> {
     const enabled = SPEAKER_LABELER_IDS.filter((id) => settings[id].enabled);
     if (!enabled.length) {
         return [];
     }
-    const { context, forVoice } = await labelContext(opened, storedPresence);
+    const { context, forVoice } = await labelContext(opened, storedPresence, options.energyMicShare);
+    const applyAbove = options.applyAbove ?? (await opened.config()).global.suggest.applyAbove;
     const byLabeler = new Map<SpeakerLabelerId, LineLabel[]>();
 
     for (const id of enabled) {
         using _labeler = prof.section(`speakers.labeler.${id}`);
-        const inputs = id === "voice" ? await forVoice(byLabeler.get("seat") ?? [], options.applyAbove) : context;
+        const inputs =
+            id === "voice" ? await forVoice(byLabeler.get("seat") ?? [], applyAbove) : { ...context, applyAbove };
         byLabeler.set(id, await (await LABELERS[id](opened, settings)).propose(inputs));
     }
 
@@ -248,13 +252,10 @@ export async function preparePreviewLabels(options: {
         return (_voice: VoiceSettings, _applyAbove: number): LineLabel[] => [];
     }
     const { context, forVoice } = await labelContext(opened, presence);
-    const labels = new Map<SpeakerLabelerId, LineLabel[]>();
-    if (settings.seat.enabled) {
-        labels.set("seat", await (await LABELERS.seat(opened, settings)).propose(context));
-    }
+    const seat = settings.seat.enabled ? await LABELERS.seat(opened, settings) : undefined;
+    const seatsAt = (applyAbove: number) => seat?.propose({ ...context, applyAbove }) ?? [];
     if (!settings.voice.enabled || !context.project || !context.attended.some((stay) => stay.seat)) {
-        const seats = mergeLineLabels(labels);
-        return (_voice: VoiceSettings, _applyAbove: number) => seats;
+        return (_voice: VoiceSettings, applyAbove: number) => seatsAt(applyAbove);
     }
     const { voiceLabeler } = await import("./voice");
     const voiceLibrary = (options.voiceLibrary ?? readVoiceLibrary)();
@@ -266,11 +267,16 @@ export async function preparePreviewLabels(options: {
         return embeddings.lines;
     };
     return async (voice: VoiceSettings, applyAbove: number) => {
-        const inputs = await forVoice(labels.get("seat") ?? [], applyAbove);
-        labels.set(
-            "voice",
-            await voiceLabeler({ opened, settings: voice, readLines: previewLines, voiceLibrary }).propose(inputs)
+        const seats = await seatsAt(applyAbove);
+        const inputs = await forVoice(seats, applyAbove);
+        const voices = await voiceLabeler({ opened, settings: voice, readLines: previewLines, voiceLibrary }).propose(
+            inputs
         );
-        return mergeLineLabels(labels);
+        return mergeLineLabels(
+            new Map([
+                ["seat", seats],
+                ["voice", voices],
+            ])
+        );
     };
 }
