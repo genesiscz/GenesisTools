@@ -203,6 +203,28 @@ public struct LiveWidgetView: View {
                     Button("Reconnect", action: model.start).font(.caption).buttonStyle(.genHover(accent: .orange))
                 }.foregroundStyle(.orange)
             }
+            if let grant = model.snapshot?.state.meetingRecordingWarning {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Meeting recording will fail: \(grant)", systemImage: "exclamationmark.triangle")
+                        .font(.callout.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Permissions…") {
+                        Task {
+                            do {
+                                let result = try await model.bridge.run(subcommand: "macos", args: ["permissions", "ui"])
+                                if result.exitCode != 0 { throw ToolsBridgeError.refused(result.stderr) }
+                            } catch { model.report(error) }
+                        }
+                    }
+                    .buttonStyle(.genHover())
+                    .accessibilityIdentifier("widget.meetings.openPermissions")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("widget.meetings.recordingWarning")
+            }
             if let errors = model.snapshot?.errors, !errors.isEmpty {
                 GenDisclosure("Some sources are unavailable", isExpanded: $sourcesExpanded,
                               identifier: "widget.sources.unavailable") {
@@ -231,7 +253,7 @@ public struct LiveWidgetView: View {
                 if model.inbox.sessions.isEmpty {
                     VStack(spacing: 10) {
                         GenesisWidgetMark()
-                        Text("Nothing needs you.").font(.headline)
+                        Text(model.snapshot?.state.meetingRecordingWarning == nil ? "Nothing needs you." : "No session items.").font(.headline)
                         Text("Questions, screenshots, and finished work land here.").font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Choose sessions") { model.showSettings?() }.buttonStyle(.genHover())

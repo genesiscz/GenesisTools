@@ -592,6 +592,7 @@ struct MeetingsSettings: Decodable, Equatable {
         struct AutoRecord: Decodable, Equatable {
             let enabled: Bool
             let notify: Bool
+            var permissionCard: Bool?
         }
         let match: [String: Folders]
         let autoRecord: AutoRecord

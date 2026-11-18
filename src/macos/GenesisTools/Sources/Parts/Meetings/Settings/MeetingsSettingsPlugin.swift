@@ -171,6 +171,13 @@ struct MeetingsRecordingPage: View {
                                                        set: { model.set(["sources", "wisprflow", "autoRecord", "notify"], $0) }))
                 }
                 .disabled(auto?.enabled != true)
+                Divider()
+                NativeSettingsToggle("Show missing permissions in the widget",
+                                     detail: "Checks at watcher startup and every hour while autostart is on.",
+                                     identifier: "meetings.autostart.permissionCard",
+                                     isOn: Binding(get: { auto?.permissionCard ?? true },
+                                                   set: { model.set(["sources", "wisprflow", "autoRecord", "permissionCard"], $0) }))
+                    .disabled(auto?.enabled != true)
             }
 
             NativeSettingsCard("Capture", subtitle: costLine(model.cost)) {

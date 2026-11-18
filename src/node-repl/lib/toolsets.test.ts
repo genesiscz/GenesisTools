@@ -2839,6 +2839,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         await expect(meetings.recordStart({ audio: "unknown" })).rejects.toThrow("--audio");
         const docs = new MeetingsToolset().api.methods;
         expect(docs.find((one) => one.name === "recordStart")?.doc).toContain("tools meetings record start");
+        expect(docs.find((one) => one.name === "watchOnce")?.doc).toContain("tools meetings watch --once");
         expect(docs.find((one) => one.name === "autostart")?.doc).toContain("tools meetings autostart");
     });
 

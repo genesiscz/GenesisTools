@@ -80,6 +80,7 @@ import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
+import { watchOnce } from "@app/meetings/lib/watch";
 import { recordingAutostart } from "@app/meetings/lib/watcher";
 import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
@@ -266,6 +267,7 @@ export class MeetingsToolset extends ReplToolset {
                         return configValueAt(config, parseConfigPath(parsed.path));
                     },
                 },
+                watchOnce: () => watchOnce(store),
                 captureCost: async () =>
                     captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() }),
                 projects: {

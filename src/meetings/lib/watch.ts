@@ -1,4 +1,5 @@
 import { readLivePermissions } from "@app/control/lib/permissions";
+import { abortableSleep } from "@genesiscz/utils/async";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
@@ -12,6 +13,7 @@ import { linkSource } from "./link";
 import { ensureOcrWorkers } from "./ocr-worker";
 import { interruptedRecording } from "./recorder-adapters";
 import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
+import { checkRecordingGrants, showRecordingGrantCard } from "./recording-preflight";
 import { pruneCapturesDaily } from "./retention";
 import { preservedSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
@@ -72,7 +74,8 @@ export interface WatchDeps {
     lastActivityAt: (meetingId: string) => number | undefined;
     /** Ends a recording whose recorder died and that is not started again: status stopped, its span `interrupted`. */
     endInterrupted: (meetingId: string, at: string) => Promise<void>;
-    notify: (note: WatchNote) => Promise<boolean | void>;
+    notify: (note: WatchNote) => Promise<boolean>;
+    grantCard: (reason?: string) => Promise<void>;
     inbox: typeof startFailureDelivery.inbox;
     grants: typeof readLivePermissions;
     logStart: (fields: {
@@ -138,6 +141,7 @@ function defaultDeps(store: MeetingStore): WatchDeps {
         },
         inbox: startFailureDelivery.inbox,
         grants: readLivePermissions,
+        grantCard: showRecordingGrantCard,
         logStart: (fields) => log.info(fields, "live grants at recording start"),
         wantsMicrophone: async () => (await current()).wantsMicrophone,
         notify: async (note) => {
@@ -437,6 +441,14 @@ export async function watchOnce(
     const deps: WatchDeps = { ...defaultDeps(store), ...options.deps };
     const now = options.now ?? Date.now();
     const settings = await deps.settings();
+    await checkRecordingGrants(store, {
+        enabled: settings.enabled,
+        cardEnabled: settings.permissionCard,
+        needsMic: settings.enabled && (await deps.wantsMicrophone()),
+        now,
+        read: deps.grants,
+        show: deps.grantCard,
+    }).catch((err: unknown) => log.warn({ err }, "recording preflight failed; the next look retries"));
     await deliverStartFailures(store, undefined, delivery(deps), now).catch((err: unknown) =>
         log.error({ err }, "could not retry recording start alerts")
     );
@@ -675,16 +687,10 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
  * meeting without a project, and the answers applied), and the capture retention pass once a day. With autoRecord
  * off it still runs while linked source audio is missing or a project question or a folder step waits.
  */
-export async function watchLoop(store: MeetingStore): Promise<void> {
-    let stopped = false;
-    const stop = () => {
-        stopped = true;
-    };
-    process.on("SIGTERM", stop);
-    process.on("SIGINT", stop);
+export async function watchLoop(store: MeetingStore, signal: AbortSignal): Promise<void> {
     log.info("meetings watcher started");
 
-    while (!stopped) {
+    while (!signal.aborted) {
         await pruneOldCaptures(store);
         await resumeOcr(store);
         const result = await watchOnce(store).catch((err: unknown) => {
@@ -699,6 +705,14 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
             break;
         }
 
-        await Bun.sleep(WATCH_INTERVAL_MS);
+        await abortableSleep(WATCH_INTERVAL_MS, signal).catch((err: unknown) => {
+            if (!signal.aborted) {
+                throw err;
+            }
+        });
     }
+    // Finish any copy that outlived its tick before a replacement takes over this store.
+    await archiving
+        .get(store)
+        ?.catch((err: unknown) => log.warn({ err }, "source audio pass ended during watcher shutdown"));
 }

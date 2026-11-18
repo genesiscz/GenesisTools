@@ -1,13 +1,18 @@
-import { join } from "node:path";
+import { statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { newestLoadedModuleMtime, onLoadedCodeChange } from "@genesiscz/utils/bun/loaded-modules";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisAppLauncherPath } from "@genesiscz/utils/macos/genesis-app";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
+import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import { sandboxInstalled } from "@genesiscz/utils/storage/real-home-guard";
 import { hasOpenAssignSteps } from "./assign";
+import { showRecordingGrantCard } from "./recording-preflight";
 import { lastStartFailure } from "./start-failures";
-import { hasRecordingToWatch, hasSourceAudioToWatch, watchedSourceId } from "./watch";
+import { hasRecordingToWatch, hasSourceAudioToWatch, watchedSourceId, watchLoop } from "./watch";
 
 /**
  * Starting the background watcher: one core that the watch command, the recorder, a config change that turns on
@@ -20,6 +25,61 @@ const WATCHER_CLAIM_MS = 15_000;
 
 export function watcherPidPath(store: MeetingStore): string {
     return join(store.root, "watch.pid");
+}
+
+/**
+ * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the
+ * shared claim's one rule (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts), so one a SIGKILL left behind no longer blocks.
+ */
+export async function claimWatcher(store: MeetingStore): Promise<void> {
+    const file = watcherPidPath(store);
+    const claim = await claimPidFile(file, {
+        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
+    });
+
+    if (claim.status !== "claimed") {
+        const owner = claim.status === "held" && "pid" in claim.state ? ` (pid ${claim.state.pid})` : "";
+        throw new Error(`another meetings watcher holds ${file}${owner}`);
+    }
+}
+
+function watcherCodeStamp(root: string): number {
+    const app = statSync(genesisAppLauncherPath(), { throwIfNoEntry: false });
+    return Math.max(newestLoadedModuleMtime(root), app?.mtimeMs ?? 0, app?.ctimeMs ?? 0);
+}
+
+/** Release the pidfile after the active tick finishes. The daemon can then start the updated watcher. */
+export async function runWatcher(
+    store: MeetingStore,
+    options: {
+        newest?: (root: string) => number;
+        everyMs?: number;
+        loop?: typeof watchLoop;
+    } = {}
+): Promise<void> {
+    await claimWatcher(store);
+    const owner = new AbortController();
+    const stop = () => owner.abort();
+    const stopWatching = onLoadedCodeChange({
+        root: resolve(moduleDir(import.meta), "../..") + sep,
+        startedAt: performance.timeOrigin,
+        newest: options.newest ?? watcherCodeStamp,
+        everyMs: options.everyMs,
+        onChanged: () => {
+            log.info("the watcher code or installed app changed; releasing the watcher for restart");
+            stop();
+        },
+    });
+    process.on("SIGTERM", stop);
+    process.on("SIGINT", stop);
+    try {
+        await (options.loop ?? watchLoop)(store, owner.signal);
+    } finally {
+        stopWatching();
+        process.off("SIGTERM", stop);
+        process.off("SIGINT", stop);
+        clearPidFile(watcherPidPath(store));
+    }
 }
 
 /** Outside the default store, a manual recording starts a watcher only when sources.<id>.autoRecord.enabled is true. */
@@ -55,6 +115,9 @@ export async function recordingAutostart(mode: "on" | "off" | "status" = "status
     }
     const config = await configStore.read();
     const enabled = config.sources[watchedSourceId(config)].autoRecord.enabled;
+    if (!enabled && mode === "off") {
+        await showRecordingGrantCard();
+    }
     if (enabled && mode === "on") {
         await ensureWatcher();
     }

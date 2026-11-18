@@ -178,6 +178,8 @@ const sourceBaseShape = {
             liveWithinSec: z.number().int().positive().default(30),
             /** Post a notification when a recording starts by itself. */
             notify: z.boolean().default(true),
+            /** Keep a permission warning in the widget while this source records automatically. */
+            permissionCard: z.boolean().default(true),
         })
         .prefault({}),
 };
