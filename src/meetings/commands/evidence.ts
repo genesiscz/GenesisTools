@@ -1,8 +1,10 @@
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import type { MeetingLevelRow } from "@genesiscz/utils/meetings/levels";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
@@ -11,6 +13,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { channelEvidence } from "../lib/channel-operation";
+import { liveMeetingLevels, savedMeetingLevels } from "../lib/levels";
 import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
@@ -44,6 +47,7 @@ async function evidence(
         voices?: string;
         voiceFeatures?: boolean;
         channel?: string;
+        levels?: boolean;
     }
 ): Promise<void> {
     const flag = formatFlag(opts);
@@ -66,6 +70,19 @@ async function evidence(
     }
 
     try {
+        if (opts.levels) {
+            const rows = savedMeetingLevels(store, ref);
+            if (format === "json" || opts.raw) {
+                out.result(rows);
+            } else if (rows.length === 0) {
+                out.println("This meeting has no saved level readings.");
+            } else {
+                for (const row of rows) {
+                    out.println(levelLine(row));
+                }
+            }
+            return;
+        }
         const record = store.resolve(ref);
 
         if (!record) {
@@ -318,7 +335,67 @@ function sharedOwnMicrophone(record: MeetingRecord): boolean {
     return (group?.people.length ?? record.seats?.room.length ?? 0) > 1;
 }
 
+function levelLine(row: MeetingLevelRow): string {
+    const source = (one: MeetingLevelRow["mic"]) => {
+        const value = one.sampled ? (one.dbfs === null ? "silent" : `${one.dbfs.toFixed(1)} dBFS`) : "no samples";
+        return `${one.device ?? "unknown device"} · ${value}${one.muted ? " (muted)" : ""}`;
+    };
+    const percent = (n: number | null) => (n === null ? "—" : `${Math.round(100 * n)}%`);
+    return [
+        row.at + (row.paused ? " (paused)" : ""),
+        `mic ${source(row.mic)}`,
+        `system ${source(row.system)}`,
+        `mic share ${percent(row.micShare)}`,
+        `loud mic passages ${percent(row.calibration.sourceMicShare ?? null)}`,
+        `last-minute calibration ${row.calibration.layout}`,
+    ].join("  ");
+}
+
 export function registerEvidenceCommand(program: Command): void {
+    program
+        .command("levels")
+        .description("Test the microphone and system sound without saving audio")
+        .option("--seconds <n>", "monitor for 1–60 seconds", "3")
+        .option("--stream", "print live readings as JSON lines")
+        .option("--until-stdin-closes", "also stop when the parent closes stdin")
+        .action(async (opts: { seconds: string; stream?: boolean; untilStdinCloses?: boolean }) => {
+            const parent = new AbortController();
+            const close = () => parent.abort();
+            if (opts.untilStdinCloses) {
+                process.stdin.once("end", close);
+                process.stdin.resume();
+            }
+            try {
+                await withInterrupt(
+                    async (interrupt) => {
+                        const signal = AbortSignal.any([interrupt, parent.signal]);
+                        try {
+                            const result = await liveMeetingLevels({
+                                seconds: Number(opts.seconds),
+                                signal,
+                                onRow: opts.stream ? (row) => out.print(`${SafeJSON.stringify(row)}\n`) : undefined,
+                                onWarning: opts.stream
+                                    ? (warning) => out.print(`${SafeJSON.stringify({ warning })}\n`)
+                                    : undefined,
+                            });
+                            out.print(`${SafeJSON.stringify(result)}\n`);
+                        } catch (error) {
+                            if (!signal.aborted) {
+                                throw error;
+                            }
+                        }
+                    },
+                    { handleTermination: true }
+                );
+            } catch (error) {
+                fail(error);
+            } finally {
+                if (opts.untilStdinCloses) {
+                    process.stdin.off("end", close);
+                    process.stdin.pause();
+                }
+            }
+        });
     program
         .command("evidence")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
@@ -331,6 +408,7 @@ export function registerEvidenceCommand(program: Command): void {
         .option("--voices <n>", "cluster lines into 1..16 voices, anchored by confirmed assignments")
         .option("--channel <0|1>", "physical clustering channel, default calibrated mic channel or left when unknown")
         .option("--files", "also list the evidence files and their sizes")
+        .option("--levels", "recorded level readings, device names, mute state and last-minute calibration")
         .option("--table", "compact per-line evidence table")
         .option("--from <seconds>", "table start time")
         .option("--to <seconds>", "table end time")

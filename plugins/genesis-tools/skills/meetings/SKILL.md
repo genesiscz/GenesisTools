@@ -210,6 +210,12 @@ A missing meeting names only the store that was searched. To find which store ho
 
 ## Listening quality and voice evidence
 
+Open Settings → Meetings → Microphone test, or use `tools meetings levels --seconds 60 --stream`.
+`await meetings.levels({seconds: 60})` returns the final live reading. Say something with playback stopped,
+then play something while quiet. Missing samples and measured silence have different meanings. A recording's
+saved dBFS, microphone share, device names, mute state and calibration are available without a transcript:
+`tools meetings evidence <meeting> --levels --json` or `await meetings.levels({meeting: "<meeting>"})`.
+
 `transcript <meeting> --with-suggested --apply-above 70` keeps lower-confidence voices as percentage marks.
 `transcript <meeting> --probe-thresholds 50,60,70,80` compares applied and open counts without changing the record.
 With `--with-suggested`, proposed terms apply at 70% confidence by default (`term.applyAbove`).

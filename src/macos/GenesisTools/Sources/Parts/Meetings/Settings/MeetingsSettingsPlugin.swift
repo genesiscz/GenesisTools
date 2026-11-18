@@ -47,6 +47,7 @@ enum MeetingsLanguage {
 @MainActor
 enum MeetingsSettingsPages {
     static let recordingPage = "meetings.recording"
+    static let microphonePage = "meetings.microphone"
     static let projectsPage = "meetings.projects"
     static let dictionaryPage = "meetings.dictionary"
     static let speakersPage = "meetings.speakers"
@@ -73,6 +74,10 @@ enum MeetingsSettingsPages {
             NativeSettingsPage(id: recordingPage, title: "Recording", symbol: "record.circle", tint: .red,
                                subtitle: "When the screen is recorded with a meeting, how often, and what it costs.") {
                 MeetingsRecordingPage(model: model)
+            },
+            NativeSettingsPage(id: microphonePage, title: "Microphone test", symbol: "mic", tint: .green,
+                               subtitle: "Test your microphone and system sound, and choose what a meeting keeps.") {
+                MeetingsMicrophonePage(model: model, defaults: defaults)
             },
             NativeSettingsPage(id: projectsPage, title: "Projects", symbol: "folder", tint: .blue,
                                subtitle: "How a meeting finds its project: rules, labels, paired people and the export folder.") {
