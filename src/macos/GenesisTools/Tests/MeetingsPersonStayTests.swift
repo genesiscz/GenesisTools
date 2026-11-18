@@ -44,6 +44,15 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(ListenPresenceStrip.window(from: "01:02", to: "1:02:03", duration: 4000), 62...3723, "the strip reads the same clock")
     }
 
+    func testTheEditorWritesAStoredTimeToATenth() {
+        XCTAssertEqual(ListenPresenceStrip.clock(5872.7229999999999563), "1:37:52.7", "never the float's every digit")
+        XCTAssertEqual(ListenPresenceStrip.clock(1.5), "00:01.5")
+        XCTAssertEqual(ListenPresenceStrip.clock(12), "00:12")
+        XCTAssertEqual(ListenPresenceStrip.clock(59.96), "01:00", "a tenth that rounds up carries into the minute")
+        XCTAssertEqual(PersonStay.Clock(ListenPresenceStrip.clock(724.25)).value ?? -1, 724.3, accuracy: 0.001,
+                       "the editor reads back what it wrote")
+    }
+
     func testASaveAndARemovalWriteOnlyWhatTheyMean() {
         let stay = PersonStay(name: "Dana Example", fromSec: 120, toSec: nil, atMic: false, via: "carol-laptop", stays: 1)
         let save = stay.params(meeting: "m")
