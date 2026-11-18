@@ -970,6 +970,9 @@ final class ReviewModel: ObservableObject {
                 return
             }
             watchReloadQueued = false
+            // Keep watcher work separate from explicit loads until it can run. Visibility may change
+            // while the current load is still reading Git.
+            if loadInFlight { return }
             watchReloadAt = Date()
             let batches = watchBatches
             watchBatches = [:]
@@ -1429,6 +1432,10 @@ final class ReviewModel: ObservableObject {
                     self.runLoads()
                 } else if self.loading {
                     self.loading = false
+                }
+                if !self.watchBatches.isEmpty, !self.watchReloadQueued {
+                    self.watchReloadQueued = true
+                    self.scheduleWatchReload()
                 }
             }
             // After the answer is on its way to the screen, so encoding a large diff never delays it.

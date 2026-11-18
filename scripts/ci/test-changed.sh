@@ -36,7 +36,10 @@ if grep -Eq '^\.githooks/|^scripts/git/install-hooks\.ts$' <<< "$changed"; then
     extra+=(scripts/ci/pre-commit-hook.test.ts)
 fi
 if grep -Eq '^\.github/workflows/ci\.yml$|^scripts/ci/test-changed\.sh$' <<< "$changed"; then
-    extra+=(scripts/ci/typecheck.test.ts scripts/ci/summarize-tests.test.ts)
+    extra+=(scripts/ci/typecheck.test.ts)
+fi
+if grep -Eq '^\.github/workflows/ci\.yml$|^scripts/ci/(test-changed|summarize-tests)\.sh$' <<< "$changed"; then
+    extra+=(scripts/ci/summarize-tests.test.ts)
 fi
 if grep -Fxq 'scripts/ci/lint-changed.sh' <<< "$changed"; then
     extra+=(scripts/ci/lint-rules.test.ts)
@@ -47,12 +50,20 @@ fi
 
 status=0
 ignore=()
-if (( ${#extra[@]} )); then
+file_readers() {
     # A missing completion marker in either run must still reach the workflow's hang guard.
+    local log
     log=$(mktemp)
-    bun scripts/test.ts --parallel "${extra[@]}" > "$log" 2>&1 || status=$?
-    sed 's/^\[test\] suite complete/[ci] file-reader tests complete/' "$log"
+    bun scripts/test.ts --parallel "$@" 2>&1 | tee "$log" |
+        awk '{ sub(/^\[test\] suite complete/, "[ci] file-reader tests complete"); print; fflush() }' || status=$?
     grep -q '^\[test\] suite complete' "$log" || exit 1
+}
+if grep -Eq '^\.githooks/pre-push$|^\.claude/skills/babysit/scripts/(integrate|scripts.test)\.ts$' <<< "$changed"; then
+    file_readers --test-name-pattern 'integrate.s gates|integration gates read the captured commit|integration uses the same dashboard lint' \
+        ./.claude/skills/babysit/scripts/scripts.test.ts
+fi
+if (( ${#extra[@]} )); then
+    file_readers "${extra[@]}"
     for file in "${extra[@]}"; do ignore+=("--path-ignore-patterns=$file"); done
 fi
 echo "[ci] testing imports affected since $base"

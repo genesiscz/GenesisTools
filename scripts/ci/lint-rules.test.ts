@@ -1622,6 +1622,7 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             run(["commit", "-qm", "base"]);
             const base = run(["rev-parse", "HEAD"]);
             expect(changedFiles(base, { cwd: dir })).toEqual(new Set());
+            writeFileSync(join(dir, "biome.json"), "{}");
 
             let previous = base;
 
@@ -1630,6 +1631,20 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
                 run(["add", "--", `scripts/ci/${file}`]);
                 run(["commit", "-qm", "remove exemption"]);
                 expect(changedFiles(previous, { cwd: dir })).toBeNull();
+                if (file === inputs[0]) {
+                    const automatic = spawnSync(
+                        process.execPath,
+                        [join(import.meta.dir, "lint-rules.ts"), "--no-rosters", "--changed", previous],
+                        {
+                            cwd: dir,
+                            env: process.env,
+                            encoding: "utf8",
+                        }
+                    );
+                    // This tiny repository lacks the unrelated files named in the real ratchet tables.
+                    expect(automatic.stdout, automatic.stderr).toMatch(/(?:OK \(|across )1 files/);
+                    expect(automatic.stdout).not.toContain("src/offender.ts:");
+                }
                 previous = run(["rev-parse", "HEAD"]);
                 const source = readFileSync(join(dir, "src/offender.ts"), "utf8");
                 expect(rules(source, "src/offender.ts")).toContain("no-model-id-literal-outside-catalog");

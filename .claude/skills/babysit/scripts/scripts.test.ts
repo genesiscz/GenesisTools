@@ -819,7 +819,7 @@ describe("integrate's gates", () => {
         expect(fromHook.length).toBeGreaterThan(5);
         expect(PRE_PUSH_GUARDS).toEqual([
             ["lint:dashboard", "bun", "run", "lint:dashboard"],
-            ["typecheck:all", "bun", "run", "typecheck:all"],
+            ["typecheck", "bun", "run", "typecheck", "--prefer-tsc-rs"],
             ...fromHook,
         ]);
     });
@@ -4641,7 +4641,7 @@ describe("round 15 review regressions", () => {
     });
 
     test("integration gates read the captured commit even when the worker advances", () => {
-        for (const mode of ["broken", "lint:dashboard", "typecheck:all", "correct"]) {
+        for (const mode of ["lint:dashboard", "typecheck", "correct"]) {
             const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-integrate-snapshot-")));
             const realWt = join(dir, "worker");
             const wt = join(dir, "worker-alias");
@@ -4692,14 +4692,14 @@ describe("round 15 review regressions", () => {
                     "import * as fs from 'node:fs';const spawn=Bun.spawnSync;const wt=" + SafeJSON.stringify(wt) + ";",
                     "const result=(code,out='')=>({exitCode:code,stdout:Buffer.from(out),stderr:Buffer.alloc(0)});",
                     "Bun.spawnSync=(args,opts)=>{if(args[0] === 'gh') {if(args[1] !== 'pr' || args[2] !== 'view') throw new Error('no GitHub writes');return result(0,'{\"headRefName\":\"pr-head\",\"baseRefName\":\"main\"}');}",
-                    "if(args[0] === 'git') {if(args.includes('fetch')) return result(0);if(args.includes('push')) throw new Error('no pushes');return spawn(args,opts);}",
-                    "if(args.includes('--noEmit')) {fs.writeFileSync(wt+'/evidence.txt','fixed later');fs.writeFileSync(wt+'/src/utils/fixture.ts','export const fixture = 2;\\n');for(const cmd of [['add','--','evidence.txt'],['commit','-qm','next round']]) {const p=spawn(['git','-c','core.hooksPath=/dev/null',...cmd],{cwd:wt,stdout:'pipe',stderr:'pipe'});if(p.exitCode) throw new Error('fixture commit failed');}fs.writeFileSync(" +
+                    "if(args[0] === 'git' && args.includes('--diff-filter=d')) {fs.writeFileSync(wt+'/evidence.txt','fixed later');fs.writeFileSync(wt+'/src/utils/fixture.ts','export const fixture = 2;\\n');for(const cmd of [['add','--','evidence.txt'],['commit','-qm','next round']]) {const p=spawn(['git','-c','core.hooksPath=/dev/null',...cmd],{cwd:wt,stdout:'pipe',stderr:'pipe'});if(p.exitCode) throw new Error('fixture commit failed');}fs.writeFileSync(" +
                         SafeJSON.stringify(gateCwd) +
-                        ",JSON.stringify({cwd:opts.cwd,evidence:fs.readFileSync(opts.cwd+'/evidence.txt','utf8'),utils:fs.realpathSync(opts.cwd+'/node_modules/@fixture/utils'),utilsText:fs.readFileSync(opts.cwd+'/node_modules/@fixture/utils/fixture.ts','utf8'),dependency:fs.realpathSync(opts.cwd+'/node_modules/fixture-dependency')}));return result(fs.readFileSync(opts.cwd+'/evidence.txt','utf8') === 'broken'?1:0,'fixture typecheck');}",
+                        ",JSON.stringify({cwd:opts.cwd,evidence:fs.readFileSync(opts.cwd+'/evidence.txt','utf8'),utils:fs.realpathSync(opts.cwd+'/node_modules/@fixture/utils'),utilsText:fs.readFileSync(opts.cwd+'/node_modules/@fixture/utils/fixture.ts','utf8'),dependency:fs.realpathSync(opts.cwd+'/node_modules/fixture-dependency')}));}",
+                    "if(args[0] === 'git') {if(args.includes('fetch')) return result(0);if(args.includes('push')) throw new Error('no pushes');return spawn(args,opts);}",
                     "if(args.includes('check') && args.includes('--no-errors-on-unmatched')) {fs.writeFileSync(" +
                         SafeJSON.stringify(gateCwd + ".biome") +
                         ",JSON.stringify(args));return result(0);}",
-                    "if(args[1] === 'run' && ['lint:dashboard','typecheck:all'].includes(args[2])) {fs.appendFileSync(" +
+                    "if(args[1] === 'run' && ['lint:dashboard','typecheck'].includes(args[2])) {fs.appendFileSync(" +
                         SafeJSON.stringify(gateCwd + ".gates") +
                         ",JSON.stringify({gate:args[2],cwd:opts.cwd,evidence:fs.readFileSync(opts.cwd+'/evidence.txt','utf8')})+'\\n');return result(args[2] === " +
                         SafeJSON.stringify(mode) +
@@ -4727,7 +4727,7 @@ describe("round 15 review regressions", () => {
                 mode === "correct" ? 0 : 1
             );
             if (mode !== "correct") {
-                expect(result.stdout.toString()).toContain(`${mode === "broken" ? "tsc" : mode} failed`);
+                expect(result.stdout.toString()).toContain(`${mode} failed`);
             } else {
                 expect(result.stdout.toString()).toContain("dry: push skipped");
             }
@@ -4741,22 +4741,22 @@ describe("round 15 review regressions", () => {
             };
             expect(seen.cwd).not.toBe(wt);
             expect(seen.evidence).toBe(mode);
-            if (mode !== "broken") {
-                expect(fs.existsSync(gateCwd + ".biome")).toBe(true);
-                expect(SafeJSON.parse(fs.readFileSync(gateCwd + ".biome", "utf8"), { strict: true })).toContain(
-                    "src/café.ts"
-                );
-                const gates = fs
-                    .readFileSync(gateCwd + ".gates", "utf8")
-                    .trim()
-                    .split("\n")
-                    .map((line) => SafeJSON.parse(line, { strict: true }));
-                expect(gates).toEqual(
-                    (mode === "lint:dashboard" ? ["lint:dashboard"] : ["lint:dashboard", "typecheck:all"]).map(
-                        (gate) => ({ gate, cwd: seen.cwd, evidence: mode })
-                    )
-                );
-            }
+            expect(fs.existsSync(gateCwd + ".biome")).toBe(true);
+            expect(SafeJSON.parse(fs.readFileSync(gateCwd + ".biome", "utf8"), { strict: true })).toContain(
+                "src/café.ts"
+            );
+            const gates = fs
+                .readFileSync(gateCwd + ".gates", "utf8")
+                .trim()
+                .split("\n")
+                .map((line) => SafeJSON.parse(line, { strict: true }));
+            expect(gates).toEqual(
+                (mode === "lint:dashboard" ? ["lint:dashboard"] : ["lint:dashboard", "typecheck"]).map((gate) => ({
+                    gate,
+                    cwd: seen.cwd,
+                    evidence: mode,
+                }))
+            );
             expect(seen.utils).toBe(join(seen.cwd, "src/utils"));
             expect(seen.utilsText).toBe("export const fixture = 1;\n");
             expect(seen.dependency).toBe(installed);
@@ -5310,9 +5310,9 @@ describe("round 19 review regressions", () => {
         expect(fs.readFileSync(join(outside, "keep.log"), "utf8")).toBe("keep");
     });
 
-    test("integration replaces the dashboard lint and complete typecheck push gates", () => {
+    test("integration uses the same dashboard lint and compiler preference as pre-push", () => {
         expect(PRE_PUSH_GUARDS).toContainEqual(["lint:dashboard", "bun", "run", "lint:dashboard"]);
-        expect(PRE_PUSH_GUARDS).toContainEqual(["typecheck:all", "bun", "run", "typecheck:all"]);
+        expect(PRE_PUSH_GUARDS).toContainEqual(["typecheck", "bun", "run", "typecheck", "--prefer-tsc-rs"]);
     });
 
     test("the prescribed judge pack includes the saved worker report", () => {

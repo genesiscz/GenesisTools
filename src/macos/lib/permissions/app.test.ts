@@ -49,6 +49,7 @@ import {
     sourceHash,
     sourceRootsFor,
     stampAppToolsPath,
+    waitForSwift,
 } from "./app";
 import {
     type BuildOfferDeps,
@@ -68,6 +69,16 @@ import {
     PLAIN_PROGRESS_EVERY_MS,
     parseSwiftBuildProgress,
 } from "./swift-progress";
+
+it("waits for a timed-out Swift command to exit before releasing its build slot", async () => {
+    const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+        env: process.env,
+        stdout: "ignore",
+        stderr: "ignore",
+    });
+    await expect(waitForSwift(child, ["swift", "build"], 50)).rejects.toThrow("swift build did not finish");
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+});
 
 describe("readAppFaceProcesses", () => {
     it("lists the faces oldest first, so they start again in the order they first started", () => {
