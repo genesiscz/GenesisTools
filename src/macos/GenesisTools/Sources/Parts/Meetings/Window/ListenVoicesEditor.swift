@@ -13,10 +13,16 @@ struct ListenVoicesEditor: View {
     @State private var showEverybody = false
     @State private var unavailable: [PersonSourceState] = []
 
+    private var sourceLines: [QuestionDetails.Line] {
+        detail.rows.value?.questionDetailsByID[row.id]?.decidedLines ?? []
+    }
+
     private func updateWords() {
         let time = row.startSec ?? 0
-        let line = detail.transcript.value?.entries.last { ($0.startSec ?? .infinity) <= time }
-        words = (line?.text ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
+        // The journal splits the original words. The displayed transcript may already have spelling edits.
+        let source = sourceLines.last { ($0.startSec ?? .infinity) <= time } ?? sourceLines.first
+        let text = source?.text ?? detail.transcript.value?.entries.last { ($0.startSec ?? .infinity) <= time }?.text
+        words = (text ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
         cut = min(max(1, cut), max(1, words.count - 1))
     }
     static func offeredPeople(_ known: [KnownPerson], row: ReviewRow, everybody: Bool) -> [String] {
@@ -40,13 +46,20 @@ struct ListenVoicesEditor: View {
                 Button("Show everybody") { showEverybody = true }.buttonStyle(.genHoverPlain())
                     .instantTooltip("Include people who were outside the call at this time")
             }
-            if words.count > 1 {
+            if words.count > 2 {
                 Slider(value: Binding(get: { Double(cut) }, set: { cut = Int($0.rounded()) }), in: 1...Double(words.count - 1), step: 1) {
                     Text("Second voice starts at")
                 }
                 .accessibilityValue(Self.boundary(words, cut: cut))
+            }
+            if words.count > 1 {
                 Text(words.prefix(cut).joined(separator: " ") + " | " + words.dropFirst(cut).joined(separator: " ")).font(.caption)
-                    .accessibilityHidden(true)
+                    .accessibilityHidden(words.count > 2)
+            } else if words.isEmpty, let failure = detail.transcript.failure {
+                NoticePill(text: failure.sentence, more: failure.detail, tone: .error)
+                Button("Retry") { detail.loadTranscript() }
+            } else if words.isEmpty, detail.transcript.value == nil {
+                ProgressView("Reading the words…").controlSize(.small)
             } else {
                 Text("No word boundary is available. The ordered voices will remain an unclear two-person mark.").font(.caption)
             }
@@ -54,14 +67,17 @@ struct ListenVoicesEditor: View {
                 let segments: [DecisionAction.VoiceSegment]? = words.count > 1 ? [.init(fromWord: 0, speaker: first), .init(fromWord: cut, speaker: second)] : nil
                 detail.decide(row, .answer(row.id, first + ", then " + second, segments: segments), askReach: false)
                 close()
-            }.buttonStyle(.genHoverPlain()).disabled(first.isEmpty || second.isEmpty || first == second)
+            }.buttonStyle(.genHoverPlain()).disabled(first.isEmpty || second.isEmpty || first == second
+                                                    || (words.isEmpty && detail.transcript.value == nil))
         }.padding().frame(width: 430)
         .onAppear {
             detail.window?.player.pause()
+            if sourceLines.isEmpty { detail.ensureTranscript() }
             updateWords()
             let next = detail.peopleSearch(atSec: row.startSec); search = next; next.ask("", after: .zero)
         }
         .onChange(of: detail.transcript.value) { _, _ in updateWords() }
+        .onChange(of: sourceLines) { _, _ in updateWords() }
         .onChange(of: search?.people, initial: true) { _, _ in updatePeople() }
         .onChange(of: search?.sources, initial: true) { _, sources in unavailable = PeopleText.unavailable(sources ?? []) }
         .onChange(of: row) { _, _ in updateWords(); updatePeople() }
