@@ -168,7 +168,7 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertTrue(folded.contains("All 5 lines"), folded)
         XCTAssertFalse(folded.contains("Alice Example:"), "the question's own speaker is not repeated on each line: \(folded)")
 
-        let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.4,"priority":1.62,"what":"Who speaks?","parts":[{"kind":"who","text":"Alice Example"},{"kind":"asks","pieces":[{"text":"Who speaks under Alice Example?"}]}],"choices":[{"value":"Bob Example","label":"Bob Example","role":"suggested","action":{"kind":"answer","answer":"Bob Example"}},{"value":"several","label":"Several voices","role":"split","action":{"kind":"answer","answer":"several"}}],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
+        let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.4,"priority":1.62,"what":"Who speaks?","parts":[{"kind":"who","text":"Alice Example"},{"kind":"asks","pieces":[{"text":"Who speaks under Alice Example?"}]}],"choices":[{"value":"Bob Example","label":"Bob Example","role":"suggested","action":{"kind":"answer","answer":"Bob Example"}},{"value":"several","label":"Several voices","role":"split","action":{"kind":"answer","answer":"several"}},{"value":"skip","label":"Skip","role":"skip","action":{"kind":"answer","answer":"skip"}}],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
         let detail = MeetingDetailModel(id: "copy", window: nil)
         detail.rows = .loaded(.init(meeting: "copy", rows: [row], hidden: .init(lowPriority: 0, minPriority: 0), questionDetails: [evidence]))
         let card = try rendered(ReviewRowView(row: row, detail: detail, player: nil, asksSpeaker: true), name: "card-answers-first")
@@ -177,6 +177,10 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertTrue(card.contains("40 % sure"), card)
         let answer = try XCTUnwrap(card.range(of: "Bob Example")), decides = try XCTUnwrap(card.range(of: "Decides"))
         XCTAssertLessThan(answer.lowerBound, decides.lowerBound, "the answers come before the evidence: \(card)")
+        // H4: the rare answers wait in More, and Skip stands last, apart from the answers.
+        XCTAssertFalse(card.contains("Several voices"), "a rare answer nobody suggested is in More: \(card)")
+        let more = try XCTUnwrap(card.range(of: "More"), card), skip = try XCTUnwrap(card.range(of: "Skip"), card)
+        XCTAssertLessThan(more.lowerBound, skip.lowerBound, "Skip comes after the answers: \(card)")
     }
 
     func testCheckByEarHoldsBothChecksWithTheirNumbersAndTheRate() throws {
