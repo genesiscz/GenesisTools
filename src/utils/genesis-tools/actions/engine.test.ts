@@ -269,14 +269,62 @@ describe("state file", () => {
 describe("the real areas", () => {
     test("windows.open waits for a permission dialog and returns on handoff for a banner", () => {
         const parsed = AREAS.windows.actions.open.args.parse({
-            window: "--permission-dialog", args: ["microphone", "--reason", "A clip"], wait: true,
+            window: "--permission-dialog",
+            args: ["microphone", "--reason", "A clip"],
+            wait: true,
         });
         expect(windowOpenArgv(parsed)).toEqual([
-            "/usr/bin/open", "-n", "-W", genesisAppBundlePath(), "--args", "--permission-dialog", "microphone", "--reason", "A clip",
+            "/usr/bin/open",
+            "-n",
+            "-W",
+            genesisAppBundlePath(),
+            "--args",
+            "--permission-dialog",
+            "microphone",
+            "--reason",
+            "A clip",
         ]);
         expect(windowOpenArgv(AREAS.windows.actions.open.args.parse({ window: "--hub" }))).toEqual([
-            "/usr/bin/open", "-n", genesisAppBundlePath(), "--args", "--hub",
+            "/usr/bin/open",
+            "-n",
+            genesisAppBundlePath(),
+            "--args",
+            "--hub",
         ]);
+    });
+
+    test("windows.open never builds without a terminal (a notification click), even when the config says build", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-actions-click-"));
+        const config = createConfigStore({ registry: AREAS, file: join(dir, "config.json") });
+        await config.set("windows.fix", "build");
+        const builds: Array<string | null> = [];
+        const builder: AppBuilder = {
+            build: async (part) => {
+                builds.push(part);
+            },
+            offerBuild: async () => false,
+            buildCommand: (part) => `build-it ${part ?? ""}`.trim(),
+        };
+        const noHub = { appManifest: () => ({ buildId: "b1", parts: ["features"], rpcMethods: null }) };
+
+        const click = await runAreaAction(
+            AREAS,
+            "windows.open",
+            { window: "--hub" },
+            deps({ config, builder, facts: fakeFacts({ ...noHub, hasTerminal: () => false }) })
+        );
+        expect(builds).toEqual([]);
+        expect(click.status).toBe("unreachable");
+        expect(click.skipped[0]?.code).toBe("part-missing");
+        expect(click.skipped[0]?.fix?.command).toContain("build-it");
+
+        await runAreaAction(
+            AREAS,
+            "windows.open",
+            { window: "--hub" },
+            deps({ config, builder, facts: fakeFacts({ ...noHub, hasTerminal: () => true }) })
+        ).catch(() => undefined);
+        expect(builds).toEqual(["hub"]);
     });
 
     test("explain windows.open names the ways and changes no state without --fresh", async () => {
