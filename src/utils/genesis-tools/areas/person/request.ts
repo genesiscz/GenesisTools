@@ -1,9 +1,10 @@
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
-import { type ActionDef, defineAction } from "@genesiscz/utils/genesis-tools/actions/define";
+import { type ActionDef, type ActionOutcome, defineAction } from "@genesiscz/utils/genesis-tools/actions/define";
 import { APP_FACES, type AppFaceFlag } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { z } from "zod";
 import { Delivery, type DeliveryName, deliverySchema, personConfigSchema } from "./deliveries";
+import type { RequestJournal, RequestView } from "./journal";
 
 export const noticeInputSchema = z.object({
     kind: z.literal("notice"),
@@ -43,6 +44,33 @@ export const requestOutcomeSchema = z.object({
 });
 export type RequestOutcome = z.infer<typeof requestOutcomeSchema>;
 export const requestConfigSchema = z.object({ delivery: deliverySchema.default(Delivery.askNow) });
+
+/** A click consumes a pending request only after its target opens or the person answers the request window. */
+export async function presentPostedRequest(options: {
+    view: RequestView;
+    journal: RequestJournal;
+    openWindow?: (target: NonNullable<PersonRequest["open"]>) => Promise<ActionOutcome<unknown>>;
+    showRequest: (request: PersonRequest) => Promise<RequestOutcome>;
+}): Promise<RequestOutcome> {
+    const { view, journal, openWindow, showRequest } = options;
+    if (view.outcome.status !== "pending") {
+        return view.outcome;
+    }
+
+    if (openWindow && view.request.open) {
+        const opened = await openWindow(view.request.open);
+        if (opened.status === "ran") {
+            return journal.settle(view.id, "done", null, { via: "notification", method: "click" });
+        }
+
+        const current = journal.get(view.id);
+        if (current && current.outcome.status !== "pending") {
+            return current.outcome;
+        }
+    }
+
+    return showRequest(view.request);
+}
 
 /** A preset owns the request text and default delivery; callers only supply the preset's typed args. */
 export function defineRequest<TArgs extends z.ZodType>(spec: {
