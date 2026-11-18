@@ -383,7 +383,7 @@ struct TranscriptAvatar: View {
 
 /// One line inside a block: a click plays from it (⇧ or ⌘ selects), its marks show at its end, and it is its own
 /// accessibility element with "Play from …" (G58).
-private struct TranscriptBlockLineView: View {
+struct TranscriptBlockLineView: View {
     let line: TranscriptBlockLine
     let speaker: String
     let heard: Bool
@@ -394,10 +394,27 @@ private struct TranscriptBlockLineView: View {
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
     let selectWords: (TranscriptBlockLine, NSRange) -> Void
     @Environment(\.rowLive) private var live
-    @State private var hovering = false
+    @State private var hovering: Bool
     @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
         MeetingsPreferences.Playback.animateActivity.defaultValue
     @GenReduceMotion private var reduceMotion
+
+    /// `hovering` is where the pointer starts: a test measures the line with it on and off, because a hidden test window
+    /// gets no pointer.
+    init(line: TranscriptBlockLine, speaker: String, heard: Bool, wordRange: NSRange?, selected: Bool, past: Bool,
+         play: @escaping (Double) -> Void, select: @escaping (TranscriptBlockLine, TranscriptLineClick) -> Void,
+         selectWords: @escaping (TranscriptBlockLine, NSRange) -> Void, hovering: Bool = false) {
+        self.line = line
+        self.speaker = speaker
+        self.heard = heard
+        self.wordRange = wordRange
+        self.selected = selected
+        self.past = past
+        self.play = play
+        self.select = select
+        self.selectWords = selectWords
+        _hovering = State(initialValue: hovering)
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -438,10 +455,18 @@ private struct TranscriptBlockLineView: View {
                     .instantTooltip("A staged comment covers this line")
             }
             Spacer(minLength: 0)
+        }
+        // Over the line's last words, taking no width (U8): beside the text it took about 90 pt, so the text wrapped
+        // again and every line below jumped on each hover.
+        .overlay(alignment: .bottomTrailing) {
             if hovering, let start = line.startSec {
                 Text(verbatim: "Play from \(MeetingsFormat.clock(start))")
                     .font(.system(size: 11)).foregroundStyle(Color.accentColor)
-                    .transition(.opacity)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .windowBackgroundColor)))
+                    .fixedSize()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
         .contentShape(Rectangle())

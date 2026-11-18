@@ -82,7 +82,18 @@ struct SpeakersTab: View {
                                     playSpan: { from, to in playRange(from, to) },
                                     zoom: { from, to in zoom(from, to) },
                                     openQuestion: { ids in if let first = ids.first { detail.reveal(row: first) } },
+                                    questionMenu: { id in Self.questionMenu(id, detail: detail) },
                                     assign: { stretch, person in detail.startAssign(stretch, to: person, email: nil) })
+    }
+
+    /// A banner's menu (U2): the question in a short line, its answers and "Show in Items". Built at the click, so it
+    /// answers the row as it is then; a row that is gone or not read yet still leads to Items.
+    static func questionMenu(_ id: String, detail: MeetingDetailModel) -> [MenuButtonItem] {
+        guard let row = detail.rows.value?.rows.first(where: { $0.id == id }) else {
+            return [.action("Show in Items") { detail.reveal(row: id) }]
+        }
+        let question = MenuButtonItem.note(TimelinePin.shortText(row.what, limit: 70))
+        return [question] + reviewChoiceItems(for: row, detail: detail)
     }
 
     /// The meeting's length for the lanes: the recording's, else the overview's, else the last line's time.
