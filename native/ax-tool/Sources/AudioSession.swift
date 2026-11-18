@@ -397,10 +397,12 @@ func cmdAudioRecord() {
     defaultErrorCode = "failed"
     guard #available(macOS 13.0, *) else { errorExit("audio-record needs macOS 13 or newer") }
     CaptureEvents.enabled = true
-    let warnings = runFromPrivateRecorderCopy()
-    for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
     let withoutScreen = CommandLine.arguments.contains("--without-screen")
-    if !withoutScreen { requireScreenRecording() }
+    if !withoutScreen {
+        let warnings = runFromPrivateRecorderCopy()
+        for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
+        requireScreenRecording()
+    }
     guard let out = argValue("--out") else { errorExit("audio-record needs --out", code: "invalid-argument") }
     let seconds = Double(argValue("--segment-sec") ?? "60") ?? .nan
     guard seconds.isFinite, (1...3600).contains(seconds) else {

@@ -11,7 +11,7 @@ import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/pro
 import { sandboxInstalled } from "@genesiscz/utils/storage/real-home-guard";
 import { hasOpenAssignSteps } from "./assign";
 import { showRecordingGrantCard } from "./recording-preflight";
-import { lastStartFailure } from "./start-failures";
+import { hasPendingStartAlerts, lastStartFailure } from "./start-failures";
 import { hasRecordingToWatch, hasSourceAudioToWatch, watchedSourceId, watchLoop } from "./watch";
 
 /**
@@ -134,7 +134,8 @@ async function startWatcher(): Promise<"started" | "running" | "disabled"> {
         !config.sources[watchedSourceId(config)].autoRecord.enabled &&
         !hasOpenAssignSteps(store) &&
         !hasRecordingToWatch(store) &&
-        !hasSourceAudioToWatch(store)
+        !hasSourceAudioToWatch(store) &&
+        !hasPendingStartAlerts(store)
     ) {
         return "disabled";
     }

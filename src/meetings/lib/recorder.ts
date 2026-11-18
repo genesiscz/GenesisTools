@@ -364,6 +364,9 @@ export async function runRecorder(options: RunRecorderOptions): Promise<Recorder
 
 /** The live displays of a recorder state, for `record status`. */
 export function stateDisplays(state: RecorderState): string {
+    if (state.withoutScreen) {
+        return "sound only";
+    }
     return state.displays?.length
         ? state.displays.map((display) => `${display.name} (${display.id})`).join(", ")
         : String(state.display);

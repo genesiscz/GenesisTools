@@ -18,7 +18,7 @@ import { pruneCapturesDaily } from "./retention";
 import { preservedSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
 import { liveSourceMeetingId, localSourceAudio, meetingSource, sourceRefOf } from "./sources";
-import { deliverStartFailures, startFailureDelivery } from "./start-failures";
+import { deliverStartFailures, hasPendingStartAlerts, startFailureDelivery } from "./start-failures";
 import {
     type AutoRecording,
     clearAuto,
@@ -700,7 +700,12 @@ export async function watchLoop(store: MeetingStore, signal: AbortSignal): Promi
         // After the look, so a meeting the look just refreshed from its source is asked about at once.
         await assignSweep(store).catch((err: unknown) => log.warn({ err }, "assign sweep failed"));
 
-        if (result === "disabled" && !hasOpenAssignSteps(store) && !hasRecordingToWatch(store)) {
+        if (
+            result === "disabled" &&
+            !hasOpenAssignSteps(store) &&
+            !hasRecordingToWatch(store) &&
+            !hasPendingStartAlerts(store)
+        ) {
             log.info("no automatic capture, active recording or project question needs the watcher; it ends");
             break;
         }
