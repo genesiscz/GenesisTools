@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import XCTest
+@testable import GenesisToolsFeatures
 @testable import GenesisToolsMeetings
 
 /// The Meetings part's logic: decoding what `tools meetings … --json` prints, the CLI's error sentence, the words and
@@ -590,6 +591,39 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: false, tab: .transcript),
                        "a tab the request named reads at once")
         XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: true, tab: .screen))
+    }
+
+    func testDictionaryPreviewFollowsTheSettingsRequestOnFirstLoadAndReopen() throws {
+        let shell = FeatureSettingsShell(mode: .headless)
+        let plugin = MeetingsSettingsPlugin()
+        shell.installPlugins([plugin])
+        let model = try XCTUnwrap(plugin.model)
+        let page = MeetingsSettingsPages.dictionaryPage
+        let request = FeatureSettingsRequest(pageID: page, context: "a")
+        let launched = FeatureSettingsRequest(arguments: ["--features"] + request.arguments)
+        XCTAssertEqual(launched, request)
+        shell.receive(launched, reopening: false)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "a")
+        XCTAssertEqual(model.dictionaryPreviewMeetings.options.map(\.value), ["", "a"])
+
+        let overview = try JSONDecoder().decode(MeetingsOverview.self, from: MeetingsUXTests.overviewJSON())
+        model.dictionaryPreviewMeetings.receive(overview.meetings)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.options.map(\.title), ["Choose a meeting…", "Weekly sync", "Screen only"])
+        model.dictionaryPreviewMeetings.selection = "b"
+        model.dictionaryPreviewMeetings.receive(overview.meetings)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "b", "A list response preserves an explicit pick")
+        shell.receive(FeatureSettingsRequest(userInfo: launched.userInfo), reopening: true)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "a", "Reopening from the same meeting selects it again")
+
+        let older = FeatureSettingsRequest(pageID: MeetingsSettingsPages.windowPage, context: "older")
+        let reopened = FeatureSettingsRequest(userInfo: FeatureSettingsRequest(arguments: older.arguments).userInfo)
+        XCTAssertEqual(reopened, older)
+        shell.receive(reopened, reopening: true)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "older")
+        XCTAssertTrue(model.dictionaryPreviewMeetings.options.contains { $0.value == "older" })
+        shell.receive(FeatureSettingsRequest(userInfo: ["page": page]), reopening: true)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "")
+        XCTAssertFalse(model.dictionaryPreviewMeetings.options.contains { $0.value == "older" })
     }
 
     /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.
