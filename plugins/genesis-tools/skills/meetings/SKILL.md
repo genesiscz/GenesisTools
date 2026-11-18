@@ -202,6 +202,15 @@ Cosine and margin are evidence, not probabilities. Missing models, quiet audio, 
 scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
 estimated-clean tracks separately.
 
+`voices [--project <p>]` lists each person's samples (meeting, seat, track, time, words); `voices play <person>
+[--sample <n>]` plays one. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
+refusal reasons, and saves nothing; `voices apply <meeting>` runs the speaker suggestions (names stay suggested);
+`voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first. `play <meeting> --track
+<track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
+it (172 minutes: about 90 s at normal priority); later passes read the cache in about half a second. Its priority and
+worker count are `global.speakerLabels.voice.compute` (`priority: normal` by default, `workers: auto` takes the free
+performance cores, at most four).
+
 Set `global.capture.recorders.native.audio.mode` to `session` for continuous sound in 60-second files; the default
 `pieces` records the sound inside the screen pieces, with up to 5 seconds missing every 30 seconds, and `record status`
 explains a fall back.
