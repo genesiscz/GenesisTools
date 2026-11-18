@@ -28,7 +28,8 @@ extension MeetingDetailModel {
             }
         }
         var marks: [String: Set<TranscriptLineMark>] = [:]
-        let voiced = items.filter { $0.kind == "speaker-range" && $0.status != "rejected" && $0.rules?.contains("voice-embedding") == true }
+        // Only a suggestion is the voice model's: a confirmed name is the person's, a rejected one is gone (ux 12a).
+        let voiced = items.filter { $0.kind == "speaker-range" && $0.status == "suggested" && $0.rules?.contains("voice-embedding") == true }
         guard !unclear.isEmpty || !corrected.isEmpty || !commented.isEmpty || !voiced.isEmpty else { return marks }
         for entry in entries {
             guard let start = entry.startSec else { continue }

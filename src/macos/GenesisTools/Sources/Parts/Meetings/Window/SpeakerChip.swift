@@ -80,6 +80,11 @@ struct SpeakerChip: View {
                 Text(verbatim: guessed).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
                 Badge(percent.map { "\($0) %" } ?? "guess", color: KitHue.care.ink, look: .tone, symbol: "questionmark")
             }
+        case .voice(let named):
+            HStack(spacing: 4) {
+                Text(verbatim: named).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                Badge("by voice", color: KitHue.play.ink, look: .tone, symbol: "waveform")
+            }
         case .open:
             Badge("Who is this?", color: KitHue.ask.ink, look: .tone, symbol: "person.fill.questionmark")
         }
@@ -90,6 +95,8 @@ struct SpeakerChip: View {
         case .name: return "Rename \(name), give this stretch to someone, or play it"
         case .guess(let guessed, let percent):
             return "A guess\(percent.map { ", \($0) % sure" } ?? ""): confirm \(guessed), give the stretch to someone else, or play it"
+        case .voice(let named):
+            return "Named by the voice model: confirm \(named) by ear, say it is not \(named), give the stretch to someone else, or play it"
         case .open(_, let candidates):
             return candidates.isEmpty ? "Nobody is named for these lines yet: give the stretch to someone, or play it"
                                       : "Not settled between \(candidates.joined(separator: ", ")): pick who it is, or play it"
@@ -100,6 +107,7 @@ struct SpeakerChip: View {
         switch shown {
         case .name: return name
         case .guess(let guessed, let percent): return "\(guessed), a guess\(percent.map { ", \($0) percent" } ?? "")"
+        case .voice(let named): return "\(named), named by the voice model"
         case .open: return "Who is this?"
         }
     }
@@ -118,6 +126,18 @@ struct SpeakerChip: View {
             if let startSec {
                 items.append(.action("It is \(guessed)") {
                     detail.startAssign(detail.blockStretch(speaker: speaker, startSec: startSec), to: guessed, email: nil)
+                })
+                items.append(.divider)
+            }
+        case .voice(let named):
+            if let startSec {
+                let stretch = detail.blockStretch(speaker: speaker, startSec: startSec)
+                items.append(.note("Named by the voice model"))
+                items.append(.action("Confirm \(named)") {
+                    detail.voices.decide(detail.voices.items(named: named, in: stretch), confirm: true)
+                })
+                items.append(.action("Not \(named)") {
+                    detail.voices.decide(detail.voices.items(named: named, in: stretch), confirm: false)
                 })
                 items.append(.divider)
             }

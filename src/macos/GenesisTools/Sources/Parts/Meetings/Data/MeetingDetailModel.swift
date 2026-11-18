@@ -43,6 +43,8 @@ final class MeetingDetailModel {
     var suggestionWarnings: [String] = []
     /// The running suggest's newest step from the service; nil when none runs or before its first step.
     var suggestProgress: MeetingsCallProgress?
+    /// The Voices pane's state for this meeting (VoicesPane.swift): made when the pane first opens, dropped with the meeting.
+    @ObservationIgnored private(set) lazy var voices = VoicesModel(meeting: id, detail: self)
     /// The notices of this pane's actions, floating over its tabs: several at once, each with its own Undo and time.
     @ObservationIgnored let notices: NoticeStackModel
     private var recordGeneration = 0

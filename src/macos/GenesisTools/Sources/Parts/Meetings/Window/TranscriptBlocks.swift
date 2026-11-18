@@ -33,6 +33,8 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
     var words: [TranscriptWord] = []
     var indicator: TranscriptLine.Indicator? = nil
     var evidenceMarks: [TranscriptEvidenceMark] = []
+    /// The voice model's score for the line's suggested name (`nameScore`), drawn with its mark.
+    var voiceScore: Double? = nil
 
     /// True while `position` is inside the line. A line without an end is heard from its start on.
     func isHeard(at position: Double) -> Bool {
@@ -82,9 +84,13 @@ struct TranscriptBlock: Equatable, Identifiable {
         let byIndex = Dictionary(evidence.map { ($0.index, $0) }, uniquingKeysWith: { _, last in last })
         for (index, entry) in entries.enumerated() {
             let cues = byIndex[entry.sourceIndex ?? index].map { TranscriptEvidenceMark.build($0, items: items, echoAbove: echoAbove) } ?? []
+            let voiced = entry.who.isVoice
+            var lineMarks = (marks[entry.rowID] ?? []).union(cues.map(\.kind))
+            if voiced { lineMarks.insert(.byVoice) }
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
-                                           text: entry.text, marks: (marks[entry.rowID] ?? []).union(cues.map(\.kind)), words: entry.words ?? [],
-                                           indicator: entry.indicator, evidenceMarks: cues)
+                                           text: entry.text, marks: lineMarks, words: entry.words ?? [],
+                                           indicator: entry.indicator, evidenceMarks: cues,
+                                           voiceScore: voiced ? entry.nameScore : nil)
             let who = entry.who
             if var last = blocks.last, last.who == who, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
@@ -416,7 +422,7 @@ private struct TranscriptBlockLineView: View {
                     .instantTooltip("The engine is not sure who said this line")
             }
             if line.marks.contains(.byVoice) {
-                Label("by voice", systemImage: "waveform").font(.caption2).foregroundStyle(.secondary)
+                VoiceModelMark(score: line.voiceScore)
             }
             if line.marks.contains(.commented) {
                 Image(systemName: "text.bubble")
@@ -464,7 +470,7 @@ private struct TranscriptBlockLineView: View {
         if heard { parts.append("playing now") }
         if line.marks.contains(.unclearSpeaker) { parts.append("speaker unsure") }
         if line.marks.contains(.corrected) { parts.append("corrected") }
-        if line.marks.contains(.byVoice) { parts.append("by voice") }
+        if line.marks.contains(.byVoice) { parts.append(VoiceModelMark.words(line.voiceScore)) }
         if line.marks.contains(.commented) { parts.append("has a staged comment") }
         return parts.joined(separator: ", ")
     }

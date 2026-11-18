@@ -73,6 +73,11 @@ struct MeetingsRequest {
     /// `--suggest-progress <fraction>,<label>`: a snapshot of the Items tab while a suggest run reports that step (the
     /// fraction `-` for none). No run starts; the picture shows the state the service's `$/progress` makes.
     var suggestProgress: MeetingsCallProgress?
+    /// `--voices open|preview`: a snapshot with the Voices pane open; `preview` runs the voice preview first (a real
+    /// `voices.preview`, nothing saved). `--voices-progress <fraction>,<label>`: the pane while a preview reports that
+    /// step (no run starts).
+    var voices: String?
+    var voicesProgress: MeetingsCallProgress?
     var width: CGFloat = 1280
     var height: CGFloat = 820
 
@@ -106,6 +111,8 @@ struct MeetingsRequest {
             case "--card": request.card = value()
             case "--sheet": request.sheet = value()
             case "--suggest-progress": request.suggestProgress = value().map(MeetingsRequest.progress)
+            case "--voices": request.voices = value()
+            case "--voices-progress": request.voicesProgress = value().map(MeetingsRequest.progress)
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
             case "--play-request": request.playRequest = value().flatMap { try? JSONDecoder().decode(MeetingsAPI.MomentParams.self, from: Data($0.utf8)) }
@@ -464,6 +471,21 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
+            }
+            if request.voices != nil || request.voicesProgress != nil, let detail = model.detail {
+                let voices = detail.voices
+                voices.open = true
+                voices.load(project: detail.record.value?.project)
+                _ = await waitUntil(60) { voices.people.value != nil || voices.people.failure != nil }
+                if request.voices == "preview" {
+                    voices.runPreview()
+                    // A cold voice pass of a 172-minute meeting takes up to 90 s with one worker.
+                    _ = await waitUntil(150) { voices.running == nil }
+                }
+                if let step = request.voicesProgress {
+                    voices.running = .preview
+                    voices.progress = step
+                }
             }
             let window: NSWindow
             if request.card != nil || request.sheet != nil {
