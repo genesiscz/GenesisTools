@@ -4,10 +4,16 @@
  */
 import type { ItemType, Role, Severity } from "../model/vocab";
 import { levelOf, SEVERITIES } from "../model/vocab";
-import type { FieldRule, ProjectRules, RoleRule, RoutingRule, RuleField, WriteVerb } from "./config";
+import type { FieldRule, NotifySurface, ProjectRules, RoleRule, RoutingRule, RuleField, WriteVerb } from "./config";
 
 export const RULE_LAYERS = ["default", "config.global", "config.repo", "config.project"] as const;
 export type RuleLayer = (typeof RULE_LAYERS)[number];
+export type NotifyLayer = RuleLayer | `surface.${NotifySurface}`;
+
+export interface NotifyLayerInput {
+    layer: NotifyLayer;
+    rules: Pick<ProjectRules, "notify">;
+}
 
 export interface Resolved<V> {
     value: V;

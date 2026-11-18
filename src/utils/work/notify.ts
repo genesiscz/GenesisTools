@@ -1,6 +1,6 @@
 /**
  * Who hears about a change (P8 decision 3). `resolveNotify` asks the layers in order (the defaults, the machine file,
- * the repository section, the project, then a surface's own key, hub or widget) and the strongest layer that names
+ * the repository section, the project, the hub, then the widget) and the strongest layer that names
  * a level decides; each answer keeps the layer trail, as the write rules do. The consumer reads the journal after its
  * own cursor and hands each line at the level `inbox` or `banner` to a port; `list` means "shows in the tree only".
  *
@@ -11,13 +11,13 @@ import type { Database } from "bun:sqlite";
 import type { Change } from "./model/change";
 import type { DeliveredPayload, MovedPayload, PairedPayload } from "./model/payloads";
 import { type ItemType, SEVERITIES, type Severity } from "./model/vocab";
-import type { NotifyAction, NotifyLevel, NotifyRule, ProjectRules } from "./rules/config";
-import type { RuleLayer, RuleLayerInput } from "./rules/resolve";
+import type { NotifyAction, NotifyLevel, NotifyRule, NotifySurface, ProjectRules } from "./rules/config";
+import { type LoadProjectRules, loadRulesForItems } from "./rules/load";
+import type { NotifyLayer, NotifyLayerInput } from "./rules/resolve";
 import { selectChangesAfter, selectItem } from "./store/rows";
 
-export const NOTIFY_SURFACES = ["hub", "widget"] as const;
-export type NotifySurface = (typeof NOTIFY_SURFACES)[number];
-export type NotifyLayer = RuleLayer | `surface.${NotifySurface}`;
+export { NOTIFY_SURFACES, type NotifySurface } from "./rules/config";
+export type { NotifyLayer } from "./rules/resolve";
 
 export interface NotifyQuestion {
     type: ItemType;
@@ -68,7 +68,7 @@ function ruleOf(rules: ProjectRules | undefined, q: NotifyQuestion): NotifyRule 
 }
 
 export function resolveNotify(
-    layers: readonly RuleLayerInput[],
+    layers: readonly NotifyLayerInput[],
     q: NotifyQuestion,
     surface?: { id: NotifySurface; rules: ProjectRules }
 ): ResolvedNotify {
@@ -76,7 +76,7 @@ export function resolveNotify(
     const trail: ResolvedNotify["layers"] = [{ layer: "default", value: base }];
     let level = base;
     let from: NotifyLayer = "default";
-    const all: { layer: NotifyLayer; rules: ProjectRules }[] = [
+    const all: NotifyLayerInput[] = [
         ...layers.filter((l) => l.layer !== "default"),
         ...(surface !== undefined ? [{ layer: `surface.${surface.id}` as const, rules: surface.rules }] : []),
     ];
@@ -149,8 +149,7 @@ export interface NotifyLine {
 
 export interface NotifyDeps {
     db: Database;
-    /** The layers of a project's rules. */
-    layers(project: string): readonly RuleLayerInput[];
+    loadRules: LoadProjectRules;
     inbox(line: NotifyLine): Promise<void>;
 }
 
@@ -177,44 +176,52 @@ const ACTION_WORDS: Record<NotifyAction, string> = {
 };
 
 /**
- * One pass. The batch is taken under BEGIN IMMEDIATE (the cursor moves before the lines go out), so two runners never
- * send the same line; a runner that dies after the move loses its lines, which is the cheaper failure for an inbox.
+ * Claim the batch after its rules load, before sending. A failed load can retry the same batch, and two runners
+ * that loaded the same batch cannot both send it.
  */
 export async function runNotifyOnce(deps: NotifyDeps): Promise<NotifyReport> {
     const { db } = deps;
-    let changes: Change[] = [];
-    let cursor = 0;
+    // A new cursor starts at the journal's head: the first pass never tells about the store's whole history.
+    db.run("INSERT OR IGNORE INTO cursors (consumer, seq) SELECT ?, COALESCE(MAX(seq), 0) FROM changes", [CURSOR]);
+    const cursorQuery = db.query<{ seq: number }, [string]>("SELECT seq FROM cursors WHERE consumer = ?");
+    const start = cursorQuery.get(CURSOR)?.seq ?? 0;
+    const changes = selectChangesAfter(db, start, BATCH);
+    const last = changes.at(-1);
 
-    db.run("BEGIN IMMEDIATE");
+    if (last === undefined) {
+        return { seen: 0, sent: 0, cursor: start };
+    }
 
-    try {
-        // A new cursor starts at the journal's head: the first pass never tells about the store's whole history.
-        db.run("INSERT OR IGNORE INTO cursors (consumer, seq) SELECT ?, COALESCE(MAX(seq), 0) FROM changes", [CURSOR]);
-        cursor = (db.query("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR) as { seq: number }).seq;
-        changes = selectChangesAfter(db, cursor, BATCH);
+    const batch = changes.flatMap((change) => {
+        const action = notifyActionOf(change);
+        const item = action === null ? null : selectItem(db, change.item);
+        return action !== null && item !== null ? [{ change, action, item }] : [];
+    });
+    const projects = await loadRulesForItems(batch, deps.loadRules);
+    const cursor = last.seq;
+    // Another writer may have claimed a shorter batch while we loaded. Take its unclaimed suffix under the lock.
+    const claimedAfter = db.transaction(() => {
+        const current = cursorQuery.get(CURSOR)?.seq ?? start;
 
-        if (changes.length > 0) {
-            cursor = changes[changes.length - 1].seq;
+        if (current < cursor) {
             db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [cursor, CURSOR]);
         }
 
-        db.run("COMMIT");
-    } catch (error) {
-        db.run("ROLLBACK");
-        throw error;
+        return current;
+    }).immediate();
+
+    if (claimedAfter >= cursor) {
+        return { seen: 0, sent: 0, cursor: claimedAfter };
     }
 
     let sent = 0;
 
-    for (const change of changes) {
-        const action = notifyActionOf(change);
-        const item = action === null ? null : selectItem(db, change.item);
-
-        if (action === null || item === null) {
+    for (const { change, action, item } of batch) {
+        if (change.seq <= claimedAfter) {
             continue;
         }
 
-        const resolved = resolveNotify(deps.layers(item.project), {
+        const resolved = resolveNotify(projects.get(item.project)?.loaded.notifyLayers ?? [], {
             type: item.type,
             action,
             ...(item.severity !== null && item.severity !== undefined ? { severity: item.severity } : {}),
@@ -238,5 +245,5 @@ export async function runNotifyOnce(deps: NotifyDeps): Promise<NotifyReport> {
         sent++;
     }
 
-    return { seen: changes.length, sent, cursor };
+    return { seen: changes.filter((change) => change.seq > claimedAfter).length, sent, cursor };
 }

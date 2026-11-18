@@ -1,18 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import { z } from "zod";
 import { callWork, type WorkSession } from "../handlers";
 import type { Actor, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
 import { projectCounts } from "../read";
+import { projectRuleLoader, setWorkConfigValue } from "../rules/load";
 import { type WorkContext, write } from "../service";
 import { openWorkDb } from "../store/db";
 import { selectItem, selectPairings } from "../store/rows";
 import { connectorConfigOf } from "./config";
-import { type ConnectorConfig, pullRemote, releaseHeld, runSyncOnce, type SyncDeps } from "./sync";
-import type { Connector, PushIntent, RemoteItem } from "./types";
+import { pullRemote, releaseHeld, runSyncOnce, type SyncDeps } from "./sync";
+import type { Connector, ConnectorContext, PushIntent, RemoteItem } from "./types";
 
 let db: Database;
+let configPath: string;
 let n = 0;
 
 function actor(sessionId: string, kind: Actor["kind"] = "agent"): Actor {
@@ -49,13 +53,16 @@ class FakeConnector implements Connector<unknown> {
     readonly settings = z.unknown();
     readonly can = { create: true, pull: true, labels: true, comments: false, parents: false };
     pushed: PushIntent[] = [];
+    batches: { context: ConnectorContext; titles: string[] }[] = [];
+    pulls: ConnectorContext[] = [];
     remote = new Map<string, RemoteItem>();
 
     async status() {
         return { ok: true, detail: "fake" };
     }
 
-    async push(intents: readonly PushIntent[]) {
+    async push(intents: readonly PushIntent[], context: ConnectorContext) {
+        this.batches.push({ context, titles: intents.map(({ item }) => item.title) });
         this.pushed.push(...intents);
         return intents.map((intent) => {
             const key = intent.pairing?.remoteKey || `R-${intent.item.id}`;
@@ -69,7 +76,8 @@ class FakeConnector implements Connector<unknown> {
         });
     }
 
-    async pull(ask: { remoteKeys: readonly string[] }) {
+    async pull(ask: { remoteKeys: readonly string[] }, context: ConnectorContext) {
+        this.pulls.push(context);
         return ask.remoteKeys.map((key) => this.remote.get(key)).filter((r): r is RemoteItem => r !== undefined);
     }
 }
@@ -77,17 +85,10 @@ class FakeConnector implements Connector<unknown> {
 let fake: FakeConnector;
 
 function deps(): SyncDeps & { newId: () => ItemId; project: string } {
-    const config: ConnectorConfig = {
-        enabled: true,
-        settings: {},
-        labelTemplate: "gt/pm/{machine}{project}/{id}",
-        createTypes: ["bug", "epic"],
-        push: () => undefined,
-    };
     return {
         db,
         connectors: { fake },
-        config: () => config,
+        loadRules: projectRuleLoader({ project: "App", configPath }),
         machinePrefix: "m-",
         now: () => new Date().toISOString(),
         owner: "test",
@@ -96,9 +97,16 @@ function deps(): SyncDeps & { newId: () => ItemId; project: string } {
     };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     db = openWorkDb(":memory:");
     fake = new FakeConnector();
+    configPath = join(makeTempDir("work-connectors-"), "config.json");
+    const set = await setWorkConfigValue({
+        configPath,
+        path: "global.rules.connectors.fake",
+        value: { enabled: true, createTypes: ["bug", "epic"] },
+    });
+    expect(set.ok).toBe(true);
 });
 
 afterEach(() => {
@@ -111,6 +119,67 @@ async function spot(sessionId: string, type: "bug" | "epic" | "task", title = "x
 }
 
 describe("the sync consumer", () => {
+    test("a pass from App loads each project once and pushes each batch with that project's settings", async () => {
+        for (const [project, type] of [
+            ["App", "bug"],
+            ["Other", "task"],
+        ]) {
+            const set = await setWorkConfigValue({
+                configPath,
+                path: `projects.${project}.rules.connectors.fake`,
+                value: { settings: { target: project }, createTypes: [type], labelTemplate: `${project}/{id}` },
+            });
+            expect(set.ok).toBe(true);
+        }
+
+        const app = ctx("s1");
+        const other = { ...app, project: "Other" };
+        await write(app, { verb: "spot", type: "bug", title: "app bug", fields: {} });
+        await write(other, { verb: "spot", type: "bug", title: "local only", fields: {} });
+        await write(other, { verb: "spot", type: "task", title: "first task", fields: {} });
+        await write(other, { verb: "spot", type: "task", title: "second task", fields: {} });
+        const sync = deps();
+        const loads: string[] = [];
+        const report = await runSyncOnce({
+            ...sync,
+            loadRules: (location) => {
+                loads.push(location.project);
+                return sync.loadRules(location);
+            },
+        });
+        expect(report.pushed).toBe(3);
+        expect(loads).toEqual(["App", "Other"]);
+        expect(fake.batches).toEqual([
+            { context: { project: "App", settings: { target: "App" }, machinePrefix: "m-" }, titles: ["app bug"] },
+            {
+                context: { project: "Other", settings: { target: "Other" }, machinePrefix: "m-" },
+                titles: ["first task", "second task"],
+            },
+        ]);
+        for (const { item, labels } of fake.pushed) {
+            expect(labels).toEqual([`${item.project}/${item.id}`]);
+        }
+    });
+
+    test("a pull in Other can use the same outside key as App without updating App's item", async () => {
+        const sync = deps();
+        fake.remote.set("R-1", { remoteKey: "R-1", title: "app task" });
+        const app = await pullRemote(sync, "fake", ["R-1"]);
+        const set = await setWorkConfigValue({
+            configPath,
+            path: "projects.Other.rules.connectors.fake.settings",
+            value: { target: "Other" },
+        });
+        expect(set.ok).toBe(true);
+
+        fake.remote.set("R-1", { remoteKey: "R-1", title: "other task" });
+        const other = await pullRemote({ ...sync, project: "Other" }, "fake", ["R-1"]);
+        expect(other.made).toHaveLength(1);
+        expect(selectItem(db, other.made[0])).toMatchObject({ title: "other task", project: "Other" });
+        expect(selectItem(db, app.made[0])).toMatchObject({ title: "app task", project: "App" });
+        expect(fake.pulls.at(-1)).toMatchObject({ project: "Other", settings: { target: "Other" } });
+    });
+
     test("a write never calls the connector; the consumer pushes after it, with the label, and a repeat pushes nothing new", async () => {
         const id = await spot("s1", "bug");
         expect(fake.pushed).toHaveLength(0);

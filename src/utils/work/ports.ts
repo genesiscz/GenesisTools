@@ -3,7 +3,6 @@
  */
 import type { SyncDeps } from "./connectors/sync";
 import type { WorkerStamp } from "./model/item";
-import type { RuleLayerInput } from "./rules/resolve";
 
 export interface DeliveryReceipt {
     outcome: "delivered" | "queued" | "nobody-alive" | "unknown";
@@ -72,9 +71,9 @@ export interface LineageResolver {
 }
 
 /**
- * The connector table and its config, as the sync needs them for one project. The tool side owns the table (a new
+ * The connector table and its project rule loader. The tool side owns the table (a new
  * connector is one folder there); the library runs the pairings, the push and the pull through it.
  */
 export interface ConnectorPort {
-    syncDeps(project: string, layers: readonly RuleLayerInput[]): SyncDeps;
+    syncDeps(): SyncDeps;
 }

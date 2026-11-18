@@ -31,7 +31,7 @@ import {
     WRITE_VERBS,
     type WriteVerb,
 } from "./rules/config";
-import { loadWorkRules } from "./rules/load";
+import { type LoadProjectRules, loadWorkRules } from "./rules/load";
 import type { Resolved } from "./rules/resolve";
 import { randomItemSuffix, type WorkContext, type WriteData, write } from "./service";
 import type { WorkCommand } from "./store/decide";
@@ -49,6 +49,7 @@ export interface WorkSession {
     ctx: WorkContext;
     call: CallOptions;
     alive: Liveness;
+    loadRules?: LoadProjectRules;
     /** The preflight context; the door builds it (git, the forge, T3 state). */
     context(network: boolean): Promise<ContextReport>;
 }
@@ -171,7 +172,7 @@ function syncOf(session: WorkSession, verb: string): { deps: SyncDeps } | { refu
         };
     }
 
-    return { deps: port.syncDeps(session.ctx.project, session.ctx.rules?.layers ?? []) };
+    return { deps: port.syncDeps() };
 }
 
 function itemOf(session: WorkSession, verb: string, ref: string): { item: Item } | { refused: Reply<never> } {
@@ -284,9 +285,9 @@ export const workHandlers: WorkHandlers = {
 
     async config(p, session) {
         const project = p.project ?? session.ctx.project;
-        const loaded = await loadWorkRules({
+        const loaded = await (session.loadRules ?? loadWorkRules)({
             project,
-            repoRoot: p.project === undefined ? session.ctx.actor.repoRoot : null,
+            repoRoot: project === session.ctx.project ? session.ctx.actor.repoRoot : null,
         });
         const types = p.type ?? [...ITEM_TYPES];
         const rows: ConfigRow[] = types.map((type) => ({
@@ -297,7 +298,7 @@ export const workHandlers: WorkHandlers = {
             writes: WRITE_VERBS.map((verb) => ({ verb, resolved: loaded.rules.mayWrite(type, verb) })),
             notify: NOTIFY_ACTIONS.map((action) => ({
                 action,
-                resolved: resolveNotify(loaded.rules.layers, { type, action }),
+                resolved: resolveNotify(loaded.notifyLayers, { type, action }),
             })),
         }));
         return okReply("config", { project, sources: loaded.sources, rows }, { diagnostics: loaded.problems });

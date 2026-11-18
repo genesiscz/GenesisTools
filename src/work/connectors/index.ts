@@ -9,8 +9,9 @@ import { connectorConfigOf } from "@genesiscz/utils/work/connectors/config";
 import type { SyncDeps } from "@genesiscz/utils/work/connectors/sync";
 import type { Connector } from "@genesiscz/utils/work/connectors/types";
 import type { ConnectorPort } from "@genesiscz/utils/work/ports";
-import { readWorkConfig } from "@genesiscz/utils/work/rules/load";
+import { type LoadProjectRules, loadRulesForItems, readWorkConfig } from "@genesiscz/utils/work/rules/load";
 import type { RuleLayerInput } from "@genesiscz/utils/work/rules/resolve";
+import { itemsChangedAfter } from "@genesiscz/utils/work/store/rows";
 import { remindersConnector } from "./reminders";
 import { trackerConnector } from "./tracker";
 
@@ -19,14 +20,14 @@ export const CONNECTORS: Readonly<Record<string, Connector<unknown>>> = {
     tracker: trackerConnector,
 };
 
-export function connectorPort(db: Database): ConnectorPort {
+export function connectorPort(db: Database, loadRules: LoadProjectRules): ConnectorPort {
     return {
-        syncDeps(_project, layers): SyncDeps {
+        syncDeps(): SyncDeps {
             const machine = readWorkConfig().value.machine?.prefix ?? "";
             return {
                 db,
                 connectors: CONNECTORS,
-                config: (_itemProject, id) => connectorConfigOf(layers, id).config,
+                loadRules,
                 machinePrefix: machine,
                 now: () => new Date().toISOString(),
                 owner: `${hostname()}:${process.pid}`,
@@ -38,4 +39,19 @@ export function connectorPort(db: Database): ConnectorPort {
 /** True when a project's layers turn on at least one connector of the table: then a write starts a detached sync. */
 export function connectorsEnabled(layers: readonly RuleLayerInput[]): boolean {
     return Object.keys(CONNECTORS).some((id) => connectorConfigOf(layers, id).config?.enabled === true);
+}
+
+/** A write to another project's item can start a sync even when the caller has every connector turned off. */
+export async function syncNeededAfter({
+    db,
+    seq,
+    loadRules,
+}: {
+    db: Database;
+    seq: number;
+    loadRules: LoadProjectRules;
+}): Promise<boolean> {
+    const changed = itemsChangedAfter(db, seq).map((item) => ({ item }));
+    const projects = await loadRulesForItems(changed, loadRules);
+    return Array.from(projects.values()).some(({ loaded }) => connectorsEnabled(loaded.rules.layers));
 }

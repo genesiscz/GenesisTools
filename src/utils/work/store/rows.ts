@@ -139,6 +139,17 @@ export function selectItem(db: Database, id: string): Item | null {
     return row === null ? null : rowToItem(row);
 }
 
+export function journalHead(db: Database): number {
+    return db.query<{ seq: number }, []>("SELECT COALESCE(MAX(seq), 0) AS seq FROM changes").get()?.seq ?? 0;
+}
+
+export function itemsChangedAfter(db: Database, seq: number): Item[] {
+    return db
+        .query<ItemRow, [number]>("SELECT * FROM items WHERE id IN (SELECT item FROM changes WHERE seq > ?)")
+        .all(seq)
+        .map(rowToItem);
+}
+
 export function selectRefsFrom(db: Database, id: string): Reference[] {
     return db
         .query<RefRow, [string]>("SELECT from_id, kind, to_id, slot, by, ts FROM refs WHERE from_id = ? ORDER BY id")
@@ -247,7 +258,7 @@ interface PairingRow {
 
 export function selectPairings(
     db: Database,
-    where: { item?: string; connector?: string; state?: string } = {}
+    where: { item?: string; connector?: string; state?: string; remoteKey?: string; project?: string } = {}
 ): Pairing[] {
     const clauses: string[] = [];
     const params: string[] = [];
@@ -256,11 +267,17 @@ export function selectPairings(
         ["item", where.item],
         ["connector", where.connector],
         ["state", where.state],
+        ["remote_key", where.remoteKey],
     ] as const) {
         if (value !== undefined) {
             clauses.push(`${column} = ?`);
             params.push(value);
         }
+    }
+
+    if (where.project !== undefined) {
+        clauses.push("item IN (SELECT id FROM items WHERE project = ?)");
+        params.push(where.project);
     }
 
     return db
