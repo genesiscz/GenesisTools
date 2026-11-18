@@ -29,6 +29,8 @@ import {
 } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import {
+    acronymStem,
+    allowsFuzzyTerm,
     findSuspectTerms,
     findUnknownWords,
     isEnglishWord,
@@ -183,7 +185,7 @@ export function knownWord(wordCheck: WordCheck | undefined): (word: string) => b
  * An unknown word with a candidate from the meeting itself at 80 % or more is proposed even when its family is said
  * on purpose (MC5): the suggestion and the retirement of a later run read it the same way.
  */
-function strongMeetingCandidate(evidence: unknown): boolean {
+function strongMeetingCandidate(heard: string, evidence: unknown): boolean {
     if (
         !isJsonObject(evidence) ||
         !Array.isArray(evidence.candidateSources) ||
@@ -196,7 +198,7 @@ function strongMeetingCandidate(evidence: unknown): boolean {
     return evidence.candidateSources.some(
         (source) =>
             isJsonObject(source) &&
-            source.source === "meeting" &&
+            (source.source === "meeting" || acronymStem(heard)) &&
             scores.some(
                 (score) =>
                     isJsonObject(score) &&
@@ -610,7 +612,7 @@ export function settledTermItems(options: {
             item.rules.includes(MeetingRule.UnknownWord) &&
             onPurpose.has(heard) &&
             heardTimes(item) < (options.minOccurrences ?? DEFAULT_WORD_MIN_OCCURRENCES) &&
-            !strongMeetingCandidate(item.evidence)
+            !strongMeetingCandidate(item.heard, item.evidence)
         ) {
             settled.set(item.id, `"${item.heard}" is said on purpose (a word family or an English root)`);
         }
@@ -661,7 +663,9 @@ function termItems(
     );
     const unknown = heardUnknown.filter(
         (word) =>
-            (word.candidates.some((candidate) => candidate.source === "meeting" && candidate.confidence >= 80) ||
+            (word.candidates.some(
+                (candidate) => candidate.confidence >= 80 && (candidate.source === "meeting" || acronymStem(word.heard))
+            ) ||
                 !onPurpose.has(word.heard.toLowerCase()) ||
                 word.occurrences >= minOccurrences) &&
             !keptFamilies.has(wordFamily(word.heard))
@@ -685,7 +689,10 @@ function termItems(
     >();
 
     for (const match of fuzzyMatches(meeting.transcript, dictionary).filter(
-        (candidate) => candidate.score < applyAt && !keep.has(candidate.heard.toLowerCase())
+        (candidate) =>
+            candidate.score < applyAt &&
+            !keep.has(candidate.heard.toLowerCase()) &&
+            (!wordCheck || allowsFuzzyTerm(candidate.heard, wordCheck))
     )) {
         const key = `${match.heard.toLowerCase()}|${match.value}`;
         const seen = fuzzy.get(key);
