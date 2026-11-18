@@ -10,6 +10,7 @@ import {
     posterEditId,
     postHandoff,
 } from "@app/handoff/executor";
+// lint-rules-ignore: the type of the old executor's input, for the same LegacyHandoffs adapter until P10 removes it
 import type { HandoffActionInput } from "@app/handoff/types";
 // lint-rules-ignore: the adapter of the SessionDelivery port wraps deliverToSession until the sessions area exists (spec, Session delivery)
 import { deliverToSession, isLiveDelivery, locateDelivery } from "@app/question/lib/decisions/deliver";

@@ -4,6 +4,7 @@ import { registerWorkDoor } from "@genesiscz/utils/work/door";
 export function registerCliWorkDoor(): void {
     registerWorkDoor({
         call: async (method, params, options) => {
+            // lint-rules-ignore: the actions tool fills the work area's registered seam (spec P7); a lazy import keeps the work tool out of every other action's start
             const { callWorkHere } = await import("@app/work/doors/service");
             return callWorkHere(method, params, options);
         },
