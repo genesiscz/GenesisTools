@@ -1224,6 +1224,51 @@ describe("evidence rule after a leave", () => {
     });
 });
 
+test.each([
+    ["scratch", false, 0],
+    ["scratch", true, 1],
+    ["default", false, 1],
+] as const)("record start in the %s store with autostart enabled=%s", async (store, enabled, starts) => {
+    const scratch = mkdtempSync(join(tmpdir(), "meeting-record-start-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        await new MeetingsConfigStore().setAutoRecord(enabled);
+        const meeting = await new MeetingStore().create(
+            { title: "Planning", start: "2026-11-02T15:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const grant = spyOn(await import("./lib/grants"), "ensureScreenRecording").mockResolvedValue({
+            granted: true,
+            identity: "fixture",
+        });
+        const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockReturnValue(12345);
+        const ack = spyOn(await import("./lib/recorder-shared"), "recorderAcknowledged").mockReturnValue(true);
+        const watcher = spyOn(await import("./lib/watcher"), "ensureWatcher").mockResolvedValue("started");
+        const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
+        try {
+            const program = new Command();
+            registerRecordCommands(program);
+            // Keep the store in the fixture, even when it doubles as the user's default home.
+            const home = store === "default" ? { HOME: scratch, USERPROFILE: scratch } : {};
+            await env.testing.withOverrides(home, async () => {
+                await program.parseAsync(["record", "start", "--meeting", meeting.id, "--yes"], { from: "user" });
+            });
+
+            expect(spawn.mock.calls).toEqual([[["meetings", "record", "run", meeting.id]]]);
+            expect(watcher).toHaveBeenCalledTimes(starts);
+            const lines = stderr.mock.calls.map(([chunk]) => String(chunk));
+            expect(lines.some((line) => line.includes(`Recording the screen for ${meeting.id}`))).toBe(true);
+            const notice = "Watcher autostart is off for this store, so start it with `tools meetings watch`.\n";
+            expect(lines.filter((line) => line.includes("tools meetings watch"))).toEqual(starts ? [] : [notice]);
+        } finally {
+            stderr.mockRestore();
+            watcher.mockRestore();
+            ack.mockRestore();
+            spawn.mockRestore();
+            grant.mockRestore();
+        }
+    });
+});
+
 describe("watchOnce", () => {
     const settings = { enabled: true, liveWithinSec: 30, notify: true };
     const now = Date.parse("2026-11-02T15:10:00.000Z");
