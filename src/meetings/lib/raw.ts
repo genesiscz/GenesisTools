@@ -15,7 +15,7 @@ import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 import { type IndicatorGap, indicatorFacts, type LabelPrehistory } from "./indicator-facts";
 import { type LocalSpeech, localSpeechLines } from "./local-speech";
-import { rosterPresence } from "./person-stays";
+import { rosterPresence, stayLeaveSource } from "./person-stays";
 import { assessIndicator } from "./speaker-indicator";
 
 export interface RawMeeting {
@@ -44,7 +44,7 @@ export interface RawMeeting {
         aliases?: string[];
         self?: boolean;
         firstSeenSec?: number;
-        stays: Array<{ fromSec: number; toSec: number; source?: string; confidence?: number }>;
+        stays: Array<{ fromSec: number; toSec: number; source?: string; leaveSource?: string; confidence?: number }>;
     }>;
     lines: Array<{
         index: number;
@@ -183,12 +183,15 @@ export function rawMeeting(options: {
                     .filter((stay) => sameName(stay.name, name))
                     .map((stay) => {
                         const stored = person?.stays?.find((one) => one.fromSec === stay.fromSec);
+                        const leaveSource =
+                            stored?.toSec === stay.toSec && stored ? stayLeaveSource(stored) : undefined;
                         return {
                             fromSec: stay.fromSec,
                             toSec: stay.toSec,
                             ...(stored
                                 ? {
                                       source: stored.source,
+                                      ...(leaveSource ? { leaveSource } : {}),
                                       ...(stored.confidence === undefined ? {} : { confidence: stored.confidence }),
                                   }
                                 : {}),

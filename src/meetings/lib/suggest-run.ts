@@ -265,6 +265,7 @@ export async function runSuggest(options: {
         presence,
         evidence,
         energyMicShare: share,
+        ...(options.attendance ? {} : { leaveSilenceMinutes: config.global.suggest.leaveSilenceMinutes }),
         voice,
         labels: needsSpeakerInputs
             ? await prof.measureAsync("speakers.labels", () =>

@@ -3150,6 +3150,26 @@ test("raw evidence uses explicit attendance for both presence and stays", () => 
     expect(raw.indicator!.knownLines + raw.indicator!.unknownLines).toBe(raw.lines.length);
 });
 
+test("raw evidence identifies the source of the actual stored leave", () => {
+    const stay = {
+        fromSec: 10,
+        toSec: 2400,
+        source: "platform-roster" as const,
+        leaveSource: "goodbye" as const,
+        confidence: 0.8,
+    };
+    const read = (toSec: number) =>
+        rawMeeting({
+            record: { ...record, participants: [{ name: "River Example", from: ["platform-roster"], stays: [stay] }] },
+            meeting,
+            evidence: null,
+            points: [],
+            presence: [{ name: "River Example", fromSec: 10, toSec }],
+        }).people.find((person) => person.name === "River Example")?.stays[0];
+    expect(read(2400)).toEqual(stay);
+    expect(read(3000)).not.toHaveProperty("leaveSource");
+});
+
 test("identical single-word names match without accepting partial single-word names", () => {
     expect(sameName("Alice", "Alice")).toBe(true);
     expect(sameName("Alice", "Alice Example")).toBe(false);

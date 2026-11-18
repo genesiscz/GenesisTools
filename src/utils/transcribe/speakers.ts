@@ -95,7 +95,7 @@ const GREETING_GOODBYE_SILENCE_SEC = 30;
 const ECHO = wholeWords("taky|také|i já|já taky|tiež|aj ja|me too");
 const ECHO_WITHIN_SEC = 15;
 
-function isLeavePhrase(text: string): boolean {
+export function isLeavePhrase(text: string): boolean {
     return LEAVE_PHRASES.some((phrase) => phrase.test(text));
 }
 

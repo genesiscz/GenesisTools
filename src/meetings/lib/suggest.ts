@@ -41,10 +41,11 @@ import {
 } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
 import { contextEntryText } from "./context-file";
-import { identifiedDepartures } from "./departure";
+import { identifiedDepartures, matchedCallVoices } from "./departure";
 import { indicatorLabels } from "./indicator-facts";
 import { uncertainSharedCallRanges } from "./listen-quality";
 import { type LocalSpeech, localSpeechLines } from "./local-speech";
+import { personStays, rosterPresence, speechAfter } from "./person-stays";
 import { selectQuestions } from "./question-select";
 import {
     DEFAULT_LISTEN_BELOW,
@@ -2146,6 +2147,8 @@ export function suggestItems(options: {
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voice?: LineVoice[];
     labels?: LineLabel[];
+    /** In a stored suggestion run, update roster stays with the voice evidence from this same pass. */
+    leaveSilenceMinutes?: number;
     /** Items under this confidence become questions to answer by ear, when they matter (default 0.6). */
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
@@ -2254,21 +2257,54 @@ export function suggestItems(options: {
                   })
               )
             : undefined;
+    const durationSec = departureLines.reduce((end, line) => Math.max(end, line.endSec), 0);
+    const deriveStays = options.leaveSilenceMinutes !== undefined && selfNameForDeparture && durationSec > 0;
+    const roster = deriveStays ? rosterPresence(record, durationSec, { rederiveLeaves: true }) : [];
+    const matchedVoices = matchedCallVoices(record, departureLines, options.labels);
     const departures =
-        selfNameForDeparture && initialStats?.hints.some((hint) => hint.kind === "leave-then-continues")
+        selfNameForDeparture && initialStats && departureLines.length
             ? identifiedDepartures({
                   hints: initialStats.hints,
-                  lines: departureLines,
+                  lines: departureLines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
                   selfName: selfNameForDeparture,
-                  presence: options.presence,
-                  labels: options.labels,
+                  presence: roster.length ? roster : options.presence,
+                  matchedVoices,
+                  roomPeople: record.seats?.room,
                   ignoredIndicator: assessIndicator({
                       lines: departureLines,
                       selfName: selfNameForDeparture,
                       roomPeople: record.seats?.room,
                   }).ignored,
-              })
+              }).filter(
+                  (event) =>
+                      !speechAfter({
+                          record,
+                          name: event.name,
+                          after: event.atSec + 5,
+                          lines: departureLines,
+                          speaking: evidence?.speaking,
+                          matchedVoices,
+                      })
+              )
             : [];
+    if (deriveStays) {
+        const derived = personStays({
+            record,
+            durationSec,
+            lines: departureLines,
+            departures,
+            speaking: evidence?.speaking,
+            matchedVoices,
+            silenceMinutes: options.leaveSilenceMinutes,
+            callSilent: record.evidence?.channels?.callSilent,
+        });
+        for (const [index, person] of record.participants.entries()) {
+            const stays = derived[index]?.stays;
+            if (stays?.length) {
+                person.stays = stays;
+            }
+        }
+    }
     if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
         for (const departure of departures) {
             const line = departureLines.find((line) => line.startSec === departure.atSec);
