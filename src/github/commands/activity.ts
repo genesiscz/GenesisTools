@@ -242,7 +242,7 @@ export function createActivityCommand(): Command {
         .option("-r, --repo <repo>", "Filter by repository (partial match)")
         .option("--type <types>", "Filter by event type (Push,Issues,PullRequest,IssueComment,...)")
         .option("--since <date>", "Activity since date/time (e.g., 7d, 24h, 2025-01-01)")
-        .option("-L, --limit <n>", "Max results", parseInt, 30)
+        .option("-L, --limit <n>", "Max results", (value) => Number.parseInt(value, 10), 30)
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
         .option("-o, --output <file>", "Output path")
         .option("-v, --verbose", "Enable verbose logging")
