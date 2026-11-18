@@ -4,7 +4,7 @@
  * selected: each call goes through its door (`HUB_SERVER_DOORS`), in this process and on this event loop. Prints one
  * JSON object of metrics on stdout. Driven by `big-session.ts`; run alone to look at one sample.
  *
- *   bun big-session-child.ts <checkout> <session id> each|together
+ *   bun big-session-child.ts <checkout> <session id> each|together|changes
  *
  * `each`: every call alone, twice. The first is what a server pays after a start (`cold`), the second what it pays
  * on a refresh (`warm`). `together`: every call at once, as a selection sends them; `together.tailAnswerMs` is how
@@ -14,13 +14,14 @@
  * The modules are imported from `<checkout>`, so another worktree's copy (an older commit) runs its own code.
  * Nothing here writes the object store: the Changes call runs without `--store-blobs`.
  */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const [checkout, session, mode] = process.argv.slice(2);
 
-if (!checkout || !session || (mode !== "each" && mode !== "together")) {
-    process.stderr.write("usage: big-session-child.ts <checkout> <session id> each|together\n");
+if (!checkout || !session || (mode !== "each" && mode !== "together" && mode !== "changes")) {
+    process.stderr.write("usage: big-session-child.ts <checkout> <session id> each|together|changes\n");
     process.exit(2);
 }
 
@@ -56,7 +57,7 @@ function cpuMs(started: NodeJS.CpuUsage): number {
     return (used.user + used.system) / 1000;
 }
 
-async function answer(argv: string[]): Promise<{ exit: number; bytes: number }> {
+async function answer(argv: string[]): Promise<{ stdout: string }> {
     for (const door of doors) {
         if (door.kind !== "call") {
             continue;
@@ -72,7 +73,7 @@ async function answer(argv: string[]): Promise<{ exit: number; bytes: number }> 
             throw new Error(`${argv.slice(0, 3).join(" ")} exited ${result.exit}: ${result.stderr.trim().slice(-300)}`);
         }
 
-        return { exit: result.exit, bytes: result.stdout.length };
+        return { stdout: result.stdout };
     }
 
     throw new Error(`no door answers: ${argv.join(" ")}`);
@@ -80,8 +81,9 @@ async function answer(argv: string[]): Promise<{ exit: number; bytes: number }> 
 
 const metrics: Record<string, number> = {};
 
-if (mode === "each") {
-    for (const call of CALLS) {
+let digest: string | undefined;
+if (mode === "each" || mode === "changes") {
+    for (const call of mode === "changes" ? CALLS.filter((call) => call.key === "changes") : CALLS) {
         for (const pass of ["cold", "warm"]) {
             const monitor = monitorLoopStalls({ tickMs: TICK_MS });
             const cpu = process.cpuUsage();
@@ -89,11 +91,18 @@ if (mode === "each") {
             const result = await answer(call.argv);
             metrics[`${call.key}.${pass}.wallMs`] = performance.now() - started;
             metrics[`${call.key}.${pass}.cpuMs`] = cpuMs(cpu);
+            if (mode === "changes") {
+                metrics[`changes.${pass}.peakRssMb`] = Math.round(process.resourceUsage().maxRSS / 1024);
+                if (pass === "cold") {
+                    digest = createHash("sha256").update(result.stdout).digest("hex");
+                    process.stderr.write("changes-cold-finished\n");
+                }
+            }
             // One more tick, so a call that never gave the loop back is counted as one stall.
             await Bun.sleep(TICK_MS * 2);
             metrics[`${call.key}.${pass}.stallMs`] = monitor.stop().maxStallMs;
             if (pass === "cold") {
-                metrics[`${call.key}.bytes`] = result.bytes;
+                metrics[`${call.key}.bytes`] = result.stdout.length;
             }
         }
     }
@@ -123,7 +132,7 @@ if (mode === "each") {
 // The kernel's high-water mark of the whole process (worker threads included), in KB: a sample taken after each
 // answer missed the transient peak of a call whose buffers were already freed.
 metrics[`${mode}.peakRssMb`] = Math.round(process.resourceUsage().maxRSS / 1024);
-process.stdout.write(`${SafeJSON.stringify(metrics, { strict: true })}\n`);
+process.stdout.write(`${SafeJSON.stringify({ ...metrics, "changes.digest": digest }, { strict: true })}\n`);
 clearInterval(keepAlive);
 // A door may leave a watcher or a database handle open; the numbers are out, so the process ends here.
 process.exit(0);
