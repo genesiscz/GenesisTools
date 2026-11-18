@@ -628,6 +628,7 @@ test("exclusion survives the preview contract and creates a question even for sh
     }));
     const rows = labels.map((row) => ({
         ...row,
+        labeler: "voice" as const,
         fromSec: row.index * 5,
         toSec: row.index * 5 + 5,
         text: "First.",
@@ -644,6 +645,8 @@ test("exclusion survives the preview contract and creates a question even for sh
         questionBudget: 0,
         now: record.start!,
     });
+    // toMatchObject below may write its matchers into the received objects, so the store gets a copy taken first.
+    const stored = structuredClone(fresh);
     const ranges = fresh.filter((item) => item.kind === "speaker-range" && item.evidence?.reason === "exclusion");
     expect(ranges).toHaveLength(2);
     expect(ranges[0]).toMatchObject({
@@ -658,7 +661,7 @@ test("exclusion survives the preview contract and creates a question even for sh
         evidence: { reason: "exclusion" },
     });
     await store.update(record.id, { command: "suggest", change: "fixture" }, (current) => {
-        current.items.push(...fresh);
+        current.items.push(...stored);
     });
     const bulk = await new DecisionJournal({ store }).plan({
         meeting: record.id,
@@ -669,9 +672,11 @@ test("exclusion survives the preview contract and creates a question even for sh
         bulk.skipped.filter((skip) => ranges.some((range) => range.id === skip.id)).map((skip) => skip.needs)
     ).toEqual(["listen", "listen"]);
     record.items.push(...ranges);
-    expect(correctionsOf(record, config, { withSuggested: true, applyAbove: 0 }).ranges).toEqual([]);
+    expect(correctionsOf(record, config, { withSuggested: true, applyAbove: 0, format: "json" }).ranges).toEqual([]);
     ranges[0]!.status = "confirmed";
-    expect(correctionsOf(record, config, { withSuggested: true, applyAbove: 0 }).ranges).toHaveLength(1);
+    expect(correctionsOf(record, config, { withSuggested: true, applyAbove: 0, format: "json" }).ranges).toHaveLength(
+        1
+    );
 });
 
 test("a live speaking indicator enrols its own line only when the existing rule clears applyAbove", async () => {
