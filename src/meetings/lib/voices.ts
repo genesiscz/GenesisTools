@@ -27,7 +27,7 @@ import {
 import type { LinkedSource } from "./sources";
 import { proposeSpeakerLabels } from "./speaker-labels";
 import type { LineLabel } from "./speaker-labels/types";
-import { embedSeatLines, voiceProgressForMeeting } from "./speaker-labels/voice";
+import { embedSeatLines, voiceProgressForMeeting, voiceSignalForMeeting } from "./speaker-labels/voice";
 import { runSuggest } from "./suggest-run";
 import { correctTranscript } from "./transcript-corrections";
 
@@ -183,7 +183,9 @@ export async function listProjectVoices(
     return { people };
 }
 
-export async function previewVoices(options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress }): Promise<{
+export async function previewVoices(
+    options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress; signal?: AbortSignal }
+): Promise<{
     meeting: string;
     project?: string;
     lines: Array<LineLabel & { fromSec: number; toSec: number; text: string; current: string }>;
@@ -192,6 +194,10 @@ export async function previewVoices(options: VoicesAccess & { meeting: string; o
     const opened = await voiceReadMeeting(openedOf(options, record));
     if (options.onProgress) {
         voiceProgressForMeeting.set(opened, options.onProgress);
+    }
+
+    if (options.signal) {
+        voiceSignalForMeeting.set(opened, options.signal);
     }
 
     const config = await (options.config?.() ?? opened.config());
@@ -234,7 +240,7 @@ export async function previewVoices(options: VoicesAccess & { meeting: string; o
 }
 
 export async function applyVoices(
-    options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress }
+    options: VoicesAccess & { meeting: string; onProgress?: VoiceProgress; signal?: AbortSignal }
 ): Promise<{ meeting: string; added: number; warnings: string[] }> {
     const record = recordOf(options, options.meeting);
 
@@ -247,6 +253,7 @@ export async function applyVoices(
         record,
         rules: ["speakers"],
         ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
     });
     return { meeting: record.id, added: result.fresh.length, warnings: result.warnings };
 }

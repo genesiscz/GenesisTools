@@ -91,6 +91,8 @@ async function freeCores(): Promise<VoiceFreeCores> {
 
 /** Each suggest call owns a fresh OpenedMeeting, including concurrent calls on the same record. */
 export const voiceProgressForMeeting = new WeakMap<OpenedMeeting, VoiceProgress>();
+/** The call's abort signal for its voice pass (`$/cancel`, a closed connection): it kills the pass's workers. */
+export const voiceSignalForMeeting = new WeakMap<OpenedMeeting, AbortSignal>();
 
 /** Batches spans on the same file/channel while retaining transcript-clock times on the resulting line. */
 export async function embedSeatLines(
@@ -99,6 +101,7 @@ export async function embedSeatLines(
         cachePath?: string;
         config?: MeetingsConfig;
         onProgress?: VoiceProgress;
+        signal?: AbortSignal;
     }
 ): Promise<VoiceLine[]> {
     const groups = new Map<
@@ -141,6 +144,7 @@ export async function embedSeatLines(
             workerPrefix: worker.prefix,
             clearBackground: worker.clearBackground,
             workers: worker.workers,
+            ...(context.signal ? { signal: context.signal } : {}),
             onProgress:
                 context.onProgress &&
                 ((done) => {
@@ -211,6 +215,7 @@ export function voiceLabeler(options: {
                     sound,
                     config: await options.opened.config(),
                     onProgress: voiceProgressForMeeting.get(options.opened),
+                    signal: voiceSignalForMeeting.get(options.opened),
                     cachePath: join(
                         options.opened.store.folder(options.opened.record.id),
                         "evidence",

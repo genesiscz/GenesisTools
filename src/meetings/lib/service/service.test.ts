@@ -840,6 +840,33 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         ]);
     });
 
+    test("meeting.suggest stops when its caller cancels: the run's signal aborts and the call rejects", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const suggest = await import("../suggest-run");
+        let seen: AbortSignal | undefined;
+        const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ signal }) => {
+            seen = signal;
+            await new Promise((_resolve, reject) => {
+                signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+            return { fresh: [], retired: [], warnings: [] };
+        });
+        closing.push(() => run.mockRestore());
+        const controller = new AbortController();
+        const call = client.call("meeting.suggest", { meeting: REVIEW.id }, { signal: controller.signal });
+        for (let waited = 0; waited < 3000 && !seen; waited += 10) {
+            await Bun.sleep(10);
+        }
+        expect(seen?.aborted).toBe(false);
+        controller.abort();
+        await expect(call).rejects.toThrow();
+        // Over a socket the service hears `$/cancel` a moment after the caller gave up.
+        for (let waited = 0; waited < 3000 && !seen?.aborted; waited += 10) {
+            await Bun.sleep(10);
+        }
+        expect(seen?.aborted).toBe(true);
+    });
+
     test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
         const { client, store, source } = await ADAPTERS[kind]();
         // The 0.5 and 0.7 previews apply the suggested speaker at 0.82; the 1 preview only shows it.

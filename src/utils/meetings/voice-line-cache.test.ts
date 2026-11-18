@@ -103,7 +103,7 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
 
 // A stand-in executable speaks the real worker protocol, including stderr progress. Its vector makes a
 // shifted decode window visible even if the same transcript lines reach the runner.
-function fakeVoicePrefix(options: { failFrom?: number; requestLog?: string } = {}): string[] {
+function fakeVoicePrefix(options: { failFrom?: number; requestLog?: string; hangFrom?: number } = {}): string[] {
     const program = `
         const { request, clearBackground } = await new Response(Bun.stdin.stream()).json();
         if (clearBackground !== true) throw new Error("worker missed clearBackground");
@@ -112,6 +112,7 @@ function fakeVoicePrefix(options: { failFrom?: number; requestLog?: string } = {
         const rows = [];
         for (const clip of request.input.clips) {
             if (clip.fromSec === ${options.failFrom ?? -1}) throw new Error("fixture chunk failure");
+            if (clip.fromSec === ${options.hangFrom ?? -1}) await Bun.sleep(60_000);
             rows.push(clip.channels.map(channel => ({
                 quality: "ready", model: "fixture-model", embedding: [clip.windowFromSec, clip.fromSec, channel]
             })));
@@ -168,6 +169,53 @@ test("one or two concurrent voice workers preserve window origins, input order, 
     expect(updates).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(parallel).toEqual(single);
     expect(readFileSync(cachePath)).toEqual(readFileSync(f.cachePath));
+});
+
+test("an aborted pass kills its worker at once and names nothing; an aborted signal starts no worker", async () => {
+    const f = await fixture();
+    const options = {
+        ...f.options,
+        spans: [0, 9, 59].map((fromSec, index) => ({ index, fromSec, toSec: fromSec + 2 })),
+        clearBackground: true,
+        workers: 1,
+    };
+    const spawn = spyOn(Bun, "spawn");
+    spies.push(spawn);
+    const controller = new AbortController();
+    const started = performance.now();
+    const pass = voice.embedVoiceLines({
+        ...options,
+        workerPrefix: fakeVoicePrefix({ hangFrom: 9 }),
+        signal: controller.signal,
+        onProgress: (done) => {
+            if (done === 1) {
+                controller.abort(new Error("cancelled by the window"));
+            }
+        },
+    });
+    await expect(pass).rejects.toThrow("cancelled by the window");
+    expect(performance.now() - started).toBeLessThan(10_000);
+    const worker = spawn.mock.results[0]?.value as Bun.Subprocess | undefined;
+    await worker?.exited;
+    expect(worker?.signalCode).toBe("SIGKILL");
+    // A worker answers its chunk only at its end, so the killed chunk keeps nothing: the next pass sends all three.
+    const requestLog = join(f.store.folder(f.record.id), "after-abort-");
+    await voice.embedVoiceLines({ ...options, workerPrefix: fakeVoicePrefix({ requestLog }) });
+    const sent = z
+        .object({ clips: z.array(z.object({ fromSec: z.number() })) })
+        .parse(SafeJSON.parse(readFileSync(`${requestLog}0`, "utf8")))
+        .clips.map((clip) => clip.fromSec);
+    expect(sent).toEqual([0, 9, 59]);
+    const spawned = spawn.mock.calls.length;
+    await expect(
+        voice.embedVoiceLines({
+            ...options,
+            spans: [{ index: 0, fromSec: 200, toSec: 202 }],
+            workerPrefix: fakeVoicePrefix(),
+            signal: AbortSignal.abort(new Error("already")),
+        })
+    ).rejects.toThrow("already");
+    expect(spawn.mock.calls.length).toBe(spawned);
 });
 
 test("cached anchors count once and only missing channels go to workers, even across a chunk failure", async () => {
