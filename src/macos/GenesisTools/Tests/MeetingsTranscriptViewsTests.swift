@@ -580,6 +580,94 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(choices.map(\.title), ["Q7 at 06:40", "Q9 at 07:40"])
     }
 
+    /// U2: a "?" banner answers its question where it stands ("the ? should be clickable so i can pick no?"). Its menu is
+    /// the question's choices without Skip, a divider and "Show in Items"; a merged banner has one submenu per question.
+    func testABannerMenuOffersItsQuestionsChoicesAndTheWayToItsRow() {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        XCTAssertEqual(Self.titles(reviewChoiceItems(for: TimelineFixture.questionRow, detail: detail)),
+                       ["Mira Holt", "Jonas Petr", "—", "Show in Items"], "every choice but Skip, then the way to the row")
+
+        let near = [TalkTimeQuestion(id: "q7", atSec: 400, label: "Q7"), TalkTimeQuestion(id: "q9", atSec: 460, label: "Q9")]
+        let menu: (String) -> [MenuButtonItem] = { id in [.action("Answer \(id)") {}] }
+        let merged = TalkTimeLayout.banners(near, durationSec: 1000, width: 500)
+        XCTAssertEqual(merged.count, 1, "the two questions share one banner")
+        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(merged[0], questions: near, menu: menu)),
+                       ["Q7 at 06:40 ▸ Answer q7", "Q9 at 07:40 ▸ Answer q9"])
+        let single = TalkTimeLayout.banners([near[0]], durationSec: 1000, width: 500)
+        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(single[0], questions: near, menu: menu)), ["Answer q7"],
+                       "one question opens its own menu at once")
+    }
+
+    /// U7: an open chip that no question covers offered nothing under "Who said this?", and then "Rename Jan Hora for
+    /// this meeting…" for a person it had just said it does not know. It now offers the covering suggestion with its
+    /// score, the meeting's people from the seats, and "Somebody else…"; a name or a guess keeps its rename.
+    func testAnOpenChipWithoutAQuestionOffersTheSuggestionAndThePeopleButNoRename() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        detail.settleDecisionRecord(try JSONDecoder().decode(MeetingRecordView.self, from: Data(Self.openChipRecord.utf8)))
+        var picked: [SpeakerChip.PickerMode] = []
+        let open = SpeakerChip.menuItems(.open(label: "Speaker 5", candidates: []), speaker: "Speaker 5", startSec: 10,
+                                         play: { _ in }, detail: detail, pick: { picked.append($0) })
+        XCTAssertEqual(Self.titles(open), ["(Who said this?)", "Alice Example (suggested, 85 % sure)", "—", "Bob Example",
+                                           "Carol Example", "Somebody else…", "—", "Play from 00:10"],
+                       "the open suggestion first (not the rejected one), then the seats once each")
+        XCTAssertFalse(Self.titles(open).contains { $0.hasPrefix("Rename") }, "a chip that asks who it is offers no rename")
+        Self.run("Somebody else…", in: open)
+        XCTAssertEqual(picked, [.assign], "Somebody else opens the person picker that assigns the stretch")
+
+        let voice = SpeakerChip.menuItems(.open(label: "Speaker 5", candidates: []), speaker: "Speaker 5", startSec: 120,
+                                          play: nil, detail: detail, pick: { _ in })
+        XCTAssertEqual(Self.titles(voice).dropFirst().first, "Dan Example (by voice 0.61)",
+                       "the cosine from the evidence, never a percent and never the rule's gate")
+
+        detail.rows = .loaded(ReviewRows(meeting: "m", rows: [TimelineFixture.questionRow],
+                                         hidden: .init(lowPriority: 0, minPriority: 0)))
+        let asked = SpeakerChip.menuItems(.open(label: nil, candidates: []), speaker: "Speaker 3", startSec: 6590,
+                                          play: nil, detail: detail, pick: { _ in })
+        XCTAssertEqual(Self.titles(asked), ["(Who said this?)", "Mira Holt", "Jonas Petr", "Somebody else…", "—", "Show in Items"],
+                       "a covering question offers its own answers")
+
+        let guess = SpeakerChip.menuItems(.guess("Alice Example", percent: 63), speaker: "Speaker 5", startSec: 10,
+                                          play: nil, detail: detail, pick: { _ in })
+        XCTAssertTrue(Self.titles(guess).contains("Rename Speaker 5 for this meeting…"), "\(Self.titles(guess))")
+    }
+
+    /// Bob in the room; Carol and Alice remote. Speaker 5 has an open suggestion (Alice, 85 %) and a rejected one (Erin)
+    /// over 0 to 40 s, a voice model's suggestion (Dan, cosine 0.61, the rule's gate 0.8 as its confidence) over 100 to
+    /// 140 s, and a question covers 6588 to 6602 s.
+    private static let openChipRecord = #"""
+    {"id":"m","title":"Practice","labels":[],"start":"2026-01-01T10:00:00Z","context":[],"sources":{},
+     "speakers":{"labels":{}},
+     "seats":{"room":["Bob Example"],"remote":[{"name":"Carol Example","fromSec":1.4},{"name":"Alice Example","fromSec":1.4}]},
+     "items":[
+      {"id":"i622","kind":"speaker-range","status":"suggested","confidence":0.85,"rules":["agent"],"label":"Speaker 5",
+       "fromSec":0,"toSec":40,"speaker":"Alice Example"},
+      {"id":"i623","kind":"speaker-range","status":"rejected","confidence":0.95,"rules":["agent"],"label":"Speaker 5",
+       "fromSec":0,"toSec":40,"speaker":"Erin Example"},
+      {"id":"i700","kind":"speaker-range","status":"suggested","confidence":0.8,"rules":["voice-embedding"],
+       "label":"Speaker 5","fromSec":100,"toSec":140,"speaker":"Dan Example","evidence":{"score":0.61}},
+      {"id":"q12","kind":"question","status":"suggested","about":"speaker","fromSec":6588,"toSec":6602,
+       "question":"Who says this?"}
+     ]}
+    """#
+
+    /// A menu's entries as text: an action by its title, a note in brackets, a divider as "—", and a submenu's entries
+    /// after its title and "▸".
+    private static func titles(_ items: [MenuButtonItem]) -> [String] {
+        items.flatMap { item -> [String] in
+            switch item {
+            case .action(let title, _, _, _): return [title]
+            case .submenu(let title, let inner): return titles(inner).map { "\(title) ▸ \($0)" }
+            case .note(let text): return ["(\(text))"]
+            case .divider: return ["—"]
+            }
+        }
+    }
+
+    /// Runs the action entry with `title`, as a click on it does.
+    private static func run(_ title: String, in items: [MenuButtonItem]) {
+        for case .action(let name, _, _, let action) in items where name == title { action() }
+    }
+
     func testRulerMarksUseARoundStep() {
         XCTAssertEqual(SpeakerTalkTimeLanes.rulerMarks(durationSec: 8772), [0, 1800, 3600, 5400, 7200, 8772])
     }
