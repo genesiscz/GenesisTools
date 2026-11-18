@@ -1,12 +1,16 @@
 import { statSync } from "node:fs";
 import { basename } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
 import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import type { ChangesWindowRead, ChangesWindowRequest, SessionChangesWindow } from "../types";
 import { advanceLines, CHUNK_BYTES, changesCache, type LineFold } from "./changes-window-cache";
 import { advanceFrom, type FileFold, merge } from "./claude-changes";
 import { advanceClaudeFacts, type FoldedFacts, sessionFacts } from "./claude-changes-facts";
+import { loadClaudeFacts, saveClaudeFacts } from "./claude-changes-facts-store";
 import {
+    backupFiles,
     backupReader,
     emptyParseState,
     finishTranscript,
@@ -28,7 +32,10 @@ const prof = profiler.scope("session-changes");
 const { log } = logger.scoped("session-changes");
 const historyMarker = Buffer.from('"file-history-');
 
-function readFacts(cache: Cache, paths: string[]) {
+function readFacts(cache: Cache, paths: string[], sessionId: string) {
+    if (!cache.facts && !cache.files.size) {
+        cache.files = loadClaudeFacts(sessionId);
+    }
     const current = new Map<string, FoldedFacts>();
     let changed = paths.length !== cache.files.size;
     const previous = cache.files.keys();
@@ -40,6 +47,9 @@ function readFacts(cache: Cache, paths: string[]) {
         changed ||= fold.mark !== mark || fold !== kept || path !== previous.next().value;
     }
     cache.files = current;
+    if (changed) {
+        saveClaudeFacts(sessionId, current);
+    }
     if (changed || !cache.facts) {
         cache.facts = sessionFacts(current);
     }
@@ -53,19 +63,37 @@ function checkedFold(
     start: number,
     facts: FoldedFacts
 ) {
-    const fold = advanceFrom(path, agentId, kept ?? null, start);
+    if (
+        kept?.start === start &&
+        kept.ino === facts.ino &&
+        kept.consumed === facts.consumed &&
+        kept.mark === facts.mark
+    ) {
+        return kept;
+    }
+    const fold = prof.measure("window parse", () => advanceFrom(path, agentId, kept ?? null, start, facts));
     if (!fold || fold.ino !== facts.ino || fold.mark !== facts.mark) {
         throw new Error("transcript changed between facts and window parse");
     }
     return fold;
 }
 
-function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): ChangesWindowRead {
+function readWindow(path: string, request: ChangesWindowRequest, cache: Cache, query: string): ChangesWindowRead {
     const sessionId = basename(path, ".jsonl");
     const agents = subagentFiles(path);
+    const inputs = (files: typeof agents) => [
+        fileIdentity(path),
+        ...files.map((file) => [file.path, file.parentToolUseId, fileIdentity(file.path)]),
+    ];
+    const before = inputs(agents);
+    const backups = new Map<string, ReturnType<typeof fileIdentity>>();
+    const unchanged = () =>
+        canonicalClaudeTranscriptSync(query) === path &&
+        isDeepStrictEqual(before, inputs(subagentFiles(path))) &&
+        [...backups].every(([file, identity]) => isDeepStrictEqual(identity, fileIdentity(file)));
     const facts = prof.measure(
         "facts",
-        () => readFacts(cache, [path, ...agents.map((agent) => agent.path)]),
+        () => readFacts(cache, [path, ...agents.map((agent) => agent.path)], sessionId),
         prof.enabled ? cpuMeta() : undefined
     );
     const mainFacts = cache.files.get(path);
@@ -113,6 +141,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
             earlierTurns,
             editedDirs: facts.editedDirs,
             shellCalls: facts.shellCalls,
+            finishedShellTurns: facts.finishedShellTurns,
             writersOf: facts.writersOf,
             sessionTurns: ledger.length,
             windowTurns: ledger.length - index,
@@ -121,11 +150,21 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
             transcript: { sessionId, calls: [], cwds: facts.cwds, turns: [] },
         };
         if (complete) {
-            return { supported: true, window: base };
+            const checkpoints = backupFiles(sessionId);
+            for (const file of checkpoints) {
+                backups.set(file, fileIdentity(file));
+            }
+            return {
+                supported: true,
+                window: {
+                    ...base,
+                    unchanged: () => unchanged() && isDeepStrictEqual(checkpoints, backupFiles(sessionId)),
+                },
+            };
         }
 
         const cut = ledger[index];
-        const main = prof.measure("window parse", () => checkedFold(path, null, cache.main, cut.offset, mainFacts));
+        const main = checkedFold(path, null, cache.main, cut.offset, mainFacts);
         cache.main = main;
         const opened: Array<{ fold: FileFold; parentToolUseId: string | null }> = [];
         const held = new Set(main.state.calls.keys());
@@ -157,9 +196,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
                 cache.agents.delete(file.path);
                 continue;
             }
-            const fold = prof.measure("window parse", () =>
-                checkedFold(file.path, file.agentId, cache.agents.get(file.path), 0, agentFacts)
-            );
+            const fold = checkedFold(file.path, file.agentId, cache.agents.get(file.path), 0, agentFacts);
             cache.agents.set(file.path, fold);
             bytesParsed += fold.consumed;
             for (const result of fold.unmatched) {
@@ -189,6 +226,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
             }
         }
         if (oldIndex !== index || oldForced !== forced.size) {
+            index = Math.max(0, Math.min(index, ledger.length - 2 * base.windowTurns));
             continue;
         }
         const state = prof.measure("merge", () => merge(main, opened, isMainTurn));
@@ -200,6 +238,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
             }
         }
         if (oldIndex !== index) {
+            index = Math.max(0, Math.min(index, ledger.length - 2 * base.windowTurns));
             continue;
         }
         if (missingLauncher) {
@@ -225,6 +264,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
                 path,
                 start,
                 until: cut.offset,
+                verified: mainFacts,
                 initial: emptyParseState,
                 line(state, bytes) {
                     if (bytes.includes(historyMarker)) {
@@ -240,7 +280,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
         const transcript = finishTranscript(
             sessionId,
             state,
-            backupReader(sessionId),
+            backupReader(sessionId, (file) => backups.set(file, fileIdentity(file))),
             mainFacts.state.newestBackupTime
         );
         transcript.turns = transcript.turns.filter((turn) => !earlierTurns.has(turn.turnId));
@@ -268,7 +308,7 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
             },
             "Claude changes window"
         );
-        return { supported: true, window: { ...base, transcript, lateResultCovers } };
+        return { supported: true, window: { ...base, transcript, lateResultCovers, unchanged } };
     }
     return { supported: false, reason: "F2: too many Claude cover rounds" };
 }
@@ -286,7 +326,8 @@ export function claudeChangesWindow(sessionId: string, request: ChangesWindowReq
         return readWindow(
             path,
             request,
-            windows.get(path, () => ({ agents: new Map(), files: new Map() }))
+            windows.get(path, () => ({ agents: new Map(), files: new Map() })),
+            sessionId
         );
     } catch (error) {
         windows.delete(path);

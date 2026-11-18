@@ -1,7 +1,6 @@
 import { basename, dirname, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { analyzeCommand } from "@genesiscz/utils/session-changes/command";
-import { writesHeredocFile } from "@genesiscz/utils/session-changes/compute";
 import { fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
 import type { WindowWriter } from "../types";
 import { advanceLines, type LineFold } from "./changes-window-cache";
@@ -25,8 +24,8 @@ interface FactCall {
     at: number | null;
     dir: string | null;
     writes: string[];
-    /** Only needed to discover indirect heredocs; an oversized command is a conservative wildcard. */
-    command: string | null;
+    scripts: string[];
+    hasCommand: boolean;
     wildcard: boolean;
 }
 
@@ -38,8 +37,9 @@ function emptyFacts() {
         calls: new Map<string, FactCall>(),
         errorIds: new Set<string>(),
         resultIds: new Set<string>(),
+        // The last result's timestamp decides whether matchRows can resolve its call by id.
+        finishedTurns: new Map<string, string | null>(),
         duplicateIds: false,
-        heredocScripts: new Set<string>(),
         newestBackupTime: new Map<string, number>(),
         backupOffsets: new Map<string, number>(),
         cursor: null as string | null,
@@ -88,6 +88,7 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
             const knownPrompt = promptPos < 0 || (prompt !== undefined && prompt === facts.cursor);
             const resultPos = bytes.indexOf(RESULT);
             const fastId = resultPos < 0 ? undefined : singleString(bytes, RESULT, resultPos);
+            const ownCall = fastId ? facts.calls.get(fastId) : undefined;
             const errorPos = bytes.indexOf(ERROR);
             const commonSuccess =
                 errorPos < 0 ||
@@ -99,12 +100,11 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 knownCwd &&
                 knownPrompt &&
                 commonSuccess &&
-                (resultPos < 0 || fastId) &&
-                !(fastId && facts.errorIds.has(fastId)) &&
+                (resultPos < 0 ||
+                    (fastId && (main || ownCall) && ownCall?.kind !== "shell" && !facts.errorIds.has(fastId))) &&
                 !bytes.includes(UNICODE)
             ) {
                 if (fastId) {
-                    // A possible cross-file result forces its file open if the cut holds the call.
                     facts.resultIds.add(fastId);
                 }
                 return;
@@ -160,6 +160,11 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 if (block?.type === "tool_result" && typeof block.tool_use_id === "string") {
                     const id = block.tool_use_id;
                     facts.resultIds.add(id);
+                    if (at && Number.isFinite(Date.parse(at)) && typeof entry.promptId === "string") {
+                        facts.finishedTurns.set(id, entry.promptId);
+                    } else {
+                        facts.finishedTurns.set(id, null);
+                    }
                     if (block.is_error === true) {
                         facts.errorIds.add(id);
                     } else {
@@ -174,30 +179,29 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                 if (!use) {
                     continue;
                 }
-                const { id, name, filePath, input, command } = use;
+                const { id, name, filePath, command } = use;
                 const via = fileToolVia(name);
                 if (!via && !isShellTool(name)) {
                     continue;
                 }
                 facts.unplaced ||= !facts.cursor;
                 const writes = new Map<string, string>();
+                const scripts: string[] = [];
                 let wildcard = false;
                 if (via && filePath) {
                     writes.set(resolve(filePath), "");
-                    if (via === "edit" || (typeof input.content === "string" && writesHeredocFile(input.content))) {
-                        facts.heredocScripts.add(basename(filePath));
-                    }
                 }
-                if (command && writesHeredocFile(command)) {
-                    analyzeCommand({ command, cwd: cwd ?? "/", files: writes });
-                    wildcard = !cwd;
-                    for (const [path, content] of writes) {
-                        if (writesHeredocFile(content)) {
-                            facts.heredocScripts.add(basename(path));
-                        }
-                    }
+                if (command) {
+                    analyzeCommand({
+                        command,
+                        cwd: cwd ?? "/",
+                        files: writes,
+                        onScript: (path) => scripts.push(basename(path)),
+                    });
+                    wildcard = !cwd && writes.size > 0;
                 }
                 facts.errorIds.delete(id);
+                facts.finishedTurns.delete(id);
                 facts.duplicateIds ||= facts.calls.has(id);
                 facts.calls.set(id, {
                     id,
@@ -206,8 +210,9 @@ export function advanceClaudeFacts(path: string, main: boolean, kept?: FoldedFac
                     at: use.startedAt,
                     dir: via && filePath ? dirname(filePath) : null,
                     writes: [...writes.keys()],
-                    command: command && command.length <= 4096 ? command : null,
-                    wildcard: wildcard || (command?.length ?? 0) > 4096,
+                    scripts,
+                    hasCommand: command !== null,
+                    wildcard,
                 });
             }
         },
@@ -224,21 +229,32 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
         for (const cwd of state.cwds) {
             cwds.add(cwd);
         }
-        for (const name of state.heredocScripts) {
-            scripts.add(name);
+        for (const call of state.calls.values()) {
+            for (const path of call.writes) {
+                // Even a script with no heredoc can invoke one that writes files.
+                scripts.add(basename(path));
+            }
         }
         ambiguous ||= state.duplicateIds;
     }
     const calls = new Map<string, { path: string; offset: number }>();
     const fileDirs = new Map<string, string>();
-    const scriptNames = [...scripts];
+    const finishedShellTurns = new Map<string, string>();
+    const commands = new Set<string>();
     const dirs = new Set<string>();
     const writers = new Map<string, WindowWriter[]>();
     const wildcards: WindowWriter[] = [];
+    const invocations: WindowWriter[] = [];
     for (const [path, { state }] of files) {
         // As in merge(): apply this file's cross-file results before inserting its own calls.
         for (const id of state.resultIds) {
             if (calls.has(id) && !state.calls.has(id)) {
+                const turn = state.finishedTurns.get(id);
+                if (turn && commands.has(id)) {
+                    finishedShellTurns.set(id, turn);
+                } else {
+                    finishedShellTurns.delete(id);
+                }
                 if (state.errorIds.has(id)) {
                     errors.add(id);
                 } else {
@@ -257,10 +273,19 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
             }
             if (call.kind === "shell") {
                 shellCalls.add(call.id);
+                if (call.hasCommand) {
+                    commands.add(call.id);
+                }
+                const turn = state.finishedTurns.get(call.id);
+                if (call.hasCommand && turn) {
+                    finishedShellTurns.set(call.id, turn);
+                }
             }
-            const wildcard =
-                call.wildcard || (call.command !== null && scriptNames.some((name) => call.command?.includes(name)));
+            const wildcard = call.wildcard || call.scripts.some((name) => scripts.has(name));
             const writer = { callId: call.id, at: call.at, wildcard };
+            if (call.scripts.length && !wildcard) {
+                invocations.push(writer);
+            }
             if (wildcard) {
                 wildcards.push(writer);
             } else {
@@ -278,12 +303,20 @@ export function sessionFacts(files: ReadonlyMap<string, FoldedFacts>) {
         }
     }
     const byTime = (a: WindowWriter, b: WindowWriter) => (a.at ?? 0) - (b.at ?? 0);
+    // An indirect heredoc can create another script whose name never appeared in a direct write.
+    const firstIndirect = wildcards.reduce((first, writer) => Math.min(first, writer.at ?? 0), Infinity);
+    for (const writer of invocations) {
+        if ((writer.at ?? 0) >= firstIndirect) {
+            wildcards.push({ ...writer, wildcard: true });
+        }
+    }
     wildcards.sort(byTime);
     const sorted = new Map<string, WindowWriter[]>();
     return {
         cwds: [...cwds],
         editedDirs: [...dirs],
         shellCalls,
+        finishedShellTurns,
         calls,
         ambiguous,
         writersOf(path: string): readonly WindowWriter[] {

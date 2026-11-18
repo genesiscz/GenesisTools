@@ -93,9 +93,12 @@ if (mode === "each" || mode === "changes") {
             metrics[`${call.key}.${pass}.cpuMs`] = cpuMs(cpu);
             if (mode === "changes") {
                 metrics[`changes.${pass}.peakRssMb`] = Math.round(process.resourceUsage().maxRSS / 1024);
+                const hash = createHash("sha256").update(result.stdout).digest("hex");
                 if (pass === "cold") {
-                    digest = createHash("sha256").update(result.stdout).digest("hex");
+                    digest = hash;
                     process.stderr.write("changes-cold-finished\n");
+                } else if (hash !== digest) {
+                    throw new Error(`Changes stdout differs between cold and warm: ${digest} vs ${hash}`);
                 }
             }
             // One more tick, so a call that never gave the loop back is counted as one stall.

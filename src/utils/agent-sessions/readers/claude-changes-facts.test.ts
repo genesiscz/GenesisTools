@@ -81,3 +81,22 @@ it("resumes an unfinished line and defers a valid record missing only its newlin
     appendFileSync(transcript, "\n");
     expect(advanceClaudeFacts(transcript, true, partial).state.ledger.has("after")).toBe(true);
 });
+
+it("indexes invoked scripts and their indirect writes without treating mentions as writers", () => {
+    const { transcript } = claudeFixture("basic");
+    if (!transcript) {
+        throw new Error("missing Claude fixture");
+    }
+    writeFileSync(
+        transcript,
+        `${jsonl([
+            prompt("p1", "", 1),
+            ...createFile("p1", "seed", "/work/acme/seed.sh", 2, "cat > child.sh <<'OUT'\ncat > a <<'IN'\nx\nIN\nOUT"),
+            use("mention", "Bash", { command: `echo seed.sh ${"x".repeat(4096)}` }, 4),
+            use("invoke", "Bash", { command: "bash seed.sh" }, 5),
+            use("child", "Bash", { command: "bash child.sh" }, 6),
+        ])}\n`
+    );
+    const facts = sessionFacts(new Map([[transcript, advanceClaudeFacts(transcript, true)]]));
+    expect(facts.writersOf("/work/acme/a").map((writer) => writer.callId)).toEqual(["invoke", "child"]);
+});

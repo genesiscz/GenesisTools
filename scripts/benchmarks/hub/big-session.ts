@@ -21,6 +21,7 @@
  *   bun scripts/benchmarks/hub/big-session.ts --baseline | --compare
  */
 import { readdirSync, statSync } from "node:fs";
+import { loadavg } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -34,7 +35,10 @@ const REPO = join(import.meta.dir, "..", "..", "..");
 const CHILD = join(import.meta.dir, "big-session-child.ts");
 const argv = process.argv.slice(2);
 /** Keep the five-run default. The changes acceptance run uses three interleaved samples. */
-const args = parseBenchArgs(argv, { runs: { fallback: 5, minimum: 3 } });
+const args = parseBenchArgs(argv, { runs: { fallback: 5, minimum: 1 } });
+if (args.runs === 1 && !argv.includes("--warmup")) {
+    args.warmup = 0;
+}
 
 /** The largest main transcript under the Claude session roots: `<root>/<project>/<session id>.jsonl`. */
 function largestClaudeSession(): { id: string; bytes: number } | null {
@@ -135,6 +139,11 @@ async function sample(checkout: string, mode: "each" | "together" | "changes") {
         throw new Error(`missing Changes digest for ${checkout}`);
     }
     if (mode === "changes") {
+        out.log.info(
+            `Changes sample for ${checkout}, load (1m, 5m, 15m) ${loadavg()
+                .map((load) => load.toFixed(2))
+                .join(", ")}`
+        );
         const cold = result.stderr.split("changes-cold-finished")[0];
         const phases = [...cold.matchAll(/\[profile:session-changes\] facts cpu=(\d+)ms/g)];
         if (phases.length) {

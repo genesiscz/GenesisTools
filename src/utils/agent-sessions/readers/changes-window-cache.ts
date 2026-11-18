@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, type Stats } from "node:fs";
 import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
@@ -56,26 +56,41 @@ export interface LineFold<T> {
     ctime: number;
 }
 
+export function sameGeneration(facts: LineFold<unknown>, stat: Stats): boolean {
+    return (
+        facts.ino === stat.ino &&
+        facts.size === stat.size &&
+        facts.ctime === stat.ctimeMs &&
+        facts.mtime === stat.mtimeMs
+    );
+}
+
 /** Only complete newline-delimited records are committed. On failure the caller discards the whole session cache. */
 export function advanceLines<T>(options: {
     path: string;
     start?: number;
     until?: number;
     kept?: LineFold<T>;
+    /** A range read in an already verified generation needs no independent hash of the bytes before its cut. */
+    verified?: LineFold<unknown>;
     initial: () => T;
     line: (state: T, bytes: Buffer, offset: number) => void;
 }): LineFold<T> {
     const { path, start = 0, kept } = options;
     const fd = openSync(path, "r");
     try {
-        const { size, ino, mtimeMs, ctimeMs } = fstatSync(fd);
+        const stat = fstatSync(fd);
+        const { size, ino, mtimeMs, ctimeMs } = stat;
+        if (options.verified && !sameGeneration(options.verified, stat)) {
+            throw new Error("transcript changed before range read");
+        }
         const until = options.until ?? size;
         if (start > until || until > size) {
             throw new Error("cut beyond end of transcript");
         }
         const candidate = kept && kept.start === start && kept.ino === ino && kept.consumed <= size ? kept : undefined;
-        let prefix = readPrefixMark(fd, candidate?.consumed ?? start);
-        const usable = candidate && candidate.mark === prefix.digest();
+        let prefix = options.verified && !candidate ? undefined : readPrefixMark(fd, candidate?.consumed ?? start);
+        const usable = candidate && candidate.mark === prefix?.digest();
         if (candidate && !usable) {
             prefix = readPrefixMark(fd, start);
         }
@@ -95,9 +110,9 @@ export function advanceLines<T>(options: {
             const newline = data.lastIndexOf(10);
             if (newline !== -1) {
                 for (const fragment of fragments) {
-                    prefix.update(fragment);
+                    prefix?.update(fragment);
                 }
-                prefix.update(data.subarray(0, newline + 1));
+                prefix?.update(data.subarray(0, newline + 1));
             }
             for (let end = data.indexOf(10); end !== -1; end = data.indexOf(10, from)) {
                 const last = data.subarray(from, end);
@@ -123,11 +138,11 @@ export function advanceLines<T>(options: {
                 throw new Error("complete transcript record without its newline");
             }
         }
-        const mark = prefix.finish();
-        if (!mark.stable) {
+        const mark = prefix?.finish();
+        if (mark?.stable === false || (options.verified && !sameGeneration(options.verified, fstatSync(fd)))) {
             throw new Error("transcript changed during scan");
         }
-        Object.assign(fold, { mark: mark.digest, size, mtime: mtimeMs, ctime: ctimeMs });
+        Object.assign(fold, { mark: mark?.digest ?? "", size, mtime: mtimeMs, ctime: ctimeMs });
         return fold;
     } finally {
         closeSync(fd);

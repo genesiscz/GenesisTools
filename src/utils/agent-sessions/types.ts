@@ -28,11 +28,15 @@ export interface SessionChangesWindow extends SessionChangesRead {
     earlierTurns: ReadonlySet<string>;
     editedDirs: readonly string[];
     shellCalls: ReadonlySet<string>;
+    /** Completed named commands with an explicit result turn. A log-only row for one belongs to that turn. */
+    finishedShellTurns?: ReadonlyMap<string, string>;
     writersOf(path: string): readonly WindowWriter[];
     complete: boolean;
     windowTurns: number;
     sessionTurns: number;
     lateResultCovers?: number;
+    /** Rechecks the canonical transcript, its contributing files and checkpoint backups before reusing an answer. */
+    unchanged?: () => boolean;
 }
 
 export type ChangesWindowRead =

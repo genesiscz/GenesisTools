@@ -67,6 +67,11 @@ function* plainChunksSync(fd: number, chunkBytes: number): Generator<Buffer> {
     }
 }
 
+/** Read exactly this file, including its unterminated last line, without resolving compressed siblings. */
+export function* readPlainLinesSync(path: string, chunkBytes = CHUNK_BYTES): Generator<string> {
+    yield* splitLinesSync(plainChunksSync(openSync(path, "r"), chunkBytes));
+}
+
 function asBuffer(bytes: Uint8Array): Buffer {
     return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
 }
