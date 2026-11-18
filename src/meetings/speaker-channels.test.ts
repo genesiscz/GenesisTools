@@ -159,7 +159,15 @@ describe("seat suggestions", () => {
                 }).ranges
             ).toEqual([]);
         }
-        const opened = OpenedMeeting.of(new MeetingStore(), seated);
+        // A second room occupant has a different mapped input. Only the moving guest occupies this Mac's mic.
+        const opened = OpenedMeeting.of(new MeetingStore(), {
+            ...seated,
+            seats: {
+                ...seats,
+                room: [...seats.room, "Vale Example"],
+                microphones: [...(seats.microphones ?? []), { id: "table", people: ["Vale Example"] }],
+            },
+        });
         const meeting = scene([]).meeting;
         meeting.transcript = [59, 61, 90, 100].map((startSec) => ({ startSec, speaker: "Guest", text: "A line." }));
         spyOn(opened, "meeting").mockResolvedValue(meeting);

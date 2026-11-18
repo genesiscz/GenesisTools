@@ -62,9 +62,12 @@ async function labelContext(opened: OpenedMeeting, storedPresence?: Presence[]) 
     const record = opened.record;
     const presence = storedPresence ?? (await prof.measureAsync("speakers.presence", () => opened.presence()));
     const attended: LabelContext["attended"][number][] = [];
+    const ownMic = record.seats?.microphones?.find((group) => group.id === "self");
     for (const row of record.seats?.room ?? []) {
         const { name, fromSec = 0, toSec = Infinity } = seatSpan(row);
-        attended.push({ person: name, seat: "mic", fromSec, toSec });
+        if (!ownMic || ownMic.people.some((person) => sameName(person, name))) {
+            attended.push({ person: name, seat: "mic", fromSec, toSec });
+        }
     }
     for (const row of record.seats?.remote ?? []) {
         const { name, fromSec = 0, toSec = Infinity } = row;
