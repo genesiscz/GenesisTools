@@ -23,9 +23,18 @@ export const SYSTEM_DIALOG_PROGRAMS =
 export const DIALOG_GIVE_UP_S = 600;
 
 export interface DialogResult {
+    /** null when the process was killed (its deadline passed) instead of exiting. */
     exitCode: number | null;
     stdout: string;
+    /** What the program wrote to stderr; osascript names a Cancel there (-128). */
+    stderr?: string;
 }
+
+/**
+ * What a person did with a dialog. Only `approved` and `cancelled` are a person's answer: `gave-up` is a dialog nobody
+ * answered before its deadline, and `failed` is a program that could not show it.
+ */
+export type DialogAnswer = "approved" | "cancelled" | "gave-up" | "failed";
 
 /** What a person dialog needs from the system. Tests pass a fake, so no dialog opens in a test. */
 export interface DialogSystem {
@@ -41,8 +50,8 @@ export interface DialogSystem {
 export interface PersonDialog {
     /** The argv that shows the dialog, or null when no trusted program for it is installed. */
     command: (dialog: SystemDialogText, system: DialogSystem) => string[] | null;
-    /** Only an explicit Approve: a cancel, a timeout or a failed program is a no. */
-    approved: (result: DialogResult) => boolean;
+    /** Reads the program's result: only an explicit Approve is `approved`, only an explicit Cancel is `cancelled`. */
+    answer: (result: DialogResult) => DialogAnswer;
     /** The PATH the program runs with: the platform's system folders, never the caller's PATH. */
     searchPath: string;
 }
@@ -137,12 +146,25 @@ const MAC_DIALOG: PersonDialog = {
             `buttons {"Cancel", "Approve"} default button "Cancel" cancel button "Cancel" with icon caution giving up after ${DIALOG_GIVE_UP_S}`;
         return osascript ? [osascript, "-e", script] : null;
     },
-    approved: ({ exitCode, stdout }) =>
-        exitCode === 0 && stdout.includes("button returned:Approve") && !stdout.includes("gave up:true"),
+    answer: ({ exitCode, stdout, stderr = "" }) => {
+        if (exitCode === null || stdout.includes("gave up:true")) {
+            return "gave-up";
+        }
+
+        if (exitCode === 0 && stdout.includes("button returned:Approve")) {
+            return "approved";
+        }
+
+        // The Cancel button is the dialog's cancel button: osascript exits 1 with "User canceled. (-128)".
+        return exitCode !== 0 && stderr.includes("(-128)") ? "cancelled" : "failed";
+    },
     searchPath: "/usr/bin:/bin",
 };
 
-/** zenity (GNOME and most desktops), else kdialog (KDE). Both exit 0 only for Approve. */
+/**
+ * zenity (GNOME and most desktops), else kdialog (KDE). Both exit 0 only for Approve and 1 for Cancel or a closed
+ * window; zenity exits 5 when its `--timeout` passes.
+ */
 const LINUX_DIALOG: PersonDialog = {
     command: ({ title, body }, system) => {
         if (!system.hasDisplay()) {
@@ -172,7 +194,17 @@ const LINUX_DIALOG: PersonDialog = {
             ? [kdialog, "--title", title, "--warningyesno", body, "--yes-label", "Approve", "--no-label", "Cancel"]
             : null;
     },
-    approved: ({ exitCode }) => exitCode === 0,
+    answer: ({ exitCode }) => {
+        if (exitCode === 0) {
+            return "approved";
+        }
+
+        if (exitCode === 1) {
+            return "cancelled";
+        }
+
+        return exitCode === null || exitCode === 5 ? "gave-up" : "failed";
+    },
     searchPath: "/usr/bin:/bin",
 };
 
@@ -196,7 +228,18 @@ const WINDOWS_DIALOG: PersonDialog = {
         ].join("; ");
         return [powershell, "-NoProfile", "-Command", script];
     },
-    approved: ({ exitCode, stdout }) => exitCode === 0 && stdout.trim() === "Yes",
+    answer: ({ exitCode, stdout }) => {
+        if (exitCode === null) {
+            return "gave-up";
+        }
+
+        if (exitCode !== 0) {
+            return "failed";
+        }
+
+        const button = stdout.trim();
+        return button === "Yes" ? "approved" : button === "No" ? "cancelled" : "failed";
+    },
     searchPath: "C:\\Windows\\System32;C:\\Windows",
 };
 
@@ -243,5 +286,5 @@ export function showSystemDialog(
         { program: argv[0], exitCode: result.exitCode, answer: result.stdout.trim() },
         "system dialog: answered"
     );
-    return dialog.approved(result);
+    return dialog.answer(result) === "approved";
 }
