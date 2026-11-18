@@ -418,7 +418,8 @@ export async function embedVoiceLines(options: {
     workerPrefix?: readonly string[];
     /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
     clearBackground?: boolean;
-    workers?: number;
+    /** A pass can defer sampling idle cores until its first cache miss needs a worker. */
+    workers?: number | (() => Promise<number>);
     onProgress?: VoiceProgress;
 }): Promise<LineEmbedding[]> {
     const { audioPath, spans, onProgress } = options;
@@ -483,7 +484,13 @@ export async function embedVoiceLines(options: {
     let done = spans.length - pending.length;
     onProgress?.(done, spans.length);
     const workerPrefix = options.workerPrefix ?? (options.workers !== undefined ? [] : undefined);
-    const workers = options.workers ?? 1;
+    let workers = 1;
+    if (typeof options.workers === "number") {
+        workers = options.workers;
+    } else if (pending.length && options.workers) {
+        workers = await options.workers();
+    }
+
     if (!Number.isSafeInteger(workers) || workers < 1) {
         throw new RangeError("Voice workers must be a positive integer");
     }
