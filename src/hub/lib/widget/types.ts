@@ -124,6 +124,7 @@ export const widgetPreferencesSchema = z.object({
         .object({
             /** How claimed handoffs appear when Tasks opens. An unset preference starts each handoff folded. */
             handoffs: z.enum(["folded", "expanded", "hidden"]).optional(),
+            showTooltips: z.boolean().optional(),
         })
         .optional(),
     /**

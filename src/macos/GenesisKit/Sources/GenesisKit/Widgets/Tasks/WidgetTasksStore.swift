@@ -199,7 +199,14 @@ public final class WidgetTasksStore: ObservableObject {
         }
         let next = recent.compactMap(latest).filter { !matchesScope($0) }
         if next != recent { recent = next }
-        if let undo, latest(undo.task) != undo.task { self.undo = nil }
+        if var undo {
+            guard let now = latest(undo.task) else { self.undo = nil; return }
+            // Importing an older TODO can fill its Work link. Only a change to the saved task invalidates Undo.
+            undo.task.workRef = now.workRef
+            undo.task.acceptance = now.acceptance
+            if now != undo.task { self.undo = nil }
+            else if undo != self.undo { self.undo = undo }
+        }
     }
 
     private func watch(_ paths: [String]) {
@@ -289,7 +296,10 @@ public final class WidgetTasksStore: ObservableObject {
         pendingStates[task.id] = action.targetState(from: task.state)
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
-            let response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
+            var response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
+            // A state change returns the ledger row. Keep the Work link and acceptance from its listing.
+            response.task.workRef = task.workRef
+            response.task.acceptance = task.acceptance
             if action == .send, response.receipt.needsResume == true, !response.receipt.saved,
                response.task.id == task.id, response.task.sessionId == task.sessionId, response.task.provider == task.provider {
                 self.resumeRequest = .init(task: response.task, sourceHome: receiverHome)
@@ -343,7 +353,9 @@ public final class WidgetTasksStore: ObservableObject {
         let view = viewGeneration
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
-            let response = try JSONDecoder().decode(WidgetTaskSaved.self, from: data)
+            var response = try JSONDecoder().decode(WidgetTaskSaved.self, from: data)
+            response.task.workRef = task.workRef
+            response.task.acceptance = task.acceptance
             guard response.receipt.saved, response.task.id == task.id, response.task.revision == task.revision + 1 else {
                 throw ToolsBridgeError.refused("The task edit returned an inconsistent receipt. Refresh to confirm its text.")
             }

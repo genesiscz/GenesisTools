@@ -390,6 +390,7 @@ public enum WidgetHandoffDisplay: String, Codable, Sendable {
 
 public struct WidgetTasksPreferences: Codable, Equatable, Sendable {
     public var handoffs: WidgetHandoffDisplay?
+    public var showTooltips: Bool?
 }
 
 /// A string preference added after the original widget wire format. Older snapshots omit these keys.
