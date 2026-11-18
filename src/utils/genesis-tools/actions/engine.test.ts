@@ -452,6 +452,16 @@ describe("the app surface generator", () => {
         const committed = await Bun.file(APP_SURFACE_PATH).text();
         expect(renderAppSurface(readAppSurfaceInput())).toBe(committed);
     });
+
+    test("a face alias gets the row of its face", () => {
+        const rendered = renderAppSurface({
+            rpcMethods: ["rpc.hello"],
+            parts: [{ id: "features", faces: [{ flag: "--features", aliases: ["--clicky"], window: true }] }],
+            hostFace: { flag: "--window", window: true },
+        });
+        expect(rendered).toContain('    "--features": { part: "features", window: true },\n');
+        expect(rendered).toContain('    "--clicky": { part: "features", window: true },\n');
+    });
 });
 
 test("app.hello reports methods to the injected state, and app.rpc returns the reply", async () => {
