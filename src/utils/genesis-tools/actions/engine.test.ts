@@ -325,6 +325,60 @@ describe("runAreaAction", () => {
         expect(outcome.skipped[0]?.code).toBe("in-test");
     });
 
+    test("one deadline from entry covers a slow fix: no later way starts and the outcome names the deadline", async () => {
+        const builder: AppBuilder = {
+            build: () => Bun.sleep(400),
+            offerBuild: async () => false,
+            buildCommand: () => "build-it",
+        };
+        const started = Date.now();
+        const outcome = await runAreaAction(REGISTRY, "demo.greet", { name: "hal" }, deps({ builder }), {
+            timeoutMs: 50,
+        });
+
+        expect(Date.now() - started).toBeLessThan(350);
+        expect(outcome.status).toBe("unreachable");
+        expect(outcome.skipped).toHaveLength(1);
+        expect(outcome.skipped[0]).toMatchObject({ way: "native", code: "timed-out" });
+        expect(outcome.skipped[0]?.reason).toContain("within 50 ms while its needs were checked");
+    });
+
+    test("a way past the deadline sees ctx.signal abort, and its effect is reported as unknown", async () => {
+        const signals: AbortSignal[] = [];
+        const slow = defineArea({
+            area: "slow",
+            summary: "",
+            actions: {
+                act: defineAction({
+                    summary: "",
+                    args: z.object({}),
+                    result: z.object({}),
+                    native: async (ctx) => {
+                        signals.push(ctx.signal);
+                        await Bun.sleep(200);
+                        return {};
+                    },
+                    fallback: { never: () => ({}) },
+                }),
+            },
+        });
+        const config = createConfigStore({
+            registry: { slow },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-")), "config.json"),
+        });
+        const timedOut = await runAreaAction({ slow }, "slow.act", {}, deps({ config }), { timeoutMs: 30 });
+
+        expect(signals[0]?.aborted).toBe(true);
+        expect(timedOut.status).toBe("unreachable");
+        expect(timedOut.skipped.map((skip) => [skip.way, skip.code])).toEqual([["native", "timed-out"]]);
+        expect(timedOut.skipped[0]?.reason).toContain("its effect is unknown");
+
+        const caller = new AbortController();
+        const cancelled = runAreaAction({ slow }, "slow.act", {}, deps({ config }), { signal: caller.signal });
+        caller.abort(new Error("the connection closed"));
+        expect((await cancelled).skipped[0]?.reason).toContain("the caller cancelled: the connection closed");
+    });
+
     test("wrong args throw before any way runs", async () => {
         calls.length = 0;
         await expect(runAreaAction(REGISTRY, "demo.greet", { name: 3 }, deps())).rejects.toThrow(
