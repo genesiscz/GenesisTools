@@ -5,6 +5,7 @@ import XCTest
 /// `HighlightedText` cuts its text at the ranges it is given and marks exactly those characters. The ranges count
 /// UTF-16 code units, as NSString and the meetings engine count them, so a word after an emoji or a Czech letter
 /// keeps its place.
+@MainActor
 final class HighlightedTextTests: XCTestCase {
     private func cut(_ text: String, _ ranges: [NSRange]) -> [HighlightedText.Segment] {
         HighlightedText.segments(text, ranges: ranges)
