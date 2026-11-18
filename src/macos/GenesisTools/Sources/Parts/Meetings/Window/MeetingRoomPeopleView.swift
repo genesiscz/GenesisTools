@@ -109,8 +109,16 @@ struct MeetingVoiceToolsSheet: View {
     @State private var enrolled: String?
     @State private var voice: [MeetingsAPI.Voice.Line] = []
     @State private var linesOpen = false
+    @State private var evidenceOpen: Bool
 
     enum Job: Equatable { case measure, enrol }
+
+    /// `evidenceOpen`: Details starts open (a snapshot of it).
+    init(detail: MeetingDetailModel, evidenceOpen: Bool = false, close: @escaping () -> Void) {
+        self.detail = detail
+        self.close = close
+        _evidenceOpen = State(initialValue: evidenceOpen)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -154,6 +162,10 @@ struct MeetingVoiceToolsSheet: View {
             } result: {
                 if let enrolled { Text(verbatim: enrolled).font(.system(size: 12)).foregroundStyle(.secondary) }
             }
+            if let evidence = detail.speakers.value?.evidence {
+                Divider()
+                evidenceDetails(evidence)
+            }
             HStack {
                 Spacer()
                 Button("Done", action: close).keyboardShortcut(.defaultAction)
@@ -161,6 +173,30 @@ struct MeetingVoiceToolsSheet: View {
         }
         .padding(16)
         .frame(width: 460)
+        // The evidence facts come with the speakers; the sheet opens from any tab.
+        .onAppear { if case .idle = detail.speakers { detail.loadSpeakers() } }
+    }
+
+    /// The engine's evidence facts as it logs them (was a disclosure above the Speakers tab's lanes, audit L3).
+    private func evidenceDetails(_ evidence: MeetingsAPI.MeetingSpeakers.Evidence) -> some View {
+        GenDisclosure(isExpanded: $evidenceOpen, minHeight: 22, identifier: "meetings.speakers.evidence") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(evidence.summary.enumerated()), id: \.offset) { _, text in
+                        Text(verbatim: text).font(.system(size: 12)).textSelection(.enabled)
+                    }
+                    Text(verbatim: evidence.lines).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Details").font(.system(size: 13, weight: .semibold))
+                Text("The facts the engine read about the speakers, as it logs them.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func section<Controls: View, Result: View>(_ job: Job, title: String, text: String,

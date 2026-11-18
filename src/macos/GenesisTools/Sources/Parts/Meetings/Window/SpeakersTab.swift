@@ -30,14 +30,8 @@ struct SpeakersTab: View {
                 // its smallest size reported no change, so the rows stayed side by side and wrapped one letter per line.
                 GeometryReader { proxy in
                     let stacked = proxy.size.width < Self.stackWidth
+                    // The engine's evidence facts are a check of the voice pass: Details in the Voice tools sheet.
                     List {
-                        if let evidence = stats.evidence {
-                            DisclosureGroup("Evidence facts") {
-                                ForEach(Array(evidence.summary.enumerated()), id: \.offset) { _, text in Text(text).textSelection(.enabled) }
-                                Text(evidence.lines).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                            }
-                            .accessibilityIdentifier("meetings.speakers.evidence")
-                        }
                         lanes(stats, names: renames)
                             .listRowSeparator(.hidden)
                         ForEach(speakers) { speaker in

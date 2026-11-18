@@ -325,6 +325,11 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         _ = await waitUntil(30) { detail.history?.entries.value != nil || detail.history?.entries.failure != nil }
         return detail.history.map { AnyView(HistorySheetView(detail: detail, history: $0)) }
     }
+    if let sheet = request.sheet, sheet == "voice-tools" || sheet == "voice-tools:details" {
+        if case .idle = detail.speakers { detail.loadSpeakers() }
+        _ = await waitUntil(60) { detail.speakers.value != nil || detail.speakers.failure != nil }
+        return AnyView(MeetingVoiceToolsSheet(detail: detail, evidenceOpen: sheet.hasSuffix(":details"), close: {}))
+    }
     return nil
 }
 
