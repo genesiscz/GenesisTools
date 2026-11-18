@@ -4,12 +4,15 @@ import type { DecisionActor, MeetingRecord } from "@genesiscz/utils/meetings/rec
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import { errorText, TOOL } from "./shared";
 
+/** The part of the person area the meetings tools call. */
+export type MeetingReviewDoor = { person: Pick<AreaClients["person"], "windowNotice"> };
+
 /** Call after the record is saved. A delivery failure is a warning on the completed run. */
 export async function requestMeetingQuestionReview(options: {
     actor: DecisionActor;
     runId: string;
     record: Pick<MeetingRecord, "id" | "title" | "items">;
-    gt?: { person: Pick<AreaClients["person"], "windowNotice"> };
+    gt?: MeetingReviewDoor;
 }): Promise<string | undefined> {
     const { actor, record, runId } = options;
     if (actor.kind !== "agent") {

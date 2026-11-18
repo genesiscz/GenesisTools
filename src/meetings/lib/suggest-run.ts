@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
-import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type LineVoice, lineVoices, type VoiceFrame, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -12,6 +13,7 @@ import { indicatorFacts } from "./indicator-facts";
 import { addQualityQuestions } from "./listen-quality";
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
+import { type MeetingReviewDoor, requestMeetingQuestionReview } from "./person-door";
 import { errorText } from "./shared";
 import { proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
@@ -92,7 +94,8 @@ function entrySpans(entries: TranscriptEntry[]): Array<{ index: number; fromSec:
  * Runs the rules on a meeting's transcript and adds what they find as suggested items, in one save: the CLI's
  * `suggest` and the REPL's meeting.suggest(). The platform, attendance and channel layout are collected first when the
  * record lacks them. A word check that cannot run is a warning, not a failure: the term rules then skip every word
- * with a Czech letter.
+ * with a Czech letter. When the caller is an agent and its run leaves word or dictionary questions, the owner gets one
+ * request per run whose click opens the Items tab (`requestMeetingQuestionReview`); a delivery failure is a warning.
  */
 export async function runSuggest(options: {
     store: MeetingStore;
@@ -101,6 +104,10 @@ export async function runSuggest(options: {
     attendance?: string;
     attendanceId?: string;
     wordCheck?: WordCheckChoice;
+    /** Who runs it. Without an actor nobody is asked (voice enrolment, tests). */
+    actor?: DecisionActor;
+    /** The person area; tests pass a fake. */
+    gt?: MeetingReviewDoor;
 }): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
     const { store, record, rules } = options;
     const warnings: string[] = [];
@@ -283,6 +290,18 @@ export async function runSuggest(options: {
         });
     } finally {
         wordCheck?.dispose();
+    }
+
+    if (options.actor) {
+        const warning = await requestMeetingQuestionReview({
+            actor: options.actor,
+            runId: randomUUID(),
+            record: store.read(record.id) ?? record,
+            ...(options.gt ? { gt: options.gt } : {}),
+        });
+        if (warning) {
+            warnings.push(warning);
+        }
     }
 
     return { fresh, retired, warnings };

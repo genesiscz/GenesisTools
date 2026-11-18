@@ -33,6 +33,7 @@ import { z } from "zod";
 import { planFindings } from "../lib/add-findings";
 import { decideResult, decisionOf, filteredNothing, reopenResult } from "../lib/decide";
 import { decisionActionSchema } from "../lib/decision-actions";
+import { callerActor } from "../lib/decision-journal";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { OpenedMeeting } from "../lib/opened-meeting";
@@ -268,6 +269,7 @@ async function suggest(
             attendance: opts.attendance,
             attendanceId: opts.attendanceId,
             wordCheck: wordCheckChoice,
+            actor: callerActor(),
         });
 
         for (const warning of warnings) {

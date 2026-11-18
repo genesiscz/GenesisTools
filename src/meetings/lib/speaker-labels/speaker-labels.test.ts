@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -101,6 +102,72 @@ describe("suggest runner word settings", () => {
         const reopened = new MeetingStore(store.storage).read(record.id)!;
         expect(reopened.items.find((item) => item.id === "i1")?.status).toBe("rejected");
         expect(reopened.items.some((item) => item.kind === "question" && item.heard === "zorbax")).toBe(false);
+    });
+
+    test("an agent's run that leaves word questions posts one window notice; other runs and callers post none", async () => {
+        const { store, record, opened, meeting, config } = await runnerFixture();
+        config.global.suggest.words.minOccurrences = 2;
+        config.global.suggest.questionCap = 0;
+        const check: WordCheck = {
+            provider: "fixture",
+            language: "cs",
+            verdict: (word) =>
+                word.toLowerCase() === "glorpix" ? { class: "unknown", count: 0 } : { class: "dictionary", count: 9 },
+            dispose: () => undefined,
+        };
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        type WindowNotice = AreaClients["person"]["windowNotice"];
+        const windowNotice = mock(
+            async (args: Parameters<WindowNotice>[0]): ReturnType<WindowNotice> => ({
+                status: "ran",
+                via: "native",
+                skipped: [],
+                value: { id: args.id, status: "pending", reason: null },
+            })
+        );
+        const gt = { person: { windowNotice } };
+        const agent = { kind: "agent" as const, harness: "fixture", session: "session-1" };
+
+        meeting.transcript = [{ speaker: "Speaker 1", startSec: 0, text: "Plain words only." }];
+        const plain = await runSuggest({ store, record, rules: ["terms"], actor: agent, gt });
+        expect(plain.fresh).toEqual([]);
+        expect(windowNotice).not.toHaveBeenCalled();
+
+        meeting.transcript = [
+            { speaker: "Speaker 1", startSec: 0, text: "We use glorpix here." },
+            { speaker: "Speaker 1", startSec: 10, text: "We use glorpix again." },
+        ];
+        await runSuggest({ store, record: store.read(record.id)!, rules: ["terms"], actor: { kind: "cli" }, gt });
+        expect(windowNotice).not.toHaveBeenCalled();
+
+        const asked = await runSuggest({ store, record: store.read(record.id)!, rules: ["terms"], actor: agent, gt });
+        expect(asked.warnings).toEqual([]);
+        expect(windowNotice).toHaveBeenCalledTimes(1);
+        expect(windowNotice.mock.calls[0]?.[0].open).toEqual({
+            window: "--meetings",
+            args: ["--meeting", record.id, "--tab", "items"],
+        });
+    });
+
+    test("a test process posts nothing real: without a fake the person area refuses and the run only warns", async () => {
+        const { store, record, opened, meeting, config } = await runnerFixture();
+        config.global.suggest.words.minOccurrences = 1;
+        const check: WordCheck = {
+            provider: "fixture",
+            language: "cs",
+            verdict: () => ({ class: "unknown", count: 0 }),
+            dispose: () => undefined,
+        };
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        meeting.transcript = [{ speaker: "Speaker 1", startSec: 0, text: "glorpix" }];
+        const result = await runSuggest({
+            store,
+            record,
+            rules: ["terms"],
+            actor: { kind: "agent", harness: "fixture", session: "session-1" },
+        });
+        expect(result.fresh.some((item) => item.kind === "question")).toBe(true);
+        expect(result.warnings).toEqual([expect.stringContaining("The meeting review request could not reach you")]);
     });
 
     test("twelve open word questions leave room for a long-stretch question", async () => {
