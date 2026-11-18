@@ -12,6 +12,7 @@ import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
+import { meetingRuleSentences } from "@genesiscz/utils/meetings/rules";
 import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -468,6 +469,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "moment.save": async (params, context) => (await moments()).saveMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "tone.presets": async () => (await moments()).listTonePresets(),
+        "rules.names": () => ({ names: meetingRuleSentences() }),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         // The acoustic reads open the meeting with the service's source, as every other read does.
         "acoustic.inspect": async (params) =>

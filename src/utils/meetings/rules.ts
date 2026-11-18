@@ -194,6 +194,11 @@ const RULE_NAMES: Readonly<Record<MeetingRule, string>> = {
     [MeetingRule.User]: "Someone added this by hand.",
 };
 
+/** Every rule's one plain sentence by its id, for a client that shows an item's rules (`rules.names`). */
+export function meetingRuleSentences(): Record<string, string> {
+    return { ...RULE_NAMES };
+}
+
 /** Older records can contain IDs without a known explanation. */
 export function meetingRuleNames(ids: readonly string[]): string[] {
     return ids.filter((id): id is MeetingRule => Object.hasOwn(RULE_NAMES, id)).map((id) => RULE_NAMES[id]);

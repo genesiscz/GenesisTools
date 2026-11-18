@@ -535,6 +535,15 @@ const tonePresets = defineMethod({
     effect: "read",
 });
 
+const rulesNames = defineMethod({
+    name: "rules.names",
+    params: z.object({}).strict(),
+    result: z.object({ names: z.record(z.string(), z.string()) }),
+    resultName: "{ names: { <rule id>: <sentence> } }",
+    doc: "Every rule's one plain sentence by its id: the words a review row shows for its rules, for a window that shows an item's `rules`. An id the table lacks (an older record) has no sentence.",
+    effect: "read",
+});
+
 const voicePrepare = defineMethod({
     name: "voice.prepare",
     params: z.object({ download: z.literal(true) }).strict(),
@@ -1601,6 +1610,7 @@ export const meetingsApi = defineApi({
         momentSave,
         tonePreview,
         tonePresets,
+        rulesNames,
         meetingAudio,
         acousticInspect,
         acousticClip,
