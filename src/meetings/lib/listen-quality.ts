@@ -3,7 +3,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import { type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
-import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { personKey, personPresent } from "./listen-answers";
@@ -54,18 +54,27 @@ export function addQualityQuestions(options: {
         },
     ];
     const ids: string[] = [];
+    const itemsById = new Map(options.record.items.map((item) => [item.id, item]));
     for (const { group, parts } of groups) {
         for (const part of parts) {
             const confidence = part.reduce((lowest, line) => Math.min(lowest, line.confidence), 1);
             const fromSec = part[0]!.fromSec,
                 toSec = part.at(-1)!.fromSec;
+            const first = part[0]!;
+            const sharedStart =
+                options.entries[first.index - 1]?.startSec === fromSec ||
+                options.entries[first.index + 1]?.startSec === fromSec;
             const known = options.record.items.find(
                 (item) =>
                     item.kind === "question" &&
                     item.status === "suggested" &&
                     item.group === group &&
                     item.fromSec === fromSec &&
-                    item.toSec === toSec
+                    item.toSec === toSec &&
+                    (group !== "spot-check" ||
+                        !sharedStart ||
+                        item.evidence?.transcriptLine === first.index ||
+                        item.decides.some((id) => itemsById.get(id)?.evidence?.transcriptLine === first.index))
             );
             if (known?.kind === "question") {
                 known.priority ??= 1;
@@ -75,7 +84,7 @@ export function addQualityQuestions(options: {
             }
             const decides: string[] = [];
             for (const line of part) {
-                const source = options.record.items.find((item) => item.id === line.item);
+                const source = line.item === undefined ? undefined : itemsById.get(line.item);
                 if (source?.kind === "speaker-range") {
                     const target = meetingItemSchema.parse({
                         ...source,
@@ -113,7 +122,11 @@ export function addQualityQuestions(options: {
                 decides,
                 rules: [],
                 suggestedAt: new Date().toISOString(),
-                evidence: { words: part.reduce((sum, line) => sum + line.words, 0), originalSpeaker: part[0]!.speaker },
+                evidence: {
+                    words: part.reduce((sum, line) => sum + line.words, 0),
+                    originalSpeaker: first.speaker,
+                    ...(group === "spot-check" ? { transcriptLine: first.index } : {}),
+                },
             });
             options.record.items.push(question);
             ids.push(question.id);
@@ -149,6 +162,15 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
                 (entry.startSec ?? Infinity) <= one.toSec
         );
         const item = matches.findLast((one) => one.status === "confirmed") ?? matches.at(-1);
+        const at = entry.startSec;
+        const assigned =
+            at !== undefined &&
+            record.speakers.assignments?.some(
+                (assignment) =>
+                    assignment.label === entry.speaker &&
+                    at >= assignment.fromSec - LINE_AT_TOLERANCE_SEC &&
+                    at <= assignment.toSec + LINE_AT_TOLERANCE_SEC
+            );
         return {
             index,
             fromSec: entry.startSec ?? 0,
@@ -157,11 +179,12 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
             confidence: item?.confidence ?? 0,
             speaker: item?.kind === "speaker-range" ? item.speaker : undefined,
             item: item?.id,
-            confirmed: item?.status === "confirmed",
+            confirmed: assigned === true || item?.status === "confirmed",
             ...(item && item.status !== "confirmed" && questionOwned.has(item.id) ? { questionOwned: true } : {}),
             asked: record.items.some(
                 (question) =>
                     question.kind === "question" &&
+                    question.about === "speaker" &&
                     (entry.startSec ?? -1) >= question.fromSec &&
                     (entry.startSec ?? Infinity) <= question.toSec
             ),

@@ -2125,6 +2125,62 @@ describe("workshop listen contracts", () => {
         ]);
     });
 
+    test("quality rounds skip hand-assigned voices and a word question leaves a speaker stretch reviewable", () => {
+        const record = meetingRecord("quality-lines", {
+            speakers: {
+                labels: {},
+                assignments: [{ id: "a1", label: "Voice", fromSec: 0, toSec: 0, person: "Lake Example", at: now }],
+            },
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Voice",
+                    fromSec: 0,
+                    toSec: 20,
+                    speaker: "Sky Example",
+                    status: "suggested",
+                    confidence: 0.61,
+                    rules: [],
+                    suggestedAt: now,
+                },
+                question("i2", { about: "term", group: "words", fromSec: 20, toSec: 20 }),
+            ],
+        });
+        const entries = [0, 20].map((startSec) => ({ startSec, speaker: "Voice", text: "words ".repeat(50) }));
+        const ids = addQualityQuestions({ record, entries, spotCheck: 20, longStretchWords: 50 });
+        expect(
+            record.items.flatMap((item) =>
+                item.kind === "question" && ids.includes(item.id) ? [[item.group, item.fromSec]] : []
+            )
+        ).toEqual([
+            ["spot-check", 20],
+            ["long-stretch", 20],
+        ]);
+    });
+
+    test("spot checks keep two sampled transcript lines with the same start distinct on retry", () => {
+        const entries = ["First", "Second"].map((speaker) => ({ startSec: 12, speaker, text: "One line." }));
+        const record = meetingRecord("overlap", {
+            items: entries.map((entry, index) => ({
+                id: `i${index + 1}`,
+                kind: "speaker-range",
+                label: entry.speaker,
+                fromSec: 12,
+                toSec: 12,
+                speaker: index ? "Sky Example" : "Lake Example",
+                confidence: 0.6,
+                status: "suggested",
+                rules: [],
+                suggestedAt: now,
+            })),
+        });
+        const prepare = () => new Set(addQualityQuestions({ record, entries, spotCheck: 2 }));
+        const first = prepare();
+        expect(first.size).toBe(2);
+        expect(prepare()).toEqual(first);
+    });
+
     test("quality probe conserves lines, sample has no replacement, alternating features split four parts", () => {
         const record = meetingRecord("quality", {
             items: [0.55, 0.75, 0.95].map((confidence, index) => ({
