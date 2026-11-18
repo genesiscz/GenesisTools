@@ -1,0 +1,198 @@
+{
+  "cases": [
+    {
+      "name": "camera only in an old project",
+      "camera": true,
+      "moves": [],
+      "order": [
+        {
+          "id": "camera",
+          "kind": "camera"
+        }
+      ]
+    },
+    {
+      "name": "unlisted camera goes below ordered and unlisted media",
+      "camera": true,
+      "layers": {
+        "order": [
+          "clip",
+          "gone",
+          "clip"
+        ],
+        "media": [
+          {
+            "id": "logo",
+            "kind": "image",
+            "file": "logo.png",
+            "startUs": 0,
+            "endUs": 1000000
+          },
+          {
+            "id": "clip",
+            "kind": "video",
+            "file": "clip.mov",
+            "startUs": 500000,
+            "endUs": 2000000
+          }
+        ]
+      },
+      "moves": [],
+      "order": [
+        {
+          "id": "camera",
+          "kind": "camera"
+        },
+        {
+          "id": "clip",
+          "kind": "video"
+        },
+        {
+          "id": "logo",
+          "kind": "image"
+        }
+      ]
+    },
+    {
+      "name": "ordered camera stays above the logo",
+      "camera": true,
+      "layers": {
+        "order": [
+          "logo",
+          "camera"
+        ],
+        "media": [
+          {
+            "id": "logo",
+            "kind": "image",
+            "file": "logo.png",
+            "startUs": 0,
+            "endUs": 1000000
+          },
+          {
+            "id": "clip",
+            "kind": "video",
+            "file": "clip.mov",
+            "startUs": 500000,
+            "endUs": 2000000
+          }
+        ]
+      },
+      "moves": [],
+      "order": [
+        {
+          "id": "logo",
+          "kind": "image"
+        },
+        {
+          "id": "camera",
+          "kind": "camera"
+        },
+        {
+          "id": "clip",
+          "kind": "video"
+        }
+      ]
+    },
+    {
+      "name": "moves use bottom to top indices",
+      "camera": true,
+      "layers": {
+        "order": [],
+        "media": [
+          {
+            "id": "logo",
+            "kind": "image",
+            "file": "logo.png",
+            "startUs": 0,
+            "endUs": 1000000
+          },
+          {
+            "id": "clip",
+            "kind": "video",
+            "file": "clip.mov",
+            "startUs": 500000,
+            "endUs": 2000000
+          }
+        ]
+      },
+      "moves": [
+        {
+          "id": "clip",
+          "to": "bottom"
+        },
+        {
+          "id": "camera",
+          "to": "top"
+        },
+        {
+          "id": "logo",
+          "to": "up"
+        },
+        {
+          "id": "clip",
+          "to": 1
+        },
+        {
+          "id": "logo",
+          "to": "down"
+        }
+      ],
+      "order": [
+        {
+          "id": "camera",
+          "kind": "camera"
+        },
+        {
+          "id": "logo",
+          "kind": "image"
+        },
+        {
+          "id": "clip",
+          "kind": "video"
+        }
+      ]
+    },
+    {
+      "name": "absent camera and unknown ids are skipped",
+      "camera": false,
+      "layers": {
+        "order": [
+          "camera",
+          "gone"
+        ],
+        "media": [
+          {
+            "id": "logo",
+            "kind": "image",
+            "file": "logo.png",
+            "startUs": 0,
+            "endUs": 1000000
+          }
+        ]
+      },
+      "moves": [
+        {
+          "id": "logo",
+          "to": "bottom"
+        },
+        {
+          "id": "logo",
+          "to": "up"
+        }
+      ],
+      "order": [
+        {
+          "id": "logo",
+          "kind": "image"
+        }
+      ]
+    },
+    {
+      "name": "empty project",
+      "camera": false,
+      "moves": [],
+      "order": []
+    }
+  ]
+}
