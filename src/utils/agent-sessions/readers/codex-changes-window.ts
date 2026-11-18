@@ -35,9 +35,13 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
         return null;
     }
     try {
-        if (path.endsWith(".zst") || statSync(path).size < CHUNK_BYTES) {
+        if (path.endsWith(".zst")) {
             windows.delete(path);
-            return { supported: false, reason: "F5: small or compressed rollout" };
+            return { supported: false, reason: "F6: compressed rollout has no raw line offsets" };
+        }
+        if (statSync(path).size < CHUNK_BYTES) {
+            windows.delete(path);
+            return { supported: false, reason: "F5: small rollout" };
         }
         const cache = windows.get(path, () => ({}));
         cache.facts = advanceLines({

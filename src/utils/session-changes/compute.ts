@@ -501,6 +501,20 @@ export function writesHeredocFile(text: string): boolean {
  */
 class WrittenFiles extends Map<string, string> {
     readonly heredocScripts = new Map<string, string>();
+    private readonly trustedAt = new Map<string, number>();
+
+    recordWriter(path: string, at: number | null): void {
+        if (at === null) {
+            this.trustedAt.delete(path);
+        } else {
+            this.trustedAt.set(path, at);
+        }
+    }
+
+    trustedSince(path: string): number {
+        return this.trustedAt.get(path) ?? Number.NEGATIVE_INFINITY;
+    }
+
     /** While one command is analyzed (`traced`): the texts it read before writing them, and what it wrote. */
     private trace: FileTrace | null = null;
 
@@ -709,22 +723,15 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
     const written = new WrittenFiles();
     const chronological = [...calls].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 
-    // Last known, trustworthy text before the current command, including cached writes.
-    const trustedAt = new Map<string, number>();
     for (const call of chronological) {
         const trusted = !window?.earlierTurns.has(call.turnId);
-        const recordWriter = (path: string) => {
-            if (window) {
-                if (trusted) {
-                    trustedAt.set(path, call.startedAt ?? 0);
-                } else {
-                    trustedAt.delete(path);
-                }
-            }
-        };
+        const writerTime = trusted ? (call.startedAt ?? 0) : null;
         if (fileToolVia(call.name) && call.filePath && typeof call.after === "string") {
-            written.set(resolve(call.filePath), call.after);
-            recordWriter(resolve(call.filePath));
+            const target = resolve(call.filePath);
+            written.set(target, call.after);
+            if (window) {
+                written.recordWriter(target, writerTime);
+            }
             continue;
         }
 
@@ -755,7 +762,7 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
             const trace = keptByCall.get(call.id);
             if (trace && trusted) {
                 for (const [path] of trace.read) {
-                    const prior = trustedAt.get(path) ?? Number.NEGATIVE_INFINITY;
+                    const prior = written.trustedSince(path);
                     const writer = window.writersOf(path).findLast((candidate) => {
                         const at = candidate.at ?? 0;
                         const source = held?.get(candidate.callId);
@@ -773,7 +780,7 @@ export function computeChanges(input: SessionChangesInput, window: SessionChange
                 }
             }
             for (const [path] of trace?.wrote ?? []) {
-                recordWriter(path);
+                written.recordWriter(path, writerTime);
             }
         }
 
