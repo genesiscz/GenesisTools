@@ -1,4 +1,8 @@
-import { findHandoffAttachment, type HandoffEventPage, handoffQueries } from "@genesiscz/utils/work/legacy/handoff-read";
+import {
+    findHandoffAttachment,
+    type HandoffEventPage,
+    handoffQueries,
+} from "@genesiscz/utils/work/legacy/handoff-read";
 import { attachmentFilePath } from "./attachments";
 import { applyGetClaim, type HandoffDeps } from "./executor";
 import { HandoffReader, withHandoffReadDb } from "./reader";

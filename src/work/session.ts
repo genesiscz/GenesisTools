@@ -44,7 +44,12 @@ export async function openSession(
             actor,
             project,
             rules: loaded.rules,
-            ports: { legacy: legacyHandoffs(), delivery, lineage: t3Lineage(), connectors: connectorPort(db, loadRules) },
+            ports: {
+                legacy: legacyHandoffs(),
+                delivery,
+                lineage: t3Lineage(),
+                connectors: connectorPort(db, loadRules),
+            },
         },
         call,
         loadRules,

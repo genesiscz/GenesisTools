@@ -383,7 +383,8 @@ export class HandoffReader {
             }
 
             // Opt-in only: with neither flag the listing stays exactly what it was.
-            const agentFilter = input.agent !== undefined && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
+            const agentFilter =
+                input.agent !== undefined && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
             const sessionFilter =
                 input.session !== undefined && input.session.trim().length > 0 ? input.session.trim() : undefined;
 
@@ -445,7 +446,9 @@ export class HandoffReader {
                             ...task,
                             proof: {
                                 ...task.proof,
-                                answer: clipped ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…` : task.proof.answer,
+                                answer: clipped
+                                    ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…`
+                                    : task.proof.answer,
                                 context: undefined,
                                 commitIds: task.proof.commitIds?.slice(0, PROOF_PREVIEW_IDS),
                                 attachmentIds: task.proof.attachmentIds?.slice(0, PROOF_PREVIEW_IDS),

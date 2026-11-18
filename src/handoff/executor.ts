@@ -8,6 +8,15 @@ import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, n
 import { type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
 import { resolveHandoffProject } from "./project-ref";
 import {
+    catchUpHandoffs,
+    commitHandoffEvents,
+    findHandoffsByName,
+    getEventOutcome,
+    getHandoffById,
+    listHandoffEvents,
+    listHandoffRows,
+} from "./read-model";
+import {
     buildBy,
     type GetClaim,
     HandoffReader,
@@ -18,15 +27,6 @@ import {
     stateInfo,
     withDb,
 } from "./reader";
-import {
-    catchUpHandoffs,
-    commitHandoffEvents,
-    findHandoffsByName,
-    getEventOutcome,
-    getHandoffById,
-    listHandoffEvents,
-    listHandoffRows,
-} from "./read-model";
 import {
     canonicalAgent,
     HANDOFF_AGENTS_LIST,

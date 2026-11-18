@@ -1,9 +1,4 @@
-import {
-    executeHandoffActions,
-    type HandoffDeps,
-    type PostHandoffResponse,
-    postHandoff,
-} from "@app/handoff/executor";
+import { executeHandoffActions, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
 import { workHandoffReader } from "@app/handoff/work-reader";
 import { linkFor, type PlannedLink, planMintedLink } from "@genesiscz/utils/browser-router/links";
