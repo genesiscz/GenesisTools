@@ -6,7 +6,19 @@ import { createLiveHub } from "@app/dev-dashboard/lib/live/hub";
 import { startLiveProducers } from "@app/dev-dashboard/lib/live/producers";
 import { QA_ANSWER_MAX_CHARS } from "@app/dev-dashboard/lib/qa-clip";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { todayHandoffLogFile } from "@app/handoff/log-store";
+import {
+    attachHandoffBytes,
+    DASHBOARD_ACTOR,
+    executeHandoffActions,
+    getHandoff,
+    listHandoffs,
+    postHandoff,
+    resolveAttachment,
+} from "@app/handoff/executor";
+import { appendHandoffEvents, todayHandoffLogFile } from "@app/handoff/log-store";
+import { listHandoffEvents, openHandoffModel } from "@app/handoff/read-model";
+import { byFor } from "@app/handoff/test-utils";
+import { readHandoffAttachment } from "@app/handoff/work-reader";
 import type { DeliverDeps, ToolRun } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets, noNativeReceivers } from "@app/question/lib/decisions/deliver.fixtures";
 import { relayedAnswerText } from "@app/question/lib/decisions/delivery-text";
@@ -20,6 +32,7 @@ import type { AskForm } from "@app/question/lib/pending/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { handoffRoutes } from "./handoff";
 import { qaRoutes } from "./qa";
 import { qaDecisionRoutes } from "./qa-decisions";
 
@@ -816,5 +829,124 @@ describe("GET /api/qa/stream, the old-shape adapter", () => {
             stream.close();
             producers.stop();
         }
+    });
+});
+
+describe("handoff route read parity", () => {
+    async function read(endpoint: string, query: URLSearchParams | Record<string, string> = {}) {
+        const pathname = `/api/handoff/${endpoint}`;
+        const def = handoffRoutes().find((route) => route.method === "GET" && route.pattern === pathname);
+        if (!def) {
+            throw new Error(`Missing GET ${pathname}`);
+        }
+
+        return def.handler({ ...makeCtx(), method: "GET", pathname, query: new URLSearchParams(query) });
+    }
+
+    it("serves the owner's full detail and the legacy list", async () => {
+        const owner = { by: DASHBOARD_ACTOR };
+        const { handoff, editId } = postHandoff(
+            { title: "Inspect sample", description: "A sample body", tasks: [{ text: "Inspect" }] },
+            { by: byFor("sample-poster") }
+        );
+        const detail = getHandoff({ id: handoff.id }, owner);
+        expect(detail.editId).toBe(editId);
+        expect(await read("get", { name: "inspect-sample" })).toEqual({ kind: "json", status: 200, body: detail });
+        expect(await read("log", { open: "1", limit: "1" })).toEqual({
+            kind: "json",
+            status: 200,
+            body: listHandoffs({ open: true, limit: 1 }, owner),
+        });
+    });
+
+    it("keeps event totals, refused attempts and both cursor forms", async () => {
+        const timestamp = new Date().toISOString();
+        const poster = { by: byFor("sample-poster"), nowIso: () => timestamp };
+        const { handoff } = postHandoff({ title: "Sort samples", tasks: [{ text: "Sort" }] }, poster);
+        const id = handoff.id;
+        executeHandoffActions({ id, actions: [{ action: "comment", text: "Sorted" }] }, poster);
+        executeHandoffActions(
+            { id, actions: [{ action: "comment", text: "Unclaimed" }] },
+            { ...poster, by: byFor("sample-outsider") }
+        );
+
+        const db = openHandoffModel();
+        try {
+            const page = listHandoffEvents({ db, handoffId: id, limit: 1 });
+            expect(page.total).toBe(3);
+            const beforeUid = page.events[0].uid;
+            for (const cursor of [{}, { before: timestamp }, { before: timestamp, beforeUid }]) {
+                const query = new URLSearchParams({ id: id.slice(2), limit: "1" });
+                if (cursor.before !== undefined) {
+                    query.set("before", cursor.before);
+                }
+
+                if (cursor.beforeUid !== undefined) {
+                    query.set("beforeUid", cursor.beforeUid);
+                }
+
+                expect(await read("events", query)).toEqual({
+                    kind: "json",
+                    status: 200,
+                    body: listHandoffEvents({ db, handoffId: id, limit: 1, ...cursor }),
+                });
+            }
+
+            const all = listHandoffEvents({ db, handoffId: id });
+            expect(all.events.some((event) => event.outcome?.applied === false)).toBe(true);
+            expect(await read("events", { id })).toEqual({ kind: "json", status: 200, body: all });
+        } finally {
+            db.close();
+        }
+
+        expect(await read("events")).toEqual({ kind: "json", status: 400, body: { error: "id query param required" } });
+        expect(await read("events", { id: "absent" })).toEqual({
+            kind: "json",
+            status: 404,
+            body: { error: "No handoff h_absent — re-check the paste block or call handoff_list" },
+        });
+    });
+
+    it("resolves the same file, serves its bytes, and distinguishes missing from unknown attachments", async () => {
+        const poster = { by: byFor("sample-poster") };
+        const { handoff } = postHandoff({ title: "Inspect picture", tasks: [{ text: "Inspect" }] }, poster);
+        const bytes = Buffer.from("<svg/>");
+        const stored = attachHandoffBytes({ id: handoff.id, filename: "sample.svg", bytes }, poster);
+        expect(readHandoffAttachment(stored.attachmentId)).toEqual(resolveAttachment(stored.attachmentId));
+        expect(await read("attachment", { id: stored.attachmentId })).toEqual({
+            kind: "binary",
+            status: 200,
+            contentType: "image/svg+xml",
+            body: bytes,
+            headers: {
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "Content-Disposition": 'attachment; filename="sample.svg"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        });
+
+        appendHandoffEvents([
+            {
+                ev: "attach",
+                uid: "sample-missing-file",
+                ts: new Date().toISOString(),
+                id: handoff.id,
+                by: poster.by,
+                attachmentId: "a_missing",
+                filename: "absent.png",
+                mime: "image/png",
+                bytes: 1,
+            },
+        ]);
+        expect(await read("attachment", { id: "a_missing" })).toEqual({
+            kind: "json",
+            status: 410,
+            body: { error: "attachment file missing on disk: a_missing" },
+        });
+        expect(await read("attachment", { id: "a_unknown" })).toEqual({
+            kind: "json",
+            status: 404,
+            body: { error: "unknown attachment: a_unknown" },
+        });
     });
 });

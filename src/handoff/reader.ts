@@ -60,6 +60,14 @@ export function withDb<T>(deps: HandoffDeps, fn: (db: Database) => T): T {
     }
 }
 
+/** Older producers may have appended only to the day file. Fold their tail before reading work.db. */
+export function withHandoffReadDb<T>(deps: HandoffDeps, read: (db: Database) => T): T {
+    return withDb(deps, (db) => {
+        catchUpHandoffs(db, deps.base);
+        return read(db);
+    });
+}
+
 /** The response-facing handoff: editId stripped (returned separately, only when entitled). */
 export type PublicHandoff = Omit<Handoff, "editId"> & {
     attachments: (Handoff["attachments"][number] & { path?: string })[];
@@ -308,8 +316,7 @@ export class HandoffReader {
         const sections = parsed?.includes("full") ? null : parsed;
         const by = buildBy(deps);
 
-        return withDb(deps, (db) => {
-            catchUpHandoffs(db, deps.base);
+        return withHandoffReadDb(deps, (db) => {
             const existing = resolveHandoffRef({ db, input, queries: this.queries });
             const id = existing.id;
             const recipient = recipientCheck({ target: existing.target, by });
@@ -357,8 +364,7 @@ export class HandoffReader {
         const wantTasks = sections.includes("tasks");
         const ignored = sections.filter((s) => s !== "tasks");
 
-        return withDb(deps, (db) => {
-            catchUpHandoffs(db, deps.base);
+        return withHandoffReadDb(deps, (db) => {
             let rows = this.queries.listHandoffRows(db, {
                 statuses: input.open === true ? ["open", "claimed"] : undefined,
                 project: input.project,
