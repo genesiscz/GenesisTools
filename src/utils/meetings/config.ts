@@ -93,7 +93,7 @@ const nativeRecorderSchema = z.object({
              * `pieces`: sound inside screen pieces, missing up to 5 seconds every 30 seconds;
              * `session`: one more native process, with 60-second sound files.
              */
-            mode: z.enum(["pieces", "session"]).default("pieces"),
+            mode: z.enum(["pieces", "session"]).default("session"),
             /** The microphone's device UID (`ax-tool audio-devices`); unset is the system default input. */
             micDevice: z.string().optional(),
         })

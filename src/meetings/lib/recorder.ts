@@ -20,6 +20,7 @@ import {
 import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manifest";
 import { MeetingLevels } from "@genesiscz/utils/meetings/levels";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { AudioLevelBlock } from "@genesiscz/utils/screen-recorder/audio-levels";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput } from "@genesiscz/utils/screen-recorder/frame-output";
 import {
@@ -52,6 +53,7 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
         });
         const salvages = new Set<Promise<void>>();
         const levels = run.capture.levels.enabled ? new MeetingLevels(minSeparation) : undefined;
+        let previousLevels: AudioLevelBlock | undefined;
         let stopLevels: (() => void) | undefined;
 
         return {
@@ -114,7 +116,32 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 save: (marker) => run.recordingRecord.addMarker(marker),
             },
             hooks: {
-                onAudioLevels: levels ? (block) => levels.observe(block) : undefined,
+                onAudioChange: (change) => run.noteSoundChange(change),
+                onAudioLevels: levels
+                    ? (block) => {
+                          if (previousLevels) {
+                              for (const [source, device] of [
+                                  ["mic", "input"],
+                                  ["system", "output"],
+                              ] as const) {
+                                  if (
+                                      previousLevels[device] &&
+                                      block[device] &&
+                                      previousLevels[device] !== block[device]
+                                  ) {
+                                      run.noteSoundChange({
+                                          kind: "device",
+                                          source,
+                                          atMs: previousLevels.atMs,
+                                          untilMs: block.atMs,
+                                      });
+                                  }
+                              }
+                          }
+                          previousLevels = block;
+                          levels.observe(block);
+                      }
+                    : undefined,
                 onAudioSegment: (segment) => run.keptSound(segment),
                 onAudioWarning: (warning) => {
                     run.note(warning);
@@ -148,6 +175,7 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                     stopLevels?.();
                     await Promise.all(salvages);
                     await run.salvageTracks(run.pieceDir);
+                    run.finishSound(recording);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {

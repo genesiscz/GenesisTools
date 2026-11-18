@@ -5886,16 +5886,27 @@ async function recordSoundTimeline(interrupted: boolean) {
         mkdirSync(join(folder, "audio"), { recursive: true });
         const file = "audio/earlier-mic.m4a";
         writeFileSync(join(folder, file), "previous file");
+        mkdirSync(join(folder, ".piece"), { recursive: true });
+        writeFileSync(
+            join(folder, ".piece", "sound-events.jsonl"),
+            `${SafeJSON.stringify({
+                kind: "device",
+                source: "mic",
+                atMs: zero - 3400,
+                untilMs: zero - 3300,
+            })}\n`
+        );
         writeFileSync(
             join(folder, "audio.jsonl"),
-            SafeJSON.stringify({
+            `${SafeJSON.stringify({
                 file,
                 source: "mic",
                 at: iso(-3500),
                 zeroAt: iso(-3500),
                 durationMs: 1000,
                 mutedSpans: [],
-            }) + "\n"
+                lostSpans: [[100, 200]],
+            })}\n`
         );
     }
 
@@ -5926,9 +5937,13 @@ async function recordSoundTimeline(interrupted: boolean) {
             writeFileSync(join(folder, ".piece", `frame-${piece}`), "");
             if (piece === 3) {
                 third.resolve();
-                if (!signal?.aborted) {
-                    await new Promise<void>((resolve) =>
-                        signal?.addEventListener("abort", () => resolve(), { once: true })
+                if (signal && !signal.aborted) {
+                    await withTimeout(
+                        new Promise<void>((resolve) =>
+                            signal.addEventListener("abort", () => resolve(), { once: true })
+                        ),
+                        10_000,
+                        new Error("fixture did not receive stop")
                     );
                 }
             }
@@ -5993,6 +6008,11 @@ test("default meeting sound covers two frame piece restarts without a gap", asyn
             expect(pcm.readUInt32LE(24)).toBe(16_000);
             expect(pcm.length - 44).toBe(row.durationMs * 16 * 2);
             expect(row.lostSpans ?? []).toEqual([]);
+            // Each second has its own sample marker, including either side of both piece boundaries.
+            for (let second = 0; second < 30; second++) {
+                const marker = samples / 16_000 + second + 1;
+                expect(pcm.readInt16LE(44 + second * 32_000)).toBe(source === "mic" ? marker : -marker);
+            }
             samples += (pcm.length - 44) / 2;
         }
         expect(samples).toBe(1_440_000);
@@ -6004,8 +6024,11 @@ test("an interrupted recorder writes the uncovered sound span and its reason", a
     const { rows } = await recordSoundTimeline(true);
     expect(rows.find((row) => row.file === "audio/earlier-mic.m4a")).toMatchObject({
         durationMs: 1000,
-        lostSpans: [[1000, 3500]],
-        lostSpanReasons: ["recorder interrupted"],
+        lostSpans: [
+            [100, 200],
+            [1000, 3500],
+        ],
+        lostSpanReasons: ["microphone input changed", "recorder interrupted"],
     });
     expect(rows.filter((row) => row.source === "system").every((row) => !row.lostSpans?.length)).toBe(true);
 }, 15_000);
@@ -6084,7 +6107,7 @@ test("native sound mode and each fallback reach live status, the meeting record 
                 }
             }
 
-            const recorder = new FixtureRecorder({
+            const recorder: FixtureRecorder = new FixtureRecorder({
                 axTool: async () => [
                     process.execPath,
                     join(moduleDir(import.meta), "../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),

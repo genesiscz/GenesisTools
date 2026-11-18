@@ -46,7 +46,10 @@ export const audioRowSchema = z.object({
     at: z.string(),
     durationMs: z.number().default(0),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
+    /** File-relative ms. A span beyond durationMs marks a gap before the next file, without extending playback. */
     lostSpans: z.array(z.tuple([z.number(), z.number()])).optional(),
+    /** Same order as lostSpans. Older writers only saved offsets. */
+    lostSpanReasons: z.array(z.string()).optional(),
     /** Wall time of the file's second 0 (`at` + the engine's `startOffsetMs`). Absent: readers use `at`. */
     zeroAt: z.string().optional(),
     /** `salvaged`: the file was found in `.piece/` at a start or after the loop; its times come from the file. */
@@ -72,7 +75,11 @@ export function readAudioRows(folder: string): AudioRow[] {
         .filter((line) => line.trim())
         .flatMap((line) => {
             try {
-                const row = audioRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+                const raw: unknown = SafeJSON.parse(line, { strict: true });
+                if (raw && typeof raw === "object" && "event" in raw && raw.event === "sound-loss") {
+                    return []; // This interval has no media file.
+                }
+                const row = audioRowSchema.safeParse(raw);
 
                 if (row.success) {
                     return [row.data];
@@ -277,12 +284,14 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
                         one.zeroSec <= request.fromSec &&
                         request.toSec <= one.zeroSec + one.durationSec &&
                         !(
-                            request.purpose === "listen" &&
                             track.from.kind === "recorder" &&
                             inputs.rows.some(
                                 (row) =>
                                     join(inputs.folder, row.file) === one.path &&
-                                    row.mutedSpans.some(
+                                    [
+                                        ...(row.lostSpans ?? []),
+                                        ...(request.purpose === "listen" ? row.mutedSpans : []),
+                                    ].some(
                                         ([fromMs, toMs]) =>
                                             request.fromSec - one.zeroSec < toMs / 1000 &&
                                             request.toSec - one.zeroSec > fromMs / 1000

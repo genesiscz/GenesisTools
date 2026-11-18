@@ -27,10 +27,20 @@ export const audioSegmentSchema = z.object({
     durationMs: z.number().finite().nonnegative(),
     mutedSpans: z.array(z.tuple([z.number().nonnegative(), z.number().nonnegative()])),
     lostSpans: z.array(z.tuple([z.number().nonnegative(), z.number().nonnegative()])).optional(),
+    lostSpanReasons: z.array(z.string()).optional(),
     zeroAt: z.iso.datetime(),
     kept: z.literal("normal"),
 });
 export type AudioSegment = z.infer<typeof audioSegmentSchema>;
+
+/** Sample clocks establish the loss. These observations can explain it after a recorder restart. */
+export const audioCaptureChangeSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("stop"), atMs: z.number() }),
+    z.object({ kind: z.literal("failure"), atMs: z.number(), reason: z.string() }),
+    z.object({ kind: z.literal("device"), source: z.enum(AUDIO_SOURCES), atMs: z.number(), untilMs: z.number() }),
+    z.object({ kind: z.literal("mute"), source: z.enum(AUDIO_SOURCES), atMs: z.number(), muted: z.boolean() }),
+]);
+export type AudioCaptureChange = z.infer<typeof audioCaptureChangeSchema>;
 
 const segmentStartedSchema = audioSegmentSchema.pick({ file: true, source: true, zeroAt: true }).extend({
     event: z.literal("segment-started"),
