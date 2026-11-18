@@ -330,7 +330,9 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
         let rows = detail.rows.value?.rows ?? []
         return rows.first { $0.id == id }.map { row in
-            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) }))
+            // The window's dock builds the card inside the meeting's view; the picture gives it the same detail.
+            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) })
+                .environment(\.meetingDetail, detail))
         }
     }
     if let sheet = request.sheet, sheet == "history" || sheet.hasPrefix("history:") {
