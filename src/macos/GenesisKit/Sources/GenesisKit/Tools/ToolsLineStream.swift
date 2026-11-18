@@ -224,6 +224,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         guard !lines.isEmpty, !stopped else { return }
         let onLines = onLines
         DispatchQueue.main.async {
+            guard !self.lock.withLock({ self.stopRequested }) else { return }
             MainActor.assumeIsolated { onLines(lines) }
         }
     }

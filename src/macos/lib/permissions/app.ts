@@ -794,6 +794,21 @@ async function testAppLocked(args: readonly string[], timeoutMs: number): Promis
         env: appSwiftEnvironment(parts, sdkRoot),
         stdio: ["inherit", "inherit", "inherit"],
     });
+    const code = await waitForSwift(proc, cmd, timeoutMs);
+    if (code === 0) {
+        mkdirSync(scratchPath, { recursive: true });
+        writeFileSync(fileListMarker, fileList);
+    }
+
+    return code;
+}
+
+/** Release the build slot only after Swift exits, including when its deadline cancels the build. */
+export async function waitForSwift(
+    proc: Pick<Bun.Subprocess, "kill" | "exited">,
+    cmd: string[],
+    timeoutMs = APP_TEST_TIMEOUT_MS
+): Promise<number> {
     let timedOut = false;
     let escalation: ReturnType<typeof setTimeout> | undefined;
     const deadline = setTimeout(() => {
@@ -809,13 +824,10 @@ async function testAppLocked(args: readonly string[], timeoutMs: number): Promis
     });
 
     if (timedOut) {
-        logger.error({ cmd, timeoutMs }, "swift test passed its deadline and was stopped");
-        throw new Error(`swift test did not finish within ${Math.round(timeoutMs / 60_000)} minutes and was stopped`);
-    }
-
-    if (code === 0) {
-        mkdirSync(scratchPath, { recursive: true });
-        writeFileSync(fileListMarker, fileList);
+        logger.error({ cmd, timeoutMs }, "Swift command passed its deadline and was stopped");
+        throw new Error(
+            `${cmd.slice(0, 2).join(" ")} did not finish within ${Math.round(timeoutMs / 60_000)} minutes and was stopped`
+        );
     }
 
     return code;

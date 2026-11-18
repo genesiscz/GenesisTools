@@ -367,6 +367,17 @@ describe("generate: an input it cannot read stops the run", () => {
             expect(run.status, run.stdout).toBe(2);
             expect(run.stderr).toContain("Cannot locate the shared Git directory");
             expect(readFileSync(join(dir, ROSTERS_FILE), "utf8")).toBe(manifest);
+
+            expect(spawnSync("git", ["init", "-q"], { cwd: dir, env: gitEnv(dir) }).status).toBe(0);
+            writeFileSync(join(dir, ".git", "index"), "invalid index");
+            const brokenIndex = spawnSync(process.execPath, [join(import.meta.dir, "generate.ts")], {
+                cwd: dir,
+                encoding: "utf8",
+                env: gitEnv(dir),
+            });
+            expect(brokenIndex.status).toBe(2);
+            expect(brokenIndex.stderr).toContain("git ls-files exited");
+            expect(readFileSync(join(dir, ROSTERS_FILE), "utf8")).toBe(manifest);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
