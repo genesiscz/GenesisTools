@@ -724,6 +724,34 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(run.mock.calls[0]?.[0].record.project).toBe(REVIEW.project);
     });
 
+    test("meeting.suggest forwards voice progress including the last line, without a notification per clip", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const suggest = await import("../suggest-run");
+        const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ onProgress }) => {
+            const clock = spyOn(performance, "now").mockReturnValue(0);
+            try {
+                for (const done of [0, 1, 2, 25]) {
+                    onProgress?.(done, 2000);
+                }
+                clock.mockReturnValue(250);
+                onProgress?.(26, 2000);
+                onProgress?.(2000, 2000);
+            } finally {
+                clock.mockRestore();
+            }
+            return { fresh: [], retired: [], warnings: [] };
+        });
+        closing.push(() => run.mockRestore());
+        const updates: Array<{ fraction?: number; label?: string }> = [];
+        await client.call("meeting.suggest", { meeting: REVIEW.id }, { onProgress: (update) => updates.push(update) });
+        expect(updates.map(({ fraction, label }) => [fraction, label])).toEqual([
+            [0, "Voices: 0 of 2000 lines"],
+            [25 / 2000, "Voices: 25 of 2000 lines"],
+            [26 / 2000, "Voices: 26 of 2000 lines"],
+            [1, "Voices: 2000 of 2000 lines"],
+        ]);
+    });
+
     test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
         const { client, store, source } = await ADAPTERS[kind]();
         // The 0.5 and 0.7 previews apply the suggested speaker at 0.82; the 1 preview only shows it.

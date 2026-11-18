@@ -101,6 +101,135 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     expect(f.compute).not.toHaveBeenCalled();
 });
 
+// A stand-in executable speaks the real worker protocol, including stderr progress. Its vector makes a
+// shifted decode window visible even if the same transcript lines reach the runner.
+function fakeVoicePrefix(options: { failFrom?: number; requestLog?: string } = {}): string[] {
+    const program = `
+        const { request, clearBackground } = await new Response(Bun.stdin.stream()).json();
+        if (clearBackground !== true) throw new Error("worker missed clearBackground");
+        const log = ${SafeJSON.stringify(options.requestLog ?? "", { strict: true })};
+        if (log) await Bun.write(log + request.input.clips[0].fromSec, await Response.json(request.input).text());
+        const rows = [];
+        for (const clip of request.input.clips) {
+            if (clip.fromSec === ${options.failFrom ?? -1}) throw new Error("fixture chunk failure");
+            rows.push(clip.channels.map(channel => ({
+                quality: "ready", model: "fixture-model", embedding: [clip.windowFromSec, clip.fromSec, channel]
+            })));
+            process.stderr.write(await Response.json({ done: rows.length }).text() + "\\n");
+        }
+        process.stdout.write(await Response.json(rows).text());
+    `;
+    return [process.execPath, "-e", program, "--"];
+}
+
+test("one or two concurrent voice workers preserve window origins, input order, cache bytes and live progress", async () => {
+    const f = await fixture();
+    const options = {
+        ...f.options,
+        spans: [68, 0, 9, 59, 124, 128].map((fromSec, index) => ({ index, fromSec, toSec: fromSec + 2 })),
+        workerPrefix: fakeVoicePrefix(),
+        clearBackground: true,
+    };
+    const spawn = spyOn(Bun, "spawn");
+    spies.push(spawn);
+    const single = await voice.embedVoiceLines({ ...options, workers: 1 });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(single.map((line) => line.channels[0])).toMatchObject(
+        [
+            [68, 68],
+            [0, 0],
+            [0, 9],
+            [59, 59],
+            [124, 124],
+            [124, 128],
+        ].map(([origin, from]) => ({
+            quality: "ready",
+            embedding: [origin, from, 0],
+        }))
+    );
+    const cachePath = join(f.cachePath, "..", "two-workers.json");
+    const updates: number[] = [];
+    const activeAtFirstClip: number[] = [];
+    spawn.mockClear();
+    const parallel = await voice.embedVoiceLines({
+        ...options,
+        cachePath,
+        workers: 2,
+        onProgress(done, total) {
+            expect(total).toBe(6);
+            updates.push(done);
+            if (done === 1) {
+                activeAtFirstClip.push(spawn.mock.calls.length);
+            }
+        },
+    });
+    expect(activeAtFirstClip).toEqual([2]);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(updates).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(parallel).toEqual(single);
+    expect(readFileSync(cachePath)).toEqual(readFileSync(f.cachePath));
+});
+
+test("cached anchors count once and only missing channels go to workers, even across a chunk failure", async () => {
+    const f = await fixture();
+    const options = {
+        ...f.options,
+        spans: [0, 9, 59, 68].map((fromSec, index) => ({ index, fromSec, toSec: fromSec + 2 })),
+        workerPrefix: fakeVoicePrefix(),
+        clearBackground: true,
+        workers: 2,
+    };
+    const call = { channel: 1 as const, track: "isolated-call" as const };
+    // Both channels of the anchor are warm. The failing chunk already has the mic channel of one line.
+    await voice.embedVoiceLines({
+        ...options,
+        spans: options.spans.slice(0, 1),
+        channels: [...options.channels, call],
+    });
+    await voice.embedVoiceLines({ ...options, spans: options.spans.slice(2, 3) });
+    const updates: number[] = [];
+    const run = { ...options, channels: [...options.channels, call] };
+    const requestLog = join(f.store.folder(f.record.id), "request-");
+    const result = await voice.embedVoiceLines({
+        ...run,
+        workerPrefix: fakeVoicePrefix({ failFrom: 68, requestLog }),
+        onProgress: (done) => updates.push(done),
+    });
+    const requests = [9, 59].map(
+        (start) =>
+            z
+                .object({ clips: z.array(z.object({ fromSec: z.number(), channels: z.array(z.number()) })) })
+                .parse(SafeJSON.parse(readFileSync(requestLog + start, "utf8"))).clips
+    );
+    expect(requests).toEqual([
+        [{ fromSec: 9, channels: [0, 1] }],
+        [
+            { fromSec: 59, channels: [1] },
+            { fromSec: 68, channels: [0, 1] },
+        ],
+    ]);
+    expect(updates[0]).toBe(1);
+    expect(updates.at(-1)).toBe(4);
+    expect(updates).toEqual([...new Set(updates)].sort((a, b) => a - b));
+    expect(result[1]?.channels).toMatchObject([
+        { quality: "ready", embedding: [0, 9, 0] },
+        { quality: "ready", embedding: [0, 9, 1] },
+    ]);
+    expect(result[2]?.channels).toMatchObject([
+        { quality: "ready", embedding: [59, 59, 0] },
+        { quality: "unknown", reason: expect.stringContaining("fixture chunk failure") },
+    ]);
+    expect(result[3]?.channels.every((channel) => channel.quality === "unknown")).toBe(true);
+    // A crashed worker's results are retryable. On the next pass only its two incomplete lines remain.
+    updates.length = 0;
+    const retry = await voice.embedVoiceLines({ ...run, onProgress: (done) => updates.push(done) });
+    expect(updates).toEqual([2, 3, 4]);
+    expect(retry.every((line) => line.channels.every((channel) => channel.quality === "ready"))).toBe(true);
+    updates.length = 0;
+    expect(await voice.embedVoiceLines({ ...run, onProgress: (done) => updates.push(done) })).toEqual(retry);
+    expect(updates).toEqual([4]);
+});
+
 test("the background worker owns model work and returns validated line results", async () => {
     const f = await fixture();
     const result: voice.LineEmbedding[] = [
@@ -108,7 +237,11 @@ test("the background worker owns model work and returns validated line results",
             index: 0,
             channels: [
                 {
-                    source: { audioPath: f.options.audioPath, size: 14, mtimeMs: 1 },
+                    source: {
+                        audioPath: f.options.audioPath,
+                        size: 14,
+                        mtimeMs: statSync(f.options.audioPath).mtimeMs,
+                    },
                     channel: 0,
                     track: "raw-mic",
                     fromSec: 0,
@@ -120,7 +253,10 @@ test("the background worker owns model work and returns validated line results",
             ],
         },
     ];
-    const output = SafeJSON.stringify(SafeJSON.stringify(result, { strict: true }), { strict: true });
+    const output = SafeJSON.stringify(
+        SafeJSON.stringify([[{ quality: "ready", model: "fixture-model", embedding: [1, 0] }]], { strict: true }),
+        { strict: true }
+    );
     const child = Bun.spawn([process.execPath, "-e", `await Bun.stdin.text(); process.stdout.write(${output});`], {
         stdin: "pipe",
         stdout: "pipe",

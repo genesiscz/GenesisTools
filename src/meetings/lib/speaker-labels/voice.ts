@@ -8,7 +8,7 @@ import {
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { embedVoiceLines } from "@genesiscz/utils/meetings/voice";
+import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import type { OpenedMeeting } from "../opened-meeting";
@@ -52,9 +52,16 @@ function freeCores(): { performanceCores: number; load1: number } {
     };
 }
 
+/** Each suggest call owns a fresh OpenedMeeting, including concurrent calls on the same record. */
+export const voiceProgressForMeeting = new WeakMap<OpenedMeeting, VoiceProgress>();
+
 /** Batches spans on the same file/channel while retaining transcript-clock times on the resulting line. */
 export async function embedSeatLines(
-    context: Pick<LabelContext, "lines" | "sound"> & { cachePath?: string }
+    context: Pick<LabelContext, "lines" | "sound"> & {
+        cachePath?: string;
+        config?: MeetingsConfig;
+        onProgress?: VoiceProgress;
+    }
 ): Promise<VoiceLine[]> {
     const groups = new Map<
         string,
@@ -68,7 +75,7 @@ export async function embedSeatLines(
         }
     >();
     const result: VoiceLine[] = [];
-    const worker = await voiceWorkerSettings();
+    const worker = await voiceWorkerSettings(context.config);
     for (const line of context.lines) {
         const slice = context.sound.slice({ ...line, purpose: "voice" });
         if (!slice) {
@@ -81,6 +88,8 @@ export async function embedSeatLines(
         group.lines.push({ line, slice });
         groups.set(key, group);
     }
+    let completed = result.length;
+    context.onProgress?.(completed, context.lines.length);
     for (const group of groups.values()) {
         group.lines.sort((a, b) => a.slice.fileFromSec - b.slice.fileFromSec);
         const embeddings = await embedVoiceLines({
@@ -88,6 +97,14 @@ export async function embedSeatLines(
             cachePath: context.cachePath,
             workerPrefix: worker.prefix,
             clearBackground: worker.clearBackground,
+            workers: worker.workers,
+            onProgress:
+                context.onProgress &&
+                ((done) => {
+                    if (done > 0) {
+                        context.onProgress?.(completed + done, context.lines.length);
+                    }
+                }),
             spans: group.lines.map(({ line, slice }) => ({
                 index: line.index,
                 fromSec: slice.fileFromSec,
@@ -97,8 +114,9 @@ export async function embedSeatLines(
                 { channel: group.channel, track: group.lines[0]!.line.seat === "mic" ? "raw-mic" : "isolated-call" },
             ],
         });
-        for (const embedding of embeddings) {
-            const { line, slice } = group.lines.find((entry) => entry.line.index === embedding.index)!;
+        completed += group.lines.length;
+        for (const [position, embedding] of embeddings.entries()) {
+            const { line, slice } = group.lines[position]!;
             result.push({ ...embedding, ...line, track: slice.track });
         }
     }
@@ -140,6 +158,8 @@ export function voiceLabeler(options: {
                 lines: await embedSeatLines({
                     lines: context.lines,
                     sound,
+                    config: await options.opened.config(),
+                    onProgress: voiceProgressForMeeting.get(options.opened),
                     cachePath: join(
                         options.opened.store.folder(options.opened.record.id),
                         "evidence",

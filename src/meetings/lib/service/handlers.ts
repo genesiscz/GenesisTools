@@ -237,12 +237,27 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
 
             const { runSuggest } = await import("../suggest-run");
             const { actorOfCall } = await decisions();
+            let lastTime = -Infinity;
+            let lastDone = -Infinity;
             const result = await runSuggest({
                 store,
                 record,
                 rules: ["speakers", "evidence", "terms"],
                 attendance: params.attendance,
                 actor: actorOfCall(context),
+                onProgress:
+                    context.progress &&
+                    ((done, total) => {
+                        const now = performance.now();
+                        if (done === total || done - lastDone >= total / 100 || now - lastTime >= 250) {
+                            context.progress?.({
+                                fraction: total ? done / total : 1,
+                                label: `Voices: ${done} of ${total} lines`,
+                            });
+                            lastDone = done;
+                            lastTime = now;
+                        }
+                    }),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             return { added: result.fresh.length, warnings: result.warnings };

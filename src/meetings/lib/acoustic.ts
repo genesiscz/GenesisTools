@@ -232,6 +232,7 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
             audioPath,
             workerPrefix: worker.prefix,
             clearBackground: worker.clearBackground,
+            workers: worker.workers,
             spans,
             channels: [{ channel, track: channel === (layout === "left-mic" ? 0 : 1) ? "raw-mic" : "isolated-call" }],
             cachePath: join(folder, "voice-lines.json"),
