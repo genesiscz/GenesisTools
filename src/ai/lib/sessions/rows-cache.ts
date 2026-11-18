@@ -153,12 +153,12 @@ export async function refreshSessionRowsCache(
  */
 async function withTmuxLocations(
     rows: AgentSessionRow[],
-    locate: () => Promise<Map<string, TmuxCmuxLocation>>
+    locate: (sessionIds: string[]) => Promise<Map<string, TmuxCmuxLocation>>
 ): Promise<AgentSessionRow[]> {
     let locations: Map<string, TmuxCmuxLocation>;
 
     try {
-        locations = await locate();
+        locations = await locate(rows.map((row) => row.sessionId));
     } catch (err) {
         logger.debug({ err }, "[ai] tmux-hosted cmux locations unavailable; serving journal locations only");
         return rows;
@@ -224,7 +224,7 @@ interface LiveFacts {
      */
     liveLocations?: boolean;
     /** Live cmux tabs of tmux-hosted sessions. A test that injects none gets none. */
-    tmuxLocations?: () => Promise<Map<string, TmuxCmuxLocation>>;
+    tmuxLocations?: (sessionIds: string[]) => Promise<Map<string, TmuxCmuxLocation>>;
     /** Running Claude session ids (`liveClaudeSessionIds`); a test that injects none gets `alive: null`. */
     liveSessionIds?: () => Set<string> | null;
 }
@@ -238,7 +238,9 @@ export interface SessionRowsAnswer {
 function liveFacts(facts: LiveFacts): Required<LiveFacts> {
     return {
         liveLocations: facts.liveLocations ?? true,
-        tmuxLocations: facts.tmuxLocations ?? (isTestProcess() ? async () => new Map() : () => tmuxCmuxLocations()),
+        tmuxLocations:
+            facts.tmuxLocations ??
+            (isTestProcess() ? async () => new Map() : (sessionIds) => tmuxCmuxLocations({ sessionIds })),
         liveSessionIds: facts.liveSessionIds ?? (isTestProcess() ? () => null : () => liveClaudeSessionIds()),
     };
 }

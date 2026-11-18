@@ -102,12 +102,25 @@ export class SessionRowsRunner {
         } = {}
     ) {}
 
-    async run(job: SessionRowsJob, traceId?: string): Promise<string> {
+    run(job: SessionRowsJob, traceId?: string): Promise<string> {
+        const key = SafeJSON.stringify(job, { strict: true });
+        const running = this.flights.get(key);
+        if (running) {
+            log.debug({ job }, "hub server: session rows ask joins the running read");
+            return running;
+        }
+
+        const flight = this.answer(job, traceId).finally(() => this.flights.delete(key));
+        this.flights.set(key, flight);
+        return flight;
+    }
+
+    private async answer(job: SessionRowsJob, traceId?: string): Promise<string> {
         if (!job.fresh) {
             const hit = await this.cachedAnswer(job);
             if (hit) {
                 if (hit.stale && job.cacheWrite !== false) {
-                    this.rebuild({ ...job, fresh: true }, traceId).catch((error) => {
+                    this.run({ ...job, fresh: true }, traceId).catch((error) => {
                         log.warn({ error, job }, "hub server: the session rows refresh behind a stale answer failed");
                     });
                 }
@@ -116,7 +129,7 @@ export class SessionRowsRunner {
             }
         }
 
-        return this.rebuild(job, traceId);
+        return this.dispatch(job, traceId);
     }
 
     private async cachedAnswer(job: SessionRowsJob): Promise<{ text: string; stale: boolean } | null> {
@@ -126,19 +139,6 @@ export class SessionRowsRunner {
             log.warn({ error, job }, "hub server: the session rows cache could not answer; rebuilding");
             return null;
         }
-    }
-
-    private rebuild(job: SessionRowsJob, traceId?: string): Promise<string> {
-        const key = SafeJSON.stringify(job, { strict: true });
-        const running = this.flights.get(key);
-        if (running) {
-            log.debug({ job }, "hub server: session rows ask joins the running rebuild");
-            return running;
-        }
-
-        const flight = this.dispatch(job, traceId).finally(() => this.flights.delete(key));
-        this.flights.set(key, flight);
-        return flight;
     }
 
     stop(): void {

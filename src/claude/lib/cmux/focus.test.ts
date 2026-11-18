@@ -1202,6 +1202,25 @@ describe("tmuxCmuxLocations", () => {
         expect(locations.size).toBe(0);
         expect(asked).toBe(0);
     });
+
+    test("a filtered listing only asks tmux for sockets hosting one of its rows", async () => {
+        const sockets: (TmuxSocket | undefined)[] = [];
+        let censuses = 0;
+        const reads = {
+            ...tmuxDeps({ sockets }),
+            listProcesses: async () => {
+                censuses++;
+                return TMUX_PROCESSES;
+            },
+            readTree: async () => tree,
+        };
+        expect((await tmuxCmuxLocations({ ...reads, sessionIds: [] })).size).toBe(0);
+        expect(censuses).toBe(0);
+        expect((await tmuxCmuxLocations({ ...reads, sessionIds: ["offline"] })).size).toBe(0);
+        expect(sockets).toHaveLength(0);
+        expect((await tmuxCmuxLocations({ ...reads, sessionIds: [TMUX_ID.toUpperCase()] })).has(TMUX_ID)).toBe(true);
+        expect(sockets).toHaveLength(1);
+    });
 });
 
 describe("findSessionTargets follows a continued session", () => {

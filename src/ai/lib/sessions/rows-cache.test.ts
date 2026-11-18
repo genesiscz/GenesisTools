@@ -210,7 +210,11 @@ describe("sessionRowsJson tmux locations", () => {
 
     test("a session that runs in tmux is served with its live cmux tab, and the cache file keeps the journal's answer", async () => {
         const path = await scratch();
-        const tmuxLocations = async () => new Map([["s-9", live]]);
+        const asked: string[][] = [];
+        const tmuxLocations = async (ids: string[]) => {
+            asked.push(ids);
+            return new Map([["s-9", live]]);
+        };
         const fresh = await sessionRowsJson(entry().query, {
             fresh: true,
             path,
@@ -225,6 +229,10 @@ describe("sessionRowsJson tmux locations", () => {
 
         expect(cached.cached).toBe(true);
         expect(cached.rows.map((r) => r.cmux ?? null)).toEqual([live, null]);
+        expect(asked).toEqual([
+            ["s-9", "s-8"],
+            ["s-9", "s-8"],
+        ]);
     });
 
     test("a daemon refresh through the server caches the journal's answer, so a detached client is not shown its old tab", async () => {
