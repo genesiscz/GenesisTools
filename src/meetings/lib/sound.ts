@@ -12,6 +12,7 @@ import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
 import type { OpenedMeeting } from "./opened-meeting";
 import { ALIGN_SEARCH_SEC, alignPiece, alignReferenceFromSec } from "./sound-align";
+import { preservedSourceAudio } from "./source-audio";
 import { isMeetingSourceId } from "./sources";
 
 const { log } = logger.scoped("meetings-sound");
@@ -27,7 +28,8 @@ export const AUDIO_INDEX = "audio.jsonl";
 /** The measured clock of the recorder tracks, beside the other derived evidence of the meeting. */
 export const SOUND_CLOCK_FILE = join("evidence", "sound-clock.json");
 
-export const TRACK_KINDS = ["source-mic", "source-call", "mic-raw", "system"] as const;
+const SOURCE_TRACK_KINDS = ["source-mic", "source-call"] as const;
+export const TRACK_KINDS = [...SOURCE_TRACK_KINDS, "mic-raw", "system"] as const;
 export type TrackKind = (typeof TRACK_KINDS)[number];
 export type Seat = "mic" | "call";
 export type SoundPurpose = "listen" | "voice";
@@ -190,9 +192,8 @@ function sourceChannels(layout: ChannelLayout): Record<Seat, 0 | 1> {
     return layout === "right-mic" ? { mic: 1, call: 0 } : { mic: 0, call: 1 };
 }
 
-/** The recorder tracks per source, each piece on the transcript clock, corrected when its source was measured. */
-function recorderTracks(inputs: SoundInputs): SoundTrack[] {
-    return AUDIO_SOURCES.flatMap((source): SoundTrack[] => {
+function recorderTrackRows(inputs: Pick<SoundInputs, "rows" | "clock">) {
+    return AUDIO_SOURCES.flatMap((source) => {
         const rows = inputs.rows.filter((row) => row.source === source);
 
         if (rows.length === 0) {
@@ -201,31 +202,36 @@ function recorderTracks(inputs: SoundInputs): SoundTrack[] {
 
         const measured = inputs.clock?.sources[source];
         const correction = measured && measured.clear > 0 ? measured.correctionSec : undefined;
-        const kind = RECORDER_KIND[source];
+        const clock: SoundTrack["clock"] = correction === undefined ? "stamp" : "measured";
+        return [{ kind: RECORDER_KIND[source], source, rows, clock, correctionSec: correction ?? 0 }];
+    });
+}
+
+/** The recorder tracks per source, each piece on the transcript clock, corrected when its source was measured. */
+function recorderTracks(inputs: SoundInputs): SoundTrack[] {
+    return recorderTrackRows(inputs).map(({ kind, source, rows, clock, correctionSec }) => {
         const pieces = rows
             .map((row) => ({
                 path: join(inputs.folder, row.file),
-                zeroSec: (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000 + (correction ?? 0),
+                zeroSec: (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000 + correctionSec,
                 durationSec: row.durationMs / 1000,
             }))
             .sort((a, b) => a.zeroSec - b.zeroSec);
-        return [
-            {
-                kind,
-                seat: SEAT_OF[kind],
-                // The engine sets no voice processing; whether the microphone is raw is what sound-probe measures.
-                processing: source === "system" ? "raw" : "unknown",
-                from: { kind: "recorder" },
-                pieces,
-                clock: correction === undefined ? "stamp" : "measured",
-            },
-        ];
+        return {
+            kind,
+            seat: SEAT_OF[kind],
+            // The engine sets no voice processing; whether the microphone is raw is what sound-probe measures.
+            processing: source === "system" ? "raw" : "unknown",
+            from: { kind: "recorder" },
+            pieces,
+            clock,
+        };
     });
 }
 
 function sourceTracks(source: NonNullable<SoundInputs["source"]>): SoundTrack[] {
     const channels = sourceChannels(source.layout);
-    return (["source-mic", "source-call"] as const).map((kind) => ({
+    return SOURCE_TRACK_KINDS.map((kind) => ({
         kind,
         seat: SEAT_OF[kind],
         processing: "unknown",
@@ -323,49 +329,79 @@ async function soundTimeline(opened: OpenedMeeting): Promise<CallTimeline> {
     }
 }
 
-async function soundSource(opened: OpenedMeeting): Promise<SoundInputs["source"]> {
+async function sourceSoundFile(opened: OpenedMeeting): Promise<{ path: string; source: MeetingSourceId } | undefined> {
     const ref = opened.sourceRef;
 
     if (!ref || !isMeetingSourceId(ref.sourceId)) {
         return undefined;
     }
 
-    let path: string;
-
     try {
-        path = await opened.audioPath();
+        return { path: await opened.audioPath(), source: ref.sourceId };
     } catch (err) {
         log.debug({ err, meeting: opened.record.id }, "the source keeps no sound for this meeting");
+        return undefined;
+    }
+}
+
+async function soundSource(opened: OpenedMeeting): Promise<SoundInputs["source"]> {
+    const file = await sourceSoundFile(opened);
+    if (!file) {
         return undefined;
     }
 
     let durationSec = Number.POSITIVE_INFINITY;
 
     try {
-        durationSec = (await probeAudio(path)).durationSec;
+        durationSec = (await probeAudio(file.path)).durationSec;
     } catch (err) {
-        log.debug({ err, path }, "the source sound's length is unknown; it counts as covering every span");
+        log.debug({ err, path: file.path }, "the source sound's length is unknown; it counts as covering every span");
     }
 
     return {
-        path,
-        source: ref.sourceId,
+        ...file,
         layout: opened.record.evidence?.channels?.layout ?? "unknown",
         durationSec,
     };
 }
 
+function readRecorderInputs(opened: OpenedMeeting) {
+    const folder = opened.store.folder(opened.record.id);
+    const clock = readSoundClock(folder);
+    return { folder, rows: readAudioRows(folder), ...(clock ? { clock } : {}) };
+}
+
+interface ListedSoundTrack {
+    kind: TrackKind;
+    holder: "record" | MeetingSourceId;
+    clock: SoundTrack["clock"];
+}
+
+/** Listing a track needs its file or recorder rows, without the playback reads for duration and transcript time. */
+export async function listSoundTracks(opened: OpenedMeeting): Promise<ListedSoundTrack[]> {
+    const file = await sourceSoundFile(opened);
+    const tracks: ListedSoundTrack[] = [];
+    if (file) {
+        const holder = preservedSourceAudio(opened.record)?.path === file.path ? "record" : file.source;
+        for (const kind of SOURCE_TRACK_KINDS) {
+            tracks.push({ kind, holder, clock: "source" });
+        }
+    }
+
+    for (const { kind, clock } of recorderTrackRows(readRecorderInputs(opened))) {
+        tracks.push({ kind, holder: "record", clock });
+    }
+
+    return tracks;
+}
+
 /** Everything `meetingSound` needs, read from the meeting's folder, its source and the settings. */
 export async function readSoundInputs(opened: OpenedMeeting): Promise<SoundInputs> {
-    const folder = opened.store.folder(opened.record.id);
     const [timeline, source, config] = await Promise.all([soundTimeline(opened), soundSource(opened), opened.config()]);
-    const clock = readSoundClock(folder);
     return {
-        folder,
+        ...readRecorderInputs(opened),
         timelineZeroMs: timeline.zeroMs,
-        rows: readAudioRows(folder),
         ...(source ? { source } : {}),
-        ...(clock ? { clock } : {}),
         tracks: config.global.playback.tracks,
     };
 }

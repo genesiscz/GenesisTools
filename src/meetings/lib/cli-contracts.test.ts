@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -29,6 +30,8 @@ import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
 import { meetingsToolsetApi } from "./service/toolset-api";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
+import { appendAudioRow } from "./sound";
+import { preserveSourceAudio } from "./source-audio";
 import { linkedSource } from "./sources";
 
 /**
@@ -67,6 +70,101 @@ test("decision reach preserves a dictionary addition for the window", () => {
         ],
     };
     expect(decisionReachSchema.parse(reach)).toEqual(reach);
+});
+
+describe("show sound tracks", () => {
+    async function show(id: string): Promise<string> {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "show" });
+        const printed = spyOn(out, "print").mockImplementation(() => {});
+        try {
+            await program.parseAsync(["show", id], { from: "user" });
+            return printed.mock.calls.map(([text]) => text).join("\n");
+        } finally {
+            printed.mockRestore();
+        }
+    }
+
+    test("both channels held only by the linked app come from one provider read per call", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            {
+                title: "Linked sound",
+                start: "2026-11-09T10:00:00Z",
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: "linked-sound" } },
+            },
+            { command: "test", change: "link fixture" }
+        );
+        const audioPath = join(store.root, "linked-sound.ogg");
+        writeFileSync(audioPath, "source bytes");
+        const evidence = spyOn(wisprflowSource, "evidence").mockResolvedValue({
+            audioPath,
+            segments: [],
+            speaking: [],
+            files: [],
+        });
+        const transcript = spyOn(wisprflowSource, "load").mockRejectedValue(new Error("unexpected transcript read"));
+        const clock = spyOn(wisprflowSource, "recordingClock").mockResolvedValue(null);
+        try {
+            const first = await show(record.id);
+            expect(first).toContain("- source-mic (source) from linked source app (wisprflow)");
+            expect(first).toContain("- source-call (source) from linked source app (wisprflow)");
+            expect(first).not.toContain("mic-raw");
+            expect(evidence).toHaveBeenCalledTimes(1);
+            expect(evidence).toHaveBeenCalledWith("linked-sound");
+
+            evidence.mockResolvedValue(null);
+            const second = await show(record.id);
+            expect(second).toContain(record.id);
+            expect(second).not.toContain("## Sound tracks");
+            expect(evidence).toHaveBeenCalledTimes(2);
+            expect(transcript).not.toHaveBeenCalled();
+            expect(clock).not.toHaveBeenCalled();
+        } finally {
+            evidence.mockRestore();
+            transcript.mockRestore();
+            clock.mockRestore();
+        }
+    });
+
+    test("the record owns its preserved source channels and its recorder tracks", async () => {
+        const store = new MeetingStore();
+        const ref = { sourceId: "wisprflow", sourceMeetingId: "owned-sound" };
+        const record = await store.create(
+            {
+                title: "Owned sound",
+                start: "2026-11-09T11:00:00Z",
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: ref.sourceMeetingId } },
+            },
+            { command: "test", change: "link fixture" }
+        );
+        const sourcePath = join(store.root, "owned-sound.ogg");
+        writeFileSync(sourcePath, "owned bytes");
+        await preserveSourceAudio({ store, meetingId: record.id, ref, sourcePath });
+        const folder = store.folder(record.id);
+        mkdirSync(join(folder, "audio"), { recursive: true });
+        for (const source of ["mic", "system"] as const) {
+            const file = `audio/${source}.m4a`;
+            writeFileSync(join(folder, file), "recorder bytes");
+            appendAudioRow(folder, { file, source, at: record.start, durationMs: 1000, mutedSpans: [] });
+        }
+
+        const evidence = spyOn(wisprflowSource, "evidence").mockRejectedValue(new Error("source offline"));
+        try {
+            const text = await show(record.id);
+            expect(text).toContain("- source-mic (source) from this record");
+            expect(text).toContain("- source-call (source) from this record");
+            expect(text).toContain("- mic-raw (stamp) from this record");
+            expect(text).toContain("- system (stamp) from this record");
+            expect(text.match(/\bmic-raw\b/g)).toHaveLength(1);
+            expect(text).toContain("source audio (wisprflow): preserved");
+            expect(evidence).not.toHaveBeenCalled();
+        } finally {
+            evidence.mockRestore();
+        }
+    });
 });
 
 test("listen --spot-check prepares through the Meetings service, which caps the sample count", async () => {
