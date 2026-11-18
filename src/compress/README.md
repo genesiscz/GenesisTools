@@ -111,10 +111,10 @@ text files grew on the same inode, appeared, or rotated between the beginning an
 
 ```bash
 evidence_dir=$(mktemp -d "${TMPDIR:-/tmp}/transparent-writers.XXXXXX")
-python3 scripts/benchmarks/compress/transparent_open_files.py codex > "$evidence_dir/codex.json"
-python3 scripts/benchmarks/compress/transparent_open_files.py grok  > "$evidence_dir/grok.json"
-python3 scripts/benchmarks/compress/transparent_open_files.py t3    > "$evidence_dir/t3.json"
-python3 scripts/benchmarks/compress/transparent_open_files.py logs  > "$evidence_dir/logs.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py codex > "$evidence_dir/codex.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py grok  > "$evidence_dir/grok.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py t3    > "$evidence_dir/t3.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py logs  > "$evidence_dir/logs.json"
 ```
 
 These sample `~/.codex/sessions`, `~/.grok/sessions`, `~/.t3/userdata/logs` and `~/.genesis-tools/logs`
@@ -123,6 +123,9 @@ needs a new sample during a write. A held session or log file is evidence agains
 Even with growth and five clear snapshots, a descriptor could have opened between snapshots. To qualify a
 root, retain the writer version and its append call site or an active writer trace that shows the pathname
 opened for append, written and closed on each operation. The sampler never changes compression configuration.
+On a Mac where the operator can trace the writer, `sudo fs_usage -w -f filesys -t 30 "$writer_pid"`
+records a 30-second window for that PID. Match each pathname and descriptor across open, write and close.
+A trace that misses the writing process or those calls leaves the evidence incomplete.
 
 #### Rerun the transparent benchmark
 
@@ -131,9 +134,9 @@ The boundary probes can materialize more than 12 GiB. Omit `--boundaries` from b
 
 ```bash
 bench_dir=$(mktemp -d "${TMPDIR:-/tmp}/transparent.XXXXXX")
-python3 scripts/benchmarks/compress/transparent.py --scratch "$bench_dir/corpus" --boundaries &&
-  python3 scripts/benchmarks/compress/transparent-writers.py --scratch "$bench_dir/corpus" --boundaries &&
-  python3 scripts/benchmarks/compress/transparent_summary.py --scratch "$bench_dir/corpus"
+python3 -B scripts/benchmarks/compress/transparent.py --scratch "$bench_dir/corpus" --boundaries &&
+  python3 -B scripts/benchmarks/compress/transparent-writers.py --scratch "$bench_dir/corpus" --boundaries &&
+  python3 -B scripts/benchmarks/compress/transparent_summary.py --scratch "$bench_dir/corpus"
 ```
 
 The first script copies five real files of each kind with `ditto --noclone`: plain and image-bearing Claude
@@ -147,6 +150,10 @@ search and the first append with fsync. The read and search arms alternate order
 Per-file byte counts, flags, mtimes, timings and commands stay in `results.json` and `writers.json` in the corpus
 directory. The directory also holds private source paths and file copies. Boundary output gives each writer's
 actual flag, allocation and exit status around 512 MiB and 4 GiB. A writer's refusal establishes only its own limit.
+
+In the November 12 macOS 27.2 run, afsctool LZFSE retained 30.68% of the 35 inputs' allocated bytes.
+Ditto retained 46.26%. All 420 outputs passed `cmp`, and all 420 appended clones read back as the original
+bytes plus the test marker. Those timings reflect a warm or uncontrolled cache.
 
 ### pack
 
