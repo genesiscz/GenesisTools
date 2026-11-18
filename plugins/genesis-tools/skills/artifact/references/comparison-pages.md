@@ -76,6 +76,11 @@ const ScoreCell = ({ option, criterion }: { option: OptionId; criterion: Criteri
 
 ## Data
 
+- **Keep the content in JSON next to the page, and make the TSX a template.** Every option, its text and diagram,
+  the answer, the decisions and the background go into `<entry>.content.json`; the TSX imports it and renders it.
+  A comparison grows (a corrected option, a new option, a new winner), and with the content in JSON each change is
+  a small edit of one file instead of a rewrite of the page. A script renders the markdown report from the same two
+  JSON files, so the page and the report cannot disagree.
 - Keep scores and reasons out of the TSX. A script reads the source files (each scorer's table) and writes
   `<entry>.scores.json` next to the page, and the page imports it (`import SCORES from "./<entry>.scores.json"`). A
   single-file build bundles a static JSON import.
