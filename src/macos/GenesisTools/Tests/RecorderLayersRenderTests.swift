@@ -149,6 +149,17 @@ final class RecorderLayersRenderTests: XCTestCase {
             }
         }
         XCTAssertEqual(names, ["mic.wav", "system.wav"])
+
+        edit.audio.lanes = nil
+        let facts = EditProject.AudioFacts(movieTracks: 1, mixedFrom: [
+            .init(source: .mic, file: "mic.wav", offsetMs: 100), .init(source: .system, file: "system.wav", offsetMs: -100),
+        ])
+        let derived = try await EditRenderer.render(project: edit, asset: AVURLAsset(url: URL(fileURLWithPath: edit.source.video)),
+                                                    zoom: ZoomState(project: edit, cursor: nil), maxHeight: side, audioFacts: facts)
+        let files = derived.composition.tracks(withMediaType: .audio).compactMap { track in
+            track.segments.first { !$0.isEmpty }?.sourceURL?.lastPathComponent
+        }
+        XCTAssertEqual(Set(files), names)
     }
 
     func testImageChangesTheCentreOnlyInsideItsSourceSpanAndWhenVisible() async throws {
@@ -194,12 +205,19 @@ final class RecorderLayersRenderTests: XCTestCase {
         var logo = try whiteImage(in: dir)
         logo.width = 0.12 // Fully covered by the opaque centre of the camera when behind it.
         edit.layers = .init(media: [logo])
-        let top = try await pixels(render(edit), atUs: 500_000)
-        let below = try await pixels(render(edit.movingLayer(logo.id, to: .bottom)), atUs: 500_000)
+        let state = ZoomState(project: edit, cursor: nil)
+        let preview = try await EditRenderer.render(project: edit, asset: AVURLAsset(url: URL(fileURLWithPath: edit.source.video)),
+                                                    zoom: state, maxHeight: side)
+        let top = try await pixels(preview, atUs: 500_000)
+        let reordered = try edit.movingLayer(logo.id, to: .bottom)
+        state.update(reordered)
+        let below = try await pixels(preview, atUs: 500_000)
         let centre = (side / 2 * side + side / 2) * 4
         XCTAssertGreaterThan(top[centre], 230)
         XCTAssertLessThan(below[centre], 180)
         XCTAssertEqual(SHA256.hash(data: below), SHA256.hash(data: old))
+        let rebuilt = try await pixels(render(reordered), atUs: 500_000)
+        XCTAssertEqual(rebuilt, below)
     }
 
     func testVideoHoldsItsLastPictureOrLoopsFromItsFileClock() async throws {
@@ -257,6 +275,8 @@ final class RecorderLayersRenderTests: XCTestCase {
         edit.audio.lanes = [.init(id: "mic", source: .mic, file: file)]
         let rendered = try await render(edit)
         XCTAssertTrue(rendered.composition.tracks(withMediaType: .audio).isEmpty, "the skipped mic must not restore the mixed proxy")
+        XCTAssertEqual(rendered.warnings.count, 1)
+        XCTAssertTrue(rendered.warnings.first?.contains(file) == true)
         let url = dir.appendingPathComponent("edited.mp4")
         _ = try await EditExporter.export(project: edit, to: url) { _ in }
         let result = AVURLAsset(url: url)
