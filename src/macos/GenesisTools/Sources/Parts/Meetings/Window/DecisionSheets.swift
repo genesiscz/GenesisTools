@@ -309,6 +309,7 @@ private struct ReachItemRow: View {
 struct HistorySheetView: View {
     let detail: MeetingDetailModel
     let history: MeetingDetailModel.HistorySheet
+    @State private var projectHistory: [MeetingRecordView.HistoryEntry] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -317,24 +318,22 @@ struct HistorySheetView: View {
                 Spacer()
                 Button("Done") { detail.history = nil }.keyboardShortcut(.defaultAction)
             }
-            if history.item == nil {
-                ForEach(Array((detail.record.value?.history ?? []).filter { $0.command.hasPrefix("assign") }.enumerated()), id: \.offset) { _, entry in
-                    Text(verbatim: "Project · \(entry.change)").font(.caption).foregroundStyle(.secondary)
-                }
-            }
             switch history.entries {
             case .idle, .loading:
+                projectRows
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 120)
             case .failed(let failure, _):
+                projectRows
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.openHistory(item: history.item) },
                                    failure.detailsFix { detail.openHistory(item: history.item) }])
             case .loaded(let entries):
-                if entries.isEmpty {
+                if entries.isEmpty && (history.item != nil || projectHistory.isEmpty) {
                     EmptyState(symbol: "clock", text: "Nothing decided yet", detail: "Each confirm, answer and Undo is kept here with who made it.")
                 } else {
-                    List(entries) { entry in
-                        HistoryRow(entry: entry, detail: detail)
+                    List {
+                        projectRows
+                        ForEach(entries) { entry in HistoryRow(entry: entry, detail: detail) }
                     }
                     .listStyle(.inset)
                 }
@@ -342,7 +341,18 @@ struct HistorySheetView: View {
         }
         .padding(18)
         .frame(width: 560, height: 460)
+        .onChange(of: detail.record.value?.history, initial: true) { _, entries in
+            projectHistory = (entries ?? []).filter { $0.command.hasPrefix("assign") }
+        }
         .closesOnEscape { detail.history = nil }
+    }
+
+    @ViewBuilder private var projectRows: some View {
+        if history.item == nil {
+            ForEach(projectHistory.indices, id: \.self) { index in
+                Text(verbatim: "Project · \(projectHistory[index].change)").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

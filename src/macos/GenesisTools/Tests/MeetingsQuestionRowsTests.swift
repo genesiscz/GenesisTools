@@ -15,13 +15,13 @@ final class MeetingsQuestionRowsTests: XCTestCase {
             raisedLines: [.init(index: 99, startSec: 60, endSec: 62, speaker: "Bob Example", text: "Raised line")])
     }
     private func rendered<V: View>(_ view: V, name: String, width: CGFloat = 460, native: Bool = false, afterMount: () -> Void = {}) throws -> String {
-        try MeetingQuestionPicture.text(view, name: name, width: width, native: native, afterMount: afterMount)
+        try MeetingQuestionPicture.text(view, name: name, native: native, width: width, afterMount: afterMount)
     }
 }
 
 @MainActor
 enum MeetingQuestionPicture {
-    static func text<V: View>(_ view: V, name: String, width: CGFloat = 460, native: Bool, afterMount: () -> Void = {}) throws -> String {
+    static func text<V: View>(_ view: V, name: String, native: Bool, width: CGFloat = 460, afterMount: () -> Void = {}) throws -> String {
         let content = view.frame(width: width).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
@@ -63,6 +63,25 @@ extension MeetingsQuestionRowsTests {
         let text = try rendered(DictionaryChangedLines(lines: try XCTUnwrap(result.lines)), name: "C17-preview")
         XCTAssertTrue(text.contains("Changes 1 source line"), text); XCTAssertTrue(text.contains("00:10"), text)
         XCTAssertNil(try JSONDecoder().decode(PhraseTest.self, from: Data(#"{"phrase":"old","text":"old","fired":[],"suggestions":[]}"#.utf8)).lines)
+    }
+    func testProjectQuestionHistoryHasItsLabelAndNoEmptyJournalMessage() throws {
+        let detail = MeetingDetailModel(id: "copy", window: nil)
+        let json = #"""
+        {"id":"copy","title":"Practice","labels":[],"start":"2026-01-01T10:00:00Z","items":[],"context":[],
+         "speakers":{"labels":{}},"sources":{},"history":[{"at":"2026-01-01T10:01:00Z","command":"assign sweep",
+         "change":"project question withdrawn"}]}
+        """#
+        detail.settleDecisionRecord(try JSONDecoder().decode(MeetingRecordView.self, from: Data(json.utf8)))
+        let history = MeetingDetailModel.HistorySheet(item: nil, entries: .loaded([]))
+        let text = try MeetingQuestionPicture.text(HistorySheetView(detail: detail, history: history),
+                                                   name: "C21-project-history", native: true, width: 560)
+        XCTAssertTrue(text.contains("Project") && text.contains("question withdrawn"), text)
+        XCTAssertFalse(text.contains("Nothing decided yet"), text)
+        let rowHistory = MeetingDetailModel.HistorySheet(item: "q1", entries: .loaded([]))
+        let empty = try MeetingQuestionPicture.text(HistorySheetView(detail: detail, history: rowHistory),
+                                                    name: "C21-row-history", native: true, width: 560)
+        XCTAssertTrue(empty.contains("Nothing decided yet"), empty)
+        XCTAssertFalse(empty.contains("question withdrawn"), empty)
     }
     func testL3QuestionChoicesLeadTheMeetingAndDirectoryPeople() {
         let own = KnownPerson(id: "dana", name: "Dana Example", sources: [.own], rank: .own)
