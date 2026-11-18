@@ -2267,6 +2267,10 @@ describe("app checks only leave the actions migration list", () => {
         expect(rules(source, "src/utils/genesis-tools/capability/facts.ts")).not.toContain(rule);
         expect(rules("existsSync(genesisAppBundlePath())", "src/new-app-check.ts")).toContain(rule);
         expect(rules("existsSync(otherFile)", "src/new-app-check.ts")).not.toContain(rule);
+        expect(rules("if (app.isGenesisAppBundleInstalled()) openWindow();", "src/new-app-check.ts")).toContain(rule);
+        expect(rules("macos.genesisApp.installedGenesisAppLauncher();", "src/new-app-check.ts")).toContain(rule);
+        expect(rules("fs.existsSync(genesisAppBundlePath())", "src/new-app-check.ts")).toContain(rule);
+        expect(rules("app.isGenesisAppBundleInstalledLater();", "src/new-app-check.ts")).not.toContain(rule);
         expect(
             ratchetAdditions(
                 "export const APP_CHECK_RATCHET = new Map([]);",
