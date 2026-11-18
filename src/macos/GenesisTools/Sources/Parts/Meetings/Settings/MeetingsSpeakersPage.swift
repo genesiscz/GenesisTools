@@ -1,4 +1,3 @@
-import Darwin
 import SwiftUI
 
 /// The voice pass's settings (`global.speakerLabels.voice.compute` of the meetings config) as this side reads them. A
@@ -25,27 +24,12 @@ struct MeetingsVoiceCompute: Equatable {
         if case .number(let count) = block.at(["workers"]), count >= 1 { workers = min(Self.maxWorkers, Int(count)) }
     }
 
-    /// The worker count `auto` means: the performance cores minus the one-minute load average, at least one and at
-    /// most four. The same rule as `voiceWorkerCount` in src/utils/meetings/config.ts, which the engine reads once when
-    /// a pass starts.
-    static func autoWorkers(performanceCores: Int, load1: Double) -> Int {
-        max(1, min(4, Int((Double(performanceCores) - load1).rounded(.down))))
-    }
-
-    /// What `auto` means on this Mac at this moment, read as the engine reads it (`readPerformanceCores`, `loadavg`).
-    static func autoWorkersNow() -> Int {
-        var load = [Double](repeating: 0, count: 3)
-        let load1 = getloadavg(&load, 3) > 0 ? load[0] : 0
-        let cores = sysctlInteger("hw.perflevel0.physicalcpu") ?? sysctlInteger("hw.physicalcpu")
-            ?? max(1, ProcessInfo.processInfo.activeProcessorCount / 2)
-        return autoWorkers(performanceCores: cores, load1: load1)
-    }
-
-    private static func sysctlInteger(_ name: String) -> Int? {
-        var value: Int32 = 0
-        var size = MemoryLayout<Int32>.size
-        guard sysctlbyname(name, &value, &size, nil, 0) == 0, value > 0 else { return nil }
-        return Int(value)
+    /// What `auto` means on this Mac now, as the engine counts it: the Meetings service's `voices.workers` (the idle
+    /// cores of a one-second CPU sample, at most the performance cores, 1 to 4; `voiceWorkerCount` in
+    /// src/utils/meetings/config.ts). The window keeps no copy of the rule; nil when no service answers.
+    static func autoWorkersNow(service: MeetingsService?) async -> Int? {
+        guard let service else { return nil }
+        return try? await service.call(MeetingsAPI.VoicesWorkers.self, .init()).auto
     }
 }
 
@@ -53,8 +37,8 @@ struct MeetingsVoiceCompute: Equatable {
 /// stay on the Window page with the side panel's cards; this page holds what runs in the Meetings service.
 struct MeetingsSpeakersPage: View {
     @Bindable var model: MeetingsSettingsModel
-    /// What `auto` means now; read when the page shows, since the load changes.
-    @State private var autoNow = MeetingsVoiceCompute.autoWorkersNow()
+    /// What `auto` means now; read from the engine each time the page shows, since the load changes.
+    @State private var autoNow: Int?
 
     var body: some View {
         MeetingsSettingsFrame(model: model) { _ in
@@ -63,15 +47,15 @@ struct MeetingsSpeakersPage: View {
             }
             .nativeSettingsAnchor(MeetingsSettingsPages.voicePassAnchor)
         }
-        .onAppear { autoNow = MeetingsVoiceCompute.autoWorkersNow() }
+        .task { autoNow = await MeetingsVoiceCompute.autoWorkersNow(service: model.service) }
     }
 }
 
 /// The voice pass card: its priority and its worker count, each choice explained with what it costs on a real meeting.
 struct MeetingsVoicePassCard: View {
     let compute: MeetingsVoiceCompute
-    /// The count `auto` means on this Mac now.
-    let autoNow: Int
+    /// The count `auto` means on this Mac now; nil until the engine answered.
+    let autoNow: Int?
     let set: ([String], Any) -> Void
 
     static let normalDetail = "Runs on the fast cores and finishes soonest: about 90 CPU seconds for a one-hour meeting. "
@@ -79,9 +63,9 @@ struct MeetingsVoicePassCard: View {
     static let backgroundDetail = "Yields to everything else and keeps the Mac quiet, but takes much longer: "
         + "32 minutes and 251 CPU seconds for the same one-hour meeting on a busy Mac."
 
-    static func autoDetail(now: Int) -> String {
-        "Auto uses the cores that are free when the pass starts (at most 4), so a busy Mac gets one worker. "
-            + "Right now that is \(Plural.count(now, "worker")); it changes with the load."
+    static func autoDetail(now: Int?) -> String {
+        "Auto uses the cores that are idle when the pass starts (at most 4), so a busy Mac gets one worker."
+            + (now.map { " Right now that is \(Plural.count($0, "worker")); it changes with the load." } ?? "")
     }
 
     var body: some View {
@@ -118,7 +102,7 @@ struct MeetingsVoicePassCard: View {
         if choice == "auto" {
             set(MeetingsVoiceCompute.path + ["workers"], "auto")
         } else if compute.workers == nil {
-            set(MeetingsVoiceCompute.path + ["workers"], autoNow)
+            set(MeetingsVoiceCompute.path + ["workers"], autoNow ?? 1)
         }
     }
 }

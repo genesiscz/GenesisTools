@@ -25,15 +25,24 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(MeetingsVoiceCompute(raw: auto).workers, nil, "\"auto\" is no fixed number")
     }
 
-    func testAutoTakesTheFreePerformanceCoresAtMostFour() {
-        // The rule of `voiceWorkerCount` in src/utils/meetings/config.ts.
-        XCTAssertEqual(MeetingsVoiceCompute.autoWorkers(performanceCores: 12, load1: 19.4), 1, "a busy Mac gets one worker")
-        XCTAssertEqual(MeetingsVoiceCompute.autoWorkers(performanceCores: 12, load1: 9.6), 2)
-        XCTAssertEqual(MeetingsVoiceCompute.autoWorkers(performanceCores: 12, load1: 0.5), 4, "never more than four")
-        XCTAssertEqual(MeetingsVoiceCompute.autoWorkers(performanceCores: 4, load1: 1.2), 2, "the cores left, rounded down")
-        XCTAssertEqual(MeetingsVoiceCompute.autoWorkers(performanceCores: 1, load1: 0), 1)
-        let now = MeetingsVoiceCompute.autoWorkersNow()
-        XCTAssertTrue((1...4).contains(now), "this Mac now: \(now)")
+    func testAutoIsWhatTheEngineCountsAndTheWindowKeepsNoCopyOfTheRule() async throws {
+        // The service's own answer (the protocol fixture, from a fixed CPU sample of 2.6 idle of 12 performance cores).
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("meetings/lib/service/__fixtures__/meetings-protocol.json")
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
+        let example = try XCTUnwrap((root["examples"] as? [[String: Any]])?.first { $0["method"] as? String == "voices.workers" })
+        let reply = try XCTUnwrap((example["reply"] as? [String: Any])?["result"])
+        let workers = try JSONDecoder().decode(MeetingsAPI.VoicesWorkers.Result.self,
+                                               from: JSONSerialization.data(withJSONObject: reply))
+        XCTAssertEqual(workers.auto, 2)
+        let noService = await MeetingsVoiceCompute.autoWorkersNow(service: nil)
+        XCTAssertNil(noService, "no service: no number, never a guess of the window's own")
+        XCTAssertEqual(MeetingsVoicePassCard.autoDetail(now: nil),
+                       "Auto uses the cores that are idle when the pass starts (at most 4), so a busy Mac gets one worker.")
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Parts/Meetings/Settings/MeetingsSpeakersPage.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("getloadavg"), "the page keeps no copy of the engine's rule")
     }
 
     func testEachChoiceWritesTheConfigPathItShows() {
@@ -51,7 +60,7 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(writes.last?.0, path)
         XCTAssertEqual(writes.last?.1, "auto")
         XCTAssertEqual(MeetingsVoicePassCard.autoDetail(now: 1),
-                       "Auto uses the cores that are free when the pass starts (at most 4), so a busy Mac gets one worker. "
+                       "Auto uses the cores that are idle when the pass starts (at most 4), so a busy Mac gets one worker. "
                            + "Right now that is 1 worker; it changes with the load.")
     }
 
