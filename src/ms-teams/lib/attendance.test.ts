@@ -22,6 +22,9 @@ describe("attendance candidate output", () => {
     const older = "19:meeting_kite_old@thread.v2";
     const date = "2026-03-02T10:00:00.000Z";
 
+    /** Read after the command ran; a direct read stays narrowed to the `undefined` assigned before it. */
+    const currentExitCode = (): typeof process.exitCode => process.exitCode;
+
     function runAttendance(query: string, json = false) {
         const cache = new TeamsCache(":memory:");
         const chat = (id: string, topic: string, lastMessageTimeUtc: number) => ({
@@ -77,7 +80,7 @@ describe("attendance candidate output", () => {
             const program = new Command();
             registerMeetingsCommand(program);
             program.parse(["meetings", "attendance", query, ...(json ? ["--json"] : [])], { from: "user" });
-            return { exitCode: process.exitCode, stdout: chunks.join("") };
+            return { exitCode: currentExitCode(), stdout: chunks.join("") };
         } finally {
             process.exitCode = saved;
             stdout.mockRestore();
