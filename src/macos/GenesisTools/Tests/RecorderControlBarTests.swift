@@ -238,29 +238,3 @@ final class RecorderControlBarTests: XCTestCase {
                                                             screens: screens, displayIDs: [55, nil]))
     }
 }
-
-// The existing per-tab OCR test renders the shared bar's real capability explanation.
-@MainActor
-final class CapturePickerModel: ObservableObject {
-    var tab: RecordingPickerTab = .displays
-    init(persist: Bool) {}
-}
-
-@MainActor
-struct CaptureOptionsView: View {
-    let bar: RecordingBarModel
-    let actions: RecordingBarActions
-
-    init(model: CapturePickerModel, onArea: @escaping () -> Void) {
-        var setup = RecordingSetup()
-        switch model.tab {
-        case .windows: setup.target = .window(ids: [1], app: "Editor", title: "Example", pid: nil)
-        case .apps: setup.target = .app(app: "editor", name: "Editor")
-        default: setup.target = .display(index: 0, name: "Example display")
-        }
-        bar = RecordingBarModel(engine: ToolsRecorderEngine(), setup: setup)
-        actions = RecordingBarActions(chooseTarget: { _ in onArea() }, useMovie: { _ in })
-    }
-
-    var body: some View { RecordingBarView(model: bar, actions: actions) }
-}

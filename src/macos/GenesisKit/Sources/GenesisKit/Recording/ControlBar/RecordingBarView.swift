@@ -236,11 +236,16 @@ public struct RecordingBarView: View {
         actions.chooseTarget(kind)
     }
 
-    private var audioReason: String? {
-        switch setup.target {
-        case .window: caps.reasonUnavailable["windowAudio"] ?? caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
-        case .app: caps.reasonUnavailable["appAudio"] ?? caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
-        default: nil
+    private var audioReason: String? { Self.audioNote(for: setup.target, capabilities: caps) }
+
+    /// What the target's movie leaves out of sound, said in view under the source line; nil when it records sound.
+    public static func audioNote(for target: RecordingTarget?, capabilities caps: RecordingCapabilities) -> String? {
+        guard let target else { return nil }
+        let live = caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
+        switch target {
+        case .window: return caps.reasonUnavailable["windowAudio"] ?? live
+        case .app: return caps.reasonUnavailable["appAudio"] ?? live
+        default: return nil
         }
     }
 
