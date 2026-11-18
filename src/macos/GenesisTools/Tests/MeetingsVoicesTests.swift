@@ -171,7 +171,38 @@ final class MeetingsVoicesTests: XCTestCase {
         XCTAssertEqual(MeetingDetailView.trailingPane(tab: .items, width: 2000, setting: .always, sidePanelOpen: false), .transcript)
     }
 
-    // MARK: w_xow4oigk: the empty state's button
+    func testInANarrowColumnTheVoicesPaneTakesTheColumnAndAMarkedLineTakesItsScoreFromItsRange() throws {
+        XCTAssertTrue(MeetingDetailView.voicesAlone(open: true, width: 600, sidePanelOpen: false))
+        XCTAssertFalse(MeetingDetailView.voicesAlone(open: true, width: 1100, sidePanelOpen: false))
+        XCTAssertFalse(MeetingDetailView.voicesAlone(open: true, width: 600, sidePanelOpen: true), "the settings panel goes first")
+        XCTAssertFalse(MeetingDetailView.voicesAlone(open: false, width: 600, sidePanelOpen: false))
+        // A line under an open question keeps "Who is this?" as its name; its mark still says the model's score.
+        let entry = TranscriptLine(id: "q", startSec: 39, speaker: "Speaker 2", text: "Under a question.")
+        let item = try decode(MeetingItem.self, #"""
+        {"id":"i9","kind":"speaker-range","status":"suggested","label":"Speaker 2","fromSec":39,"toSec":39,"speaker":"Bob Example","rules":["voice-embedding"],"evidence":{"score":0.76}}
+        """#)
+        let blocks = TranscriptBlock.build(from: [entry], marks: [entry.rowID: [.byVoice]], items: [item])
+        XCTAssertEqual(blocks.first?.lines.first?.voiceScore, 0.76)
+    }
+
+    func testRunningTheRulesAgainSaysWhatHappensToTheItemsThereAre() throws {
+        XCTAssertEqual(RunRulesPopover.lines, [
+            "Confirmed and rejected items stay as they are.",
+            "A suggestion you rejected is not suggested again.",
+            "New suggestions and questions are added.",
+            "An open suggestion that a dictionary entry or a voice name now settles is retired.",
+        ])
+        let text = try drawnText(RunRulesPopover(cancel: {}, run: {}), width: 340)
+        XCTAssertTrue(text.contains("Run the rules"), text)
+        XCTAssertTrue(text.contains("stay as they are"), text)
+        let strip = try drawnText(SuggestRunStrip(progress: .init(fraction: 0.4, label: "Voices: 120 of 300 lines")) {}, width: 560)
+        XCTAssertTrue(strip.contains("Cancel"), strip)
+        XCTAssertTrue(strip.contains("(40 %)"), strip)
+        let empty = try drawnText(SuggestRunView(progress: nil) {}, width: 420)
+        XCTAssertTrue(empty.contains("Cancel"), empty)
+    }
+
+    // MARK: w_xow4oigk: the empty state's button    // MARK: w_xow4oigk: the empty state's button
 
     /// With a second closure parameter after `action`, Swift 5 mode bound the trailing closure of
     /// `EmptyState(…, actionTitle: "Suggest items") { … }` to the last one, and the button was never drawn.

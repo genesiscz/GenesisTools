@@ -51,6 +51,14 @@ struct MeetingDetailView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            if voicesAlone {
+                // Too narrow for the meeting beside it (900 x 600 left the header 280 pt and cut it): the pane takes the
+                // column until it closes, with the notices of its Confirm and Undo.
+                VoicesPane(detail: detail) { detail.voices.open = false }
+                    .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
+                    .safeAreaPadding(.bottom, dockInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
             VStack(spacing: 0) {
                 header
                 Divider()
@@ -63,7 +71,8 @@ struct MeetingDetailView: View {
                     .frameProbe("meetings.detail.content")
             }
             .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
-            if let pane = trailingPane {
+            }
+            if !voicesAlone, let pane = trailingPane {
                 Divider()
                 trailing(pane)
                     .safeAreaPadding(.bottom, dockInset)
@@ -89,6 +98,16 @@ struct MeetingDetailView: View {
             openItems = items.map { $0.lazy.filter { $0.status == "suggested" }.count }
         }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
+    }
+
+    /// Below this column width the Voices pane takes the whole column instead of standing beside the meeting.
+    static let voicesBesideMinWidth: CGFloat = 760
+
+    /// The Voices pane open in a column too narrow to show it beside the meeting (the settings panel goes first).
+    private var voicesAlone: Bool { Self.voicesAlone(open: detail.voices.open, width: width, sidePanelOpen: window.sidePanelOpen) }
+
+    static func voicesAlone(open: Bool, width: CGFloat, sidePanelOpen: Bool) -> Bool {
+        open && !sidePanelOpen && width > 0 && width < voicesBesideMinWidth
     }
 
     private var trailingPane: TrailingPane? {
