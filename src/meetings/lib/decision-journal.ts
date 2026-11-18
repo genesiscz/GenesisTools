@@ -896,6 +896,7 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const propagationSource = structuredClone(question);
             const corrections = answerQuestion(record, question.id, {
                 answer: action.answer,
+                knownSpeaker: action.knownAnswer !== undefined,
                 transcript: context.prepared.transcript,
                 people: context.prepared.people,
                 segments: action.segments,
@@ -914,7 +915,7 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 (item) => item.kind === "speaker-range" && decided.has(item.id) && (item.voices?.length ?? 0) > 1
             );
             const alike =
-                action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
+                action.knownAnswer || action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
                     ? { settled: [], corrections: [] }
                     : settleLookAlikes(record, propagationSource, {
                           answer: question.answer ?? action.answer,
@@ -2053,6 +2054,10 @@ export class DecisionJournal {
         }
 
         const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
+        const replay = action.kind === "answer" ? action.knownAnswer : undefined;
+        if (replay && request.actor.kind !== "listen") {
+            throw new Error("Only a Listen round can replay a known speaker answer.");
+        }
         const at = (this.options.now?.() ?? new Date()).toISOString();
         const token = randomUUID();
         // One lazy snapshot per decision, read under the record lock. Reopening many independently confirmed
@@ -2121,6 +2126,13 @@ export class DecisionJournal {
         let voices: VoicePrintChange[] = [];
         let voiceBase: MeetingRecord | undefined;
         const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
+            if (
+                replay &&
+                (record.history.length !== replay.revision ||
+                    (replay.source && store.read(replay.source.id)?.history.length !== replay.source.revision))
+            ) {
+                return MEETING_UNCHANGED;
+            }
             if (voiceBase && !isDeepStrictEqual(record, voiceBase)) {
                 throw new Error("The meeting changed while preparing voice samples; retry the answer.");
             }
@@ -2207,6 +2219,7 @@ export class DecisionJournal {
 
         // A person's speaker answer, or confirm of a voice-named range, keeps the confirmed lines as voice samples.
         if (
+            !replay &&
             (action.kind === "answer" || confirmsVoiceNames(action, saved)) &&
             saved.project &&
             ["window", "listen", "cli"].includes(request.actor.kind)

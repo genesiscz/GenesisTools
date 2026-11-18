@@ -692,6 +692,8 @@ export function answerQuestion(
     id: string,
     options: {
         answer: string;
+        /** A journaled single-speaker name can be absent from this copy's current choice list. */
+        knownSpeaker?: boolean;
         comment?: string;
         now: string;
         except?: readonly string[];
@@ -715,7 +717,7 @@ export function answerQuestion(
         throw new Error("An empty answer decides nothing: answer with a person, word or comment");
     }
     const parsed =
-        question.about === "speaker" && answer.toLowerCase() !== NONE_OF_THESE
+        question.about === "speaker" && !options.knownSpeaker && answer.toLowerCase() !== NONE_OF_THESE
             ? parsePersonAnswer({
                   text: answer,
                   people: [...question.choices, ...recordPeople(record), ...(options.people ?? [])].filter((name) =>

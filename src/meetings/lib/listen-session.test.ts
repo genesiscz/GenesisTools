@@ -11,6 +11,7 @@ import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import type { cutClip } from "./audio";
 import { decideItems } from "./decide";
 import { DecisionJournal } from "./decision-journal";
+import { duplicateMeeting } from "./duplicate";
 import { findingItems, findingsFileSchema } from "./findings";
 import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
 import { listenQuestionFindings, roundQuestionIds, selectedQuestionIds } from "./listen-input";
@@ -112,13 +113,16 @@ async function fixture(items: Record<string, unknown>[]) {
             selected?: string[];
             budget?: number;
             join?: boolean;
+            askKnown?: boolean;
+            record?: MeetingRecord;
+            transcript?: (record: MeetingRecord) => Promise<TranscriptEntry[]>;
             ledger?: (corrections: Correction[]) => void;
         } = {}
     ) =>
         new ListenSession({
             store,
-            meeting,
-            logPath,
+            meeting: extra.record ?? meeting,
+            logPath: join(store.folder(extra.record?.id ?? meeting.id), ANSWER_LOG_FILE),
             adapter,
             ...(extra.only ? { only: extra.only } : {}),
             ...(extra.selected ? { selected: extra.selected } : {}),
@@ -126,7 +130,8 @@ async function fixture(items: Record<string, unknown>[]) {
             minPriority: 0,
             listenBelow: 0.6,
             ...(extra.join ? { joinRunningRound: true } : {}),
-            split: { transcript: async () => transcript },
+            askKnown: extra.askKnown,
+            split: { transcript: extra.transcript ?? (async () => transcript) },
             ledger: extra.ledger ?? ((corrections) => ledger.push(...corrections)),
         });
     const read = (): MeetingRecord => store.read(meeting.id)!;
@@ -136,6 +141,163 @@ async function fixture(items: Record<string, unknown>[]) {
 }
 
 describe("listen session", () => {
+    const range = (id: string, label: string, fromSec: number) => ({
+        id,
+        kind: "speaker-range",
+        status: "suggested",
+        label,
+        fromSec,
+        toSec: fromSec,
+        rules: [],
+        suggestedAt: now,
+    });
+
+    test("known answers cover every decided line across regenerated item ids in a clean duplicate", async () => {
+        const fx = await fixture([range("i1", "A", 10), range("i2", "B", 12)]);
+        const journal = new DecisionJournal({ store: fx.store, now: () => new Date(now), ledger: () => {} });
+        await journal.apply({
+            meeting: fx.meeting.id,
+            actor: { kind: "window" },
+            action: { kind: "confirm", items: ["i1", "i2"], speaker: "Bob Example" },
+        });
+        const copy = await duplicateMeeting({ store: fx.store, ref: fx.meeting.id, withoutItems: true });
+        await fx.store.update(copy.id, { command: "test", change: "new questions" }, (record) => {
+            record.items.push(
+                ...([
+                    range("i8", "B", 12),
+                    range("i9", "A", 10),
+                    question("i10", { group: "long-stretch", decides: ["i8", "i9"], priority: 3 }),
+                    question("i11", {
+                        group: "spot-check",
+                        decides: ["i8"],
+                        priority: 2,
+                        evidence: { originalSpeaker: "Alice Example" },
+                    }),
+                    question("i12", {
+                        group: "spot-check",
+                        fromSec: 20,
+                        toSec: 20,
+                        priority: 1,
+                        evidence: { originalSpeaker: "Alice Example" },
+                    }),
+                ] as MeetingItem[])
+            );
+        });
+        const adapter = new ScriptedAdapter([{ answer: "Alice Example" }]);
+        const round = fx.session(adapter, { record: fx.store.read(copy.id)! });
+        await round.run();
+        expect(adapter.asked.map((one) => one.question.id)).toEqual(["i12"]);
+        const replay = new DecisionJournal({ store: fx.store }).read(copy.id).find((entry) => entry.question === "i10");
+        expect(replay).toMatchObject({
+            actor: { kind: "listen" },
+            reason: `known answer from ${fx.meeting.id} 2026-11-02`,
+        });
+        expect(fx.store.read(copy.id)?.items.find((item) => item.id === "i10")).toMatchObject({
+            status: "confirmed",
+            answer: "Bob Example",
+        });
+        expect(adapter.notes).toContainEqual(
+            expect.objectContaining({ kind: "decided", label: "Q1", knownDate: "2026-11-02" })
+        );
+        expect(round.spotCheckResult()).toMatchObject({
+            answered: 2,
+            changed: 1,
+            known: { answered: 1, changed: 1 },
+            asked: { answered: 1, changed: 0 },
+        });
+    });
+
+    test("ordinary speaker questions reuse active human assignments and --ask-known asks again", async () => {
+        for (const askKnown of [false, true]) {
+            const fx = await fixture([range("i1", "A", 10), question("i2", { decides: ["i1"] })]);
+            await new DecisionJournal({ store: fx.store }).apply({
+                meeting: fx.meeting.id,
+                actor: { kind: "cli" },
+                action: { kind: "assign", person: "Bob Example", stretches: [{ label: "A", fromSec: 10, toSec: 12 }] },
+            });
+            const adapter = new ScriptedAdapter([{ answer: "Alice Example" }]);
+            await fx.session(adapter, { askKnown }).run();
+            expect(adapter.asked).toHaveLength(askKnown ? 1 : 0);
+            expect(fx.item("i2")).toMatchObject({ answer: askKnown ? "Alice Example" : "Bob Example" });
+        }
+    });
+
+    test("a direct speaker answer follows the same words in the copy, but a different line or a conflicting local answer asks", async () => {
+        const fx = await fixture([question("i1", { fromSec: 10, toSec: 10 })]);
+        const journal = new DecisionJournal({ store: fx.store, now: () => new Date(now), ledger: () => {} });
+        await journal.apply({
+            meeting: fx.meeting.id,
+            actor: { kind: "listen" },
+            action: { kind: "answer", question: "i1", answer: "Alice Example" },
+        });
+        for (const mode of ["same", "different", "conflict"]) {
+            const copy = await duplicateMeeting({ store: fx.store, ref: fx.meeting.id, withoutItems: true });
+            await fx.store.update(copy.id, { command: "test", change: "same time" }, (record) => {
+                record.items.push(question("i7", { fromSec: 10, toSec: 10 }) as MeetingItem);
+            });
+            if (mode === "conflict") {
+                await journal.apply({
+                    meeting: copy.id,
+                    actor: { kind: "window" },
+                    action: {
+                        kind: "assign",
+                        person: "Bob Example",
+                        stretches: [{ label: "A", fromSec: 10, toSec: 10 }],
+                    },
+                });
+            }
+            const adapter = new ScriptedAdapter(["stop"]);
+            await fx
+                .session(adapter, {
+                    record: fx.store.read(copy.id)!,
+                    transcript: async (record) =>
+                        record.id === copy.id && mode === "different"
+                            ? [{ ...transcript[0]!, text: "Different words." }]
+                            : transcript,
+                })
+                .run();
+            expect(adapter.asked).toHaveLength(mode === "same" ? 0 : 1);
+            expect(fx.store.read(copy.id)?.items[0]?.status).toBe(mode === "same" ? "confirmed" : "suggested");
+        }
+    });
+
+    test("partial, conflicting, reverted and agent-only line decisions still ask", async () => {
+        for (const mode of ["partial", "conflicting", "reverted", "agent-only", "complete"]) {
+            const fx = await fixture([
+                range("i1", "A", 10),
+                range("i2", "B", 12),
+                question("i3", { decides: ["i1", "i2"] }),
+            ]);
+            const journal = new DecisionJournal({ store: fx.store, ledger: () => {} });
+            await journal.apply({
+                meeting: fx.meeting.id,
+                actor: { kind: "listen" },
+                action: { kind: "confirm", items: ["i1"], speaker: "Alice Example" },
+            });
+            if (mode !== "partial") {
+                const second = await journal.apply({
+                    meeting: fx.meeting.id,
+                    actor:
+                        mode === "agent-only" ? { kind: "agent", harness: "codex", session: null } : { kind: "window" },
+                    action: {
+                        kind: "confirm",
+                        items: ["i2"],
+                        speaker: mode === "conflicting" ? "Bob Example" : "Alice Example",
+                    },
+                });
+                if (mode === "reverted") {
+                    await journal.revert({
+                        meeting: fx.meeting.id,
+                        token: second.entry!.token,
+                        actor: { kind: "window" },
+                    });
+                }
+            }
+            const adapter = new ScriptedAdapter(["stop"]);
+            await fx.session(adapter).run();
+            expect(adapter.asked.map((one) => one.question.id)).toEqual(mode === "complete" ? [] : ["i3"]);
+        }
+    });
     // The decision journal writes the ledger as each answer lands (an Esc writes the retraction), not at the round's
     // end: a ledger failure fails that answer's write, which stays saved, and the round ends as aborted once.
     test("a ledger failure at an answer aborts the round once and keeps the saved answer", async () => {
@@ -385,10 +547,17 @@ describe("listen session", () => {
                 { answer: "Bob Example" },
                 "skip",
                 "stop",
-            ])
+            ]),
+            { askKnown: true }
         );
         await session.run();
-        expect(session.spotCheckResult()).toEqual({ answered: 2, changed: 1, questionIds: ["i1", "i2"] });
+        expect(session.spotCheckResult()).toEqual({
+            answered: 2,
+            changed: 1,
+            questionIds: ["i1", "i2"],
+            asked: { answered: 2, changed: 1 },
+            known: { answered: 0, changed: 0 },
+        });
     });
 
     test("a refused Undo still counts the answer against the round budget", async () => {

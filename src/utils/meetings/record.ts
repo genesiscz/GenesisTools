@@ -469,6 +469,8 @@ export const meetingRecordSchema = z.object({
                                 at: z.string(),
                                 answered: z.number().int(),
                                 changed: z.number().int(),
+                                known: z.object({ answered: z.number().int(), changed: z.number().int() }).optional(),
+                                asked: z.object({ answered: z.number().int(), changed: z.number().int() }).optional(),
                                 questionIds: z.array(z.string()),
                             })
                         )

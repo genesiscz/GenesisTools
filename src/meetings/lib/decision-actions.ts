@@ -62,6 +62,17 @@ export const DECISION_ACTION_OPTIONS = [
         kind: z.literal("answer"),
         question: itemRef,
         answer: z.string(),
+        /** Listen replayed a named speaker from these human decisions. The revisions fence a concurrent edit. */
+        knownAnswer: z
+            .object({
+                meeting: z.string().min(1),
+                date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+                revision: z.number().int().nonnegative(),
+                source: z
+                    .object({ id: z.string().regex(/^[A-Za-z0-9][\w.-]*$/), revision: z.number().int().nonnegative() })
+                    .optional(),
+            })
+            .optional(),
         comment: z.string().optional(),
         segments: z
             .array(z.object({ fromWord: z.number().int().nonnegative(), speaker: z.string().min(1) }))

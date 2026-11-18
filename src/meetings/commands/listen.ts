@@ -453,6 +453,7 @@ interface ListenOptions {
     enrolVoices?: boolean;
     prepareOnly?: boolean;
     spotCheck?: string;
+    askKnown?: boolean;
     longStretchWords?: string;
     group?: string;
     applyAbove?: string;
@@ -501,22 +502,21 @@ class TerminalAdapter implements ListenAdapter {
         private readonly deps: {
             store: MeetingStore;
             meeting: MeetingRecord;
-            audioPath: string;
-            player: (typeof LISTEN_PLAYERS)[number];
-            vocabulary: string[];
-            transcript: TranscriptLines;
             listen: ListenSettings;
-            clips: ClipSettings;
+            playback: () => Promise<
+                | {
+                      audioPath: string;
+                      player: (typeof LISTEN_PLAYERS)[number];
+                      vocabulary: string[];
+                      transcript: TranscriptLines;
+                      clips: ClipSettings;
+                  }
+                | undefined
+            >;
         }
     ) {}
 
-    /** The dictionary questions of the last answer, asked before anything else (the owner's answer to M5). */
-    private offered: Promise<void> = Promise.resolve();
-
-    /** Waits for the dictionary question of the round's last answer. */
-    async settled(): Promise<void> {
-        await this.offered;
-    }
+    private playback?: ReturnType<typeof this.deps.playback>;
 
     /** Asks yes or no at once (Enter is no) for each dictionary question the answer left; a yes adds the word. */
     private async offerDictionary(label: string): Promise<void> {
@@ -569,8 +569,16 @@ class TerminalAdapter implements ListenAdapter {
     }
 
     async ask(asked: AskedQuestion): Promise<ListenOutcome> {
-        await this.offered;
-        const { store, meeting, transcript, listen } = this.deps;
+        const { store, meeting, listen } = this.deps;
+        if (!isInteractive()) {
+            fail(`${asked.label} needs an answer. Without a terminal, answer it directly:`);
+            ui.raw(
+                suggestCommand(TOOL, {
+                    replaceCommand: ["listen", meeting.id, "--item", asked.label, "--answer", "<answer>"],
+                })
+            );
+            return "stop";
+        }
 
         // The dictionary question was answered at once, after its word.
         if (
@@ -580,6 +588,12 @@ class TerminalAdapter implements ListenAdapter {
             return "skip";
         }
 
+        this.playback ??= this.deps.playback();
+        const playback = await this.playback;
+        if (!playback) {
+            return "stop";
+        }
+        const { transcript, clips, audioPath, player, vocabulary } = playback;
         const question =
             asked.question.about === "speaker"
                 ? {
@@ -592,12 +606,12 @@ class TerminalAdapter implements ListenAdapter {
         const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
         const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
         const plan = await refineSplitClip({
-            plan: questionClip({ record: asked.record, question, transcript, ...this.deps.clips }),
+            plan: questionClip({ record: asked.record, question, transcript, ...clips }),
             question,
-            audioPath: this.deps.audioPath,
+            audioPath,
         });
         await cutClip({
-            audioPath: this.deps.audioPath,
+            audioPath,
             outPath: clip,
             ...plan,
         });
@@ -621,8 +635,8 @@ class TerminalAdapter implements ListenAdapter {
             question: { ...question, question: view.question },
             clip,
             plan,
-            player: this.deps.player,
-            vocabulary: [...new Set([...question.choices, ...this.deps.vocabulary])].filter((name) =>
+            player,
+            vocabulary: [...new Set([...question.choices, ...vocabulary])].filter((name) =>
                 personPresent(asked.record, name, question.fromSec)
             ),
             delayMs: listen.delaySec * 1000,
@@ -636,7 +650,6 @@ class TerminalAdapter implements ListenAdapter {
     }
 
     async confirmLeave(): Promise<boolean> {
-        await this.offered;
         const leave = await p.select({
             cancel: "back",
             message: "Leave this round? The answers are saved; the next listen goes on from here.",
@@ -648,7 +661,7 @@ class TerminalAdapter implements ListenAdapter {
         return p.isCancel(leave) || leave === "leave";
     }
 
-    note(note: SessionNote): void {
+    note(note: SessionNote): void | Promise<void> {
         const { meeting } = this.deps;
 
         if (note.kind === "decided") {
@@ -661,18 +674,21 @@ class TerminalAdapter implements ListenAdapter {
             ui.ok(
                 note.outcome === "skip"
                     ? `${note.label} skipped`
-                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}${note.outcome.answer ? fixed : ""}\n`
+                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}${note.knownDate ? ` (your answer from ${note.knownDate})` : fixed}\n`
             );
-
-            if (note.outcome !== "skip" && note.outcome.answer) {
-                const label = note.label;
-                this.offered = this.offered.then(() => this.offerDictionary(label));
-            }
 
             if (note.settled.length > 0) {
                 ui.dim(`  the same answer settled ${note.settled.length} more: ${note.settled.join(" ")}`);
             }
 
+            if (
+                decided?.kind === "question" &&
+                decided.about === "term" &&
+                note.outcome !== "skip" &&
+                note.outcome.answer
+            ) {
+                return this.offerDictionary(note.label);
+            }
             return;
         }
 
@@ -713,7 +729,6 @@ interface AdapterContext {
     meeting: MeetingRecord;
     opened: OpenedMeeting;
     opts: ListenOptions;
-    first: QuestionItem;
     settings: MeetingsConfig;
 }
 
@@ -741,52 +756,37 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
         );
         return { adapter, budget: 1, joinRunningRound: true, actor: callerActor() };
     },
-    terminal: async ({ store, meeting, opened, first, settings }) => {
-        if (!isInteractive()) {
-            fail(`listen plays audio and asks in a terminal. Without one, answer a question directly:`);
-            ui.raw(
-                suggestCommand(TOOL, {
-                    replaceCommand: [
-                        "listen",
-                        meeting.id,
-                        "--item",
-                        questionLabel(meeting, first.id),
-                        "--answer",
-                        "<answer>",
-                    ],
-                })
-            );
-            return undefined;
-        }
-
-        const pads = await askedPads(new MeetingsConfigStore());
-
-        if (pads === undefined) {
-            return undefined;
-        }
-
+    terminal: async ({ store, meeting, opened, settings }) => {
         const listen = settings.global.playback.listen;
-        const player = clipPlayer(listen.player, LISTEN_PLAYERS);
-
-        if (!player) {
-            fail(`No player found (${LISTEN_PLAYERS.join(", ")}).`);
-            return undefined;
-        }
-
-        const dictionary = resolveDictionary(settings, { project: meeting.project, meeting: meeting.dictionary });
         const adapter = new TerminalAdapter({
             store,
             meeting,
-            audioPath: await opened.audioPath(),
-            player,
-            vocabulary: answerVocabulary(
-                meeting,
-                dictionary.entries.map((entry) => entry.value),
-                await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
-            ),
-            transcript: new TranscriptLines((await opened.meeting()).transcript),
             listen,
-            clips: await clipSettings(listen, pads),
+            playback: async () => {
+                const pads = await askedPads(new MeetingsConfigStore());
+                if (!pads) {
+                    return undefined;
+                }
+                const player = clipPlayer(listen.player, LISTEN_PLAYERS);
+                if (!player) {
+                    throw new Error(`No player found (${LISTEN_PLAYERS.join(", ")}).`);
+                }
+                const dictionary = resolveDictionary(settings, {
+                    project: meeting.project,
+                    meeting: meeting.dictionary,
+                });
+                return {
+                    audioPath: await opened.audioPath(),
+                    player,
+                    vocabulary: answerVocabulary(
+                        meeting,
+                        dictionary.entries.map((entry) => entry.value),
+                        await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
+                    ),
+                    transcript: new TranscriptLines((await opened.meeting()).transcript),
+                    clips: await clipSettings(listen, pads),
+                };
+            },
         });
         return { adapter, budget: listen.roundCap, actor: { kind: "listen" } };
     },
@@ -1045,7 +1045,6 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             meeting,
             opened,
             opts,
-            first,
             settings,
         });
 
@@ -1083,13 +1082,16 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             applyAbove: threshold,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
             actor: chosen.actor,
+            askKnown: opts.askKnown,
             ...(opts.reason ? { reason: opts.reason } : {}),
             decisions: {
                 apply: (request) => client.call("decision.apply", request),
                 revert: (request) => client.call("decision.revert", request),
             },
             split: {
-                transcript: async () => (await opened.meeting()).transcript,
+                transcript: async (record) =>
+                    (await (record.id === opened.record.id ? opened : OpenedMeeting.of(store, record)).meeting())
+                        .transcript,
                 micShare: async () => (await opened.energy()).share,
             },
         });
@@ -1102,11 +1104,6 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         try {
             await session.run();
 
-            // The dictionary question of the round's last answer is asked before the round's result.
-            if (chosen.adapter instanceof TerminalAdapter) {
-                await chosen.adapter.settled();
-            }
-
             if (opts.spotCheck) {
                 const result = session.spotCheckResult();
                 await store.update(meeting.id, { command: "listen", change: "spot-check result" }, (record) => {
@@ -1118,10 +1115,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                         ...result,
                     });
                 });
-                ui.info(
-                    `Spot check: ${result.changed}/${result.answered} changed` +
-                        (result.answered ? ` (${Math.round((100 * result.changed) / result.answered)} %)` : "")
-                );
+                const share = ({ changed, answered }: typeof result.known) =>
+                    `${changed}/${answered} changed (${answered ? `${Math.round((100 * changed) / answered)} %` : "no answers"})`;
+                ui.info(`Spot check: known ${share(result.known)} · asked ${share(result.asked)}`);
             }
         } finally {
             process.off("exit", onExit);
@@ -1191,6 +1187,7 @@ export function registerListenCommand(program: Command): void {
         )
         .option("--apply-above <percent>", "confidence threshold for quality questions")
         .option("--spot-check <n>", "ask a random sample of 50 to 69 percent lines and report the share changed")
+        .option("--ask-known", "ask again even when your earlier speaker decisions cover every line")
         .option(
             "--enrol-voices",
             "enrol remote seats from isolated call audio with an already installed model; score and store line evidence"
