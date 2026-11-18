@@ -2001,7 +2001,7 @@ test("changing one inbox preference preserves the other kinds and unrelated hub 
             forAgent: { show: true, countInBadge: false },
         },
     });
-    expect(await reopened.getConfigValue("prLookupCacheSeconds")).toBe(77);
+    expect(await reopened.getConfigValue<number>("prLookupCacheSeconds")).toBe(77);
 });
 
 test("task visibility and badge counts follow the recipient within its session", async () => {
