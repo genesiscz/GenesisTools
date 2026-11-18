@@ -98,6 +98,39 @@ final class WidgetTasksPolishTests: XCTestCase {
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
+    func testClaimedHandoffsRenderFoldedExpandedAndHiddenInTasks() async throws {
+        let wire = Data(#"""
+        {"tasks":[],"total":0,"activeCount":0,"truncated":false,"sourcePath":"/fixture/work/work.db-wal",
+         "sourceStamp":"store:1","projects":["App"],"sessions":[{"id":"codex:s-a","title":"Release session"}],
+         "claimedHandoffs":[{"id":"h_release1","project":"App","title":"Prepare the release",
+         "claimants":[{"sessionId":"s-a","harness":"codex","title":"Release session"}],
+         "members":[{"id":"w_notes001","slot":"t1","title":"Write release notes","state":"done"},
+                    {"id":"w_build001","slot":"t2","title":"Check the build","state":"active"}]}]}
+        """#.utf8)
+        let store = WidgetTasksStore(request: { _ in wire })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+
+        let folded = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 432),
+                                     name: "widget-handoffs-folded")
+        for word in ["Claimed handoffs", "Prepare the release", "App", "2 tasks", "Release session"] {
+            XCTAssertTrue(folded.contains(word), folded)
+        }
+        XCTAssertFalse(folded.contains("Write release notes"), folded)
+
+        let expanded = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
+            .frame(width: 432), name: "widget-handoffs-expanded")
+        for word in ["Write release notes", "Done", "Check the build", "Active"] {
+            XCTAssertTrue(expanded.contains(word), expanded)
+        }
+
+        let hidden = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .hidden)
+            .frame(width: 432), name: "widget-handoffs-hidden")
+        XCTAssertTrue(hidden.contains("Tasks"), hidden)
+        XCTAssertFalse(hidden.contains("Prepare the release"), hidden)
+    }
+
     func testATickShowsAtOnceRunsBesideAnotherAndStaysVisibleWithUndo() async throws {
         let first = task()
         let second = task("t_2_fixture", title: "Feed the cat")

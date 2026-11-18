@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
@@ -5,16 +6,17 @@ import {
     type DecisionRecord,
     kindOf,
     readDecisions,
+    readStoredTodoRows,
     reviseTodo,
-    storedTodoRows,
     type TodoUpdateSnapshot,
     updateTodo,
 } from "@app/question/lib/decisions/store";
 import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { type ClaimedHandoff, claimedHandoffTree, handoffClaimantIds } from "@genesiscz/utils/work/claimed-handoffs";
 import { type ProjectCounts, projectCounts } from "@genesiscz/utils/work/read";
-import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
+import { workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import type { WidgetCard } from "./snapshot";
 
@@ -96,6 +98,9 @@ export interface WidgetTaskSnapshot {
     sessions: { id: string; title: string }[];
     /** Per project: items spotted, items reopened, outside changes held (work-items P8). Absent before the store. */
     work?: ProjectCounts[];
+    claimedHandoffs?: ClaimedHandoff[];
+    /** Other files that can change the result while the Tasks module is open. */
+    additionalSourcePaths?: string[];
 }
 const taskCache = new Map<string, { stamp: string; tasks: WidgetTask[] }>();
 
@@ -160,24 +165,28 @@ export function widgetTask(row: WidgetTaskSource): WidgetTask {
     };
 }
 
+interface WidgetTaskListOptions {
+    file?: string;
+    /** The work store to read from (work-items P9). Default: the user's store when no log file is named. */
+    store?: string;
+    filters?: Partial<WidgetTaskFilters>;
+    signal?: AbortSignal;
+}
+
 /** A metadata view of the canonical TODO ledger. Missing files are empty; inspecting never creates storage. */
 export function listWidgetTasks({
     file: fileArg,
     store: storeArg,
     filters,
     signal,
-}: {
-    file?: string;
-    /** The work store to read from (work-items P9). Default: the user's store when no log file is named. */
-    store?: string;
-    filters?: Partial<WidgetTaskFilters>;
-    signal?: AbortSignal;
-} = {}): WidgetTaskSnapshot {
+}: WidgetTaskListOptions = {}): WidgetTaskSnapshot {
     signal?.throwIfAborted();
     const options = widgetTaskFiltersSchema.parse(filters ?? {});
     const file = fileArg ?? decisionFiles().file;
     const store = storeArg ?? (fileArg === undefined ? workDbPath() : undefined);
-    if (store === undefined && !existsSync(file)) {
+    const fromStore = store !== undefined ? readStoreTasks(store) : null;
+    const storeHasTodos = fromStore !== null && fromStore.tasks.length > 0;
+    if (!storeHasTodos && !existsSync(file)) {
         return {
             tasks: [],
             total: 0,
@@ -187,12 +196,12 @@ export function listWidgetTasks({
             sourceStamp: "missing",
             projects: [],
             sessions: [],
+            ...(fromStore ? { work: fromStore.work } : {}),
         };
     }
-    const fromStore = store !== undefined ? readStoreTasks(store) : null;
     let cached: { stamp: string; tasks: WidgetTask[] } | undefined;
     let stamp: string;
-    if (fromStore !== null) {
+    if (storeHasTodos) {
         stamp = `store:${fromStore.stamp}`;
         cached = { stamp, tasks: fromStore.tasks };
     } else {
@@ -261,9 +270,8 @@ export function listWidgetTasks({
         total: selected.length,
         activeCount: cached.tasks.filter((task) => ["open", "acknowledged"].includes(task.state)).length,
         truncated: selected.length > options.limit,
-        // The widget watches this one path for changes. A store write lands in its WAL file (the database file changes
-        // only at a checkpoint), so the store's WAL is the path to watch; a write after a checkpoint creates it again.
-        sourcePath: fromStore !== null && store !== undefined ? `${store}-wal` : file,
+        // Session to-dos come from the log until imported. A store write lands in the WAL between checkpoints.
+        sourcePath: storeHasTodos ? `${store}-wal` : file,
         sourceStamp: stamp,
         ...(fromStore !== null ? { work: fromStore.work } : {}),
     };
@@ -272,40 +280,137 @@ export function listWidgetTasks({
 const storeCache = new Map<string, { stamp: string; tasks: WidgetTask[]; work: ProjectCounts[] }>();
 
 /**
- * The to-do items as the work store holds them; null when the store has none yet (before the first import), so the
- * caller reads the decision log as before. One indexed query; the result is cached by the store's last change.
+ * Work counts are available even before the first to-do import. Only the to-do rows fall back to the decision log.
  */
 function readStoreTasks(path: string): { stamp: string; tasks: WidgetTask[]; work: ProjectCounts[] } | null {
     if (!existsSync(path)) {
         return null;
     }
 
+    let connection: Database | undefined;
     try {
-        return withWorkDb(path, (db) => {
-            const head = String(
-                (db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0
-            );
+        const db = new Database(path, { readonly: true });
+        connection = db;
+        return db.transaction(() => {
+            const last = db.query<{ seq: number | null }, []>("SELECT MAX(seq) AS seq FROM changes").get();
+            const head = String(last?.seq ?? 0);
             const cached = storeCache.get(path);
 
             if (cached?.stamp === head) {
-                return cached.tasks.length > 0 ? cached : null;
+                return cached;
             }
 
             const stamp = head;
             const tasks = prof.measure("tasks-read-store", () =>
-                storedTodoRows(path)
+                readStoredTodoRows(db)
                     .filter((row) => kindOf(row) === "todo")
                     .map(widgetTask)
             );
             const work = projectCounts(db);
             storeCache.set(path, { stamp, tasks, work });
             logger.debug({ path, count: tasks.length }, "Widget task metadata read from the work store");
-            return tasks.length > 0 ? { stamp, tasks, work } : null;
-        });
+            return { stamp, tasks, work };
+        })();
     } catch (error) {
         logger.warn({ err: error, path }, "Widget tasks: the work store is unreadable; reading the decision log");
         return null;
+    } finally {
+        connection?.close();
     }
+}
+
+/** Session hosts know running turns and panes. An unhosted terminal can also have a registry entry or a named process. */
+async function localClaimSessions(ids: string[]): Promise<ReadonlySet<string>> {
+    const { liveClaudeSessionIds } = await import("@genesiscz/utils/claude/peer-message");
+    const registry = liveClaudeSessionIds();
+    const live = new Set(ids.filter((id) => registry?.has(id.toLowerCase())));
+    const remaining = ids.filter((id) => !live.has(id));
+    if (remaining.length === 0) {
+        return live;
+    }
+
+    const { describeSessionHosts } = await import("@app/ai/lib/session-host/registry");
+    const hosts = await describeSessionHosts(remaining);
+    const withoutLiveHost = hosts.filter(({ host }) => host?.live !== true);
+    if (withoutLiveHost.length > 0) {
+        const { readOpenSessions } = await import("../agents");
+        const open = await readOpenSessions({ psTimeoutMs: 3_000 });
+        for (const { sessionId } of withoutLiveHost) {
+            if (open.has(sessionId)) {
+                live.add(sessionId);
+            }
+        }
+    }
+
+    for (const { sessionId, host } of hosts) {
+        if (host?.live) {
+            live.add(sessionId);
+        }
+    }
+
+    return live;
+}
+
+/** Both widget doors use the current local sessions. A session can exit without writing the work store. */
+export async function listLiveWidgetTasks({
+    liveSessions = localClaimSessions,
+    root,
+    ...options
+}: WidgetTaskListOptions & {
+    root?: string;
+    liveSessions?: (ids: string[]) => Promise<ReadonlySet<string>>;
+} = {}): Promise<WidgetTaskSnapshot> {
+    const snapshot = listWidgetTasks(options);
+    const path = options.store ?? (options.file === undefined ? workDbPath() : undefined);
+    if (!path) {
+        return snapshot;
+    }
+
+    const wal = `${path}-wal`;
+    const paths = new Set([path, wal]);
+    if (snapshot.work !== undefined) {
+        const db = new Database(path, { readonly: true });
+        let tree: ClaimedHandoff[] = [];
+        try {
+            const claimants = handoffClaimantIds(db);
+            if (claimants.length > 0) {
+                const { widgetRosterCachePath } = await import("./roster-cache");
+                paths.add(widgetRosterCachePath(root));
+                const live = await liveSessions(claimants);
+                options.signal?.throwIfAborted();
+                tree = claimedHandoffTree(db, live);
+            }
+        } finally {
+            db.close();
+        }
+
+        const sessionKey = (claim: ClaimedHandoff["claimants"][number]) =>
+            `${taskProvider(claim.harness)}:${claim.sessionId}`;
+        const projects = new Set(snapshot.projects);
+        const sessions = new Map(snapshot.sessions.map((session) => [session.id, session]));
+        for (const handoff of tree) {
+            projects.add(handoff.project);
+            for (const claim of handoff.claimants) {
+                const id = sessionKey(claim);
+                if (!sessions.has(id)) {
+                    sessions.set(id, { id, title: claim.title });
+                }
+            }
+        }
+
+        snapshot.projects = [...projects].sort();
+        snapshot.sessions = [...sessions.values()].sort((a, b) => a.title.localeCompare(b.title));
+        const { projects: projectFilter = [], sessions: sessionFilter = [] } = options.filters ?? {};
+        snapshot.claimedHandoffs = tree.filter(
+            (handoff) =>
+                (!projectFilter.length || projectFilter.includes(handoff.project)) &&
+                (!sessionFilter.length || handoff.claimants.some((claim) => sessionFilter.includes(sessionKey(claim))))
+        );
+    }
+
+    paths.delete(snapshot.sourcePath);
+    snapshot.additionalSourcePaths = [...paths];
+    return snapshot;
 }
 
 export async function updateWidgetTask({

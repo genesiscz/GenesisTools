@@ -7,6 +7,7 @@ import {
     createWidgetTask,
     editWidgetTask,
     LOCAL_TASK_SESSION,
+    listLiveWidgetTasks,
     listWidgetTasks,
     updateWidgetTask,
     widgetTask,
@@ -18,6 +19,7 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
 import { listItems } from "@genesiscz/utils/work/read";
 import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
@@ -1917,6 +1919,61 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         const controller = new AbortController();
         controller.abort();
         expect(() => listWidgetTasks({ file: files.file, signal: controller.signal })).toThrow();
+    });
+
+    test("a claimed handoff shows before the first to-do import and disappears when its session exits", async () => {
+        const { files, row } = fixture();
+        const store = join(dirname(files.file), "work.db");
+        const by = {
+            agent: "codex",
+            sessionId: "s-a",
+            sessionTitle: "Release session",
+            project: "App",
+            repoRoot: null,
+            branch: null,
+            commitSha: null,
+        };
+        const id = "h_release1";
+        const db = openWorkDb(store);
+        try {
+            ingestLegacyHandoff(
+                db,
+                {
+                    id,
+                    project: "App",
+                    title: "Prepare the release",
+                    status: "claimed",
+                    postedByContext: by,
+                    createdTs: row.updatedTs,
+                    tasks: [{ id: "t1", text: "Write release notes", checked: true, denied: false }],
+                },
+                [{ event: { ev: "claim", id, by, ts: row.updatedTs, uid: "claim-1" }, outcome: null }]
+            );
+        } finally {
+            db.close();
+        }
+
+        const liveSessions = async (ids: string[]) => {
+            expect(ids).toEqual(["s-a"]);
+            return new Set(ids);
+        };
+        const options = { file: files.file, store, liveSessions };
+        const first = await listLiveWidgetTasks(options);
+        expect(first.tasks.map((task) => task.id)).toEqual([row.id]);
+        expect(first.sourcePath).toBe(files.file);
+        expect(first.additionalSourcePaths).toContain(`${store}-wal`);
+        expect(first.projects).toContain("App");
+        expect(first.sessions).toContainEqual({ id: "codex:s-a", title: "Release session" });
+        expect(first.claimedHandoffs).toMatchObject([
+            { id, members: [{ slot: "t1", state: "done", title: "Write release notes" }] },
+        ]);
+        const noLog = await listLiveWidgetTasks({ ...options, file: join(dirname(files.file), "absent.jsonl") });
+        expect(noLog.tasks).toEqual([]);
+        expect(noLog.claimedHandoffs).toEqual(first.claimedHandoffs);
+        const filtered = await listLiveWidgetTasks({ ...options, filters: { sessions: ["codex:other"] } });
+        expect(filtered.claimedHandoffs).toEqual([]);
+        const exited = await listLiveWidgetTasks({ ...options, liveSessions: async () => new Set<string>() });
+        expect(exited.claimedHandoffs).toEqual([]);
     });
 
     test("parity (work-items P9, list 2): every task the log shows today shows the same from the work store", () => {

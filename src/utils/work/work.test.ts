@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { claimedHandoffTree, handoffClaimantIds } from "./claimed-handoffs";
+import type { ChangeKind } from "./model/change";
 import type { Actor } from "./model/item";
 import { asItemId } from "./model/item";
+import type { ItemState, ItemType } from "./model/vocab";
 import type { DeliveryReceipt, LegacyHandoffs, SessionDelivery, SessionPlace } from "./ports";
 import { listItems, showItem, triage } from "./read";
 import { reopen } from "./reopen";
@@ -81,6 +84,59 @@ beforeEach(() => {
 
 afterEach(() => {
     db.close();
+});
+
+test("claimed handoffs use active local sessions and keep each member slot and its current state", () => {
+    const change = (item: string, kind: ChangeKind, payload: unknown, session = "s-a") =>
+        applyChange(db, {
+            v: 1,
+            item: asItemId(item),
+            actor: actor(session, { project: "App" }),
+            ts: "2026-11-17T20:00:00.000Z",
+            origin: { via: "local" },
+            kind,
+            payload,
+        });
+    const create = (id: string, type: ItemType, state: ItemState) =>
+        change(id, "created", { title: id, project: "App", type, state, tags: [], fields: {} });
+    create("pack", "handoff", "active");
+    create("empty", "handoff", "reopened");
+    create("ended", "handoff", "done");
+    create("dropped", "handoff", "dropped");
+    create("released", "handoff", "open");
+    create("away", "handoff", "open");
+    create("unclaimed", "handoff", "open");
+    create("epic", "epic", "open");
+    create("ship", "task", "active");
+    create("check", "bug", "done");
+    for (const id of ["pack", "empty", "ended", "dropped", "released", "epic", "ship"]) {
+        change(id, "claimed", {});
+    }
+
+    change("pack", "claimed", {}, "s-b");
+    change("released", "released", {});
+    change("away", "claimed", {}, "s-away");
+    change("pack", "linked", { kind: "member", to: "check", slot: "t10" });
+    change("pack", "linked", { kind: "member", to: "ship", slot: "t2" });
+    change("pack", "linked", { kind: "related", to: "away" });
+
+    expect(handoffClaimantIds(db).sort()).toEqual(["s-a", "s-away", "s-b"]);
+    expect(claimedHandoffTree(db, new Set())).toEqual([]);
+    const live = new Set(["s-a", "s-b"]);
+    const tree = claimedHandoffTree(db, live);
+    expect(tree.map((handoff) => handoff.id)).toEqual(["empty", "pack"]);
+    expect(tree[0].members).toEqual([]);
+    expect(tree[1].project).toBe("App");
+    expect(tree[1].claimants.map((claim) => claim.sessionId)).toEqual(["s-a", "s-b"]);
+    expect(tree[1].members).toEqual([
+        { id: "ship", title: "ship", state: "active", slot: "t2" },
+        { id: "check", title: "check", state: "done", slot: "t10" },
+    ]);
+
+    change("ship", "moved", { from: "active", to: "done" });
+    change("pack", "released", {}, "s-a");
+    expect(claimedHandoffTree(db, live)[1].members[0].state).toBe("done");
+    expect(claimedHandoffTree(db, new Set(["s-a"])).map((handoff) => handoff.id)).toEqual(["empty"]);
 });
 
 async function spotted(c: WorkContext, title = "x", extra: Record<string, unknown> = {}): Promise<string> {

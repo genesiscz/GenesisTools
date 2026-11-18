@@ -125,6 +125,26 @@ struct WidgetTaskSnapshot: Codable, Equatable, Sendable {
     var sessions: [Session]
     /// Per project, from the work store: items spotted, items reopened, outside changes held. Absent before the store.
     var work: [WidgetWorkCount]? = nil
+    var claimedHandoffs: [WidgetClaimedHandoff]? = nil
+    var additionalSourcePaths: [String]? = nil
+}
+
+struct WidgetClaimedHandoff: Codable, Equatable, Identifiable, Sendable {
+    struct Claimant: Codable, Equatable, Sendable {
+        var title: String
+    }
+    struct Member: Codable, Equatable, Sendable {
+        var id: String
+        var slot: String?
+        var title: String
+        var state: String
+        var rowID: String { slot ?? id }
+    }
+    var id: String
+    var project: String
+    var title: String
+    var claimants: [Claimant]
+    var members: [Member]
 }
 
 /// One project's counts of the work store (work-items P8): what waits for a look, shown under the Tasks header.

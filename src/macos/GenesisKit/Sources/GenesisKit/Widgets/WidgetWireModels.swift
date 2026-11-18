@@ -381,6 +381,14 @@ public struct WidgetUsagePreferences: Codable, Equatable, Sendable {
     public init(ringWindow: WidgetUsageRingWindow? = nil) { self.ringWindow = ringWindow }
 }
 
+public enum WidgetHandoffDisplay: String, Codable, Sendable {
+    case folded, expanded, hidden
+}
+
+public struct WidgetTasksPreferences: Codable, Equatable, Sendable {
+    public var handoffs: WidgetHandoffDisplay?
+}
+
 /// The widget's stored settings. The hub resolves every default before a snapshot leaves it (`widgetPreferencesSchema`
 /// in src/hub/lib/widget/types.ts, `prefault({})` in the state schema), so only the settings the hub keeps optional are
 /// optional here. Writes go through `WidgetPreferencesStore`, by field.
@@ -499,6 +507,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var decisionProposal: String
     /// The Usage module's own preferences; nil (a state saved before the module) reads as the defaults.
     public var usage: WidgetUsagePreferences?
+    public var tasks: WidgetTasksPreferences?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
