@@ -170,7 +170,7 @@ struct TranscriptBlocksPane: View {
             }
             staged
         }
-        .onAppear { detail.ensureComments(); if detail.rows.value == nil { detail.loadRows() } }
+        .onAppear { detail.restoreRowsForReopen(); detail.ensureComments(); if detail.rows.value == nil { detail.loadRows() } }
         .onChange(of: detail.rows.value, initial: true) { _, rows in
             let indexes = raisedFlash.receive(rows, enabled: flashRaised)
             guard !indexes.isEmpty else { return }

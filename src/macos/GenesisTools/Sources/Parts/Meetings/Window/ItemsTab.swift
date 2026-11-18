@@ -190,7 +190,7 @@ struct ItemsTab: View {
                 Spacer(minLength: 0)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }
-        LoadablePane(state: detail.rows, reading: "Reading the items…", retry: detail.loadRows) { rows in
+        LoadablePane(state: detail.rowsForReopen, reading: "Reading the items…", retry: detail.loadRows) { rows in
             if rows.rows.isEmpty, rows.hidden.lowPriority == 0 {
                 if needsProject { Color.clear } else {
                 let hasTranscript = detail.window?.meeting(detail.id)?.hasTranscript ?? true
@@ -204,6 +204,7 @@ struct ItemsTab: View {
         }
         }
         .onChange(of: detail.record.value?.project) { _, _ in projectRefused = false }
+        .onAppear { detail.restoreRowsForReopen() }
         .onChange(of: lowPriority) { _, _ in detail.readRows(quiet: true) }
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {

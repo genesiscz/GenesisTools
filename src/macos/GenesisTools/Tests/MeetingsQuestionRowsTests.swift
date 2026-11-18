@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 import Vision
 import XCTest
 @testable import GenesisToolsMeetings
@@ -128,6 +129,25 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertTrue(try rendered(view, name: "X13-after", native: true, afterMount: { detail.rows = .loaded(after) }).contains("Raised source line"))
     }
 
+    func testC22FailedServiceStartReportsOnceWhileTheCommandWorks() async throws {
+        var timing = MeetingsService.Timing(); timing.startThrottle = 0
+        let service = MeetingsService(folder: URL(fileURLWithPath: "/nonexistent-service-\(UUID().uuidString)"), timing: timing,
+            startService: { throw MeetingsCLI.Failure(sentence: "Start refused", detail: "launch detail") })
+        var failures: [MeetingsCLI.Failure] = []
+        let listening = service.listenForStartFailure { failures.append($0) }
+        defer { listening.cancel() }
+        let read = MeetingsRead<ReviewRows>.service(MeetingsAPI.MeetingRows.self, .init(meeting: "copy"), orRun: ["rows", "copy", "--json"])
+        let expected = ReviewRows(meeting: "copy", rows: [], hidden: .init(lowPriority: 0, minPriority: 0))
+        for _ in 0..<2 {
+            let value = try await read.run(service: service, command: { _, _ in expected })
+            XCTAssertEqual(value, expected)
+        }
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(failures.count, 1)
+        XCTAssertTrue(try XCTUnwrap(failures.first).sentence.contains("uses its command instead"))
+        XCTAssertEqual(failures.first?.detail, "launch detail")
+    }
+
     func testPinPlacementInputsCoverPinsZoomWidthLanesAndCaptions() {
         let pins = [TimelinePin(id: "a", sec: 10, text: "First", state: .question), TimelinePin(id: "b", sec: 11, text: "Second", state: .open)]
         let input = TimelinePinLayout(pins: pins, view: 0...100, width: 400, lanes: 1, showsText: false)
@@ -136,6 +156,29 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertNotEqual(input, TimelinePinLayout(pins: [], view: 0...100, width: 400, lanes: 1, showsText: false))
         let lanes = TimelinePinLayout(pins: pins, view: 0...100, width: 800, lanes: 2, showsText: true)
         XCTAssertEqual(lanes.make(), PinCluster.laid(pins, in: 0...100, width: 800, lanes: 2, markWidth: 72))
+    }
+
+    func testReopenOffersCachedRowsBeforeTheRefreshAndKeepsFailures() async throws {
+        let service = MeetingsService(folder: URL(fileURLWithPath: "/nonexistent-service-\(UUID().uuidString)"))
+        let saved = ReviewRows(meeting: "copy", rows: [try question()], hidden: .init(lowPriority: 0, minPriority: 0))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "test.reopen.\(UUID().uuidString)"))
+        let key = MeetingsAPI.MeetingRows.Params(meeting: "copy", lowPriority: nil)
+        _ = try await service.rowsRefresh.read(key) { saved }
+        let window = MeetingsWindowModel(defaults: defaults, service: service, loadDetail: { $0.rows = .loading(previous: nil) })
+        window.select("copy", tab: .items)
+        let detail = try XCTUnwrap(window.detail)
+        XCTAssertTrue(detail.rows.isLoading)
+        XCTAssertNil(detail.rows.value)
+        XCTAssertEqual(detail.rowsForReopen.value, saved)
+        detail.restoreRowsForReopen()
+        XCTAssertEqual(detail.rows.value, saved)
+        let fresh = ReviewRows(meeting: "copy", rows: [], hidden: saved.hidden)
+        detail.rows = .loaded(fresh)
+        XCTAssertEqual(detail.rowsForReopen.value, fresh)
+        let failure = MeetingsCLI.Failure(sentence: "Read failed", detail: "read detail")
+        detail.rows = .failed(failure, previous: nil)
+        XCTAssertEqual(detail.rowsForReopen.failure, failure)
+        XCTAssertEqual(detail.rowsForReopen.value, saved)
     }
 
     func testPatchPreservesEveryOptionalRowAndEvidenceField() throws {
@@ -159,4 +202,151 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertEqual(patch.applying(to: current, token: "next", latest: [row.id: "newer"]), current)
     }
 
+    func testAnswerBurstSharesOneRowsReadAndKeepsTheLastReply() async throws {
+        let refresh = MeetingsRowsRefresh(quietWindow: .zero)
+        let key = MeetingsAPI.MeetingRows.Params(meeting: "copy", lowPriority: "show")
+        let rows = ReviewRows(meeting: "copy", rows: [], hidden: .init(lowPriority: 0, minPriority: 0))
+        var loads = 0
+        refresh.beginWrite()
+        let readers = (0..<10).map { _ in Task {
+            try await refresh.read(key) {
+                loads += 1
+                try await Task.sleep(for: .milliseconds(20))
+                return rows
+            }
+        } }
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(loads, 0, "Rows wait while an answer is in flight")
+        refresh.endWrite()
+        for reader in readers { let value = try await reader.value; XCTAssertEqual(value, rows) }
+        XCTAssertEqual(loads, 1)
+        XCTAssertEqual(refresh.cached(key), rows)
+        XCTAssertNil(refresh.cached(.init(meeting: "copy", lowPriority: nil)), "Priority views never share a snapshot")
+    }
+
+    func testAReadAfterAnAnswerNeverJoinsALoadThatStartedBeforeIt() async throws {
+        let refresh = MeetingsRowsRefresh(quietWindow: .zero)
+        let key = MeetingsAPI.MeetingRows.Params(meeting: "copy", lowPriority: nil)
+        let old = ReviewRows(meeting: "copy", rows: [try question()], hidden: .init(lowPriority: 0, minPriority: 0))
+        let fresh = ReviewRows(meeting: "copy", rows: [try question(status: "confirmed", token: "next")], hidden: old.hidden)
+        var loads = 0
+        var release: CheckedContinuation<Void, Never>?
+        let first = Task { try await refresh.read(key) {
+            loads += 1
+            await withCheckedContinuation { release = $0 }
+            return old
+        } }
+        while release == nil { await Task.yield() }
+        refresh.beginWrite()
+        refresh.endWrite()
+        let second = Task { try await refresh.read(key) { loads += 1; return fresh } }
+        let secondValue = try await second.value
+        release?.resume()
+        let firstValue = try await first.value
+        XCTAssertEqual(firstValue, old)
+        XCTAssertEqual(secondValue, fresh, "The read after the answer must not take rows loaded before it")
+        XCTAssertEqual(loads, 2)
+        XCTAssertEqual(refresh.cached(key), fresh, "Rows loaded before a write are never cached")
+    }
+
+    /// Opt-in scratch driver: exercises the window's apply/patch/evidence-read path on an isolated duplicate only.
+    func testTenAnswerServicePath() async throws {
+        guard let input = ProcessInfo.processInfo.environment["MEETINGS_ANSWER_BENCH"] else { throw XCTSkip("Scratch benchmark only") }
+        let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: input))) as? [String: String])
+        let meeting = try XCTUnwrap(values["meeting"]), output = try XCTUnwrap(values["output"])
+        XCTAssertNotEqual(canonicalHome(GenesisToolsHome.home()), canonicalHome(NSHomeDirectory()))
+        let service = MeetingsService(folder: GenesisToolsHome.url("meetings-service"), startService: { throw CancellationError() })
+        let detail = MeetingDetailModel(id: meeting, window: nil, service: service)
+        detail.settleDecisionRecord(try await service.call(MeetingsAPI.Show.self, .init(ref: meeting)))
+        detail.rows = .loaded(try await MeetingDetailModel.rowsRead(meeting, lowPriority: .show).run(service: service))
+        func serviceCPU() throws -> Double {
+            let process = Process(), pipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-p", try XCTUnwrap(values["pid"]), "-o", "time="]
+            process.standardOutput = pipe
+            try process.run()
+            let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":").reduce(0) { $0 * 60 + (Double($1) ?? 0) }
+        }
+        let cpuStart = try serviceCPU()
+        let readStart = service.rowsRefresh.completedReadCount
+        let start = ProcessInfo.processInfo.systemUptime
+        var lastRow: ReviewRow?
+        for _ in 0..<10 {
+            let row = try XCTUnwrap(detail.rows.value?.rows.first { row in
+                row.isQuestion && row.isOpen && row.group != "words" && row.choices.contains { $0.action.kind == "answer" && $0.action.answer?.isEmpty == false }
+            })
+            var action = try XCTUnwrap(row.choices.first { $0.action.kind == "answer" && $0.action.answer?.isEmpty == false }).action.decision(on: row)
+            action.lookAlikes = "leave"
+            let result = try await MeetingDetailModel.applyDecision(meeting: meeting, action: action, reason: nil, service: service, lowPriority: .show)
+            XCTAssertNotNil(result.entry)
+            XCTAssertTrue(detail.patchDecision(result))
+            lastRow = detail.rows.value?.rows.first { $0.id == row.id }
+            detail.readRows(quiet: true)
+        }
+        let last = try XCTUnwrap(lastRow)
+        let deadline = ProcessInfo.processInfo.systemUptime + 60
+        while detail.rows.value?.needsQuestionDetails(for: last) == true, ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(try XCTUnwrap(detail.rows.value).needsQuestionDetails(for: last))
+        let result: [String: Any] = ["answers": 10, "wallSeconds": ProcessInfo.processInfo.systemUptime - start,
+                                   "fullRowsReads": service.rowsRefresh.completedReadCount - readStart,
+                                   "serviceCPUSeconds": try serviceCPU() - cpuStart]
+        try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]).write(to: URL(fileURLWithPath: output))
+        detail.cancelReads()
+    }
+
+    func testScratchReopenAndProjectionPerformance() async throws {
+        guard let input = ProcessInfo.processInfo.environment["MEETINGS_READ_BENCH"] else { throw XCTSkip("Scratch benchmark only") }
+        let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: input))) as? [String: String])
+        let meeting = try XCTUnwrap(values["meeting"]), output = try XCTUnwrap(values["output"])
+        XCTAssertNotEqual(canonicalHome(GenesisToolsHome.home()), canonicalHome(NSHomeDirectory()))
+        let service = MeetingsService(folder: GenesisToolsHome.url("meetings-service"), startService: { throw CancellationError() })
+        let priority = MeetingsPreferences.Rows.lowPriority.value()
+        let rows = try await MeetingDetailModel.rowsRead(meeting, lowPriority: priority).run(service: service)
+        let record = try await service.call(MeetingsAPI.Show.self, .init(ref: meeting))
+        let people = try await service.call(MeetingsAPI.PeopleKnown.self, .init(query: "", meeting: meeting, atSec: 10, limit: 20)).people
+        let pins = rows.rows.compactMap { TimelinePin(row: $0) }
+        let layout = TimelinePinLayout(pins: pins, view: 0...10320, width: 1400, lanes: 2, showsText: true)
+        func cpu() -> Double {
+            var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        func serviceCPU() throws -> Double {
+            let process = Process(), pipe = Pipe(); process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-p", try XCTUnwrap(values["pid"]), "-o", "time="]; process.standardOutput = pipe
+            try process.run(); let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self); process.waitUntilExit()
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":").reduce(0) { $0 * 60 + (Double($1) ?? 0) }
+        }
+        var samples: [[String: Any]] = []
+        func measure(_ name: String, call: Int, _ work: () throws -> Int) rethrows {
+            let cpuStart = cpu(), start = ProcessInfo.processInfo.systemUptime
+            let count = try work()
+            samples.append(["path": name, "call": call, "wallSeconds": ProcessInfo.processInfo.systemUptime - start, "cpuSeconds": cpu() - cpuStart, "count": count])
+        }
+        let question = try XCTUnwrap(rows.rows.first(where: \.isQuestion))
+        let fields = ReviewRowsPatch.Fields.Value(title: record.title, project: record.project, labels: record.labels, speakerLabels: record.speakers.labels)
+        var after = question; after.status = "confirmed"
+        let patch = ReviewRowsPatch(meeting: meeting, changes: [.init(id: question.id, before: question, after: after)], order: rows.rows.map(\.id),
+                                    hidden: .init(before: rows.hidden, after: rows.hidden), fields: .init(before: fields, after: fields))
+        for call in 1...2 {
+            measure("row patch", call: call) { patch.applying(to: rows, token: "probe", latest: [:]).rows.count }
+            measure("voice picker", call: call) { ListenVoicesEditor.offeredPeople(people, row: question, everybody: false).count }
+            measure("pin layout", call: call) { layout.make().count }
+            measure("raised lines", call: call) { var flash = RaisedLineFlash(); _ = flash.receive(rows, enabled: true); return flash.receive(rows, enabled: true).count }
+            let detail = MeetingDetailModel(id: meeting, window: nil, service: service); detail.rows = .loading(previous: nil)
+            measure("reopen cached rows", call: call) { detail.rowsForReopen.value?.rows.count ?? 0 }
+            let serverStart = try serviceCPU(), start = ProcessInfo.processInfo.systemUptime
+            detail.readRows(quiet: true)
+            let deadline = ProcessInfo.processInfo.systemUptime + 30
+            while detail.rows.isLoading, ProcessInfo.processInfo.systemUptime < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertNotNil(detail.rows.value)
+            samples.append(["path": "reopen refresh", "call": call, "wallSeconds": ProcessInfo.processInfo.systemUptime - start, "cpuSeconds": try serviceCPU() - serverStart])
+            detail.cancelReads()
+        }
+        try JSONSerialization.data(withJSONObject: ["rows": rows.rows.count, "pins": pins.count, "samples": samples], options: [.sortedKeys, .prettyPrinted]).write(to: URL(fileURLWithPath: output))
+    }
 }
