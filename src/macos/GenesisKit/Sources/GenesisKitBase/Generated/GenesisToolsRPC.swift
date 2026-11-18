@@ -683,15 +683,16 @@ public enum AppBuildResult: Codable, Sendable {
 
 public enum WindowsOpenParamsWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
-    case value9 = "--permission-dialog"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
+    case value10 = "--permission-dialog"
 }
 
 public struct WindowsOpenParams: Codable, Sendable {
@@ -728,15 +729,16 @@ public enum WindowsOpenResultOption0Status: String, Codable, Sendable {
 
 public enum WindowsOpenResultOption0ValueWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
-    case value9 = "--permission-dialog"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
+    case value10 = "--permission-dialog"
 }
 
 public enum WindowsOpenResultOption0ValueOpened: Codable, Sendable {
@@ -943,14 +945,15 @@ public enum PersonAskParamsKind: String, Codable, Sendable {
 
 public enum PersonAskParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonAskParamsOpen: Codable, Sendable {
@@ -1255,14 +1258,15 @@ public enum PersonConfirmParamsKind: String, Codable, Sendable {
 
 public enum PersonConfirmParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonConfirmParamsOpen: Codable, Sendable {
@@ -1831,14 +1835,15 @@ public enum PersonNoticeResult: Codable, Sendable {
 
 public enum PersonWindowNoticeParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonWindowNoticeParamsOpen: Codable, Sendable {
@@ -2139,14 +2144,15 @@ public enum PersonShowWindowParamsKind: String, Codable, Sendable {
 
 public enum PersonShowWindowParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonShowWindowParamsOpen: Codable, Sendable {
@@ -2463,14 +2469,15 @@ public enum PersonNotifyThenAskParamsKind: String, Codable, Sendable {
 
 public enum PersonNotifyThenAskParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonNotifyThenAskParamsOpen: Codable, Sendable {
@@ -2787,14 +2794,15 @@ public enum PersonAskNowParamsKind: String, Codable, Sendable {
 
 public enum PersonAskNowParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonAskNowParamsOpen: Codable, Sendable {
@@ -3111,14 +3119,15 @@ public enum PersonAskElseNotifyParamsKind: String, Codable, Sendable {
 
 public enum PersonAskElseNotifyParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonAskElseNotifyParamsOpen: Codable, Sendable {
@@ -3435,14 +3444,15 @@ public enum TerminalPromptParamsKind: String, Codable, Sendable {
 
 public enum TerminalPromptParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct TerminalPromptParamsOpen: Codable, Sendable {
@@ -5064,14 +5074,15 @@ public enum RequestsPostParamsInputKind: String, Codable, Sendable {
 
 public enum RequestsPostParamsInputOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsPostParamsInputOpen: Codable, Sendable {
@@ -5152,14 +5163,15 @@ public enum RequestsPostResultRequestKind: String, Codable, Sendable {
 
 public enum RequestsPostResultRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsPostResultRequestOpen: Codable, Sendable {
@@ -5248,14 +5260,15 @@ public enum RequestsPostResultEventsItemOption0RequestKind: String, Codable, Sen
 
 public enum RequestsPostResultEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsPostResultEventsItemOption0RequestOpen: Codable, Sendable {
@@ -5780,14 +5793,15 @@ public enum RequestsGetResultRequestKind: String, Codable, Sendable {
 
 public enum RequestsGetResultRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsGetResultRequestOpen: Codable, Sendable {
@@ -5876,14 +5890,15 @@ public enum RequestsGetResultEventsItemOption0RequestKind: String, Codable, Send
 
 public enum RequestsGetResultEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsGetResultEventsItemOption0RequestOpen: Codable, Sendable {
@@ -6408,14 +6423,15 @@ public enum RequestsListResultItemRequestKind: String, Codable, Sendable {
 
 public enum RequestsListResultItemRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsListResultItemRequestOpen: Codable, Sendable {
@@ -6504,14 +6520,15 @@ public enum RequestsListResultItemEventsItemOption0RequestKind: String, Codable,
 
 public enum RequestsListResultItemEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsListResultItemEventsItemOption0RequestOpen: Codable, Sendable {
@@ -7200,14 +7217,15 @@ public enum RequestPresentParamsKind: String, Codable, Sendable {
 
 public enum RequestPresentParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestPresentParamsOpen: Codable, Sendable {
@@ -7352,14 +7370,15 @@ public enum RequestChangedEventRequestKind: String, Codable, Sendable {
 
 public enum RequestChangedEventRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestChangedEventRequestOpen: Codable, Sendable {
@@ -7448,14 +7467,15 @@ public enum RequestChangedEventEventsItemOption0RequestKind: String, Codable, Se
 
 public enum RequestChangedEventEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestChangedEventEventsItemOption0RequestOpen: Codable, Sendable {
