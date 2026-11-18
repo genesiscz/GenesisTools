@@ -1,10 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { launcherConfigForSavedCommand } from "@genesiscz/utils/bun/launcher-config";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type PriorityTools, priorityShellArgv } from "@genesiscz/utils/process/priority";
 import { taskWorkingDir } from "./config";
 import { taskLogDirName } from "./run-log-name";
 import type { DaemonTask, RunContext, RunResult, TaskPriority } from "./types";
@@ -87,43 +88,13 @@ async function streamLines(
     }
 }
 
-const PERL = "/usr/bin/perl";
-const TASKPOLICY = "/usr/sbin/taskpolicy";
-
 /**
- * Lifts the process out of darwin background (`setpriority(PRIO_DARWIN_PROCESS, 0, 0)`, PRIO_DARWIN_PROCESS = 4),
- * then execs the task. A process may clear its own background state even when it inherited it, which `taskpolicy -B`
- * cannot do for another process (measured 2026-10-12: a `taskpolicy -b` child stays at priority 4 after
- * `taskpolicy -B -p`, and reaches 31 after clearing its own).
+ * The argv a task runs with, by priority (`priorityShellArgv`, src/utils/process/priority.ts). The launchd job is
+ * `ProcessType=Standard` (launchd.ts); a plist installed before that is `Background`, and then every child inherits
+ * background QoS (throttled CPU and disk), which `high` clears.
  */
-const RAISE_FROM_BACKGROUND =
-    'setpriority(4, 0, 0) or warn "setpriority: $!\\n"; exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\\n"';
-
-/**
- * The argv a task runs with, by priority. The launchd job is `ProcessType=Standard` (launchd.ts); a plist installed
- * before that is `Background`, and then every child inherits background QoS (throttled CPU and disk):
- * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS is. Without /usr/sbin/taskpolicy (any
- *   system but macOS) it runs as `normal`.
- * - `normal`: the daemon's QoS.
- * - `high`: the child clears any inherited background state before the command starts, so it is never throttled.
- *   Without /usr/bin/perl it runs as `normal`.
- */
-export function taskArgv(
-    command: string,
-    priority: TaskPriority,
-    onDisk = { perl: existsSync(PERL), taskpolicy: existsSync(TASKPOLICY) }
-): string[] {
-    const shell = ["sh", "-c", command];
-
-    if (priority === "low" && onDisk.taskpolicy) {
-        return [TASKPOLICY, "-b", ...shell];
-    }
-
-    if (priority === "high" && onDisk.perl) {
-        return [PERL, "-e", RAISE_FROM_BACKGROUND, ...shell];
-    }
-
-    return shell;
+export function taskArgv(command: string, priority: TaskPriority, onDisk?: PriorityTools): string[] {
+    return priorityShellArgv(command, priority, onDisk);
 }
 
 export async function runTask(
