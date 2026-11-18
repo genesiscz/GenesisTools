@@ -439,7 +439,8 @@ export interface PendingToolCall {
 /** What a file under a session root is (`NativeSessionReader.classifyPath`). */
 export interface SessionPathRole {
     /** Whose file it is: a session's own, or one of its sub-agents' (written beside the session, Claude). */
-    owner: "session" | "subagent";
+    owner: "session" | "subagent" | "teammate";
+    teamName?: string;
     /** The transcript itself, or a metadata file beside it (a sub-agent's `.meta.json`, Grok's `summary.json`). */
     file: "transcript" | "sidecar";
     /** The session the file belongs to (a sub-agent's own id); null when the path names none (an index of many). */
@@ -569,7 +570,7 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * and the hub asks it for a sub-agent's lead instead of slicing the path. The cases are pinned by the shared
      * fixtures in `readers/fixtures/session-paths.json`.
      */
-    classifyPath(relativePath: string): SessionPathRole | null;
+    classifyPath(relativePath: string, root?: string): SessionPathRole | null;
     /**
      * The session that started this one, or null for a session nobody spawned or a provider whose files name no
      * spawner. Codex reads its rollout's `session_meta` header (`codexSpawnLink`, which the usage context shares);

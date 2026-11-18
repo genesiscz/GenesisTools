@@ -140,6 +140,7 @@ const GROK_CHAT_FILES = ["chat_history.jsonl", "chatHistory.jsonl"];
  * session's event, signal and rewind files change constantly and index nothing.
  */
 export function grokClassifyPath(relativePath: string): SessionPathRole | null {
+    // Grok has no on-disk teammate transcripts.
     const parts = relativePath.split(/[/\\]/);
     const name = parts.at(-1) ?? "";
     const sessionId = parts.length >= 2 ? (parts.at(-2) ?? null) : null;

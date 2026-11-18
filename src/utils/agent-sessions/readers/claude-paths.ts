@@ -1,7 +1,11 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { resolveProjectNameFromEncoded } from "@genesiscz/utils/claude/projects";
+import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
+import { nonEmptyString } from "@genesiscz/utils/string";
 import type { NativeSessionSource, SessionPathRole, SpawnLink } from "../types";
 import {
     type ClaudeSubagentFile,
@@ -164,8 +168,30 @@ function isConversationFile(parts: readonly string[]): boolean {
     );
 }
 
-/** `NativeSessionReader.classifyPath` for Claude: a path relative to a `projects` root. */
-export function claudeClassifyPath(relativePath: string): SessionPathRole | null {
+export function readClaudeSubagentMeta(path: string): Record<string, unknown> {
+    try {
+        const value: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        return isObject(value) ? value : {};
+    } catch (error) {
+        if (!isMissingPathError(error)) {
+            logger.debug({ error, path }, "[transcripts] unreadable sub-agent meta");
+        }
+
+        return {};
+    }
+}
+
+export function claudeAgentOwner(meta: Record<string, unknown>): { owner: "subagent" | "teammate"; teamName?: string } {
+    const teamName = nonEmptyString(meta.teamName);
+    if (meta.taskKind === "in_process_teammate" || teamName) {
+        return { owner: "teammate", ...(teamName ? { teamName } : {}) };
+    }
+
+    return { owner: "subagent" };
+}
+
+/** With a projects root, reads the direct agent's sidecar to distinguish a member of a team. */
+export function claudeClassifyPath(relativePath: string, root?: string): SessionPathRole | null {
     const parts = relativePath.split(/[/\\]/);
     const name = parts.at(-1) ?? "";
 
@@ -194,7 +220,11 @@ export function claudeClassifyPath(relativePath: string): SessionPathRole | null
 
     if (parts.length === 4 && (name.endsWith(".jsonl") || name.endsWith(".json"))) {
         return {
-            owner: "subagent",
+            ...claudeAgentOwner(
+                root && agent?.[1]
+                    ? readClaudeSubagentMeta(claudeSubagentFiles(join(root, ...parts.slice(0, -1)), agent[1]).meta)
+                    : {}
+            ),
             file: name.endsWith(".jsonl") ? "transcript" : "sidecar",
             sessionId: agent?.[1] ?? name.replace(/\.(jsonl|json)$/, ""),
             parentSessionId,
@@ -223,7 +253,7 @@ export async function claudeReadSpawnLink(
 ): Promise<SpawnLink | null> {
     const role = claudeClassifyPath(relative(source.root, source.filePath));
 
-    if (role?.owner === "subagent" && role.file === "transcript" && role.parentSessionId) {
+    if (role && role.owner !== "session" && role.file === "transcript" && role.parentSessionId) {
         return { parentSessionId: role.parentSessionId };
     }
 

@@ -275,6 +275,7 @@ export function isCodexRolloutPath(path: string): boolean {
 
 /** `NativeSessionReader.classifyPath` for Codex: a rollout, plain or compressed, under a session root. */
 export function codexClassifyPath(relativePath: string): SessionPathRole | null {
+    // Codex has child threads but no teammate transcripts.
     const name = relativePath.split(/[/\\]/).at(-1) ?? "";
 
     return isCodexRolloutPath(name)
