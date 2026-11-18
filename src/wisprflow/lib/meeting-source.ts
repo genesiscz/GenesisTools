@@ -8,6 +8,7 @@ import {
     dictionaryCandidates,
     listLocalCalendar,
     listLocalFolders,
+    listLocalMeetings,
     liveLocalMeeting,
     localAvailable,
     localMeetingFolders,
@@ -196,6 +197,23 @@ export const wisprflowSource: TranscriptSource = {
 
     async folders() {
         return localAvailable() ? listLocalFolders() : null;
+    },
+
+    async meetingsBetween(range) {
+        // The app's local copy lists meetings without a network call; the MCP is not asked for a picker.
+        if (!localAvailable()) {
+            return null;
+        }
+
+        return listLocalMeetings({ since: range.from.toISOString(), until: range.to.toISOString(), limit: 50 }).map(
+            (meeting) => ({
+                sourceMeetingId: meeting.id,
+                title: meeting.title,
+                start: meeting.start,
+                ...(meeting.end ? { end: meeting.end } : {}),
+                hasTranscript: meeting.hasTranscript,
+            })
+        );
     },
 
     async meetingFolders(sourceMeetingId) {
