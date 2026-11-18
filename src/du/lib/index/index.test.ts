@@ -30,8 +30,11 @@ import {
 } from "@app/macos/lib/kit-fixtures";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
+import { Command } from "commander";
 import { scanWithC } from "../engine";
+import { humanBytes } from "../format";
 import {
     applySnapshotRetention,
     buildIndex,
@@ -40,6 +43,7 @@ import {
     progressEvent,
     sweepOrphanTempFiles,
 } from "./build";
+import { registerIndexCommands } from "./commands";
 import { indexTaskStatus } from "./daemon-task";
 import { openIndexDbForWrite, setMeta, sweepDeadScans } from "./db";
 import { attributeToLeaves, diffIndex } from "./diff";
@@ -1331,6 +1335,18 @@ describeOnDarwin("compressed index persistence", () => {
             }
         };
         expect(read()).toEqual({ compressed_files: 1, compressed_logical_bytes: lstatSync(plain).size });
+        const program = new Command();
+        registerIndexCommands(program);
+        const printed = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            await program.parseAsync(["index", "query", "--db", db, "--format", "human"], { from: "user" });
+            const saving = lstatSync(plain).size - lstatSync(compressed).blocks * 512;
+            expect(printed.mock.calls.flat().join("\n")).toContain(
+                `${humanBytes(saving)} saved before clone deduplication`
+            );
+        } finally {
+            printed.mockRestore();
+        }
         writeFileSync(compressed, "now plain\n");
         await updateIndex({ db, paths: [folder], minFreeBytes: 0 });
         expect(read()).toEqual({ compressed_files: 0, compressed_logical_bytes: 0 });

@@ -1,7 +1,15 @@
 import { homedir } from "node:os";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import pc from "picocolors";
-import type { ClonesizeResult, CloudBackedResult, Engine, NodeResult, PartnersResult, VolumeInfo } from "./types";
+import type {
+    ClonesizeResult,
+    CloudBackedResult,
+    CompressedTotals,
+    Engine,
+    NodeResult,
+    PartnersResult,
+    VolumeInfo,
+} from "./types";
 
 export function humanBytes(b: number): string {
     const KB = 1024,
@@ -181,6 +189,11 @@ export function shellQuote(p: string): string {
     return /^[\w./@:-]+$/.test(p) ? p : `'${p.replaceAll("'", `'\\''`)}'`;
 }
 
+export function compressionLine(totals: CompressedTotals, format: (bytes: number) => string): string {
+    const saved = Math.max(0, totals.logical_bytes - totals.allocated_bytes);
+    return `Transparent compression: ${totals.files} files, ${format(totals.logical_bytes)} logical, ${format(totals.allocated_bytes)} allocated, ${format(saved)} saved before clone deduplication`;
+}
+
 /** Pretty, human-first rendering of a scan result. */
 export function renderHuman(r: ClonesizeResult, engine: Engine, elapsedMs?: number): string {
     const L: string[] = [];
@@ -188,9 +201,7 @@ export function renderHuman(r: ClonesizeResult, engine: Engine, elapsedMs?: numb
 
     L.push(pc.bold(`Clone-aware disk usage — ${r.path}`));
     if (r.compressed && r.compressed.files > 0) {
-        L.push(
-            `Transparent compression: ${r.compressed.files} files, ${humanBytes(r.compressed.logical_bytes)} logical, ${humanBytes(r.compressed.allocated_bytes)} allocated, ${humanBytes(Math.max(0, r.compressed.logical_bytes - r.compressed.allocated_bytes))} saved before clone deduplication`
-        );
+        L.push(compressionLine(r.compressed, humanBytes));
     }
     const meta: string[] = [`${r.files_scanned.toLocaleString()} files`, `${engine} engine`, `${r.threads} threads`];
     if (elapsedMs !== undefined) {
@@ -409,9 +420,7 @@ export function renderVolume(vol: VolumeInfo, scan: ClonesizeResult, elapsedMs?:
 
     L.push(pc.bold(`Volume reconcile — ${vol.mount}`));
     if (scan.compressed && scan.compressed.files > 0) {
-        L.push(
-            `Transparent compression: ${scan.compressed.files} files, ${humanBytesDecimal(scan.compressed.logical_bytes)} logical, ${humanBytesDecimal(scan.compressed.allocated_bytes)} allocated`
-        );
+        L.push(compressionLine(scan.compressed, humanBytesDecimal));
     }
     const meta = [`${scan.files_scanned.toLocaleString()} files`, `${scan.threads} threads`];
     if (elapsedMs !== undefined) {
