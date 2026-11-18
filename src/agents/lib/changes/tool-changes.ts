@@ -202,8 +202,12 @@ export async function sessionTurnChanges(input: {
     count?: number;
 }): Promise<SessionTurnChanges | { error: string }> {
     const { session, file, options, count } = input;
+    // TEMPORARY (2026-11-18, PR #836): the bounded read gave the same answer but cost 29.9 s of CPU against 5.0 s for
+    // the full read on a 749 MB session (about 70 rounds per call). The full read serves every caller until the fix
+    // meets the spec's benchmark; then this guard is reverted.
+    const boundedReadReady = false;
     const changes =
-        count !== undefined && !options.turn && !options.tool
+        boundedReadReady && count !== undefined && !options.turn && !options.tool
             ? loadRecentSessionChanges({ sessionId: session, count, log: input.rows })
             : loadSessionChanges({ sessionId: session, log: input.rows });
 
