@@ -41,6 +41,7 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(task.actions, [.acknowledge, .complete, .dismiss, .send])
     }
 
+    @MainActor
     func testFormDraftsSurviveCardRecreationWithoutCrossingForms() {
         let inbox = HubInboxModel()
         let first = inbox.formDraft(for: "form-a")
