@@ -359,6 +359,27 @@ extension MeetingsPreferences {
             key: "meetings.selection.clipSec", defaultValue: 5.0, choices: [3, 5, 10],
             title: "Clip of a selection", detail: "Seconds “Clip” plays from the first selected line.")
 
+        /// The cached timestamp model "Word timings…" uses (`word-timings generate --model`); nothing is downloaded.
+        enum TimingModel: String, CaseIterable { case whisperTurbo = "onnx-community/whisper-large-v3-turbo_timestamped" }
+        static let timingModel = MeetingsWindowSetting(
+            key: "meetings.transcript.timingModel", defaultValue: TimingModel.whisperTurbo, choices: TimingModel.allCases,
+            title: "Word timings model", detail: "The cached model that times the words of a range. Nothing is downloaded.")
+        /// The language "Word timings…" listens for: the meeting's (`global.language` of the config), none (the model
+        /// detects it), or one named.
+        enum TimingLanguage: String, CaseIterable { case meeting, detect, cs, en }
+        static let timingLanguage = MeetingsWindowSetting(
+            key: "meetings.transcript.timingLanguage", defaultValue: TimingLanguage.meeting, choices: TimingLanguage.allCases,
+            title: "Word timings language", detail: "The language the model listens for when it times words.")
+
+        /// The language code the timings ask for: nil lets the model detect it.
+        static func timingLanguageCode(_ choice: TimingLanguage, meeting: String?) -> String? {
+            switch choice {
+            case .meeting: meeting
+            case .detect: nil
+            case .cs, .en: choice.rawValue
+            }
+        }
+
         /// The pause that starts a new block, nil for one block per turn.
         static func breakAfterGapSec(_ stored: Double) -> Double? { stored > 0 ? stored : nil }
     }
