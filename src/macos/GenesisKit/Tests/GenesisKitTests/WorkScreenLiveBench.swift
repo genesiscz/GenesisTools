@@ -9,6 +9,7 @@ private final class CountingSource: WorkSource {
     var reads = 0
     init(_ inner: WorkSource) { self.inner = inner }
     func projects() async throws -> [String] { try await inner.projects() }
+    func detail(ref: String) async throws -> WorkItemDetail { try await inner.detail(ref: ref) }
     func snapshot(project: String) async throws -> WorkSnapshotValue { reads += 1; return try await inner.snapshot(project: project) }
     func notify(project: String) async throws -> [WorkNotifyRow] { try await inner.notify(project: project) }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {

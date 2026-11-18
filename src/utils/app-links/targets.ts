@@ -20,6 +20,7 @@ export const HUB_LINK_KEYS = [
     "tab",
     "filter",
     "worktree",
+    "work",
     // The Inbox at one card: a decision or todo (`d_3_<session>`) or a pending form (`ask_…`).
     "decision",
     "question",

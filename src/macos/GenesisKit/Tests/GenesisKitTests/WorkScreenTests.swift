@@ -14,6 +14,7 @@ private final class FakeWorkSource: WorkSource {
     init(_ snapshot: WorkSnapshotValue) { snapshotValue = snapshot }
 
     func projects() async throws -> [String] { ["App", "Other"] }
+    func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No fixture item \(ref)") }
     func snapshot(project: String) async throws -> WorkSnapshotValue { reads += 1; return snapshotValue }
     func notify(project: String) async throws -> [WorkNotifyRow] { notifyRows }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {

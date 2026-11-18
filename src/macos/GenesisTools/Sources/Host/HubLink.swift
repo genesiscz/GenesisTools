@@ -6,7 +6,7 @@ package enum HubLink {
     /// The flags a link may carry. Never `--snapshot`, `--bench`, `--set` or `--menu`: a link is a place to
     /// show, not a file to write or a command to run.
     package static let linkKeys: Set<String> = [
-        "mode", "session", "agent", "pr", "reveal", "commit", "repo", "tab", "filter", "worktree", "decision", "question",
+        "mode", "session", "agent", "pr", "reveal", "commit", "repo", "tab", "filter", "worktree", "work", "decision", "question",
         // The Usage mode's place: `usage-account` repeats, `usage-all-accounts` is a flag (`flagKeys`).
         "usage-section", "usage-session", "usage-harness", "usage-account", "usage-all-accounts",
         // Who asked and why, for the hub's history (`tools hub nav open`): never a command, only words on an entry.

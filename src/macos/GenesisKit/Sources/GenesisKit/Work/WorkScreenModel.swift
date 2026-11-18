@@ -20,14 +20,27 @@ public final class WorkScreenModel: ObservableObject {
     @Published public var project: String? {
         didSet {
             openingCandidates = nil // A row click or history navigation takes precedence over the pending opening choice.
-            if project != oldValue {
+            if adoptingItemProject { return }
+            if project != oldValue || itemRef != nil {
+                itemRef = nil
+                itemDetail = nil
                 snapshot = nil
                 notifyRows = []
                 reload()
             }
         }
     }
-    @Published public var pane: Pane = .items { didSet { if pane != oldValue { reload() } } }
+    @Published public var pane: Pane = .items {
+        didSet {
+            if pane != oldValue {
+                if pane == .notify { itemRef = nil; itemDetail = nil }
+                reload()
+            }
+        }
+    }
+    @Published public private(set) var itemRef: String?
+    @Published public private(set) var itemDetail: WorkItemDetail?
+    private var adoptingItemProject = false
     @Published public private(set) var snapshot: WorkSnapshotValue?
     @Published public private(set) var notifyRows: [WorkNotifyRow] = []
     @Published public private(set) var isLoading = false
@@ -88,7 +101,7 @@ public final class WorkScreenModel: ObservableObject {
         opening = Task {
             guard !Task.isCancelled else { return }
             await loadProjects()
-            if !Task.isCancelled && loadToken == previousLoad { reload() }
+            if !Task.isCancelled && loadToken == previousLoad && itemRef == nil { reload() }
         }
     }
 
@@ -107,6 +120,12 @@ public final class WorkScreenModel: ObservableObject {
             let names = try await source.projects()
             guard !Task.isCancelled else { return }
             projects = names
+            if itemRef != nil {
+                // The item owns its project, even when the default project's list finishes last.
+                openingCandidates = nil
+                projectsLoaded = true
+                return
+            }
             let candidates = openingCandidates ?? [project].compactMap { $0 }
             let match = candidates.lazy.compactMap { candidate in
                 names.first { $0 == candidate } ?? names.first { $0.caseInsensitiveCompare(candidate) == .orderedSame }
@@ -116,14 +135,32 @@ public final class WorkScreenModel: ObservableObject {
             if project != next { project = next }
         } catch {
             guard !Task.isCancelled else { return }
-            failure = error.localizedDescription
+            if itemRef == nil { failure = error.localizedDescription }
         }
         projectsLoaded = true
     }
 
+    public func openItem(_ ref: String) {
+        itemRef = ref
+        itemDetail = nil
+        failure = nil
+        if pane == .items { reload() } else { pane = .items }
+    }
+
+    public func closeItem() {
+        guard itemRef != nil else { return }
+        itemRef = nil
+        itemDetail = nil
+        failure = nil
+        if project == nil, let first = projects.first { project = first }
+        else { reload() }
+    }
+
     public func reload() {
         loading?.cancel()
-        guard let project else {
+        let project = project
+        let ref = itemRef
+        guard project != nil || ref != nil else {
             loading = nil
             isLoading = false
             return
@@ -137,12 +174,22 @@ public final class WorkScreenModel: ObservableObject {
         loading = Task { [weak self] in
             guard let self else { return }
             do {
-                switch pane {
-                case .items:
+                if let ref {
+                    let detail = try await self.source.detail(ref: ref)
+                    guard !Task.isCancelled, self.itemRef == ref else { return }
+                    self.adoptingItemProject = true
+                    if self.project != detail.item.project {
+                        self.snapshot = nil
+                        self.notifyRows = []
+                        self.project = detail.item.project
+                    }
+                    self.adoptingItemProject = false
+                    self.itemDetail = detail
+                } else if let project, pane == .items {
                     let next = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
                     self.snapshot = next
-                case .notify:
+                } else if let project {
                     let rows = try await self.source.notify(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
                     self.notifyRows = rows
