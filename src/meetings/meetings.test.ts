@@ -1626,6 +1626,22 @@ test.each([
     }
 );
 
+test("an unreadable Screen Recording grant reports the original error even with sound fallback disabled", async () => {
+    const read = spyOn(await import("@app/control/lib/permissions"), "readLivePermissions").mockReturnValue({
+        live: null,
+        error: "fixture helper returned an incomplete envelope",
+    });
+    try {
+        const { ensureScreenRecording } = await import("./lib/grants");
+        const result = await ensureScreenRecording({ quiet: true });
+        expect(result.granted).toBe(false);
+        expect(result.message).toContain("could not read the grant");
+        expect(result.message).toContain("fixture helper returned an incomplete envelope");
+    } finally {
+        read.mockRestore();
+    }
+});
+
 test("record start chooses frames only on a positive live grant and preserves the read error", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "meeting-grant-"));
     await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
@@ -2478,6 +2494,47 @@ describe("watchOnce", () => {
         expect(messages[0]).toContain("tools macos permissions ui");
         expect(banners).toBe(2);
         expect((await recordingAutostart("status", reopened)).lastFailure?.confirmed).toBe(true);
+    });
+
+    test("a lost inbox receipt is recovered without a duplicate and the autostart command prints the failure", async () => {
+        const home = mkdtempSync(join(tmpdir(), "meeting-alert-receipt-"));
+        const logBase = join(home, "question-log");
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, QUESTION_LOG_BASE: logBase }, async () => {
+            const { registerWatchCommands } = await import("./commands/watch");
+            const { sendInboxMessage } = await import("@app/question/lib/message");
+            const store = new MeetingStore();
+            const h = harness({
+                run: async () => ({ success: false, exitCode: 1, stderr: "Microphone permission denied" }),
+                inbox: async (title, text, sessionHint) => {
+                    await sendInboxMessage(
+                        { title, text, sessionHint, source: "cli", interrupt: false },
+                        { env: {}, logBase, config: { sinks: { obsidian: false, sound: false, notify: false } } }
+                    );
+                    throw new Error("fixture stopped between append and receipt");
+                },
+            });
+            expect(await watchOnce(store, { deps: h.deps, now })).toBe("failed");
+            expect(readdirSync(logBase)).toHaveLength(1);
+            // A fresh watcher uses the actual question-log reader to find the existing card.
+            delete h.deps.inbox;
+            await watchOnce(new MeetingStore(), { deps: h.deps, now: now + 60_000 });
+            const rows = readFileSync(join(logBase, readdirSync(logBase)[0]), "utf8")
+                .trim()
+                .split("\n");
+            expect(rows).toHaveLength(1);
+            const cli = new Command();
+            registerWatchCommands(cli);
+            const warning = spyOn(ui, "warn").mockImplementation(() => {});
+            try {
+                await cli.parseAsync(["autostart"], { from: "user" });
+                const printed = String(warning.mock.calls[0]?.[0]);
+                expect(printed).toContain("Last recording failure at");
+                expect(printed).toContain("Planning: Microphone permission denied");
+                expect(printed).toContain("Notification delivery: confirmed");
+            } finally {
+                warning.mockRestore();
+            }
+        });
     });
 
     test("sound-only autostart posts one partial-start notice and records who owns the running recorder", async () => {

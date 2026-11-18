@@ -111,7 +111,9 @@ export class MeetingRun {
             startedAt: new Date().toISOString(),
             display: policy,
             backend: deps.recorder.id,
-            ...(options.withoutScreen ? { withoutScreen: options.withoutScreen } : {}),
+            ...(options.withoutScreen
+                ? { withoutScreen: options.withoutScreen, warning: `Screen frames omitted: ${options.withoutScreen}` }
+                : {}),
             frames: 0,
             bytes: 0,
         };

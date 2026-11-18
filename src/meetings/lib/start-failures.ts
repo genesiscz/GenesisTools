@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { sendInboxMessage } from "@app/question/lib/message";
+import { queryEntriesSnapshot } from "@app/question/lib/read-model";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { jsonDocument } from "@genesiscz/utils/storage/locked-document";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 
 const { log } = logger.scoped("meetings-start");
@@ -17,6 +20,7 @@ const failureSchema = z.object({
     partial: z.boolean(),
     fix: z.string(),
     inboxId: z.string().optional(),
+    inboxSession: z.string().optional(),
     confirmed: z.boolean().default(false),
     attemptedAt: z.number().optional(),
 });
@@ -38,23 +42,40 @@ export function lastStartFailure(store: MeetingStore): Failure | undefined {
     return failures.find((row) => row.key === latest);
 }
 
+export function hasPendingStartAlerts(store: MeetingStore): boolean {
+    return history(store)
+        .read()
+        .failures.some((row) => !row.confirmed || !row.inboxId);
+}
+
 interface Delivery {
-    inbox(title: string, text: string): Promise<string>;
+    inbox(title: string, text: string, session: string, retry: boolean): Promise<string>;
     banner(title: string, meeting: string, text: string): Promise<boolean>;
 }
 
 export const startFailureDelivery: Delivery = {
-    inbox: async (title, text) =>
-        (
+    inbox: async (title, text, session, retry) => {
+        // A crash can come after the question log append but before our receipt was saved.
+        if (retry) {
+            const [posted] = queryEntriesSnapshot({
+                dbPath: toolDataDir("question", "qa.db"),
+                opts: { sessionId: session, tag: "message", limit: 1 },
+            });
+            if (posted) {
+                return posted.id;
+            }
+        }
+        return (
             await sendInboxMessage({
                 title,
                 text,
                 agentLabel: "Meetings",
-                sessionHint: "meetings-recorder",
+                sessionHint: session,
                 source: "cli",
                 interrupt: false,
             })
-        ).id,
+        ).id;
+    },
     banner: async (title, meeting, message) =>
         (await sendNotification({ title, subtitle: meeting, message, group: "meetings" })).confirmed,
 };
@@ -106,11 +127,19 @@ export async function deliverStartFailures(
                         }
                     });
                 const title = row.partial ? "Meeting recording is incomplete" : "Meeting not recorded";
-                const text = `${row.meeting}: ${row.problem}\nRun: ${row.fix}`;
-                await save({ attemptedAt: now });
+                const text = `${row.meeting}: ${row.problem}${row.problem.includes(row.fix) ? "" : `\nRun: ${row.fix}`}`;
+                const session = row.inboxSession ?? `meetings-recorder-${randomUUID()}`;
+                await save({ attemptedAt: now, inboxSession: session });
                 if (!row.inboxId) {
                     try {
-                        await save({ inboxId: await delivery.inbox(`${title}: ${row.meeting}`, text) });
+                        await save({
+                            inboxId: await delivery.inbox(
+                                `${title}: ${row.meeting}`,
+                                text,
+                                session,
+                                row.attemptedAt !== undefined
+                            ),
+                        });
                     } catch (err) {
                         log.error({ err, meeting: row.meeting }, "recording failure inbox delivery failed");
                     }

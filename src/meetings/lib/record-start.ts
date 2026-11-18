@@ -55,7 +55,7 @@ async function meetingToRecord(
     store: MeetingStore,
     opts: { meeting?: string; source?: string; title?: string; project?: string; yes?: boolean }
 ): Promise<MeetingRecord> {
-    const config = new MeetingsConfigStore();
+    const config = new MeetingsConfigStore(store.storage);
 
     if (opts.meeting) {
         const record = store.resolve(opts.meeting);

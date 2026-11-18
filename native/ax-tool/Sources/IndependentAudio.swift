@@ -2,6 +2,7 @@ import AVFoundation
 import CoreAudio
 import CoreMedia
 import Foundation
+import SnapshotSupport
 
 private func audioInputError(_ message: String) -> NSError {
     NSError(domain: "ax-tool.audio-input", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -37,7 +38,7 @@ final class IndependentAudio: NSObject, AVCaptureAudioDataOutputSampleBufferDele
             session.startRunning()
             guard session.isRunning else { throw audioInputError("Microphone capture did not start.") }
             microphone = session
-            interruption = NotificationCenter.default.addObserver(forName: .AVCaptureSessionRuntimeError,
+            interruption = NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
                 object: session, queue: nil) { [weak self] note in
                 let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
                 self?.audio.failed?(error?.localizedDescription ?? "Microphone capture stopped.")

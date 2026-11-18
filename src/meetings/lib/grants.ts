@@ -36,15 +36,6 @@ function identityNow(): { identity: string; granted: boolean | undefined; microp
     return { identity, granted: live.screenRecording, microphone: live.microphone };
 }
 
-/**
- * Screen Recording for whoever captures, by the classic route first. Without it macOS returns frames with only the
- * desktop and the menu bar, so a recording never starts without it.
- * 1. Granted: go.
- * 2. Otherwise, in a terminal: ask macOS for that identity (its own prompt and the System Settings pane), wait for it.
- * 3. Still missing, GenesisTools.app installed: its permission window opens, and the grant is read for 3 minutes.
- * 4. Not installed and the terminal has no grant: say so, and propose installing the app and granting it.
- * Without a terminal (the daemon) nothing prompts: the outcome says what to run.
- */
 /** Reads the grant until it is on or the deadline passes; the window returns at once, the user takes a while. */
 async function waitForGrant(timeoutMs: number): Promise<ReturnType<typeof identityNow>> {
     const deadline = Date.now() + timeoutMs;
@@ -67,6 +58,7 @@ function unavailable(read: ReturnType<typeof identityNow>): GrantOutcome {
     return { granted: false, identity: read.identity, message: reason };
 }
 
+/** Missing or unreadable screen access rules out frame capture. Sound-only and unattended starts return immediately. */
 export async function ensureScreenRecording(
     options: { quiet?: boolean; allowSoundOnly?: boolean } = {}
 ): Promise<GrantOutcome> {
