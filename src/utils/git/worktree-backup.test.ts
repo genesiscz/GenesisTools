@@ -295,7 +295,7 @@ describe("worktree backup", () => {
         const result = await backupWorktree({ path: spare, remove: true, readUsers, backupRoot, now });
 
         expect(result.plan.locked).toBe("busy");
-        expect(result.refusal).toContain("locked (busy)");
+        expect(result.refusal).toContain("Locked: busy");
         expect(result.folder).toBeNull();
         expect(existsSync(spare)).toBe(true);
     });

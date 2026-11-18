@@ -201,7 +201,8 @@ export function worktreeUseBlockers(facts: WorktreeUse): Blocker[] {
     if (facts.locked !== null) {
         blockers.push({
             kind: "locked",
-            text: `The worktree is locked${facts.locked ? ` (${facts.locked})` : ""}; unlock it first.`,
+            // "Locked:" is a contract: GenesisClaude's build-purge lifts a stale lock by this prefix.
+            text: `Locked: ${facts.locked || "no reason given"}`,
         });
     }
     if (facts.processesError) {
