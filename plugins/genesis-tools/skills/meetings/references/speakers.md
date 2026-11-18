@@ -119,6 +119,11 @@ model, compare all three tracks, score remote voices and enrol a confirmed call 
 labelled unverified. The REPL Meeting handle offers `acousticInspect`, `acousticClip`, `acousticCollect`, `voiceScore`,
 `voiceEnroll` and `voiceCollect`, using the same service methods as CLI and native clients.
 
+For project voice naming, follow the seats and voices step in pass 1 of the skill. Check each occupied seat in the
+`voice` field of raw evidence. When exactly one person on the seat has no sample, the voice pass can propose them
+by exclusion. The person must be present throughout the line. The voice must sound different from every enrolled
+seat-mate there, and the proposed lines must form one voice. Listen to confirm the name.
+
 ## Inputs the agent still gathers
 
 1. **The roles. Ask the user before scoring**: who is the analyst, the architect, the backend and frontend developers,

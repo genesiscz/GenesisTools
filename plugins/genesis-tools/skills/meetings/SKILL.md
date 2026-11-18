@@ -23,20 +23,23 @@ every command. The judgement lives here.
 
 Both modes share the meeting record, its items and `tools meetings listen`.
 
+For an isolated store, prefix **every command** with the same `GENESIS_TOOLS_HOME`, including reads, playback and the
+answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home tools meetings show <meeting> --json`.
+
 ## Procedure (three-pass)
 
 1. **Export raw, never edit it.** `tools wisprflow meetings export <id> --dir <topic>/meetings/<date>-wisprflow
    --timestamps`. The raw `Transcript.md`, `Summary.md` and `meeting.json` stay next to the
    polished file. Details: [wisprflow.md](references/wisprflow.md).
-2. **Set the project first.** After creating or linking the record, inspect its project and set it with
-   `tools meetings set <meeting> --project <name>` before evidence, suggestions or term passes. Confirm each person's
-   join and leave window from `evidence --raw` before pass 2. Unknown indicator intervals are missing evidence.
-   **Pass 1, the tool collects the facts.** `tools meetings new --source wisprflow:<id>` builds the meeting record
-   (transcript, people, calendar entry, attendance and `sections[]` from the meeting platform). `tools meetings
+2. **Pass 1, collect the facts.** Create or link the record with
+   `tools meetings new --source wisprflow:<id> --project <name>`. For an existing record, check its project and set
+   it with `tools meetings set <meeting> --project <name>`. Confirm each person's join and leave window from
+   `evidence --raw` before pass 2. Unknown indicator intervals are missing evidence.
+   The record links the transcript, people, calendar entry, attendance and platform sections. `tools meetings
    evidence <meeting> --raw` prints the facts per line (label and its origin, text, microphone share, the people shown
    speaking or muted, who was present) and, for the terms, the vocabulary, the runs that sound like a vocabulary term
-   and the words no layer of the word check knows, each with its verdict (`--word-check hunspell` by default). Its
-   `terms.documents` lists, for the meeting's context documents, each passage that reads a document line aloud
+   and the words no layer of the word check knows, each with its verdict. The check uses each language's configured
+   provider unless you pass `--word-check`. The `terms.documents` field lists each passage that reads a document line aloud
    (`readAloud`: the heard words, the line and its text) and each spoken path or identifier (`identifiers`). It has
    no rule weights and no confidence.
    Every timed line has `channel.micShare`, `null` when unknown. `meeting.labels` includes first own indicator/join
@@ -48,7 +51,28 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    The first flag uses the meeting start, not its end. Both save the chosen text and full commit inside the record;
    later file changes, deletion and duplication retain it. Check `evidence <meeting> --raw` for the expected
    `terms.documents.readAloud` and `terms.documents.identifiers`. Without either flag, the ordinary file-reference
-   fallback still applies. Check the project dictionary (`tools meetings dictionary show`). **Ask the user for each person's role and who sat at the user's microphone, who was remote, and when remote people joined or left** before you judge anything. Store explicit project roles and aliases, and meeting seats; unknown roles remain unknown.
+   fallback still applies. Check the project dictionary with `tools meetings dictionary show --project <p>`.
+   Ask the user about missing roles, aliases and uncertain join or leave times. Keep unknown roles open.
+
+   **Seats and voices. Strongly recommended before pass 2.**
+
+   - Run `tools meetings seats <meeting>` and read the reasons. Someone listed in the call may have sat in the room.
+     Run `tools meetings seats <meeting> --apply` to save the suggestion when seats are missing. Ask where anyone
+     marked unsure sat. Use `--room` and `--remote` for corrections. Use `--replace` to change saved seats.
+   - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`.
+     `people` counts project samples per attendee. `ready` means seats are set and each occupied side of the recording
+     has samples from at least one person on that side. Without seats or usable samples, voice naming is off and
+     people in the room or on the call can stay unnamed.
+   - Run `tools meetings voices backfill --project <p>` to recover samples from earlier speaker answers and names
+     proposed by voice that a person confirmed individually. To select meetings directly, pass their IDs in place of
+     `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
+     to see counts per meeting and person. Repeating the command counts existing samples separately.
+   - Run `tools meetings voices preview <meeting>`. Check proposed names, times and refusals. The pass can also
+     use certain lines from this meeting as temporary samples. It excludes the line it is scoring. A person without
+     a sample can still be proposed if they are the only such person present on that seat, the voice clearly matches
+     none of the enrolled seat-mates, and the lines sound like one speaker. Check that suggestion by ear.
+     Run `tools meetings voices apply <meeting>` to save the speaker suggestions for review.
+
 3. **Pass 2, the agent judges.**
    First run `meeting.items.byChannel({ label, dryRun: true })` with the stored seats, or `tools meetings items by-channel <meeting> --label <label> --dry-run`. Inspect the plan before applying with `dryRun: false`. The shipped `meetings-attribute-by-mic` REPL preset takes meeting, label, room, remote and dryRun parameters. When a line refers to something on the screen, read `screen --at` before attributing the idea.
    Attribute speakers with [speakers.md](references/speakers.md), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
@@ -108,15 +132,19 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    <sha>:<path>`), and use a later version for spelling only, never for who said what.
 4. **Pass 3, the user listens.** Give the user `tools meetings listen <meeting>`: it shows one question, plays its clip
    with a tone before the asked words, and waits for the answer; Esc goes back one step and undoes only what the
-   previous answer changed, so your own `items add` during the round stays. Name a question by its number, `Q12`, in
-   `listen --item`, `confirm` and `reject`; `tools meetings items` shows it in the `Q` column. To relay an answer the
+   previous answer changed, so your own `items add` during the round stays. Use `tools meetings listen <meeting> --item <Q12|id>`
+   to ask one question. Find its number in the `Q` column of `tools meetings items <meeting>`. Listen reuses a
+   person's answer when it covers every line, including answers on the source meeting of a copy. It asks about
+   conflicting answers, partial coverage and lines the user has yet to decide. Use `--ask-known` to hear known
+   questions again. Spot-check results report the reused and newly asked answers separately. To relay an answer the
    user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
    background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
    so you act on each answer while the user is still listening. Do not poll the record. When the user reviews in the
    Meetings window, add `--with-comments --follow`: the comments the user sends from a transcript selection arrive on
    the same stream (`"type": "comment"`, with the text, the selected words and the transcript `target`; answer lines
    then carry `"type": "answer"`), and the window names you as the listener while the command runs. Read each comment
-   as an instruction for that passage. `tools meetings rows <meeting> --json` shows the questions as the window does.
+   after acknowledging it with `tools meetings comments read <meeting> <id>`. If the user withdrew it first, skip it.
+   `tools meetings rows <meeting> --json` shows the questions as the window does.
 5. **The agent finishes.** Take the answers from the subscription (or `tools meetings items <meeting> --kind
    question`) and carry each one to the other lines with the same evidence. Ask what is still open in rounds (the `grilling` style): numbered questions
    with concrete quotes and timestamps, one recommendation each. Never settle a person's identity or a business term
@@ -140,15 +168,15 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    the original project and do not ask for project assignment again. A normal duplicate retains items and copied
    journal tokens with `copiedFrom`; its Undo changes only the copy. An older journal naming another meeting is
    refused: use a clean copy or resolve that incompatibility explicitly before Undo.
-2. `tools meetings suggest <meeting> --attendance teams`. The meeting needs its project first: without one, `suggest`
+2. Follow the seats and voices steps above, then run `tools meetings suggest <meeting> --attendance teams`. The meeting needs its project first: without one, `suggest`
    exits 1 with the `tools meetings set <meeting> --project <name>` command (a terminal shows the project picker
    instead). Attendance uses the linked source's title and
    transcript clock, including for a renamed copy. Unavailable platform attendance warns, skips E2 and saves the
    other suggestions. A missing or ambiguous Teams chat lists cached candidate titles and IDs; last-message
    proximity does not prove a chat belongs to this call. Select a known chat with `--attendance-id <threadId>`,
    or `meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })` in the REPL. Invalid input and
-   unreadable or malformed attendance files still fail. The term rules use the word check (`--word-check hunspell`,
-   the default; `hunspell-cc0`, `macos` or `off`). Its dictionaries download on first use.
+   unreadable or malformed attendance files still fail. The term rules use each language's configured word check.
+   Use `--word-check` to override it for this run. Hunspell dictionaries download on first use.
 3. `tools meetings listen <meeting>` for the user, with `--subscribe-answers` for you as in step 4 above, then review
    the items (`tools meetings items <meeting>`) and decide each one
    with `tools meetings confirm <meeting> <items>` or `tools meetings reject <meeting> <items>`.
@@ -167,8 +195,8 @@ Both modes share the meeting record, its items and `tools meetings listen`.
   give it to a worker you are testing the skill with.
 - The tooling never calls a language model. You, the agent running this skill, propose a correction of a misheard
   word from its context and the project's dictionary, and record it with `items add` or as an answer; the user
-  confirms the repeated ones through the word questions, the most heard first, and a confirmed spelling goes into the
-  dictionary.
+  confirms the repeated ones through the word questions, the most heard first. The user chooses whether to add
+  a confirmed spelling to the dictionary.
 - Never write to the source app, ADO, Teams or the vault's git. The user commits the vault.
 - Every change is visible in a `diff` block, with `//` lines that give the rule and the score.
 
@@ -176,10 +204,13 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 
 `transcript <meeting> --with-suggested --apply-above 70` keeps lower-confidence voices as percentage marks.
 `transcript <meeting> --probe-thresholds 50,60,70,80` compares applied and open counts without changing the record.
-The Meetings window loads suggestions once; its threshold and Probe controls filter them locally.
+Term and speaker thresholds are global settings in Settings → Meetings. Open Thresholds from a meeting to preview
+which proposals change there before saving a setting for all meetings. In the CLI, `tools meetings thresholds <meeting>`
+lists the names and current values. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` to
+see the changed lines, then omit `--preview` to save the value.
 
 `listen <meeting> --spot-check 20` samples the 50 to 69 percent band without replacement. Comments leave questions
-open. `listen --long-stretch-words 50` prepares the long-stretch group; `--group rules|spot-check|long-stretch|all`
+open. `listen --long-stretch-words 50` prepares the long-stretch group; `--group rules|spot-check|long-stretch|words|all`
 selects a group. Long stretches split on channel voice-feature changes before naming. The group is retained in rows
 JSON. A sample result measures the share changed among answered sample lines, not a known meeting error rate.
 
@@ -204,7 +235,7 @@ estimated-clean tracks separately.
 
 `voices [--project <p>]` lists each person's samples (meeting, seat, track, time, words); `voices play <person>
 [--sample <n>]` plays one. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
-refusal reasons, and saves nothing; `voices apply <meeting>` runs the speaker suggestions (names stay suggested);
+refusal reasons. A preview can cache line embeddings. `voices apply <meeting>` saves the names as suggestions.
 `voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first. `play <meeting> --track
 <track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
 it (172 minutes: about 90 s at normal priority); later passes read the cache in about half a second. Its priority and
