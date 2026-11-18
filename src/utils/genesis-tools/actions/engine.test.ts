@@ -12,7 +12,7 @@ import type { AppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { windowOpenArgv } from "@genesiscz/utils/genesis-tools/areas/windows";
 import { parseSwiftRpcMethods } from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
-import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
+import { type Facts, parseAppManifest } from "@genesiscz/utils/genesis-tools/capability/facts";
 import {
     checkAppInstalled,
     checkNeed,
@@ -119,6 +119,16 @@ describe("the synchronous app.installed need", () => {
         const result = checkAppInstalled({ facts, builder: null });
         expect(result).toMatchObject({ ok: false, code: "in-test", fix: null });
         expect(describeNeedFailure(result)).toBe("a test process never reaches GenesisTools.app");
+    });
+});
+
+test("parseAppManifest answers null for malformed JSON and for JSON that is not a manifest", () => {
+    expect(parseAppManifest("{ not json")).toBeNull();
+    expect(parseAppManifest("[]")).toBeNull();
+    expect(parseAppManifest('{"sourceHash":"abc","builtAt":"t1","rpcMethods":["rpc.hello"]}')).toEqual({
+        buildId: "abc@t1",
+        parts: null,
+        rpcMethods: ["rpc.hello"],
     });
 });
 
