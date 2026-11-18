@@ -30,6 +30,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 import { z } from "zod";
 import { registerServeCommand } from "../../commands/serve";
+
 import { MeetingComments } from "../comments";
 import { DecisionJournal } from "../decision-journal";
 import { OpenedMeeting } from "../opened-meeting";
@@ -109,6 +110,125 @@ test("a draft dictionary entry previews only the changed meeting lines without s
     ]);
     expect(readFileSync(store.path(REVIEW.id), "utf8")).toBe(before);
     expect((await config.read()).global.dictionary.entries).toEqual([]);
+});
+
+test("threshold preview changes a 79% term at its two times and keeps decisions and the config byte-for-byte", async () => {
+    const { store, source, linkedSource, config } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({
+        ...original,
+        transcript: [9, 22].map((startSec) => ({ startSec, speaker: "Speaker 1", text: "Read the blenwick now." })),
+    });
+    source.evidence = async () => null;
+    await config.update((raw) => {
+        raw.projects = { Atlas: {} };
+        raw.languages = { cs: { wordCheck: "off" }, sk: { wordCheck: "off" } };
+    });
+    await store.update(REVIEW.id, { command: "fixture", change: "suggested spelling" }, (record) => {
+        record.items = [
+            {
+                id: "i9",
+                kind: "term",
+                heard: "blenwick",
+                proposed: "Blenwik",
+                status: "suggested",
+                confidence: 0.79,
+                atSec: 9,
+                rules: [MeetingRule.Agent],
+                suggestedAt: record.createdAt,
+            },
+        ];
+    });
+    const recordBytes = readFileSync(store.path(REVIEW.id));
+    const configBytes = readFileSync(config.path);
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    const preview = await client.call("meeting.thresholds.preview", {
+        meeting: REVIEW.id,
+        values: { "term.applyAbove": 0.7 },
+    });
+    expect(preview.changes).toContainEqual(
+        expect.objectContaining({
+            kind: "term proposal",
+            change: "changed",
+            atSec: 9,
+            text: "Read the blenwick now.",
+            before: expect.objectContaining({ status: "suggested", confidence: 0.79 }),
+            after: expect.objectContaining({ status: "applied", confidence: 0.79 }),
+            reason: expect.stringContaining("0.8 → 0.7"),
+        })
+    );
+    expect(preview.changes.filter((row) => row.kind === "transcript line").map((row) => row.atSec)).toEqual([9, 22]);
+    expect(readFileSync(store.path(REVIEW.id))).toEqual(recordBytes);
+    expect(readFileSync(config.path)).toEqual(configBytes);
+});
+
+test("lowering and raising the dictionary cutoff adds and removes the same timed proposal", async () => {
+    const { store, source, linkedSource, config } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({ ...original, transcript: [{ startSec: 13, speaker: "Narrator", text: "klyxpart" }] });
+    source.evidence = async () => null;
+    await config.update((raw) => {
+        raw.global = {
+            dictionary: { entries: [{ type: "term", value: "klymport" }] },
+            suggest: { terms: { phonetic: 1 } },
+        };
+        raw.languages = { cs: { wordCheck: "off" }, sk: { wordCheck: "off" } };
+    });
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    const preview = (values: Record<string, number>) =>
+        client.call("meeting.thresholds.preview", { meeting: REVIEW.id, values });
+    const added = await preview({ "fuzzy.suggest": 0.7 });
+    const term = added.changes.find((row) => row.kind === "term proposal");
+    expect(term).toMatchObject({ change: "added", atSec: 13, text: "klyxpart", after: { confidence: 0.75 } });
+    await client.call("config.edit", { edits: [{ path: "global.suggest.terms.fuzzy.suggest", value: 0.7 }] });
+    const removed = await preview({ "fuzzy.suggest": 0.8 });
+    expect(removed.changes.find((row) => row.key === term!.key)).toMatchObject({
+        change: "removed",
+        before: term!.after,
+    });
+    const replaced = await preview({ "fuzzy.apply": 0.74, "fuzzy.suggest": 0.9 });
+    expect(replaced.changes.find((row) => row.kind === "transcript line")?.after?.description).toContain("klymport");
+    client.close();
+});
+
+test("threshold CLI lists sources, previews without saving and commits multiple global settings together", async () => {
+    const { registerThresholdsCommand } = await import("../../commands/thresholds");
+    const { store, linkedSource, config } = scratchStore();
+    await config.update((raw) => {
+        raw.projects = { Atlas: { dictionary: { fuzzy: { suggest: 0.82 } } } };
+    });
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    const result = spyOn(out, "result").mockImplementation(() => undefined);
+    const run = (args: string[]) => {
+        const program = new Command().exitOverride();
+        registerThresholdsCommand(program, (work) => work(client));
+        return program.parseAsync(["thresholds", REVIEW.id, "--json", ...args], { from: "user" });
+    };
+    const bytes = readFileSync(config.path);
+    try {
+        await run([]);
+        expect(String(result.mock.lastCall?.[0])).toContain("project Atlas dictionary.fuzzy.suggest");
+        await run(["--set", "fuzzy.suggest=0.7", "--preview"]);
+        expect(readFileSync(config.path)).toEqual(bytes);
+        await expect(run(["--set", "term.applyAbove=0.7", "words.minOccurrences=1"])).rejects.toThrow(
+            "words.minOccurrences"
+        );
+        expect(readFileSync(config.path)).toEqual(bytes);
+        await run(["--set", "term.applyAbove=0.7", "--set", "words.minOccurrences=4"]);
+        expect((await new MeetingsConfigStore(config.storage).read()).global.suggest).toMatchObject({
+            terms: { applyAbove: 0.7 },
+            words: { minOccurrences: 4 },
+        });
+    } finally {
+        result.mockRestore();
+        client.close();
+    }
 });
 
 const closing: Array<() => void> = [];
@@ -3175,6 +3295,7 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(window, "voice.backfill", { project: "Unassigned-fixture", dryRun: true });
     await ask(window, "meeting.seats.suggest", { meeting: RETRO.id });
+    await ask(window, "meeting.thresholds.preview", { meeting: "nope", values: {} });
     return examples;
 }
 

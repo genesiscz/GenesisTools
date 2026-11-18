@@ -27,13 +27,22 @@ import { diagnoseTermAddress } from "./term-address";
  */
 function unclearPassages(
     record: MeetingRecord,
-    opts: { below: number; applied?: (item: MeetingItem) => boolean; guesses?: boolean; unclearLabel: string }
+    opts: {
+        below: number;
+        termBelow?: number;
+        applied?: (item: MeetingItem) => boolean;
+        guesses?: boolean;
+        unclearLabel: string;
+    }
 ): UnclearPassage[] {
     const applied = opts.applied ?? (() => false);
     const open = openQuestions(record);
     const asked = new Set(open.flatMap((question) => question.decides));
     const unaskedLow = (item: MeetingItem) =>
-        item.status === "suggested" && !applied(item) && !asked.has(item.id) && (item.confidence ?? 1) < opts.below;
+        item.status === "suggested" &&
+        !applied(item) &&
+        !asked.has(item.id) &&
+        (item.confidence ?? 1) < (item.kind === "term" ? (opts.termBelow ?? opts.below) : opts.below);
     // A low term the rules have a guess for is marked wherever it was heard, even unasked. An unknown word with no
     // guess is often plain spoken Czech no dictionary has ("byznysák"): it stays text unless it is asked.
     const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
@@ -179,6 +188,7 @@ export function correctionsOf(
     if (!Number.isFinite(applyAbove) || applyAbove < 0 || applyAbove > 1) {
         throw new RangeError("applyAbove must be between 0 and 1");
     }
+    const termApplyAbove = opts.applyAbove ?? config.global.suggest.terms.applyAbove;
     const questionOwned = questionOwnedItems(record);
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
@@ -188,7 +198,7 @@ export function correctionsOf(
             item.status === "suggested" &&
             item.evidence?.reason !== "exclusion" &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
-            (item.confidence === undefined || item.confidence >= applyAbove));
+            (item.confidence === undefined || item.confidence >= (item.kind === "term" ? termApplyAbove : applyAbove)));
     const used = record.items
         .filter(applies)
         .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
@@ -198,7 +208,13 @@ export function correctionsOf(
     );
     const passages = [
         ...(opts.withSuggested
-            ? unclearPassages(record, { below: applyAbove, applied: applies, guesses: true, unclearLabel })
+            ? unclearPassages(record, {
+                  below: applyAbove,
+                  termBelow: termApplyAbove,
+                  applied: applies,
+                  guesses: true,
+                  unclearLabel,
+              })
             : unclearPassages(record, { below: config.global.suggest.listenBelow, unclearLabel })),
         ...unlabeled,
     ];

@@ -170,9 +170,42 @@ export async function embedSeatLines(
     return result.sort((a, b) => a.index - b.index);
 }
 
+async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): Promise<VoiceLine[]> {
+    let sound = context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => opened.sound()));
+    {
+        using _clock = prof.section("speakers.sound-clock");
+        // Read-only previews supply their own sound without stamp tracks.
+        if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
+            const inputs = await opened.soundInputs();
+            // Another run may have saved the measurement since this snapshot was opened.
+            const clock = readSoundClock(inputs.folder);
+            if (clock) {
+                sound = meetingSound({ ...inputs, clock });
+            } else if (inputs.tracks === "best") {
+                const measured = await measureSoundClock(inputs);
+                if (measured) {
+                    saveSoundClock(inputs.folder, measured.clock);
+                    sound = meetingSound({ ...inputs, clock: measured.clock });
+                }
+            }
+        }
+    }
+    using _pass = prof.section("voices.pass");
+    return await embedSeatLines({
+        lines: context.lines,
+        sound,
+        config: await opened.config(),
+        onProgress: voiceProgressForMeeting.get(opened),
+        signal: voiceSignalForMeeting.get(opened),
+        cachePath: join(opened.store.folder(opened.record.id), "evidence", "voice-lines.json"),
+    });
+}
+
 export function voiceLabeler(options: {
     opened: OpenedMeeting;
     settings: MeetingsConfig["global"]["speakerLabels"]["voice"];
+    /** A threshold preview supplies in-memory embeddings shared by its two scores. */
+    readLines?: (context: LabelContext, model: string) => Promise<VoiceLine[]>;
 }): SpeakerLabeler {
     return {
         id: "voice",
@@ -185,35 +218,9 @@ export function voiceLabeler(options: {
             if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }
-            let sound =
-                context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => options.opened.sound()));
-            {
-                using _clock = prof.section("speakers.sound-clock");
-                // Read-only previews supply their own sound without stamp tracks.
-                if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
-                    const inputs = await options.opened.soundInputs();
-                    // Another run may have saved the measurement since this snapshot was opened.
-                    const clock = readSoundClock(inputs.folder);
-                    if (clock) {
-                        sound = meetingSound({ ...inputs, clock });
-                    } else if (inputs.tracks === "best") {
-                        const measured = await measureSoundClock(inputs);
-                        if (measured) {
-                            saveSoundClock(inputs.folder, measured.clock);
-                            sound = meetingSound({ ...inputs, clock: measured.clock });
-                        }
-                    }
-                }
-            }
-            using _pass = prof.section("voices.pass");
-            const lines = await embedSeatLines({
-                lines: context.lines,
-                sound,
-                config: await options.opened.config(),
-                onProgress: voiceProgressForMeeting.get(options.opened),
-                signal: voiceSignalForMeeting.get(options.opened),
-                cachePath: join(options.opened.store.folder(options.opened.record.id), "evidence", "voice-lines.json"),
-            });
+            const lines = options.readLines
+                ? await options.readLines(context, store.model)
+                : await meetingVoiceLines(options.opened, context);
             const inputs = {
                 ...options.settings,
                 store,

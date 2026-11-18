@@ -8,6 +8,7 @@ import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/scree
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type AbbrExpansion,
+    DEFAULT_FUZZY,
     type DictionaryEntry,
     type DictionaryLevel,
     dictionaryEntrySchema,
@@ -16,6 +17,7 @@ import {
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
 import { DEFAULT_MUTED_CARRY_SEC } from "@genesiscz/utils/transcribe/evidence";
+import { DEFAULT_MIN_CONFIDENCE } from "@genesiscz/utils/transcribe/terms";
 import { z } from "zod";
 import { MeetingsConflictError } from "./conflict";
 import {
@@ -627,6 +629,24 @@ const storedConfigSchema = z
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
                         restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
+                        terms: z
+                            .object({
+                                /** With suggestions included, apply a proposed term at this confidence. */
+                                applyAbove: z.number().min(0).max(1).default(0.8),
+                                phonetic: z
+                                    .number()
+                                    .min(0)
+                                    .max(1)
+                                    .default(DEFAULT_MIN_CONFIDENCE / 100),
+                                unknownCandidate: z.number().min(0).max(1).default(0.8),
+                                fuzzy: z
+                                    .object({
+                                        suggest: z.number().min(0).max(1).default(DEFAULT_FUZZY.suggest),
+                                        apply: z.number().min(0).max(1).default(DEFAULT_FUZZY.apply),
+                                    })
+                                    .prefault({}),
+                            })
+                            .prefault({}),
                         /** Unknown words heard again and again become one word question each. */
                         words: z
                             .object({
@@ -967,7 +987,12 @@ export function resolveDictionary(
     options: { project?: string; meeting?: DictionaryLevel } = {}
 ): ResolvedDictionary {
     const project = options.project ? config.projects[options.project]?.dictionary : undefined;
-    return mergeDictionaries([config.global.dictionary, project, options.meeting]);
+    return mergeDictionaries([
+        { entries: [], fuzzy: config.global.suggest.terms.fuzzy },
+        config.global.dictionary,
+        project,
+        options.meeting,
+    ]);
 }
 
 /** Where a dictionary level lives in the config. */
@@ -998,6 +1023,11 @@ export class MeetingsConfigStore {
      * the file. An explicit update migrates the saved shape under its existing lock.
      */
     async read(): Promise<MeetingsConfig> {
+        return (await this.readWithSource()).config;
+    }
+
+    /** One file read supplies effective values and the keys that were explicitly saved. */
+    async readWithSource(): Promise<{ config: MeetingsConfig; raw: Record<string, unknown> }> {
         const raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
         const parsed = meetingsConfigSchema.safeParse(raw);
 
@@ -1005,7 +1035,7 @@ export class MeetingsConfigStore {
             throw new Error(formatIssues(parsed.error, this.path));
         }
 
-        return parsed.data;
+        return { config: parsed.data, raw };
     }
 
     /**
