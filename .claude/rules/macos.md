@@ -83,6 +83,12 @@ prints it in UTC. The widget stayed off for two days from 2026-11-02 with no tra
 the next stop has one. Every window face other than the widget also starts the widget while "Show the widget" is on
 (`WidgetLaunch.ensureRunningIfShown`), so quitting the hub with "Quit All" and opening it again brings the widget back.
 
+**🛑 Start another face (`--hub`, `--review`, `--window`, `--features`, `--widget`) only with `FaceLaunch.start`**
+(`Sources/Host/FaceLaunch.swift`), never with `Process`. Launch Services makes the face an app job, and launchd stops
+it when the login session ends. A plain child belongs to no job: on 2026-11-18 WindowServer crashed at 08:36, the hub
+the relay had started as a child lived on with no screen, kept `hub.lock`, and every open of the app went to it for
+seven hours. A one-shot helper whose output you read (`--permission-status`) stays a `Process`.
+
 **Before believing an app-face bug report, check what is actually running:**
 `ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry
 with no program argument is a window instance, and its start time tells you which build it is.
