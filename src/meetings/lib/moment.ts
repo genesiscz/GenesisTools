@@ -16,7 +16,7 @@ import {
     MOMENTS_FOLDER,
 } from "@genesiscz/utils/meetings/record";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { type HeardOccurrence, heardIn, SPOT_CLIP_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
@@ -34,6 +34,8 @@ import {
     questionOccurrence,
 } from "./questions";
 import { resolveToneSound, sineToneSound, type ToneSound } from "./tone-sound";
+import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
+import { meetingWordTimingCache } from "./word-timings";
 
 const { log } = logger.scoped("meetings-moment");
 
@@ -381,7 +383,72 @@ function voiceEnd(lines: TranscriptLines, fromSec: number, toSec: number): numbe
     return toSec - fromSec < INSTANT_SEC ? Math.max(toSec, voiceReachSec(lines, fromSec)) : toSec;
 }
 
-function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLines): Span {
+/** A corrected line with its cached word times (`meetingWordTimingCache`), as a term's spot reads it. */
+export interface WordTimedLine {
+    startSec?: number;
+    text: string;
+    words?: ReadonlyArray<{ range: { location: number; length: number }; startSec: number }>;
+}
+
+/**
+ * Where a term's occurrence is said by the meeting's word timings: the start of the first timed word inside it (U11).
+ * The timed lines are the corrected ones the cache was made from, so the occurrence is found again there: the line
+ * that starts with the occurrence's line, the same occurrence in it under the heard spelling, or under the proposed
+ * one once the spelling was applied. Undefined when the word timings do not cover that line.
+ */
+function wordTimedSpot({
+    lines,
+    said,
+    item,
+    timed,
+}: {
+    lines: TranscriptLines;
+    said: HeardOccurrence;
+    item: Extract<MeetingItem, { kind: "term" }>;
+    timed: readonly WordTimedLine[] | undefined;
+}): number | undefined {
+    const line = lines.entries[said.index];
+
+    if (!timed || line?.startSec === undefined) {
+        return undefined;
+    }
+
+    const nth = heardIn(line.text, item.heard).findIndex((one) => one.at === said.at);
+
+    if (nth < 0) {
+        return undefined;
+    }
+
+    for (const entry of timed) {
+        if (entry.startSec !== line.startSec || !entry.words?.length) {
+            continue;
+        }
+
+        for (const spelling of item.proposed ? [item.heard, item.proposed] : [item.heard]) {
+            const found = heardIn(entry.text, spelling)[nth];
+            const word =
+                found &&
+                entry.words.find(
+                    (one) =>
+                        one.range.location < found.at + found.text.length &&
+                        one.range.location + one.range.length > found.at
+                );
+
+            if (word) {
+                return word.startSec;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function itemSpan(
+    record: MeetingRecord,
+    item: MeetingItem,
+    lines: TranscriptLines,
+    timed?: readonly WordTimedLine[]
+): Span {
     switch (item.kind) {
         case "removal":
             return {
@@ -417,6 +484,18 @@ function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLin
             const said = lines
                 .occurrences({ heard: item.heard, fromSec: atSec, toSec: atSec })
                 .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
+            const wordSec = said ? wordTimedSpot({ lines, said, item, timed }) : undefined;
+
+            if (wordSec !== undefined) {
+                return {
+                    fromSec: Math.max(0, wordSec - SPOT_CLIP_SEC.before),
+                    toSec: wordSec + SPOT_CLIP_SEC.after,
+                    spotSec: wordSec,
+                    pad: "around",
+                    label: item.id,
+                };
+            }
+
             const heard = (said ? lines.clip(said) : undefined) ?? { fromSec: atSec, toSec: atSec + TERM_SPAN_SEC };
             const spotSec = (said ? lines.spotSec(said) : undefined) ?? atSec;
             return { ...heard, spotSec, pad: "around", label: item.id };
@@ -467,7 +546,12 @@ function pointSec(lines: TranscriptLines, point: LinePoint, edge: "from" | "to")
     return { sec: span.fromSec + fraction * (span.toSec - span.fromSec), index: found.index };
 }
 
-function targetSpan(record: MeetingRecord, target: MomentTarget, lines: TranscriptLines): Span {
+function targetSpan(
+    record: MeetingRecord,
+    target: MomentTarget,
+    lines: TranscriptLines,
+    timed?: readonly WordTimedLine[]
+): Span {
     switch (target.kind) {
         case "item": {
             const id = questionIdOf(record, target.id);
@@ -477,7 +561,7 @@ function targetSpan(record: MeetingRecord, target: MomentTarget, lines: Transcri
                 throw new MomentError("unknown-item", `No item ${target.id} in ${record.id}.`);
             }
 
-            return itemSpan(record, item, lines);
+            return itemSpan(record, item, lines, timed);
         }
         case "time":
             return timeSpan(lines, target.atSec, formatClock(target.atSec));
@@ -556,6 +640,11 @@ export interface MomentInput {
      * length is read from the file); a sine is made from the settings when absent.
      */
     toneSound?: ToneSound;
+    /**
+     * The meeting's corrected lines with their cached word times (`meetingWordTimingCache`): a term's spot is its word's
+     * start where they cover its line, else the estimate from its place in the line's text.
+     */
+    wordTimedLines?: readonly WordTimedLine[];
 }
 
 /** The audio an `around` span keeps on each side: the caller's, else the saved pads, else `DEFAULT_PAD_SEC`. */
@@ -621,7 +710,7 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
 
 /** The Moment of one target. Throws a `MomentError` for a target the meeting does not have. Reads nothing. */
 export function planMoment(input: MomentInput & { target: MomentTarget }): Moment {
-    const whole = targetSpan(input.record, input.target, linesOf(input.transcript));
+    const whole = targetSpan(input.record, input.target, linesOf(input.transcript), input.wordTimedLines);
     const span =
         input.lengthSec === undefined
             ? whole
@@ -660,7 +749,7 @@ function clampTooLong(record: MeetingRecord, target: MomentTarget, span: Span, l
  */
 export function itemMoment(input: MomentInput & { item: MeetingItem }): Moment {
     const target: MomentTarget = { kind: "item", id: input.item.id };
-    return momentOf(input, target, itemSpan(input.record, input.item, linesOf(input.transcript)));
+    return momentOf(input, target, itemSpan(input.record, input.item, linesOf(input.transcript), input.wordTimedLines));
 }
 
 /** What `cutClip` cuts for a Moment: the same numbers `listen --clip-out --json` prints, plus the tone's sound. */
@@ -943,6 +1032,38 @@ export interface OpenMomentOptions {
     opened?: OpenedMeeting;
 }
 
+/**
+ * The meeting's corrected lines with their cached word times, read for a term only (U11) and only when the meeting has
+ * a word timing cache. The read corrects the whole transcript as `meeting.wordTimings.generate` does, because the cache
+ * keys its windows to those exact lines.
+ */
+async function termWordTimes(opened: OpenedMeeting, options: OpenMomentOptions): Promise<WordTimedLine[] | undefined> {
+    const { store, record, target } = options;
+
+    if (target.kind !== "item") {
+        return undefined;
+    }
+
+    const id = questionIdOf(record, target.id);
+    const item = record.items.find((one) => one.id === id);
+    const cache = meetingWordTimingCache(record.id);
+
+    if (item?.kind !== "term" || !existsSync(cache.folder)) {
+        return undefined;
+    }
+
+    const { applied } = await correctedTranscriptRead({
+        store,
+        record,
+        format: "json",
+        flags: { dictionary: true },
+        opened,
+    });
+    const read = cache.read(timedTranscriptView(record, applied).entries);
+    log.debug({ meeting: record.id, item: item.id, state: read.wordTimings.state }, "word timings for a term's spot");
+    return read.wordTimings.state === "ready" ? read.entries : undefined;
+}
+
 async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Promise<Moment> {
     const { store, record } = options;
     const [meeting, config] = await Promise.all([opened.meeting(), opened.config()]);
@@ -956,11 +1077,13 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
               onMissing: listen.tone.onMissing,
           })
         : undefined;
+    const wordTimedLines = await termWordTimes(opened, options);
     const moment = planMoment({
         record,
         transcript: meeting.transcript,
         listen,
         target: options.target,
+        ...(wordTimedLines ? { wordTimedLines } : {}),
         ...(toneSound ? { toneSound } : {}),
         ...(options.padSec === undefined ? {} : { padSec: options.padSec }),
         ...(options.padAfterSec === undefined ? {} : { padAfterSec: options.padAfterSec }),

@@ -737,4 +737,61 @@ extension MeetingsPlayerTests {
         XCTAssertEqual(player.phase, .paused, "the evidence's own recording never plays over the meeting")
         XCTAssertEqual(playingCount, 0)
     }
+
+    // MARK: The clip's flag and the spelling dialog (U11, U12)
+
+    /// U11: the flag stood on the asked span's start, 1.5 s before a spelling's word (a "Hoho" item: the flag at 17:13.6,
+    /// the word at 17:15.4). The dock's timeline and the playing row's bar both put it where `flagSec` says: on the
+    /// asked spot.
+    func testTheFlagStandsOnTheAskedSpotNotOnTheStartOfTheAskedSpan() {
+        let span = ZoomSpan(startSec: 1028.92, endSec: 1042.92, fromSec: 1033.92, toSec: 1037.92, spotSec: 1035.42,
+                            toneSec: 1035.02, label: "i897")
+        XCTAssertEqual(span.flagSec, 1035.42)
+        for view in [span.fitView, span.startSec...span.endSec] {
+            XCTAssertEqual(TimelineGeometry.x(span.flagSec, in: view, width: 600), TimelineGeometry.x(span.spotSec, in: view, width: 600),
+                           "the flag's x is the spot's x")
+            XCTAssertGreaterThan(TimelineGeometry.x(span.flagSec, in: view, width: 600) - TimelineGeometry.x(span.fromSec, in: view, width: 600), 30,
+                                 "1.5 s after the asked span's start, where the flag stood")
+        }
+        let range = ZoomSpan(startSec: 95, endSec: 125, fromSec: 100, toSec: 120, spotSec: 100, isRange: true, label: "Q3")
+        XCTAssertEqual(range.flagSec, 100, "a range question's spot is its start: the flag stays there, the tick marks its end")
+        let outside = ZoomSpan(startSec: 95, endSec: 110, fromSec: 100, toSec: 105, spotSec: 300, label: "Q4")
+        XCTAssertEqual(outside.flagSec, 100, "a spot the clip does not hold leaves the flag on the asked span's start")
+    }
+
+    /// U12: the dialog said "Besides i897, this decision also changes:" and never named the new spelling. It leads with
+    /// what changes and where, and follows the ticked lines and the dictionary box.
+    func testTheSpellingDialogLeadsWithTheWordsTheCountAndTheDictionary() {
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 4, dictionary: true),
+                       "“Hoho” becomes “HoHo” in 4 lines and in the dictionary.")
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 1, dictionary: false),
+                       "“Hoho” becomes “HoHo” in 1 line.")
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 0, dictionary: true),
+                       "“Hoho” becomes “HoHo” in the dictionary.")
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 0, dictionary: false),
+                       "“Hoho” stays as it is: tick a line or the dictionary.")
+        let lead = ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 4, dictionary: true)
+        XCTAssertEqual(ReachSheet.spellingLeadRanges(lead, proposed: "HoHo").map { (lead as NSString).substring(with: $0) }, ["HoHo"],
+                       "the new spelling is the marked part of the sentence")
+    }
+
+    /// The engine's spelling reach (decision.plan) brings the two spellings and where the heard words sit in each line,
+    /// and the dialog draws the lead and the marked words from them.
+    func testASpellingReachBringsItsWordsAndWhereTheySitInEachLine() throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"""
+        {"items":[],"dictionary":[],"spelling":{"heard":"Hoho","proposed":"HoHo","dictionary":true,"occurrences":[
+          {"line":175,"atSec":1035,"speaker":"Speaker 5","text":"Hoho. Pochop.","selected":true,"primary":true,
+           "ranges":[{"location":0,"length":4}]},
+          {"line":921,"atSec":5871,"speaker":"Speaker 5","text":"jenom Hoho řekl","selected":true,"primary":false,
+           "ranges":[{"location":6,"length":4}]}]}}
+        """#.utf8))
+        let spelling = try XCTUnwrap(reach.spelling)
+        XCTAssertEqual(ReachSheet.spellingLead(heard: spelling.heard, proposed: spelling.proposed, lines: spelling.occurrences.count,
+                                               dictionary: spelling.dictionary),
+                       "“Hoho” becomes “HoHo” in 2 lines and in the dictionary.")
+        let marked = spelling.occurrences.map { line in
+            HighlightedText.segments(line.text, ranges: line.ranges).filter(\.marked).map(\.text)
+        }
+        XCTAssertEqual(marked, [["Hoho"], ["Hoho"]])
+    }
 }
