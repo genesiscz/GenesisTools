@@ -89,6 +89,7 @@ function name(
         attended?: LabelContext["attended"];
         gate?: typeof settings.gate;
         minSeconds?: number;
+        applyAbove?: number;
     } = {}
 ) {
     return nameByVoice({

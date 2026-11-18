@@ -168,6 +168,71 @@ test("threshold preview changes a 79% term at its two times and keeps decisions 
     expect(readFileSync(config.path)).toEqual(configBytes);
 });
 
+test("R3 sampled call reviews split at an unmute and persist separate answer targets", async () => {
+    const { store, source, linkedSource, config } = scratchStore();
+    const original = await source.load("wf-2041");
+    const remote = "Finch Example";
+    const other = "Wren Example";
+    source.load = async () => ({
+        ...original,
+        speakers: [],
+        transcript: [0, 5].map((startSec) => ({
+            startSec,
+            speaker: "Voice",
+            text: "Please review this proposal.",
+        })),
+    });
+    source.evidence = async () => ({
+        files: [],
+        segments: [{ startSec: 0, endSec: 30, channel: "system" }],
+        speaking: [
+            { tSec: 0, speaking: [], muted: [other] },
+            { tSec: 5, speaking: [], muted: [] },
+        ],
+    });
+    await store.update(REVIEW.id, { command: "fixture", change: "two remote lines" }, (record) => {
+        record.participants = [remote, other].map((name) => ({ name, from: ["fixture"] }));
+        record.seats = { room: [], remote: [{ name: remote }, { name: other }] };
+        record.items = [
+            {
+                kind: "speaker-range",
+                id: "i1",
+                status: "suggested",
+                suggestedAt: record.createdAt,
+                rules: ["RA"],
+                speaker: remote,
+                label: "Voice",
+                fromSec: 0,
+                toSec: 5,
+                confidence: 0.55,
+            },
+        ];
+    });
+    const features = spyOn(await import("../listen-quality"), "qualityVoiceFeatures").mockResolvedValue([]);
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    try {
+        const result = await client.call("meeting.listen.prepare", {
+            meeting: REVIEW.id,
+            group: "long-stretch",
+            words: 1,
+            below: 0.7,
+        });
+        expect(result.questions).toHaveLength(2);
+        const saved = new MeetingStore(store.storage).read(REVIEW.id)!;
+        const questions = saved.items.filter((item) => item.kind === "question");
+        expect(questions[0]?.choices).not.toContain(other);
+        expect(questions[1]?.choices).toContain(other);
+        expect(questions[0]?.decides).toHaveLength(1);
+        expect(questions[1]?.decides).toHaveLength(1);
+        expect(questions[0]?.decides[0]).not.toBe(questions[1]?.decides[0]);
+    } finally {
+        features.mockRestore();
+        client.close();
+    }
+});
+
 test("lowering and raising the dictionary cutoff adds and removes the same timed proposal", async () => {
     const { store, source, linkedSource, config } = scratchStore();
     const original = await source.load("wf-2041");

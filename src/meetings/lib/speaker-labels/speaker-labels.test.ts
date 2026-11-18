@@ -562,6 +562,52 @@ describe("seat labeler", () => {
 });
 
 describe("speaker-label integration", () => {
+    test("R3 preview and writer agree on the muted room guest and leave preview bytes untouched", async () => {
+        const owner = "Elm Example";
+        const guest = "Finch Example";
+        const { store, record, meeting, opened, config } = await runnerFixture({
+            seats: { room: [owner, guest], remote: [] },
+            participants: [
+                { name: owner, self: true, from: ["fixture"] },
+                { name: guest, from: ["fixture"] },
+            ],
+        });
+        config.global.speakerLabels.voice.enabled = false;
+        meeting.transcript = [{ speaker: "Voice", startSec: 0, text: "Yes please." }];
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                selfName: owner,
+                files: [],
+                segments: [{ startSec: 0, endSec: 30, channel: "mic" }],
+                speaking: [{ tSec: 0, speaking: [], muted: [guest] }],
+            }),
+            spyOn(opened, "energy").mockResolvedValue({
+                share: Object.assign(() => 1, {
+                    voice: () => ({
+                        person: guest,
+                        quality: "matched" as const,
+                        candidates: [],
+                        model: "fixture",
+                        reason: "independent match",
+                    }),
+                }),
+            })
+        );
+        const args = { store, record, rules: ["evidence" as const] };
+        const bytes = readFileSync(store.path(record.id));
+        const { previewSuggestions } = await import("../suggest-run");
+        const preview = await previewSuggestions(args);
+        expect(readFileSync(store.path(record.id))).toEqual(bytes);
+        const predicted = preview.changes.fresh.find((item) => item.kind === "speaker-range");
+        expect(predicted).toMatchObject({ speaker: guest, rules: [MeetingRule.Voice] });
+        await runSuggest(args);
+        const saved = new MeetingStore(store.storage).read(record.id)!;
+        expect(saved.items.find((item) => item.id === predicted!.id)).toMatchObject({
+            speaker: guest,
+            rules: [MeetingRule.Voice],
+        });
+        expect((await runSuggest({ ...args, record: saved })).fresh).toEqual([]);
+    });
     test("a stranger stretch asks once, withdraws old seat proposals, and preserves confirmed lines after reopen", async () => {
         const { store, record, meeting, config } = await runnerFixture({
             participants: [

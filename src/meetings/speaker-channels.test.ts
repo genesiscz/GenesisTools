@@ -502,7 +502,7 @@ describe("sparse roster mute readings on the call", () => {
     }
 
     for (const applyAbove of [0, 0.4, 0.7]) {
-        test(`R3 sole remote needs an individual review at apply ${applyAbove}`, () => {
+        test(`R3 sole remote needs an individual review at apply ${applyAbove}`, async () => {
             const items = at({ sec: 100, applyAbove });
             const [range] = ranges(items);
             expect(range?.rules).toContain("RM");
@@ -522,7 +522,15 @@ describe("sparse roster mute readings on the call", () => {
                 applyAbove: 0,
                 dictionary: false,
             });
-            expect(result.entries[0]?.guess).not.toBe(false);
+            expect(result.entries[0]?.band).not.toBe("applied");
+            const store = new MeetingStore(new Storage(`r3-sole-remote-${applyAbove}`));
+            const saved = await store.create({ ...record, items }, { command: "fixture", change: "review" });
+            const bulk = await new DecisionJournal({ store }).plan({
+                meeting: saved.id,
+                actor: { kind: "cli" },
+                action: { kind: "confirm", items: [], minConfidence: 0 },
+            });
+            expect(bulk.skipped).toContainEqual(expect.objectContaining({ id: range!.id, needs: "listen" }));
         });
     }
 
