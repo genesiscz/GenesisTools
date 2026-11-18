@@ -157,6 +157,28 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertFalse(text.contains("samples"), "no system stepper is left: \(text)")
     }
 
+    func testTheQuestionCardAnswersFirstAndFoldsItsLines() throws {
+        let lines = (0..<5).map { QuestionDetails.Line(index: $0, startSec: Double(60 * $0), endSec: Double(60 * $0 + 5),
+                                                         speaker: "Alice Example", text: "Line number \($0) of the evidence") }
+        let evidence = QuestionDetails(id: "q", decidedLines: lines, impact: .init(lines: 5, words: 30, sameDoubtLines: 2), raisedLines: nil)
+        XCTAssertEqual(QuestionLines.allLinesWords(evidence), "All 5 lines (30 words)")
+        let folded = try rendered(QuestionLines(evidence: evidence, expanded: true, answered: false, speaker: "Alice Example"), name: "card-lines")
+        XCTAssertTrue(folded.contains("Line number 2"), folded)
+        XCTAssertFalse(folded.contains("Line number 3"), "the fourth line waits behind All 5 lines: \(folded)")
+        XCTAssertTrue(folded.contains("All 5 lines"), folded)
+        XCTAssertFalse(folded.contains("Alice Example:"), "the question's own speaker is not repeated on each line: \(folded)")
+
+        let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.4,"priority":1.62,"what":"Who speaks?","parts":[{"kind":"who","text":"Alice Example"},{"kind":"asks","pieces":[{"text":"Who speaks under Alice Example?"}]}],"choices":[{"value":"Bob Example","label":"Bob Example","role":"suggested","action":{"kind":"answer","answer":"Bob Example"}},{"value":"several","label":"Several voices","role":"split","action":{"kind":"answer","answer":"several"}}],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
+        let detail = MeetingDetailModel(id: "copy", window: nil)
+        detail.rows = .loaded(.init(meeting: "copy", rows: [row], hidden: .init(lowPriority: 0, minPriority: 0), questionDetails: [evidence]))
+        let card = try rendered(ReviewRowView(row: row, detail: detail, player: nil, asksSpeaker: true), name: "card-answers-first")
+        XCTAssertEqual(card.components(separatedBy: "Somebody else").count - 1, 1, "one Somebody else: \(card)")
+        XCTAssertFalse(card.contains("Priority"), card)
+        XCTAssertTrue(card.contains("40 % sure"), card)
+        let answer = try XCTUnwrap(card.range(of: "Bob Example")), decides = try XCTUnwrap(card.range(of: "Decides"))
+        XCTAssertLessThan(answer.lowerBound, decides.lowerBound, "the answers come before the evidence: \(card)")
+    }
+
     func testCheckByEarHoldsBothChecksWithTheirNumbersAndTheRate() throws {
         XCTAssertEqual(SpotCheckRate(changed: 1, answered: 3).percent, 33)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "test.listen.\(UUID().uuidString)"))
