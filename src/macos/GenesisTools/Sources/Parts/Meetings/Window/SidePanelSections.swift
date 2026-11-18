@@ -455,12 +455,13 @@ enum SidePanelCatalog {
     /// with the named tones `presets` holds. `fileExists` checks a saved sound file (one stat per draw).
     @MainActor static func engineSection(listen: JSONValue, presets: TonePresetList = .loading,
                               fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-                              threshold: MeetingsApplyThreshold = .shared) -> SidePanelSection {
+                              threshold: MeetingsApplyThreshold? = nil) -> SidePanelSection {
         func number(_ path: [String]) -> Double? { if case .number(let value) = listen.at(path) { return value } else { return nil } }
         func flag(_ path: [String]) -> Bool? { if case .bool(let value) = listen.at(path) { return value } else { return nil } }
         func text(_ path: [String]) -> String? { if case .string(let value) = listen.at(path) { return value } else { return nil } }
         let toneOn = "\(listenPath).tone.enabled"
         let setting = toneSetting(listen.at(["tone", "sound"]))
+        let threshold = threshold ?? MeetingsApplyThreshold.shared
         let thresholdRows = threshold.percent != nil || threshold.failure != nil ? [thresholdRow(threshold)] : []
         return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
             SidePanelRow(store: .engine(path: toneOn), title: "Tone",
