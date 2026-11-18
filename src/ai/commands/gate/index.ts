@@ -27,10 +27,10 @@ import {
 } from "@genesiscz/utils/ai/gate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
+import { checkNeed, describeNeedFailure, Need, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { parseJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { createBoxTable, renderCliHeader, renderCliSection, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -68,7 +68,7 @@ interface RequestOpts {
  * default here, because `tools` runs this command under the GenesisTools.app launcher, and a
  * grant keyed on the launcher would cover every tool run.
  */
-export function registerGateCommands(program: Command): void {
+export function registerGateCommands(program: Command, needEnv?: NeedEnv): void {
     const gate = program
         .command("gate")
         .description("Hand an AI account access token or API key to another app after native approval");
@@ -263,10 +263,16 @@ export function registerGateCommands(program: Command): void {
 
     gate.command("status")
         .description("Is the approval window reachable? (read-only)")
-        .action(() => {
-            const available = isGenesisAppRpcAvailable();
+        .action(async () => {
+            const approval = await checkNeed(Need.app.rpc("gate.approve"), {
+                ...(needEnv ?? liveEngineDeps({})),
+                fresh: false,
+                write: false,
+            });
             out.println(
-                `${available ? pc.green("● ok") : pc.red("● missing")} GenesisTools.app RPC ${available ? "installed" : `not installed or switched off: ${genesisAppBuildHint()}`}`
+                approval.ok
+                    ? `${pc.green("● ok")} GenesisTools.app RPC installed`
+                    : `${pc.red("● missing")} GenesisTools.app RPC: ${describeNeedFailure(approval)}`
             );
             out.println(`${pc.dim("grants")} ${grantsPath()}`);
             out.println(`${pc.dim("audit ")} ${auditPath()}`);
