@@ -892,7 +892,7 @@ const RULES: Rule[] = [
         test: (_text, node) => {
             const fn = node.field("function")?.text() ?? "";
             if (
-                /^(?:isGenesisAppBundleInstalled|installedGenesisAppLauncher|isGenesisAppRpcAvailable|appCannotAnswer|genesisAppBuildHint)$/.test(
+                /(?:^|\.)(?:isGenesisAppBundleInstalled|installedGenesisAppLauncher|isGenesisAppRpcAvailable|appCannotAnswer|genesisAppBuildHint)$/.test(
                     fn
                 )
             ) {
