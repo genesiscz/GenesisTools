@@ -1268,6 +1268,23 @@ describe("calibrateChannels", () => {
         expect(quiet.calibration.layout).toBe("unknown");
         expect(levels.snapshot(125_000).mic.sampled).toBe(false);
     });
+    test("a short guided test of 8 s speech and 8 s playback verifies the layout", async () => {
+        const { MeetingLevels } = await import("./levels");
+        const levels = new MeetingLevels();
+        for (let i = 0; i < 160; i++) {
+            const speaking = i < 80;
+            levels.observe({
+                atMs: i * 100,
+                mic: speaking ? 0.5 : 0.05,
+                system: speaking ? 0.05 : 0.5,
+                input: "Desk mic",
+                output: "Headphones",
+            });
+        }
+        const row = levels.snapshot(15_900);
+        expect(row.calibration.layout).toBe("left-mic");
+        expect(row.voiceMicShare).toBeGreaterThan(0.8);
+    });
     // 30 mic segments (2 s each) then 30 call segments, 10 blocks per second.
     const segments = Array.from({ length: 60 }, (_, index) => ({
         startSec: index * 2,
