@@ -6,13 +6,9 @@ import { hasCodeWord } from "./reason-words";
 
 const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
-/**
- * An agent's reason, which the meeting's owner reads on the row (U18): words, never a field of `evidence --raw`
- * (`meeting.indicatorGaps`), a rule id (`RA`) or a labeler code (`seat-of-one`).
- */
-const reason = text.refine((value) => !hasCodeWord(value), {
-    message: "Write the reason in plain words for the person who reads it",
-});
+/** An agent's reason, as a saved journal line holds it: one saved before the plain-words rule (U18) still reads. */
+const reason = text;
+const PLAIN_WORDS = "Write the reason in plain words for the person who reads it";
 /** A line's index in the source transcript: tells apart two lines that start in the same second. */
 const line = z.number().int().min(0).optional();
 /** A name for a finding that a question in the same batch can list in `decides`, before the finding has an id. */
@@ -23,11 +19,11 @@ const ref = z
     .optional();
 
 /**
- * One finding to store, from `items add` flags or one entry of `--from-file`. A speaker range, a join or a term is an
+ * One finding as an `add` journal line saves it (`findingSchema` checks new input). A speaker range, a join or a term is an
  * agent's judgement and needs a confidence and a reason; a label that tracks no one person needs a reason; a question
  * needs neither.
  */
-export const findingSchema = z.discriminatedUnion("kind", [
+export const savedFindingSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("removal"), ref, from: clock, to: clock, heard: text, confidence, reason }),
     z.object({
         kind: z.literal("speaker-range"),
@@ -107,7 +103,21 @@ export const findingSchema = z.discriminatedUnion("kind", [
         reason: reason.optional(),
     }),
 ]);
-export type Finding = z.output<typeof findingSchema>;
+export type Finding = z.output<typeof savedFindingSchema>;
+
+/**
+ * Refuses a new finding whose reason the meeting's owner could not read (U18): a field of `evidence --raw`
+ * (`meeting.indicatorGaps`), a rule id (`RA`) or a labeler code (`seat-of-one`). Only input doors call it: a saved
+ * journal line keeps the words it was written with, so its entry still reads and undoes.
+ */
+export function refinePlainReason(finding: Finding, ctx: z.RefinementCtx, path: (string | number)[] = []): void {
+    if (finding.reason && hasCodeWord(finding.reason)) {
+        ctx.addIssue({ code: "custom", path: [...path, "reason"], message: PLAIN_WORDS });
+    }
+}
+
+/** A new finding, from `items add` flags, `--from-file` or the toolset: its reason is in plain words. */
+export const findingSchema = savedFindingSchema.superRefine((finding, ctx) => refinePlainReason(finding, ctx));
 export const FINDING_KINDS = ["speaker-range", "label", "join", "term", "question", "removal"] as const;
 
 /** A file of findings: an array, or `{ findings: [...] }`. */

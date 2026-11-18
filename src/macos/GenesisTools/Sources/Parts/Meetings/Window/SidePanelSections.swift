@@ -196,7 +196,7 @@ enum SidePanelWords {
     static let choiceTitles: [String: String] = [
         "always": "Always", "never": "Never", "auto": "Auto", "on": "On", "off": "Off",
         "edit": "Edit first", "confirm": "Confirm",
-        "inPlace": "In place", "hidden": "Hidden",
+        "inPlace": "In place", "hidden": "Hidden", "atEnd": "At the end",
         "priority": "Priority", "time": "Time",
         "hide": "Hide", "show": "Show",
         "afterAnswer": "After an answer",

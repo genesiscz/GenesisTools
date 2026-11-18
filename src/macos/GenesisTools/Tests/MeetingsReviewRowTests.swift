@@ -57,8 +57,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(word.dictionaryQuestion(in: [old, pending])?.id, "dict")
         let rows = try rows().rows
         var dictionary = rows[0]
-        dictionary = ReviewRow(id: "dict", label: "Q2", kind: "question", status: "suggested", confidence: nil, priority: 31,
-                             group: "words", what: "Add Zorb?", parts: [], choices: [], edit: "none", needs: nil, sources: [], target: .item("dict"))
+        dictionary = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"dict","label":"Q2","kind":"question","kindWord":"Question","status":"suggested","priority":31,"group":"words","what":"Add Zorb?","parts":[],"choices":[],"edit":"none","sources":[],"target":{"kind":"item","id":"dict"}}"#.utf8))
         XCTAssertEqual(ItemsTab.wordRows(rows + [dictionary], items: [word, pending]).map(\.id), rows.map(\.id))
         let action = DecisionAction.answer("dict", "add")
         let encoded = try JSONDecoder().decode(DecisionAction.self, from: JSONEncoder().encode(action))
@@ -75,7 +74,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         rows[1].occurrences = 18
         rows[0].status = "confirmed"
         XCTAssertEqual(ItemsTab.wordRows(rows, items: []).map(\.id), ["q1", "i2", "i3"])
-        let json = #"{"id":"q","label":"Q1","kind":"question","status":"suggested","group":"words","occurrences":31,"what":"What is zorb?","parts":[],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#
+        let json = #"{"id":"q","label":"Q1","kind":"question","kindWord":"Question","status":"suggested","group":"words","occurrences":31,"what":"What is zorb?","parts":[],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(json.utf8))
         XCTAssertEqual(row.group, "words")
         XCTAssertEqual(row.occurrences, 31)
@@ -158,7 +157,9 @@ final class MeetingsReviewRowTests: XCTestCase {
         typealias Panes = MeetingsPreferences.Panes
         XCTAssertEqual(Rows.returnKey.value(defaults), .edit)
         XCTAssertEqual(Rows.choiceKeys.value(defaults), .on)
-        XCTAssertEqual(Rows.decided.value(defaults), .inPlace)
+        // U15, U16: the decided rows follow the open ones, so 32 rejected questions no longer stand above the 9 open ones.
+        XCTAssertEqual(Rows.decided.value(defaults).rawValue, "atEnd")
+        XCTAssertEqual(Rows.decided.choices.map(\.rawValue), ["inPlace", "hidden", "atEnd"], "in place and hidden stay reachable")
         XCTAssertEqual(Rows.order.value(defaults), .priority)
         XCTAssertEqual(Rows.lowPriority.value(defaults), .hide)
         XCTAssertEqual(Rows.askReach.value(defaults), .always)
@@ -200,18 +201,18 @@ final class MeetingsReviewRowTests: XCTestCase {
     /// speaker range at 00:12 that an agent decided.
     static let rowsJSON = Data("""
     {"meeting":"m","hidden":{"lowPriority":2,"minPriority":0.5},"rows":[
-     {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who says this?","edit":"answer","sources":[],
+     {"id":"q1","label":"Q1","kind":"question","kindWord":"Question","status":"suggested","what":"Who says this?","edit":"answer","sources":[],
       "parts":[{"kind":"when","from":{"sec":1200,"text":"20:00"},"target":{"kind":"item","id":"q1"}},
                {"kind":"asks","pieces":[{"text":"Who speaks at "},{"text":"20:10","target":{"kind":"time","atSec":1210}}]}],
       "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
                  {"value":"none of these","label":"None of these","role":"none","action":{"kind":"answer","answer":"none of these"}}],
       "target":{"kind":"item","id":"q1"}},
-     {"id":"i2","label":"i2","kind":"term","status":"suggested","confidence":0.82,"what":"OMP → EMP","edit":"spelling","sources":[],
+     {"id":"i2","label":"i2","kind":"term","kindWord":"Word","status":"suggested","confidence":0.82,"what":"OMP → EMP","edit":"spelling","sources":[],
       "parts":[{"kind":"when","from":{"sec":309,"text":"05:09"},"target":{"kind":"item","id":"i2"}}],
       "choices":[{"value":"EMP","label":"EMP","role":"suggested","action":{"kind":"confirm"},"confidence":0.82},
                  {"value":"OMP","label":"OMP","role":"heard","action":{"kind":"reject"}}],
       "target":{"kind":"item","id":"i2"}},
-     {"id":"i3","label":"i3","kind":"speaker-range","status":"confirmed","what":"Speaker 3 00:12–00:30 → Alex Example","edit":"person",
+     {"id":"i3","label":"i3","kind":"speaker-range","kindWord":"Speaker range","status":"confirmed","what":"Speaker 3 00:12–00:30 → Alex Example","edit":"person",
       "sources":[],"parts":[{"kind":"when","from":{"sec":12,"text":"00:12"},"to":{"sec":30,"text":"00:30"},"target":{"kind":"item","id":"i3"}}],
       "choices":[],"target":{"kind":"item","id":"i3"},
       "decision":{"token":"t-agent","actor":{"kind":"agent","harness":"claude-code","session":"11111111-2222-4333-8444-555555555555"},
@@ -425,7 +426,7 @@ final class MeetingsReviewRowTests: XCTestCase {
     func testAHeldDecidedRowKeepsItsChoicesAndHeight() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         let open = try JSONDecoder().decode(ReviewRow.self, from: Data("""
-        {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who speaks?","edit":"answer","sources":[],"parts":[],
+        {"id":"q1","label":"Q1","kind":"question","kindWord":"Question","status":"suggested","what":"Who speaks?","edit":"answer","sources":[],"parts":[],
          "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
                     {"value":"Alex Example","label":"Alex Example","role":"candidate","action":{"kind":"answer","answer":"Alex Example"}}],
          "target":{"kind":"item","id":"q1"}}
@@ -637,7 +638,7 @@ final class MeetingsReviewRowTests: XCTestCase {
     func testALongDecidedAnswerWrapsInANarrowColumn() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         func height(_ answer: String) throws -> CGFloat {
-            let json: [String: Any] = ["id": "q1", "label": "Q1", "kind": "question", "status": "confirmed", "answer": answer,
+            let json: [String: Any] = ["id": "q1", "label": "Q1", "kind": "question", "kindWord": "Question", "status": "confirmed", "answer": answer,
                 "what": "Who owns the next action?", "edit": "answer", "sources": [], "parts": [], "choices": [],
                 "target": ["kind": "item", "id": "q1"]]
             let row = try JSONDecoder().decode(ReviewRow.self, from: JSONSerialization.data(withJSONObject: json))
@@ -688,7 +689,7 @@ final class MeetingsReviewRowTests: XCTestCase {
 
         XCTAssertNil(MeetingDetailModel.changing(answer, on: rows[0]).replaces, "an open question is answered, not changed")
         let decided = try JSONDecoder().decode(ReviewRow.self, from: Data("""
-        {"id":"q1","label":"Q1","kind":"question","status":"confirmed","what":"Who says this?","edit":"answer","sources":[],"parts":[],
+        {"id":"q1","label":"Q1","kind":"question","kindWord":"Question","status":"confirmed","what":"Who says this?","edit":"answer","sources":[],"parts":[],
          "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
                     {"value":"Alex Example","label":"Alex Example","role":"candidate","action":{"kind":"answer","answer":"Alex Example"}}],
          "target":{"kind":"item","id":"q1"},"answer":"Alex Example",
@@ -919,7 +920,7 @@ final class MeetingsReviewRowTests: XCTestCase {
     /// A transcript line at the row's own time, whose words the row already quotes, is the header's time button again.
     func testTheFromLineLeavesOutTheRowsOwnTime() throws {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data("""
-        {"id":"i9","label":"i9","kind":"term","status":"suggested","what":"OMP → EMP","edit":"spelling","choices":[],
+        {"id":"i9","label":"i9","kind":"term","kindWord":"Word","status":"suggested","what":"OMP → EMP","edit":"spelling","choices":[],
          "target":{"kind":"item","id":"i9"},
          "parts":[{"kind":"when","from":{"sec":600,"text":"10:00"},"target":{"kind":"item","id":"i9"}},
                   {"kind":"said","text":"We ship the OMP today.","speaker":"Bob Example"}],
@@ -1017,5 +1018,215 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertTrue(text.hasSuffix(" clip"), text)
         XCTAssertFalse(text.contains("→"), "the clip's two ends stood one second from the row's own span beside the bar")
     }
-}
 
+    // MARK: The owner's Items round (U13 to U17)
+
+    /// The reason one agent pass gave on many rows at once: long, so on one line it took the row's whole width.
+    static let passReason = "Second pass (agent): the seat rule contradicts the audio of the call (the microphone held under a third of "
+        + "the energy), so the seat mark is wrong on this line; replaced by agent findings and nine new questions about the stretch."
+
+    /// A row as `meeting.rows` sends it, from its fields.
+    private func row(_ fields: [String: Any]) throws -> ReviewRow {
+        var json: [String: Any] = ["edit": "none", "sources": [Any](), "parts": [Any](), "choices": [Any]()]
+        json.merge(fields) { _, new in new }
+        if json["target"] == nil, let id = json["id"] as? String { json["target"] = ["kind": "item", "id": id] }
+        return try JSONDecoder().decode(ReviewRow.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    private static func passDecision(_ action: String) -> [String: Any] {
+        ["token": "t-pass", "actor": ["kind": "agent", "harness": "claude-code", "session": "11111111-2222-4333-8444-555555555555"],
+         "by": "an agent (Claude Code, session 11111111)", "action": action, "reason": passReason, "at": "2026-11-18T17:15:07.000Z"]
+    }
+
+    /// i132 of the owner's shot 14: a speaker range an agent pass rejected.
+    private func rejectedRange() throws -> ReviewRow {
+        try row(["id": "i132", "label": "i132", "kind": "speaker-range", "kindWord": "Speaker range", "status": "rejected",
+                 "confidence": 0.95, "what": "Speaker 5 18:03 → Alice Example", "edit": "person",
+                 "parts": [["kind": "when", "from": ["sec": 1083, "text": "18:03"], "target": ["kind": "item", "id": "i132"]]],
+                 "decision": Self.passDecision("reject")])
+    }
+
+    /// Q5 of the owner's shot 15: a question the same pass rejected.
+    private func rejectedQuestion() throws -> ReviewRow {
+        try row(["id": "q5", "label": "Q5", "kind": "question", "kindWord": "Question", "status": "rejected", "what": "Who speaks?",
+                 "edit": "answer",
+                 "parts": [["kind": "when", "from": ["sec": 1647, "text": "27:27"], "target": ["kind": "item", "id": "q5"]],
+                           ["kind": "asks", "pieces": [["text": "Who speaks under Speaker 5 here?"]]]],
+                 "decision": Self.passDecision("reject")])
+    }
+
+    /// i126 of the owner's shot 13: a speaker range the voice model named, with the voice behind it (`row.voice`) and
+    /// the labeler's sentence that the voice line replaces.
+    private func voiceRow() throws -> ReviewRow {
+        try row(["id": "i126", "label": "i126", "kind": "speaker-range", "kindWord": "Speaker range", "status": "suggested",
+                 "confidence": 0.6083, "rules": ["voice-embedding"], "what": "Speaker 2 17:11 → Alice Example", "edit": "person",
+                 "parts": [["kind": "when", "from": ["sec": 1031, "text": "17:11"], "target": ["kind": "item", "id": "i126"]],
+                           ["kind": "reason", "pieces": [["text": "Sounds like Alice Example: 0.61 match, next closest Bob Example 0.40"]]]],
+                 "choices": [["value": "Alice Example", "label": "Alice Example", "role": "suggested", "action": ["kind": "confirm"],
+                              "confidence": 0.6083]],
+                 "voice": ["person": "Alice Example", "score": 0.6083, "next": ["person": "Bob Example", "score": 0.4021],
+                           "samples": ["count": 6, "meetings": 2], "seat": "call", "support": false]])
+    }
+
+    /// The words a view shows, read from a picture of it: a hosted view has no accessibility tree in a test.
+    private func shownText<V: View>(_ view: V, width: CGFloat) throws -> String {
+        let renderer = ImageRenderer(content: view.frame(width: width).background(Color.white).environment(\.colorScheme, .light))
+        renderer.scale = 3
+        let request = VNRecognizeTextRequest()
+        // The accurate recognizer initializes an E5RT model that fails on some macOS builds (see the held-row test).
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        for (stage, devices) in try request.supportedComputeStageDevices {
+            let cpu = try XCTUnwrap(devices.first { device in
+                if case .cpu = device { return true }
+                return false
+            }, "OCR needs a CPU device for \(stage)")
+            request.setComputeDevice(cpu, for: stage)
+        }
+        try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    }
+
+    /// The Items tab in a window the screen does not show, with the probes on, for a click on a probed control.
+    private func hostedItems(_ detail: MeetingDetailModel, defaults: UserDefaults, height: CGFloat = 420) -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: height), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.contentView = NSHostingView(rootView: ItemsTab(detail: detail).defaultAppStorage(defaults).frame(width: 640, height: height))
+        window.orderFrontRegardless()
+        return window
+    }
+
+    private func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }
+
+    /// One click at the middle of a probed frame (top-left origin, as SwiftUI's global space).
+    private func click(_ frame: CGRect, in host: NSWindow) throws {
+        let point = NSPoint(x: frame.midX, y: host.frame.height - frame.midY)
+        for type in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                       timestamp: ProcessInfo.processInfo.systemUptime,
+                                                       windowNumber: host.windowNumber, context: nil,
+                                                       eventNumber: 0, clickCount: 1, pressure: 1))
+            host.sendEvent(event)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    /// U15: the Questions tab counted 9 open questions and listed 41 rows, 32 of them rejected, first.
+    func testTheQuestionsFilterListsOnlyOpenQuestionsSoTheListMatchesItsCount() throws {
+        let rows = try rows().rows
+        let mixed = [try rejectedQuestion()] + rows
+        XCTAssertEqual(ItemsFilter.questions.rows(mixed, atLine: [], applyAbove: 0.5).map(\.id), ["q1"],
+                       "only the open question, as the tab's count says")
+        XCTAssertEqual(ItemsFilter.all.rows(mixed, atLine: [], applyAbove: 0.5).count, 4, "All keeps the decided history")
+    }
+
+    /// U15, U16: decided rows follow the open ones by default; a row this window just decided keeps its place (G33).
+    func testDecidedRowsGoToTheEndAndARowJustDecidedKeepsItsPlace() throws {
+        let atEnd = try XCTUnwrap(MeetingsPreferences.Rows.Decided(rawValue: "atEnd"), "a third way for meetings.rows.decided")
+        // Q5 rejected at 27:27, q1 open at 20:00, i2 open at 05:09, i3 confirmed at 00:12.
+        let rows = [try rejectedQuestion()] + (try rows().rows)
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: atEnd).map(\.id), ["q1", "i2", "q5", "i3"])
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .time, decided: atEnd).map(\.id), ["i2", "q1", "i3", "q5"],
+                       "open rows by time, then decided rows by time")
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: atEnd, keeping: ["q5"]).map(\.id),
+                       ["q5", "q1", "i2", "i3"], "the row under the pointer does not jump to the end until the reader scrolls")
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .inPlace).map(\.id), ["q5", "q1", "i2", "i3"],
+                       "in place keeps the engine's order")
+        XCTAssertEqual(SidePanelWords.choiceTitles["atEnd"], "At the end", "the settings name the choice in words, not its key")
+    }
+
+    /// U14: the folded line of a rejected row showed "i132 …" and then the agent's whole reason, cut at the window's edge.
+    func testAFoldedDecidedRowShowsItsItemTextAndAShortStatus() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let range = try shownText(ReviewRowView(row: try rejectedRange(), detail: detail, player: nil, foldedFit: 0), width: 900)
+        XCTAssertTrue(range.contains("Speaker 5 18:03"), "the item text comes first: \(range)")
+        XCTAssertTrue(range.contains("Alice Example"), range)
+        XCTAssertTrue(range.contains("Rejected by an agent"), range)
+        XCTAssertFalse(range.contains("seat rule"), "the reason waits for the unfolded row and the tooltip: \(range)")
+        let question = try shownText(ReviewRowView(row: try rejectedQuestion(), detail: detail, player: nil, foldedFit: 0), width: 900)
+        XCTAssertTrue(question.contains("Who speaks under Speaker 5"), "a rejected question shows what it asked: \(question)")
+    }
+
+    /// U14: a click on a folded row unfolds it with the whole reason as a paragraph; its chevron folds it again.
+    func testAClickUnfoldsADecidedRowWithItsWholeReasonAndTheChevronFoldsIt() throws {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.rows = .loaded(.init(meeting: "m", rows: [try rejectedRange()], hidden: .init(lowPriority: 0, minPriority: 0.5)))
+        let host = hostedItems(detail, defaults: defaults)
+        defer { host.orderOut(nil); host.close() }
+        settle()
+        XCTAssertNil(FrameProbe.frames["meetings.row.i132.why"], "folded, the reason stays in the tooltip")
+        try click(try XCTUnwrap(FrameProbe.frames["meetings.row.i132.folded"], "the folded line is one click target"), in: host)
+        settle()
+        let why = try XCTUnwrap(FrameProbe.frames["meetings.row.i132.why"], "a click unfolds the row with its reason")
+        XCTAssertGreaterThan(why.height, 28, "the whole reason wraps as a paragraph, never cut: \(why)")
+        XCTAssertEqual(detail.selectedRow, "i132", "the click also selects the row")
+
+        let fold = try XCTUnwrap(FrameProbe.frames["meetings.row.i132.fold"], "the unfolded row has a chevron that folds it")
+        FrameProbe.reset()
+        try click(fold, in: host)
+        settle()
+        XCTAssertNotNil(FrameProbe.frames["meetings.row.i132.folded"], "folded again")
+        XCTAssertNil(FrameProbe.frames["meetings.row.i132.why"])
+    }
+
+    /// U13: a voice row says whom it sounds like with the cosine, the next closest voice, and the samples behind it.
+    func testAVoiceRowReadsItsCosineAndTheSamplesBehindIt() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let text = try shownText(ReviewRowView(row: try voiceRow(), detail: detail, player: nil), width: 760)
+        XCTAssertFalse(text.contains("61 %") || text.contains("61%"), "a cosine is not a percent: \(text)")
+        XCTAssertTrue(text.contains("Alice Example 0.61"), "the choice carries the cosine: \(text)")
+        XCTAssertTrue(text.contains("Sounds like Alice Example: 0.61 match"), text)
+        XCTAssertTrue(text.contains("Bob Example 0.40"), "the next closest voice: \(text)")
+        XCTAssertTrue(text.contains("6 saved samples"), text)
+        XCTAssertTrue(text.contains("from 2 meetings"), text)
+        XCTAssertEqual(text.components(separatedBy: "Sounds like").count, 2, "one voice line, not the labeler's sentence too: \(text)")
+    }
+
+    /// U13: the sample count is a button that opens the Voices pane.
+    func testTheSampleCountOpensTheVoicesPane() throws {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.rows = .loaded(.init(meeting: "m", rows: [try voiceRow()], hidden: .init(lowPriority: 0, minPriority: 0.5)))
+        let host = hostedItems(detail, defaults: defaults)
+        defer { host.orderOut(nil); host.close() }
+        settle()
+        XCTAssertFalse(detail.voices.open)
+        try click(try XCTUnwrap(FrameProbe.frames["meetings.row.i126.samples"], "the sample count is a control"), in: host)
+        settle()
+        XCTAssertTrue(detail.voices.open, "the count opens the Voices pane")
+    }
+
+    /// U17: the kind word is the row's own (`kindWord`, one table in TS), so "Mixed voices" is gone from every surface.
+    func testTheKindWordIsTheRowsOwnWord() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let label = try row(["id": "i972", "label": "i972", "kind": "label", "kindWord": "Unreliable label", "status": "suggested",
+                             "what": "The label \"Alice Example\" does not belong to one person (00:00 to 1:41:43)",
+                             "parts": [["kind": "when", "from": ["sec": 0, "text": "00:00"], "to": ["sec": 6103, "text": "1:41:43"],
+                                        "target": ["kind": "item", "id": "i972"]]],
+                             "choices": [["value": "unclear", "label": "Mark its lines unclear", "role": "suggested",
+                                          "action": ["kind": "confirm"]]]])
+        let text = try shownText(ReviewRowView(row: label, detail: detail, player: nil), width: 760)
+        XCTAssertTrue(text.contains("Unreliable label"), text)
+        XCTAssertFalse(text.contains("Mixed voices"), text)
+        XCTAssertEqual(ReviewRowView.reference(label), "Unreliable label 00:00–1:41:43", "another row names it by the same word")
+        XCTAssertEqual(MeetingsWords.rowName(label), "the unreliable label at 00:00–1:41:43")
+        let item = try JSONDecoder().decode(MeetingItem.self, from: Data(#"{"id":"i972","kind":"label","status":"confirmed","label":"Alice Example","fromSec":0,"toSec":6103,"rules":[],"suggestedAt":"2026-11-18T10:00:00.000Z"}"#.utf8))
+        XCTAssertEqual(MeetingsWords.itemTitle(item), "The label \"Alice Example\" does not belong to one person (00:00 to 1:41:43)",
+                       "the notice after a confirm says what the row says")
+    }
+}

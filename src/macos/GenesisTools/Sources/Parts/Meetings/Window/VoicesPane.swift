@@ -29,6 +29,8 @@ final class VoicesModel {
     private(set) var preview: Loadable<VoicesPreviewSummary> = .idle
     /// The pane is open in the meeting's trailing slot ("…" → "Voices…").
     var open = false
+    /// The person the pane opens on and scrolls to (a voice row's sample count, U13); cleared once shown.
+    var focus: String?
     /// The long call that runs now, and its newest step from the service's `$/progress`.
     var running: Run?
     var progress: MeetingsCallProgress?
@@ -375,17 +377,21 @@ struct VoicesPane: View {
                 EmptyState(symbol: "person.wave.2", text: "Choose a project first",
                            detail: "Voice samples are kept per project, so the voice model names people of the meeting's project.")
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
-                        actions
-                        // The preview answers the button above it, so it shows right under it.
-                        previewSection
-                        Divider().padding(.vertical, 6)
-                        peopleSection
-                        namedSection
-                        othersSection
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
+                            actions
+                            // The preview answers the button above it, so it shows right under it.
+                            previewSection
+                            Divider().padding(.vertical, 6)
+                            peopleSection
+                            namedSection
+                            othersSection
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .onChange(of: model.focus, initial: true) { _, _ in reveal(proxy) }
+                    .onChange(of: model.people.value != nil) { _, _ in reveal(proxy) }
                 }
             }
         }
@@ -407,6 +413,17 @@ struct VoicesPane: View {
     private struct NamedInput: Equatable {
         let items: [MeetingItem]?
         let entries: [TranscriptLine]?
+    }
+
+    /// Opens the focused person's samples and scrolls to them once the people are read; a person the list does not
+    /// hold leaves the pane as it is.
+    private func reveal(_ proxy: ScrollViewProxy) {
+        guard let name = model.focus, let people = model.people.value else { return }
+        model.focus = nil
+        guard let person = (people.inMeeting + people.others).first(where: { $0.person == name }) else { return }
+        if people.others.contains(where: { $0.id == person.id }) { othersOpen = true }
+        expanded.insert(person.id)
+        Task { @MainActor in proxy.scrollTo(person.id, anchor: .top) }
     }
 
     private var header: some View {
@@ -474,7 +491,7 @@ struct VoicesPane: View {
                     Text("Nobody of this meeting is known to the project yet.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                         .padding(.vertical, 4)
                 }
-                ForEach(people.inMeeting) { person in personRow(person) }
+                ForEach(people.inMeeting) { person in personRow(person).id(person.id) }
             }
         }
     }
@@ -485,7 +502,7 @@ struct VoicesPane: View {
             Divider().padding(.vertical, 6)
             GenDisclosure(isExpanded: $othersOpen, identifier: "meetings.voices.others",
                           accessibilityTitle: "Other people of the project with samples") {
-                VStack(alignment: .leading, spacing: 0) { ForEach(others) { person in personRow(person) } }
+                VStack(alignment: .leading, spacing: 0) { ForEach(others) { person in personRow(person).id(person.id) } }
             } label: {
                 Text("Other people of \(project ?? "the project") (\(others.count))").font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.secondary)

@@ -3,7 +3,8 @@ import SwiftUI
 // MARK: - Items
 
 /// The review rows of one meeting (`meeting.rows`, F6): questions and suggestions in the order `tools meetings listen`
-/// asks, one `ReviewRowView` each. A decided row folds in place (R16) or leaves the list (`meetings.rows.decided`).
+/// asks, one `ReviewRowView` each. A decided row folds (R16) and moves below the open rows, folds in place, or leaves
+/// the list (`meetings.rows.decided`); a click unfolds it with its whole reason (U14).
 /// The keyboard reaches every row (G11): Up and Down select, Return edits or confirms (`meetings.rows.returnKey`), a
 /// second Return in the editor saves (R11), 1 to 9 pick a choice (`meetings.rows.choiceKeys`, G23), Delete picks
 /// "none of these", Esc closes the editor, else clears the selection.
@@ -11,11 +12,13 @@ import SwiftUI
 enum ItemsFilter: String, CaseIterable {
     case all, questions, suggestions
 
-    /// `atLine`: the open suggestions (`MeetingDetailModel.confirmable` at `applyAbove`).
-    func rows(_ rows: [ReviewRow], atLine: Set<String>, applyAbove: Double) -> [ReviewRow] {
+    /// `atLine`: the open suggestions (`MeetingDetailModel.confirmable` at `applyAbove`). Questions are the open ones,
+    /// the tab's count (U15: it counted 9 and listed 41, 32 of them rejected); one this window just answered
+    /// (`keeping`, G33) keeps its place until the reader scrolls. All keeps the decided history.
+    func rows(_ rows: [ReviewRow], atLine: Set<String>, applyAbove: Double, keeping: Set<String> = []) -> [ReviewRow] {
         switch self {
         case .all: rows
-        case .questions: rows.filter(\.isQuestion)
+        case .questions: rows.filter { $0.isQuestion && ($0.isOpen || keeping.contains($0.id)) }
         case .suggestions: rows.filter { Self.isSuggestion($0, atLine: atLine, applyAbove: applyAbove) }
         }
     }
@@ -249,7 +252,7 @@ struct ItemsTab: View {
     private var projectionInput: ItemsProjection.Input {
         .init(rows: detail.rowsForReopen.value?.rows ?? [], items: detail.record.value?.items,
               order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
-              decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
+              decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? MeetingsPreferences.Rows.decided.defaultValue,
               held: detail.heldFolds, filter: detail.itemsFilter, group: questionGroup, applyAbove: applyAbove)
     }
 
@@ -301,6 +304,7 @@ struct ItemsTab: View {
                                       changingAnswer: detail.changingRows.contains(row.id),
                                       foldedFit: ReviewRowView.foldedFit(row, busy: busy, room: listWidth.map { $0 - Self.rowInset }),
                                       held: detail.heldFolds.contains(row.id),
+                                      unfolded: detail.unfoldedRows.contains(row.id),
                                       asksSpeaker: projection.speakerQuestions.contains(row.id),
                                       references: projection.references[row.id] ?? [],
                                       selectRow: {

@@ -10,6 +10,12 @@ struct MeetingPeopleChip: View {
     /// The person the editor opened on; nil adds one.
     @State private var editing: PersonStay?
     @State private var warnings: [String] = []
+    /// The attendance check's one sentence (`ReviewRows.attendanceWarning`) and its full text with the commands it
+    /// tried (`attendanceDetail`); the notes of this window's last suggestion run.
+    @State private var attendance: String?
+    @State private var attendanceDetail: String?
+    @State private var notes: [String] = []
+    @State private var showingDetails = false
 
     var body: some View {
         let people = detail.record.value?.participants ?? []
@@ -19,20 +25,27 @@ struct MeetingPeopleChip: View {
                                           warn: !warnings.isEmpty)
         }
         .disabled(detail.record.value == nil)
-        .instantTooltip(warnings.isEmpty ? "Who took part: edit someone's join and leave, or add a person"
-                                         : warnings.joined(separator: " ") + " Add or edit the people here.")
+        .instantTooltip(Self.tooltip(attendance: attendance, notes: notes))
         .accessibilityLabel(warnings.isEmpty ? "People, \(people.count)" : "People, \(people.count), needs a check")
         .accessibilityIdentifier("meetings.people.add")
         .task { if case .idle = detail.rows { detail.loadRows() } }
         .onChange(of: detail.rows.value?.attendanceWarning, initial: true) { _, _ in updateWarnings() }
+        .onChange(of: detail.rows.value?.attendanceDetail, initial: true) { _, _ in updateWarnings() }
         .onChange(of: detail.suggestionWarnings, initial: true) { _, _ in updateWarnings() }
         .sheet(isPresented: $detail.showingMeetingPeopleEditor) { editor }
+        .sheet(isPresented: $showingDetails) {
+            MeetingPeopleDetailsSheet(attendance: attendanceDetail ?? attendance, notes: notes) { showingDetails = false }
+        }
     }
 
-    /// Built at the click (`MenuButton`), so the body never walks the people.
+    /// Built at the click (`MenuButton`), so the body never walks the people. The attendance sentence stands first;
+    /// the log with its commands opens from "Details…", never in the menu or the tooltip (U3).
     private func menu(_ names: [String]) -> [MenuButtonItem] {
-        var items: [MenuButtonItem] = warnings.map { .note($0) }
-        if !warnings.isEmpty { items.append(.divider) }
+        var items: [MenuButtonItem] = attendance.map { [MenuButtonItem.note($0)] } ?? []
+        if !Self.detailsText(attendance: attendanceDetail ?? attendance, notes: notes).isEmpty {
+            items.append(.action("Details…") { showingDetails = true })
+        }
+        if !items.isEmpty { items.append(.divider) }
         items += names.map { person in .action("\(person)…") { edit(person) } }
         if !names.isEmpty { items.append(.divider) }
         items.append(.action("Add a person…") { edit("") })
@@ -40,10 +53,33 @@ struct MeetingPeopleChip: View {
     }
 
     private func updateWarnings() {
-        warnings = Self.peopleWarnings(attendance: detail.rows.value?.attendanceWarning, suggested: detail.suggestionWarnings)
+        attendance = detail.rows.value?.attendanceWarning
+        attendanceDetail = detail.rows.value?.attendanceDetail
+        notes = detail.suggestionWarnings
+        warnings = Self.peopleWarnings(attendance: attendance, suggested: notes)
     }
     static func peopleWarnings(attendance: String?, suggested: [String]) -> [String] {
         Array(Set(suggested + (attendance.map { [$0] } ?? []))).sorted()
+    }
+
+    /// The chip's tooltip: the attendance sentence and where to act. The notes of a suggestion run can carry a log with
+    /// commands ("attendance unavailable; E2 skipped: tools ms-teams …"), so the tooltip only counts them.
+    static func tooltip(attendance: String?, notes: [String]) -> String {
+        if let attendance {
+            let sentence = attendance.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (sentence.hasSuffix(".") ? sentence : sentence + ".") + " Add or edit the people here."
+        }
+        if !notes.isEmpty {
+            let them = notes.count == 1 ? "it" : "them"
+            return "The last suggestion run left \(Plural.count(notes.count, "note")); Details… in this menu shows \(them). Add or edit the people here."
+        }
+        return "Who took part: edit someone's join and leave, or add a person"
+    }
+
+    /// What Details… shows and copies: the attendance check's full text, then each note the suggestion run left that
+    /// does not repeat it.
+    static func detailsText(attendance: String?, notes: [String]) -> String {
+        ((attendance.map { [$0] } ?? []) + notes.filter { $0 != attendance }).joined(separator: "\n\n")
     }
 
     /// The one editor of who was there (`PersonStayEditor`), on this person or on a new one.
@@ -55,6 +91,52 @@ struct MeetingPeopleChip: View {
     private var editor: some View {
         PersonStayEditor(detail: detail, original: editing, duration: detail.window?.meeting(detail.id)?.durationSec) {
             detail.showingMeetingPeopleEditor = false
+        }
+    }
+}
+
+/// "Details…" of the people chip: the attendance check's full text, with the commands it tried, and the notes of the
+/// last suggestion run, as the tools wrote them. Selectable, and Copy takes all of it (U3).
+struct MeetingPeopleDetailsSheet: View {
+    let attendance: String?
+    let notes: [String]
+    let close: () -> Void
+
+    var body: some View {
+        let others = notes.filter { $0 != attendance }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("People: details").font(.headline)
+                Text("The full text of the attendance check and of the last suggestion run's notes, as the tools wrote them.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let attendance { block("Attendance", [attendance]) }
+                    if !others.isEmpty { block("Notes from the last suggestion run", others) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 320)
+            HStack {
+                Button("Copy") { Clipboard.copy(MeetingPeopleChip.detailsText(attendance: attendance, notes: notes), what: "details") }
+                    .accessibilityIdentifier("meetings.people.details.copy")
+                Spacer()
+                Button("Done", action: close).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 520)
+        .accessibilityIdentifier("meetings.people.details")
+    }
+
+    private func block(_ title: String, _ texts: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            ForEach(Array(texts.enumerated()), id: \.offset) { _, text in
+                Text(verbatim: text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

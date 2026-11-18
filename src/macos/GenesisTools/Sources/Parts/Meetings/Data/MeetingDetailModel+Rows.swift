@@ -58,19 +58,38 @@ extension MeetingDetailModel {
         }
     }
 
-    /// The rows in the order the reader asked for (`meetings.rows.order`), decided rows in place or hidden
-    /// (`meetings.rows.decided`); a held row (`keeping`, G33) stays until the reader scrolls. Priority is the engine's own
-    /// order, the one `listen` asks in.
+    /// The rows in the order the reader asked for (`meetings.rows.order`), decided rows after the open ones, in place or
+    /// hidden (`meetings.rows.decided`); a held row (`keeping`, G33) keeps its place until the reader scrolls. Priority is
+    /// the engine's own order, the one `listen` asks in.
     static func visibleRows(_ rows: [ReviewRow], order: MeetingsPreferences.Rows.Order,
                             decided: MeetingsPreferences.Rows.Decided, keeping: Set<String> = []) -> [ReviewRow] {
-        var shown = decided == .hidden ? rows.filter { $0.isOpen || keeping.contains($0.id) } : rows
+        let waits = { (row: ReviewRow) in row.isOpen || keeping.contains(row.id) }
+        var shown = decided == .hidden ? rows.filter(waits) : rows
         if order == .time {
             shown = shown.enumerated().sorted { a, b in
                 let left = a.element.startSec ?? .infinity, right = b.element.startSec ?? .infinity
                 return left == right ? a.offset < b.offset : left < right
             }.map(\.element)
         }
+        if decided == .atEnd {
+            shown = shown.filter(waits) + shown.filter { !waits($0) }
+        }
         return shown
+    }
+
+    /// A decided row's click: it unfolds with its whole reason, or folds back to one line (U14).
+    func toggleUnfolded(_ id: String) {
+        if unfoldedRows.contains(id) {
+            unfoldedRows.remove(id)
+        } else {
+            unfoldedRows.insert(id)
+        }
+    }
+
+    /// Opens the Voices pane on one person: a voice row's sample count (U13).
+    func showVoices(of person: String) {
+        voices.focus = person
+        voices.open = true
     }
 
     /// The next open row after `id` in `rows`, wrapping to the first; nil when no other row is open (the queue's end).
@@ -470,6 +489,7 @@ extension MeetingDetailModel {
     /// An answered question keeps its answer and shows its choices instead: the next one replaces it in one entry and
     /// asks again about what it carried (`changing`), and "Keep" leaves it as it was (genesiscz.md 6).
     func revertAndEdit(_ row: ReviewRow) {
+        unfoldedRows.remove(row.id)
         if row.isQuestion, row.decision?.token != nil {
             changingRows.insert(row.id)
             selectedRow = row.id
@@ -789,19 +809,22 @@ extension ReviewRow {
 }
 
 extension MeetingsWords {
-    /// "Q9" for a question; "the word at 00:12", "the speaker range at 01:12–01:40", "the join at 24:09" for a
-    /// suggestion; the label for a row without a time.
+    /// "Q9" for a question; "the word at 00:12", "the speaker range at 01:12–01:40" for a suggestion, from the row's
+    /// own kind word (U17: one table, in TS); the label for a row without a time.
     static func rowName(_ row: ReviewRow) -> String {
         guard !row.isQuestion, let when = row.whenText else { return row.label }
-        let kind: String
-        switch row.kind {
-        case "term": kind = "word"
-        case "speaker-range": kind = "speaker range"
-        case "label": kind = "mixed voices"
-        case "join": kind = "join"
-        default: kind = "item"
+        return "the \(row.kindWord.lowercased()) at \(when)"
+    }
+
+    /// Who decided a row, in the words a folded row has room for: "you", "an agent", "a rule" (U14). The whole actor
+    /// (`actor`) stands in the unfolded row and the tooltip.
+    static func shortActor(_ actor: DecisionActor) -> String {
+        switch actor.kind {
+        case "window", "listen", "cli": return "you"
+        case "agent": return "an agent"
+        case "rule": return "a rule"
+        default: return "someone"
         }
-        return "the \(kind) at \(when)"
     }
 
     /// Who made a decision, in the engine's words (decision-journal.ts, G44): "you", "you in the terminal", "you at the

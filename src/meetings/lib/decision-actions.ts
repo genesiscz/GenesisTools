@@ -10,7 +10,7 @@ import { voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
-import { findingSchema } from "./findings";
+import { refinePlainReason, savedFindingSchema } from "./findings";
 import { linePointSchema } from "./moment-schema";
 import { rejectFilterSchema } from "./reject-filter";
 
@@ -145,7 +145,7 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({
         kind: z.literal("add"),
         /** Empty only with `replace`: a new plan that found nothing still takes the old suggestions back. */
-        findings: z.array(findingSchema),
+        findings: z.array(savedFindingSchema),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
         replace: z
@@ -166,7 +166,18 @@ export const DECISION_ACTION_OPTIONS = [
     setFieldsAction,
 ] as const;
 
-export const decisionActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS]);
+/** A decision to apply now: an add's new findings give their reasons in plain words (U18); a saved line need not. */
+export const decisionActionSchema = z
+    .discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS])
+    .superRefine((action, ctx) => {
+        if (action.kind !== "add") {
+            return;
+        }
+
+        for (const [index, finding] of action.findings.entries()) {
+            refinePlainReason(finding, ctx, ["findings", index]);
+        }
+    });
 export type DecisionAction = z.infer<typeof decisionActionSchema>;
 
 /** The Undo of one entry (`items`: only these of its items; a question named brings back its whole answer). */
