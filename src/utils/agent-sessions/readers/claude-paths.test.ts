@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { basename, join, sep } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, sep } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -49,6 +50,7 @@ test("the sub-agent path test answers as the segment split it replaced", () => {
 });
 
 interface PathCase {
+    meta?: unknown;
     harness: string;
     path: string;
     expect: unknown;
@@ -85,7 +87,15 @@ describe("classifyPath against the shared session-path fixtures", () => {
 
     for (const entry of cases) {
         test(`${entry.harness} ${entry.path}`, () => {
-            const role: unknown = resolveHistoryProvider(entry.harness).reader.classifyPath(entry.path);
+            let root: string | undefined;
+            if (entry.meta) {
+                root = mkdtempSync(join(tmpdir(), "path-role-"));
+                const file = join(root, entry.path.replace(/\.jsonl$/, ".meta.json"));
+                mkdirSync(dirname(file), { recursive: true });
+                writeFileSync(file, SafeJSON.stringify(entry.meta));
+            }
+
+            const role: unknown = resolveHistoryProvider(entry.harness).reader.classifyPath(entry.path, root);
             expect(role).toEqual(entry.expect);
         });
     }
