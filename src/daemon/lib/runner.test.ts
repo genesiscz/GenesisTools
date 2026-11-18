@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { skip } from "@genesiscz/utils/test/skip";
 import { taskWorkingDir } from "./config";
 import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskArgv, taskPath } from "./runner";
@@ -16,7 +18,20 @@ function makeTempDir(): string {
     return dir;
 }
 
+// runTask makes its working folders under the daemon folder; a GENESIS_TOOLS_DAEMON_DIR from the shell would point
+// them at a real one, so every test here gets its own.
+let envBefore: ReturnType<typeof env.testing.snapshot> | undefined;
+
+beforeEach(() => {
+    envBefore = env.testing.snapshot();
+    env.testing.set("GENESIS_TOOLS_DAEMON_DIR", makeTempDir());
+});
+
 afterEach(() => {
+    if (envBefore) {
+        env.testing.restore(envBefore);
+    }
+
     for (const dir of tempDirs.splice(0)) {
         if (existsSync(dir)) {
             rmSync(dir, { recursive: true, force: true });
@@ -220,10 +235,15 @@ describe("run log meta", () => {
     // D28 (2026-11-18): the build purge is tuned by what each run costs, so the exit record carries it.
     it.skipIf(skip.onWindows)("records the CPU of the run, the children it waited for included", async () => {
         const logsBaseDir = makeTempDir();
-        const burn = `${process.execPath} -e "const end = Date.now() + 300; while (Date.now() < end) {}"`;
+        // The child burns 200 ms of its own CPU (not of wall time, which a busy machine stretches), at most 10 s, and
+        // prints what it measured; the run's record must hold at least that much.
+        const script =
+            "const end = Date.now() + 10000; const cpu = () => process.cpuUsage(); " +
+            "while ((cpu().user + cpu().system) / 1000 < 200 && Date.now() < end) {} " +
+            "console.log(Math.floor((cpu().user + cpu().system) / 1000));";
         const task: DaemonTask = {
             name: "cost-task",
-            command: `${burn}; true`,
+            command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}; true`,
             every: "every 1 hour",
             retries: 0,
             enabled: true,
@@ -232,8 +252,13 @@ describe("run log meta", () => {
         const lines = readFileSync(result.logFile, "utf8").trim().split("\n");
         const exit = SafeJSON.parse(lines.at(-1) ?? "{}", { strict: true });
 
+        const childCpuMs = Number(stdoutOf(result.logFile)[0]);
+
         expect(exit.type).toBe("exit");
-        expect(exit.usage.cpuMs).toBeGreaterThanOrEqual(250);
+        expect(childCpuMs).toBeGreaterThanOrEqual(200);
+        expect(exit.usage.cpuMs).toBeGreaterThanOrEqual(childCpuMs - 5);
+        expect(exit.usage.wallMs).toBeGreaterThan(0);
+        expect(exit.usage.wallMs).toBeLessThanOrEqual(result.duration_ms);
         expect(exit.usage.cpuMs).toBe(exit.usage.userMs + exit.usage.systemMs);
         expect(exit.usage.maxRssMb).toBeGreaterThan(0);
         expect(result.usage).toEqual(exit.usage);

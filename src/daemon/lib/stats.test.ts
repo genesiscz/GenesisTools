@@ -171,6 +171,43 @@ describe("collectDaemonStats", () => {
         expect(alpha.recentRuns[0]).toMatchObject({ cpuMs: null, maxRssMb: null });
     });
 
+    test("a damaged usage reading counts as missing, and the logged lifetime is read", () => {
+        const dir = mkdtempSync(join(tmpdir(), "daemon-stats-usage-"));
+
+        try {
+            const taskDir = join(dir, "eps");
+            mkdirSync(taskDir, { recursive: true });
+            const write = (runId: string, startedAt: string, usage: string) =>
+                writeFileSync(
+                    join(taskDir, `${formatLocalFileTimestamp(new Date(startedAt))}-${runId}.jsonl`),
+                    [
+                        SafeJSON.stringify({
+                            type: "meta",
+                            taskName: "eps",
+                            command: "true",
+                            runId,
+                            attempt: 1,
+                            startedAt,
+                        }),
+                        `{"type":"exit","ts":"${startedAt}","code":0,"duration_ms":900,"usage":${usage}}`,
+                    ].join("\n")
+                );
+            write("e1", "2026-10-11T01:00:00.000Z", '{"userMs":-5,"systemMs":0,"cpuMs":-5,"maxRssMb":1e999}');
+            write(
+                "e2",
+                "2026-10-11T02:00:00.000Z",
+                '{"userMs":400,"systemMs":0,"cpuMs":400,"maxRssMb":10,"wallMs":800}'
+            );
+
+            const eps = taskOf(collectDaemonStats({ logsBaseDir: dir, tasks: [], window: allWindow, now: NOW }), "eps");
+            expect([eps.cpuP50Ms, eps.cpuMaxMs]).toEqual([400, 400]);
+            expect(eps.recentRuns.find((run) => run.runId === "e1")).toMatchObject({ cpuMs: null, maxRssMb: null });
+            expect(eps.recentRuns.find((run) => run.runId === "e2")).toMatchObject({ cpuMs: 400, wallMs: 800 });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     test("failures newest first with their stderr tail; the last run is the unfinished one", () => {
         const alpha = taskOf(stats, "alpha");
 

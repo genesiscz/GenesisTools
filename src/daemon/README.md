@@ -387,9 +387,11 @@ The launchd job gets only `HOME` and `PATH`. These variables set in your shell c
   stdout and exits 1. A wrong value writes nothing.
 - `run <name> --json`: `{ task, ok, exitCode, duration_ms, logFile, runId }`. `exitCode` is null when the run timed
   out. The process exits 0 when the task exited 0, else 1.
-- Every run log's `exit` record carries `usage: { userMs, systemMs, cpuMs, maxRssMb }` since 2026-11-18: the rusage
-  of the task process, which includes every child it waited for. `cpuMs / duration_ms` is the average number of cores
-  the run kept busy. `stats` shows it per run and as CPU P50 and CPU max per task; older runs show none.
+- Every run log's `exit` record carries `usage: { userMs, systemMs, cpuMs, maxRssMb, wallMs }` since 2026-11-18: the
+  rusage of the task process, which includes every child it waited for, and `wallMs`, the process's own lifetime on a
+  monotonic clock (`duration_ms` also holds the wait for its output pipes). `cpuMs / wallMs` is the average number of
+  cores the run kept busy. `stats` shows it per run, and CPU P50 and CPU max per task in the overview and the task
+  view; older runs show none. A negative or non-finite figure in a log counts as missing.
 - `stats --json`: `DaemonStats` version 1 (`lib/stats.ts`). Times are ISO UTC, durations are ms. A run's status is
   `ok`, `failed`, `timedOut`, `killed` (no exit code and no timeout) or `unfinished` (no exit record). The
   GenesisTools settings window reads it, so fields are only added; `version` goes up when a meaning changes.
