@@ -202,6 +202,14 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertNil(notices.waiting[id])
     }
 
+    func testDismissingAnUndoInFlightKeepsItsNoticeClosed() async {
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        let id = notices.push(StackedNotice(text: "Removed Dana Example"))
+        let undo = notices.settleUndo(id, done: "Undone") { notices.dismiss(id) }
+        await undo.value
+        XCTAssertTrue(notices.notices.isEmpty)
+    }
+
     func testThePersonEditorsUndoWritesWhatTheNoticeReportsAndSaysSo() throws {
         let dana = PersonStay(name: "Dana Example", fromSec: 120, toSec: nil, atMic: false, via: "carol-laptop", stays: 1)
         var moved = dana

@@ -9,6 +9,7 @@ extension StackedNotice {
     /// "Details" opens the failure window (the error, its output, Copy context for agents, Report a bug).
     @MainActor
     static func meetingsFailure(_ error: Error, id: StackedNotice.ID = StackedNotice.ID(),
+                                retryAction: StackedNotice.Action? = nil,
                                 retry: (@MainActor () -> Void)? = nil) -> StackedNotice {
         let failure = error as? MeetingsCLI.Failure
         let text = failure?.sentence ?? "The meetings command failed."
@@ -19,7 +20,8 @@ extension StackedNotice {
         report.command = failure?.command
         report.stack = failure?.stack
         report.issue = failure?.issue
-        let actions: [StackedNotice.Action] = (retry.map { [.retry($0)] } ?? []) + [.details(report, retry: retry)]
+        let button = retryAction ?? retry.map { StackedNotice.Action.retry($0) }
+        let actions: [StackedNotice.Action] = (button.map { [$0] } ?? []) + [.details(report, retry: retry)]
         return StackedNotice(id: id, text: text, more: more, tone: .error, actions: actions)
     }
 }
@@ -35,15 +37,19 @@ extension NoticeStackModel {
         Task { @MainActor [weak self] in
             do {
                 try await work()
-                self?.push(StackedNotice(text: done), replacing: notice)
+                guard let self, self.contains(notice) else { return }
+                push(StackedNotice(text: done), replacing: notice)
             } catch {
-                guard let self else { return }
-                var failed = StackedNotice.meetingsFailure(error) { [weak self] in self?.settleUndo(notice, done: done, work) }
-                failed.text = "Not undone: \(failed.text)"
-                // Retry waits in this notice's place, as the Undo did, and its answer replaces it again.
-                failed.actions[0] = .init("Retry", symbol: "arrow.clockwise", afterPress: .wait("Undoing…")) { [weak self] id in
+                guard let self, self.contains(notice) else { return }
+                let retry = StackedNotice.Action("Retry", symbol: "arrow.clockwise", afterPress: .wait("Undoing…")) { [weak self] id in
                     self?.settleUndo(id, done: done, work)
                 }
+                // Details may outlive its error. Route its Retry through the still-current notice, just like a button press.
+                var failed = StackedNotice.meetingsFailure(error, id: notice, retryAction: retry, retry: { [weak self] in
+                    guard let self, self.waiting[notice] == nil, self.notice(notice)?.tone == .error else { return }
+                    press(retry, of: notice)
+                })
+                failed.text = "Not undone: \(failed.text)"
                 push(failed, replacing: notice)
             }
         }
