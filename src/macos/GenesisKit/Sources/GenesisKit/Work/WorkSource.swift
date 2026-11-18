@@ -5,6 +5,33 @@ import GenesisKitBase
 // reopened with nobody working on them, and who hears about each kind of change. The data comes from the `work` area of
 // the actions service through the generated client; the screen never runs `tools`.
 
+public struct WorkPairingValue: Identifiable, Equatable, Sendable, Decodable {
+    public enum State: String, Decodable, Sendable {
+        case synced = "in-sync"
+        case pending, held, drift, failed
+    }
+
+    public enum DriftDirection: String, Decodable, Sendable {
+        case local, remote
+    }
+
+    public var connector: String
+    public var displayName: String?
+    public var enabled: Bool
+    public var remoteKey: String
+    public var state: State
+    public var driftDirection: DriftDirection?
+    public var note: String?
+    public var id: String { connector }
+
+    public init(connector: String, displayName: String? = nil, remoteKey: String, state: State,
+                driftDirection: DriftDirection? = nil, note: String? = nil, enabled: Bool = true) {
+        self.connector = connector; self.displayName = displayName; self.remoteKey = remoteKey
+        self.state = state; self.driftDirection = driftDirection; self.note = note
+        self.enabled = enabled
+    }
+}
+
 /// One item as a row.
 public struct WorkRowValue: Identifiable, Equatable, Sendable, Decodable {
     public var ref: String
@@ -15,12 +42,14 @@ public struct WorkRowValue: Identifiable, Equatable, Sendable, Decodable {
     public var title: String
     public var project: String?
     public var slot: String?
+    public var pairings: [WorkPairingValue]?
     public var id: String { ref }
 
     public init(ref: String, state: String, type: String, severity: String? = nil, worker: String? = nil,
-                title: String, project: String? = nil, slot: String? = nil) {
+                title: String, project: String? = nil, slot: String? = nil, pairings: [WorkPairingValue]? = nil) {
         self.ref = ref; self.state = state; self.type = type; self.severity = severity
         self.worker = worker; self.title = title; self.project = project; self.slot = slot
+        self.pairings = pairings
     }
 
     public var isOpen: Bool { ["spotted", "open", "active", "reopened"].contains(state) }
@@ -35,11 +64,13 @@ public struct WorkContainerValue: Identifiable, Equatable, Sendable, Decodable {
     public var open: Int
     public var total: Int
     public var members: [WorkRowValue]
+    public var pairings: [WorkPairingValue]?
     public var id: String { ref }
 
-    public init(ref: String, type: String, state: String, title: String, open: Int, total: Int, members: [WorkRowValue]) {
+    public init(ref: String, type: String, state: String, title: String, open: Int, total: Int, members: [WorkRowValue],
+                pairings: [WorkPairingValue]? = nil) {
         self.ref = ref; self.type = type; self.state = state; self.title = title
-        self.open = open; self.total = total; self.members = members
+        self.open = open; self.total = total; self.members = members; self.pairings = pairings
     }
 }
 
@@ -56,14 +87,15 @@ public struct WorkTriageValue: Identifiable, Equatable, Sendable, Decodable {
     public var severity: String?
     public var spottedBy: String?
     public var worker: String?
+    public var pairings: [WorkPairingValue]?
     public var id: String { ref }
 
     public init(ref: String, group: String, type: String, state: String, title: String, where: String? = nil,
                 why: String? = nil, userSees: String? = nil, severity: String? = nil, spottedBy: String? = nil,
-                worker: String? = nil) {
+                worker: String? = nil, pairings: [WorkPairingValue]? = nil) {
         self.ref = ref; self.group = group; self.type = type; self.state = state; self.title = title
         self.where = `where`; self.why = why; self.userSees = userSees; self.severity = severity
-        self.spottedBy = spottedBy; self.worker = worker
+        self.spottedBy = spottedBy; self.worker = worker; self.pairings = pairings
     }
 }
 
@@ -116,10 +148,14 @@ public enum WorkScreenAction: Equatable, Sendable {
     case finish(ref: String, proof: String)
     case reopen(ref: String, why: String)
     case addMember(ref: String, handoff: String)
+    // A tree member can belong to another project. Its own settings decide which connector gets the push.
+    case unpair(ref: String, connector: String, project: String? = nil)
+    case sync(ref: String, project: String? = nil)
 
     public var ref: String {
         switch self {
-        case let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _), let .addMember(ref, _): return ref
+        case let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _),
+             let .addMember(ref, _), let .unpair(ref, _, _), let .sync(ref, _): return ref
         }
     }
 
@@ -131,6 +167,8 @@ public enum WorkScreenAction: Equatable, Sendable {
         case .finish: return "Finished"
         case .reopen: return "Reopened"
         case let .addMember(_, handoff): return "Added to \(handoff)"
+        case .unpair: return "Unpaired"
+        case .sync: return "Pushed"
         }
     }
 }
@@ -210,6 +248,21 @@ public final class LiveWorkSource: WorkSource {
             outcome = try decode(await rpc.work.reopen(WorkReopenParams(ref: ref, why: why, call: .init(project: project))))
         case let .addMember(ref, handoff):
             outcome = try decode(await rpc.work.addMember(WorkAddMemberParams(refs: [ref], to: handoff, call: .init(project: project))))
+        case let .unpair(ref, connector, itemProject):
+            let params = WorkUnpairParams(ref: ref, connector: connector, call: .init(project: itemProject ?? project))
+            let result: UnpairData = try reply(await rpc.work.unpair(params))
+            let message = result.removed ? "Unpaired \(ref) from \(connector)" : "\(ref) was already unpaired from \(connector)"
+            return WorkActionOutcome(ok: true, message: message)
+        case let .sync(ref, itemProject):
+            let params = WorkSyncParams(release: ref, call: .init(project: itemProject ?? project))
+            let result: SyncData = try reply(await rpc.work.sync(params))
+            if result.failed > 0 {
+                return WorkActionOutcome(ok: false, message: "\(ref): \(result.pushed) pushed, \(result.failed) failed")
+            }
+            guard result.pushed > 0 else {
+                return WorkActionOutcome(ok: false, message: "No enabled connector pushed \(ref)")
+            }
+            return WorkActionOutcome(ok: true, message: "Pushed \(ref) to \(Plural.count(result.pushed, "connector"))")
         }
         if let value = outcome.value {
             return value.ok
@@ -252,6 +305,8 @@ public final class LiveWorkSource: WorkSource {
         var skipped: [Skipped]
     }
     private struct IgnoredData: Decodable {}
+    private struct UnpairData: Decodable { var removed: Bool }
+    private struct SyncData: Decodable { var pushed: Int; var failed: Int }
     private struct ProjectOnly: Decodable { var project: String? }
     private struct TreeData: Decodable { var containers: [WorkContainerValue] }
     private struct ConfigData: Decodable {

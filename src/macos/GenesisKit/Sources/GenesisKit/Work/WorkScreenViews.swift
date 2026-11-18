@@ -95,42 +95,53 @@ public struct WorkItemsView: View {
     private func containerRow(_ container: WorkContainerValue) -> some View {
         let open = Binding(get: { expanded.contains(container.ref) },
                            set: { if $0 { expanded.insert(container.ref) } else { expanded.remove(container.ref) } })
-        return GenDisclosure(isExpanded: open, identifier: "work-container-\(container.ref)",
-                             accessibilityTitle: container.title) {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(container.members) { member in
-                    memberRow(member)
+        let links = pairingRows(ref: container.ref, pairings: container.pairings)
+        return VStack(alignment: .leading, spacing: 0) {
+            GenDisclosure(isExpanded: open, identifier: "work-container-\(container.ref)",
+                          accessibilityTitle: container.title) {
+                VStack(alignment: .leading, spacing: 2) {
+                    links
+                    ForEach(container.members) { member in
+                        memberRow(member)
+                    }
+                }
+                .padding(.leading, 18)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: container.type == "epic" ? "square.stack.3d.up" : "tray.full")
+                        .foregroundStyle(KitPalette.dim)
+                    Text(container.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                    Text(verbatim: container.ref).font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(KitPalette.faint)
+                    Spacer()
+                    Text(verbatim: "\(container.open) of \(container.total) open")
+                        .font(.system(size: 11)).foregroundStyle(KitPalette.dim)
                 }
             }
-            .padding(.leading, 18)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: container.type == "epic" ? "square.stack.3d.up" : "tray.full")
-                    .foregroundStyle(KitPalette.dim)
-                Text(container.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                Text(verbatim: container.ref).font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(KitPalette.faint)
-                Spacer()
-                Text(verbatim: "\(container.open) of \(container.total) open")
-                    .font(.system(size: 11)).foregroundStyle(KitPalette.dim)
+            // Pairing buttons stay outside the disclosure button and are usable even when the members are folded.
+            if !open.wrappedValue {
+                links.padding(.leading, 24)
             }
         }
     }
 
     private func memberRow(_ row: WorkRowValue) -> some View {
-        HStack(spacing: 8) {
-            stateGlyph(row.state)
-            Text(row.title).font(.system(size: 12)).lineLimit(1)
-                .foregroundStyle(row.isOpen ? KitPalette.text : KitPalette.dim)
-            Text(verbatim: row.slot ?? row.ref).font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(KitPalette.faint)
-            Spacer()
-            if let worker = row.worker {
-                Text(worker).font(.system(size: 10.5)).foregroundStyle(KitPalette.faint).lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                stateGlyph(row.state)
+                Text(row.title).font(.system(size: 12)).lineLimit(1)
+                    .foregroundStyle(row.isOpen ? KitPalette.text : KitPalette.dim)
+                Text(verbatim: row.slot ?? row.ref).font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(KitPalette.faint)
+                Spacer()
+                if let worker = row.worker {
+                    Text(worker).font(.system(size: 10.5)).foregroundStyle(KitPalette.faint).lineLimit(1)
+                }
+                actions(ref: row.ref, state: row.state, accept: false)
             }
-            actions(ref: row.ref, state: row.state, accept: false)
+            .frame(minHeight: 26)
+            pairingRows(ref: row.ref, pairings: row.pairings, project: row.project).padding(.leading, 24)
         }
-        .frame(minHeight: 26)
         .accessibilityElement(children: .contain)
     }
 
@@ -148,6 +159,7 @@ public struct WorkItemsView: View {
                 Spacer()
                 actions(ref: row.ref, state: row.state, accept: accept)
             }
+            pairingRows(ref: row.ref, pairings: row.pairings).padding(.leading, 24)
             let detail = [row.where, row.why].compactMap { $0 }.joined(separator: " · ")
             if !detail.isEmpty {
                 Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
@@ -164,6 +176,42 @@ public struct WorkItemsView: View {
             .frame(width: 16)
             .instantTooltip(state)
             .accessibilityLabel(state)
+    }
+
+    @ViewBuilder
+    private func pairingRows(ref: String, pairings: [WorkPairingValue]?, project: String? = nil) -> some View {
+        if let pairings, !pairings.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(pairings) { pairing in
+                        let look = pairing.look
+                        let name = pairing.displayName ?? pairing.connector
+                        let key = pairing.remoteKey.isEmpty ? "No remote key yet" : pairing.remoteKey
+                        let disabledReason = pairing.enabled ? nil : "Sync is turned off for this connector."
+                        HStack(spacing: 5) {
+                            Badge(look.label, color: look.color, look: .tone, symbol: look.symbol,
+                                  tooltip: [look.detail, pairing.note, disabledReason].compactMap { $0 }.joined(separator: "\n"))
+                            Text(verbatim: "\(name) · \(key)")
+                                .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                                .instantTooltip("\(name) · \(key)")
+                            IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
+                                perform(.unpair(ref: ref, connector: pairing.connector, project: project))
+                            }
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+                if pairings.contains(where: \.enabled) {
+                    let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
+                    let driftTip = " A successful push clears the drift flag without pulling remote fields."
+                    IconButton(systemName: "arrow.triangle.2.circlepath",
+                               tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
+                        perform(.sync(ref: ref, project: project))
+                    }
+                }
+            }
+            .disabled(pending.contains(ref))
+        }
     }
 
     @ViewBuilder
@@ -212,6 +260,30 @@ public struct WorkItemsView: View {
 
     private func handoffs(excluding ref: String) -> [WorkContainerValue] {
         snapshot.openHandoffs.filter { handoff in !handoff.members.contains { $0.ref == ref } }
+    }
+}
+
+private extension WorkPairingValue {
+    var look: (label: String, symbol: String, color: Color, detail: String) {
+        switch state {
+        case .synced:
+            return ("Synced", "checkmark.circle.fill", KitPalette.added, "The last sync completed.")
+        case .pending:
+            return ("Pending", "clock", KitPalette.dim, "The pairing is waiting for a push.")
+        case .held:
+            return ("Held", "pause.circle.fill", KitPalette.renamed, "The local change is waiting for release.")
+        case .drift:
+            switch driftDirection {
+            case .local:
+                return ("Local drift", "arrow.triangle.branch", KitPalette.modified, "A field owned by the connector changed here.")
+            case .remote:
+                return ("Remote drift", "arrow.triangle.branch", KitPalette.modified, "A field owned here changed on the connector.")
+            case nil:
+                return ("Drift", "arrow.triangle.branch", KitPalette.modified, "The two items differ. The direction was not recorded.")
+            }
+        case .failed:
+            return ("Failed", "exclamationmark.triangle.fill", KitPalette.removed, "The last push failed.")
+        }
     }
 }
 
