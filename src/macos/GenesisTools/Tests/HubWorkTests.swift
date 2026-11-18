@@ -42,6 +42,21 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(HubMode.work.title, "Work")
     }
 
+    /// A launch with `--mode work` settles on the Work screen's first load (the snapshot waits for it).
+    func testOnLoadedFiresOnceOnTheFirstLoad() async {
+        let model = HubWorkModel(source: FakeWorkSource())
+        var calls = 0
+        model.onLoaded = { calls += 1 }
+        model.activate()
+        let deadline = Date().addingTimeInterval(3)
+        while calls == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(calls, 1)
+        model.screen.reload()
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(calls, 1, "once only")
+        model.deactivate()
+    }
+
     /// The hub window's visibility reaches the Work screen, so a covered or hidden hub reloads nothing.
     func testTheWorkScreenFollowsTheHubWindowsVisibility() {
         let model = HubWorkModel(source: FakeWorkSource())
