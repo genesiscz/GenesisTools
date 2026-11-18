@@ -1,4 +1,9 @@
-import type { FoldOutcome, Handoff, HandoffActionResult, HandoffListRow } from "@genesiscz/utils/work/legacy/handoff-types";
+import type {
+    FoldOutcome,
+    Handoff,
+    HandoffActionResult,
+    HandoffListRow,
+} from "@genesiscz/utils/work/legacy/handoff-types";
 
 export type {
     Handoff,

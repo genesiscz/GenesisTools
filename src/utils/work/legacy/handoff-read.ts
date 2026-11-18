@@ -226,7 +226,10 @@ export function findHandoffAttachment(db: Database, attachmentId: string): Store
         }
 
         if (typeof found.filename !== "string" || typeof found.mime !== "string") {
-            logger.warn({ handoffId: row.id, attachmentId }, "attachment entry missing string filename/mime — skipping");
+            logger.warn(
+                { handoffId: row.id, attachmentId },
+                "attachment entry missing string filename/mime — skipping"
+            );
             continue;
         }
 

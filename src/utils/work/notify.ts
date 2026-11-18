@@ -200,15 +200,17 @@ export async function runNotifyOnce(deps: NotifyDeps): Promise<NotifyReport> {
     const projects = await loadRulesForItems(batch, deps.loadRules);
     const cursor = last.seq;
     // Another writer may have claimed a shorter batch while we loaded. Take its unclaimed suffix under the lock.
-    const claimedAfter = db.transaction(() => {
-        const current = cursorQuery.get(CURSOR)?.seq ?? start;
+    const claimedAfter = db
+        .transaction(() => {
+            const current = cursorQuery.get(CURSOR)?.seq ?? start;
 
-        if (current < cursor) {
-            db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [cursor, CURSOR]);
-        }
+            if (current < cursor) {
+                db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [cursor, CURSOR]);
+            }
 
-        return current;
-    }).immediate();
+            return current;
+        })
+        .immediate();
 
     if (claimedAfter >= cursor) {
         return { seen: 0, sent: 0, cursor: claimedAfter };
