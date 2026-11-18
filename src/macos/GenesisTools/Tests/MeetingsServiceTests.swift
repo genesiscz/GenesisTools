@@ -461,6 +461,12 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.MeetingPeopleEdit.name:
                 try roundTrip(MeetingsAPI.MeetingPeopleEdit.Params.self, params, label)
                 if let result { try Self.checkPeopleEdit(result, params: params, label) }
+            case MeetingsAPI.SeatsSuggest.name:
+                try roundTrip(MeetingsAPI.SeatsSuggest.Params.self, params, label)
+                if let result {
+                    let seats = try MeetingsService.decode(MeetingsAPI.SeatsSuggest.Result.self, result)
+                    XCTAssertEqual(seats.meeting, params["meeting"] as? String, label)
+                }
             case MeetingsAPI.Voice.name:
                 try roundTrip(MeetingsAPI.Voice.Params.self, params, label)
                 if let result { try Self.checkVoice(result, params: params, label) }
@@ -675,7 +681,7 @@ final class MeetingsServiceTests: XCTestCase {
         // A success of each, so a drift of what the native people and voice controls read fails here: people.edit
         // adds and removes, meeting.voice answers with and without clusters.
         let successes = [MeetingsAPI.MeetingPeopleEdit.name: 2, MeetingsAPI.Voice.name: 2,
-                         MeetingsAPI.AcousticInspect.name: 1, MeetingsAPI.VoiceScore.name: 1]
+                         MeetingsAPI.AcousticInspect.name: 1, MeetingsAPI.VoiceScore.name: 1, MeetingsAPI.SeatsSuggest.name: 1]
         for (method, count) in successes {
             XCTAssertGreaterThanOrEqual(succeeded[method] ?? 0, count, "the fixture has \(count) successful \(method)")
         }
