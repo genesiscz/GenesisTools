@@ -102,6 +102,30 @@ otherwise eligible file and checks its signature, so renaming a database to `.js
 `du-cold-compress` task registers disabled through `tools du compression-schedule` and requires explicit operator
 approval before it is enabled.
 
+#### Rerun the transparent benchmark
+
+From the checkout root on an APFS Mac with Python 3 and `rg`, use a fresh private scratch directory.
+The boundary probes can materialize more than 12 GiB. Omit `--boundaries` from both commands for a corpus-only run.
+
+```bash
+bench_dir=$(mktemp -d "${TMPDIR:-/tmp}/transparent.XXXXXX")
+python3 scripts/benchmarks/compress/transparent.py --scratch "$bench_dir/corpus" --boundaries &&
+  python3 scripts/benchmarks/compress/transparent-writers.py --scratch "$bench_dir/corpus" --boundaries &&
+  python3 scripts/benchmarks/compress/transparent_summary.py --scratch "$bench_dir/corpus"
+```
+
+The first script copies five real files of each kind with `ditto --noclone`: plain and image-bearing Claude
+transcripts, tool results, Codex sessions, Grok sessions, GenesisTools logs and JSON files. It requires all 35.
+Each writer gets three copies per input. The supplementary script times the installed afsctool codecs after staging
+the plain copy. Ditto's time includes the copy. If applesauce is installed, pass its in-place compression arguments
+last with `--applesauce-args`, using the literal `'{file}'` for the scratch copy. The scripts install nothing.
+
+The summary prints sample counts and p10/p50/p90 for allocation ratios, compression, `cmp`, reads, directory
+search and the first append with fsync. The read and search arms alternate order with an uncontrolled cache.
+Per-file byte counts, flags, mtimes, timings and commands stay in `results.json` and `writers.json` in the corpus
+directory. The directory also holds private source paths and file copies. Boundary output gives each writer's
+actual flag, allocation and exit status around 512 MiB and 4 GiB. A writer's refusal establishes only its own limit.
+
 ### pack
 
 ```bash

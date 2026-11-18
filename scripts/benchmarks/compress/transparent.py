@@ -2,13 +2,13 @@
 """Opt-in APFS benchmark. Reads real sources; writes only --scratch. No installs or cache purge."""
 import argparse
 import collections
-import glob
+from fnmatch import fnmatch
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import statistics
+import stat
 import struct
 import subprocess
 import time
@@ -18,11 +18,9 @@ parser.add_argument('--scratch', required=True)
 parser.add_argument('--boundaries', action='store_true')
 args = parser.parse_args()
 root = Path(args.scratch).resolve()
-root.mkdir(parents=True, exist_ok=True)
-if (root/'results.json').exists():
-    raise SystemExit('Use a fresh scratch directory; an existing result would invalidate writer timings.')
+root.mkdir(mode=0o700, parents=True, exist_ok=False)
 # Every external command has a deadline (`_run.TIMEOUT_S`), and `commands` logs each one.
-from _run import TIMEOUT_S, commands, run
+from _run import APPEND, TIMEOUT_S, append_trial, commands, digest, require_corpus, run, search_trials
 
 def info(p):
     s = os.stat(p)
@@ -36,22 +34,21 @@ def info(p):
                 result['decmpfs_header'] = list(struct.unpack('<IIQ', header))
     return result
 
-def digest(p):
-    h = hashlib.sha256()
-    with open(p, 'rb') as f:
-        for block in iter(lambda: f.read(1024*1024), b''):
-            h.update(block)
-    return h.hexdigest()
-
 def candidates(folder, pattern):
     result = []
-    for p in glob.iglob(os.path.expanduser(folder)+'/**/'+pattern, recursive=True):
-        try:
-            s = os.stat(p)
-            if 64*1024 <= s.st_size <= 16*1024*1024 and s.st_mtime < time.time()-86400:
+    cutoff = time.time() - 86400
+    for directory, _, names in os.walk(os.path.expanduser(folder)):
+        for name in names:
+            if not fnmatch(name, pattern):
+                continue
+            p = os.path.join(directory, name)
+            try:
+                s = os.lstat(p)
+            except OSError:
+                continue
+            if (stat.S_ISREG(s.st_mode) and not s.st_flags & 0x40000000 and
+                    64*1024 <= s.st_size <= 16*1024*1024 and s.st_mtime < cutoff):
                 result.append(p)
-        except OSError:
-            continue
     return sorted(result, key=lambda p: hashlib.sha256(p.encode()).hexdigest())
 
 selected = collections.defaultdict(list)
@@ -74,6 +71,7 @@ for kind, folder, pattern in [('tool_results','~/.claude/projects','*.txt'),
     if kind == 'grok':
         files = [p for p in files if re.fullmatch(r'[0-9a-f-]{36}\.json', os.path.basename(p))]
     selected[kind] = files[:5]
+require_corpus(selected)
 (root/'source-map.json').write_text(json.dumps(dict(selected), indent=2))
 rows = []
 for kind, paths in selected.items():
@@ -100,27 +98,25 @@ for kind, paths in selected.items():
         for repeat in range(3):
             for arm,p in [('plain',plain),('compressed',compressed)] if repeat%2 == 0 else [('compressed',compressed),('plain',plain)]:
                 row['reads'].append(dict(arm=arm,repeat=repeat,**run(['/bin/cat',p])))
+        expected = digest(plain, APPEND)
         for repeat in range(3):
-            target = folder/('append-'+str(repeat))
-            run(['/bin/cp','-c','-p',compressed,target])
-            start = time.monotonic_ns()
-            with open(target,'ab') as f:
-                f.write(b'\ntransparent-append-fixture\n')
-                f.flush()
-                os.fsync(f.fileno())
-            row['append'].append(dict(elapsed_ms=(time.monotonic_ns()-start)/1e6,after=info(target)))
+            row['append'].append(append_trial(folder/('compressed-'+str(repeat)),
+                                              folder/('append-'+str(repeat)), expected, info))
         row['source_after'] = info(source)
         row['source_unchanged'] = row['source_before'] == row['source_after']
+        if not row['source_unchanged']:
+            raise SystemExit(f'Source metadata changed during sampling: {ident}. Use a fresh corpus.')
         row['sha256'] = digest(plain)
         rows.append(row)
         (root/'results.json').write_text(json.dumps(dict(rows=rows,commands=commands),indent=2))
         print(ident,baseline['size'],row['compressed']['allocated'],flush=True)
 
-search = []
-for repeat in range(3):
-    for arm in (['plain','compressed'] if repeat%2==0 else ['compressed','plain']):
-        paths = [root/r['id']/('compressed-2' if arm=='compressed' else ('materialized' if (root/r['id']/'materialized').exists() else 'plain')) for r in rows]
-        search.append(dict(arm=arm,repeat=repeat,**run(['rg','-l','--text','transparent-no-such-token-293819',*paths],ok=(1,))))
+pairs = []
+for row in rows:
+    folder = root / row['id']
+    plain = folder / ('materialized' if (folder / 'materialized').exists() else 'plain')
+    pairs.append((row['id'], plain, folder / 'compressed-2'))
+search = search_trials(root / 'rg-ditto', pairs)
 
 facts = {}
 sample = root/rows[0]['id']
@@ -144,7 +140,8 @@ with open(root/'descriptor-file','ab') as descriptor:
     facts['descriptor'] = dict(old=info(root/'descriptor-aside'),new=info(root/'descriptor-file'),
         old_has_append=Path(root/'descriptor-aside').read_bytes().endswith(b'held-descriptor-write\n'),
         new_has_append=Path(root/'descriptor-file').read_bytes().endswith(b'held-descriptor-write\n'))
-    run(['/usr/sbin/lsof','-nP','-Fn'],stdout=open(root/'lsof-descriptor.txt','wb'))
+    with open(root/'lsof-descriptor.txt', 'wb') as evidence:
+        run(['/usr/sbin/lsof','-nP','-Fn',root/'descriptor-aside'], stdout=evidence)
 
 boundaries=[]
 if args.boundaries:
@@ -153,8 +150,9 @@ if args.boundaries:
         with open(p,'wb') as f:
             f.truncate(size)
         operation=run(['/usr/bin/ditto','--noclone','--hfsCompression',p,str(p)+'-out'])
-        boundaries.append(dict(size=size,before=info(p),after=info(str(p)+'-out'),operation=operation))
+        comparison=run(['/usr/bin/cmp','-s',p,str(p)+'-out'])
+        boundaries.append(dict(size=size,before=info(p),after=info(str(p)+'-out'),operation=operation,cmp=comparison))
         print('boundary',size,boundaries[-1]['after'],flush=True)
-(root/'results.json').write_text(json.dumps(dict(rows=rows,search=search,facts=facts,boundaries=boundaries,commands=commands,
+(root/'results.json').write_text(json.dumps(dict(complete=True,rows=rows,search=search,facts=facts,boundaries=boundaries,commands=commands,
     system=dict(uname=list(os.uname()),load=os.getloadavg(),time=time.strftime('%Y-%m-%d %H:%M'))),indent=2))
 print('complete',len(rows),dict((k,len(v)) for k,v in selected.items()),flush=True)
