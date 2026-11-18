@@ -191,15 +191,21 @@ final class TargetPulseTests: XCTestCase {
     }
 
     func testClosingPickerPreservesDelayedChoiceUntilItsHoldEnds() async throws {
-        let f = try fixture([right], reduced: true)
-        defer { f.pulse.clear() }
-        let ended = expectation(description: "choice appeared and cleared after the picker closed")
-        f.strokes[0].onClear = { ended.fulfill() }
-        f.pulse.pulse([target], after: .milliseconds(30))
-        f.pulse.pickerClosed()
-        f.pulse.pickerClosed() // choiceStarts can also dismiss the picker at countdown.
-        await fulfillment(of: [ended], timeout: 4)
-        XCTAssertFalse(f.panels[0].isVisible)
+        let app = NSApplication.shared
+        let overlays = RecordingPickerOverlays(screens: [right])
+        let id = try XCTUnwrap(overlays.pulse.windowIDs.first)
+        let panel = try XCTUnwrap(app.windows.first { $0.windowNumber == id })
+        panel.alphaValue = 0
+        defer { overlays.pulse.clear() }
+        overlays.pulse.pulse([target], after: .milliseconds(30))
+        overlays.dismiss()
+        overlays.dismiss() // choiceStarts can also dismiss the picker at countdown.
+        let startDeadline = ContinuousClock.now + .seconds(2)
+        while !panel.isVisible, ContinuousClock.now < startDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(panel.isVisible, "closing the picker cancelled the delayed choice")
+        let endDeadline = ContinuousClock.now + .seconds(4)
+        while panel.isVisible, ContinuousClock.now < endDeadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(panel.isVisible, "the confirmation must release its panel after the last beat")
     }
 
     func testClearAndNewHoverSupersedeDelayedChoices() async throws {
