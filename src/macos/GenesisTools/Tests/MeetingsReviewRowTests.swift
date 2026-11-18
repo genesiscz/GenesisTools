@@ -347,12 +347,19 @@ final class MeetingsReviewRowTests: XCTestCase {
 
     func testTheKindFilterShowsOneKindAndHoldsOnlyWhileBothKindsWait() throws {
         let rows = try rows().rows
-        XCTAssertEqual(ItemsFilter.all.rows(rows).map(\.id), ["q1", "i2", "i3"])
-        XCTAssertEqual(ItemsFilter.questions.rows(rows).map(\.id), ["q1"])
-        XCTAssertEqual(ItemsFilter.suggestions.rows(rows).map(\.id), ["i2", "i3"])
-        XCTAssertEqual(ItemsFilter.effective(.questions, open: 2, questions: 1), .questions)
-        XCTAssertEqual(ItemsFilter.effective(.questions, open: 1, questions: 0), .all, "the last question is answered: the suggestions show")
-        XCTAssertEqual(ItemsFilter.effective(.suggestions, open: 2, questions: 2), .all, "only questions wait: they show")
+        XCTAssertEqual(ItemsFilter.all.rows(rows, atLine: ["i2"], applyAbove: 0.5).map(\.id), ["q1", "i2", "i3"])
+        XCTAssertEqual(ItemsFilter.questions.rows(rows, atLine: ["i2"], applyAbove: 0.5).map(\.id), ["q1"])
+        // A suggestion is an open item at the apply line (the meeting list's count); i3 is decided with no confidence.
+        XCTAssertEqual(ItemsFilter.suggestions.rows(rows, atLine: ["i2"], applyAbove: 0.5).map(\.id), ["i2"])
+        XCTAssertEqual(ItemsFilter.suggestions.rows(rows, atLine: [], applyAbove: 0.9).map(\.id), [], "below the line: under All only")
+        var confirmed = rows[1]
+        confirmed.status = "confirmed"
+        XCTAssertTrue(ItemsFilter.isSuggestion(confirmed, atLine: [], applyAbove: 0.5), "a row confirmed here keeps its place in the filter")
+        XCTAssertEqual(ItemsFilter.effective(.questions, questions: 1, suggestions: 1), .questions)
+        XCTAssertEqual(ItemsFilter.effective(.questions, questions: 0, suggestions: 1), .all, "the last question is answered: the suggestions show")
+        XCTAssertEqual(ItemsFilter.effective(.suggestions, questions: 2, suggestions: 0), .all, "no suggestion at the line: every row shows")
+        XCTAssertEqual(ItemsTab.kindsTooltip(suggestions: 181, belowLine: 355, line: "50 %"),
+                       "Suggestions: the 181 items at 50 % or more, which Confirm all takes and the meeting list counts. 355 more wait below 50 %; All shows them.")
         XCTAssertEqual(SelectionPopover.started("", with: "Fix the speaker"), "Fix the speaker: ")
         XCTAssertEqual(SelectionPopover.started("Fix the speaker: it is Mira", with: "Make this a question"), "Make this a question: it is Mira")
     }

@@ -11,22 +11,32 @@ import SwiftUI
 enum ItemsFilter: String, CaseIterable {
     case all, questions, suggestions
 
-    func rows(_ rows: [ReviewRow]) -> [ReviewRow] {
+    /// `atLine`: the open suggestions (`MeetingDetailModel.confirmable` at `applyAbove`).
+    func rows(_ rows: [ReviewRow], atLine: Set<String>, applyAbove: Double) -> [ReviewRow] {
         switch self {
         case .all: rows
         case .questions: rows.filter(\.isQuestion)
-        case .suggestions: rows.filter { !$0.isQuestion }
+        case .suggestions: rows.filter { Self.isSuggestion($0, atLine: atLine, applyAbove: applyAbove) }
         }
+    }
+
+    /// A suggestion, on every surface of the window: an item that is no question, at or above the apply line, that
+    /// Confirm all takes. The meeting list counts the same (`suggestedAboveApply` in src/meetings/lib/overview.ts); the
+    /// rest are "below 50 %" and show under All. A row decided in this window keeps its place while its confidence is
+    /// at the line, so a confirm does not pull it out of the list under the pointer.
+    static func isSuggestion(_ row: ReviewRow, atLine: Set<String>, applyAbove: Double) -> Bool {
+        guard !row.isQuestion else { return false }
+        return row.isOpen ? atLine.contains(row.id) : (row.confidence ?? 0) >= applyAbove
     }
 
     /// The filter that applies. It holds only while both kinds wait, which is also when its control shows: with one
     /// kind left every row shows, so the list is never empty with no way back.
-    static func effective(_ filter: ItemsFilter, open: Int, questions: Int) -> ItemsFilter {
-        offered(open: open, questions: questions) ? filter : .all
+    static func effective(_ filter: ItemsFilter, questions: Int, suggestions: Int) -> ItemsFilter {
+        offered(questions: questions, suggestions: suggestions) ? filter : .all
     }
 
-    static func offered(open: Int, questions: Int) -> Bool {
-        questions > 0 && open > questions
+    static func offered(questions: Int, suggestions: Int) -> Bool {
+        questions > 0 && suggestions > 0
     }
 
     /// The shape of the filter's strip in the Items bar.
@@ -419,6 +429,13 @@ struct ItemsTab: View {
                                      : "none at \(line) or more"
         guard open > 0 else { return atLine > 0 ? suggestions : "No suggestion at \(line) or more" }
         return compact ? "\(open) wait · \(suggestions)" : "\(waitingWords(open: open)) · \(suggestions)"
+    }
+
+    /// The filter strip's tooltip: what Suggestions counts (the meeting list's count) and where the other items are.
+    static func kindsTooltip(suggestions: Int, belowLine: Int, line: String) -> String {
+        let counted = "Suggestions: the \(Plural.count(suggestions, "item")) at \(line) or more, which Confirm all takes and the meeting list counts."
+        guard belowLine > 0 else { return counted }
+        return counted + " \(belowLine) more \(belowLine == 1 ? "waits" : "wait") below \(line); All shows them."
     }
 
     /// A hairline stands above an open row, except the list's first row and a row that keeps its place after an answer.
