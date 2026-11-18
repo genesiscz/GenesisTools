@@ -321,7 +321,7 @@ test("a notice goes through isolated RPC in both directions, emits events, and r
     const dir = scratch();
     const start = await startGenesisToolsService({
         dir,
-        deps: { facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true } },
+        deps: { facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: async () => true } },
     });
     if (start.status !== "started") {
         throw new Error("fixture service did not start");
@@ -502,7 +502,7 @@ test("a timed-out request action returns pending and keeps its posted request op
     let shown = 0;
     const presented = Promise.withResolvers<void>();
     const deps = liveEngineDeps(AREAS, {
-        facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true },
+        facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: async () => true },
         service: {
             journal,
             hasClient: () => true,

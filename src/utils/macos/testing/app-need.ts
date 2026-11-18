@@ -22,7 +22,7 @@ export function appNeedFixture(options: AppNeedFixtureOptions = {}): NeedEnv {
             isTest: () => options.isTest ?? false,
             platform: () => "darwin",
             isAgent: () => false,
-            hasDisplay: () => false,
+            hasDisplay: async () => false,
             hasTerminal: () => false,
             appBundle: () => ({
                 path: "/fixture/GenesisTools.app",

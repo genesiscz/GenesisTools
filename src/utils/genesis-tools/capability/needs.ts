@@ -283,7 +283,7 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
 
     "person.display": async (_need, env) =>
         inTest(env, "a person's screen") ??
-        (env.facts.hasDisplay()
+        ((await env.facts.hasDisplay())
             ? OK_PROBE
             : fail("no-display", "no person can see a window here (no display, or an ssh session)")),
 
