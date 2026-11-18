@@ -241,23 +241,26 @@ Cosine and margin are evidence, not probabilities. Missing models, quiet audio, 
 scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
 estimated-clean tracks separately.
 
-`tools meetings voices --project <p> --json` or `await meetings.voices({ scope: "project", project })` lists each person's samples.
-Use `scope: "meeting", meeting: id` for one meeting or `scope: "global"` for the library. Each row gives the meeting, seat, track, time and words. `voices play <person>
-[--sample <n>]` plays one. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
+Each sample lists the meeting, seat, track, time and words. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
 refusal reasons. A preview can cache line embeddings. `voices apply <meeting>` saves the names as suggestions.
 `voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first.
 
 | Voice library command (after `tools meetings`) | REPL call (await the result) |
 | --- | --- |
+| `voices --project <p> --json` | `meetings.voices({ scope: "project", project })` |
 | `voices --meeting <meeting> --person <person> --json` | `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` |
+| `voices samples <person> --project <p> --json` | `meetings.voices.samples({ project, person })` |
 | `voices play <person> --sample <id> --no-start --json` | `meetings.voices.sample({ id })` returns the verified file and slice |
+| `voices play <person> --sample <id>` | `meetings.voices.play({ id })` plays the clip and returns the same slice |
 | `voices quality --project <p> --person <person>` | `meetings.voices.quality({ project, person })` |
 | `voices move <person> --sample <id> --to <name>` | `meetings.voices.move({ id, person, to: { name } })` |
 | `voices reject <person> --sample <id> --reason wrong-person` | `meetings.voices.reject({ id, person, reason: "wrong-person" })` |
 | `voices remove <person> --sample <id> --preview` | `meetings.voices.remove({ id, preview: true })` |
 | `voices undo <token>` | `meetings.voices.undo({ token })` |
 
-Copy the stable `id` from the list. In the REPL, add `preview: true` to inspect a move, rejection or removal.
+The callable browser also takes `{ scope: "meeting", meeting: id }` or `{ scope: "global" }`. Each scope accepts a `person` filter.
+Copy the stable `id` from the list. For playback, pass `player` to choose a player or `start: false` to return the slice silently.
+In the REPL, add `preview: true` to inspect a move, rejection or removal.
 Use the preview's `planToken` on the same call without `preview` to
 apply it. A stale preview needs a fresh read. The applied receipt's `token` addresses that correction for Undo.
 Use `wrong-person` for an incorrect owner. Use `bad-audio` or `several-voices` when the clip is unsuitable for any owner.

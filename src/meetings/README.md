@@ -526,6 +526,17 @@ tools meetings voices remove "Finch Example" --project harbor --sample 1 --previ
 tools meetings voices remove "Finch Example" --project harbor --sample 1 --plan-token "$plan_token"
 ```
 
+In the node REPL, browse with `meetings.voices({ scope: "project", project })`. Its methods also work without opening a meeting.
+
+```js
+const { people } = await meetings.voices.samples({ person: "Finch Example", project: "harbor" })
+const { id } = people[0].samples[0]
+await meetings.voices.play({ id, start: false })
+const plan = await meetings.voices.remove({ id, preview: true })
+```
+
+`list` and `quality` accept the same filters, including `scope: { kind: "meeting", meeting: meetingId }`. Use `sample({ id })` to resolve the verified slice or `play({ id })` to hear it. `move({ id, to: { name, email } })` and `reject({ id, reason })` return a receipt on success. Pass its token to `undo({ token })`. To confirm the removal above, call `remove({ id, planToken: plan.planToken })` on the same group.
+
 ## The dictionary
 
 - `fix`: a misheard spelling, replaced at every whole-word match in any letter case (`DTLčko` becomes `DTOčko`, and so
