@@ -42,6 +42,7 @@ export interface ChoiceSelectOptions<T> {
     footer?: string;
     onSpace?: () => void;
     liveContext?: () => string[];
+    output?: Writable & Partial<FrameSize> & { isTTY?: boolean };
 }
 
 export const CHOICE_FOOTER = `${pc.dim("↑↓")} move  ${pc.dim("enter")} pick  ${pc.dim("esc")} back`;
@@ -130,6 +131,7 @@ export function renderChoiceFrame<T>(
         wrap(text, size.columns - 1, 5).map((part) => `${BAR}  ${GUTTER} ${part.slice(5)}`)
     );
     const note = opts.note ? [`${BAR}  ${opts.note}`] : [];
+    const live = (opts.liveContext?.() ?? []).slice(0, Math.max(0, budget - 4)).map((text) => `${BAR}  ${text}`);
     const footer = [`${BAR}  ${opts.footer ?? CHOICE_FOOTER}`, pc.cyan("└")];
     const hint = row?.hint ? `${BAR}  ${pc.dim("↳")} ${pc.dim(row.hint)}` : `${BAR}  `;
 
@@ -140,6 +142,7 @@ export function renderChoiceFrame<T>(
             ...header,
             ...askLines,
             ...(parts.context ? [...contextLines, ...note] : []),
+            ...live,
             ...(headings ? [BAR, `${BAR}  ${rule(opts.answersHeading ?? "answers", 44)}`] : [BAR]),
             ...answers.map(line),
             ...(actions.length > 0
@@ -168,10 +171,11 @@ export function renderChoiceFrame<T>(
 
     const ordered = [...answers, ...actions];
     const focused = Math.max(0, ordered.indexOf(row!));
-    const room = Math.max(1, budget - 3);
+    const room = Math.max(1, budget - 3 - live.length);
     const start = Math.max(0, Math.min(focused - Math.floor(room / 2), ordered.length - room));
     return paint([
         `${pc.cyan("◆")}  ${question[0]?.slice(3) ?? ""}`,
+        ...live,
         ...ordered.slice(start, start + room).map(line),
         ...footer,
     ]);
@@ -179,24 +183,18 @@ export function renderChoiceFrame<T>(
 
 /** Shows the select. Returns the picked row's value, or the cancel symbol on Esc (test it with `isCancel`). */
 export async function choiceSelect<T>(opts: ChoiceSelectOptions<T>): Promise<T | symbol> {
-    const liveOutput = opts.liveContext
-        ? new Writable({
-              write(chunk, encoding, callback) {
-                  process.stderr.write(chunk, encoding, callback);
-              },
-          })
-        : undefined;
+    // Clack uses this stream's row count to locate the old frame. A forwarding Writable with no
+    // dimensions makes it assume 20 rows and move above the picker on successive single-line diffs.
+    const output = opts.output ?? (opts.liveContext ? process.stderr : process.stdout);
     const prompt = new SelectPrompt({
-        ...(liveOutput ? { output: liveOutput } : {}),
+        output,
         options: opts.rows.map((row) => ({ value: row.value })),
         initialValue: opts.initialValue ?? opts.rows[0]?.value,
         render() {
-            return renderChoiceFrame(
-                opts.liveContext ? { ...opts, context: [...(opts.context ?? []), ...opts.liveContext()] } : opts,
-                this.state,
-                this.cursor,
-                terminalSize()
-            );
+            return renderChoiceFrame(opts, this.state, this.cursor, {
+                columns: output.columns || 80,
+                rows: output.rows || 20,
+            });
         },
     });
     const keypress = (text: string) => {
@@ -207,14 +205,14 @@ export async function choiceSelect<T>(opts: ChoiceSelectOptions<T>): Promise<T |
     if (opts.onSpace) {
         process.stdin.on("keypress", keypress);
     }
-    const refresh = liveOutput ? setInterval(() => liveOutput.emit("resize"), 200) : undefined;
+    const refresh = opts.liveContext && output.isTTY ? setInterval(() => output.emit("resize"), 200) : undefined;
+    prompt.once("finalize", () => clearInterval(refresh));
     let result: unknown;
     try {
         result = await prompt.prompt();
     } finally {
         process.stdin.off("keypress", keypress);
         clearInterval(refresh);
-        liveOutput?.end();
     }
 
     if (isCancel(result)) {

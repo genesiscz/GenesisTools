@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Writable } from "node:stream";
 import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
 import {
@@ -6,6 +7,7 @@ import {
     type ChoiceRow,
     type ChoiceSelectOptions,
     choiceChip,
+    choiceSelect,
     heardMark,
     renderChoiceFrame,
 } from "./choice-select";
@@ -40,6 +42,59 @@ const frame = (opts: ChoiceSelectOptions<string>, state: string, cursor: number,
     stripAnsi(renderChoiceFrame(opts, state, cursor, { columns, rows: height })).split("\n");
 
 describe("renderChoiceFrame", () => {
+    test("the playback row stays in the active frame even in a short pane", () => {
+        const opts = options({ liveContext: () => ["♪──┃──"] });
+        expect(frame(opts, "active", 0, 40, 7).join("\n")).toContain("♪──┃──");
+        expect(frame(opts, "submit", 0).join("\n")).not.toContain("♪");
+        expect(frame(opts, "cancel", 0).join("\n")).not.toContain("♪");
+    });
+
+    test("a tall live picker repaints the playback row in place and releases the stream before a text prompt", async () => {
+        let written = "";
+        const output = Object.assign(
+            new Writable({
+                write(chunk, _encoding, done) {
+                    written += chunk.toString();
+                    done();
+                },
+            }),
+            { columns: 80, rows: 45, isTTY: true }
+        );
+        let bar = "♪──┃──";
+        let polls = 0;
+        const answer = choiceSelect(
+            options({
+                output,
+                context: Array.from({ length: 20 }, (_, i) => `Context ${i}`),
+                liveContext: () => {
+                    polls++;
+                    return [bar];
+                },
+            })
+        );
+        try {
+            const initial = stripAnsi(written).split("\n");
+            const line = initial.findIndex((text) => text.includes(bar));
+            expect(initial.length).toBeGreaterThan(20);
+            expect(line).toBeGreaterThan(0);
+            written = "";
+            bar = "♪───┃─";
+            output.emit("resize");
+            expect(written).toContain(`\x1b[${line}B`);
+            expect(written).toContain(bar);
+            expect(written).not.toContain("\n");
+        } finally {
+            process.stdin.emit("keypress", "\r", { name: "return", sequence: "\r" });
+            await answer;
+        }
+        expect(output.listenerCount("resize")).toBe(0);
+        const lastPoll = polls;
+        written = "";
+        output.write("Comment (optional)\n");
+        output.emit("resize");
+        expect(polls).toBe(lastPoll);
+        expect(written).toBe("Comment (optional)\n");
+    });
     test("every focused row stays visible in a short terminal", () => {
         const many: ChoiceRow<string>[] = Array.from({ length: 20 }, (_, i) => ({
             value: String(i),
