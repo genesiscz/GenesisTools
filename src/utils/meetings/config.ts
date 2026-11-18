@@ -601,7 +601,7 @@ const storedConfigSchema = z
                         /** Derive a low-confidence leave only after this many observed silent call minutes. */
                         leaveSilenceMinutes: z.number().min(1).max(120).default(10),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
-                        applyAbove: z.number().min(0).max(1).default(0.5),
+                        applyAbove: z.number().min(0).max(1).default(0.7),
                         /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */

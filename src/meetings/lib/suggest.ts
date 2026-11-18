@@ -2615,7 +2615,7 @@ export function suggestItems(options: {
     // One budget for speakers and terms together, for the meeting and not per run: a question still open counts, so a
     // second suggest asks nothing new until some are answered (MC4: a second run added 11, 23 open of a cap of 12).
     const open = record.items.filter(
-        (item) => item.kind === "question" && item.status === "suggested" && item.group !== "words"
+        (item) => item.kind === "question" && item.status === "suggested" && (item.group ?? "rules") === "rules"
     ).length;
     const budget = Math.max(0, (options.questionBudget ?? Number.POSITIVE_INFINITY) - open);
     const wordLines = new Set<number>();

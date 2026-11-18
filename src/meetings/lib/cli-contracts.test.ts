@@ -452,6 +452,72 @@ test("listen --spot-check prepares through the Meetings service, which caps the 
     }
 });
 
+test("a fresh spot check selects only its sampled lines even with an older round open", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Sample selection",
+            start: "2026-11-09T10:00:00Z",
+            createdBy: "new",
+            sources: { wisprflow: { meetingId: "sample-selection" } },
+        },
+        { command: "test", change: "fixture" }
+    );
+    const base = { status: "suggested" as const, rules: [], suggestedAt: record.start };
+    await store.update(record.id, { command: "test", change: "prior round" }, (current) => {
+        current.items.push(
+            {
+                ...base,
+                id: "i1",
+                kind: "question",
+                group: "spot-check",
+                about: "speaker",
+                fromSec: 60,
+                toSec: 60,
+                question: "Who?",
+                choices: ["River Example"],
+                decides: [],
+            },
+            {
+                ...base,
+                id: "i2",
+                kind: "speaker-range",
+                label: "Remote",
+                speaker: "River Example",
+                fromSec: 2,
+                toSec: 2,
+                confidence: 0.63,
+            }
+        );
+    });
+    const source = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+        sourceMeetingId: "sample-selection",
+        title: record.title,
+        start: record.start,
+        speakers: [],
+        participants: [],
+        folders: [],
+        transcript: [{ speaker: "Remote", startSec: 2, text: "We can begin." }],
+    });
+    const output = spyOn(out, "result").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(["listen", record.id, "--spot-check", "1", "--prepare-only"], { from: "user" });
+        const sampled = new MeetingStore(store.storage)
+            .read(record.id)!
+            .items.find((item) => item.kind === "question" && item.group === "spot-check" && item.fromSec === 2);
+        expect(sampled).toBeDefined();
+        expect(SafeJSON.parse(String(output.mock.calls.at(-1)?.[0]))).toEqual({
+            meeting: record.id,
+            questions: [sampled!.id],
+        });
+    } finally {
+        source.mockRestore();
+        output.mockRestore();
+    }
+});
+
 test("standalone subscription flags fail before resolving or reading a meeting", async () => {
     const raw = spyOn(ui, "raw").mockImplementation(() => {});
     const human = spyOn(ui, "err").mockImplementation(() => {});

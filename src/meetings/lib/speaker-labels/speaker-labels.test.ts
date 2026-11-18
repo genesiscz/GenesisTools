@@ -345,6 +345,51 @@ describe("suggest runner word settings", () => {
             1
         );
     });
+
+    test("suggest asks every fifty-word speaker stretch even when ordinary questions fill the cap", async () => {
+        const { store, record, meeting, config } = await runnerFixture();
+        config.global.suggest.questionCap = 1;
+        meeting.transcript = [0, 5, 10, 15, 20].map((startSec, index) => ({
+            speaker: "Voice",
+            startSec,
+            text: index === 0 || index === 4 ? "words ".repeat(50).trim() : "Pause.",
+        }));
+        const base = { status: "suggested" as const, rules: [], suggestedAt: START };
+        await store.update(record.id, { command: "test", change: "two separate stretches" }, (current) => {
+            current.items.push(
+                {
+                    ...base,
+                    kind: "question",
+                    id: "i1",
+                    about: "speaker",
+                    question: "Who?",
+                    fromSec: 40,
+                    toSec: 40,
+                    choices: ["River Example"],
+                    decides: [],
+                },
+                ...[0, 20].map((sec, index) => ({
+                    ...base,
+                    kind: "speaker-range" as const,
+                    id: `i${index + 2}`,
+                    label: "Voice",
+                    fromSec: sec,
+                    toSec: sec,
+                    speaker: "River Example",
+                    confidence: 0.69,
+                }))
+            );
+        });
+        const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["evidence"] });
+        await suggest();
+        await suggest();
+        const saved = new MeetingStore(store.storage).read(record.id)!;
+        expect(
+            saved.items.flatMap((item) =>
+                item.kind === "question" && item.group === "long-stretch" ? [item.fromSec] : []
+            )
+        ).toEqual([0, 20]);
+    });
 });
 
 function labelContext(attended: LabelContext["attended"]): LabelContext {

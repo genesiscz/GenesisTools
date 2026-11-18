@@ -269,7 +269,7 @@ people) on each look until the record has an end, for up to 10 min.
 
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
 confirmed items change a transcript. `--with-suggested` previews the rest: it applies a suggested item at
-`global.suggest.applyAbove` (0.5) or more, and one with no confidence (a person's own); a lower one is marked unclear,
+`global.suggest.applyAbove` (0.7) or more, and one with no confidence (a person's own); a lower one is marked unclear,
 as an open question is. A range owned by an open speaker question stays a guess at every confidence until
 answered or confirmed.
 
@@ -688,7 +688,7 @@ Line-scoped terms with a dead or ambiguous anchor are refused. The diagnostic di
 
 The Meetings window offers Add question or term, clean duplication, question priority, saved document revision, and an indicator tooltip naming a stuck signal and why it was ignored. Its dictionary editor can preview an unsaved entry on pasted transcript lines. The read-only command equivalent is `dictionary test '<lines>' --entry '<dictionary-entry JSON>' --json`.
 
-The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 70` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
+The transcript's native confidence selector defaults to 70 percent. The service loads the threshold previews together. Changing the selector chooses a loaded preview and saves the threshold in `global.suggest.applyAbove`. CLI `transcript --with-suggested --apply-above 70` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
 
 For a meeting-local room person, use `attendance <meeting> --add "Alice Example" --from 0 --to 600 --at-mic`. `--via "Bob Example"` instead names a remote device owner. These finite stays and canonical microphone groups reopen from the meeting record. The native people strip and `meeting.people.edit` use the same implementation. Imported platform speaking and muted names also join automatic question candidates. `Meeting.editPerson` exposes the same operation in the REPL.
 
@@ -698,7 +698,7 @@ Speaker-question selection and the terminal/native queue rank by `(1 - confidenc
 The displayed priority and its minimum filter keep their existing scale. Questions without word counts, including older
 records, retain priority order. Matching candidate names alone never multiply reach or establish one voice identity.
 
-Suggested speaker names under the transcript threshold (`global.suggest.applyAbove`, default 50%) remain explicit
+Suggested speaker names under the transcript threshold (`global.suggest.applyAbove`, default 70%) remain explicit
 guesses, as every other kind of suggestion does. `transcript <meeting> --with-suggested
 --apply-above 80` and `rows <meeting> --apply-above 80` change the read's threshold; they do not change saved
 confidences. The Meetings transcript has the same local threshold picker and Probe. Confirmed answers remain applied.
