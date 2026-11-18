@@ -440,6 +440,7 @@ extension MeetingDetailModel {
             if let after = change.after {
                 row.status = after.status
                 row.answer = ReviewRow.decidedAs(after)
+                row.comment = after.comment
                 // An Undo gives the item back its earlier decision, which the entry does not carry: the re-read brings it.
                 if entry.action.kind != "revert", entry.decided.contains(change.id) { row.decision = .init(entry) }
             }
@@ -827,7 +828,13 @@ extension MeetingsWords {
         case "add": return "added \(Plural.count(entry.changes.count, "finding"))"
         case "revert":
             return entry.changes.isEmpty ? "undid a decision" : "undid the decision on \(list(entry.changes.map(\.id).map(label)))"
-        case "answer": return actionWords(action, items: ids, question: entry.question, label: label)
+        case "answer":
+            if let id = entry.question ?? action.question,
+               let change = entry.changes.first(where: { $0.id == id }),
+               change.after?.status == "suggested", change.after?.comment != change.before?.comment {
+                return "commented on \(label(id))"
+            }
+            return actionWords(action, items: ids, question: entry.question, label: label)
         default: return actionWords(action, items: ids, label: label)
         }
     }

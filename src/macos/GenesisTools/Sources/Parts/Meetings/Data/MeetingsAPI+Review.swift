@@ -917,6 +917,7 @@ struct ReviewRowsPatch: Decodable, Equatable {
             // `markRows` also sets the answer and this entry's decision, so a row the event marked is still this read.
             var marked = optimistic
             marked?.answer = change.after?.answer
+            marked?.comment = change.after?.comment
             let unmarked = present.map { row -> ReviewRow in
                 var row = row
                 if row.decision?.token == token { row.decision = change.before?.decision }
