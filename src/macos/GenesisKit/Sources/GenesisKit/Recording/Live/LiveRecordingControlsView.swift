@@ -33,6 +33,7 @@ struct LiveRecordingControlsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .frame(maxWidth: 420, alignment: .leading)
+                        .frameProbe("live-recording.message.\(message)")
                 }
                 .padding(.leading, 6)
                 .accessibilityElement(children: .combine)
