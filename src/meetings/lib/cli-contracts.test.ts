@@ -9,6 +9,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
 import { renderBrief } from "@genesiscz/utils/repl/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -1075,6 +1076,43 @@ describe("rows --json: the review rows (F3)", () => {
             ],
         });
         expect([speaker.edit, speaker.needs, speaker.target]).toEqual(["answer", "listen", { kind: "item", id: "i4" }]);
+    });
+
+    test("a speaker question explains E1 and keeps the rule ID in the row data", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const row = reviewRow(record, { ...record.items[3]!, rules: ["E1"] });
+
+        expect(row.parts.filter((part) => part.kind === "reason")).toEqual([
+            { kind: "reason", pieces: [{ text: "The recording separates microphone audio from call audio." }] },
+        ]);
+        expect(row.rules).toEqual(["E1"]);
+    });
+
+    test("every meeting rule gives the reader a reason in words", async () => {
+        const { reviewRow } = await import("./review-rows");
+        for (const rule of Object.values(MeetingRule)) {
+            const row = reviewRow(record, { ...record.items[3]!, rules: [rule] });
+            const reason = row.parts.find((part) => part.kind === "reason");
+            const text = reason?.pieces.map((piece) => piece.text).join("");
+            expect(text).toMatch(/\w+\s+\w+/u);
+            expect(text).not.toBe(`Rules: ${rule}`);
+        }
+    });
+
+    test("known rules read in order and an unrecognized saved ID remains in the row data", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const rules = ["E3", "retired-rule", "E1"];
+        const row = reviewRow(record, { ...record.items[3]!, rules });
+
+        expect(row.parts.filter((part) => part.kind === "reason")).toEqual([
+            {
+                kind: "reason",
+                pieces: [
+                    { text: "The call shows who is speaking. The recording separates microphone audio from call audio." },
+                ],
+            },
+        ]);
+        expect(row.rules).toEqual(["E3", "retired-rule", "E1"]);
     });
 
     test("choices are typed with confidence: highest scores first including earlier answers, then unscored actions", async () => {

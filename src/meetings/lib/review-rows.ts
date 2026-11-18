@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -557,9 +558,11 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
         parts.push(whenPart(item));
     }
 
-    if (item.rules.length > 0) {
-        parts.push({ kind: "reason", pieces: textPieces(`Rules: ${item.rules.join(", ")}`) });
+    const ruleNames = meetingRuleNames(item.rules);
+    if (ruleNames.length > 0) {
+        parts.push({ kind: "reason", pieces: [{ text: ruleNames.join(" ") }] });
     }
+
     if (typeof item.evidence?.indicatorIgnored === "string") {
         parts.push({
             kind: "reason",
@@ -683,7 +686,11 @@ function decidedAs(item: MeetingItem): string | undefined {
 }
 
 /** One item's row. `transcript`: the meeting's lines, for what was said; without it a row names no words. */
-export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?: Transcript): ReviewRow {
+export function reviewRow(
+    record: MeetingRecord,
+    item: MeetingItem,
+    transcript?: Transcript
+): ReviewRow & Pick<MeetingItem, "rules"> {
     const lines = transcript ? linesOf(transcript) : undefined;
     const parts = partsOf(record, item, lines);
     const needs = inputNeeded(item) ?? (item.kind === "question" && item.status === "suggested" ? "listen" : undefined);
@@ -695,6 +702,7 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
         label: item.kind === "question" ? questionLabel(record, item.id) : item.id,
         kind: item.kind,
         status: item.status,
+        rules: item.rules,
         ...confidenceOf(item.confidence),
         ...(item.kind === "question" && item.priority !== undefined ? { priority: item.priority } : {}),
         ...(item.kind === "question" && item.group ? { group: item.group } : {}),
