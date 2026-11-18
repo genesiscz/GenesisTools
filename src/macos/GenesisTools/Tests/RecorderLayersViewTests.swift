@@ -44,11 +44,14 @@ final class RecorderLayersViewTests: XCTestCase {
         window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
                           backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: TimelineView(model: model, viewportWidth: size.width)
+            .defaultAppStorage(UserDefaults(suiteName: UUID().uuidString)!)
             .frame(width: size.width, height: size.height))
         window.contentView?.layoutSubtreeIfNeeded()
     }
 
     private func element(_ id: String) throws -> NSAccessibilityProtocol {
+        // AppKit exposes the last committed SwiftUI transaction. Let a button's synchronous service reply draw.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         window.contentView?.layoutSubtreeIfNeeded()
         func find(_ node: NSAccessibilityProtocol) -> NSAccessibilityProtocol? {
             if node.accessibilityIdentifier() == id { return node }
@@ -80,5 +83,33 @@ final class RecorderLayersViewTests: XCTestCase {
         let camera = try element("recorder.timeline.layer.camera")
         XCTAssertGreaterThan(logo.accessibilityFrame().midY, camera.accessibilityFrame().midY,
                              "AppKit accessibility coordinates increase toward the top")
+    }
+
+    func testFourOrderActionsSendTheirNamedMovesOnce() throws {
+        hostTimeline()
+        let row = try element("recorder.timeline.layer.logo")
+        let actions = try XCTUnwrap(row.accessibilityCustomActions())
+        for title in ["Bring to Front", "Bring Forward", "Send Backward", "Send to Back"] {
+            let action = try XCTUnwrap(actions.first { $0.name == title }, "Missing \(title)")
+            if let handler = action.handler {
+                XCTAssertTrue(handler())
+            } else {
+                XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(action.selector), to: action.target, from: action))
+            }
+        }
+        XCTAssertEqual(service.count("edit.apply"), 4)
+        XCTAssertEqual(service.sentOps as NSArray, ["top", "up", "down", "bottom"].map {
+            ["op": "layerMove", "id": "logo", "to": $0]
+        } as NSArray)
+    }
+
+    func testOnlyMediaOffersDelete() throws {
+        hostTimeline()
+        let camera = try XCTUnwrap(try element("recorder.timeline.layer.camera").accessibilityCustomActions()).map(\.name)
+        XCTAssertTrue(camera.contains("Hide Camera"))
+        XCTAssertFalse(camera.contains("Delete"))
+        let media = try XCTUnwrap(try element("recorder.timeline.layer.logo").accessibilityCustomActions()).map(\.name)
+        XCTAssertTrue(media.contains("Delete"))
+        XCTAssertTrue(media.contains("Replace File…"))
     }
 }
