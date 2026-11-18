@@ -941,8 +941,8 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
 
         expect(markdown).toContain("### ❓ DECISION 1 — Cache");
         expect(markdown).toContain("b) no (recommended)");
-        expect(markdown).toContain("### ☐ TODO 1 — Bench");
-        expect(markdown).toContain("for: agent");
+        expect(markdown).toContain("### ☐ TODO 1 (for agent): Bench");
+        expect(markdown).not.toContain("for: agent");
     });
 
     test("a reply's unposted DECISION blocks are parsed with their number, title and options", () => {
@@ -1474,7 +1474,7 @@ describe("answers recorded by an agent, and superseded decisions", () => {
         ).toEqual([old.id]);
     });
 
-    test("superseded is legal from open, drafted, sent and acknowledged, and never for an answered row or a todo", async () => {
+    test("superseded is legal from open, drafted, sent and acknowledged, and for an open todo, but never for an answered decision", async () => {
         const { file, events, rows } = await fixture(["Open?", "Drafted?", "Sent?", "Acked?", "Answered?", "Done?"]);
         const [open, drafted, sent, acked, answered, done] = rows;
         await updateDecision(file, events, drafted.id, { state: "drafted", draftOption: "a" });
@@ -1499,7 +1499,9 @@ describe("answers recorded by an agent, and superseded decisions", () => {
             sessionId: "recorded-session",
             decisions: [{ type: "todo", prompt: "Ship it", options: [] }],
         });
-        await expect(updateDecision(file, events, todo.id, why)).rejects.toThrow("cannot move");
+        expect(readDecisions(file).find((row) => row.id === todo.id)?.for).toBe("agent");
+        await expect(updateDecision(file, events, todo.id, { state: "dismissed" })).rejects.toThrow("comment");
+        expect((await updateDecision(file, events, todo.id, why)).state).toBe("superseded");
     });
 });
 
@@ -1767,6 +1769,56 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         updatedTs: row.updatedTs,
         sessionId: row.sessionId,
         provider: row.provider ?? "unknown",
+    });
+
+    test("sending reserves the shown todo once and taking it back keeps its state", async () => {
+        const { row, files } = fixture();
+        const input = { id: row.id, action: "send", expected: expected(row) };
+        const sent = await updateWidgetTask({
+            files,
+            input,
+            deliver: async ({ session, text }) => {
+                expect(session).toBe(row.sessionId);
+                expect(text).toContain(row.prompt);
+                await expect(updateWidgetTask({ files, input })).rejects.toThrow("changed");
+                return { channel: "cmux", delivered: true };
+            },
+        });
+        expect(readDecisions(files.file)[0]).toMatchObject({ for: "agent", state: "acknowledged" });
+        await updateWidgetTask({
+            files,
+            input: {
+                ...input,
+                action: "take",
+                expected: expected({ ...row, state: sent.task.state, updatedTs: sent.task.updatedTs }),
+            },
+        });
+        expect(readDecisions(files.file)[0]).toMatchObject({ for: "human", state: "acknowledged" });
+    });
+
+    test("a refused send keeps the task available and an unknown receipt blocks resending", async () => {
+        const { row, files } = fixture();
+        const send = (deliver: typeof import("./deliver").deliverToSession) =>
+            updateWidgetTask({
+                files,
+                deliver,
+                input: { id: row.id, action: "send", expected: expected(readDecisions(files.file)[0]) },
+            });
+        await expect(send(async () => ({ channel: "queued", delivered: false, error: "offline" }))).rejects.toThrow(
+            "offline"
+        );
+        expect(readDecisions(files.file)[0].delivery).toBeUndefined();
+        await expect(
+            send(async () => {
+                throw new Error("lost receipt");
+            })
+        ).rejects.toThrow("lost receipt");
+        expect(readDecisions(files.file)[0].delivery?.uncertain).toBe(true);
+        await expect(
+            send(async () => {
+                throw new Error("duplicate");
+            })
+        ).rejects.toThrow("already been sent");
     });
 
     test("acknowledge, complete, reopen and dismiss append ordinary audit receipts", async () => {

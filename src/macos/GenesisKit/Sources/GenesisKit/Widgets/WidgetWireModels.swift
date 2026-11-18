@@ -207,6 +207,8 @@ public enum WidgetCardKind: Codable, Hashable, Sendable, ExpressibleByStringLite
 }
 public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     public var messageOrigin: String? = nil
+    public var task: WidgetTask? = nil
+    public var hiddenFromInbox: Bool? = nil
     public var sourceContext: WidgetSourceContext? = nil
     public var transcriptAnchor: WidgetTranscriptAnchor? = nil
     public var id: String
@@ -812,6 +814,7 @@ public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var items: [WidgetInboxItem]? = nil
 }
 public struct WidgetInboxSummary: Codable, Equatable, Sendable {
+    public var badgeCount: Int? = nil
     public struct Profile: Codable, Equatable, Sendable { public var hostId: String }
     public var unread: Int
     public var needsAnswer: Int
@@ -865,7 +868,7 @@ public enum WidgetSelection {
     }
 }
 
-public struct WidgetSourceContext: Codable, Equatable, Sendable {
+public struct WidgetSourceContext: Codable, Hashable, Sendable {
     public var sessionId: String
     public var agent: String?
     public var agentLabel: String?

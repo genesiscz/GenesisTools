@@ -424,6 +424,21 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(WidgetTaskAction.returning(to: "open"), [.reopen])
     }
 
+    func testTaskAssignmentActionsFollowOwnerAndReceipt() {
+        var row = task()
+        row.owner = "human"
+        XCTAssertEqual(row.addressee, "For you")
+        XCTAssertTrue(row.actions.contains(.send))
+        XCTAssertFalse(row.actions.contains(.take))
+        row.owner = "agent"
+        row.state = "acknowledged"
+        XCTAssertEqual(row.addressee, "For agent")
+        XCTAssertTrue(row.actions.contains(.take))
+        XCTAssertFalse(row.actions.contains(.send))
+        row.state = "implemented"
+        XCTAssertEqual(row.actions, [.reopen])
+    }
+
     func testSessionChoicesPutLiveLeadSessionsFirstAndSkipSubagents() async throws {
         let target = WidgetTarget(hostId: "local", provider: "claude", sessionId: "live", sourceHome: "", cwd: "/fixture")
         let live = WidgetSession(key: "live", target: target, title: "Live lead", project: "Fixture", activityAt: 20,

@@ -126,6 +126,7 @@ export async function performWidgetAction({
             }
             return updateDecision(files.file, files.events, request.id, {
                 state: request.state,
+                ...(row.type === "todo" && request.state === "dismissed" ? { comment: "Dismissed by the user." } : {}),
                 expectedRevision: request.expectedRevision,
                 ...(request.draft !== undefined ? { draft: request.draft } : {}),
                 ...(request.draftOption !== undefined ? { draftOption: request.draftOption } : {}),

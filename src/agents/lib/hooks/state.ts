@@ -40,6 +40,7 @@ export interface GuardSessionState {
 
 /** The decision hooks' part: the loop guard, the question nudge and the chat-answer step. */
 export interface DecisionSessionState {
+    todoReminder?: string;
     /** Blocks the `❓ DECISION N` check spent, against `maxBlocksPerSession`. */
     stopBlocks: number;
     nudge: {
@@ -126,6 +127,9 @@ export function migrateHookState(raw: unknown): HookSessionState {
             ? Object.fromEntries(Object.entries(guard.seen).map(([loop, rules]) => [loop, numbersOf(rules)]))
             : {};
         state.decisions.stopBlocks = numberOr(decisions.stopBlocks) ?? 0;
+        if (typeof decisions.todoReminder === "string") {
+            state.decisions.todoReminder = decisions.todoReminder;
+        }
         state.decisions.nudge = {
             blocks: numberOr(nudge.blocks) ?? 0,
             ...(lastTurn !== undefined ? { lastTurn } : {}),

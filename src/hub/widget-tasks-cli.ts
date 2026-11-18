@@ -45,7 +45,7 @@ export function registerWidgetTasks(widget: Command): void {
         });
     tasks
         .command("update <id>")
-        .requiredOption("--action [action]", "acknowledge, complete, reopen or dismiss")
+        .requiredOption("--action [action]", "acknowledge, complete, reopen, dismiss, send to the agent, or take back")
         .requiredOption("--revision <revision>", "Revision shown by list", Number)
         .requiredOption("--state [state]", "open, acknowledged, implemented or dismissed; use the state shown by list")
         .requiredOption("--updated-at <timestamp>", "Stored updatedTs shown by list")
@@ -102,6 +102,7 @@ export function registerWidgetTasks(widget: Command): void {
         .command("create")
         .description("Add a task by hand: on a chosen session, or on the local task list")
         .option("--json")
+        .option("--for <addressee>", "human (default) or agent")
         .requiredOption("--title <title>", "One line; up to 180 characters")
         .option("--details <text>", "The longer text; up to 2000 characters")
         .option("--session <identity>", "provider:sessionId the task belongs to (default: local tasks)")
@@ -115,6 +116,7 @@ export function registerWidgetTasks(widget: Command): void {
                         await createWidgetTask({
                             signal,
                             input: {
+                                for: options.for,
                                 title: options.title,
                                 details: options.details,
                                 session: options.session,

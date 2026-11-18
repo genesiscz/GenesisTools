@@ -34,6 +34,7 @@ import { buildInbox, fromRecord, type InboxSessionInfo, inboxDelivery, scanTurns
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
 import { cachingReadDeps, fillExcerpts, locateRef, readExcerpt } from "./excerpts";
+import { DEFAULT_INBOX_KINDS } from "./kinds";
 import {
     type InboxDeps,
     loadInbox,
@@ -1028,7 +1029,8 @@ describe("loadInbox", () => {
         expect(readDecisions(files.file).map((stored) => [stored.number, stored.state, stored.harvested])).toEqual([
             [3, "open", true],
         ]);
-        const listed = (result: typeof first) => result.sessions[0]?.items.map((item) => [item.kind, item.source]);
+        const listed = (result: typeof first) =>
+            result.sessions[0]?.items.map((item) => [item.kind, "source" in item ? item.source : null]);
         expect(listed(first)).toEqual([["decision", "store"]]);
         expect(listed(second)).toEqual([["decision", "store"]]);
 
@@ -1983,4 +1985,31 @@ describe("answering a dialog item by its option key", () => {
         });
         expect(tool.calls).toHaveLength(1);
     });
+});
+
+test("task visibility and badge counts follow the recipient within its session", async () => {
+    const { file, events } = scratch();
+    const rows = await postDecisions(file, events, {
+        sessionId: SESSION.sessionId,
+        decisions: [
+            { type: "todo", prompt: "Sign off", for: "human" },
+            { type: "todo", prompt: "Review notes" },
+        ],
+    });
+    const input = { sessions: [SESSION], scans: new Map(), forms: [], rows };
+    const [group] = buildInbox(input);
+    expect(group.items.map((item) => item.id)).toEqual([rows[0].id]);
+    expect(group.waiting).toBe(0);
+    const [both] = buildInbox({
+        ...input,
+        kinds: {
+            ...DEFAULT_INBOX_KINDS,
+            todo: {
+                forHuman: { show: true, countInBadge: true },
+                forAgent: { show: true, countInBadge: false },
+            },
+        },
+    });
+    expect(both.items.map((item) => item.id)).toEqual(rows.map((row) => row.id));
+    expect(both.waiting).toBe(1);
 });

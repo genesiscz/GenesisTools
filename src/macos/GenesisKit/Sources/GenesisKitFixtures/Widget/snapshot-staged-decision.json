@@ -98,6 +98,7 @@
     "notifications": {
         "unread": 0,
         "needsAnswer": 1,
+        "badgeCount": 1,
         "complete": true,
         "truncated": false,
         "sessions": [

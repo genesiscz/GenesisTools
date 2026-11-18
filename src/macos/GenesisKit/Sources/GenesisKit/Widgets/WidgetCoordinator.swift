@@ -134,6 +134,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 self?.model.selectedCardID = cardID
             })
         self.tasks = tasks
+        model.taskActions = tasks
         let voiceNotes = WidgetVoiceNotesStore(binaryPath: binaryPath, stateRoot: stateRoot,
             micLauncher: micLauncher ?? "", acquireAudio: { try await runtime.acquireExternalAudio() },
             settings: { [weak model] in

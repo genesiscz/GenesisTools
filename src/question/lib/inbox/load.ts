@@ -32,7 +32,6 @@ import {
     type InboxDecision,
     type InboxDialog,
     type InboxForm,
-    type InboxItem,
     type InboxSession,
     inboxForm,
     scanTurns,
@@ -41,8 +40,10 @@ import {
 } from "./build";
 import { listedDialogs, notifiedAfterDelivery, notifyOpenQuestions } from "./dialogs";
 import { fillExcerpts, tracedReadDeps } from "./excerpts";
+import { type InboxKinds, readInboxKinds } from "./kinds";
 import type { InboxTrace } from "./session-cursor";
 import { stagedSendText } from "./staged";
+import { readInboxData, type WidgetInboxGroup } from "./unread";
 
 const { log } = logger.scoped("question-inbox");
 
@@ -79,6 +80,8 @@ export interface InboxDeps {
         found: HarvestedDecision[];
         at: string | null;
     }) => Promise<number>;
+    kinds?: () => Promise<InboxKinds>;
+    unread?: () => WidgetInboxGroup[];
     forms: () => AskForm[] | Promise<AskForm[]>;
     /**
      * Every pending form's head, with no limit: the waiting queue's total counts the forms past the listing's limit
@@ -124,6 +127,8 @@ export const realInboxDeps: InboxDeps = {
         }
     },
     rows: () => readDecisions(decisionFiles().file),
+    kinds: readInboxKinds,
+    unread: () => readInboxData({ clearedAt: 0, staleBefore: 0 }).answers,
     harvest: async ({ sessionId, provider, cwd, found, at }) => {
         if (!loadDecisionsHookConfig().harvestListed) {
             return 0;
@@ -495,7 +500,7 @@ export async function loadInbox({
 } = {}): Promise<InboxResult> {
     const started = performance.now();
     const parts = await gatherInbox(hours, deps);
-    const inbox = buildInbox(parts).map((session) => ({
+    const inbox = buildInbox({ ...parts, kinds: await deps.kinds?.(), unread: deps.unread?.() }).map((session) => ({
         ...session,
         items: session.items.map((item) =>
             item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item
@@ -626,11 +631,13 @@ export async function loadWaitingQueue({
         now,
         clearedAt,
     });
-    const found = new Map<string, { item: InboxItem; session: InboxSession }>();
+    const found = new Map<string, { item: WaitingQueueItem; session: InboxSession }>();
 
     for (const session of inbox) {
         for (const item of session.items) {
-            found.set(item.id, { item, session });
+            if (item.kind === "form" || item.kind === "decision" || item.kind === "dialog") {
+                found.set(item.id, { item, session });
+            }
         }
     }
 

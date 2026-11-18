@@ -721,7 +721,9 @@ public struct LiveWidgetView: View {
                 }.font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
             }
             HStack(spacing: 8) {
-                if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
+                if let task = card.task, let store = model.taskActions {
+                    WidgetInboxTaskButtons(task: task, store: store)
+                } else if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
                     if card.status == "open" {
                         Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
                     }
@@ -1914,6 +1916,27 @@ enum WidgetErrorText {
         default:
             return ("The widget's call to the hub failed. Try again, or reconnect.",
                     error.localizedDescription + "\n" + String(describing: error))
+        }
+    }
+}
+
+private struct WidgetInboxTaskButtons: View {
+    let task: WidgetTask
+    @ObservedObject var store: WidgetTasksStore
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(task.addressee).font(.caption)
+            if task.sendUncertain == true { Text("Check the session before sending again.") }
+            HStack {
+                ForEach(task.actions, id: \.self) { action in
+                    Button(action.title) { store.perform(action, on: task) }
+                }
+            }.disabled(store.mutatingIDs.contains(task.id))
+            if let error = store.error { Text(error).foregroundStyle(.red) }
+            if let undo = store.undo, undo.task.id == task.id {
+                Button("Undo") { store.perform(undo.action, on: undo.task, then: undo.then) }
+            }
         }
     }
 }

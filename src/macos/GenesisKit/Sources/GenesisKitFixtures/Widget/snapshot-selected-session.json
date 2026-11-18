@@ -98,6 +98,7 @@
     "notifications": {
         "unread": 2,
         "needsAnswer": 4,
+        "badgeCount": 4,
         "complete": true,
         "truncated": false,
         "sessions": [
@@ -545,6 +546,28 @@
         {
             "id": "decision:t_5_fixture",
             "kind": "todo",
+            "task": {
+                "id": "t_5_fixture",
+                "number": 5,
+                "title": "Rename the fixture folder once the review lands.",
+                "summary": "Rename the fixture folder once the review lands.",
+                "truncated": false,
+                "revision": 1,
+                "state": "open",
+                "updatedTs": "2026-01-01T11:35:00.000Z",
+                "createdTs": "2026-01-01T11:35:00.000Z",
+                "blocking": false,
+                "owner": "agent",
+                "sessionId": "fixture-work",
+                "provider": "claude",
+                "sourceContext": {
+                    "sessionId": "fixture-work",
+                    "agent": "claude",
+                    "project": "work",
+                    "cwd": "/fixture/work"
+                }
+            },
+            "hiddenFromInbox": true,
             "sourceContext": {
                 "sessionId": "fixture-work",
                 "agent": "claude",

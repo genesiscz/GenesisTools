@@ -1,3 +1,4 @@
+import { readInboxKinds, setInboxKind } from "@app/question/lib/inbox/kinds";
 import {
     DEFAULT_PR_LOOKUP_CACHE_SECONDS,
     parsePrLookupCacheSeconds,
@@ -13,6 +14,23 @@ export function registerConfigCommands(program: Command): void {
         .description("Hub-wide settings, stored in ~/.genesis-tools/hub/config.json");
 
     config
+        .command("inbox [kind] [field] [value]")
+        .description(
+            "Get inbox kinds or set KIND show|countInBadge on|off. Task kinds are todo.forHuman and todo.forAgent."
+        )
+        .option("--json", "Machine-readable settings")
+        .action(async (kind?: string, field?: string, value?: string) => {
+            if (kind === undefined) {
+                out.result(await readInboxKinds());
+                return;
+            }
+            if (!field || (value !== "on" && value !== "off")) {
+                throw new Error("Choose a kind, show or countInBadge, and on or off.");
+            }
+            out.result(await setInboxKind(kind, field, value === "on"));
+        });
+
+    config
         .command("get", { isDefault: true })
         .description("The current settings")
         .option("--json", "machine-readable output")
@@ -20,7 +38,7 @@ export function registerConfigCommands(program: Command): void {
             const prLookupCacheSeconds = await readPrLookupCacheSeconds();
 
             if (opts.json) {
-                out.result({ prLookupCacheSeconds });
+                out.result({ prLookupCacheSeconds, inbox: { kinds: await readInboxKinds() } });
                 return;
             }
 

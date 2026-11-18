@@ -94,8 +94,8 @@ export function sessionTodoLogState(state: ItemState): string {
 export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; stamp: string } {
     const stamp = String((db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0);
     const rows = db
-        .query<{ meta: string | null; body: string | null; state: ItemState }, [string]>(
-            "SELECT p.meta AS meta, i.body AS body, i.state AS state FROM pointers p JOIN items i ON i.id = p.item WHERE p.kind = ?"
+        .query<{ meta: string | null; body: string | null; state: ItemState; owner: string | null }, [string]>(
+            "SELECT p.meta AS meta, i.body AS body, i.state AS state, i.for_who AS owner FROM pointers p JOIN items i ON i.id = p.item WHERE p.kind = ?"
         )
         .all(SESSION_TODO_POINTER)
         .flatMap((r) => {
@@ -109,7 +109,7 @@ export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; sta
             // The log's word survives while the item still stands for it (superseded and dismissed are both dropped);
             // a move through the store (`tools work finish`) gives the word of the new state.
             const state = sessionTodoState(logState) === r.state ? logState : sessionTodoLogState(r.state);
-            return [{ ...rest, prompt: r.body ?? "", state }];
+            return [{ ...rest, for: r.owner ?? rest.for ?? "agent", prompt: r.body ?? "", state }];
         });
     return { rows, stamp };
 }
@@ -210,6 +210,10 @@ export function mirrorSessionTodos(
                 wrote = true;
             } else {
                 const set: ItemPatch = {};
+
+                if (row.for !== undefined && item.for !== row.for) {
+                    set.for = row.for;
+                }
 
                 if (item.title !== title) {
                     set.title = title;

@@ -32,6 +32,10 @@ public enum HubSettingsPages {
                         HubPaneSettings(preferences: preferences)
                     }
                 },
+                NativeSettingsPage(id: "hub.inbox", title: "Inbox", symbol: "tray", tint: .indigo,
+                                   subtitle: "Choose what the hub and widget show and count.") {
+                    HubInboxKindSettings()
+                },
                 NativeSettingsPage(
                     id: historyPageID, title: "History", symbol: "clock.arrow.circlepath", tint: .purple,
                     subtitle: "Back, Forward and the list of places the hub showed, yours and the agents'."
@@ -338,6 +342,72 @@ private struct HubHistorySettings: View {
             Text("⌘[ and ⌘] go back and forward; ⌘Y lists every place. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+@MainActor
+private struct HubInboxKindSettings: View {
+    private struct Policy: Decodable { let show: Bool; let countInBadge: Bool }
+    private struct Kinds: Decodable {
+        struct Todos: Decodable { let forHuman: Policy; let forAgent: Policy }
+        let decision, form, answer, message: Policy
+        let todo: Todos
+        var entries: [(String, String, Policy)] {
+            [("decision", "Decisions", decision), ("form", "Forms and dialogs", form),
+             ("answer", "Answers", answer), ("message", "Messages", message),
+             ("todo.forHuman", "Tasks for you", todo.forHuman), ("todo.forAgent", "Tasks for agents", todo.forAgent)]
+        }
+    }
+
+    @State private var kinds: Kinds?
+    @State private var saving = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let kinds {
+                NativeSettingsCard("Inbox items", subtitle: "The same choices apply in the hub and widget.") {
+                    ForEach(kinds.entries.indices, id: \.self) { index in
+                        let (key, label, policy) = kinds.entries[index]
+                        HStack {
+                            Text(label)
+                            Spacer()
+                            Toggle("Show", isOn: setting(key, "show", policy.show))
+                            Toggle("Count in badge", isOn: setting(key, "countInBadge", policy.countInBadge))
+                                .disabled(!policy.show)
+                        }
+                    }
+                }
+                let shown = kinds.entries.filter { $0.2.show }
+                let badge = shown.filter { $0.2.countInBadge }.count
+                Text("Preview with one item of each kind: \(shown.count) visible, badge \(badge).")
+            } else if error == nil { ProgressView() }
+            if let error {
+                Text(error).foregroundStyle(.red)
+                Button("Reload") { Task { await request([]) } }
+            }
+        }.disabled(saving).task { await request([]) }
+    }
+
+    private func setting(_ key: String, _ field: String, _ current: Bool) -> Binding<Bool> {
+        Binding(get: { current }, set: { value in
+            guard !saving else { return }
+            saving = true
+            Task { await request([key, field, value ? "on" : "off"]) }
+        })
+    }
+
+    private func request(_ args: [String]) async {
+        defer { saving = false }
+        do {
+            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
+                subcommand: "hub", args: ["config", "inbox"] + args + ["--json"], timeoutSeconds: 15)
+            guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
+            kinds = try JSONDecoder().decode(Kinds.self, from: Data(result.stdout.utf8))
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

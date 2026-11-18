@@ -1,6 +1,6 @@
 import { agentNote } from "@app/question/lib/agent-note";
 import { type QuestionItemInput, validateQuestionItems } from "@app/question/lib/decisions/items";
-import { DECISION_RECORD_RULE } from "@app/question/lib/decisions/schema";
+import { DECISION_RECORD_RULE, TODO_RECORD_RULE } from "@app/question/lib/decisions/schema";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import { decisionNudge } from "@app/question/lib/inbox-guidance";
 import {
@@ -450,7 +450,7 @@ export function questionPostDescription({
         'Items with type "decision" or "todo" are NOT a form: they are numbered in this session\'s decision log ' +
         "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
         `paste into your reply. ${nudge}${answeredIn} reach you in a later prompt or through ` +
-        `question_poll, and you record progress with question_update. ${DECISION_RECORD_RULE} ` +
+        `question_poll, and you record progress with question_update. ${DECISION_RECORD_RULE} ${TODO_RECORD_RULE} ` +
         'A decision where the user may pick several options takes allowMultiple: true; its answer is a set ("ac"). ' +
         "To correct an item nobody answered yet, " +
         "post it again with supersedes: <its id>; it keeps its number and the old text is kept as a version.\n" +

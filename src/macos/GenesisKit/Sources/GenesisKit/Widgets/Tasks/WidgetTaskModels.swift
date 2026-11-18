@@ -1,6 +1,6 @@
 import Foundation
 
-public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
+public struct WidgetTask: Codable, Identifiable, Hashable, Sendable {
     public var id: String
     public var number: Int
     public var title: String
@@ -17,6 +17,8 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
     public var sessionTitle: String?
     public var sourceContext: WidgetSourceContext
 
+    public var sendUncertain: Bool? = nil
+    public var addressee: String { owner?.lowercased() == "human" ? "For you" : "For agent" }
     public var statusLabel: String { Self.label(for: state) }
     public static func label(for state: String) -> String {
         switch state {
@@ -29,11 +31,17 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
     }
     public var actions: [WidgetTaskAction] {
         switch state {
-        case "open": return [.acknowledge, .complete, .dismiss]
-        case "acknowledged": return [.complete, .dismiss]
+        case "open": return [.acknowledge, .complete, .dismiss] + assignmentActions
+        case "acknowledged": return [.complete, .dismiss] + assignmentActions
         case "implemented", "dismissed": return [.reopen]
         default: return []
         }
+    }
+    private var assignmentActions: [WidgetTaskAction] {
+        if sendUncertain == true { return [.take] }
+        guard !isLocal, provider != "unknown" else { return [] }
+        if owner?.lowercased() == "human" { return [.send] }
+        return state == "open" ? [.send, .take] : [.take]
     }
     /// The one-click action of the row's checkbox: tick an unfinished task done, untick a finished one.
     public var toggleAction: WidgetTaskAction? {
@@ -52,20 +60,24 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
 }
 
 public enum WidgetTaskAction: String, CaseIterable, Sendable {
-    case acknowledge, complete, reopen, dismiss
+    case acknowledge, complete, reopen, dismiss, send, take
     public var title: String {
         switch self {
         case .acknowledge: return "Acknowledge"
         case .complete: return "Complete"
         case .reopen: return "Reopen"
+        case .send: return "Send to agent"
+        case .take: return "Take it myself"
         case .dismiss: return "Dismiss"
         }
     }
-    public var targetState: String {
+    public func targetState(from current: String) -> String {
         switch self {
         case .acknowledge: return "acknowledged"
         case .complete: return "implemented"
         case .reopen: return "open"
+        case .send: return "acknowledged"
+        case .take: return current
         case .dismiss: return "dismissed"
         }
     }
@@ -86,6 +98,7 @@ public enum WidgetTaskAction: String, CaseIterable, Sendable {
 public struct WidgetTaskDraft: Equatable, Sendable {
     public var title = ""
     public var details = ""
+    public var owner = "human"
     /// `provider:sessionId`, empty for a local task.
     public var session = ""
     public var sessionTitle = ""

@@ -109,6 +109,7 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     /// landed is another client's answer, and it shows on the next load (DECISION 51 b).
     var updatedAt: Double? = nil
 
+    var task: WidgetTask? = nil
     var isForm: Bool { kind == "form" }
     var isDialog: Bool { kind == "dialog" || source == "dialog" }
     var isDecision: Bool { kind == "decision" && !isDialog }
@@ -1549,6 +1550,9 @@ struct InboxMain: View {
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     /// The list has the keyboard: Up and Down move the key card, 1 to 9 pick its options, Return opens its note (F8).
+    @StateObject private var tasks = WidgetTasksStore(binaryPath: ToolsBridge.defaultBinaryPath(), sessions: { [] }, openSession: { _, _ in })
+    @State private var addingTask = false
+    @State private var sendImmediately = false
     @FocusState private var keysFocused: Bool
     @GenReduceMotion private var reduceMotion
 
@@ -1557,6 +1561,19 @@ struct InboxMain: View {
         let rows = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)
         VStack(spacing: 0) {
             header(rows)
+                .onChange(of: tasks.receipt) { _, notice in
+                    if notice != nil { addingTask = false; inbox.load() }
+                }
+            if let error = tasks.error {
+                Text(error).foregroundStyle(.red).textSelection(.enabled)
+            } else if let receipt = tasks.receipt {
+                HStack {
+                    Text(receipt)
+                    if let undo = tasks.undo {
+                        Button("Undo") { tasks.perform(undo.action, on: undo.task, then: undo.then) }
+                    }
+                }
+            }
             // ⌘F: the shared find bar, wired around InboxMain (Hub/HubInboxFind.swift); draws nothing until opened.
             PanelFindBarSlot()
             ScrollViewReader { proxy in
@@ -1723,7 +1740,24 @@ struct InboxMain: View {
             .padding(.top, 28)
         case .card(let session, let item):
             Group {
-                if item.isForm {
+                if let task = item.task {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(task.title).font(.headline)
+                        Text(task.addressee + " · " + task.statusLabel).foregroundStyle(.secondary)
+                        if task.summary != task.title { Text(task.summary).textSelection(.enabled) }
+                        if task.sendUncertain == true { Text("Check the session before sending this task again.") }
+                        HStack {
+                            ForEach(task.actions, id: \.self) { action in
+                                Button(action.title) { tasks.perform(action, on: task) }
+                            }
+                        }.disabled(tasks.mutatingIDs.contains(task.id))
+                    }
+                } else if item.kind == "message" || item.kind == "answer" {
+                    VStack(alignment: .leading) {
+                        Text(item.kind.capitalized).font(.caption).foregroundStyle(.secondary)
+                        Text(item.title ?? "").textSelection(.enabled)
+                    }
+                } else if item.isForm {
                     InboxFormCard(inbox: inbox, item: item)
                 } else {
                     InboxDecisionCard(model: model, inbox: inbox, session: session, item: item,
@@ -1775,6 +1809,37 @@ struct InboxMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
+
+                Button("Add task", systemImage: "plus") { addingTask = true }
+                    .popover(isPresented: $addingTask) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            TextField("Title", text: $tasks.draft.title)
+                            TextField("Details (optional)", text: $tasks.draft.details, axis: .vertical)
+                            Picker("Session", selection: $tasks.draft.session) {
+                                Text("Local tasks").tag("")
+                                ForEach(model.sessions, id: \.id) { session in
+                                    Text(session.title ?? session.sessionId).tag(session.provider + ":" + session.sessionId)
+                                }
+                            }
+                            .onChange(of: tasks.draft.session) { _, key in
+                                let row = model.sessions.first { $0.provider + ":" + $0.sessionId == key }
+                                tasks.draft.sessionTitle = row?.title ?? ""
+                                tasks.draft.project = row?.project ?? ""
+                                tasks.draft.cwd = row?.cwd ?? ""
+                                if key.isEmpty { tasks.draft.owner = "human" }
+                                sendImmediately = false
+                            }
+                            Picker("Assigned to", selection: $tasks.draft.owner) {
+                                Text("For you").tag("human")
+                                if !tasks.draft.session.isEmpty { Text("For agent").tag("agent") }
+                            }
+                            if tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty {
+                                Toggle("Send to the session now", isOn: $sendImmediately)
+                            }
+                            Button("Add task") { tasks.create(sendImmediately: sendImmediately) }
+                                .disabled(tasks.isCreating || tasks.draft.title.trimmed.isEmpty)
+                        }.padding().frame(width: 340)
+                    }
 
                 if let missing = inbox.revealMissing {
                     // Not an error: the decision moved on. It names the decision and offers the way to it (F18).
