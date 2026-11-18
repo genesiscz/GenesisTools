@@ -759,3 +759,95 @@ test("a client cannot hand in a person's answer; the service records what its ow
         await start.host.stopped;
     }
 });
+
+test("two click workers for one request open its target once", async () => {
+    const journal = createRequestJournal({ dir: scratch(), now });
+    const view = await journal.post({ input: { ...input, open } });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const openWindow = mock(async () => {
+        entered.resolve();
+        await release.promise;
+        return { status: "ran" as const, via: "native" as const, value: {}, skipped: [] };
+    });
+    const showRequest = mock(async (request: PersonRequest) => ({
+        id: request.id,
+        status: "pending" as const,
+        reason: null,
+    }));
+    const first = presentPostedRequest({ view, journal, openWindow, showRequest });
+    await entered.promise;
+    expect(await presentPostedRequest({ view, journal, openWindow, showRequest })).toMatchObject({
+        status: "pending",
+        reason: "Another worker is presenting this request.",
+    });
+    release.resolve();
+    expect(await first).toMatchObject({ status: "done" });
+    expect(openWindow).toHaveBeenCalledTimes(1);
+    expect(showRequest).not.toHaveBeenCalled();
+});
+
+test("a request no surface took is delivered again on a retry, and its delivery names the surface that took it", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir: join(dir, "requests"), now });
+    let askCalls = 0;
+    const ask = mock(({ args }: { args: PersonRequest }) => {
+        askCalls++;
+        return askCalls === 1
+            ? { pass: true as const, reason: "No display yet." }
+            : { id: args.id, status: "pending" as const, reason: null };
+    });
+    const notify = mock(({ args }: { args: PersonRequest }) => ({
+        id: args.id,
+        status: "pending" as const,
+        reason: null,
+    }));
+    const actions = AREAS.person.actions;
+    const registry = {
+        ...AREAS,
+        person: {
+            ...AREAS.person,
+            actions: {
+                ...actions,
+                askNow: { ...actions.askNow, native: ask },
+                notifyThenAsk: { ...actions.notifyThenAsk, native: notify },
+                askElseNotify: {
+                    ...actions.askElseNotify,
+                    native: () => ({ pass: true as const, reason: "Every window way failed." }),
+                },
+            },
+        },
+    };
+    const config = createConfigStore({ registry, file: join(dir, "config.json") });
+    const wait = mock(async (id: string) => ({ id, status: "pending" as const, reason: "waited" }));
+    const deps = liveEngineDeps(registry, {
+        config,
+        facts: { ...LIVE_FACTS, isTest: () => false, isAgent: () => false, hasDisplay: () => true },
+        service: {
+            journal: { ...journal, wait },
+            hasClient: () => false,
+            present: async () => {
+                throw new Error("Only the fake delivery should run");
+            },
+        },
+    });
+    const run = (id: string) => runAreaAction(registry, "person.ask", { ...input, id }, deps);
+
+    expect(await run(input.id)).toMatchObject({ status: "ran", value: { status: "unreachable" } });
+    expect(journal.get(input.id)?.events.map((event) => event.type)).toEqual(["posted"]);
+    expect(await run(input.id)).toMatchObject({ status: "ran", value: { reason: "waited" } });
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(journal.get(input.id)?.events.at(-1)).toMatchObject({ type: "delivered", channel: "dialog" });
+    await run(input.id);
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledTimes(2);
+
+    // A display is there, but every window way fails and the notification fallback takes the request.
+    await config.set("person.ask.delivery", "askElseNotify");
+    await run("notice:fallback");
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(journal.get("notice:fallback")?.events.at(-1)).toMatchObject({
+        type: "delivered",
+        channel: "notification",
+    });
+});
