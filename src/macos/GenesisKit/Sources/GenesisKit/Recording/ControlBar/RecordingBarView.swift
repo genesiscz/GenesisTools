@@ -318,10 +318,10 @@ public struct RecordingBarView: View {
             word("Record", "record", prominent: true, reason: setup.target == nil && !follows ? "Choose a recording target first." : nil,
                  action: model.record)
         case let .countdown(seconds):
-            Text("\(seconds) s").monospacedDigit().accessibilityIdentifier("recording.bar.countdown")
+            Text("\(seconds) s").monospacedDigit().barStatus("recording.bar.countdown")
             word("Cancel", "cancel", action: model.discard)
         case let .starting(take):
-            Text(waitingTake == take ? "Still waiting" : "Starting…").accessibilityIdentifier("recording.bar.starting")
+            Text(waitingTake == take ? "Still waiting" : "Starting…").barStatus("recording.bar.starting")
             word("Cancel", "cancel", action: model.discard)
         case .recording:
             clock(paused: false)
@@ -332,7 +332,7 @@ public struct RecordingBarView: View {
             icon("play.fill", "Resume", "resume", reason: byUser ? nil : "Finish choosing a target to resume.", action: model.resume)
             stop
         case .finishing:
-            Text("Saving…").accessibilityIdentifier("recording.bar.finishing")
+            Text("Saving…").barStatus("recording.bar.finishing")
         case let .done(url):
             word(actions.useTitle, "use", prominent: true,
                  reason: url == nil ? "The recorder returned no movie." : usingMovie ? "Opening the movie…" : nil) {
@@ -359,7 +359,7 @@ public struct RecordingBarView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(paused ? "Paused" : "Recording").accessibilityValue(time)
-        .accessibilityIdentifier("recording.bar.clock")
+        .barStatus("recording.bar.clock")
     }
 
     @ViewBuilder private var phaseDetails: some View {
@@ -373,7 +373,8 @@ public struct RecordingBarView: View {
             }
         case let .failed(message):
             HStack {
-                InfoStrip(message, tone: .error).accessibilityElement(children: .combine).accessibilityIdentifier("recording.bar.failed")
+                InfoStrip(message, tone: .error).accessibilityElement(children: .combine)
+                    .barStatus("recording.bar.failed", label: message)
                 newRecording
             }
         default: EmptyView()
@@ -650,15 +651,70 @@ public struct RecordingBarView: View {
 }
 
 private extension View {
+    func barStatus(_ identifier: String, label: String? = nil) -> some View {
+        accessibilityIdentifier(identifier).modifier(RecordingBarProbe(identifier, label: label))
+    }
+
     func barControl(_ id: String, label: String, value: String = "", reason: String? = nil, scope: String? = nil) -> some View {
+        let identifier = "recording.bar.\(id)"
         let hint = scope.map { timing in reason.map { "\(timing). \($0)" } ?? timing } ?? reason ?? ""
         let tip = label + (value.isEmpty ? "" : " · \(value)") + (hint.isEmpty ? "" : " · \(hint)")
-        return disabled(reason != nil)
+        return modifier(RecordingBarProbe(identifier, label: label, hint: hint))
+            .disabled(reason != nil)
             .modifier(RecordingBarHover(text: tip))
             .accessibilityLabel(Text(label))
             .accessibilityValue(Text(value))
             .accessibilityHint(Text(hint))
-            .accessibilityIdentifier("recording.bar.\(id)")
+            .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The test host requests just the controls it needs from its own window.
+private struct RecordingBarProbeIDs: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
+extension EnvironmentValues {
+    var recordingBarProbeIDs: Set<String> {
+        get { self[RecordingBarProbeIDs.self] }
+        set { self[RecordingBarProbeIDs.self] = newValue }
+    }
+}
+
+struct RecordingBarProbe: ViewModifier {
+    struct State: Equatable {
+        let isEnabled: Bool
+        let label: String?
+        let hint: String
+    }
+
+    /// A preference contains only mounted controls. FrameProbe retains a control's last geometry after it disappears.
+    enum Controls: PreferenceKey {
+        static var defaultValue: [String: State] { [:] }
+        static func reduce(value: inout [String: State], nextValue: () -> [String: State]) {
+            value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+        }
+    }
+
+    @Environment(\.recordingBarProbeIDs) private var requested
+    @Environment(\.isEnabled) private var isEnabled
+    private let id: String
+    private let label: String?
+    private let hint: String
+
+    init(_ id: String, label: String?, hint: String = "") {
+        self.id = id
+        self.label = label
+        self.hint = hint
+    }
+
+    func body(content: Content) -> some View {
+        if FrameProbe.enabled, requested.contains(id) {
+            content.frameProbe(id)
+                .preference(key: Controls.self, value: [id: State(isEnabled: isEnabled, label: label, hint: hint)])
+        } else {
+            content
+        }
     }
 }
 
