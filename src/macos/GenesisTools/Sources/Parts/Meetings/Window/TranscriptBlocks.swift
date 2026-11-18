@@ -400,7 +400,7 @@ private struct TranscriptBlockLineView: View {
                 }
             // Only an indicator that says something the block does not (window audit M12): stuck and ignored, or naming
             // someone other than the block's speaker. Drawn on every line, it was a glyph down the whole pane.
-            if let indicator = line.indicator, indicator.ignored != nil || !indicator.names.contains(speaker) {
+            if let indicator = line.indicator, indicator.addsTo(speaker: speaker) {
                 Image(systemName: indicator.ignored == nil ? "person.wave.2" : "exclamationmark.triangle")
                     .font(.system(size: 11)).foregroundStyle(indicator.ignored == nil ? Color.secondary : .orange)
                     .instantTooltip(indicator.shownText)
@@ -484,6 +484,12 @@ private struct TranscriptBlockLineView: View {
 }
 
 extension TranscriptLine.Indicator {
+    /// True when the indicator says something the block's speaker does not: it is stuck and ignored, or it names
+    /// someone else (window audit M12).
+    func addsTo(speaker: String) -> Bool {
+        ignored != nil || (!names.isEmpty && !names.contains(speaker))
+    }
+
     /// The indicator's names, and when the engine ignores it, why in words (C2): the engine sends a code.
     var shownText: String {
         let names = names.isEmpty ? "No named indicator" : names.joined(separator: ", ")

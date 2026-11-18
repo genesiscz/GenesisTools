@@ -438,11 +438,14 @@ final class MeetingsService {
     }
 
     /// The service did not answer the call; the caller runs the command instead.
-    struct Unavailable: Error, Equatable, CustomStringConvertible {
+    struct Unavailable: Error, Equatable, CustomStringConvertible, LocalizedError {
         let reason: String
         /// False once a request may have changed data, even if its reply could not be read.
         var safeToRetry = true
         var description: String { reason }
+        /// The words a failure line shows (window audit M10): it read "GenesisToolsMeetings.MeetingsService.Unavailable
+        /// error 1." where this type had none.
+        var errorDescription: String? { "The Meetings service did not answer (\(reason))" }
     }
 
     /// Starts the service; returns once it listens (`tools meetings serve --detach` prints its service.json then).
