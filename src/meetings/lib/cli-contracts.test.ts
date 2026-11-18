@@ -2975,6 +2975,24 @@ describe("P3 voice library CLI", () => {
 
     test("a stale numbered preview cannot remove the next clip and a stable ID keeps its sound", async () => {
         const { x, y, file } = await fixture();
+        const allSamples = (await listing("samples", person)).people[0]!.samples;
+        expect(allSamples).toHaveLength(3);
+        const playById = async (id: string) => cli("play", person, "--sample", id, "--no-start");
+        const clips = new Map<string, unknown>();
+        for (const row of allSamples) {
+            const clip = await playById(row.id);
+            expect(clip).toMatchObject({
+                meeting: row.meeting,
+                path: file(row.meeting),
+                track: row.track,
+                channel: 0,
+                fromSec: row.fromSec,
+                toSec: row.toSec,
+                fileFromSec: row.fromSec,
+                fileToSec: row.toSec,
+            });
+            clips.set(row.id, clip);
+        }
         const samples = (await listing("samples", person, "--project", "orchard")).people[0]!.samples;
         const [first, second] = samples;
         const scoped = ["--project", "orchard"];
@@ -2983,18 +3001,29 @@ describe("P3 voice library CLI", () => {
         expect(before).toMatchObject({ path: file(y.id), fileFromSec: 5, fileToSec: 10, channel: 0 });
         expect(await play("2")).toEqual(before);
         const numberOne = ["remove", person, ...scoped, "--sample", "1"];
+        await expect(cli(...numberOne, "--sample", second!.id)).rejects.toThrow(/conflicting/i);
         const preview = voicesRemove.result.parse(await cli(...numberOne, "--preview"));
         expect(preview.ids).toEqual([first!.id]);
         expect(await cli(...numberOne, "--plan-token", preview.planToken!)).toMatchObject({ ids: [first!.id] });
         await expect(cli(...numberOne, "--plan-token", preview.planToken!)).rejects.toThrow(/stale/i);
         expect(await play("1")).toEqual(before);
-        expect(await play(second!.id)).toEqual(before);
+        const survivors = (await listing("samples", person)).people[0]!.samples;
+        expect(survivors.map((s) => s.id)).toEqual(allSamples.filter((s) => s.id !== first!.id).map((s) => s.id));
+        for (const row of survivors) {
+            expect(await playById(row.id)).toEqual(clips.get(row.id));
+        }
+        await expect(playById(first!.id)).rejects.toThrow(/stale/i);
         await expect(play("1e0")).rejects.toThrow(/sample/i);
-        await expect(play("123456789012")).rejects.toThrow(/sample/i);
+        await expect(play("123456789012")).rejects.toThrow(/sample 123456789012/i);
+        writeFileSync(file(y.id), "different recording at the original path");
+        await expect(play(second!.id)).rejects.toThrow(/sound changed/i);
         await expect(cli("move", person, "--sample", "1", "--to", visitor)).rejects.toThrow(/ID/i);
         await expect(cli("remove", person, "--sample", "1")).rejects.toThrow(/project|ambiguous/i);
         await expect(cli("remove", person, "--all")).rejects.toThrow(/preview/i);
+        const across = voicesRemove.result.parse(await cli("remove", person, "--all", "--preview"));
+        expect(across.ids).toEqual(survivors.map((s) => s.id));
         expect(await cli("remove", person, ...scoped)).toMatchObject({ removed: 1, ids: [second!.id] });
+        await expect(cli("remove", person, "--all", "--plan-token", across.planToken!)).rejects.toThrow(/stale/i);
         expect(readVoiceLibrary().library.samples.map((s) => s.meeting)).toEqual([x.id]);
     });
 
