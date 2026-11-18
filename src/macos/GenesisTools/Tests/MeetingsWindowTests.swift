@@ -15,7 +15,6 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(item.proposedStem, "correct")
         let removal = #"{"id":"i2","kind":"removal","status":"suggested","fromSec":5,"toSec":5,"heard":"Fixture done","rules":["local-speech"],"suggestedAt":"2026-11-02T15:00:00.000Z"}"#
         let removed = try JSONDecoder().decode(MeetingItem.self, from: Data(removal.utf8))
-        XCTAssertEqual(MeetingsWords.itemKind(removed), "Local speech output")
         XCTAssertTrue(removed.isDecidable)
     }
 
@@ -231,7 +230,6 @@ final class MeetingsWindowTests: XCTestCase {
         {"kind":"speaker-range","id":"i3","status":"suggested","label":"S1","fromSec":62,"toSec":75,"speaker":"Bob",
          "confidence":0.83,"rules":["E1"],"evidence":{"reason":"the call channel held it"},"suggestedAt":"2026-11-04T10:00:00.000Z"}
         """.utf8))
-        XCTAssertEqual(MeetingsWords.itemKind(item), "Speaker range")
         XCTAssertEqual(MeetingsWords.itemTitle(item), "S1 from 01:02 to 01:15 is Bob")
         XCTAssertEqual(MeetingsWords.confidence(item.confidence), "83 %")
         XCTAssertEqual(item.reason, "the call channel held it")

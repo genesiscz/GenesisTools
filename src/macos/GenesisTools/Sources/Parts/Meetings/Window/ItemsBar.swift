@@ -137,7 +137,7 @@ struct ItemsProjection: Equatable {
         let visible = MeetingDetailModel.visibleRows(rows, order: input.order, decided: input.decided, keeping: input.held)
         let grouped = ItemsTab.wordRows(visible.filter { $0.group != "words" } + rows.filter { $0.group == "words" }, items: items)
         let group = projection.group
-        projection.shown = projection.kind.rows(grouped, atLine: atLine, applyAbove: input.applyAbove).filter { row in
+        projection.shown = projection.kind.rows(grouped, atLine: atLine, applyAbove: input.applyAbove, keeping: input.held).filter { row in
             group == "all" || (row.group ?? (row.isQuestion ? "rules" : nil)) == group
         }
         projection.ids = projection.shown.map(\.id)

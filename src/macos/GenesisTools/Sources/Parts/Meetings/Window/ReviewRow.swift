@@ -3,9 +3,9 @@ import SwiftUI
 
 /// One review row (`meeting.rows`), the one row of the Items tab for questions and suggestions alike (R9, R12, R17).
 /// Open, it reads as points (who, what was said, when, what it asks, what it settles, why), offers its choices with
-/// the engine's confidence (R49), and opens its editor on Return or a double click (R11, R45). Decided, it folds in
-/// place to one line that names who decided it and why (R16, R35), with "Revert and edit". While its Moment plays, its
-/// header carries its own timeline (R25).
+/// the engine's confidence (R49), and opens its editor on Return or a double click (R11, R45). Decided, it folds to one
+/// line: its text, then a short status ("Rejected by an agent", R16, R35), with "Revert and edit". A click unfolds it
+/// with the whole reason, who decided it and when (U14). While its Moment plays, its header carries its own timeline (R25).
 ///
 /// The row is a value (`Equatable`, `.equatable()` in the list): the list hands in what it shows (selected, editing,
 /// busy, the player's state for its Moments, its draft), and a click, a hover or a play re-runs only the rows it
@@ -41,6 +41,9 @@ struct ReviewRowView: View, Equatable {
     /// This window just decided the row and it still keeps its place (G33): its choices stay in the same slot until
     /// the reader scrolls, so another choice can change the answer without opening a separate editor.
     var held = false
+    /// A decided row the reader unfolded (`MeetingDetailModel.unfoldedRows`, U14): the open layout, its whole reason,
+    /// who decided it and when.
+    var unfolded = false
     /// A question that asks who speaks (`ItemsProjection.speakerQuestions`): it offers "Somebody else…", "Something
     /// else…" and "Two voices…". Passed in, so no row searches the record's items in its body.
     var asksSpeaker = false
@@ -64,8 +67,11 @@ struct ReviewRowView: View, Equatable {
             && lhs.meanwhile == rhs.meanwhile && lhs.choiceKeys == rhs.choiceKeys && lhs.held == rhs.held
             && lhs.play == rhs.play && lhs.draft == rhs.draft && lhs.changingAnswer == rhs.changingAnswer
             && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player && lhs.asksSpeaker == rhs.asksSpeaker
-            && lhs.references == rhs.references
+            && lhs.references == rhs.references && lhs.unfolded == rhs.unfolded
     }
+
+    /// A decided row shown in its open layout because the reader unfolded it.
+    private var showsUnfolded: Bool { unfolded && !row.isOpen }
 
     /// Every Moment the row offers to play: its own, the times in its text, and the transcript lines it comes from.
     static func targets(_ row: ReviewRow) -> [MomentTarget] {
@@ -84,7 +90,7 @@ struct ReviewRowView: View, Equatable {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if row.isOpen || editing || meanwhile != nil || held || changing {
+            if row.isOpen || editing || meanwhile != nil || held || changing || showsUnfolded {
                 open
             } else {
                 folded
@@ -117,9 +123,10 @@ struct ReviewRowView: View, Equatable {
             headerLine
             Group {
                 title
-                ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
+                ForEach(Array(Self.shownParts(row).enumerated()), id: \.offset) { _, part in
                     partLine(part)
                 }
+                if let voice = row.voice { voiceLine(voice) }
             }
             .opacity(row.isOpen || editing ? 1 : 0.6)
             if let meanwhile {
@@ -148,12 +155,7 @@ struct ReviewRowView: View, Equatable {
                                 tooltip: "Leave the answer as it is") { detail.keepAnswer(row) }
                 }
             } else {
-                HStack(spacing: 8) {
-                    decidedMark
-                    decidedTail(words: true)
-                    Spacer(minLength: 6)
-                    revertButton(words: true)
-                }
+                decidedDetail
             }
             // The answers come first (genesiscz.md 5): the lines the question decides follow them, folded to three, so
             // Q1's 16 lines no longer pushed every answer below the window.
@@ -165,6 +167,11 @@ struct ReviewRowView: View, Equatable {
 
     private var headerLine: some View {
         HStack(spacing: 6) {
+            if showsUnfolded {
+                IconButton(systemName: "chevron.down", tooltip: "Fold this row to one line") { detail.toggleUnfolded(row.id) }
+                    .accessibilityLabel("Fold \(row.label)")
+                    .frameProbe("meetings.row.\(row.id).fold")
+            }
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .lineLimit(1).fixedSize()
                 .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.primary))
@@ -173,7 +180,7 @@ struct ReviewRowView: View, Equatable {
                 .instantTooltip(row.questionPriority ?? "")
             // The label, the kind and the score never break: the playing bar takes only the room they leave. Beside it at
             // 900 pt "Question" broke into "Questi" and "on", then "Q15" into "Q1" and "5", then "30 %".
-            Text(verbatim: Self.kindWord(row.kind)).font(.system(size: 11, weight: .semibold))
+            Text(verbatim: row.kindWord).font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.secondary))
                 .lineLimit(1).fixedSize()
             if let player {
@@ -259,6 +266,95 @@ struct ReviewRowView: View, Equatable {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: symbol).font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
             text.font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The parts a row draws. A row with a voice line leaves out the labeler's sentence about the same voice ("Sounds
+    /// like …", `labelerReasonSentence` in src/meetings/lib/reason-words.ts): the voice line says it, with the samples.
+    static func shownParts(_ row: ReviewRow) -> [RowPart] {
+        guard row.voice != nil else { return row.parts }
+        return row.parts.filter { part in
+            guard case .reason(let pieces) = part else { return true }
+            return !pieces.map(\.text).joined().hasPrefix(voiceLead)
+        }
+    }
+
+    private static let voiceLead = "Sounds like "
+
+    /// The voice line's words around its sample count, which is a button (U13).
+    struct VoiceWords: Equatable {
+        /// "Sounds like Alice: 0.61 match (next Bob 0.40). Compared with"
+        let lead: String
+        /// "6 saved samples"; empty when the library holds none.
+        let samples: String
+        /// "from 2 meetings."
+        let tail: String
+    }
+
+    /// "Sounds like <person>: 0.61 match (next <next> 0.40). Compared with 6 saved samples from 2 meetings." A cosine
+    /// reads as "0.61", never as a percent: it is no probability (U13).
+    static func voiceWords(person: String, score: Double, next: (person: String, score: Double)?, samples: Int,
+                           meetings: Int) -> VoiceWords {
+        let nearest = next.map { " (next \($0.person) \(VoiceScore.text($0.score)))" } ?? ""
+        let sounds = "\(voiceLead)\(person): \(VoiceScore.text(score)) match\(nearest)."
+        guard samples > 0 else { return VoiceWords(lead: sounds, samples: "", tail: "") }
+        return VoiceWords(lead: "\(sounds) Compared with", samples: Plural.count(samples, "saved sample"),
+                          tail: "from \(Plural.count(meetings, "meeting")).")
+    }
+
+    /// U13: whom the line sounds like, the cosine, the next closest voice and the saved samples it was compared with.
+    /// The sample count opens the Voices pane on that person.
+    private func voiceLine(_ voice: RowVoice) -> some View {
+        let words = Self.voiceWords(person: voice.person, score: voice.score,
+                                    next: voice.next.map { (person: $0.person, score: $0.score) },
+                                    samples: voice.samples.count, meetings: voice.samples.meetings)
+        let size: CGFloat = 11.5
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "waveform").font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
+            WrapLayout(spacing: 0, lineSpacing: 2) {
+                ForEach(Array(Self.flow([TextPiece(text: words.lead + " ")]).enumerated()), id: \.offset) { _, token in
+                    Text(verbatim: token.piece.text).font(.system(size: size)).foregroundStyle(.secondary)
+                        .padding(.trailing, token.spaceAfter ? size * Self.wordSpace : 0)
+                }
+                if !words.samples.isEmpty {
+                    LiveButton(tooltip: "Open the Voices pane on \(voice.person): the saved samples this line was compared with",
+                               pressable: true, action: { detail.showVoices(of: voice.person) }) {
+                        Text(verbatim: words.samples).font(.system(size: size)).foregroundStyle(Color.accentColor)
+                    }
+                    .accessibilityLabel("\(words.samples) of \(voice.person): open the Voices pane")
+                    .frameProbe("meetings.row.\(row.id).samples")
+                    .padding(.trailing, size * Self.wordSpace)
+                    ForEach(Array(Self.flow([TextPiece(text: words.tail)]).enumerated()), id: \.offset) { _, token in
+                        Text(verbatim: token.piece.text).font(.system(size: size)).foregroundStyle(.secondary)
+                            .padding(.trailing, token.spaceAfter ? size * Self.wordSpace : 0)
+                    }
+                }
+            }
+        }
+    }
+
+    /// An unfolded decided row (U14): what it was decided as, who decided it and when, "Revert and edit", and the whole
+    /// reason as a paragraph.
+    private var decidedDetail: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                decidedMark
+                if let answer = Self.foldedAnswer(row) {
+                    Text(verbatim: "→ \(answer)").font(.system(size: 12.5, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(verbatim: Self.decidedByAndWhen(row)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                revertButton(words: true)
+            }
+            if let reason = row.decision?.reason, !reason.isEmpty {
+                Text(verbatim: reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.leading, 22)
+                    .frameProbe("meetings.row.\(row.id).why")
+            }
         }
     }
 
@@ -393,7 +489,7 @@ struct ReviewRowView: View, Equatable {
     }
 
     private func choiceButton(_ choice: RowChoice, index: Int) -> some View {
-        ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
+        ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook, cosine: row.isVoiceModel,
                      number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
             detail.choose(choice, on: row)
         }
@@ -521,6 +617,7 @@ struct ReviewRowView: View, Equatable {
     static func foldedNeed(_ row: ReviewRow, shape: FoldedShape, busy: Bool) -> CGFloat {
         let answer = foldedAnswer(row) != nil
         var parts: [CGFloat] = [
+            KitTextWidth.symbol(unfoldGlyph, size: 9, weight: .semibold),
             KitTextWidth.symbol(row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle", size: 13, weight: .regular),
             FoldedShape.Nominal.label,
         ]
@@ -535,11 +632,43 @@ struct ReviewRowView: View, Equatable {
         return parts.reduce(0, +) + FoldedShape.Nominal.gap * CGFloat(parts.count - 1)
     }
 
+    /// The folded line's glyph that says a click unfolds it (U14).
+    static let unfoldGlyph = "chevron.right"
+
     private func foldedLine(_ shape: FoldedShape) -> some View {
         // A row without an answer of its own measures its text as the text and an answer, so it takes the shape the
         // questions around it take.
         let answerRoom = Self.foldedAnswer(row) == nil ? FoldedShape.Nominal.answer + FoldedShape.Nominal.gap : 0
         return HStack(spacing: FoldedShape.Nominal.gap) {
+            // Everything before the spacer is one click target that unfolds the row (U14). It ranks above the spacer:
+            // beside a spacer of its own priority, the line's text got half the free room and truncated with room to spare.
+            foldedSummary(shape, answerRoom: answerRoom)
+                .contentShape(Rectangle())
+                .onTapGesture { unfold() }
+                .frameProbe("meetings.row.\(row.id).folded")
+                .layoutPriority(1)
+            Spacer(minLength: 6)
+            if busy { ProgressView().controlSize(.small) }
+            revertButton(words: shape.revertWords)
+            IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history") { detail.openHistory(item: row.id) }
+                .accessibilityLabel("History of \(row.label)")
+        }
+    }
+
+    /// A click on the folded line: the row is selected, as a click anywhere on a row selects it, and unfolds.
+    private func unfold() {
+        selectTitle()
+        detail.toggleUnfolded(row.id)
+    }
+
+    /// The folded line's text part: the unfold glyph, the decided mark, the label, the item text, then a short status.
+    /// The item text keeps its room: the status is a few words, and the reason waits for the unfolded row (U14: the
+    /// 232-character reason of an agent pass left "i132 …" of the item).
+    private func foldedSummary(_ shape: FoldedShape, answerRoom: CGFloat) -> some View {
+        HStack(spacing: FoldedShape.Nominal.gap) {
+            Image(systemName: Self.unfoldGlyph).font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                .instantTooltip("Click the row to unfold it: why, who decided it and when")
+                .accessibilityHidden(true)
             decidedMark
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                 .lineLimit(1).fixedSize()
@@ -554,18 +683,13 @@ struct ReviewRowView: View, Equatable {
                     .accessibilityLabel(Self.decidedWords(row))
             }
             if let width = shape.textWidth {
-                // Above the spacer's priority: beside a spacer of its own priority a one-line text gets half the free
-                // room and truncates with room to spare. The ideal width is the room this shape asks for its text.
+                // Below the short status: the status stays whole and the text takes all the room after it. The ideal
+                // width is the room this shape asks for its text.
                 Text(verbatim: Self.foldedText(row)).font(.system(size: 12.5)).lineLimit(1).truncationMode(.tail)
                     .frame(idealWidth: width + answerRoom, alignment: .leading)
                     .layoutPriority(0.5)
             }
             decidedTail(words: shape.words)
-            Spacer(minLength: 6)
-            if busy { ProgressView().controlSize(.small) }
-            revertButton(words: shape.revertWords)
-            IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history") { detail.openHistory(item: row.id) }
-                .accessibilityLabel("History of \(row.label)")
         }
     }
 
@@ -600,10 +724,11 @@ struct ReviewRowView: View, Equatable {
                 .instantTooltip("\(answer)\n\(Self.decidedWords(row))")
         }
         if words {
-            Text(verbatim: Self.decidedWords(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+            // A few words: who decided it, never why. The whole reason is the tooltip and the unfolded row's paragraph.
+            Text(verbatim: Self.foldedStatus(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 .frame(idealWidth: FoldedShape.Nominal.words, alignment: .leading)
                 .layoutPriority(1)
-                .instantTooltip(row.decision?.reason.map { "Why: \($0)" } ?? "")
+                .instantTooltip(Self.decidedWords(row))
         }
     }
 
@@ -696,7 +821,7 @@ struct ReviewRowView: View, Equatable {
 
     /// How a row is named where another row refers to it: "Speaker range 1:45:15–1:53:22", never a bare item id.
     static func reference(_ row: ReviewRow) -> String {
-        "\(kindWord(row.kind)) \(row.whenText ?? row.label)"
+        "\(row.kindWord) \(row.whenText ?? row.label)"
     }
 
     /// "Confirmed by an agent (Claude Code, session 3f98b772)", "Rejected by you".
@@ -706,15 +831,20 @@ struct ReviewRowView: View, Equatable {
         return "\(status) by \(decision.by)" + (decision.reason.map { ": \($0)" } ?? "")
     }
 
-    static func kindWord(_ kind: String) -> String {
-        switch kind {
-        case "speaker-range": return "Speaker range"
-        case "label": return "Mixed voices"
-        case "join": return "Join lines"
-        case "term": return "Word"
-        case "question": return "Question"
-        default: return kind
-        }
+    /// The folded line's status: "Rejected by an agent", "Confirmed by you" (U14). The actor's session and the reason
+    /// wait for the tooltip and the unfolded row.
+    static func foldedStatus(_ row: ReviewRow) -> String {
+        let status = MeetingsWords.status(row.status)
+        guard let decision = row.decision else { return status }
+        return "\(status) by \(MeetingsWords.shortActor(decision.actor))"
+    }
+
+    /// The unfolded row's status line: "Rejected by an agent (Claude Code, session a1523c66) · Today 18:15".
+    static func decidedByAndWhen(_ row: ReviewRow) -> String {
+        let status = MeetingsWords.status(row.status)
+        guard let decision = row.decision else { return status }
+        let when = MeetingsFormat.dayTime(decision.at)
+        return "\(status) by \(decision.by)" + (when.isEmpty ? "" : " · \(when)")
     }
 
     static func editWord(_ edit: String) -> String {
@@ -730,7 +860,7 @@ struct ReviewRowView: View, Equatable {
 
     private var accessibilityLabel: String {
         let state = row.isOpen ? "open" : Self.decidedWords(row)
-        return [row.label, Self.kindWord(row.kind), row.what, state, row.questionPriority].compactMap { $0 }.joined(separator: ", ")
+        return [row.label, row.kindWord, row.what, state, row.questionPriority].compactMap { $0 }.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -741,6 +871,7 @@ struct ReviewRowView: View, Equatable {
             }
             if row.edit != "none" { Button("Edit") { detail.edit(row) } }
         } else {
+            Button(unfolded ? "Fold the decision" : "Show the whole decision") { detail.toggleUnfolded(row.id) }
             Button("Revert and edit") { detail.revertAndEdit(row) }
         }
         if row.isQuestion { Button("Edit question wording") { detail.editQuestion(row) } }
@@ -757,6 +888,8 @@ private struct ChoiceButton: View {
     let state: DecisionState
     /// `meetings.rows.stateLook`, read once by the row.
     let stateLook: MeetingsPreferences.Rows.StateLook
+    /// The row's scores are voice cosines (`ReviewRow.isVoiceModel`): "0.61", never "61 %" (U13).
+    var cosine = false
     let number: Int?
     let enabled: Bool
     let action: () -> Void
@@ -791,16 +924,18 @@ private struct ChoiceButton: View {
                 }
                 Text(verbatim: choice.label).font(.system(size: 12.5, weight: state == .plain ? .regular : .semibold))
                     .strikethrough(state.struck)
-                if let confidence = MeetingsWords.confidence(choice.confidence) {
-                    // With its sign, as the row's header writes it: a bare "58" beside a name read as a count.
-                    Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                if let score = MeetingsWords.score(choice.confidence, cosine: cosine) {
+                    // With its sign, as the row's header writes it: a bare "58" beside a name read as a count. A voice
+                    // cosine keeps its two decimals, as the header's voice mark does.
+                    Text(verbatim: score).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
             .foregroundStyle(Self.ink(state: state, stateLook: stateLook, kitLook: look))
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(ground)
         }
-        .accessibilityLabel([choice.label, choice.confidence.map { "\(Int(($0 * 100).rounded())) percent" }, state.words.isEmpty ? nil : state.words]
+        .accessibilityLabel([choice.label, choice.confidence.map { cosine ? "voice match \(VoiceScore.text($0))" : "\(Int(($0 * 100).rounded())) percent" },
+                             state.words.isEmpty ? nil : state.words]
             .compactMap { $0 }.joined(separator: ", "))
     }
 

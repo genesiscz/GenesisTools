@@ -527,6 +527,8 @@ final class MeetingsReviewFixTests: XCTestCase {
         FrameProbe.reset()
         defer { FrameProbe.enabled = false; FrameProbe.reset() }
         defaults.set(MeetingsPreferences.Rows.AutoplayNext.off.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        // The fold in place: with decided rows at the end (the default), the released row moves below the open ones.
+        defaults.set(MeetingsPreferences.Rows.Decided.inPlace.rawValue, forKey: MeetingsPreferences.Rows.decided.key)
         let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
         let detail = MeetingDetailModel(id: "m", window: window)
         let rows = try termRows()

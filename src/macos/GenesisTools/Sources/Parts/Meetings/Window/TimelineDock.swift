@@ -168,7 +168,7 @@ struct TimelineDock: View {
     static func flagged(_ span: ZoomSpan, top: MomentLayer, meeting: String, rows: [ReviewRow]) -> ZoomSpan {
         guard let row = plainRow(of: top, meeting: meeting, rows: rows) else { return span }
         var named = span
-        named.label = ReviewRowView.kindWord(row.kind)
+        named.label = row.kindWord
         return named
     }
 
@@ -209,7 +209,7 @@ struct TimelineDock: View {
 
     /// One pin per row with a time; a row the Items tab hides (decided rows hidden) is dimmed (G-PLAY-5).
     private func pins(_ rows: [ReviewRow], meeting: String, top: MomentLayer) -> [TimelinePin] {
-        let hidden = (MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace) == .hidden
+        let hidden = (MeetingsPreferences.Rows.Decided(rawValue: decided) ?? MeetingsPreferences.Rows.decided.defaultValue) == .hidden
         return rows.compactMap { row in
             TimelinePin(row: row, playing: top.kind == .moment && row.target == top.target, dimmed: hidden && !row.isOpen)
         }
