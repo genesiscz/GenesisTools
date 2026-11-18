@@ -13,6 +13,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { JournalEntry } from "./decision-actions";
 import { recordPeople } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
+import { NONE_OF_THESE } from "./questions";
 import type { Seat } from "./sound";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines } from "./speaker-labels/voice";
@@ -41,6 +42,11 @@ function stretchEnd(item: { toSec: number; evidence?: Record<string, unknown> })
     return typeof end === "number" && Number.isFinite(end) ? Math.max(item.toSec, end) : item.toSec;
 }
 
+/** answerQuestion stores several speakers as an ordered list joined with " + ", also on the decided range. */
+function singleSpeaker(name: string | undefined): name is string {
+    return !!name?.trim() && !name.includes(" + ") && name.trim().toLowerCase() !== NONE_OF_THESE;
+}
+
 /**
  * What a person's decision confirmed by ear: the answer of a speaker question by one person (P5, decision 3), or a
  * confirm of speaker ranges the voice model named (P7, decision 2: "a confirm adds a sample"), each item listed by
@@ -54,7 +60,7 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
             question?.kind !== "question" ||
             question.about !== "speaker" ||
             question.status !== "confirmed" ||
-            !question.answer?.trim()
+            !singleSpeaker(question.answer)
         ) {
             return [];
         }
@@ -77,7 +83,8 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
             after.status !== "confirmed" ||
             change.before?.status === "confirmed" ||
             after.decision?.token !== entry.token ||
-            !after.speaker ||
+            !singleSpeaker(after.speaker) ||
+            (after.voices?.length ?? 0) > 1 ||
             !after.rules.includes(MeetingRule.VoiceEmbedding)
         ) {
             return [];
