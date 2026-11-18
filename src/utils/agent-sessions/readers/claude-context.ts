@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { claudeUsageOfRow } from "@genesiscz/utils/ai/usage/spend/parse";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isObject } from "@genesiscz/utils/object";
+import { collapsePath } from "@genesiscz/utils/paths";
 import type { ContextItem, LoopContext, SessionLoop } from "../analysis-types";
 import { isoOf } from "./analysis-lines";
 import { isCompactBoundary, type LoopCollector } from "./claude-analysis-loops";
@@ -72,10 +73,6 @@ function addHook(attachment: Record<string, unknown>, add: Add): void {
     }
 }
 
-function shortPath(value: unknown): string {
-    return text(value).replace(/^\/Users\/[^/]+\//, "~/");
-}
-
 function addAttachment(row: Record<string, unknown>, add: Add, omitted: Map<string, number>): void {
     const attachment = row.attachment;
     if (!isObject(attachment)) {
@@ -91,12 +88,12 @@ function addAttachment(row: Record<string, unknown>, add: Add, omitted: Map<stri
     } else if (type === "instructions" && Array.isArray(attachment.files)) {
         for (const file of attachment.files) {
             if (isObject(file)) {
-                add("instructions", shortPath(file.path), text(file.content).length);
+                add("instructions", collapsePath(text(file.path)), text(file.content).length);
             }
         }
     } else if (type === "nested_memory") {
         const body = isObject(attachment.content) ? attachment.content.content : attachment.content;
-        add("rule-file", text(attachment.displayPath) || shortPath(attachment.path), text(body).length);
+        add("rule-file", text(attachment.displayPath) || collapsePath(text(attachment.path)), text(body).length);
     } else if (type === "queued_command") {
         const origin = isObject(attachment.origin) ? text(attachment.origin.kind) : "";
         addParts("queued", origin || text(attachment.commandMode) || "?", attachment.prompt, add);
