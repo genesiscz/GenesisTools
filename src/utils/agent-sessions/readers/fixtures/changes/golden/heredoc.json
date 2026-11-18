@@ -1,0 +1,228 @@
+{
+  "1": {
+    "session": "10000003-1111-4111-8111-111111111111",
+    "turn": "p7",
+    "turns": [
+      "p7"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/other.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-written"
+        ]
+      },
+      {
+        "path": "/work/acme/out.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-gen"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000003-1111-4111-8111-111111111111.jsonl"
+  },
+  "2": {
+    "session": "10000003-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p3",
+      "p7"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/other.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-written"
+        ]
+      },
+      {
+        "path": "/work/acme/out.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-gen"
+        ]
+      },
+      {
+        "path": "/work/acme/run.sh",
+        "beforeOid": null,
+        "afterOid": "a21bb110549ff5ed934198962a554d6f250c165f",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "script"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000003-1111-4111-8111-111111111111.jsonl"
+  },
+  "3": {
+    "session": "10000003-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p3",
+      "p7"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/gen.sh",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "generate"
+        ]
+      },
+      {
+        "path": "/work/acme/other.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-written"
+        ]
+      },
+      {
+        "path": "/work/acme/out.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-gen"
+        ]
+      },
+      {
+        "path": "/work/acme/run.sh",
+        "beforeOid": null,
+        "afterOid": "a21bb110549ff5ed934198962a554d6f250c165f",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "script"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000003-1111-4111-8111-111111111111.jsonl"
+  },
+  "5": {
+    "session": "10000003-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p3",
+      "p7"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/gen.sh",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "generate"
+        ]
+      },
+      {
+        "path": "/work/acme/other.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-written"
+        ]
+      },
+      {
+        "path": "/work/acme/out.txt",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "high",
+        "toolUseIds": [
+          "run-gen"
+        ]
+      },
+      {
+        "path": "/work/acme/run.sh",
+        "beforeOid": null,
+        "afterOid": "a21bb110549ff5ed934198962a554d6f250c165f",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "script"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000003-1111-4111-8111-111111111111.jsonl"
+  }
+}

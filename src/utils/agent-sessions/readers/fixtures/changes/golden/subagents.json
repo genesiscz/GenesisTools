@@ -1,0 +1,464 @@
+{
+  "1": {
+    "session": "10000001-1111-4111-8111-111111111111",
+    "turn": "foreign",
+    "turns": [
+      "foreign"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/phantom",
+        "beforeOid": null,
+        "afterOid": "b3eca18d4ff3f9ad9c57ab374b213a88078662d7",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "phantom"
+        ],
+        "agentIds": [
+          "d"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000001-1111-4111-8111-111111111111.jsonl"
+  },
+  "2": {
+    "session": "10000001-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p7",
+      "foreign"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/external",
+        "beforeOid": null,
+        "afterOid": "62495ef8d7050e49585637db538895cf7c090fcd",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "external"
+        ]
+      },
+      {
+        "path": "/work/acme/phantom",
+        "beforeOid": null,
+        "afterOid": "b3eca18d4ff3f9ad9c57ab374b213a88078662d7",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "phantom"
+        ],
+        "agentIds": [
+          "d"
+        ]
+      },
+      {
+        "path": "/work/acme/revived",
+        "beforeOid": null,
+        "afterOid": "78b11a25abeeddcc53a7e3bfa4d4f69fc2527160",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "revived"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/workflow",
+        "beforeOid": null,
+        "afterOid": "80adca4ac20953863d4e599f3963999a218b9a37",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "workflow"
+        ],
+        "agentIds": [
+          "w"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000001-1111-4111-8111-111111111111.jsonl"
+  },
+  "3": {
+    "session": "10000001-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p2",
+      "p7",
+      "foreign"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/a",
+        "beforeOid": null,
+        "afterOid": "978c15e77a775acb120269a1ece4a158d651a0c1",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-a"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/external",
+        "beforeOid": null,
+        "afterOid": "62495ef8d7050e49585637db538895cf7c090fcd",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "external"
+        ]
+      },
+      {
+        "path": "/work/acme/nested",
+        "beforeOid": null,
+        "afterOid": "97b5be952251ba17fca068d150c9e0e12c00719b",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "nested-edit"
+        ],
+        "agentIds": [
+          "c"
+        ]
+      },
+      {
+        "path": "/work/acme/phantom",
+        "beforeOid": null,
+        "afterOid": "b3eca18d4ff3f9ad9c57ab374b213a88078662d7",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "phantom"
+        ],
+        "agentIds": [
+          "d"
+        ]
+      },
+      {
+        "path": "/work/acme/revived",
+        "beforeOid": null,
+        "afterOid": "78b11a25abeeddcc53a7e3bfa4d4f69fc2527160",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "revived"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/workflow",
+        "beforeOid": null,
+        "afterOid": "80adca4ac20953863d4e599f3963999a218b9a37",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "workflow"
+        ],
+        "agentIds": [
+          "w"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000001-1111-4111-8111-111111111111.jsonl"
+  },
+  "4": {
+    "session": "10000001-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p2",
+      "p7",
+      "foreign"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/a",
+        "beforeOid": null,
+        "afterOid": "978c15e77a775acb120269a1ece4a158d651a0c1",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-a"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/background",
+        "beforeOid": null,
+        "afterOid": "255fefea382a7d52ae6fe0102ad0e397b2695dfe",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "background"
+        ],
+        "agentIds": [
+          "b"
+        ]
+      },
+      {
+        "path": "/work/acme/external",
+        "beforeOid": null,
+        "afterOid": "62495ef8d7050e49585637db538895cf7c090fcd",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "external"
+        ]
+      },
+      {
+        "path": "/work/acme/nested",
+        "beforeOid": null,
+        "afterOid": "97b5be952251ba17fca068d150c9e0e12c00719b",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "nested-edit"
+        ],
+        "agentIds": [
+          "c"
+        ]
+      },
+      {
+        "path": "/work/acme/phantom",
+        "beforeOid": null,
+        "afterOid": "b3eca18d4ff3f9ad9c57ab374b213a88078662d7",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "phantom"
+        ],
+        "agentIds": [
+          "d"
+        ]
+      },
+      {
+        "path": "/work/acme/revived",
+        "beforeOid": null,
+        "afterOid": "78b11a25abeeddcc53a7e3bfa4d4f69fc2527160",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "revived"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/workflow",
+        "beforeOid": null,
+        "afterOid": "80adca4ac20953863d4e599f3963999a218b9a37",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "workflow"
+        ],
+        "agentIds": [
+          "w"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000001-1111-4111-8111-111111111111.jsonl"
+  },
+  "6": {
+    "session": "10000001-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p2",
+      "p7",
+      "foreign"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/a",
+        "beforeOid": null,
+        "afterOid": "978c15e77a775acb120269a1ece4a158d651a0c1",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "edit-a"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/background",
+        "beforeOid": null,
+        "afterOid": "255fefea382a7d52ae6fe0102ad0e397b2695dfe",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "background"
+        ],
+        "agentIds": [
+          "b"
+        ]
+      },
+      {
+        "path": "/work/acme/external",
+        "beforeOid": null,
+        "afterOid": "62495ef8d7050e49585637db538895cf7c090fcd",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "external"
+        ]
+      },
+      {
+        "path": "/work/acme/nested",
+        "beforeOid": null,
+        "afterOid": "97b5be952251ba17fca068d150c9e0e12c00719b",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "nested-edit"
+        ],
+        "agentIds": [
+          "c"
+        ]
+      },
+      {
+        "path": "/work/acme/phantom",
+        "beforeOid": null,
+        "afterOid": "b3eca18d4ff3f9ad9c57ab374b213a88078662d7",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "phantom"
+        ],
+        "agentIds": [
+          "d"
+        ]
+      },
+      {
+        "path": "/work/acme/revived",
+        "beforeOid": null,
+        "afterOid": "78b11a25abeeddcc53a7e3bfa4d4f69fc2527160",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "revived"
+        ],
+        "agentIds": [
+          "a"
+        ]
+      },
+      {
+        "path": "/work/acme/workflow",
+        "beforeOid": null,
+        "afterOid": "80adca4ac20953863d4e599f3963999a218b9a37",
+        "status": "added",
+        "source": "write",
+        "skipped": null,
+        "via": "write",
+        "confidence": "exact",
+        "toolUseIds": [
+          "workflow"
+        ],
+        "agentIds": [
+          "w"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": "<home>/projects/-work-acme/10000001-1111-4111-8111-111111111111.jsonl"
+  }
+}

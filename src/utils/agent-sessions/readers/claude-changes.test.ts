@@ -10,55 +10,7 @@ import { readClaudeTranscriptFolded } from "./claude-changes";
 import { emptyParseState, parseClaudeTranscript, parseLines, readClaudeTranscript } from "./claude-changes-parse";
 import { AmbiguousSessionIdError, canonicalClaudeTranscript, canonicalClaudeTranscriptSync } from "./claude-locate";
 
-const REPO = "/tmp/fixture-repo";
-
-/** Seconds past a fixed instant, as the ISO text transcripts carry. */
-const at = (seconds: number): string => new Date(Date.UTC(2026, 0, 2, 10, 0, 0) + seconds * 1000).toISOString();
-
-type Line = Record<string, unknown>;
-
-function prompt(promptId: string, text: string, seconds: number): Line {
-    return {
-        type: "user",
-        promptId,
-        uuid: `msg-${promptId}`,
-        timestamp: at(seconds),
-        cwd: REPO,
-        message: { role: "user", content: text },
-    };
-}
-
-function use(id: string, name: string, input: Record<string, unknown>, seconds: number): Line {
-    return {
-        type: "assistant",
-        timestamp: at(seconds),
-        cwd: REPO,
-        message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] },
-    };
-}
-
-function result(
-    promptId: string,
-    id: string,
-    seconds: number,
-    extra: { toolUseResult?: unknown; isError?: boolean } = {}
-): Line {
-    return {
-        type: "user",
-        promptId,
-        timestamp: at(seconds),
-        cwd: REPO,
-        message: {
-            role: "user",
-            content: [{ type: "tool_result", tool_use_id: id, is_error: extra.isError === true }],
-        },
-        toolUseResult: extra.toolUseResult,
-    };
-}
-
-function jsonl(lines: Line[]): string {
-    return lines.map((line) => SafeJSON.stringify(line, { strict: true })).join("\n");
-}
+import { at, jsonl, type Line, prompt, REPO, result, use } from "./fixtures/changes/claude-sessions";
 
 function compute(transcript: Parameters<typeof computeSessionChanges>[0]["transcript"]) {
     return computeSessionChanges({

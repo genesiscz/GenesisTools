@@ -1,0 +1,176 @@
+{
+  "1": {
+    "session": "30000000-1111-4111-8111-111111111111",
+    "turn": "p3",
+    "turns": [
+      "p3"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/file-3",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-3"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": null
+  },
+  "2": {
+    "session": "30000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p2",
+      "p3"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/file-2",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-2"
+        ]
+      },
+      {
+        "path": "/work/acme/file-3",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-3"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": null
+  },
+  "3": {
+    "session": "30000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p2",
+      "p3"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/file-1",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-1"
+        ]
+      },
+      {
+        "path": "/work/acme/file-2",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-2"
+        ]
+      },
+      {
+        "path": "/work/acme/file-3",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-3"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": null
+  },
+  "5": {
+    "session": "30000000-1111-4111-8111-111111111111",
+    "turn": null,
+    "turns": [
+      "p1",
+      "p2",
+      "p3"
+    ],
+    "files": [
+      {
+        "path": "/work/acme/file-1",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-1"
+        ]
+      },
+      {
+        "path": "/work/acme/file-2",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-2"
+        ]
+      },
+      {
+        "path": "/work/acme/file-3",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell-3"
+        ]
+      }
+    ],
+    "excluded": [],
+    "log": "<home>/changes.jsonl",
+    "objects": "<home>/.genesis-tools/agents/_objects",
+    "transcript": null
+  }
+}
