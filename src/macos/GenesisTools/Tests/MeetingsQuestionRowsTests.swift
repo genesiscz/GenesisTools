@@ -14,14 +14,14 @@ final class MeetingsQuestionRowsTests: XCTestCase {
             impact: .init(lines: 1, words: 45, sameDoubtLines: 3),
             raisedLines: [.init(index: 99, startSec: 60, endSec: 62, speaker: "Bob Example", text: "Raised line")])
     }
-    private func rendered<V: View>(_ view: V, name: String, native: Bool = false, afterMount: () -> Void = {}) throws -> String {
-        let content = view.frame(width: 460).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
+    private func rendered<V: View>(_ view: V, name: String, width: CGFloat = 460, native: Bool = false, afterMount: () -> Void = {}) throws -> String {
+        let content = view.frame(width: width).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
         let image: CGImage
         if native {
             let host = NSHostingView(rootView: content)
-            let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 484, height: 460), styleMask: [.borderless], backing: .buffered, defer: false)
+            let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width + 24, height: 460), styleMask: [.borderless], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.contentView = host; panel.orderInForSnapshot()
             defer { panel.orderOut(nil); panel.close() }
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
@@ -151,10 +151,16 @@ final class MeetingsQuestionRowsTests: XCTestCase {
 
         let detail = MeetingDetailModel(id: "copy", window: nil)
         let text = try rendered(ItemsBar(detail: detail, projection: projection, group: .constant("all"), applyAbove: 0.5),
-                                name: "X18-bar", native: true)
+                                name: "X18-bar", width: 800, native: true)
         XCTAssertTrue(text.contains("Rules 1/2"), text)
         XCTAssertTrue(text.contains("Spot check 1/2"), text)
         XCTAssertFalse(text.contains("samples"), "no system stepper is left: \(text)")
+
+        input.group = "spot-check"
+        let compact = try rendered(ItemsBar(detail: detail, projection: ItemsProjection.make(input), group: .constant(input.group), applyAbove: 0.5),
+                                   name: "X18-bar-compact", width: 460, native: true)
+        XCTAssertTrue(compact.contains("Spot check 1/2"), compact)
+        XCTAssertFalse(compact.contains("Rules 1/2"), "the other groups are inside the compact menu: \(compact)")
     }
 
     func testTheQuestionCardAnswersFirstAndFoldsItsLines() throws {
