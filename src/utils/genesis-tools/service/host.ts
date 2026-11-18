@@ -134,9 +134,11 @@ export async function startGenesisToolsService(
         },
     };
     const deps = liveEngineDeps(AREAS, { ...options.deps, config, state, service: door });
+    // The service's own terminal belongs to no caller on its socket: a prompt or a build offer there would wait for an
+    // answer from a terminal the caller cannot see. A remote call skips the terminal ways; a local run keeps them.
     const callerDeps = (connection: RpcConnection<FaceState>): EngineDeps => ({
         ...deps,
-        facts: { ...deps.facts, isAgent: () => connection.state.caller === "agent" },
+        facts: { ...deps.facts, isAgent: () => connection.state.caller === "agent", hasTerminal: () => false },
     });
     const handlers: Record<string, RpcHandler<MethodDescriptor, ServiceCall>> = {};
     for (const [area, definition] of Object.entries(AREAS)) {

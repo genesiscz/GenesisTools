@@ -812,6 +812,43 @@ test("a client cannot hand in a person's answer; the service records what its ow
     }
 });
 
+test("a call over the service socket never prompts in the service's own terminal", async () => {
+    const dir = scratch();
+    const start = await startGenesisToolsService({
+        dir,
+        deps: {
+            facts: {
+                ...LIVE_FACTS,
+                isTest: () => false,
+                isAgent: () => false,
+                hasDisplay: async () => false,
+                hasTerminal: () => true,
+            },
+        },
+    });
+    if (start.status !== "started") {
+        throw new Error("fixture service did not start");
+    }
+
+    const client = await connectGenesisToolsService({ dir });
+    if (!client) {
+        throw new Error("fixture client did not connect");
+    }
+
+    try {
+        const request = { ...input, createdAt: now().toISOString() };
+        for (const id of ["terminal.prompt", "person.showWindow"]) {
+            const outcome = await client.call<{ status: string; skipped: Array<{ code: string }> }>(id, request);
+            expect(outcome.status).toBe("unreachable");
+            expect(outcome.skipped.map((skip) => skip.code)).toContain("no-terminal");
+        }
+    } finally {
+        client.close();
+        start.host.stop("test complete");
+        await start.host.stopped;
+    }
+});
+
 test("two click workers for one request open its target once", async () => {
     const journal = createRequestJournal({ dir: scratch(), now });
     const view = await journal.post({ input: { ...input, open } });
