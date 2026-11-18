@@ -200,6 +200,14 @@ function fakeSource(): TranscriptSource {
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
         folders: async () => [],
+        meetingsBetween: async () => [
+            {
+                sourceMeetingId: "wf-2041",
+                title: "Design review",
+                start: "2026-11-03T09:00:00.000Z",
+                hasTranscript: true,
+            },
+        ],
         meetingFolders: async () => [],
         folderWrite: { supported: false, reason: "fake", manualStep: "none" },
     };
@@ -628,6 +636,8 @@ async function startService(
         store: () => store,
         configStore: () => config,
         linkedSource,
+        // A source list or a link reads the fake, never this Mac's Wispr Flow.
+        sources: async () => source,
         idleMs: 0,
         code: CODE,
         watch: options.watch ?? false,
@@ -2943,6 +2953,18 @@ async function captureExamples(): Promise<Example[]> {
         "The Undo of the removal: the block, its pairings and the meeting it left without a project come back."
     );
     await ask(window, "rules.names", {}, "Every rule's sentence by its id, as a review row words an item's rules.");
+    await ask(
+        window,
+        "meeting.sources.near",
+        { meeting: REVIEW.id },
+        "The source meetings near the record's start, nearest first; this one is linked to the record already."
+    );
+    await ask(
+        window,
+        "meeting.link",
+        { meeting: RETRO.id, source: "wisprflow:wf-2041" },
+        "A source meeting another record holds: refused, so two records never share one source meeting."
+    );
     return examples;
 }
 
@@ -3130,6 +3152,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "no-hello",
                 "no-transcript-source",
                 "protocol-mismatch",
+                "source-linked",
             ].sort()
         );
     });
@@ -3139,6 +3162,48 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         const entry = SafeJSON.parse(await Bun.file(serviceEntryPath(dir)).text(), { strict: true });
 
         expect(entry).toMatchObject({ version: 1, protocol: MEETINGS_PROTOCOL, code: CODE });
+    });
+});
+
+describe("linking a source meeting from the window", () => {
+    test("meeting.sources.near lists the source meetings near a record, and meeting.link links one", async () => {
+        const base = fakeSource();
+        const meeting = {
+            ...(await base.load("wf-2041")),
+            sourceMeetingId: "wf-3000",
+            title: "Retro call",
+            start: "2026-11-03T13:02:00.000Z",
+        };
+        const source: TranscriptSource = {
+            ...base,
+            load: async () => meeting,
+            describe: () => ({ meetingId: "wf-3000" }),
+            evidence: async () => null,
+            meetingsBetween: async () => [
+                { sourceMeetingId: "wf-3000", title: "Retro call", start: meeting.start, hasTranscript: true },
+            ],
+        };
+        const { service, store } = await startService({ deps: { sources: async () => source } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+
+        expect(await client.call("meeting.sources.near", { meeting: RETRO.id })).toEqual({
+            meetings: [
+                {
+                    ref: "wisprflow:wf-3000",
+                    source: "Fake",
+                    title: "Retro call",
+                    start: "2026-11-03T13:02:00.000Z",
+                    hasTranscript: true,
+                },
+            ],
+            unavailable: [],
+        });
+        const linked = await client.call("meeting.link", { meeting: RETRO.id, source: "wisprflow:wf-3000" });
+        expect(linked.id).toBe(RETRO.id);
+        expect(store.resolve(RETRO.id)?.sources).toEqual({ wisprflow: { meetingId: "wf-3000" } });
+        const refused = await failure(client.call("meeting.link", { meeting: RETRO.id, source: "elsewhere:1" }));
+        expect(refused).toMatchObject({ code: "meeting-ref" });
     });
 });
 

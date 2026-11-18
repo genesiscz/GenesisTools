@@ -28,6 +28,8 @@
             "meeting.listen.prepare",
             "meeting.voice.enrol",
             "meeting.people.edit",
+            "meeting.sources.near",
+            "meeting.link",
             "meeting.voice",
             "meeting.suggest",
             "meeting.transcript",
@@ -107,7 +109,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "51d23163bb72"
+          "version": "f4c5171b4445"
         }
       }
     },
@@ -1371,6 +1373,8 @@
             "meeting.listen.prepare",
             "meeting.voice.enrol",
             "meeting.people.edit",
+            "meeting.sources.near",
+            "meeting.link",
             "meeting.voice",
             "meeting.suggest",
             "meeting.transcript",
@@ -1450,7 +1454,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "51d23163bb72"
+          "version": "f4c5171b4445"
         }
       }
     },
@@ -6038,6 +6042,8 @@
             "meeting.listen.prepare",
             "meeting.voice.enrol",
             "meeting.people.edit",
+            "meeting.sources.near",
+            "meeting.link",
             "meeting.voice",
             "meeting.suggest",
             "meeting.transcript",
@@ -6117,7 +6123,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "51d23163bb72"
+          "version": "f4c5171b4445"
         }
       }
     },
@@ -6858,6 +6864,68 @@
             "spoken-identifier": "The spoken words match a name or path in a document.",
             "agent": "An agent suggested this after reviewing the meeting.",
             "user": "Someone added this by hand."
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.sources.near",
+      "direction": "client→service",
+      "note": "The source meetings near the record's start, nearest first; this one is linked to the record already.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 116,
+        "method": "meeting.sources.near",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 116,
+        "result": {
+          "meetings": [
+            {
+              "ref": "wisprflow:wf-2041",
+              "source": "Fake",
+              "title": "Design review",
+              "start": "2026-11-03T09:00:00.000Z",
+              "hasTranscript": true,
+              "linkedTo": {
+                "id": "2026-11-03-1000-design-review",
+                "title": "Design review"
+              }
+            }
+          ],
+          "unavailable": []
+        }
+      }
+    },
+    {
+      "method": "meeting.link",
+      "direction": "client→service",
+      "note": "A source meeting another record holds: refused, so two records never share one source meeting.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 117,
+        "method": "meeting.link",
+        "params": {
+          "meeting": "2026-11-03-1400-retro",
+          "source": "wisprflow:wf-2041"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 117,
+        "error": {
+          "code": 1100,
+          "message": "wisprflow:wf-2041 is linked to 2026-11-03-1000-design-review already. Merge the two records instead: tools meetings merge 2026-11-03-1400-retro --into 2026-11-03-1000-design-review",
+          "data": {
+            "code": "source-linked"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
           }
         }
       }

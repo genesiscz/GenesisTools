@@ -10,9 +10,10 @@ import {
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, MeetingStore, parseSourceRef } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
 import { meetingRuleSentences } from "@genesiscz/utils/meetings/rules";
+import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -24,7 +25,7 @@ import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
 import { preservedSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
-import { type LinkedSource, linkedSource } from "../sources";
+import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
 import { assessIndicator } from "../speaker-indicator";
 import { correctTranscript } from "../transcript-corrections";
 import { meetingVoices } from "../voice";
@@ -74,6 +75,8 @@ export interface MeetingsHandlerDeps {
     store?: () => MeetingStore;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
     linkedSource?: (record: MeetingRecord) => LinkedSource | undefined;
+    /** A source by its id, for the lists and links of `meeting.sources.near` and `meeting.link`; tests pass a fake. */
+    sources?: (id: MeetingSourceId) => Promise<TranscriptSource>;
     /** Where a decision's corrections go (tests keep them); the corrections ledger by default. */
     ledger?: (corrections: Correction[]) => void;
     /** The corrections ledger a plan's dictionary reach reads (tests pass lines); the ledger file by default. */
@@ -308,6 +311,71 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             context.emit?.("people.changed", {});
             return record;
+        },
+        "meeting.sources.near": async (params) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const start = Date.parse(record.start);
+            const spanMs = (params.hours ?? 3) * 3_600_000;
+            const range = { from: new Date(start - spanMs), to: new Date(start + spanMs) };
+            const linked = new Map<string, MeetingRecord>();
+            for (const other of store.list()) {
+                const ref = sourceRefOf(other);
+                if (ref) {
+                    linked.set(`${ref.sourceId}:${ref.sourceMeetingId}`, other);
+                }
+            }
+
+            const meetings: MeetingsResult<"meeting.sources.near">["meetings"] = [];
+            const unavailable: string[] = [];
+            for (const id of MEETING_SOURCE_IDS) {
+                const source = await (deps.sources ?? meetingSource)(id);
+                const found = await source.meetingsBetween(range);
+                if (!found) {
+                    unavailable.push(source.label);
+                    continue;
+                }
+
+                for (const meeting of found) {
+                    const ref = `${id}:${meeting.sourceMeetingId}`;
+                    const other = linked.get(ref);
+                    meetings.push({
+                        ref,
+                        source: source.label,
+                        title: meeting.title,
+                        start: meeting.start,
+                        ...(meeting.end ? { end: meeting.end } : {}),
+                        hasTranscript: meeting.hasTranscript,
+                        ...(other ? { linkedTo: { id: other.id, title: other.title } } : {}),
+                    });
+                }
+            }
+
+            const distance = (iso: string) => Math.abs(Date.parse(iso) - start);
+            meetings.sort((a, b) => distance(a.start) - distance(b.start));
+            return { meetings, unavailable };
+        },
+        "meeting.link": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const ref = parseSourceRef(params.source);
+            if (!ref || !isMeetingSourceId(ref.source)) {
+                throw refusal("meeting-ref", `"${params.source}" is not a source meeting; write it as wisprflow:<id>`);
+            }
+
+            const { linkSource } = await import("../link");
+            const { record: linked } = await linkSource({
+                store,
+                config: deps.configStore?.() ?? new MeetingsConfigStore(),
+                sourceRef: params.source,
+                meetingRef: record.id,
+                command: "link",
+                createdBy: "link",
+                quiet: true,
+                ...(deps.sources ? { source: await deps.sources(ref.source) } : {}),
+            });
+            context.emit?.("meeting.changed", { meeting: linked.id, parts: ["show", "speakers", "transcript"] });
+            return linked;
         },
         "meeting.voice": async (params) => {
             const store = storeOf();

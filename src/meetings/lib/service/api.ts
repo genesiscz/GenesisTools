@@ -1453,6 +1453,39 @@ export const meetingPeopleEdit = defineMethod({
     doc: "Add/update or remove a meeting-local person, finite stay and canonical microphone/device group. Bounds are half-open. Does not edit the people book.",
     effect: "reversible",
 });
+export const meetingSourcesNear = defineMethod({
+    name: "meeting.sources.near",
+    params: z.object({ meeting: meetingRef, hours: z.number().positive().max(72).optional() }).strict(),
+    result: z.object({
+        meetings: z.array(
+            z.object({
+                /** What `meeting.link` takes: `<source>:<id>`. */
+                ref: z.string(),
+                /** The source's name ("Wispr Flow"). */
+                source: z.string(),
+                title: z.string(),
+                start: z.string(),
+                end: z.string().optional(),
+                hasTranscript: z.boolean(),
+                /** The record this source meeting is linked to already. */
+                linkedTo: z.object({ id: z.string(), title: z.string() }).optional(),
+            })
+        ),
+        /** The sources that keep no list on this Mac, by name. */
+        unavailable: z.array(z.string()),
+    }),
+    resultName: "{ meetings: { ref, source, title, start, end?, hasTranscript, linkedTo? }[], unavailable: string[] }",
+    doc: "The source meetings that started within `hours` (default 3) of the record's start, nearest first, with the record each one is linked to already: what a window offers to link.",
+    effect: "read",
+});
+export const meetingLink = defineMethod({
+    name: "meeting.link",
+    params: z.object({ meeting: meetingRef, source: z.string().min(1) }).strict(),
+    result: meetingRecordSchema,
+    resultName: "MeetingRecord",
+    doc: "Link a source's meeting (`<source>:<id>`) to the record: its transcript, people, times and calendar entry, as `tools meetings link` does, without asking for a project.",
+    effect: "reversible",
+});
 export const meetingVoice = defineMethod({
     name: "meeting.voice",
     params: z
@@ -1596,6 +1629,8 @@ export const meetingsApi = defineApi({
         listenPrepare,
         voiceEnrol,
         meetingPeopleEdit,
+        meetingSourcesNear,
+        meetingLink,
         meetingVoice,
         meetingSuggest,
         transcript,

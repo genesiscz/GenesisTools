@@ -99,6 +99,11 @@ export interface TranscriptSource {
     calendarEntries(range: { from: Date; to: Date }): Promise<CalendarLookup>;
     /** Every folder the source has; null when the source keeps no folders on this Mac. */
     folders(): Promise<string[] | null>;
+    /**
+     * The source's meetings that started in `range`, newest first, without their transcripts (a window offers them to
+     * link to a record); null when the source keeps no list on this Mac.
+     */
+    meetingsBetween(range: { from: Date; to: Date }): Promise<SourceMeetingSummary[] | null>;
     /** The folders one meeting is in now; null when the source cannot tell. */
     meetingFolders(sourceMeetingId: string): Promise<string[] | null>;
     /**
@@ -106,6 +111,15 @@ export interface TranscriptSource {
      * hand. A source that can will add `supported: true` and a write member here.
      */
     readonly folderWrite: FolderWriteSupport;
+}
+
+/** One meeting of a source as a list shows it: no transcript. */
+export interface SourceMeetingSummary {
+    sourceMeetingId: string;
+    title: string;
+    start: string;
+    end?: string;
+    hasTranscript: boolean;
 }
 
 /** A source's folder write capability: none yet, with the evidence and the step the owner takes instead. */
