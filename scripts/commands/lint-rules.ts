@@ -49,6 +49,11 @@ export function lintRulesPlan({
     };
 }
 
+/** `CI` set at all, an empty value included, as CI runners and `CI= cmd` both mean it. */
+export function isCiRun(): boolean {
+    return env.has("CI");
+}
+
 function runChecker(plan: LintRulesPlan): number {
     out.println(plan.note);
     const run = Bun.spawnSync([process.execPath, CHECKER, ...plan.args], {
@@ -77,7 +82,7 @@ if (import.meta.main) {
         .option("--all", "every tracked file, roster rules included (the full audit; also the mode when CI is set)")
         .action((options: { base: string; all?: boolean }) => {
             process.exitCode = runChecker(
-                lintRulesPlan({ base: options.base, all: options.all === true, ci: Boolean(env.get("CI")) })
+                lintRulesPlan({ base: options.base, all: options.all === true, ci: isCiRun() })
             );
         });
 

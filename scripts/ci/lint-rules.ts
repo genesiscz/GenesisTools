@@ -2690,7 +2690,11 @@ export async function targetFiles(): Promise<string[]> {
         throw new Error(`lint-rules: git ls-files exited ${listed.exitCode}: ${listed.stderr.toString().trim()}`);
     }
 
-    const files = listed.stdout.toString().split("\0").filter(Boolean);
+    // `git ls-files` lists the index, so a file deleted on disk but not staged is still there; nothing can read it.
+    const files = listed.stdout
+        .toString()
+        .split("\0")
+        .filter((file) => file && existsSync(file));
 
     const included = files.filter(
         (file) => !excludes.some((prefix) => file === prefix || file.startsWith(`${prefix}/`))
