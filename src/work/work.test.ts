@@ -1,17 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { executeHandoffActions, getHandoff, type HandoffDeps, postHandoff } from "@app/handoff/executor";
 import { byFor, freshEnv, type TestEnv } from "@app/handoff/test-utils";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import { parityOf } from "@genesiscz/utils/work/legacy/shadow";
 import type { Actor } from "@genesiscz/utils/work/model/item";
 import type { SessionDelivery } from "@genesiscz/utils/work/ports";
 import { listItems, showItem } from "@genesiscz/utils/work/read";
 import { reopen } from "@genesiscz/utils/work/reopen";
+import { projectRuleLoader, setWorkConfigValue } from "@genesiscz/utils/work/rules/load";
 import { type WorkContext, write } from "@genesiscz/utils/work/service";
 import { openWorkDb } from "@genesiscz/utils/work/store/db";
+import { journalHead } from "@genesiscz/utils/work/store/rows";
 import { legacyHandoffs } from "./adapters";
 import { ownerAtSurface } from "./adapters/actor";
 import { openLegacySource } from "./adapters/legacy-source";
+import { connectorPort, syncNeededAfter } from "./connectors";
 
 const actor: Actor = {
     kind: "agent",
@@ -70,6 +75,30 @@ async function spot(title: string): Promise<string> {
     const reply = await write(ctx(), { verb: "spot", title, type: "bug", fields: {} });
     return reply.ok ? reply.data.items[0].id : "";
 }
+
+test("an App write schedules sync when it changes an item in Other with a connector enabled", async () => {
+    const configPath = join(makeTempDir("work-sync-"), "config.json");
+    const set = await setWorkConfigValue({
+        configPath,
+        path: "projects.Other.rules.connectors.reminders.enabled",
+        value: true,
+    });
+    expect(set.ok).toBe(true);
+    const app = { ...ctx(), project: "App", actor: { ...actor, project: "App" } };
+    const other = await write({ ...app, project: "Other" }, { verb: "add", type: "task", title: "other task" });
+
+    if (!other.ok) {
+        throw new Error("could not create the task in Other");
+    }
+
+    const loadRules = projectRuleLoader({ project: "App", configPath });
+    const sync = connectorPort(db, loadRules).syncDeps();
+    const seq = journalHead(db);
+    await write(app, { verb: "spot", type: "bug", title: "app bug", fields: {} });
+    expect(await syncNeededAfter({ ...sync, seq })).toBe(false);
+    await write(app, { verb: "comment", ref: other.data.items[0].id, text: "changed from App" });
+    expect(await syncNeededAfter({ ...sync, seq })).toBe(true);
+});
 
 describe("one store (P6)", () => {
     test("a post and a tick fold the handoff and its items in one write; parity holds", () => {

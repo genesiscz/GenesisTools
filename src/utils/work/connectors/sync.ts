@@ -11,11 +11,13 @@ import type { Actor, Item, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
 import type { EditedPayload, ItemPatch } from "../model/payloads";
 import { type ItemType, levelOf, type Role } from "../model/vocab";
-import { allows } from "../rules/resolve";
+import { type LoadProjectRules, loadRulesForItems } from "../rules/load";
+import { allows, type RuleLayerInput } from "../rules/resolve";
 import { rolesOf } from "../rules/roles";
 import { applyChange } from "../store/apply";
 import { selectChangesAfter, selectItem, selectPairings } from "../store/rows";
 import { sqlView } from "../store/view";
+import { connectorConfigOf } from "./config";
 import {
     type Connector,
     type ConnectorContext,
@@ -44,7 +46,7 @@ export interface ConnectorConfig {
 export interface SyncDeps {
     db: Database;
     connectors: Readonly<Record<string, Connector<unknown>>>;
-    config(project: string, connector: string): ConnectorConfig | null;
+    loadRules: LoadProjectRules;
     machinePrefix: string;
     now: () => string;
     /** The lease holder's name; one runner at a time. */
@@ -140,24 +142,46 @@ export interface SyncReport {
     cursor: number;
 }
 
-async function pushItems(
-    deps: SyncDeps,
-    items: { item: Item; actor: Actor | null; release: boolean }[],
-    report: SyncReport
-): Promise<void> {
+interface ChangedItem {
+    item: Item;
+    actor: Actor | null;
+    release: boolean;
+}
+
+async function pushItems(deps: SyncDeps, items: ChangedItem[], report: SyncReport): Promise<void> {
+    const projects = await loadRulesForItems(items, deps.loadRules);
+
+    for (const [project, { entries, loaded }] of projects) {
+        await pushProject({ deps, items: entries, project, layers: loaded.rules.layers, report });
+    }
+}
+
+async function pushProject({
+    deps,
+    items,
+    project,
+    layers,
+    report,
+}: {
+    deps: SyncDeps;
+    items: ChangedItem[];
+    project: string;
+    layers: readonly RuleLayerInput[];
+    report: SyncReport;
+}): Promise<void> {
     const { db } = deps;
     const view = sqlView(db);
 
     for (const [id, connector] of Object.entries(deps.connectors)) {
+        const config = connectorConfigOf(layers, id).config;
+
+        if (!config?.enabled) {
+            continue;
+        }
+
         const intents: PushIntent[] = [];
 
         for (const { item, actor, release } of items) {
-            const config = deps.config(item.project, id);
-
-            if (config === null || !config.enabled) {
-                continue;
-            }
-
             const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
 
             if (pairing === null && !(connector.can.create && config.createTypes.includes(item.type))) {
@@ -204,10 +228,9 @@ async function pushItems(
             continue;
         }
 
-        const first = intents[0];
         const ctx: ConnectorContext = {
-            settings: deps.config(first.item.project, id)?.settings,
-            project: first.item.project,
+            settings: config.settings,
+            project,
             machinePrefix: deps.machinePrefix,
         };
         const results = await connector.push(intents, ctx);
@@ -361,7 +384,8 @@ export async function pullRemote(
         return report;
     }
 
-    const config = deps.config(deps.project, connectorId);
+    const loaded = await deps.loadRules({ project: deps.project });
+    const config = connectorConfigOf(loaded.rules.layers, connectorId).config;
     const remotes = await connector.pull(
         { remoteKeys },
         { settings: config?.settings, project: deps.project, machinePrefix: deps.machinePrefix }
@@ -372,9 +396,11 @@ export async function pullRemote(
 
     inTransaction(db, () => {
         for (const remote of remotes) {
-            const pairing = selectPairings(db, { connector: connectorId }).find(
-                (p) => p.remoteKey === remote.remoteKey
-            );
+            const pairing = selectPairings(db, {
+                project: deps.project,
+                connector: connectorId,
+                remoteKey: remote.remoteKey,
+            })[0];
 
             if (pairing === undefined) {
                 const id = deps.newId();

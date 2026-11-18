@@ -6,7 +6,8 @@ import { z } from "zod";
 import { FIELD_NAMES } from "../model/item";
 import { ITEM_TYPES, type ItemType, ROLES, type Role, SEVERITIES, type Severity } from "../model/vocab";
 
-export const WORK_CONFIG_VERSION = 1;
+export const WORK_CONFIG_VERSION = 2;
+export const REPO_WORK_VERSION = 1;
 
 /** The fields a rule may name: the item's own columns and its `fields`. */
 export const RULE_FIELDS = ["title", "body", "acceptance", "severity", "for", ...FIELD_NAMES] as const;
@@ -43,6 +44,8 @@ export const NOTIFY_ACTIONS = [
 export type NotifyAction = (typeof NOTIFY_ACTIONS)[number];
 export const NOTIFY_LEVELS = ["off", "list", "inbox", "banner"] as const;
 export type NotifyLevel = (typeof NOTIFY_LEVELS)[number];
+export const NOTIFY_SURFACES = ["hub", "widget"] as const;
+export type NotifySurface = (typeof NOTIFY_SURFACES)[number];
 
 const levelSchema = z.enum(["required", "recommended", "optional"]);
 const fieldRuleSchema = z.object({ level: levelSchema, measure: z.string().optional() });
@@ -84,6 +87,8 @@ export const projectRulesSchema = z.object({
     connectors: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 });
 
+const surfaceRulesSchema = projectRulesSchema.pick({ notify: true }).strict();
+
 export const workConfigFileSchema = z.object({
     version: z.literal(WORK_CONFIG_VERSION),
     machine: z.object({ prefix: z.string().optional() }).optional(),
@@ -95,13 +100,14 @@ export const workConfigFileSchema = z.object({
                 roots: z.array(z.string()).optional(),
                 prefix: z.string().optional(),
                 rules: projectRulesSchema.optional(),
+                surfaces: z.partialRecord(z.enum(NOTIFY_SURFACES), surfaceRulesSchema).optional(),
             })
         )
         .optional(),
 });
 
 export const repoWorkSectionSchema = z.object({
-    version: z.literal(WORK_CONFIG_VERSION),
+    version: z.literal(REPO_WORK_VERSION),
     key: z.string().optional(),
     prefix: z.string().optional(),
     rules: projectRulesSchema.optional(),
@@ -125,8 +131,16 @@ export interface WorkConfigMigration {
     run(raw: Record<string, unknown>): Record<string, unknown>;
 }
 
-/** Version 1 is the first shape, so the chain is empty. A new shape adds one entry here and raises the version. */
-export const WORK_CONFIG_MIGRATIONS: readonly WorkConfigMigration[] = [];
+export const WORK_CONFIG_MIGRATIONS: readonly WorkConfigMigration[] = [
+    {
+        from: 1,
+        to: 2,
+        id: "project-surface-notify",
+        describe: "Each project can override notification levels for the hub and widget.",
+        // Version 1 had no surface preferences. An absent override inherits the project's level.
+        run: (raw) => raw,
+    },
+];
 
 export type MigrateResult =
     | { ok: true; raw: Record<string, unknown>; migrated: string[] }
@@ -154,7 +168,7 @@ export function migrateWorkConfig(
     }
 
     for (const step of chain) {
-        if (step.from === version) {
+        if (step.from === version && step.to <= current) {
             doc = { ...step.run(doc), version: step.to };
             version = step.to;
             migrated.push(step.id);

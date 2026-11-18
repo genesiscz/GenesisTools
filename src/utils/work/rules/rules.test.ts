@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { Actor } from "../model/item";
 import { type WorkContext, write } from "../service";
 import { openWorkDb } from "../store/db";
-import { migrateWorkConfig, type WorkConfigMigration } from "./config";
+import { migrateWorkConfig, WORK_CONFIG_VERSION, type WorkConfigMigration } from "./config";
 import { loadWorkRules, readWorkConfig, setWorkConfigValue } from "./load";
 import { resolveWorkRules } from "./resolve";
 
@@ -66,6 +66,7 @@ describe("the config file", () => {
             })
         );
         expect(readWorkConfig(configPath).problems).toEqual([]);
+        expect(SafeJSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({ version: 1 });
 
         const set = await setWorkConfigValue({
             path: "projects.App.rules.types.bug.fields.why",
@@ -86,12 +87,22 @@ describe("the config file", () => {
             configPath,
         });
         expect(refused.ok).toBe(false);
-        expect(SafeJSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({ version: 1 });
+        expect(SafeJSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({ version: WORK_CONFIG_VERSION });
 
         writeFileSync(configPath, SafeJSON.stringify({ version: 7 }));
         const newer = readWorkConfig(configPath);
-        expect(newer.value).toEqual({ version: 1 });
+        expect(newer.value).toEqual({ version: WORK_CONFIG_VERSION });
         expect(newer.problems[0].code).toBe("CONFIG_UNUSABLE");
+    });
+
+    test("the surface migration preserves version 1 project rules and runs only once", () => {
+        const projects = { App: { rules: { notify: { bug: { spotted: "inbox" } } } } };
+        const first = migrateWorkConfig({ version: 1, projects });
+        expect(first.ok && first.migrated).toEqual(["project-surface-notify"]);
+        expect(first.ok && first.raw).toEqual({ version: WORK_CONFIG_VERSION, projects });
+        const second = migrateWorkConfig(first.ok ? first.raw : {});
+        expect(second.ok && second.migrated).toEqual([]);
+        expect(second.ok && second.raw).toEqual(first.ok ? first.raw : {});
     });
 
     test("a second migration run changes nothing", () => {
@@ -100,6 +111,7 @@ describe("the config file", () => {
         ];
         const first = migrateWorkConfig({ version: 1 }, chain, 2);
         expect(first.ok && first.migrated).toEqual(["rename"]);
+        expect(first.ok && first.raw).toEqual({ version: 2, renamed: true });
         const second = migrateWorkConfig(first.ok ? first.raw : {}, chain, 2);
         expect(second.ok && second.migrated).toEqual([]);
         expect(second.ok && second.raw).toEqual(first.ok ? first.raw : {});

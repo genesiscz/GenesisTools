@@ -3,13 +3,12 @@
  * library, runs the notifier after a write, and closes. It never spawns a CLI. The actions registry's `work` area
  * reaches it through the registered door (`registerWorkDoor`).
  */
-import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import type { Reply } from "@genesiscz/utils/output/reply";
 import { type WorkMethodName, workMethods } from "@genesiscz/utils/work/api";
 import { registerWorkDoor, type WorkDoor, type WorkDoorCall } from "@genesiscz/utils/work/door";
 import { callWork } from "@genesiscz/utils/work/handlers";
+import { journalHead } from "@genesiscz/utils/work/store/rows";
 import { actorHere, ownerAtSurface } from "../adapters/actor";
-import { connectorsEnabled } from "../connectors";
 import { openSession } from "../session";
 
 const CONNECTOR_METHODS = new Set<string>(["pair", "unpair", "pull", "sync"]);
@@ -38,16 +37,12 @@ export async function callWorkHere(
     );
 
     try {
+        const syncSince =
+            !read && !options.dryRun && !CONNECTOR_METHODS.has(method) ? journalHead(opened.session.ctx.db) : undefined;
         const reply = await callWork(method, params, opened.session);
 
         if (reply.ok && !read && options.dryRun !== true) {
-            await opened.afterWrite();
-
-            // The sync is a feed consumer: it runs after the commit, in its own process, so a write never waits
-            // for the network (P5 decision 4). The connector methods push themselves.
-            if (!CONNECTOR_METHODS.has(method) && connectorsEnabled(opened.session.ctx.rules?.layers ?? [])) {
-                spawnToolDetached(["work", "sync"], { reparent: true });
-            }
+            await opened.afterWrite(syncSince);
         }
 
         return reply;
