@@ -72,7 +72,7 @@ import {
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
-import { searchMethods } from "@genesiscz/utils/repl/discovery";
+import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi, editSourceOf, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
@@ -251,6 +251,7 @@ interface MeetingHandle {
 
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
+    look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
     locate(ref: string): { store: string; setting?: string } | null;
@@ -306,6 +307,33 @@ describe("browser toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("meetings.look documents its CLI twin and accepts a meeting and two clocks", async () => {
+        const help = describeMethod([new MeetingsToolset().api], "meetings.look");
+        expect(help).toContain("meetings look");
+        expect(help).toContain("attendance");
+        const meetings = await loadMeetings();
+        const input = { meeting: "missing-look-fixture", from: 4293, to: "1:37:20" };
+        await expect(meetings.look(input)).rejects.toThrow('No meeting "missing-look-fixture"');
+        await expect(meetings.look({ ...input, to: 4292 })).rejects.toThrow("to must be at or after from");
+        const record = await new MeetingStore().create(
+            {
+                title: "Harbour bell rehearsal",
+                start: "2026-10-01T09:00:00.000Z",
+                createdBy: "new",
+                attendance: { from: "fixture", people: [{ name: "Ash Example", fromSec: 4000, toSec: 6000 }] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        expect(await meetings.look({ ...input, meeting: record.id })).toMatchObject({
+            meeting: record.id,
+            fromSec: 4293,
+            toSec: 5840,
+            lines: [],
+            attendance: [{ name: "Ash Example", fromSec: 4293, toSec: 5840 }],
+            screen: null,
+        });
+    });
+
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {
         const ctx: ToolsetContext = { scratchDir: tmpdir(), show: async () => {}, write: () => {} };
         const { movies } = (await new MoviesToolset().load(ctx)) as {
