@@ -101,7 +101,8 @@ export class MeetingRun {
         this.capture = capture;
         this.deps = deps;
         this.initial = initial;
-        const previous = initial?.recording?.spans?.at(-1);
+        const spans = initial?.recording?.spans ?? [];
+        const previous = spans.at(-1);
         if (
             previous &&
             (!previous.to ||
@@ -109,7 +110,9 @@ export class MeetingRun {
                 previous.stopReason === "error" ||
                 previous.stopReason === "failed")
         ) {
-            this.interruptedFrom = Date.parse(previous.from);
+            // A pause or another interrupted start may precede this one. An explicit stop ends that recording.
+            const lastStop = spans.findLastIndex((span) => span.stopReason === "requested");
+            this.interruptedFrom = Date.parse(spans[lastStop + 1]?.from ?? previous.from);
         }
         this.stateFile = options.stateFile;
         this.folder = store.folder(meetingId);
