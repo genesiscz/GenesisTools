@@ -39,7 +39,7 @@ import { decisionActionSchema } from "../lib/decision-actions";
 import { callerActor } from "../lib/decision-journal";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { setMeetingFields } from "../lib/meeting-fields";
-import { OpenedMeeting } from "../lib/opened-meeting";
+import { attendanceDetail, attendanceWarning, OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { missingProjectWarning, projectRequired, resolveProject } from "../lib/project";
 import { questionLabel, questionWarnings } from "../lib/questions";
@@ -299,10 +299,17 @@ async function suggest(
                   },
         });
 
+        const saved = store.read(record.id) ?? record;
+        const attendance = attendanceWarning(saved);
         for (const warning of warnings) {
             ui.warn(warning);
+
+            if (warning === attendance) {
+                // The terminal also prints the full failure: the error and the commands that fix it.
+                ui.dim(`  ${attendanceDetail(saved)}`);
+            }
         }
-        voiceReadiness(store.read(record.id) ?? record, { seatsHint: false }).hints.forEach(ui.info);
+        voiceReadiness(saved, { seatsHint: false }).hints.forEach(ui.info);
 
         if (opts.json) {
             out.result(SafeJSON.stringify(fresh, null, 2));
@@ -940,7 +947,7 @@ export function registerItemCommands(program: Command): void {
         .command("rows")
         .argument("<meeting>", MEETING_REF)
         .description(
-            "The review rows: each item as the window shows it, in the order listen asks, with its question as parts, its choices with confidence and who decided it"
+            "The review rows: each item as the window shows it, open rows first in the order listen asks and decided rows after them, with its question as parts, its choices with confidence and who decided it"
         )
         .option("--all", "also the open questions below playback.listen.minPriority")
         .option("--apply-above <percent>", "mark lower-confidence speaker suggestions in the loaded rows")
@@ -1070,7 +1077,7 @@ export function registerItemCommands(program: Command): void {
         )
         .option(
             "--reason <text>",
-            "why: the facts and context it rests on (required for speaker-range, label, join and term)"
+            "why: the facts and context it rests on, written in plain words in the meeting's language for the person who reviews the meeting; never a field name (meeting.indicatorGaps), a rule id (RA) or a labeler code (required for speaker-range, label, join and term)"
         )
         .option("--plan", "print each finding's affected transcript line indices and first words; write nothing")
         .option("--allow-duplicates", "append even when an equal open finding exists")

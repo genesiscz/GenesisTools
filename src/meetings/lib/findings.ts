@@ -2,9 +2,17 @@ import { type MeetingItem, meetingItemSchema, nextId, QUESTION_TOPICS } from "@g
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { z } from "zod";
 import { transcriptTimeSchema as clock } from "./moment-schema";
+import { hasCodeWord } from "./reason-words";
 
 const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
+/**
+ * An agent's reason, which the meeting's owner reads on the row (U18): words, never a field of `evidence --raw`
+ * (`meeting.indicatorGaps`), a rule id (`RA`) or a labeler code (`seat-of-one`).
+ */
+const reason = text.refine((value) => !hasCodeWord(value), {
+    message: "Write the reason in plain words for the person who reads it",
+});
 /** A line's index in the source transcript: tells apart two lines that start in the same second. */
 const line = z.number().int().min(0).optional();
 /** A name for a finding that a question in the same batch can list in `decides`, before the finding has an id. */
@@ -20,7 +28,7 @@ const ref = z
  * needs neither.
  */
 export const findingSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("removal"), ref, from: clock, to: clock, heard: text, confidence, reason: text }),
+    z.object({ kind: z.literal("removal"), ref, from: clock, to: clock, heard: text, confidence, reason }),
     z.object({
         kind: z.literal("speaker-range"),
         ref,
@@ -34,7 +42,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         signature: text.optional(),
         candidates: z.array(text).optional(),
         confidence,
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("term"),
@@ -52,7 +60,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** The heard words read a document line aloud: its exact text and the source, shown instead of them. */
         quote: z.object({ text, source: text }).optional(),
         confidence,
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("join"),
@@ -65,7 +73,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** The whole word, as the joined line shows it. */
         joined: text.optional(),
         confidence,
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("label"),
@@ -76,7 +84,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         label: text,
         meaningless: z.literal(true),
         confidence: confidence.optional(),
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("question"),
@@ -96,7 +104,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** Evidence-group identity, never inferred from matching words alone. */
         signature: text.optional(),
         confidence: confidence.optional(),
-        reason: text.optional(),
+        reason: reason.optional(),
     }),
 ]);
 export type Finding = z.output<typeof findingSchema>;

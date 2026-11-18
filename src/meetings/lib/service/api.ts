@@ -334,6 +334,8 @@ export const decisionReachSchema = z.object({
     lines: z.number().int().nonnegative().optional(),
     spelling: z
         .object({
+            heard: z.string(),
+            proposed: z.string(),
             occurrences: z.array(
                 z.object({
                     line: z.number().int().nonnegative(),
@@ -342,6 +344,10 @@ export const decisionReachSchema = z.object({
                     text: z.string(),
                     selected: z.boolean(),
                     primary: z.boolean(),
+                    /** Where the line says the heard words: UTF-16 offsets into `text`. */
+                    ranges: z.array(
+                        z.object({ location: z.number().int().nonnegative(), length: z.number().int().positive() })
+                    ),
                 })
             ),
             dictionary: z.boolean(),
@@ -934,7 +940,9 @@ const meetingRows = defineMethod({
         })
         .strict(),
     result: reviewRowsSchema.extend({
+        /** A failed attendance lookup in one short sentence; its full text with the fixing commands is the detail. */
         attendanceWarning: z.string().optional(),
+        attendanceDetail: z.string().optional(),
         lineEvidence: z.array(windowLineEvidenceSchema).optional(),
         questionDetails: z
             .array(

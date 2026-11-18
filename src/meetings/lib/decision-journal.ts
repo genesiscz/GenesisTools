@@ -1391,7 +1391,14 @@ export interface DecisionReach {
      * over the same span (closed with it). A look-alike question's own targets go with it and are not listed apart.
      */
     items: ReachItem[];
+    /**
+     * A spelling's reach (U12): the words as heard and as they become, and each line that says them, with where it
+     * says them (`ranges`, UTF-16 offsets into `text`, as the window's NSRange counts).
+     */
     spelling?: {
+        heard: string;
+        /** What the heard words become; the heard words themselves when the term only marks them (a quote, a meaning). */
+        proposed: string;
         occurrences: Array<{
             line: number;
             atSec: number;
@@ -1399,6 +1406,7 @@ export interface DecisionReach {
             text: string;
             selected: boolean;
             primary: boolean;
+            ranges: Array<{ location: number; length: number }>;
         }>;
         dictionary: boolean;
     };
@@ -1579,7 +1587,8 @@ export function decisionReach(options: {
               )
             : undefined;
         const occurrences = transcript.flatMap((line, index) => {
-            if (line.startSec === undefined || heardIn(line.text, term.heard).length === 0) {
+            const heard = heardIn(line.text, term.heard);
+            if (line.startSec === undefined || heard.length === 0) {
                 return [];
             }
             const selected = selectedLines
@@ -1595,10 +1604,13 @@ export function decisionReach(options: {
                     text: line.text,
                     selected,
                     primary: index === primary,
+                    ranges: heard.map((match) => ({ location: match.at, length: match.text.length })),
                 },
             ];
         });
         spelling = {
+            heard: term.heard,
+            proposed: term.proposed ?? term.heard,
             occurrences,
             dictionary: term.reach?.dictionary ?? (term.reach?.lines === undefined && term.scope !== "line"),
         };

@@ -1831,7 +1831,8 @@
                   "target": {
                     "kind": "item",
                     "id": "i1"
-                  }
+                  },
+                  "kindWord": "Speaker range"
                 },
                 "after": {
                   "id": "i1",
@@ -1919,7 +1920,8 @@
                     "reason": "the calendar says so",
                     "at": "2026-11-03T10:00:00.000Z"
                   },
-                  "answer": "Alex Example"
+                  "answer": "Alex Example",
+                  "kindWord": "Speaker range"
                 }
               }
             ],
@@ -2240,7 +2242,8 @@
                   "target": {
                     "kind": "item",
                     "id": "i1"
-                  }
+                  },
+                  "kindWord": "Speaker range"
                 },
                 "after": {
                   "id": "i1",
@@ -2327,7 +2330,8 @@
                     "action": "confirm",
                     "at": "2026-11-03T10:00:00.000Z"
                   },
-                  "answer": "Alex Example"
+                  "answer": "Alex Example",
+                  "kindWord": "Speaker range"
                 }
               }
             ],
@@ -3852,7 +3856,8 @@
                 "action": "confirm",
                 "at": "2026-11-03T10:00:00.000Z"
               },
-              "answer": "Alex Example"
+              "answer": "Alex Example",
+              "kindWord": "Speaker range"
             }
           ],
           "hidden": {

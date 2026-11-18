@@ -25,9 +25,11 @@ wisprflow:<id>` (or `link`): the record, with the transcript, the people, the ca
 
 - **Three-pass (default):** `tools meetings evidence <meeting> --raw` gives the facts per line with no weights. Apply
   the tiers below and the content rules yourself, and store each finding with `tools meetings items add --kind
-  speaker-range ... --confidence <0..1> --reason "<the tiers and rules it rests on>"`. Store every line you can
-  attribute, interjections too ("Hm." under the label of a person who has left): they render with the right name.
-  Only the questions skip them.
+  speaker-range ... --confidence <0..1> --reason "<what the tiers and rules showed, in plain words>"`. The person
+  who reviews the meeting reads the reason on the row: write it in the meeting's language, and name no field
+  (`meeting.indicatorGaps`), rule id (`RA`) or labeler code (`seat-of-one`); `items add` refuses a reason that does.
+  Store every line you can attribute, interjections too ("Hm." under the label of a person who has left): they render
+  with the right name. Only the questions skip them.
 - **Automatic:** `tools meetings suggest <meeting> --rules evidence --attendance <platform>` applies the tiers and
   writes scored suggestion items. `tools meetings evidence <meeting>` shows why an item scored as it did.
 
