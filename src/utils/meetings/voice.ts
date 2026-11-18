@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ArtifactStore } from "@genesiscz/utils/ai/local/artifacts";
 import { EMBEDDING_MODEL } from "@genesiscz/utils/ai/local/runtimes/sherpa/models";
+import {
+    createSpeakerEmbedder,
+    type SpeakerEmbedder,
+} from "@genesiscz/utils/ai/local/runtimes/sherpa/speaker-embedding";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -43,24 +45,6 @@ export interface VoiceMatch {
     reason: string;
     model: string;
 }
-interface VoiceStream {
-    acceptWaveform(input: { samples: Float32Array; sampleRate: number }): void;
-    inputFinished(): void;
-}
-interface Extractor {
-    createStream(): VoiceStream;
-    isReady(stream: VoiceStream): boolean;
-    compute(stream: VoiceStream): Float32Array;
-}
-interface Sherpa {
-    SpeakerEmbeddingExtractor: new (config: {
-        model: string;
-        numThreads: number;
-        provider: string;
-        debug: boolean;
-    }) => Extractor;
-}
-
 /** Explicit provisioning, reusing the canonical ungated artifact and cache. Never called by a read or scoring. */
 export async function prepareVoiceModel(): Promise<string> {
     const [asset] = await ArtifactStore.default().ensure([
@@ -79,32 +63,17 @@ export class VoiceUnavailableError extends Error {
     }
 }
 
-let runtime: { model: string; extractor: Extractor } | undefined;
+let runtime: SpeakerEmbedder | undefined;
 let selectedModelFile = EMBEDDING_MODEL.file;
-export function localVoiceBackend(): { model: string; extractor: Extractor } {
+/** The speaker model of this process (the sherpa runtime's embedder, src/utils/ai/local/runtimes/sherpa). */
+export function localVoiceBackend(): SpeakerEmbedder {
     if (runtime) {
         return runtime;
     }
     if (!existsSync(selectedModelFile)) {
         throw new VoiceUnavailableError("Speaker model unavailable; run meetings voice prepare explicitly");
     }
-    const model = `campplus:${createHash("sha256").update(readFileSync(selectedModelFile)).digest("hex")}`;
-    let extractor: Extractor | undefined;
-    runtime = {
-        model,
-        get extractor() {
-            if (!extractor) {
-                const sherpa: Sherpa = createRequire(import.meta.url)("sherpa-onnx-node");
-                extractor = new sherpa.SpeakerEmbeddingExtractor({
-                    model: selectedModelFile,
-                    numThreads: 1,
-                    provider: "cpu",
-                    debug: false,
-                });
-            }
-            return extractor;
-        },
-    };
+    runtime = createSpeakerEmbedder({ modelFile: selectedModelFile, threads: 1 });
     return runtime;
 }
 export async function embedVoice(options: {
@@ -139,21 +108,12 @@ function embeddingOf(
     samples: Float32Array,
     backend: ReturnType<typeof localVoiceBackend>
 ): { model: string; embedding: number[] } {
-    const rms = Math.sqrt(samples.reduce((sum, n) => sum + n * n, 0) / Math.max(1, samples.length));
-    if (rms < 0.002) {
-        throw new VoiceUnavailableError("Voice sample is quiet; identity remains unknown");
+    const result = backend.embed(samples);
+    if ("unavailable" in result) {
+        throw new VoiceUnavailableError(result.unavailable);
     }
-    const stream = backend.extractor.createStream();
-    stream.acceptWaveform({ samples, sampleRate: 16000 });
-    stream.inputFinished();
-    if (!backend.extractor.isReady(stream)) {
-        throw new VoiceUnavailableError("Not enough speech for a speaker embedding");
-    }
-    const embedding = Array.from(backend.extractor.compute(stream));
-    if (!embedding.length || embedding.some((n) => !Number.isFinite(n))) {
-        throw new Error("Invalid local speaker embedding");
-    }
-    return { model: backend.model, embedding };
+
+    return { model: backend.model, embedding: result.embedding };
 }
 export function readVoiceSamples(file: string): VoiceSample[] {
     return existsSync(file) ? z.array(voiceSampleSchema).parse(SafeJSON.parse(readFileSync(file, "utf8"))) : [];
