@@ -2650,7 +2650,8 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
     const changed = new Set(diff.stdout.toString().split("\0").filter(Boolean));
     checkRatchetGrowth({ from, cwd, changed });
 
-    if ([...changed].some(isRuleInput)) {
+    // Automatic checks review changed source. A manual audit still expands a rule edit to all existing files.
+    if (includeRosters && [...changed].some(isRuleInput)) {
         return null;
     }
 
@@ -2662,6 +2663,7 @@ const RULE_INPUTS = new Set([
     "biome.json",
     "scripts/ci/lint-rules.ts",
     "scripts/ci/lint-changed.sh",
+    "scripts/ci/local-check-slot.ts",
     "scripts/ci/harness-guard.ts",
     "scripts/ci/harness-guard-allowlist.ts",
     "scripts/ci/spawn-deadline.ts",

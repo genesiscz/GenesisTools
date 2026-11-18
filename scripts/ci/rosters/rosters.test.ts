@@ -365,7 +365,7 @@ describe("generate: an input it cannot read stops the run", () => {
             });
 
             expect(run.status, run.stdout).toBe(2);
-            expect(run.stderr).toContain("git ls-files exited");
+            expect(run.stderr).toContain("Cannot locate the shared Git directory");
             expect(readFileSync(join(dir, ROSTERS_FILE), "utf8")).toBe(manifest);
         } finally {
             rmSync(dir, { recursive: true, force: true });
