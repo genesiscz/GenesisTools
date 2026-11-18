@@ -47,7 +47,8 @@ export const permissions = defineArea({
             args,
             result,
             native: {
-                needs: [Need.platform.darwin, Need.app.installed],
+                // Both start the launcher by its path, so routing switched off does not block them.
+                needs: [Need.platform.darwin, Need.app.bundle],
                 run: async (ctx) => ({ kind: ctx.args.kind, status: await status(ctx.args.kind) }),
             },
         }),
@@ -56,7 +57,7 @@ export const permissions = defineArea({
             args: args.extend({ reason: z.string().optional() }),
             result,
             native: {
-                needs: [Need.platform.darwin, Need.app.installed, Need.person.display],
+                needs: [Need.platform.darwin, Need.app.bundle, Need.person.display],
                 run: async (ctx) => {
                     refuseHostEffectInTest("permission request", "Inject a permission requester in tests.");
                     const proc = Bun.spawn(

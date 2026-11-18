@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigStore, resolveConfig } from "@genesiscz/utils/genesis-tools/actions/config";
-import { defineAction, defineArea } from "@genesiscz/utils/genesis-tools/actions/define";
+import { defineAction, defineArea, needsFor, waysOf } from "@genesiscz/utils/genesis-tools/actions/define";
 import { createAreaEventBus } from "@genesiscz/utils/genesis-tools/actions/events";
 import { clientsOf, type EngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
 import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
@@ -18,6 +18,7 @@ import {
     checkNeed,
     describeNeedFailure,
     Need,
+    type NeedSpec,
 } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -30,7 +31,7 @@ function fakeFacts(overrides: Partial<Facts> = {}): Facts {
         platform: () => "darwin",
         isAgent: () => false,
         isTest: () => false,
-        appBundle: () => ({ installed: true, routingOff: false, path: "/Applications/Fake.app" }),
+        appBundle: () => ({ installed: true, launcher: true, routingOff: false, path: "/Applications/Fake.app" }),
         appManifest: () => ({ buildId: "b1", parts: ["features"], rpcMethods: ["rpc.hello"] }),
         hasDisplay: () => true,
         hasTerminal: () => false,
@@ -118,6 +119,37 @@ describe("the synchronous app.installed need", () => {
         const result = checkAppInstalled({ facts, builder: null });
         expect(result).toMatchObject({ ok: false, code: "in-test", fix: null });
         expect(describeNeedFailure(result)).toBe("a test process never reaches GenesisTools.app");
+    });
+});
+
+describe("the app.bundle need asks for the bundle on disk, not for routing", () => {
+    test("routing switched off blocks app.installed only; a missing launcher blocks both, with the build fix", async () => {
+        const routingOff = appNeedFixture({ routingOff: true });
+        expect(await checkNeed(Need.app.bundle, routingOff)).toEqual({ ok: true, from: "probe" });
+        expect(await checkNeed(Need.app.part("hub"), routingOff)).toEqual({ ok: true, from: "probe" });
+        expect((await checkNeed(Need.app.installed, routingOff)).ok).toBe(false);
+
+        const noLauncher = appNeedFixture({ launcher: false });
+        for (const need of [Need.app.bundle, Need.app.installed]) {
+            const result = await checkNeed(need, noLauncher);
+            expect(result).toMatchObject({ ok: false, code: "app-missing", fix: { command: "fixture-build" } });
+            expect(describeNeedFailure(result)).toContain("has no launcher (Contents/MacOS/GenesisTools)");
+        }
+    });
+
+    test("opening a face, the permissions window among them, needs the bundle and not routing", async () => {
+        const env = appNeedFixture({ routingOff: true });
+        const args = { window: "--window", args: [], activate: true };
+        const native = waysOf(AREAS.windows.actions.open).find((way) => way.way === "native");
+        const needs = needsFor(native?.needs ?? [], { ok: true, value: args }) ?? [];
+        const failed: NeedSpec[] = [];
+        for (const need of needs) {
+            if (!(await checkNeed(need, env)).ok) {
+                failed.push(need);
+            }
+        }
+        expect(needs).toContainEqual(Need.app.bundle);
+        expect(failed).toEqual([Need.person.display]);
     });
 });
 
@@ -391,7 +423,7 @@ describe("the real areas", () => {
         expect(explain.ways.map((way) => way.way)).toEqual(["native"]);
         expect(explain.ways[0]?.needs.map((need) => need.need)).toEqual([
             "platform.darwin",
-            "app.installed",
+            "app.bundle",
             "app.part(hub)",
             "person.display",
         ]);

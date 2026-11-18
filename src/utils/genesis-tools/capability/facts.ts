@@ -8,8 +8,9 @@ import { logger } from "@genesiscz/utils/logger";
 import {
     genesisAppBundlePath,
     genesisAppInstallDir,
-    installedGenesisAppLauncher,
+    genesisAppLauncherPath,
     isGenesisAppBundleInstalled,
+    isGenesisAppRoutingOff,
 } from "@genesiscz/utils/macos/genesis-app";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
@@ -28,7 +29,12 @@ export interface Facts {
     isAgent(): boolean;
     platform(): NodeJS.Platform;
     isTest(): boolean;
-    appBundle(): { installed: boolean; routingOff: boolean; path: string };
+    /**
+     * The bundle at `path`: `installed` when its folder is there, `launcher` when its `Contents/MacOS` executable is
+     * there too (missing after an interrupted install), `routingOff` when `GENESIS_TOOLS_NO_APP=1` or the window's
+     * switch keeps `tools` from running through it, whatever is on disk.
+     */
+    appBundle(): { installed: boolean; launcher: boolean; routingOff: boolean; path: string };
     appManifest(): AppManifestFacts | null;
     hasDisplay(): boolean;
     hasTerminal(): boolean;
@@ -74,10 +80,10 @@ export const LIVE_FACTS: Facts = {
     isTest: () => isTestProcess(),
     appBundle: () => {
         const installed = isGenesisAppBundleInstalled();
-        // installedGenesisAppLauncher is null when the bundle is missing or routing is switched off.
         return {
             installed,
-            routingOff: installed && installedGenesisAppLauncher() === null,
+            launcher: installed && existsSync(genesisAppLauncherPath()),
+            routingOff: isGenesisAppRoutingOff(),
             path: genesisAppBundlePath(),
         };
     },

@@ -30,10 +30,13 @@ export function reviewResourcesProblem(bundle: string): string | undefined {
     return undefined;
 }
 
-/** The needs of opening a face: macOS, the bundle, the part that ships the face, and a person who can see it. */
+/**
+ * The needs of opening a face: macOS, the bundle, the part that ships the face, and a person who can see it. `open`
+ * starts the bundle itself, so routing switched off blocks no face: `--window` holds the switch that turns it back on.
+ */
 function openNeeds(flag: OpenWindowFlag): NeedSpec[] {
     const part = OPEN_WINDOWS[flag].part;
-    return [Need.platform.darwin, Need.app.installed, ...(part ? [Need.app.part(part)] : []), Need.person.display];
+    return [Need.platform.darwin, Need.app.bundle, ...(part ? [Need.app.part(part)] : []), Need.person.display];
 }
 
 /** The argv of `open`: `-n` hands the flags to a running face too, `-g` keeps the caller in front. */

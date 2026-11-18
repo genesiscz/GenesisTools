@@ -49,7 +49,7 @@ it("opening the permissions window in a test returns the engine refusal without 
                 {
                     way: "native",
                     code: "in-test",
-                    reason: "app.installed: a test process never reaches GenesisTools.app",
+                    reason: "app.bundle: a test process never reaches GenesisTools.app",
                     fix: null,
                 },
             ],
