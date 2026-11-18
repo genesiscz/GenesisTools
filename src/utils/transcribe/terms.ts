@@ -165,6 +165,19 @@ const SOUND_RULES: Array<[RegExp, string]> = [
 
 /** Letters only Czech writes. A run that has one is a Czech word, so it is never a misheard English term. */
 const CZECH_LETTERS = /[áčďéěíňóřšťúůýž]/i;
+const CZECH_COPULA =
+    /^(?:není|(?:ne)?(?:jsem|jsi|je|jsme|jste|jsou|byl[aoiy]?|budu|bude[šm]?|budeme|budete|budou|být|buď(?:me|te)?))$/iu;
+
+/** Capitals and digits are the spelling; a lowercase Czech ending belongs to the sentence. */
+export function acronymStem(word: string): string | undefined {
+    const match = /^(\p{Lu}[\p{Lu}\p{N}]+)(\p{Ll}*)$/u.exec(word);
+    if (!match) {
+        return undefined;
+    }
+
+    const stem = match[1]!;
+    return !match[2] || CZECH.loanStems(word).includes(stem) ? stem : undefined;
+}
 
 export function phoneticKey(value: string): string {
     let key = value.toLowerCase();
@@ -385,7 +398,10 @@ class TermIndex {
     /** Czech stems of one-word terms: "Figmy" and "Figmě" are "Figma". */
     private readonly knownStems = new Set<string>();
 
-    constructor(vocab: VocabTerm[]) {
+    constructor(
+        vocab: VocabTerm[],
+        private readonly wordCheck?: WordCheck
+    ) {
         for (const term of vocab.map(indexTerm)) {
             this.known.add(term.compact);
             this.knownKeys.add(term.key);
@@ -402,7 +418,17 @@ class TermIndex {
 
     /** True when the run is a term, or a term plus a short case ending ("Reduxu", "reducery"). */
     isKnown(run: RunKeys): boolean {
-        if (this.known.has(run.compact) || (run.words === 1 && this.knownStems.has(stemOf(run.run)))) {
+        if (this.known.has(run.compact)) {
+            return true;
+        }
+
+        const acronym = acronymStem(run.run);
+        if (acronym) {
+            // A capital belongs to the acronym. Only a lowercase suffix can be its case ending.
+            return this.known.has(compact(acronym));
+        }
+
+        if (run.words === 1 && this.knownStems.has(stemOf(run.run))) {
             return true;
         }
 
@@ -427,8 +453,17 @@ class TermIndex {
         }
 
         const candidates: Array<TermCandidate & { kind: TermSuggestion["kind"] }> = [];
+        const last = run.words > 1 ? run.run.slice(run.run.lastIndexOf(" ") + 1) : undefined;
+        const preservedTail =
+            last && this.wordCheck && isCzechSpeech(this.wordCheck.verdict(last))
+                ? ` ${last.toLowerCase()}`
+                : undefined;
 
         for (const term of this.byFirst.get(run.key[0]!) ?? []) {
+            if (preservedTail && !term.term.toLowerCase().endsWith(preservedTail)) {
+                continue;
+            }
+
             const scored = scorePair(run, term);
 
             if (!scored) {
@@ -467,11 +502,12 @@ class TermIndex {
 /** Preserve a recognized Czech ending when comparing a heard form to a proposed base. */
 export function inflectedCandidate(heard: string, proposed: string): string {
     const last = heard.split(/\s+/u).at(-1) ?? heard;
-    const target = proposed.split(/[\s._-]+/u).at(-1) ?? proposed;
-    const ending = CZECH_ENDINGS.find(
-        (suffix) => last.toLowerCase().endsWith(suffix) && last.length - suffix.length >= 3
-    );
-    if (!ending || target.toLowerCase().endsWith(ending)) {
+    const lower = last.toLowerCase();
+    const target = (proposed.split(/[\s._-]+/u).at(-1) ?? proposed).toLowerCase();
+    const endings = CZECH_ENDINGS.filter((suffix) => lower.endsWith(suffix) && lower.length - suffix.length >= 3);
+    // A clipped "basky" can end in "-ky" or "-y". The supplied base "rebask" accounts for the k.
+    const ending = endings.find((suffix) => target.endsWith(lower.slice(0, -suffix.length))) ?? endings[0];
+    if (!ending || target.endsWith(ending)) {
         return proposed;
     }
     return similarityScore(phoneticKey(last.slice(0, -ending.length)), phoneticKey(target)) >= 0.5
@@ -512,8 +548,6 @@ export function scopedVocabulary(options: {
     ]);
 }
 
-const ACRONYM_PATTERN = /^(\p{Lu}[\p{Lu}\p{N}]+)(\p{Ll}*)$/u;
-
 /** What one meeting offers every proposal: its vocabulary terms that were spoken, and how often each acronym stem was. */
 export interface MeetingTerms {
     scoped: VocabTerm[];
@@ -526,12 +560,15 @@ export function meetingTermsOf(entries: TranscriptEntry[], vocab: VocabTerm[]): 
     const spoken = new Set(tokens.map((word) => word.toLowerCase()));
     const acronyms = new Map<string, number>();
     for (const token of tokens) {
-        const stem = ACRONYM_PATTERN.exec(token)?.[1];
+        const stem = acronymStem(token);
         if (stem) {
             acronyms.set(stem, (acronyms.get(stem) ?? 0) + 1);
         }
     }
-    return { scoped: vocab.filter((term) => spoken.has(term.term.toLowerCase())), acronyms };
+    const scoped = vocab.filter(({ term }) =>
+        acronymStem(term) === term ? acronyms.has(term) : spoken.has(term.toLowerCase())
+    );
+    return { scoped, acronyms };
 }
 
 /**
@@ -539,8 +576,8 @@ export function meetingTermsOf(entries: TranscriptEntry[], vocab: VocabTerm[]): 
  * {@link meetingTermsOf} reads once for every proposal.
  */
 export function candidatesInMeeting(meeting: MeetingTerms, heard: string): TermCandidate[] {
-    const acronym = ACRONYM_PATTERN.exec(heard);
-    const base = acronym?.[1] ?? heard;
+    const acronym = acronymStem(heard);
+    const base = acronym ?? heard;
     const counts = meeting.acronyms;
     const observed = acronym
         ? [...counts]
@@ -563,17 +600,26 @@ export function candidatesInMeeting(meeting: MeetingTerms, heard: string): TermC
         );
     };
     return buildVocabulary([meeting.scoped, observed])
-        .filter((term) => oneEdit(term.term))
+        .filter((term) => (!acronym || counts.has(term.term)) && oneEdit(term.term))
         .map((term) => ({
             ...term,
-            term: acronym ? term.term + (acronym[2] ?? "") : inflectedCandidate(heard, term.term),
+            term: acronym ? term.term + heard.slice(acronym.length) : inflectedCandidate(heard, term.term),
             confidence: 80,
         }));
 }
 
+function isCzechSpeech(verdict: WordVerdict): boolean {
+    return verdict.class === "dictionary" || verdict.class === "spoken";
+}
+
 function knownCzechForm(word: string, check: WordCheck): boolean {
-    const known = (form: string) => ["dictionary", "spoken"].includes(check.verdict(form).class);
+    const known = (form: string) => isCzechSpeech(check.verdict(form));
     return known(word) || CZECH.loanStems(word).some(known);
+}
+
+/** Known Czech forms stay as heard. Unknown acronyms need a spelling attested in the same meeting. */
+export function allowsFuzzyTerm(word: string, check: WordCheck): boolean {
+    return !acronymStem(word) && !knownCzechForm(word, check);
 }
 
 /** The sentence of `entries[index]` that holds `heard`, marked, with the sentence before and after it. */
@@ -609,11 +655,11 @@ function bareWord(token: string): string {
 
 /**
  * The confidence a run needs to be a suspect, or undefined when it is ordinary speech. With a word check, a single
- * word is scored when no layer accepts it, or when it is a rare dictionary word, and a longer run is speech when the
- * dictionary knows every word of it. A run with a Czech letter, or a single English word without a check, is speech.
+ * word is scored when no layer accepts it, and a longer run is speech when the dictionary knows every word of it.
+ * A run with a Czech letter, or a single English word without a check, is speech.
  */
 function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: WordCheck): number | undefined {
-    if (run.words > 1 && /(?:^|\s)(?:je|jsou|jsem|jsme|jste|byl|byla|byli)$/iu.test(run.run)) {
+    if (run.words > 1 && CZECH_COPULA.test(run.run.slice(run.run.lastIndexOf(" ") + 1))) {
         return undefined;
     }
 
@@ -628,7 +674,7 @@ function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: Wor
             : minConfidence;
     }
 
-    if (knownCzechForm(bareWord(run.run), wordCheck)) {
+    if (!allowsFuzzyTerm(bareWord(run.run), wordCheck)) {
         return undefined;
     }
     const verdict = wordCheck.verdict(bareWord(run.run));
@@ -642,7 +688,7 @@ function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: Wor
 
 /**
  * Every 1 to 3 word run that is not already a vocabulary term but sounds like one. A run that is a
- * known term is skipped whole, so its neighbours never glue onto it.
+ * known term is skipped unless a longer proposal preserves it as a whole-word prefix.
  */
 export function findSuspectTerms(options: {
     entries: TranscriptEntry[];
@@ -655,7 +701,7 @@ export function findSuspectTerms(options: {
 }): TermSuggestion[] {
     const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
     const context = new Set((options.context ?? []).map((t) => compact(t.term)));
-    const index = new TermIndex(options.vocab);
+    const index = new TermIndex(options.vocab, options.wordCheck);
     const cache = new Map<string, { known: boolean; scored?: Scored }>();
     const counts = new Map<string, { scored: Scored; occurrences: number; examples: TermExample[] }>();
 
@@ -695,8 +741,22 @@ export function findSuspectTerms(options: {
             }
 
             if (knownLength > 0) {
-                i += knownLength;
-                continue;
+                const prefix = `${tokens
+                    .slice(i, i + knownLength)
+                    .join(" ")
+                    .toLowerCase()} `;
+                if (
+                    !best?.heard.toLowerCase().startsWith(prefix) ||
+                    !best.candidates[0]?.term.toLowerCase().startsWith(prefix)
+                ) {
+                    i += knownLength;
+                    continue;
+                }
+
+                best = {
+                    ...best,
+                    candidates: best.candidates.filter((candidate) => candidate.term.toLowerCase().startsWith(prefix)),
+                };
             }
 
             if (!best) {
@@ -829,7 +889,8 @@ export function findUnknownWords(options: {
 
             const verdict = options.wordCheck.verdict(word);
             const keys = runKeys(word);
-            const short = word.length < UNKNOWN_MIN_LENGTH && !/^\p{Lu}{2,}$/u.test(word);
+            const acronym = acronymStem(word);
+            const short = word.length < UNKNOWN_MIN_LENGTH && !acronym;
 
             if (
                 knownCzechForm(word, options.wordCheck) ||
@@ -850,7 +911,7 @@ export function findUnknownWords(options: {
                 verdict,
                 candidates: nearby.length
                     ? nearby
-                    : /^\p{Lu}{2,}\p{Ll}*$/u.test(word)
+                    : acronym
                       ? []
                       : (index.score(keys, context, WEAK_MIN)?.candidates ?? []),
             });
