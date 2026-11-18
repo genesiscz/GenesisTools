@@ -220,63 +220,87 @@ const recording = () => {
 };
 
 describe("the recorder keeps the meeting's sound", () => {
-    test("a recording writes the 30 s level rows to evidence even when the input stops delivering", async () => {
-        const store = new MeetingStore(new Storage("meetings-level-rows"));
-        const meeting = await store.create(
-            { title: "Sound test", start: new Date().toISOString(), createdBy: "record" },
-            { command: "test", change: "fixture" }
-        );
-        const liveDir = mkdtempSync(join(tmpdir(), "levels-live-"));
-        const start = Date.now();
-        let tick: ((atMs: number) => void) | undefined;
-        let interval: number | undefined;
-        let closed = false;
-        class MeterRecorder extends GrantRecorder {
-            override async capture(request: CaptureRequest): Promise<CaptureResult> {
-                request.hooks?.onLevels?.({
-                    atMs: start + 30_000,
-                    mic: 0.5,
-                    system: 0.125,
-                    input: "Desk mic",
-                    output: "Headphones",
-                });
-                tick?.(start + 30_000);
-                tick?.(start + 60_000);
-                await callRecorder({ id: meetingLiveId(meeting.id), method: "stop", dir: liveDir });
-                return { startedAtMs: start, frames: [], endedEarly: "stopped" };
+    test.each([undefined, 5, false] as const)(
+        "recording level evidence uses its configured clock (%s)",
+        async (intervalSetting) => {
+            const store = new MeetingStore(new Storage("meetings-level-rows"));
+            const meeting = await store.create(
+                { title: "Sound test", start: new Date().toISOString(), createdBy: "record" },
+                { command: "test", change: "fixture" }
+            );
+            const liveDir = mkdtempSync(join(tmpdir(), "levels-live-"));
+            const start = Date.now();
+            const seconds = intervalSetting === false ? 30 : (intervalSetting ?? 30);
+            const step = seconds * 1000;
+            let tick: ((atMs: number) => void) | undefined;
+            let interval: number | undefined;
+            let closed = false;
+            class MeterRecorder extends GrantRecorder {
+                override async capture(request: CaptureRequest): Promise<CaptureResult> {
+                    request.hooks?.onLevels?.({
+                        atMs: start + step,
+                        mic: 0.5,
+                        system: 0.125,
+                        input: "Desk mic",
+                        output: "Headphones",
+                    });
+                    tick?.(start + step);
+                    tick?.(start + 2 * step);
+                    await callRecorder({
+                        id: meetingLiveId(meeting.id),
+                        method: "stop",
+                        params: { wait: false },
+                        dir: liveDir,
+                    });
+                    return { startedAtMs: start, frames: [], endedEarly: "stopped" };
+                }
             }
-        }
-        await runRecorder({
-            store,
-            meetingId: meeting.id,
-            display: "main",
-            capture: meetingsConfigSchema.parse({}).global.capture,
-            deps: {
-                recorder: new MeterRecorder(() => {}),
-                liveDir,
-                startOcr: () => {},
-                notify: async () => {},
-                scheduleLevels: (sample, ms) => {
-                    tick = sample;
-                    interval = ms;
-                    return () => {
-                        closed = true;
-                    };
+            await runRecorder({
+                store,
+                meetingId: meeting.id,
+                display: "main",
+                capture: meetingsConfigSchema.parse(
+                    intervalSetting === undefined
+                        ? {}
+                        : {
+                              global: {
+                                  capture: { levels: { enabled: intervalSetting !== false, intervalSec: seconds } },
+                              },
+                          }
+                ).global.capture,
+                deps: {
+                    recorder: new MeterRecorder(() => {}),
+                    liveDir,
+                    startOcr: () => {},
+                    notify: async () => {},
+                    scheduleLevels: (sample, ms) => {
+                        tick = sample;
+                        interval = ms;
+                        return () => {
+                            closed = true;
+                        };
+                    },
                 },
-            },
-        });
-        expect(interval).toBe(30_000);
-        expect(closed).toBe(true);
-        const { savedMeetingLevels } = await import("./levels");
-        const rows = savedMeetingLevels(new MeetingStore(store.storage), meeting.id);
-        expect(rows.map((row) => Date.parse(row.at) - start)).toEqual([30_000, 60_000]);
-        expect(rows[0]).toMatchObject({
-            micShare: 0.8,
-            mic: { device: "Desk mic", muted: false },
-            system: { device: "Headphones", muted: false },
-        });
-        expect(rows[1]?.mic).toMatchObject({ sampled: false, dbfs: null });
-    });
+            });
+            const { savedMeetingLevels } = await import("./levels");
+            const rows = savedMeetingLevels(new MeetingStore(store.storage), meeting.id);
+            if (intervalSetting === false) {
+                expect(interval).toBeUndefined();
+                expect(rows).toEqual([]);
+                expect(existsSync(join(store.folder(meeting.id), "evidence", "levels.jsonl"))).toBe(false);
+                return;
+            }
+            expect(interval).toBe(step);
+            expect(closed).toBe(true);
+            expect(rows.map((row) => Date.parse(row.at) - start)).toEqual([step, 2 * step]);
+            expect(rows[0]).toMatchObject({
+                micShare: 0.8,
+                mic: { device: "Desk mic", muted: false },
+                system: { device: "Headphones", muted: false },
+            });
+            expect(rows[1]?.mic).toMatchObject({ sampled: false, dbfs: null });
+        }
+    );
     test("without a screen grant the native session keeps both sidecars and never opens a frame capture", async () => {
         const store = new MeetingStore(new Storage("meetings-sound-only"));
         const meeting = await store.create(
