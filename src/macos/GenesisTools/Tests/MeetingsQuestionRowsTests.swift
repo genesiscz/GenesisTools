@@ -87,6 +87,12 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertTrue(text.contains("Raised confidence on 1 line"), text)
     }
 
+    func testX5TwoVoiceEditorUsesTheTimeScopedPeopleAndEverybodyEscape() throws {
+        let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","what":"Who?","parts":[{"kind":"when","from":{"sec":10,"text":"00:10"},"target":{"kind":"item","id":"q"}}],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
+        XCTAssertEqual(ListenVoicesEditor.offeredPeople([present, absent], row: row, everybody: false), [present.name])
+        XCTAssertEqual(ListenVoicesEditor.offeredPeople([present, absent], row: row, everybody: true), [present.name, absent.name])
+    }
+
     func testPatchPreservesEveryOptionalRowAndEvidenceField() throws {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.8,"priority":0.9,"group":"rules","occurrences":3,"reach":0.7,"comment":"Keep the source","what":"Who?","parts":[],"choices":[],"edit":"answer","needs":"listen","sources":[],"target":{"kind":"item","id":"q"},"answer":"Earlier","decision":{"token":"earlier","actor":{"kind":"window"},"by":"you","action":"answer","reason":"Checked","question":"q","at":"2026-01-01T00:00:00Z"}}"#.utf8))
         let hidden = ReviewRows.Hidden(lowPriority: 2, minPriority: 0.5)
@@ -107,4 +113,5 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertEqual(updated.questionDetailsTokens, current.questionDetailsTokens)
         XCTAssertEqual(patch.applying(to: current, token: "next", latest: [row.id: "newer"]), current)
     }
+
 }
