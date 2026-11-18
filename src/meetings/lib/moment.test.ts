@@ -6,6 +6,7 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    rmSync,
     statSync,
     utimesSync,
     writeFileSync,
@@ -18,6 +19,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema, TONE_MAX_SEC } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { makeWordTimingArtifact, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { Command } from "commander";
@@ -44,6 +46,8 @@ import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
 import * as screenBoxes from "./screen-boxes";
 import { resolveToneSound } from "./tone-sound";
+import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
+import { meetingWordTimingCache } from "./word-timings";
 
 const now = "2026-11-09T10:00:00.000Z";
 
@@ -219,6 +223,132 @@ describe("a Moment of an item", () => {
             spotSec: 20,
             padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
         });
+    });
+});
+
+describe("a term's spot from the meeting's word timings (U11)", () => {
+    /** "Ada" stands at character 10 of the 43 in the line spoken from 20 s to 30 s: its text estimates 22.33 s. */
+    const estimatedAda = 20 + (10 / 43) * 10;
+    /** The same lines as the word timings read them: "Ada" is said at 26.2 s. */
+    const timedLines = transcript.map((entry) =>
+        entry.startSec === 20
+            ? { ...entry, words: [{ range: { location: 10, length: 3 }, startSec: 26.2, endSec: 26.6 }] }
+            : entry
+    );
+
+    test("a term's spot is the start of its word in the word timings, and its clip and tone follow it", () => {
+        const target: MomentTarget = { kind: "item", id: "i3" };
+        const timed = planMoment({ record: meeting, transcript, listen, target, wordTimedLines: timedLines });
+
+        expect(plan(target).spotSec).toBeCloseTo(estimatedAda, 5);
+        expect(timed.spotSec).toBe(26.2);
+        expect(timed.fromSec).toBeCloseTo(26.2 - 1.5, 5);
+        expect(timed.toSec).toBeCloseTo(26.2 + 2.5, 5);
+        expect(timed.tone?.atSec).toBeCloseTo(26.2 - listen.tone.leadSec, 5);
+    });
+
+    test("an applied spelling finds its word too: the timed line reads the proposed spelling", () => {
+        const renamed = record([{ id: "i9", kind: "term", atSec: 20, heard: "Ada", proposed: "Adaline" }]);
+        const applied = transcript.map((entry) =>
+            entry.startSec === 20
+                ? {
+                      ...entry,
+                      text: entry.text.replace("Ada", "Adaline"),
+                      words: [
+                          { range: { location: 0, length: 3 }, startSec: 20.1, endSec: 20.4 },
+                          { range: { location: 10, length: 7 }, startSec: 26.2, endSec: 26.9 },
+                      ],
+                  }
+                : entry
+        );
+
+        expect(
+            planMoment({
+                record: renamed,
+                transcript,
+                listen,
+                target: { kind: "item", id: "i9" },
+                wordTimedLines: applied,
+            }).spotSec
+        ).toBe(26.2);
+    });
+
+    test("word timings that do not cover the term's line leave the estimate from its text", () => {
+        const elsewhere = transcript.map((entry) =>
+            entry.startSec === 30
+                ? { ...entry, words: [{ range: { location: 0, length: 2 }, startSec: 30.2, endSec: 30.4 }] }
+                : entry
+        );
+
+        expect(
+            planMoment({
+                record: meeting,
+                transcript,
+                listen,
+                target: { kind: "item", id: "i3" },
+                wordTimedLines: elsewhere,
+            }).spotSec
+        ).toBeCloseTo(estimatedAda, 5);
+    });
+
+    test("a saved meeting's term takes its spot from the meeting's cached word timings", async () => {
+        const audioPath = recording("word-timed-term");
+        const store = new MeetingStore(new Storage("meetings-moment-word-timed"));
+        const saved = await store.create(
+            {
+                title: "Word timed planning",
+                start: now,
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: "abc" } },
+                items: meeting.items,
+            },
+            { command: "new", change: "test" }
+        );
+        const opened = OpenedMeeting.of(store, saved, { source: fakeSource(audioPath), sourceMeetingId: "abc" });
+        const target: MomentTarget = { kind: "item", id: "i3" };
+        const estimated = await openMoment({ store, record: saved, target, opened, screen: false });
+        const cache = meetingWordTimingCache(saved.id);
+        const model = join(dirname(audioPath), "weights.onnx");
+        writeFileSync(model, "model weights");
+        const { applied } = await correctedTranscriptRead({
+            store,
+            record: saved,
+            format: "json",
+            flags: { dictionary: true },
+            opened,
+        });
+        await cache.publish(
+            makeWordTimingArtifact({
+                window: { fromSec: 20, toSec: 30 },
+                audio: wordTimingFile(audioPath),
+                modelFiles: [wordTimingFile(model)],
+                modelId: "test/word-model",
+                pcmSha256: "test-pcm",
+                // Times from the window's start: "Ada" is said 6.2 s into the line.
+                words: [
+                    { text: "Dej", startSec: 0.1, endSec: 0.4 },
+                    { text: "to", startSec: 0.5, endSec: 0.7 },
+                    { text: "do", startSec: 0.8, endSec: 1 },
+                    { text: "Ada", startSec: 6.2, endSec: 6.6 },
+                    { text: "a", startSec: 6.8, endSec: 6.9 },
+                    { text: "pak", startSec: 7, endSec: 7.3 },
+                    { text: "taky", startSec: 7.4, endSec: 7.7 },
+                    { text: "do", startSec: 7.8, endSec: 7.9 },
+                    { text: "zadání", startSec: 8, endSec: 8.6 },
+                    { text: "prosím", startSec: 8.8, endSec: 9.3 },
+                ],
+                lines: timedTranscriptView(saved, applied).entries,
+            })
+        );
+
+        try {
+            const timed = await openMoment({ store, record: saved, target, opened, screen: false });
+
+            expect(estimated.spotSec).toBeCloseTo(estimatedAda, 5);
+            expect(timed.spotSec).toBeCloseTo(26.2, 5);
+        } finally {
+            rmSync(cache.folder, { recursive: true, force: true });
+        }
     });
 });
 
