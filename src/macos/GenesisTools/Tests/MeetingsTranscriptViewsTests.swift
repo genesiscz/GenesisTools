@@ -375,6 +375,45 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(TranscriptAvatar.initials("…"), "?")
     }
 
+    /// U8: the pointer on a line never moves the lines below it. "Play from 00:10" stood beside the text and took about
+    /// 90 pt of its width, so the text wrapped again, the line grew, and every line under it jumped down.
+    func testALineKeepsItsSizeWithThePointerOnIt() throws {
+        let text = String(repeating: "We can rename the staging pipeline before the release, or keep the old name. ", count: 5)
+        let line = TranscriptBlockLine(id: "l1", index: 0, startSec: 10, endSec: 40, text: text)
+        let rest = try lineFrame(line, hovering: false)
+        let hovered = try lineFrame(line, hovering: true)
+        XCTAssertGreaterThan(rest.height, 60, "the line wraps over several rows at 360 pt: \(rest)")
+        XCTAssertEqual(hovered.height, rest.height, accuracy: 0.5, "the pointer changed the line's height: \(rest) to \(hovered)")
+        XCTAssertEqual(hovered.width, rest.width, accuracy: 0.5, "the pointer changed the line's width: \(rest) to \(hovered)")
+    }
+
+    /// One transcript line at `width` in a window that never shows and takes no pointer; its frame from `FrameProbe`.
+    private func lineFrame(_ line: TranscriptBlockLine, hovering: Bool, width: CGFloat = 360) throws -> CGRect {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let root = VStack(spacing: 0) {
+            TranscriptBlockLineView(line: line, speaker: "Alice Example", heard: false, wordRange: nil, selected: false,
+                                    past: false, play: { _ in }, select: { _, _ in }, selectWords: { _, _ in },
+                                    hovering: hovering)
+                .frameProbe("transcript.line")
+            Spacer(minLength: 0)
+        }
+        .frame(width: width, height: 400, alignment: .top)
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 400), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.contentView = NSHostingView(rootView: root)
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        return try XCTUnwrap(FrameProbe.frames["transcript.line"], "the line reported its frame")
+    }
+
     func testSnapshotTranscriptBlocks() throws {
         var blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300,
                                            marks: ["l2": [.unclearSpeaker], "l4": [.corrected], "l7": [.commented]])

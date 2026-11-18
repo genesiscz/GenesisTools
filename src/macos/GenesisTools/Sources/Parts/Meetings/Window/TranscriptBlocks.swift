@@ -383,7 +383,7 @@ struct TranscriptAvatar: View {
 
 /// One line inside a block: a click plays from it (⇧ or ⌘ selects), its marks show at its end, and it is its own
 /// accessibility element with "Play from …" (G58).
-private struct TranscriptBlockLineView: View {
+struct TranscriptBlockLineView: View {
     let line: TranscriptBlockLine
     let speaker: String
     let heard: Bool
@@ -394,10 +394,27 @@ private struct TranscriptBlockLineView: View {
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
     let selectWords: (TranscriptBlockLine, NSRange) -> Void
     @Environment(\.rowLive) private var live
-    @State private var hovering = false
+    @State private var hovering: Bool
     @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
         MeetingsPreferences.Playback.animateActivity.defaultValue
     @GenReduceMotion private var reduceMotion
+
+    /// `hovering` is where the pointer starts: a test measures the line with it on and off, because a hidden test window
+    /// gets no pointer.
+    init(line: TranscriptBlockLine, speaker: String, heard: Bool, wordRange: NSRange?, selected: Bool, past: Bool,
+         play: @escaping (Double) -> Void, select: @escaping (TranscriptBlockLine, TranscriptLineClick) -> Void,
+         selectWords: @escaping (TranscriptBlockLine, NSRange) -> Void, hovering: Bool = false) {
+        self.line = line
+        self.speaker = speaker
+        self.heard = heard
+        self.wordRange = wordRange
+        self.selected = selected
+        self.past = past
+        self.play = play
+        self.select = select
+        self.selectWords = selectWords
+        _hovering = State(initialValue: hovering)
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
