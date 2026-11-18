@@ -7,7 +7,7 @@ import { explainAction, runAreaAction } from "@genesiscz/utils/genesis-tools/act
 import { createStateStore } from "@genesiscz/utils/genesis-tools/actions/state";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { createRequestJournal } from "@genesiscz/utils/genesis-tools/areas/person/journal";
-import { requestOutcomeSchema } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import { type RequestOutcome, requestOutcomeSchema } from "@genesiscz/utils/genesis-tools/areas/person/request";
 import { logger } from "@genesiscz/utils/logger";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
@@ -87,20 +87,21 @@ export async function startGenesisToolsService(
     const deps = liveEngineDeps(AREAS, { ...options.deps, config, state, service: door });
     const handlers: Record<string, RpcHandler<MethodDescriptor, RpcConnection<FaceState>>> = {};
     const deadlines = new Map<string, number>();
+    const depsFor = (connection: RpcConnection<FaceState>): EngineDeps => ({
+        ...deps,
+        facts: { ...deps.facts, isAgent: () => connection.state.caller === "agent" },
+    });
     for (const [area, definition] of Object.entries(AREAS)) {
         for (const [name, action] of Object.entries(definition.actions)) {
             const id = `${area}.${name}`;
             deadlines.set(id, serviceActionDeadlineMs(action.timeoutMs));
             handlers[id] = (params, connection) =>
-                runAreaAction(
-                    AREAS,
-                    id,
-                    params,
-                    { ...deps, facts: { ...deps.facts, isAgent: () => connection.state.caller === "agent" } },
-                    { timeoutMs: (deadlines.get(id) ?? 130_000) - 10_000 }
-                );
+                runAreaAction(AREAS, id, params, depsFor(connection), {
+                    timeoutMs: (deadlines.get(id) ?? 130_000) - 10_000,
+                });
         }
     }
+    deadlines.set("requests.present", deadlines.get("person.showWindow") ?? 130_000);
     const extra: RpcHandlers<{ methods: typeof serviceMethods }, RpcConnection<FaceState>> = {
         hello: (params, connection) => {
             connection.state.methods = params.methods;
@@ -124,7 +125,45 @@ export async function startGenesisToolsService(
         "requests.post": (params) => journal.post(params),
         "requests.get": (params) => journal.get(params.id),
         "requests.list": (params) => journal.list({ limit: params.limit }),
-        "requests.answer": (params) => journal.settle(params.id, params.status, params.reason),
+        "requests.present": async (params, connection) => {
+            const view = journal.get(params.id);
+            if (!view) {
+                throw new Error(`request ${params.id} does not exist`);
+            }
+
+            if (view.outcome.status !== "pending") {
+                return view.outcome;
+            }
+
+            // The service presents the request itself and records only the answer of that presentation, so no
+            // client can hand in an answer for the person. A click on the notification passes takesFocus.
+            const takesFocus =
+                params.takesFocus ?? personConfigSchema.parse(config.resolve("person")).dialog.takesFocus;
+            const shown = await runAreaAction(
+                AREAS,
+                "person.showWindow",
+                { ...view.request, takesFocus },
+                depsFor(connection),
+                { timeoutMs: (deadlines.get("requests.present") ?? 130_000) - 10_000 }
+            );
+            const outcome: RequestOutcome =
+                shown.status === "ran"
+                    ? requestOutcomeSchema.parse(shown.value)
+                    : {
+                          id: view.id,
+                          status: "unreachable",
+                          reason:
+                              shown.skipped.map((skip) => skip.reason).join("; ") || "No request surface could run.",
+                      };
+            if (outcome.status === "done" || outcome.status === "declined") {
+                return journal.settle(view.id, outcome.status, outcome.reason, {
+                    via: outcome.via,
+                    method: outcome.method,
+                });
+            }
+
+            return outcome;
+        },
         "requests.withdraw": (params) => journal.withdraw(params.id),
     };
     Object.assign(handlers, extra);

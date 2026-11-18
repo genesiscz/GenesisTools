@@ -18174,36 +18174,27 @@ public struct RequestsListResultItem: Codable, Sendable {
     }
 }
 
-public enum RequestsAnswerParamsStatus: String, Codable, Sendable {
-    case value0 = "done"
-    case value1 = "declined"
-}
-
-public struct RequestsAnswerParams: Codable, Sendable {
+public struct RequestsPresentParams: Codable, Sendable {
     public var `id`: String
-    public var `status`: RequestsAnswerParamsStatus
-    public var `reason`: String?
-    public init(`id`: String, `status`: RequestsAnswerParamsStatus, `reason`: String? = nil) {
+    public var `takesFocus`: Bool?
+    public init(`id`: String, `takesFocus`: Bool? = nil) {
         self.`id` = `id`
-        self.`status` = `status`
-        self.`reason` = `reason`
+        self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
-        self.`status` = try box.decode(RequestsAnswerParamsStatus.self, forKey: .`status`)
-        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(`id`, forKey: .`id`)
-        try box.encode(`status`, forKey: .`status`)
-        try box.encodeIfPresent(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
-public enum RequestsAnswerResultStatus: String, Codable, Sendable {
+public enum RequestsPresentResultStatus: String, Codable, Sendable {
     case value0 = "done"
     case value1 = "failed"
     case value2 = "declined"
@@ -18212,18 +18203,18 @@ public enum RequestsAnswerResultStatus: String, Codable, Sendable {
     case value5 = "unreachable"
 }
 
-public enum RequestsAnswerResultMethod: String, Codable, Sendable {
+public enum RequestsPresentResultMethod: String, Codable, Sendable {
     case value0 = "click"
     case value1 = "terminal"
     case value2 = "touch-id"
     case value3 = "password"
 }
 
-public struct RequestsAnswerResult: Codable, Sendable {
+public struct RequestsPresentResult: Codable, Sendable {
     public var `id`: String
-    public var `status`: RequestsAnswerResultStatus
+    public var `status`: RequestsPresentResultStatus
     public var `reason`: String?
-    public var `method`: RequestsAnswerResultMethod?
+    public var `method`: RequestsPresentResultMethod?
     public var `via`: String?
     public var `elevation`: String?
     public var `note`: String?
@@ -18231,7 +18222,7 @@ public struct RequestsAnswerResult: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsAnswerResultStatus, `reason`: String? = nil, `method`: RequestsAnswerResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public init(`id`: String, `status`: RequestsPresentResultStatus, `reason`: String? = nil, `method`: RequestsPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -18248,9 +18239,9 @@ public struct RequestsAnswerResult: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
-        self.`status` = try box.decode(RequestsAnswerResultStatus.self, forKey: .`status`)
+        self.`status` = try box.decode(RequestsPresentResultStatus.self, forKey: .`status`)
         self.`reason` = try box.decode(String?.self, forKey: .`reason`)
-        self.`method` = try box.decodeIfPresent(RequestsAnswerResultMethod.self, forKey: .`method`)
+        self.`method` = try box.decodeIfPresent(RequestsPresentResultMethod.self, forKey: .`method`)
         self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
         self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
         self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
@@ -19564,7 +19555,7 @@ public final class GenesisToolsRPC {
     public func requestsPost(_ params: RequestsPostParams) async throws -> RequestsPostResult { try await call("requests.post", params) }
     public func requestsGet(_ params: RequestsGetParams) async throws -> RequestsGetResult? { try await call("requests.get", params) }
     public func requestsList(_ params: RequestsListParams) async throws -> [RequestsListResultItem] { try await call("requests.list", params) }
-    public func requestsAnswer(_ params: RequestsAnswerParams) async throws -> RequestsAnswerResult { try await call("requests.answer", params) }
+    public func requestsPresent(_ params: RequestsPresentParams) async throws -> RequestsPresentResult { try await call("requests.present", params) }
     public func requestsWithdraw(_ params: RequestsWithdrawParams) async throws -> RequestsWithdrawResult { try await call("requests.withdraw", params) }
     public lazy var events = Events(owner: self)
     @MainActor public final class Events {
@@ -19699,7 +19690,7 @@ public final class GenesisToolsRPC {
         case "requests.post": _ = try decoder.decode(RequestsPostParams.self, from: params); _ = try decoder.decode(RequestsPostResult.self, from: result)
         case "requests.get": _ = try decoder.decode(RequestsGetParams.self, from: params); _ = try decoder.decode(RequestsGetResult?.self, from: result)
         case "requests.list": _ = try decoder.decode(RequestsListParams.self, from: params); _ = try decoder.decode([RequestsListResultItem].self, from: result)
-        case "requests.answer": _ = try decoder.decode(RequestsAnswerParams.self, from: params); _ = try decoder.decode(RequestsAnswerResult.self, from: result)
+        case "requests.present": _ = try decoder.decode(RequestsPresentParams.self, from: params); _ = try decoder.decode(RequestsPresentResult.self, from: result)
         case "requests.withdraw": _ = try decoder.decode(RequestsWithdrawParams.self, from: params); _ = try decoder.decode(RequestsWithdrawResult.self, from: result)
         case "request.present": _ = try decoder.decode(RequestPresentParams.self, from: params); _ = try decoder.decode(RequestPresentResult.self, from: result)
         default: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown method " + method))

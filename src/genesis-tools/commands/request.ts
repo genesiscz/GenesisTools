@@ -19,20 +19,19 @@ import type { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { type Command, Option } from "commander";
 
-async function showRequestWindow(client: RpcSocketClient, request: PersonRequest): Promise<RequestOutcome> {
-    const raw = await client.call("person.showWindow", request, {
-        timeoutMs: serviceActionClientTimeoutMs(person.actions.showWindow.timeoutMs),
-    });
-    const outcome = requestOutcomeSchema.parse(
-        typeof raw === "object" && raw !== null && "value" in raw
-            ? raw.value
-            : { id: request.id, status: "unreachable", reason: "No request surface could run." }
+/** The service shows the request and records the person's answer itself; a click on its notification takes focus. */
+async function showRequestWindow(
+    client: RpcSocketClient,
+    request: PersonRequest,
+    fromNotification: boolean
+): Promise<RequestOutcome> {
+    return requestOutcomeSchema.parse(
+        await client.call(
+            "requests.present",
+            { id: request.id, ...(fromNotification ? { takesFocus: true } : {}) },
+            { timeoutMs: serviceActionClientTimeoutMs(person.actions.showWindow.timeoutMs) }
+        )
     );
-    if (outcome.status === "done" || outcome.status === "declined") {
-        return client.call("requests.answer", { id: request.id, status: outcome.status, reason: outcome.reason });
-    }
-
-    return outcome;
 }
 
 export function registerRequestCommand(program: Command): void {
@@ -92,7 +91,7 @@ export function registerRequestCommand(program: Command): void {
                                       timeoutMs: serviceActionClientTimeoutMs(windows.actions.open.timeoutMs),
                                   })
                             : undefined,
-                        showRequest: (request) => showRequestWindow(client, request),
+                        showRequest: (request) => showRequestWindow(client, request, options.fromNotification === true),
                     })
                 );
             } finally {
