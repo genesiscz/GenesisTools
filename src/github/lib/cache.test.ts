@@ -108,6 +108,43 @@ describe("GitHub issue search backends", () => {
         }
     });
 
+    test("the default keyword search writes only its JSON to stdout", async () => {
+        const item = {
+            number: 21,
+            title: "Window flicker",
+            state: "open",
+            user: { login: "alice" },
+            created_at: "2026-01-02T00:00:00Z",
+            updated_at: "2026-01-03T00:00:00Z",
+            repository_url: "https://api.github.com/repos/acme/widgets",
+            html_url: "https://github.com/acme/widgets/issues/21",
+            comments: 1,
+            reactions: { total_count: 2 },
+        };
+        const http = spyOn(globalThis, "fetch").mockImplementation(async () =>
+            Response.json({ total_count: 1, items: [item] })
+        );
+        const stdout = spyOn(out, "println").mockImplementation(() => {});
+        const stderr = spyOn(out, "printlnErr").mockImplementation(() => {});
+        try {
+            await env.testing.withOverrides({ GITHUB_TOKEN: "fixture-token" }, async () => {
+                await createSearchCommand().parseAsync(
+                    ["window flicker", "--repo", "acme/widgets", "--type", "issue", "--format", "json"],
+                    { from: "user" }
+                );
+            });
+            expect(stdout).toHaveBeenCalledTimes(1);
+            expect(SafeJSON.parse(String(stdout.mock.calls[0][0]))).toEqual([
+                expect.objectContaining({ number: 21, repo: "acme/widgets" }),
+            ]);
+            expect(stderr.mock.calls.map((call) => String(call[0])).join("\n")).toContain("Searching (advanced)");
+        } finally {
+            stderr.mockRestore();
+            stdout.mockRestore();
+            http.mockRestore();
+        }
+    });
+
     test.each([403, 429])("reports the quota reset after HTTP %i without retrying", async (status) => {
         const response = Response.json(
             { message: "API rate limit exceeded" },

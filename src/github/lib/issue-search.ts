@@ -97,7 +97,7 @@ async function searchLegacy(query: string, options: SearchCommandOptions): Promi
         searchQuery += " is:issue is:pr";
     }
 
-    out.println(chalk.dim(`Searching (legacy): ${searchQuery}`));
+    out.printlnErr(chalk.dim(`Searching (legacy): ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -130,7 +130,7 @@ async function searchAdvanced(query: string, options: SearchCommandOptions): Pro
         searchQuery += " type:issue type:pr";
     }
 
-    out.println(chalk.dim(`Searching (advanced): ${searchQuery}`));
+    out.printlnErr(chalk.dim(`Searching (advanced): ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
