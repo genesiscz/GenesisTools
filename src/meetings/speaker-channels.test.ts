@@ -8,6 +8,7 @@ import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
     activeSeatPeople,
     meetingSeatsSchema,
@@ -464,9 +465,18 @@ describe("sparse roster mute readings on the call", () => {
         },
     ];
 
-    function at(options: { sec: number; unmute?: boolean; third?: boolean; mutedCarrySec?: number }) {
+    function at(options: {
+        sec: number;
+        unmute?: boolean;
+        third?: boolean;
+        mutedCarrySec?: number;
+        applyAbove?: number;
+    }) {
         const { meeting, evidence } = scene([{ label: lake, mic: 0 }]);
         meeting.transcript = transcriptAt(options.sec);
+        if (options.applyAbove !== undefined) {
+            meeting.transcript[0]!.text = "Yes please.";
+        }
         meeting.speakers = [{ speakerId: 1, name: lake, origin: "platform" }];
         evidence.segments = [{ startSec: 0, endSec: 1000, channel: "system" }];
         evidence.speaking = [
@@ -481,33 +491,99 @@ describe("sparse roster mute readings on the call", () => {
             ...base,
             meeting,
             evidence: { ...evidence, mutedCarrySec: options.mutedCarrySec },
+            applyAbove: options.applyAbove,
+            questionBudget: options.applyAbove === undefined ? undefined : 0,
+            labels:
+                options.applyAbove === undefined
+                    ? undefined
+                    : [{ labeler: "seat", reason: "seat-of-one", person: lake, seat: "call", index: 0 }],
             presence,
         });
     }
 
-    test("a mute on either side of an unread call line leaves one eligible remote and no question", () => {
-        const items = at({ sec: 100 });
-        // toMatchObject below may write its matchers into the received objects, so keep a copy for the record.
-        const stored = structuredClone(ranges(items));
-        expect(ranges(items)).toMatchObject([{ speaker: lake, rules: expect.arrayContaining(["RM"]) }]);
-        expect(items.filter((item) => item.kind === "question")).toHaveLength(0);
-        const transcript = correctTranscript({
-            record: meetingRecordSchema.parse({
-                ...record,
-                items: stored.map((item, index) => ({
-                    ...item,
-                    id: `i${index + 1}`,
-                    status: "suggested",
-                    suggestedAt: "2026-11-02T15:00:00.000Z",
-                })),
-            }),
-            transcript: transcriptAt(100),
-            config: meetingsConfigSchema.parse({}),
-            format: "json",
-            withSuggested: true,
-            dictionary: false,
+    for (const applyAbove of [0, 0.4, 0.7]) {
+        test(`R3 sole remote needs an individual review at apply ${applyAbove}`, () => {
+            const items = at({ sec: 100, applyAbove });
+            const [range] = ranges(items);
+            expect(range?.rules).toContain("RM");
+            expect(range?.evidence?.reviewOnly).toBe(true);
+            expect(range?.confidence).toBeLessThanOrEqual(Math.max(0, applyAbove - 0.01) + Number.EPSILON);
+            expect(range?.speaker).toBe(applyAbove === 0 ? undefined : lake);
+            expect(items.find((item) => item.kind === "question")).toMatchObject({
+                choices: [lake],
+                decides: [range!.id],
+            });
+            const result = correctTranscript({
+                record: meetingRecordSchema.parse({ ...record, items }),
+                transcript: transcriptAt(100),
+                config: meetingsConfigSchema.parse({}),
+                format: "json",
+                withSuggested: true,
+                applyAbove: 0,
+                dictionary: false,
+            });
+            expect(result.entries[0]?.guess).not.toBe(false);
         });
-        expect(transcript.entries[0]?.speaker).toBe(lake);
+    }
+
+    test("R3 positive mic voices survive a personal mute and an absent call account", () => {
+        const { meeting, evidence } = scene([
+            { label: "S1", mic: 1 },
+            { label: "S2", mic: 1 },
+        ]);
+        const seated = meetingRecordSchema.parse({ ...record, seats: { room: [USER, reed], remote: [] } });
+        const measuredLines = lineEvidence(meeting.transcript, evidence).map((line, index) => ({
+            ...line,
+            muted: [reed],
+            present: [USER],
+            voice: {
+                person: index === 0 ? reed : USER,
+                quality: "matched" as const,
+                model: "fixture",
+                reason: "independent match",
+                candidates: [],
+            },
+        }));
+        const items = suggestItems({ ...base, meeting, evidence, record: seated, measuredLines });
+        expect(ranges(items).map((item) => [item.speaker, item.rules.includes(MeetingRule.Voice)])).toEqual([
+            [reed, true],
+            [USER, true],
+        ]);
+    });
+
+    test("R3 an unmute splits group answers at the eligibility boundary", () => {
+        const { meeting, evidence } = scene([
+            { label: "S1", mic: 0 },
+            { label: "S1", mic: 0 },
+        ]);
+        const seated = meetingRecordSchema.parse({
+            ...record,
+            seats: { room: [USER], remote: [{ name: reed }, { name: lake }] },
+        });
+        const measuredLines = lineEvidence(meeting.transcript, evidence).map((line) => ({
+            ...line,
+            muted: line.index === 0 ? [reed] : [],
+        }));
+        const fresh = suggestItems({
+            ...base,
+            record: seated,
+            meeting,
+            evidence,
+            measuredLines,
+            rules: ["speakers"],
+            labels: measuredLines.map((line) => ({
+                index: line.index,
+                seat: "call",
+                labeler: "voice",
+                reason: "not-the-seat-person",
+                next: { person: lake, score: 0.1 },
+            })),
+        });
+        const asked = fresh.filter((item) => item.kind === "question");
+        expect(asked.map((item) => item.fromSec)).toEqual([0, 10]);
+        expect(asked[0]?.choices).not.toContain(reed);
+        expect(asked[1]?.choices).toContain(reed);
+        expect(asked[1]?.decides).toHaveLength(1);
     });
 
     test("two eligible remotes stay a question and the roster cannot add the muted third choice back", () => {

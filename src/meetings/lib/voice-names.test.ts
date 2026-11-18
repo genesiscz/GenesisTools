@@ -153,7 +153,14 @@ test("exclusion on a shared microphone needs one unsampled person and one cohere
     );
     const nobody = (rows: ReturnType<typeof name>) => rows.every((row) => row.person === undefined);
     expect(nobody(name({ ...options, lines: lines.slice(0, 1) }))).toBe(true);
-    expect(nobody(name({ ...options, attended: [alice, bob, { ...bob, person: "Carol Example" }] }))).toBe(true);
+    const twoVisitors = name({ ...options, attended: [alice, bob, { ...bob, person: "Gale Example" }] });
+    expect(nobody(twoVisitors)).toBe(true);
+    expect(twoVisitors.every((row) => row.next === undefined)).toBe(true);
+    expect(
+        name({ ...options, applyAbove: 0 })
+            .slice(0, 3)
+            .map((row) => row.reason)
+    ).toEqual(Array(3).fill("exclusion"));
     expect(nobody(nameByVoice({ ...settings, ...options, exclusion: { ...settings.exclusion, enabled: false } }))).toBe(
         true
     );
