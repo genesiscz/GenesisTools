@@ -131,10 +131,20 @@ describe("sparse roster mute readings on the call", () => {
 
     test("a mute on either side of an unread call line leaves one eligible remote and no question", () => {
         const items = at({ sec: 100 });
+        // toMatchObject below may write its matchers into the received objects, so keep a copy for the record.
+        const stored = structuredClone(ranges(items));
         expect(ranges(items)).toMatchObject([{ speaker: lake, rules: expect.arrayContaining(["RM"]) }]);
         expect(items.filter((item) => item.kind === "question")).toHaveLength(0);
         const transcript = correctTranscript({
-            record: { ...record, items },
+            record: meetingRecordSchema.parse({
+                ...record,
+                items: stored.map((item, index) => ({
+                    ...item,
+                    id: `i${index + 1}`,
+                    status: "suggested",
+                    suggestedAt: "2026-11-02T15:00:00.000Z",
+                })),
+            }),
             transcript: transcriptAt(100),
             config: meetingsConfigSchema.parse({}),
             format: "json",
