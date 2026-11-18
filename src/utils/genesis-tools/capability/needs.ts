@@ -1,7 +1,7 @@
 import type { AppDoor, Fix, UnavailableCode } from "@genesiscz/utils/genesis-tools/actions/define";
 import type { StateStore, StateValue } from "@genesiscz/utils/genesis-tools/actions/state";
-import { type AppBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
-import type { Facts } from "@genesiscz/utils/genesis-tools/capability/facts";
+import { type AppBuilder, appBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
+import { type Facts, LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import type { AppPartId, AppRpcMethod } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import type { ServiceDoor } from "@genesiscz/utils/genesis-tools/service/clients";
 import { macosPermissionsCommand } from "@genesiscz/utils/genesis-tools/tools/system";
@@ -77,16 +77,16 @@ function fail(
     return { ok: false, code, reason, fix, from };
 }
 
-function buildFix(env: NeedEnv, part: AppPartId | null, sentence: string): Fix {
+function buildFix(env: Pick<NeedEnv, "builder">, part: AppPartId | null, sentence: string): Fix {
     return { command: env.builder?.buildCommand(part) ?? defaultBuildCommand(part), sentence };
 }
 
-function inTest(env: NeedEnv, what: string): NeedResult | null {
+function inTest(env: Pick<NeedEnv, "facts">, what: string): NeedResult | null {
     return env.facts.isTest() ? fail("in-test", `a test process never reaches ${what}`) : null;
 }
 
 /** The installed bundle and its routing, or the reason it cannot be used. */
-function appBundleUsable(env: NeedEnv): NeedResult {
+function appBundleUsable(env: Pick<NeedEnv, "facts" | "builder">): NeedResult {
     const bundle = env.facts.appBundle();
 
     if (!bundle.installed) {
@@ -105,6 +105,22 @@ function appBundleUsable(env: NeedEnv): NeedResult {
     }
 
     return OK_PROBE;
+}
+
+/** The same app.installed need for callers that return a string or report synchronously. */
+export function checkAppInstalled(
+    env: Pick<NeedEnv, "facts" | "builder"> = { facts: LIVE_FACTS, builder: appBuilder() }
+): NeedResult {
+    return inTest(env, "GenesisTools.app") ?? appBundleUsable(env);
+}
+
+/** Human-readable diagnostic text. A satisfied need has nothing to explain. */
+export function describeNeedFailure(result: NeedResult): string {
+    if (result.ok) {
+        return "";
+    }
+
+    return result.fix ? `${result.reason}. Run \`${result.fix.command}\`.` : result.reason;
 }
 
 /** A state value that may answer now: present, not stale, from this build, and young enough. */
@@ -131,7 +147,7 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
             ? OK_PROBE
             : fail("platform", `needs ${need.platform}, this is ${env.facts.platform()}`),
 
-    "app.installed": async (_need, env) => inTest(env, "GenesisTools.app") ?? appBundleUsable(env),
+    "app.installed": async (_need, env) => checkAppInstalled(env),
 
     "app.part": async (need, env) => {
         const refused = inTest(env, "GenesisTools.app") ?? (appBundleUsable(env).ok ? null : appBundleUsable(env));
