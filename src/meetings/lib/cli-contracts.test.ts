@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -12,6 +14,7 @@ import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voiceBackend from "@genesiscz/utils/meetings/voice";
+import { insertVoiceSample, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore, type VoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -26,14 +29,14 @@ import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
-import { DecisionJournal } from "./decision-journal";
+import { DecisionJournal, JOURNAL_FILE } from "./decision-journal";
 import { duplicateMeeting } from "./duplicate";
 import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { planMoment } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
-import { decisionReachSchema } from "./service/api";
+import { decisionReachSchema, voicesList, voicesMove, voicesRemove } from "./service/api";
 import { InProcessMeetingsClient } from "./service/client";
 import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
@@ -271,11 +274,16 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
             "backfill",
             "collect",
             "enroll",
+            "move",
             "play",
             "prepare",
             "preview",
+            "quality",
+            "reject",
             "remove",
+            "samples",
             "score",
+            "undo",
         ]);
     }
 });
@@ -2752,6 +2760,262 @@ const p6Print: VoicePrint = {
     embedding: [1, 0],
     confirmedAt: "2026-11-01T10:00:00Z",
 };
+
+describe("P3 voice library CLI", () => {
+    let previousHome: string;
+    beforeEach(() => {
+        previousHome = env.tools.getHome();
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "meetings-voice-cli-")));
+    });
+    afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
+
+    async function cli(...args: string[]): Promise<unknown> {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "voices" });
+        const result = spyOn(out, "result").mockImplementation(() => {});
+        const error = spyOn(ui, "err").mockImplementation(() => {});
+        const raw = spyOn(ui, "raw").mockImplementation(() => {});
+        const previousExit = process.exitCode;
+        try {
+            process.exitCode = 0;
+            await program.parseAsync(["voices", ...args, "--json"], { from: "user" });
+            if (Number(process.exitCode) !== 0) {
+                throw new Error(String(error.mock.calls.at(-1)?.[0] ?? result.mock.calls.at(-1)?.[0]));
+            }
+            expect(result).toHaveBeenCalledTimes(1);
+            return SafeJSON.parse(String(result.mock.calls[0]![0]));
+        } finally {
+            process.exitCode = previousExit;
+            result.mockRestore();
+            error.mockRestore();
+            raw.mockRestore();
+        }
+    }
+
+    const person = "Finch Example";
+    const visitor = "Wren Example";
+    async function fixture() {
+        const store = new MeetingStore();
+        const create = (project: string) =>
+            store.create(
+                {
+                    title: `Review in ${project}`,
+                    project,
+                    start: p6Print.confirmedAt,
+                    createdBy: "new",
+                    participants: [person, visitor].map((name) => ({ name, from: ["fixture"] })),
+                },
+                { command: "test", change: "voice CLI fixture" }
+            );
+        const x = await create("harbor");
+        const y = await create("orchard");
+        const file = (id: string) => join(store.folder(id), "source.wav");
+        const plant = (record: typeof x, fromSec: number, email?: string) => {
+            const print = {
+                ...p6Print,
+                meeting: record.id,
+                fromSec,
+                toSec: fromSec + 5,
+                sourceSha: createHash("sha256")
+                    .update(readFileSync(file(record.id)))
+                    .digest("hex"),
+            };
+            const owner = email ? { name: person, email } : { name: person };
+            const result = insertVoiceSample({
+                project: record.project!,
+                owner,
+                print,
+                model: "fixture-model",
+                source: sourceForVoicePrint(print),
+                origin: "confirm",
+                acquiredBy: "live",
+            });
+            expect(result.status).toBe("added");
+            return print;
+        };
+        for (const record of [x, y]) {
+            writeFileSync(file(record.id), record.title);
+        }
+        plant(x, 0);
+        plant(y, 0);
+        const confirmed = plant(y, 5);
+        const token = "human-confirm-fixture";
+        const record = await store.update(y.id, { command: "test", change: "confirmed source" }, (draft) => {
+            draft.items.push({
+                id: "i1",
+                kind: "speaker-range",
+                label: "Voice",
+                speaker: person,
+                fromSec: 5,
+                toSec: 10,
+                status: "confirmed",
+                suggestedAt: p6Print.confirmedAt,
+                rules: [MeetingRule.VoiceEmbedding],
+                decision: { token, previous: { status: "suggested" } },
+            });
+        });
+        const entry = journalEntrySchema.parse({
+            token,
+            at: p6Print.confirmedAt,
+            meeting: y.id,
+            actor: { kind: "listen" },
+            action: { kind: "confirm", items: ["i1"] },
+            decided: ["i1"],
+            changes: [{ id: "i1", after: record.items[0] }],
+            voices: [{ project: y.project, person, model: "fixture-model", item: "i1", after: confirmed }],
+        });
+        writeFileSync(join(store.folder(y.id), JOURNAL_FILE), `${SafeJSON.stringify(entry)}\n`);
+        p6VoiceSpies.push(
+            spyOn(OpenedMeeting.prototype, "sound").mockImplementation(async function (this: OpenedMeeting) {
+                return meetingSound({
+                    folder: store.folder(this.record.id),
+                    timelineZeroMs: 0,
+                    rows: [],
+                    tracks: "best",
+                    source: { path: file(this.record.id), source: "wisprflow", layout: "left-mic", durationSec: 30 },
+                });
+            }),
+            spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+                sourceMeetingId: "source",
+                title: "Review",
+                start: y.start,
+                participants: [],
+                speakers: [],
+                folders: [],
+                transcript: [0, 5, 10].map((startSec) => ({
+                    speaker: "Voice",
+                    startSec,
+                    text: `Line at ${startSec}.`,
+                })),
+            }),
+            spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({}),
+            spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue({ segments: [], speaking: [], files: [] })
+        );
+        return { x, y, file, plant };
+    }
+
+    const listing = async (...args: string[]) => voicesList.result.parse(await cli(...args));
+    const correction = async (...args: string[]) => {
+        const result = voicesMove.result.parse(await cli(...args));
+        if (result.status !== "applied") {
+            throw new Error("Expected an applied voice correction.");
+        }
+        return result;
+    };
+
+    test("scopes list three samples once and keep a meeting attendee without a sample", async () => {
+        const { x, y } = await fixture();
+        const all = await listing("--person", person);
+        expect(all.people).toHaveLength(1);
+        const ids = all.people[0]!.samples.map((sample) => sample.id);
+        expect(new Set(ids).size).toBe(3);
+        expect(ids).toHaveLength(3);
+        expect(await listing("samples", person, "--all")).toEqual(all);
+        expect((await listing("samples", person, "--project", "harbor")).people[0]!.samples).toMatchObject([
+            {
+                meeting: x.id,
+                title: x.title,
+                project: "harbor",
+                origin: "confirm",
+                acquiredBy: "live",
+                available: true,
+            },
+        ]);
+        const meeting = await listing("--meeting", y.id);
+        expect(meeting.people.find((row) => row.person === person)?.samples.map((s) => s.fromSec)).toEqual([0, 5]);
+        expect(meeting.people.find((row) => row.person === visitor)?.samples).toEqual([]);
+        expect(await cli("quality", "--person", person, "--project", "harbor")).toMatchObject({
+            learnt: [{ owner: { name: person }, count: 1, samples: [{ reason: "too-few-independent" }] }],
+        });
+        await expect(listing("samples", person, "--project", "harbor", "--all")).rejects.toThrow(/scope|choose/i);
+    });
+
+    test("plays the listed ID, moves its owner and blocks recovery after move or rejection", async () => {
+        const { y, file } = await fixture();
+        const samples = (await listing("samples", person, "--meeting", y.id)).people[0]!.samples;
+        expect(samples).toHaveLength(2);
+        const { id } = samples[1]!;
+        expect(await cli("play", person, "--sample", id, "--no-start")).toMatchObject({
+            meeting: y.id,
+            path: file(y.id),
+            track: "source-mic",
+            channel: 0,
+            fromSec: 5,
+            toSec: 10,
+            fileFromSec: 5,
+            fileToSec: 10,
+        });
+        const move = await correction("move", person, "--sample", id, "--to", `${visitor} <wren@example.com>`);
+        expect(move.ids).toEqual([id]);
+        const stored = () => readVoiceLibrary().library;
+        expect(stored().samples.find((s) => s.id === id)).toMatchObject({
+            owner: { name: visitor, email: "wren@example.com" },
+            origin: "confirm",
+            acquiredBy: "live",
+            transferred: true,
+        });
+        const backfill = (reason: string) => ({
+            added: 0,
+            rows: [expect.objectContaining({ meeting: y.id, person, skipped: { [reason]: 1 } })],
+        });
+        expect(await cli("backfill", y.id)).toMatchObject(backfill("wrong-person"));
+        expect((await listing("samples", visitor, "--all")).people[0]?.samples.map((s) => s.id)).toEqual([id]);
+        await correction("undo", move.token);
+        expect(stored().samples.find((s) => s.id === id)?.owner).toEqual({ name: person });
+        expect(stored().rejected).toEqual([]);
+        const reject = await correction("reject", person, "--sample", id, "--reason", "bad-audio");
+        expect(await cli("backfill", y.id)).toMatchObject(backfill("bad-audio"));
+        expect(stored().samples.map((s) => s.id)).toHaveLength(2);
+        expect(stored().samples.some((s) => s.id === id)).toBe(false);
+        expect(stored().rejected).toMatchObject([
+            { reason: "bad-audio", token: reject.token, source: { rootMeeting: y.id } },
+        ]);
+        expect(new MeetingStore().read(y.id)?.items[0]?.status).toBe("confirmed");
+    });
+
+    test("a stale numbered preview cannot remove the next clip and a stable ID keeps its sound", async () => {
+        const { x, y, file } = await fixture();
+        const samples = (await listing("samples", person, "--project", "orchard")).people[0]!.samples;
+        const [first, second] = samples;
+        const scoped = ["--project", "orchard"];
+        const play = (sample: string) => cli("play", person, ...scoped, "--sample", sample, "--no-start");
+        const before = await play(second!.id);
+        expect(before).toMatchObject({ path: file(y.id), fileFromSec: 5, fileToSec: 10, channel: 0 });
+        expect(await play("2")).toEqual(before);
+        const numberOne = ["remove", person, ...scoped, "--sample", "1"];
+        const preview = voicesRemove.result.parse(await cli(...numberOne, "--preview"));
+        expect(preview.ids).toEqual([first!.id]);
+        expect(await cli(...numberOne, "--plan-token", preview.planToken!)).toMatchObject({ ids: [first!.id] });
+        await expect(cli(...numberOne, "--plan-token", preview.planToken!)).rejects.toThrow(/stale/i);
+        expect(await play("1")).toEqual(before);
+        expect(await play(second!.id)).toEqual(before);
+        await expect(play("1e0")).rejects.toThrow(/sample/i);
+        await expect(play("123456789012")).rejects.toThrow(/sample/i);
+        await expect(cli("move", person, "--sample", "1", "--to", visitor)).rejects.toThrow(/ID/i);
+        await expect(cli("remove", person, "--sample", "1")).rejects.toThrow(/project|ambiguous/i);
+        await expect(cli("remove", person, "--all")).rejects.toThrow(/preview/i);
+        expect(await cli("remove", person, ...scoped)).toMatchObject({ removed: 1, ids: [second!.id] });
+        expect(readVoiceLibrary().library.samples.map((s) => s.meeting)).toEqual([x.id]);
+    });
+
+    test("same-name people in one project require a stable ID", async () => {
+        const { x, plant } = await fixture();
+        plant(x, 15, "finch@example.com");
+        const found = await listing("samples", person, "--project", "harbor");
+        expect(found.people).toHaveLength(2);
+        const addressed = found.people.find((row) => row.owner.email === "finch@example.com")!.samples[0]!;
+        await expect(cli("remove", person, "--project", "harbor", "--sample", "1")).rejects.toThrow(/ambiguous/i);
+        expect(readVoiceLibrary().library.samples).toHaveLength(4);
+        expect(await cli("remove", person, "--sample", addressed.id)).toMatchObject({
+            removed: 1,
+            ids: [addressed.id],
+        });
+        expect(
+            (await listing("samples", person, "--project", "harbor")).people.flatMap((row) => row.samples)
+        ).toMatchObject([{ fromSec: 0 }]);
+    });
+});
+
 test("voice readiness in show JSON counts attended people and requires one sampled person on each occupied seat", async () => {
     const store = new MeetingStore();
     const project = "readiness-fixture";
