@@ -21,6 +21,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import * as apfs from "@genesiscz/utils/macos/apfs";
 import { getCloneId } from "@genesiscz/utils/macos/apfs";
 import * as genesisApp from "@genesiscz/utils/macos/genesis-app";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import * as prompts from "@genesiscz/utils/prompts/p";
@@ -31,6 +32,8 @@ import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { skip } from "@genesiscz/utils/test/skip";
 import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
+    appBuildSdkProblem,
+    appRebuildCommand,
     appStatus,
     buildApp,
     bundleClickyLibrary,
@@ -495,6 +498,14 @@ describe("runningExecutableInodes", () => {
 });
 
 describe("requireAppBuildSdk", () => {
+    it("keeps SDK instructions with the builder and uses its command for a manual retry", () => {
+        expect(appBuildSdkProblem({ kind: "unsupported", toolchain: { kind: "none" } })).toContain(
+            "install Xcode, select it with `sudo xcode-select"
+        );
+        expect(appBuildSdkProblem({ kind: "xcode" })).toBeNull();
+        expect(appRebuildCommand(appNeedFixture().builder)).toBe("fixture-build");
+    });
+
     it("builds with Xcode's own SDK when the full Xcode toolchain is active", () => {
         expect(requireAppBuildSdk({ kind: "xcode" })).toEqual({});
     });
