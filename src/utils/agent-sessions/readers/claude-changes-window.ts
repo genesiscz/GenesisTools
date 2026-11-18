@@ -231,6 +231,9 @@ function readWindow(path: string, request: ChangesWindowRequest, cache: Cache): 
                 },
             });
         }
+        if (cache.lookbehind?.ctime !== mainFacts.ctime || cache.lookbehind.ino !== mainFacts.ino) {
+            throw new Error("transcript changed during checkpoint lookbehind");
+        }
         state.backups = [...(cache.lookbehind?.state.backups ?? []), ...state.backups];
         const transcript = finishTranscript(
             sessionId,

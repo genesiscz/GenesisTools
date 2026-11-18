@@ -8,6 +8,8 @@ export function codexFixture(): Fixture {
     mkdirSync(dir, { recursive: true });
     const records: Line[] = [];
     const file = join(f.home, "file");
+    const live = join(f.home, "live");
+    writeFileSync(live, "current\n");
     const moved = join(f.home, "moved");
     const patch = (turn: number, id: string, path: string, change: Line) => ({
         type: "event_msg",
@@ -36,6 +38,9 @@ export function codexFixture(): Fixture {
                 })
             );
         } else if (i === 7) {
+            records.push(
+                patch(7, "on-disk", live, { type: "update", unified_diff: "@@ -1 +1 @@\n-original\n+current\n" })
+            );
             records.push(patch(7, "delete", moved, { type: "delete", content: "moved\n" }));
         }
     }

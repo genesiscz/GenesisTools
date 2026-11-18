@@ -7,6 +7,19 @@
     ],
     "files": [
       {
+        "path": "<home>/live",
+        "beforeOid": "4b48deed3a433909bfd6b6ab3d4b91348b6af464",
+        "afterOid": "5b9023a315ae79fd8cbe9e8c3a6f8053f0ed3ddb",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "on-disk"
+        ]
+      },
+      {
         "path": "<home>/moved",
         "beforeOid": "549477274da81523feadb7071d7af1b0f0bd1683",
         "afterOid": null,
@@ -34,16 +47,16 @@
     ],
     "files": [
       {
-        "path": "/work/acme/shell",
-        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "<home>/live",
+        "beforeOid": "4b48deed3a433909bfd6b6ab3d4b91348b6af464",
+        "afterOid": "5b9023a315ae79fd8cbe9e8c3a6f8053f0ed3ddb",
         "status": "modified",
-        "source": "bash",
+        "source": "edit",
         "skipped": null,
-        "via": "bash",
-        "confidence": "low",
+        "via": "edit",
+        "confidence": "exact",
         "toolUseIds": [
-          "shell"
+          "on-disk"
         ]
       },
       {
@@ -57,6 +70,19 @@
         "confidence": "exact",
         "toolUseIds": [
           "delete"
+        ]
+      },
+      {
+        "path": "/work/acme/shell",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell"
         ]
       }
     ],
@@ -75,19 +101,6 @@
     ],
     "files": [
       {
-        "path": "/work/acme/shell",
-        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "status": "modified",
-        "source": "bash",
-        "skipped": null,
-        "via": "bash",
-        "confidence": "low",
-        "toolUseIds": [
-          "shell"
-        ]
-      },
-      {
         "path": "<home>/file",
         "beforeOid": "3e757656cf36eca53338e520d134963a44f793f8",
         "afterOid": null,
@@ -98,6 +111,19 @@
         "confidence": "exact",
         "toolUseIds": [
           "move"
+        ]
+      },
+      {
+        "path": "<home>/live",
+        "beforeOid": "4b48deed3a433909bfd6b6ab3d4b91348b6af464",
+        "afterOid": "5b9023a315ae79fd8cbe9e8c3a6f8053f0ed3ddb",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "on-disk"
         ]
       },
       {
@@ -112,6 +138,19 @@
         "toolUseIds": [
           "move",
           "delete"
+        ]
+      },
+      {
+        "path": "/work/acme/shell",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell"
         ]
       }
     ],
@@ -132,19 +171,6 @@
     ],
     "files": [
       {
-        "path": "/work/acme/shell",
-        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "status": "modified",
-        "source": "bash",
-        "skipped": null,
-        "via": "bash",
-        "confidence": "low",
-        "toolUseIds": [
-          "shell"
-        ]
-      },
-      {
         "path": "<home>/file",
         "beforeOid": null,
         "afterOid": null,
@@ -160,6 +186,19 @@
         ]
       },
       {
+        "path": "<home>/live",
+        "beforeOid": "4b48deed3a433909bfd6b6ab3d4b91348b6af464",
+        "afterOid": "5b9023a315ae79fd8cbe9e8c3a6f8053f0ed3ddb",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "on-disk"
+        ]
+      },
+      {
         "path": "<home>/moved",
         "beforeOid": null,
         "afterOid": null,
@@ -171,6 +210,19 @@
         "toolUseIds": [
           "move",
           "delete"
+        ]
+      },
+      {
+        "path": "/work/acme/shell",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell"
         ]
       }
     ],
@@ -191,19 +243,6 @@
     ],
     "files": [
       {
-        "path": "/work/acme/shell",
-        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "status": "modified",
-        "source": "bash",
-        "skipped": null,
-        "via": "bash",
-        "confidence": "low",
-        "toolUseIds": [
-          "shell"
-        ]
-      },
-      {
         "path": "<home>/file",
         "beforeOid": null,
         "afterOid": null,
@@ -219,6 +258,19 @@
         ]
       },
       {
+        "path": "<home>/live",
+        "beforeOid": "4b48deed3a433909bfd6b6ab3d4b91348b6af464",
+        "afterOid": "5b9023a315ae79fd8cbe9e8c3a6f8053f0ed3ddb",
+        "status": "modified",
+        "source": "edit",
+        "skipped": null,
+        "via": "edit",
+        "confidence": "exact",
+        "toolUseIds": [
+          "on-disk"
+        ]
+      },
+      {
         "path": "<home>/moved",
         "beforeOid": null,
         "afterOid": null,
@@ -230,6 +282,19 @@
         "toolUseIds": [
           "move",
           "delete"
+        ]
+      },
+      {
+        "path": "/work/acme/shell",
+        "beforeOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "afterOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "status": "modified",
+        "source": "bash",
+        "skipped": null,
+        "via": "bash",
+        "confidence": "low",
+        "toolUseIds": [
+          "shell"
         ]
       }
     ],

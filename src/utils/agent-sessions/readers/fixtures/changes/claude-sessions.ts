@@ -250,7 +250,7 @@ export function claudeFixture(name: ClaudeFixture): Fixture {
                 capture(8, `bulk-${String(i).padStart(4, "0")}`, "bulk");
             }
             // The repeated path straddles the old modulo boundary.
-            f.rows.push({ ...f.rows[2], beforeOid: "b".repeat(40), afterOid: "c".repeat(40) });
+            f.rows.push({ ...f.rows[998], beforeOid: "b".repeat(40), afterOid: "c".repeat(40) });
             break;
         }
         case "roots": {

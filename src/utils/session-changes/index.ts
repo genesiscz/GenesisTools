@@ -181,9 +181,12 @@ export function loadRecentSessionChanges(input: {
         if (!window || window.complete) {
             return fallback(window ? "F1" : "F4");
         }
+        const current = window;
         const { changes, cover, triggers } = profiler
             .scope("session-changes")
-            .measure("compute", () => computeChanges({ sessionId, log: rows, transcript: window.transcript }, window));
+            .measure("compute", () =>
+                computeChanges({ sessionId, log: rows, transcript: current.transcript }, current)
+            );
         const changed = changes.turns.filter((turn) => turn.files.length).length;
         total.late += window.lateResultCovers ?? 0;
         total.writers += triggers.writers;
