@@ -11,14 +11,18 @@ import { addVoicePrint, readVoiceStore, type VoicePrint, type VoiceStore } from 
 import { Storage } from "@genesiscz/utils/storage";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { journalEntrySchema } from "./decision-actions";
+import { DecisionJournal } from "./decision-journal";
 import { identifiedDepartures } from "./departure";
 import { itemWhat } from "./item-text";
 import { OpenedMeeting } from "./opened-meeting";
+import { voicesPreview } from "./service/api";
 import * as soundModule from "./sound";
 import { meetingSound } from "./sound";
-import { mergeLineLabels, speakerLabelRule } from "./speaker-labels";
+import { mergeLineLabels, proposeSpeakerLabels, speakerLabelRule } from "./speaker-labels";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
+import { suggestItems } from "./suggest";
+import { correctionsOf } from "./transcript-corrections";
 import { nameByVoice, type VoiceLine } from "./voice-names";
 import { saveAnsweredVoiceSamples, undoAnsweredVoiceSamples } from "./voice-samples";
 
@@ -84,6 +88,106 @@ function name(
         ...options,
     });
 }
+
+function timedLine(index: number, fromSec: number, vector: number[], seat: VoiceLine["seat"]): VoiceLine {
+    const toSec = fromSec + 3;
+    return line(vector, {
+        index,
+        fromSec,
+        toSec,
+        seat,
+        track: seat === "mic" ? "source-mic" : "source-call",
+        channels: line(vector).channels.map((channel) => ({ ...channel, fromSec, toSec })),
+    });
+}
+
+test("exclusion names a late remote only inside her stay and preserves direct matches", () => {
+    const seat = "call";
+    const enrolled = { ...alice, seat } as const;
+    const late = { ...bob, seat, fromSec: 20, toSec: 50 } as const;
+    const store = storeOf({ [alice.person]: [[1, 0]] });
+    store.people[alice.person]!.samples[0] = { ...basePrint, seat, track: "source-call" };
+    const lines = [10, 18, 20, 24, 28, 32, 49, 55].map((at, i) => timedLine(i, at, at === 24 ? [1, 0] : [0, 1], seat));
+    const labels = name({ lines, attended: [enrolled, late], store });
+    expect(labels.map((row) => row.person)).toEqual([
+        undefined,
+        undefined,
+        bob.person,
+        alice.person,
+        bob.person,
+        bob.person,
+        undefined,
+        undefined,
+    ]);
+    expect(labels[2]).toMatchObject({
+        reason: "exclusion",
+        margin: settings.gate.score,
+        next: { person: alice.person, score: 0 },
+    });
+    expect(labels[2]!.score!).toBeLessThanOrEqual(settings.exclusion.maxConfidence);
+    expect(labels[3]?.reason).toBe("named");
+});
+
+test("exclusion on a shared microphone needs one unsampled person and one coherent stay", () => {
+    const lines = [5, 10, 15, 30, 35, 40].map((at, i) => timedLine(i, at, i === 4 ? [0, -1] : [0, 1], "mic"));
+    const options = {
+        lines,
+        store: storeOf({ [alice.person]: [[1, 0]] }),
+        attended: [alice, { ...bob, toSec: 20 }, { ...bob, fromSec: 25 }],
+    };
+    const labels = name(options);
+    expect(labels.slice(0, 3).map((row) => row.person)).toEqual(Array(3).fill(bob.person));
+    expect(labels.slice(3).map((row) => [row.person, row.reason])).toEqual(
+        Array(3).fill([undefined, "exclusion-not-one-voice"])
+    );
+    const nobody = (rows: ReturnType<typeof name>) => rows.every((row) => row.person === undefined);
+    expect(nobody(name({ ...options, lines: lines.slice(0, 1) }))).toBe(true);
+    expect(nobody(name({ ...options, attended: [alice, bob, { ...bob, person: "Carol Example" }] }))).toBe(true);
+    expect(nobody(nameByVoice({ ...settings, ...options, exclusion: { ...settings.exclusion, enabled: false } }))).toBe(
+        true
+    );
+    expect(nobody(nameByVoice({ ...settings, ...options, exclusion: { ...settings.exclusion, margin: 0.5 } }))).toBe(
+        true
+    );
+    expect(nobody(name({ ...options, store: storeOf({}) }))).toBe(true);
+    const varied = storeOf({
+        [alice.person]: [
+            [0, 1],
+            [1, -1],
+            [1, -1],
+            [1, -1],
+        ],
+    });
+    expect(nobody(name({ ...options, lines: lines.slice(0, 3), store: varied }))).toBe(true);
+    expect(nameByVoice({ ...settings, ...options, applyAbove: 0.3 })[0]!.score!).toBeLessThan(0.3);
+});
+
+test("meeting enrolment holds out overlapping windows from both stores and keeps its prints local", () => {
+    const lines = [5, 6, 12, 18, 24, 30].map((at, i) => timedLine(i, at, i < 3 ? [1, 0] : [0, 1], "mic"));
+    const store = storeOf({});
+    store.model = "";
+    const options = {
+        ...settings,
+        lines,
+        store,
+        attended: [alice, bob],
+        meeting: "current",
+        certain: new Map([[0, alice.person]]),
+    };
+    const labels = nameByVoice(options);
+    expect(labels.map((row) => row.person)).toEqual([
+        undefined,
+        undefined,
+        alice.person,
+        bob.person,
+        bob.person,
+        bob.person,
+    ]);
+    expect(store.people).toEqual({});
+    const saved = storeOf({ [alice.person]: [[1, 0]] });
+    saved.people[alice.person]!.samples[0] = { ...basePrint, meeting: "current", fromSec: 5, toSec: 8 };
+    expect(nameByVoice({ ...options, store: saved }).map((row) => row.person)).toEqual(labels.map((row) => row.person));
+});
 
 test("voice registry maps to the canonical rule", () => {
     expect(speakerLabelRule("voice")).toBe(MeetingRule.VoiceEmbedding);
@@ -423,6 +527,180 @@ async function sampledMeeting(project: string) {
     );
     return { store, record, opened };
 }
+
+test("voice preview uses this meeting's independent seats, indicators and human decisions without saving samples", async () => {
+    const { record, opened } = await sampledMeeting("local-preview-fixture");
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    const meeting = await opened.meeting();
+    meeting.transcript = [0, 5, 10, 15, 20, 25, 30].map((startSec) => ({
+        speaker: "Speaker 1",
+        startSec,
+        text: "Hello.",
+    }));
+    const config = meetingsConfigSchema.parse({});
+    spies.push(
+        spyOn(opened, "presence").mockResolvedValue([
+            { name: alice.person, fromSec: 0, toSec: 35 },
+            { name: bob.person, fromSec: 5, toSec: 35 },
+        ]),
+        spyOn(opened, "evidence").mockResolvedValue({
+            segments: [{ startSec: 0, endSec: 35, channel: "mic" }],
+            files: [],
+            speaking: [],
+        }),
+        spyOn(voice, "embedVoiceLines").mockImplementation(async (input) =>
+            input.spans.map((span) => timedLine(span.index, span.fromSec, span.index < 2 ? [1, 0] : [0, 1], "mic"))
+        )
+    );
+    const preview = () =>
+        proposeSpeakerLabels(opened, config.global.speakerLabels, undefined, {
+            voiceOnly: true,
+            applyAbove: config.global.suggest.applyAbove,
+        });
+    const labels = await preview();
+    expect(labels[0]?.person).toBeUndefined();
+    expect(labels[1]).toMatchObject({ person: alice.person, reason: "named" });
+    expect(labels.slice(2, 5).map((row) => row.person)).toEqual(Array(3).fill(bob.person));
+    expect(readVoiceStore(record.project!).people).toEqual({});
+    config.global.speakerLabels.seat.enabled = false;
+    expect(await preview()).toEqual([]);
+    record.items.push({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        suggestedAt: record.start!,
+        label: "Speaker 1",
+        speaker: alice.person,
+        fromSec: 0,
+        toSec: 0,
+        rules: [MeetingRule.SpeakingIndicator],
+        confidence: 0.75,
+    });
+    expect((await preview())[1]?.person).toBe(alice.person);
+    config.global.suggest.applyAbove = 0.8;
+    expect(await preview()).toEqual([]);
+    record.items.push({
+        id: "i2",
+        kind: "question",
+        status: "confirmed",
+        suggestedAt: record.start!,
+        about: "speaker",
+        fromSec: 0,
+        toSec: 5,
+        decides: [],
+        choices: [alice.person],
+        answer: alice.person,
+        question: "Who spoke?",
+        rules: [],
+        decision: {
+            token: "answer",
+            actor: { kind: "listen" },
+            entry: { action: "answer", question: "i2" },
+            previous: { status: "suggested" },
+        },
+    });
+    expect((await preview())[1]?.person).toBe(alice.person);
+    record.items[1]!.decision!.actor = { kind: "agent", harness: "fixture", session: null };
+    expect(await preview()).toEqual([]);
+    expect(readVoiceStore(record.project!).people).toEqual({});
+});
+
+test("exclusion survives the preview contract and creates a question even for short lines and a zero question budget", async () => {
+    const { record, opened, store } = await sampledMeeting("exclusion-question-fixture");
+    const meeting = await opened.meeting();
+    const config = meetingsConfigSchema.parse({});
+    const labels: ReturnType<typeof nameByVoice> = [0, 1].map((index) => ({
+        labeler: "voice",
+        index,
+        seat: "mic",
+        person: bob.person,
+        reason: "exclusion",
+        score: 0.45,
+        margin: 0.45,
+        next: { person: alice.person, score: 0 },
+    }));
+    const rows = labels.map((row) => ({
+        ...row,
+        fromSec: row.index * 5,
+        toSec: row.index * 5 + 5,
+        text: "First.",
+        current: "Speaker 1",
+    }));
+    expect(voicesPreview.result.parse({ meeting: record.id, lines: rows }).lines).toEqual(rows);
+    const fresh = suggestItems({
+        record,
+        meeting,
+        labels,
+        rules: ["speakers"],
+        dictionary: { abbrExpansion: "every", entries: [] },
+        sourceWords: [],
+        questionBudget: 0,
+        now: record.start!,
+    });
+    const ranges = fresh.filter((item) => item.kind === "speaker-range" && item.evidence?.reason === "exclusion");
+    expect(ranges).toHaveLength(2);
+    expect(ranges[0]).toMatchObject({
+        status: "suggested",
+        confidence: 0.45,
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: { margin: 0.45 },
+    });
+    expect(fresh.find((item) => item.kind === "question")).toMatchObject({
+        choices: expect.arrayContaining([bob.person]),
+        decides: ranges.map((item) => item.id),
+        evidence: { reason: "exclusion" },
+    });
+    await store.update(record.id, { command: "suggest", change: "fixture" }, (current) => {
+        current.items.push(...fresh);
+    });
+    const bulk = await new DecisionJournal({ store }).plan({
+        meeting: record.id,
+        actor: { kind: "cli" },
+        action: { kind: "confirm", items: [], minConfidence: 0 },
+    });
+    expect(
+        bulk.skipped.filter((skip) => ranges.some((range) => range.id === skip.id)).map((skip) => skip.needs)
+    ).toEqual(["listen", "listen"]);
+    record.items.push(...ranges);
+    expect(correctionsOf(record, config, { withSuggested: true, applyAbove: 0 }).ranges).toEqual([]);
+    ranges[0]!.status = "confirmed";
+    expect(correctionsOf(record, config, { withSuggested: true, applyAbove: 0 }).ranges).toHaveLength(1);
+});
+
+test("a live speaking indicator enrols its own line only when the existing rule clears applyAbove", async () => {
+    const { opened, record } = await sampledMeeting("indicator-seed-fixture");
+    record.seats = { room: ["Owner Example"], remote: [{ name: alice.person }, { name: bob.person }] };
+    const presence = [alice, bob].map((stay) => ({ name: stay.person, fromSec: 0, toSec: 30 }));
+    spies.push(
+        spyOn(opened, "evidence").mockResolvedValue({
+            selfName: "Owner Example",
+            files: [],
+            segments: [
+                { startSec: 0, endSec: 5, channel: "system", liveName: alice.person },
+                { startSec: 5, endSec: 20, channel: "system" },
+            ],
+            speaking: [{ tSec: 0, speaking: [alice.person] }],
+        }),
+        spyOn(opened, "sound").mockResolvedValue({
+            tracks: [],
+            slice: (line) => ({
+                fileFromSec: line.fromSec,
+                fileToSec: line.toSec,
+                track: "source-call",
+                path: "call.wav",
+                channel: 0,
+                clock: "source",
+            }),
+        })
+    );
+    const labelers = { ...meetingsConfigSchema.parse({}).global.speakerLabels, seat: { enabled: false } };
+    const preview = (applyAbove: number) =>
+        proposeSpeakerLabels(opened, labelers, presence, { voiceOnly: true, applyAbove });
+    const rows = await preview(0.7);
+    expect(rows[0]?.person).toBeUndefined();
+    expect(rows[1]).toMatchObject({ reason: "named", person: alice.person });
+    expect(await preview(0.71)).toEqual([]);
+});
 
 test("only human speaker answers wholly containing a line persist prints; Undo reopens the store", async () => {
     const { record, opened } = await sampledMeeting("answer-voice-fixture");
