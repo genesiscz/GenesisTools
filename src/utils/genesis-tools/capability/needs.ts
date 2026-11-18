@@ -123,17 +123,25 @@ export function describeNeedFailure(result: NeedResult): string {
     return result.fix ? `${result.reason}. Run \`${result.fix.command}\`.` : result.reason;
 }
 
-/** A state value that may answer now: present, not stale, from this build, and young enough. */
-function usable(value: StateValue | undefined, env: NeedEnv, buildId: string | null, ttlMs: number | null): boolean {
+/**
+ * A state value that may answer now: present, not stale, not from another build, and young enough. `bound` also
+ * refuses a value saved with no build while the installed build is known: a method list read before the install had
+ * a manifest belongs to some earlier build, never provably to this one.
+ */
+function usable(
+    value: StateValue | undefined,
+    env: NeedEnv,
+    rule: { buildId: string | null; bound: boolean; ttlMs: number | null }
+): boolean {
     if (!value || value.stale || env.fresh) {
         return false;
     }
 
-    if (value.build !== undefined && value.build !== buildId) {
+    if (value.build === undefined ? rule.bound && rule.buildId !== null : value.build !== rule.buildId) {
         return false;
     }
 
-    return ttlMs === null || env.now().getTime() - Date.parse(value.at) <= ttlMs;
+    return rule.ttlMs === null || env.now().getTime() - Date.parse(value.at) <= rule.ttlMs;
 }
 
 function isStringList(value: unknown): value is string[] {
@@ -193,7 +201,10 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
 
         const saved = env.state.get(APP_AREA, "rpcMethods");
 
-        if (usable(saved, env, manifest?.buildId ?? null, null) && isStringList(saved?.value)) {
+        if (
+            usable(saved, env, { buildId: manifest?.buildId ?? null, bound: true, ttlMs: null }) &&
+            isStringList(saved?.value)
+        ) {
             return saved.value.includes(need.method) ? { ok: true, from: "state" } : missing("state");
         }
 
@@ -233,7 +244,10 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
 
         const saved = env.state.get(APP_AREA, `grant.${need.grant}`);
 
-        if (usable(saved, env, env.facts.appManifest()?.buildId ?? null, GRANT_TTL_MS)) {
+        // A grant belongs to the bundle's signature, not to one build, so a report with no build may answer for an hour.
+        if (
+            usable(saved, env, { buildId: env.facts.appManifest()?.buildId ?? null, bound: false, ttlMs: GRANT_TTL_MS })
+        ) {
             return saved?.value === "granted"
                 ? { ok: true, from: "state" }
                 : fail("grant-missing", `the ${need.grant} grant is ${String(saved?.value)}`, null, "state");
